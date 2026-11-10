@@ -1,6 +1,5 @@
-//! Shared pin punctuation mutations; the tool never deletes an empty entry.
+//! The utilities' shared pin punctuation append operation.
 use super::dbm::Tree;
-use oxpinyin_data::row_format::punct::encode_puncts;
 use oxpinyin_input::tool;
 use std::ffi::CStr;
 
@@ -38,53 +37,69 @@ pub(crate) fn append_punctuation(table: &Tree, token: u32, punctuation: &CStr) {
     let _ = table.put(&key, &value);
 }
 
-/// `PunctTable::remove_punctuation` (`punct_table.cpp:169-177`).
-pub(crate) fn remove_punctuation(table: &Tree, token: u32, punct: &str) -> bool {
-    let key = token.to_le_bytes();
-    let mut entry = table.get(&key).unwrap_or_default();
-    if !remove_entry(&mut entry, &encode_puncts(&[punct])) {
-        return false;
-    }
-    // Even the final removal stores a zero-byte entry, never deletes its key.
-    table.put(&key, &entry).is_ok()
-}
-
-/// `PunctTableEntry::remove_punctuation` (`punct_table.cpp:117-145`):
-/// first whole NUL-terminated span, at a punctuation boundary.
-fn remove_entry(entry: &mut Vec<u8>, punct: &[u8]) -> bool {
-    let mut start = 0_usize;
-    while let Some(candidate) = entry.get(start..start.saturating_add(punct.len())) {
-        if candidate == punct {
-            entry.drain(start..start + punct.len());
-            return true;
-        }
-        let Some(end) = entry[start..]
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .position(|word| *word == [0; 4])
-        else {
-            return false;
-        };
-        start += (end + 1) * 4;
-    }
-    false
-}
-
 #[cfg(test)]
-mod tests {
+mod native_tests {
     use super::*;
+    use oxpinyin_data::{
+        PunctTable,
+        row_format::punct::{decode_puncts, encode_puncts},
+    };
+    use oxpinyin_store::{DefaultStore, RawReadStore, WriteStore};
+    use std::ops::Bound;
 
     #[test]
-    fn remove_first_whole_span_and_keep_empty_entry() {
-        let mut entry = encode_puncts(&["……", "…", "？", "…"]);
-        assert!(remove_entry(&mut entry, &encode_puncts(&["…"])));
-        assert_eq!(entry, encode_puncts(&["……", "？", "…"]));
-        assert!(!remove_entry(&mut entry, &encode_puncts(&["。"])));
-        for punct in ["……", "？", "…"] {
-            assert!(remove_entry(&mut entry, &encode_puncts(&[punct])));
+    fn punctuation_keeps_its_order_in_a_snapshot_and_the_empty_row_is_readable() {
+        // tests/storage/test_punct_table.cpp:47-66 at 074a2219: attach,
+        // three appends, save_db and load_db. Its `remove_punctuation`
+        // calls (`:59`, `:68`, `:72`) have no product counterpart and are
+        // not simulated here.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("punct.bin");
+        let snapshot = dir.path().join("snapshot.db");
+        let token = 1_u32;
+        let key = token.to_le_bytes();
+        // Include the empty-file attach case before appending.
+        std::fs::write(&path, []).unwrap();
+        let tree = Tree::create(&path).unwrap();
+        for punctuation in [c"……", c"…", c"？"] {
+            append_punctuation(&tree, token, punctuation);
         }
-        assert!(entry.is_empty());
-        assert!(!remove_entry(&mut entry, &encode_puncts(&["…"])));
+        assert_eq!(tree.get(&key), Some(encode_puncts(&["……", "…", "？"])));
+        drop(tree);
+
+        let source = DefaultStore::open_read_only(&path).unwrap();
+        DefaultStore::write_user_index(&snapshot, |sink| {
+            source.range_raw(Bound::Unbounded, Bound::Unbounded, sink)
+        })
+        .unwrap();
+        let occupied = dir.path().join("occupied");
+        std::fs::create_dir(&occupied).unwrap();
+        std::fs::write(occupied.join("keep"), b"kept").unwrap();
+        assert!(Tree::create(&occupied).is_err());
+        assert!(
+            DefaultStore::write_user_index(&occupied, |sink| {
+                source.range_raw(Bound::Unbounded, Bound::Unbounded, sink)
+            })
+            .is_err()
+        );
+        assert_eq!(std::fs::read(occupied.join("keep")).unwrap(), b"kept");
+
+        // Kyoto Cabinet loads snapshot bytes through its snapshot API,
+        // while the product's punctuation table opens a TreeDB file.
+        let copy = DefaultStore::open_user_index(&snapshot).unwrap();
+        let mut entry = Vec::new();
+        assert!(copy.get_raw(&key, &mut entry).unwrap());
+        assert_eq!(decode_puncts(&entry), ["……", "…", "？"]);
+        let table = PunctTable::open(&path).unwrap();
+        assert_eq!(table.punctuations(token).unwrap(), ["……", "…", "？"]);
+        drop(table);
+        drop(source);
+        // A hand-written zero-byte row, not a removal: the reader accepts it.
+        let tree = Tree::create(&path).unwrap();
+        tree.put(&key, &[]).unwrap();
+        assert_eq!(tree.get(&key), Some(Vec::new()));
+        drop(tree);
+        let table = PunctTable::open(&path).unwrap();
+        assert!(table.punctuations(token).unwrap().is_empty());
     }
 }

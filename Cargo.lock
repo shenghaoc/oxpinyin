@@ -655,6 +655,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-repl"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "assert_fs",
+ "libc",
+ "oxpinyin-capi",
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-engine",
+ "oxpinyin-input",
+ "oxpinyin-runtime",
+ "oxpinyin-store",
+ "oxpinyin-user",
+ "oxpinyin-utils",
+ "oxpinyin-zhuyin-capi",
+ "regex",
+ "rstest",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "oxpinyin-runtime"
 version = "0.1.0"
 dependencies = [
@@ -698,16 +721,11 @@ dependencies = [
  "assert_cmd",
  "assert_fs",
  "libc",
- "oxpinyin-capi",
- "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-data",
- "oxpinyin-engine",
  "oxpinyin-input",
- "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",
- "oxpinyin-zhuyin-capi",
  "regex",
  "rstest",
  "sha2",

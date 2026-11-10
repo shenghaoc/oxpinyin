@@ -85,9 +85,12 @@ pub struct LookupRow {
     pub tokens: Vec<(usize, u32)>,
     /// Concatenated phrase text, retaining raw UCS-4 words.
     pub text: oxpinyin_core::PhraseText,
+    /// Bytes the row spans: the bound of the decode, the pin's
+    /// `MatchResult` length less its terminal column.
+    pub span: usize,
 }
 
-/// The one parsed scan matrix reused by test_pinyin_lookup's timed calls.
+/// The parsed scan matrix used by the nonshipping phonetic lookup mode.
 pub struct PreparedLookup {
     /// Returned parser length and original keys, for the physical dump.
     pub parsed: Parse,
@@ -145,6 +148,7 @@ where
                     .map(|span| (span.start, span.token.value()))
                     .collect(),
                 text: row.text,
+                span: row.span,
             })
             .collect()
     })
@@ -184,38 +188,6 @@ fn full_input(input: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 mod tests {
     use super::*;
     use oxpinyin_core::{PINYIN_INCOMPLETE, USE_TONE};
-    /// 074a2219 tests/lookup/test_pinyin_lookup.cpp:94-111 carries parsed_len
-    /// through fill_matrix to get_nbest_match, including the terminal column.
-    #[test]
-    fn prepared_lookup_keeps_the_consumed_bound() {
-        use crate::fixture_doubles::FixtureDictionary;
-        use oxpinyin_core::{LanguageModel, NbestStepCosts, PhraseToken};
-        struct Model;
-        impl LanguageModel for Model {
-            type Error = core::convert::Infallible;
-            type Token = PhraseToken;
-            fn nbest_step_costs(
-                &self,
-                _: &PhraseToken,
-                _: &PhraseToken,
-            ) -> Result<NbestStepCosts, Self::Error> {
-                Ok(NbestStepCosts {
-                    blended: Some(0.5),
-                    unigram: Some(0.5),
-                    unigram_lambda: 1.0,
-                })
-            }
-        }
-        let vocab = "token=2\tkeys=ni\ttext=你\tunigram=1000\n";
-        let dictionary = FixtureDictionary::parse(vocab).unwrap();
-        let model = Model;
-        let prepared = prepare_lookup(b"ni", 0).unwrap();
-        assert_eq!(prepared.parsed.consumed, 2);
-        let rows = lookup(&prepared, &dictionary, &model).unwrap();
-        assert_eq!(rows[0].tokens, [(0, 2)]);
-        assert_eq!(rows[0].text.outward_words().collect::<Vec<_>>(), [0x4f60]);
-    }
-
     #[test]
     fn explicit_nul_spans_keep_the_pin_length_and_zero_pad_the_tail() {
         for options in [PINYIN_INCOMPLETE, USE_TONE | PINYIN_INCOMPLETE] {

@@ -1,7 +1,7 @@
 # Utility compatibility cases
 
 This page describes how to run and extend the frozen compatibility cases of the pin's standalone utilities.
-331 ordinary Rust integration tests check these utilities.
+Ordinary Rust integration tests check these utilities.
 Their results are frozen from the pin and written in the tests as Rust values.
 A test run never captures the pin, reads a data file of expected results, or writes an expected value.
 
@@ -31,8 +31,8 @@ Each test is in its existing integration suite:
 | `segmentation` | `ngseg`, `spseg`, `mergeseq` |
 | `kmm_tools` | The seven K-mixture-model tools |
 | `training` | N-gram generation, unigram generation, interpolation estimation and correction evaluation |
-| `storage_tools` | Binary-file generation, interpolation import/export, and the parser, lookup, table, chunk and phrase-index test programs |
-| `dbm_programs` | `test_ngram`, `test_flexible_ngram`, `test_punct_table` |
+| `storage_tools` | Binary-file generation and interpolation import/export |
+| `oxpinyin-repl` / `interactive` | Ten interactive modes, with retained product outputs and saved-file witnesses; obsolete timing lines are excluded |
 | `gen_pinyin_table`, `gen_zhuyin_table` | Their respective table generators |
 | `k_mixture_model_to_interpolation` | The interpolation converter |
 

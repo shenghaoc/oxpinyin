@@ -779,10 +779,16 @@ mod tests {
         assert_eq!(library.total_freq(), 123, "the local total is preserved");
         assert!(library.is_layout_failed());
         assert_eq!(libs.unigram_total(), 0, "the facade does not add it");
+        // tests/storage/test_phrase_index_logger.cpp:29-30 and :53-54 at
+        // 074a2219 load sub-index 1 twice. Reattaching the same failed chunk
+        // also subtracts the previous sub-index total and declines to add
+        // the refused replacement.
+        libs.load_heap(4, &dir.path().join("merged.bin")).unwrap();
+        assert_eq!(libs.unigram_total(), 0_u32.wrapping_sub(123));
         // The pin's `FacadePhraseIndex::unload` subtracts the local total
         // whether or not the failed load added it.
         assert!(libs.unload(4));
-        assert_eq!(libs.unigram_total(), 0_u32.wrapping_sub(123));
+        assert_eq!(libs.unigram_total(), 0_u32.wrapping_sub(246));
     }
 
     #[test]

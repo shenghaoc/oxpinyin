@@ -9,11 +9,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
-pub mod fixed_tmp;
-
 pub mod gen_pinyin_table;
-
-pub mod pin_tests;
 
 pub mod estimate_k_mixture_model;
 
@@ -47,13 +43,3 @@ pub mod validate_k_mixture_model;
 pub use utils_helper::taglib;
 
 mod utils_helper;
-
-pub mod test_parser2;
-
-pub mod test_table_info;
-
-pub mod dbm_tests;
-
-pub mod chunk_tests;
-
-pub mod storage_tests;

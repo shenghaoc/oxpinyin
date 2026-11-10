@@ -18,7 +18,7 @@ use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 /// list carries them at its head typed `NBEST_MATCH_CANDIDATE`, and
 /// [`pinyin_get_sentence`] returns their decoded text — upstream's
 /// `m_nbest_results` gate (`pinyin.cpp:1373-1385`, `2292-2293`). Rows are
-/// cleared by [`pinyin_reset`], nothing else.
+/// cleared by [`crate::pinyin_reset`], nothing else.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
@@ -348,7 +348,7 @@ pub extern "C" fn pinyin_get_character_offset(
 /// separator run (ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next
 /// key rest, issue #570). libpinyin@dbff264 normalizes it back to the first
 /// byte of that run and validates the normalized offset —
-/// [`crate::state::CapiInstance::validate_lookup_offset`] runs that law in
+/// [`oxpinyin_facade::InstanceView::validate_lookup_offset`] runs that law in
 /// the active parse mode's own coordinates: the full walk where `'` is a
 /// zero-key separator (plain full pinyin, Luoma/secondary-zhuyin), the
 /// range refusal alone where a composition cannot hold one (double pinyin,
@@ -361,7 +361,7 @@ pub extern "C" fn pinyin_get_character_offset(
 /// candidates; the scan anchor is otherwise still positionless — the
 /// engine has no positional backend yet.
 ///
-/// W14 honours [`crate::types::sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
+/// W14 honours `SORT_WITHOUT_SENTENCE_CANDIDATE`: with
 /// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
 /// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
 /// with the bit set the engine never prepends them (`pinyin.cpp:2295-2296`),

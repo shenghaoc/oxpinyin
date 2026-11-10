@@ -96,6 +96,10 @@ impl Run {
 /// tree. `files` is `inventory()` after the run; `before` is `snapshot_inputs()` before it.
 pub fn check(output: Output, files: &str, before: &Snapshot, expected: &Run) {
     let stdout = expected.stdout.expected(&output.stdout);
+    check_stdout(output, stdout, files, before, expected);
+}
+
+fn check_stdout(output: Output, stdout: Vec<u8>, files: &str, before: &Snapshot, expected: &Run) {
     let assertion = output.assert();
     let assertion = match expected.status {
         Exit(code) => assertion.code(code),
@@ -112,6 +116,24 @@ pub fn check(output: Output, files: &str, before: &Snapshot, expected: &Run) {
     };
     assertion.stdout(stdout).stderr(expected.stderr);
     assert_eq!(files, expected.inventory(before), "files");
+}
+
+/// Preserve the captured product rows and file effects when moving a driver
+/// into the REPL. Clock lines belonged solely to the retired benchmark loop.
+pub fn check_repl(output: Output, files: &str, before: &Snapshot, expected: &Run) {
+    let stdout = expected.stdout.expected(&output.stdout);
+    let mut lines = stdout.split_inclusive(|byte| *byte == b'\n').peekable();
+    let mut product = Vec::new();
+    while let Some(line) = lines.next() {
+        if line.starts_with(b"Spent <TIME> us for ") {
+            if lines.peek() == Some(&b"\n".as_slice()) {
+                lines.next();
+            }
+        } else {
+            product.extend_from_slice(line);
+        }
+    }
+    check_stdout(output, product, files, before, expected);
 }
 
 // Values that expectations in more than one suite share.

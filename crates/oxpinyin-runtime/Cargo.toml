@@ -38,6 +38,12 @@ required-features = ["tkrzw"]
 name = "sentence_surface_parity"
 required-features = ["tkrzw"]
 
+# Reads W3 through the nonshipping lookup assembly; without `tools` the
+# target is not built, so it cannot pass empty.
+[[test]]
+name = "tool_lookup"
+required-features = ["tools"]
+
 [features]
 # Nonshipping pin lookup program assembly.
 tools = ["oxpinyin-engine/tools", "oxpinyin-input/tools"]

@@ -22,11 +22,12 @@ No oracle, probe or differential was run for this record.
 
 ## Ruling and scope
 
-Maintainer ruling, 2026-11-01 UTC (`date -u`): every program under the
-pin's `tests/` is ported as a drop-in tool, without exception. Its binary
-name, arguments, stdin protocol, stdout/stderr bytes, exit status and fixed
-file paths are the interface. The binaries live in nonshipping
-`oxpinyin-utils` and are not installed.
+Maintainer ruling, 2026-11-10 UTC (#1776): it supersedes the 2026-11-01 UTC
+drop-in requirement for upstream `tests/` programs. Seven fixed programs become tests of product
+code, and ten interactive programs become the nonshipping `oxpinyin-repl`.
+The [coverage ledger](../testing/upstream-test-coverage.md#libpinyin-tests)
+records their retained mechanisms and witnesses. The 21 genuine utilities
+remain drop-in tools; this changes no C ABI or persistent-data contract.
 
 Maintainer ruling, 2026-10-28 UTC:
 
@@ -645,7 +646,8 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 The [upstream test coverage ledger](../testing/upstream-test-coverage.md#libpinyin-tests)
 is the single coverage table for every program in the pin's `tests/`.
 It records all 17 `noinst_PROGRAMS`, including the six automated `TESTS`,
-and tracks each complete drop-in tool as GAP or Ported.
+and records each product-test or REPL replacement under the #1776 ruling
+(2026-11-10 UTC).
 
 ## Records affected by the ruling
 

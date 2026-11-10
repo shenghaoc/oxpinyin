@@ -1,14 +1,21 @@
 //! tests/storage/test_matrix.cpp and tests/lookup/test_*_lookup.cpp, 074a2219.
-use super::*;
+use crate::{conf, present};
+use oxpinyin_input::tool;
+use std::{ffi::CString, path::Path};
+fn check(value: bool) {
+    if !value {
+        tool::abort();
+    }
+}
 use oxpinyin_core::tool::Key;
 use oxpinyin_core::{ChewingKey, PINYIN_AMB_ALL, PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE};
 use oxpinyin_engine::tool::{parse_full, physical_matrix, prepare_lookup};
 use oxpinyin_input::tool::lookup_tests as output;
 use oxpinyin_runtime::tool::Lookup;
 
-fn load(phonetic: bool, bigram: bool) -> Lookup {
-    let conf = conf();
-    Lookup::open(&conf, phonetic, bigram).unwrap_or_else(|error| {
+fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
+    let conf = conf(data);
+    Lookup::open(data, &conf, phonetic, bigram).unwrap_or_else(|error| {
         if matches!(
             error.cause,
             oxpinyin_data::phrase_library::LibraryError::Row(_)
@@ -74,23 +81,17 @@ fn continued(data: &Lookup, matrix: &[Vec<Key>], start: usize, end: usize) -> bo
     let mut longest = 0;
     recurse(data, matrix, start, end, &mut Vec::new(), &mut longest) || longest > end
 }
-/// Timed parse, matrix construction and complete search-index trace.
-pub fn matrix_main() {
-    let data = load(true, false);
+/// Parse, matrix construction and complete search-index trace.
+pub fn matrix_main(data: &Path) {
+    let data = load(data, true, false);
     let options = PINYIN_CORRECT_ALL | PINYIN_AMB_ALL | PINYIN_INCOMPLETE;
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
             break;
         }
-        let mut parsed = Default::default();
-        let mut matrix = Vec::new();
-        let start = tool::timer::record_time();
-        for _ in 0..1000 {
-            parsed = parse_full(input.line(), options);
-            matrix = physical_matrix(&parsed, options);
-        }
-        tool::timer::print_time(start, 1000);
+        let parsed = parse_full(input.line(), options);
+        let matrix = physical_matrix(&parsed, options);
         output::parsed(parsed.consumed, parsed.keys.len());
         dump(&matrix);
         for start in 0..matrix.len() {
@@ -103,9 +104,9 @@ pub fn matrix_main() {
         }
     }
 }
-/// Matrix dump and timed existing PhoneticLookup<2,3> results.
-pub fn pinyin_main() {
-    let data = load(true, true);
+/// Matrix dump and existing PhoneticLookup<2,3> results.
+pub fn pinyin_main(data: &Path) {
+    let data = load(data, true, true);
     let options = USE_TONE | PINYIN_CORRECT_ALL | PINYIN_INCOMPLETE;
     let mut input = tool::LineReader::stdin();
     while input.getline() {
@@ -119,12 +120,7 @@ pub fn pinyin_main() {
             continue;
         }
         dump(&physical_matrix(&prepared.parsed, options));
-        let start = tool::timer::record_time();
-        let mut rows = Vec::new();
-        for _ in 0..100 {
-            rows = data.phonetic(&prepared).unwrap_or_else(|_| tool::abort());
-        }
-        tool::timer::print_time(start, 100);
+        let rows = data.phonetic(&prepared).unwrap_or_else(|_| tool::abort());
         for row in rows {
             for (position, token) in row.tokens {
                 output::token(position, token);
@@ -138,9 +134,9 @@ pub fn pinyin_main() {
     }
 }
 /// Raw-text PhraseLookup with token-prefixed newline-separated output.
-pub fn phrase_main() {
+pub fn phrase_main(data: &Path) {
     let _ = tool::set_locale_from_environment();
-    let data = load(false, true);
+    let data = load(data, false, true);
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {

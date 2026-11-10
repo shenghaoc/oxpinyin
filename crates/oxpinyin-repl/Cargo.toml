@@ -1,0 +1,39 @@
+[package]
+name = "oxpinyin-repl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Nonshipping interactive access to oxpinyin's parser, lookup and C facades"
+
+[lints]
+workspace = true
+
+[features]
+default = ["tkrzw"]
+tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin-runtime/tkrzw", "oxpinyin-capi/tkrzw", "oxpinyin-zhuyin-capi/tkrzw"]
+bdb = ["oxpinyin-utils/bdb", "oxpinyin-runtime/bdb", "oxpinyin-capi/bdb", "oxpinyin-zhuyin-capi/bdb"]
+kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin-runtime/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxpinyin-zhuyin-capi/kyotocabinet"]
+
+[dependencies]
+oxpinyin-utils = { path = "../oxpinyin-utils", default-features = false }
+oxpinyin-core = { workspace = true, features = ["tools"] }
+oxpinyin-engine = { workspace = true, features = ["tools"] }
+oxpinyin-runtime = { workspace = true, features = ["tools"] }
+oxpinyin-data.workspace = true
+oxpinyin-user = { workspace = true, features = ["tools"] }
+oxpinyin-input = { workspace = true, features = ["tools"] }
+oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false, features = ["tools"] }
+oxpinyin-zhuyin-capi = { path = "../oxpinyin-zhuyin-capi", default-features = false, features = ["tools"] }
+
+[dev-dependencies]
+assert_cmd = "2.2"
+assert_fs = "1.1"
+libc.workspace = true
+regex = "1.13"
+rstest = { version = "0.28", default-features = false }
+sha2 = "0.11"
+oxpinyin-store.workspace = true
+tempfile.workspace = true
