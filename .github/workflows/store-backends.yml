@@ -148,6 +148,8 @@ jobs:
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
             --also crates/oxpinyin-utils/ \
+            --also fixtures/w3/kct/ \
+            --also fixtures/w3/db/ \
             --also tools/dev/ci_tree.py \
             --also tools/dev/ci_tree.test.py \
             --also tools/bisection/cells-for-diff.py \
