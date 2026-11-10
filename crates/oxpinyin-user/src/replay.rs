@@ -38,6 +38,7 @@
 //! Session opens keep each retained payload's private byte view. Typed [`ChunkItem`]s are cached on use; value-only callers use
 //! [`Merge::finish`].
 
+use crate::persistence::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1378,7 +1379,7 @@ impl<'a, 'l> Merge<'a, 'l> {
 
     pub(crate) fn finish(
         mut self,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
     ) -> (Option<u32>, BTreeMap<u32, Option<ChunkItem>>) {
         self.sort_touched();
@@ -1399,14 +1400,20 @@ impl<'a, 'l> Merge<'a, 'l> {
                 // the library's own item.
                 Found::Past => {
                     typed.push((slot, None));
-                    skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                    record_skip(
+                        skipped,
+                        format_args!("{name}: item {slot} ends past the phrase content"),
+                    );
                 }
                 Found::Item { offset, len } => match self.content.item(offset, len) {
                     Some(bytes) => match decode_phrase_item(&bytes) {
                         Ok(item) => typed.push((slot, Some(item))),
-                        Err(error) => skipped.push(format!("{name}: {error}")),
+                        Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
                     },
-                    None => skipped.push(format!("{name}: item {slot} was not readable")),
+                    None => record_skip(
+                        skipped,
+                        format_args!("{name}: item {slot} was not readable"),
+                    ),
                 },
             }
         }
@@ -1852,7 +1859,7 @@ impl<'a> Merge<'a, '_> {
         &mut self,
         slot: u32,
         typed: &mut BTreeMap<u32, Option<ChunkItem>>,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
         next: &mut Vec<u32>,
         retain_adds: bool,
@@ -1870,14 +1877,17 @@ impl<'a> Merge<'a, '_> {
             }
             Found::Past => {
                 typed.insert(slot, None);
-                skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                record_skip(
+                    skipped,
+                    format_args!("{name}: item {slot} ends past the phrase content"),
+                );
                 false
             }
             Found::Item { offset, len } => match self.original_item(slot) {
                 Some((_, original_extent)) => match self.content.item(offset, len) {
                     Some(bytes) => {
                         if let Err(error) = validate_phrase_item(&bytes) {
-                            skipped.push(format!("{name}: {error}"));
+                            record_skip(skipped, format_args!("{name}: {error}"));
                             return false;
                         }
                         if !relocated && len > original_extent {
@@ -1892,7 +1902,10 @@ impl<'a> Merge<'a, '_> {
                         true
                     }
                     None => {
-                        skipped.push(format!("{name}: item {slot} was not readable"));
+                        record_skip(
+                            skipped,
+                            format_args!("{name}: item {slot} was not readable"),
+                        );
                         false
                     }
                 },
@@ -1904,7 +1917,7 @@ impl<'a> Merge<'a, '_> {
                                     self.has_added_items = true;
                                     return true;
                                 }
-                                Err(error) => skipped.push(format!("{name}: {error}")),
+                                Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
                             }
                         }
                         return false;
@@ -1914,7 +1927,7 @@ impl<'a> Merge<'a, '_> {
                             Ok(item) => {
                                 typed.insert(slot, Some(item));
                             }
-                            Err(error) => skipped.push(format!("{name}: {error}")),
+                            Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
                         }
                     }
                     false
@@ -1928,7 +1941,7 @@ impl<'a> Merge<'a, '_> {
     fn finish_overreach(
         &mut self,
         typed: &mut BTreeMap<u32, Option<ChunkItem>>,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
         retain_adds: bool,
     ) {
@@ -1964,7 +1977,7 @@ impl<'a> Merge<'a, '_> {
     #[cfg(test)]
     pub(crate) fn finish_lazy(
         self,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
     ) -> (
         Option<u32>,
@@ -1978,7 +1991,7 @@ impl<'a> Merge<'a, '_> {
     /// the same conversion as USER_FILE items.
     pub(crate) fn finish_views(
         self,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
     ) -> (
         Option<u32>,
@@ -1990,7 +2003,7 @@ impl<'a> Merge<'a, '_> {
 
     fn finish_live_owner(
         mut self,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
     ) -> (
         Option<u32>,
@@ -2031,7 +2044,10 @@ impl<'a> Merge<'a, '_> {
                 Found::Past => {
                     removed |= original;
                     rejected.push(slot);
-                    skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                    record_skip(
+                        skipped,
+                        format_args!("{name}: item {slot} ends past the phrase content"),
+                    );
                 }
                 // The item is the header-derived `len` bytes at `offset`, all
                 // inside the buffer. `validate_phrase_item` cannot refuse
@@ -2065,7 +2081,7 @@ impl<'a> Merge<'a, '_> {
 
     fn finish_lazy_impl(
         mut self,
-        skipped: &mut Vec<String>,
+        skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
         retain_adds: bool,
     ) -> (
@@ -2094,7 +2110,10 @@ impl<'a> Merge<'a, '_> {
                         // Row 107, option 1: the read leaves the buffer, so the
                         // item answers no item. The other changes stay.
                         typed.insert(slot, None);
-                        skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                        record_skip(
+                            skipped,
+                            format_args!("{name}: item {slot} ends past the phrase content"),
+                        );
                         false
                     }
                     Found::Item { offset, len } => {
@@ -2107,12 +2126,15 @@ impl<'a> Merge<'a, '_> {
                             match self.content.item(offset, len) {
                                 Some(bytes) => {
                                     if let Err(error) = validate_phrase_item(&bytes) {
-                                        skipped.push(format!("{name}: {error}"));
+                                        record_skip(skipped, format_args!("{name}: {error}"));
                                         return false;
                                     }
                                 }
                                 None => {
-                                    skipped.push(format!("{name}: item {slot} was not readable"));
+                                    record_skip(
+                                        skipped,
+                                        format_args!("{name}: item {slot} was not readable"),
+                                    );
                                     return false;
                                 }
                             }
@@ -2126,7 +2148,7 @@ impl<'a> Merge<'a, '_> {
                                         true
                                     }
                                     Err(error) => {
-                                        skipped.push(format!("{name}: {error}"));
+                                        record_skip(skipped, format_args!("{name}: {error}"));
                                         false
                                     }
                                 };
@@ -2135,7 +2157,7 @@ impl<'a> Merge<'a, '_> {
                                 Ok(item) => {
                                     typed.insert(slot, Some(item));
                                 }
-                                Err(error) => skipped.push(format!("{name}: {error}")),
+                                Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
                             }
                         }
                         false
@@ -2231,7 +2253,7 @@ mod tests {
             };
             assert!(merge.apply_owned(record).is_ok());
             let mut skipped = Vec::new();
-            let (_, _, view) = merge.finish_views(&mut skipped, &"test");
+            let (_, _, view) = merge.finish_views(&mut Some(&mut skipped), &"test");
             let view = view.expect("retained original");
             assert!(skipped.is_empty());
             assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
@@ -2273,7 +2295,7 @@ mod tests {
                 assert!(merge.apply_owned(record).is_ok());
             }
             let mut skipped = Vec::new();
-            let (_, _, view) = merge.finish_views(&mut skipped, &"test");
+            let (_, _, view) = merge.finish_views(&mut Some(&mut skipped), &"test");
             let view = view.expect("retained originals and addition");
             assert!(skipped.is_empty());
             let expected: Vec<_> = view
@@ -2305,7 +2327,7 @@ mod tests {
                         .is_ok()
                 );
             }
-            let (_, _, view) = merge.finish_views(&mut Vec::new(), &"test");
+            let (_, _, view) = merge.finish_views(&mut None, &"test");
             let view = view.expect("retained overreach originals");
             assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
             assert!(view.add_candidates().next().is_none());
@@ -2342,7 +2364,7 @@ mod tests {
     fn an_unrecorded_overlapped_slot_is_visible_and_seeded() {
         let original = library();
         let merge = over_length_merge(&original);
-        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
+        let (_, _, view) = merge.finish_lazy(&mut None, &"test");
         let view = view.expect("retained originals");
         assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
         assert!(view.contains(2));
@@ -2354,7 +2376,7 @@ mod tests {
     fn an_over_length_item_reports_the_borrowed_keys() {
         let original = library();
         let merge = over_length_merge(&original);
-        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
+        let (_, _, view) = merge.finish_lazy(&mut None, &"test");
         let view = view.expect("retained originals");
         let item = view.item(1).expect("over-length item");
         assert_eq!(item.prons[0].0, [0x0000, 0x0201]);
@@ -2410,7 +2432,7 @@ mod tests {
         changed[2..6].copy_from_slice(&170_u32.to_le_bytes());
         assert!(merge.apply_owned(modify(2, two(), changed)).is_ok());
         let mut skipped = Vec::new();
-        let (_, _, retained) = merge.finish_lazy(&mut skipped, &"test");
+        let (_, _, retained) = merge.finish_lazy(&mut Some(&mut skipped), &"test");
         let retained = retained.expect("the over-length item stays");
         assert!(retained.contains(2));
         assert_eq!(retained.item(2).expect("two").unigram, 170);
@@ -2442,7 +2464,7 @@ mod tests {
         assert_eq!(merge.slot_offset(1), 8, "slot 1 is aliased, not moved");
         assert!(merge.overreach);
         let mut skipped = Vec::new();
-        let (total, _, retained) = merge.finish_views(&mut skipped, &"test");
+        let (total, _, retained) = merge.finish_views(&mut Some(&mut skipped), &"test");
         assert_eq!(total, Some(157), "the total takes only the added unigram");
         let retained = retained.expect("the overwritten buffer is retained");
         assert_eq!(retained.item(1).expect("one").unigram, 7);
@@ -2466,7 +2488,7 @@ mod tests {
                 .is_ok()
         );
         let mut skipped = Vec::new();
-        let (_, _, retained) = merge.finish_views(&mut skipped, &"test");
+        let (_, _, retained) = merge.finish_views(&mut Some(&mut skipped), &"test");
         let mut retained = retained.expect("the added item is retained");
         assert!(!retained.has_removed());
         assert!(retained.item(1).is_some());
@@ -2498,9 +2520,9 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (_, eager) = replay().finish(&mut eager_skipped, &"test");
+        let (_, eager) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (_, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (_, lazy, retained) = replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         assert_eq!(lazy_skipped, eager_skipped);
         assert_eq!(
             lazy_skipped
@@ -2581,9 +2603,10 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (eager_total, eager) = replay().finish(&mut eager_skipped, &"test");
+        let (eager_total, eager) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (lazy_total, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (lazy_total, lazy, retained) =
+            replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         let retained = retained.expect("the two original slots stay lazy");
         assert_eq!(eager_total, Some(250));
         assert_eq!(lazy_total, eager_total);
@@ -2623,9 +2646,9 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (_, eager) = replay().finish(&mut eager_skipped, &"test");
+        let (_, eager) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (_, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (_, lazy, retained) = replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         let retained = retained.expect("the valid original slot keeps the view");
         assert_eq!(eager_skipped, [expected]);
         assert_eq!(lazy_skipped, eager_skipped);
@@ -2677,9 +2700,9 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (_, eager) = replay().finish(&mut eager_skipped, &"test");
+        let (_, eager) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (_, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (_, lazy, retained) = replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         let retained = retained.expect("one valid original remains");
         let expected: Vec<_> = (1..=invalid_count)
             .map(|slot| format!("test: item {slot} ends past the phrase content"))
@@ -2719,9 +2742,10 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (eager_total, eager_items) = replay().finish(&mut eager_skipped, &"test");
+        let (eager_total, eager_items) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (lazy_total, lazy_items, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (lazy_total, lazy_items, retained) =
+            replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         let retained = retained.expect("the valid slot stays lazy");
         assert_eq!(lazy_total, eager_total);
         assert_eq!(lazy_skipped, eager_skipped);
@@ -2762,9 +2786,10 @@ mod tests {
             merge
         };
         let mut eager_skipped = Vec::new();
-        let (eager_total, eager_items) = replay().finish(&mut eager_skipped, &"test");
+        let (eager_total, eager_items) = replay().finish(&mut Some(&mut eager_skipped), &"test");
         let mut lazy_skipped = Vec::new();
-        let (lazy_total, lazy_items, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let (lazy_total, lazy_items, retained) =
+            replay().finish_lazy(&mut Some(&mut lazy_skipped), &"test");
         let retained = retained.expect("the valid original slot keeps the view");
         assert_eq!(lazy_total, eager_total);
         assert_eq!(lazy_skipped, eager_skipped);
@@ -2804,7 +2829,7 @@ mod tests {
                 break;
             }
         }
-        let (total, overrides) = merge.finish(&mut Vec::new(), &"test");
+        let (total, overrides) = merge.finish(&mut None, &"test");
         (outcome, total, overrides)
     }
 
@@ -3309,7 +3334,7 @@ mod tests {
             merge.apply_owned(modify(2, one(), with_freq(one(), 5))),
             Err(Stop::Mismatch("MODIFY", 2))
         ));
-        let (_, items, _) = merge.finish_lazy(&mut Vec::new(), &"test");
+        let (_, items, _) = merge.finish_lazy(&mut None, &"test");
         assert!(items.is_empty());
         let (outcome, _, overrides) = merge_of(
             &original,
