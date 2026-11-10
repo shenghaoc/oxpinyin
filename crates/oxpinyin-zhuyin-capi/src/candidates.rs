@@ -198,7 +198,18 @@ pub extern "C" fn zhuyin_choose_candidate(
     }
     let source_index = inst.state.candidates[index].source_index as usize;
     let window_end = match inst.core.select_candidate(source_index, None) {
-        Ok(window_end) => window_end,
+        Ok((oxpinyin_engine::Selection::Refused, _)) => {
+            let chosen = &inst.state.candidates[index];
+            let offset = if chosen.candidate_type
+                == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR
+            {
+                chosen.span_begin
+            } else {
+                chosen.span_end
+            };
+            return c_int::try_from(offset).unwrap_or(c_int::MAX);
+        }
+        Ok((_, window_end)) => window_end,
         Err(_) => return -1,
     };
     // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663` at the
@@ -358,6 +369,10 @@ pub fn snapshot_candidates(
         let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
             oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
         });
+        let span_end_session = anchor.saturating_add(cand.consumed_bytes());
+        let span_end = zhuyin_parse.as_ref().map_or(span_end_session, |parse| {
+            oxpinyin_facade::zhuyin_original_offset(parse, span_end_session)
+        });
         // Before-cursor law: only candidates whose span ENDS at the requested
         // original-offset. At offset 0 no span ends there (nothing precedes
         // the first key), so the before-cursor window is empty — not the whole
@@ -383,6 +398,7 @@ pub fn snapshot_candidates(
             },
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
+            span_end: u32::try_from(span_end).unwrap_or(u32::MAX),
         });
     }
 }

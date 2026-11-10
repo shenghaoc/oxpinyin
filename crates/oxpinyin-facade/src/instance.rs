@@ -66,11 +66,10 @@ pub struct InstanceState {
     /// upstream `m_parsed_len`, in the active parse mode's own
     /// coordinates. Allocation and reset both store 0.
     pub parsed_len: usize,
-    /// The re-anchored candidate window from the most recent guess when
-    /// it ran at an offset other than the composition's own, as
-    /// `(anchor, window)` — retained so a later choose resolves its index
-    /// against the SAME window the caller saw. `None` when the last guess
-    /// ran at the composition offset.
+    /// The candidate window from the most recent guess, as `(anchor, window)`.
+    /// Retained across parsing so a later choose resolves its index against
+    /// the same window the caller saw, including a guess at offset zero.
+    /// Selection consumes it; a new guess replaces it and full reset drops it.
     pub anchored_window: Option<(usize, CandidateList)>,
     /// Most recent double-pinyin parse, when the last parse call was the
     /// double-pinyin entry point. Used for aux text and
@@ -409,15 +408,12 @@ impl<
     /// whole buffer every keystroke, so the chosen cursor must survive
     /// the re-parse.
     ///
-    /// The re-anchored window drops here too: the snapshot that indexed
-    /// into it is cleared in the same breath, so a stale window was
-    /// already unreachable through a later choose — dropping it is the
-    /// defensive union of the two facades' bodies (the zhuyin facade
-    /// dropped it, the pinyin facade relied on the cleared snapshot) and
-    /// is observably identical for both.
+    /// Candidate snapshots survive parsing in both ABIs. Keep their anchored
+    /// window too, so a later choose resolves the retained row's token and
+    /// span rather than an index into the new parse's candidate list
+    /// (074a2219, pinyin.cpp:2580-2587, zhuyin.cpp:1646-1666).
     pub fn reset_parse_state(&mut self) {
         self.session.reset_composition();
-        self.anchored_window = None;
         self.parsed_len = 0;
         self.double_parse = None;
         self.double_input.clear();
@@ -452,8 +448,9 @@ impl<
 
     /// Selects the candidate at `source_index` in the window the caller saw,
     /// or its promoted token when the facade promoted an addon row first.
-    /// Clears the re-anchored window and answers the chosen row's absolute
-    /// end in that window, when the window was anchored.
+    /// Returns the selection outcome and the chosen row's absolute end when
+    /// anchored. A refused span preserves the window for another choose;
+    /// an accepted selection clears it.
     ///
     /// # Errors
     ///
@@ -462,7 +459,7 @@ impl<
         &mut self,
         source_index: usize,
         promoted: Option<PhraseToken>,
-    ) -> Result<Option<usize>, EngineError> {
+    ) -> Result<(oxpinyin_engine::Selection, Option<usize>), EngineError> {
         let (window_end, selection) = {
             let state = self.state.borrow();
             let window = state.anchored_window.as_ref();
@@ -484,9 +481,11 @@ impl<
             };
             (window_end, selection)
         };
-        selection?;
-        self.state.borrow_mut().anchored_window = None;
-        Ok(window_end)
+        let selection = selection?;
+        if selection != oxpinyin_engine::Selection::Refused {
+            self.state.borrow_mut().anchored_window = None;
+        }
+        Ok((selection, window_end))
     }
 
     /// Clears the constraint at `offset`, mapping the caller's original-input
@@ -555,6 +554,7 @@ impl<
     /// record, n-best rows, constraint store) all go.
     pub fn full_reset(&mut self) {
         self.reset_parse_state();
+        self.anchored_window = None;
         self.phrase_result.clear();
         self.session.reset();
     }

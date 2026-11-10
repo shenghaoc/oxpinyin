@@ -1285,3 +1285,47 @@ existing beam/phrase-DP algorithms and bounds; no alternate lookup or
 performance measurement is introduced. Data loading is linear in chunk
 bytes and retains heap-owned payloads, as these programs' MemoryChunk::load
 calls do. The nonshipping adapters do not change the C ABI or file formats.
+
+## Candidate strings across reparsing
+
+At 074a2219, `pinyin.cpp:1497-1609` and `zhuyin.cpp:1017-1081` replace the
+parse matrix without touching the candidate vector or its strings. The
+candidate string getters return the stored pointer (`pinyin.cpp:2873-2878`,
+`zhuyin.cpp:1865-1870`). Candidate guesses free the preceding list, even on
+an empty-matrix refusal (`pinyin.cpp:2183-2196`, `zhuyin.cpp:1460-1471`);
+reset also frees it (`pinyin.cpp:2693-2704`, `zhuyin.cpp:1718-1729`).
+
+Both Rust ABI parse modules therefore retain their `CandidateSnapshot` until
+those invalidation boundaries. Parse resets also preserve its anchored engine
+window: a subsequent normal choose uses the retained token/span
+(`pinyin.cpp:2580-2587`, `zhuyin.cpp:1646-1666`), not a freshly decoded row at
+the same index. Full reset discards that window. For N rows and B string bytes, its existing
+O(N + B) storage remains live across parsing; removing the parse-time clear
+adds no allocation, copy or loop. The snapshot already retained its capacity
+on clear. This changes the lifetime of its contents, not its allocation bound.
+
+A retained normal span may overrun the new constraint array after a shorter
+parse. `ForwardPhoneticConstraints::add_constraint` refuses `end > len`
+without a write (`lookup/phonetic_lookup.cpp:61-65`). Both choose functions
+still validate existing constraints before and after that refusal. Pinyin
+returns `offset + 0` (`pinyin.cpp:2578-2589`); Zhuyin returns the candidate's
+original begin or end (`zhuyin.cpp:1646-1666`). The engine reports
+`Selection::Refused` before clipping or recording the span. Its existing
+constraint validator handles both passes; the facades retain their distinct
+cursor rules and the refused candidate's window. Zhuyin stores the original
+end in its snapshot's existing padding (the 64-bit row remains 32 bytes).
+
+The refusal and validation size comes from the retained parse: zero when
+the selected key path is empty, otherwise the parsed matrix bound plus its
+tail slot (`storage/phonetic_key_matrix.cpp:30-48`). Unconsumed input bytes
+do not enlarge it, and consumed apostrophes alone do not create a matrix.
+The check applies to token-bearing candidates that write constraints;
+tokenless engine fallbacks do not call the pin's `add_constraint` route.
+No additional matrix or parse-length state is retained.
+
+The refusal test is O(1). Two validation passes reuse the retained parse and
+the existing spelling check: each scans C constraint cells and probes F
+forcings, with O(F) temporary forcing storage plus the existing spelling
+matrix and search costs. The pin also validates twice. This adds no new
+decoding algorithm or persistent state; the former path incorrectly clipped
+and recorded the refused span. Pin-compatible successful selection is unchanged.

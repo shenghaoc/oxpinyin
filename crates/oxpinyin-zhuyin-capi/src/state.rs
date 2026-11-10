@@ -134,6 +134,8 @@ pub struct CapiCandidate {
     /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
     /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
     pub(crate) span_begin: u32,
+    /// Original `m_end`, also returned when reparsing makes the span refuse.
+    pub(crate) span_end: u32,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
