@@ -1361,7 +1361,7 @@ impl UserStore {
     /// present zero count stays `Some(0)`. The existence check and the count
     /// read happen under one arena guard, as the pin reads one item
     /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
-    /// applies library visibility and any facade overlay.
+    /// applies library visibility.
     ///
     /// # Errors
     /// None: the `Result` is the callers' signature.
@@ -1429,23 +1429,27 @@ impl UserStore {
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
-        Ok(self.add_system_unigram_outcome(token, delta)?.is_accepted())
+        Ok(self.add_unigram_outcome(token, delta)?.is_accepted())
     }
 
-    /// [`Self::add_system_unigram_frequency`] with the sub-index's answer in
-    /// the pin's terms: only [`UnigramAdd::Refused`] is
-    /// `ERROR_INTEGER_OVERFLOW`, the one error a caller can act on
-    /// (`pinyin.cpp:2528`).
+    /// Apply a unigram increment to the default phrase index. A loaded
+    /// sub-index receives the update in its live item, and an absent
+    /// sub-index leaves the facade total alone (074a2219
+    /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
+    /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
     ///
     /// # Errors
     /// None: the `Result` is the callers' signature.
-    pub fn add_system_unigram_outcome(
+    pub fn add_unigram_outcome(
         &mut self,
         token: Token,
         delta: u32,
     ) -> Result<UnigramAdd, UserStoreError> {
-        let offsets = self.offsets();
-        Ok(self.arena_add_unigram_outcome(&offsets, token, delta))
+        let library = phrase_index_library_index(token);
+        if self.originals.get(&library).is_none() && !self.has_user_library(library) {
+            return Ok(UnigramAdd::Missing);
+        }
+        Ok(self.arena_add_unigram_outcome(token, delta))
     }
 
     /// What the user side adds to the facade's unigram total: everything of
@@ -1657,7 +1661,7 @@ impl UserStore {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let offsets = self.offsets();
-        let accepted = self.arena_add_unigram(&offsets, cur, delta);
+        let accepted = self.arena_add_unigram(cur, delta);
         self.mark_committed_write(offsets, true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
@@ -1695,7 +1699,7 @@ impl UserStore {
             if matches!(policy, SeedPolicy::Predicted) {
                 let delta =
                     u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
-                let accepted = self.arena_add_unigram(&offsets, cur, delta);
+                let accepted = self.arena_add_unigram(cur, delta);
                 self.mark_committed_write(offsets, true);
                 if !accepted {
                     return Err(UserStoreError::UnigramTotalOverflow);
@@ -1713,12 +1717,12 @@ impl UserStore {
             // The unigram add comes first and its overflow ends the call
             // before any bigram is trained (`pinyin.cpp:2609-2612`); the
             // facade total has already taken the delta.
-            SeedPolicy::Predicted => self.arena_add_unigram(&offsets, cur, delta),
+            SeedPolicy::Predicted => self.arena_add_unigram(cur, delta),
             // `train_result3` ignores the sub-index's refusal
             // (`phonetic_lookup.h:928-929`): the item stops growing once its
             // library's `guint32` total would overflow.
             SeedPolicy::Training => {
-                self.arena_add_unigram(&offsets, cur, delta);
+                self.arena_add_unigram(cur, delta);
                 true
             }
         };
@@ -3082,7 +3086,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+            store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
             UnigramAdd::Refused
         );
         assert_eq!(store.unigram_total().unwrap(), 7);

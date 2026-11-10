@@ -467,8 +467,7 @@ fn predicted_total(lm: &SharedLm) -> u64 {
 }
 
 /// Both predicted row kinds read the live item counter. Imports, training
-/// and system ABI increments share store rows; remaining transient increments
-/// live in the dictionary overlay.
+/// and ABI increments share the same live phrase items.
 fn predicted_frequency(
     dict: &SharedDict,
     user: Option<&UserStore>,
@@ -480,14 +479,11 @@ fn predicted_frequency(
         user.and_then(|store| store.unigram_delta(token).ok())
             .unwrap_or(0)
     };
-    // System items carry their full live count. User items without a live
-    // system chunk use the store's count; runtime bumps are added once.
-    let item_count = dict
+    // Read the system item or the user arena's count.
+    let unigram = dict
         .live_items()
         .effective_unigram(token)
         .unwrap_or_else(store_count);
-    let unigram =
-        item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
     // The pin's candidate `m_freq` for predicted rows is the same
     // expression as the lookup candidates' (`pinyin.cpp:1811-1824`, the
     // `PREDICTED_PREFIX` branch), so the engine's function computes it.

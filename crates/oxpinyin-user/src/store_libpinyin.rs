@@ -1368,7 +1368,7 @@ mod tests {
             let before = store.unigram_total().expect("facade extra");
             assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
             assert_eq!(
-                store.add_system_unigram_outcome(token, 483).unwrap(),
+                store.add_unigram_outcome(token, 483).unwrap(),
                 crate::UnigramAdd::Missing
             );
             assert_eq!(store.observe_selection(1, token).unwrap(), 69);
@@ -3107,9 +3107,7 @@ mod tests {
             .expect("the log is not read");
         assert_eq!(slot_state(&store), (None, None));
         assert_eq!(
-            store
-                .add_system_unigram_outcome(0x0100_0002, 7)
-                .expect("add"),
+            store.add_unigram_outcome(0x0100_0002, 7).expect("add"),
             crate::UnigramAdd::Missing
         );
         drop(store);

@@ -543,10 +543,10 @@ impl UserStore {
         Ok(token)
     }
 
-    pub(super) fn arena_add_unigram(&self, offsets: &Offsets, token: Token, delta: u32) -> bool {
+    pub(super) fn arena_add_unigram(&self, token: Token, delta: u32) -> bool {
         // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
         // a missing item answers another error that callers do not act on.
-        self.arena_add_unigram_outcome(offsets, token, delta) != UnigramAdd::Refused
+        self.arena_add_unigram_outcome(token, delta) != UnigramAdd::Refused
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency` over the session's state
@@ -555,12 +555,7 @@ impl UserStore {
     /// it holds the item and its `guint32` total can: a system library's total
     /// is its live scalar, a user library's the sum of its items. A
     /// sub-index that does not take it leaves the delta in the facade's extra.
-    pub(super) fn arena_add_unigram_outcome(
-        &self,
-        offsets: &Offsets,
-        token: Token,
-        delta: u32,
-    ) -> UnigramAdd {
+    pub(super) fn arena_add_unigram_outcome(&self, token: Token, delta: u32) -> UnigramAdd {
         let library = phrase_index_library_index(token);
         let mut phrases = self.inner.libpinyin.phrases();
         // phrase_index.h:631-632 returns before the facade total changes.
@@ -594,20 +589,22 @@ impl UserStore {
         }
         items.add_facade_extra(u64::from(delta));
         drop(items);
-        let offset = offsets.get(&library).copied().unwrap_or(0);
-        let total = phrases
-            .libraries
-            .get(&library)
-            .map_or(offset, UserLibrary::total);
-        if total.checked_add(delta).is_none() {
+        let slot = token & PHRASE_MASK;
+        let Some(library) = phrases.item_mut(token) else {
+            return UnigramAdd::Missing;
+        };
+        // The pin checks the slot and reads the item before the sub-index's
+        // total overflow guard (074a2219 phrase_index.cpp:153-171).
+        if library.item(slot).is_none() {
+            return UnigramAdd::Missing;
+        }
+        if library.total().checked_add(delta).is_none() {
             return UnigramAdd::Refused;
         }
-        match phrases.item_mut(token) {
-            Some(library) => {
-                library.increment_unigram(token & PHRASE_MASK, delta);
-                UnigramAdd::Accepted
-            }
-            None => UnigramAdd::Missing,
+        if library.increment_unigram(slot, delta) {
+            UnigramAdd::Accepted
+        } else {
+            UnigramAdd::Missing
         }
     }
 

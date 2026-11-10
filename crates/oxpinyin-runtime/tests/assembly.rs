@@ -492,6 +492,56 @@ fn addon_unigram_totals_stay_none_until_a_library_loads() {
     );
 }
 
+/// U2: absent sub-indices return before the facade total moves, while a
+/// missing slot in a loaded sub-index still moves it (`phrase_index.h:628-635`
+/// and `phrase_index.cpp:150-161` at 074a2219).
+#[test]
+fn unigram_add_distinguishes_a_missing_sub_index_from_a_missing_slot() {
+    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let before = runtime.lm().amplified_total();
+    assert!(!runtime.add_unigram_delta(0x0800_0001, 9));
+    assert_eq!(runtime.lm().amplified_total(), before);
+    assert!(!runtime.add_unigram_delta(FIRST_USER_TOKEN, 9));
+    assert_eq!(runtime.lm().amplified_total(), before + 9);
+}
+
+/// U3: the exported add consults only the default phrase index
+/// (`pinyin.cpp:2836-2843`, `phrase_index.h:628-635` at 074a2219).
+#[test]
+fn unigram_add_rejects_a_token_found_only_in_the_addon_index() {
+    use oxpinyin_data::phrase_library::PhraseLibrary;
+
+    let system = scratch_dir("oxpinyin-addon-only-");
+    for entry in std::fs::read_dir(w3_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), system.path().join(entry.file_name())).unwrap();
+    }
+    let conf = system.path().join("table.conf");
+    let stock = std::fs::read_to_string(&conf).unwrap();
+    let edited = stock.replace(
+        "default MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE",
+        "default MERGED_DICTIONARY NULL NULL NULL NOT_USED",
+    );
+    assert_ne!(stock, edited);
+    std::fs::write(conf, edited).unwrap();
+    let addon = PhraseLibrary::open(&system.path().join("art.bin")).unwrap();
+    let token = 0x0400_0000 | addon.items().next().unwrap().0;
+    let mut runtime = Runtime::open(system.path(), None).unwrap();
+    assert!(runtime.load_addon(4, system.path()));
+    assert!(
+        runtime
+            .lm()
+            .addon_unigram_freq(&PhraseToken::new(token))
+            .unwrap()
+            .unwrap()
+            > 0
+    );
+    assert!(!runtime.dict().token_exists(token));
+    let before = runtime.lm().amplified_total();
+    assert!(!runtime.add_unigram_delta(token, 9));
+    assert_eq!(runtime.lm().amplified_total(), before);
+}
+
 #[test]
 fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast_path() {
     // The CR-flagged bug on PR #234: `phrase_prefix_exists` used to
@@ -576,7 +626,6 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     };
     let shipped = [live(&runtime, tokens[0]), live(&runtime, tokens[1])];
     assert!(runtime.add_unigram_delta(tokens[0], u64::from(remaining)));
-    assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
     assert_eq!(
         live(&runtime, tokens[0]),
         shipped[0].wrapping_add(remaining)
@@ -584,7 +633,6 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     assert!(!runtime.add_unigram_delta(tokens[1], 1));
     assert_eq!(live(&runtime, tokens[1]), shipped[1]);
     assert!(!runtime.add_unigram_delta(tokens[0], 1));
-    assert_eq!(runtime.dict().unigram_delta(tokens[0]), None);
     assert_eq!(
         live(&runtime, tokens[0]),
         shipped[0].wrapping_add(remaining)

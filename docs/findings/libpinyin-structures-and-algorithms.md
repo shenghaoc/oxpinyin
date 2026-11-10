@@ -606,6 +606,27 @@ neither implementation's output allocation is removed by this guard.
 | Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_reporting` (`oxpinyin-user/src/persistence.rs`) with the pin's file set and rename order | same / follows |
 | Aborts | asserts and `abort()` on caller-reachable input | `Result`, then the C adapters abort, except the accepted unsorted-gram training case (row 85, [record](1297-gram-partition-training.md)) | same / follows |
 
+### Exported unigram reads and adds
+
+The default facade selects the library and slot with the token's masks
+(`novel_types.h:41-44`, `storage/phrase_index.h:628-652`, and
+`storage/phrase_index.cpp:153-155,185-187` at `074a2219`). The getter
+reads the item's `guint32` frequency. The adder rejects a missing sub-index
+before moving the facade total. A loaded sub-index takes the facade bump
+before checking its item, then checks the item before guarding its own
+total. An accepted item increment wraps at `guint32`
+(`storage/phrase_index.cpp:150-177`).
+
+OxPinyin writes system and user frequencies in their live items. The same
+fields reach getters, scoring, removal, and an armed save. The exported add
+leaves the dirty flag alone (`pinyin.cpp:2836-2843`,
+`zhuyin.cpp:1828-1835`). A later armed save stores the item
+(`pinyin.cpp:978-981,1132-1147`). The store's existing facade accounting
+preserves bumps that failed after finding a loaded sub-index. Each add uses
+a bounded number of library, slot, and item-header accesses,
+using the existing sparse or dense arena lookup. It retains no second
+per-token map and requires no new per-item storage.
+
 ## 8. Offline tooling
 
 | Item | Pin | oxpinyin | Mark |
