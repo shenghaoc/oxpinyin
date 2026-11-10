@@ -1,9 +1,9 @@
 schema=oracle-provisioning-pin-v6
 # Exact on purpose (#1074): every pin below identifies the reference libpinyin and its inputs, not a tool version a newer one could replace.
-# Composite pin identity for the locally built oracle, and its only record:
-# tools/oracle/build.py, tools/dev/cell.py and tools/oracle/image.py read
-# these fields, and no other file repeats them. This file is a recipe input,
-# so any change here gives a new recipe_sha256 and every prefix is rebuilt.
+# Authoritative pin identity for the locally built oracle.
+# The builder and host model fetcher both read the model digest here.
+# This file is a recipe input. A change gives a new recipe_sha256 and
+# invalidates prefixes from the old recipe.
 #
 # v2 (2026-09-06 UTC): drops libpinyin_archive_sha256. libpinyin is now
 # verified by commit SHA (git fetch --depth=1); no release tag carries

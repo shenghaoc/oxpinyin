@@ -70,7 +70,7 @@ class CaptureTests(unittest.TestCase):
         self.model.mkdir(parents=True)
         for name in model.EXPECTED_MODEL_FILES:
             (self.model / name).write_text('')
-        (self.model.parent / 'verified').write_text(f'sha256={model.MODEL20_SHA256}\n')
+        (self.model.parent / 'verified').write_text(f'sha256={model.archive_sha256()}\n')
         self.staging = self.root / 'target/pin-observations'
 
     def make_prefix(self, prefix, cell):

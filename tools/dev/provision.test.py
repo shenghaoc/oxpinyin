@@ -541,7 +541,7 @@ elif name in ('curl','apt-get','sudo'):
             for name in ('art culture economy gb_char gbk_char geology history life merged nature opengram people punct science society sport technology'.split()):
                 (extracted / (name + '.table')).touch()
             (extracted / 'interpolation2.text').touch()
-            (model / 'verified').write_text('sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155\n')
+            (model / 'verified').write_text(f'sha256={provision.model.archive_sha256()}\n')
 
         def test_cold_no_pull_unrecorded_library_is_rejected(self):
             self.verified_model()

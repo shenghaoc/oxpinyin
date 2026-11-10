@@ -5,9 +5,7 @@ they must not enter the repository, a release or an installer
 (docs/findings/model-provenance.md). Nothing here feeds frequencies into the
 language model.
 
-Pinned identity (do not alter; from model-provenance.md):
-  URL     https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
-  SHA-256 59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+The expected archive SHA-256 comes from tools/oracle/oracle-pin.txt.
 
 Network: downloads.sourceforge.net over HTTPS; SourceForge may redirect to a
 mirror. There is no vendored copy and no alternate URL: model-provenance.md
@@ -33,10 +31,10 @@ import tempfile
 
 from .process import ROOT, fail, run
 from .runners import guarded
-from tools.oracle.build import MODEL_FILES
+from tools.oracle.build import MODEL_FILES, fields
 
 MODEL_URL = 'https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'
-MODEL20_SHA256 = '59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
+PIN_FILE = ROOT / 'tools/oracle/oracle-pin.txt'
 ARCHIVE_NAME = 'model20.text.tar.gz'
 MARKER_SCHEMA = 'pinyin-model-cache-v1'
 # The eighteen-file inventory; the guest builder owns it and cannot import tools.dev.
@@ -80,10 +78,17 @@ def extraction_complete(directory):
     return directory.is_dir() and all((directory / name).is_file() for name in EXPECTED_MODEL_FILES)
 
 
-def marker_matches(marker):
+def archive_sha256():
+    """The expected SHA-256 of the model archive in this checkout."""
+    return fields(PIN_FILE)['model_archive_sha256']
+
+
+def marker_matches(marker, digest=None):
     """True when MARKER has the line `sha256=<pinned digest>`."""
+    if digest is None:
+        digest = archive_sha256()
     try:
-        return f'sha256={MODEL20_SHA256}'.encode() in Path(marker).read_bytes().splitlines()
+        return f'sha256={digest}'.encode() in Path(marker).read_bytes().splitlines()
     except OSError:
         return False
 
@@ -177,7 +182,8 @@ def fetch(cache_dir=None, *, url=None, archive=None, force=False, root=ROOT, env
     extracted = cache / 'extracted'
     marker = cache / 'verified'
     refuse_tracked(cache, root, env)
-    if not force and extraction_complete(extracted) and marker_matches(marker):
+    digest = archive_sha256()
+    if not force and extraction_complete(extracted) and marker_matches(marker, digest):
         print('verified model cache present; skipping fetch', file=sys.stderr)
         return extracted
     if archive:
@@ -193,10 +199,10 @@ def fetch(cache_dir=None, *, url=None, archive=None, force=False, root=ROOT, env
         if not source.is_file():
             download(url, source, env)
     actual = file_sha256(source)
-    if actual != MODEL20_SHA256:
-        fail(f'checksum mismatch: {ARCHIVE_NAME}\n  expected: {MODEL20_SHA256}\n  actual:   {actual}')
+    if actual != digest:
+        fail(f'checksum mismatch: {ARCHIVE_NAME}\n  expected: {digest}\n  actual:   {actual}')
     extract(source, cache, extracted)
-    marker.write_text(f'schema={MARKER_SCHEMA}\nurl={MODEL_URL}\nsha256={MODEL20_SHA256}\n')
+    marker.write_text(f'schema={MARKER_SCHEMA}\nurl={MODEL_URL}\nsha256={digest}\n')
     return extracted
 
 
