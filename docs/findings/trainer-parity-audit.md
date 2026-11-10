@@ -169,7 +169,7 @@ the staged utilities ([packaging](../packaging.md#trainer-utility-layout)).
 | ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | `oxpinyin-utils` `ngseg` |
 | spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | `oxpinyin-utils` `spseg` |
 | mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | `oxpinyin-utils` `mergeseq` |
-| KMM generate, estimate, merge, validate, prune, export, import | `generate.py`, `estimate.py`, `tryprune.py` | `utils/training/*_k_mixture_model.cpp` | `oxpinyin-utils` binaries over `oxpinyin-kmm` |
+| KMM generate, estimate, merge, validate, prune, export, import | `generate.py`, `estimate.py`, `tryprune.py` | `utils/training/*_k_mixture_model.cpp` | `oxpinyin-utils` binaries and its `k_mixture_model` module |
 | KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | `oxpinyin-utils` `k_mixture_model_to_interpolation` |
 | eval runtime model build | `evaluate.py` `make` | `data/Makefile.am:60-62` | `oxpinyin-utils` `gen_binary_files`, `import_interpolation`, `gen_unigram` |
 | λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | `oxpinyin-utils` `estimate_interpolation` |
@@ -540,7 +540,7 @@ Sources of nondeterminism in the upstream tools, and how the utilities
 answer them:
 
 - **Hash iteration order** — upstream KMM export and merge walk
-  `get_all_items` in the backend's native order. `oxpinyin-kmm` walks the
+  `get_all_items` in the backend's native order. `oxpinyin-utils` `k_mixture_model` walks the
   pin's own `FlexibleBigram` container in that same native order.
 - **Document order** — KMM `m_Mr`/maximum-occurs is order-sensitive
   across documents. The utilities take documents in the order the trainer

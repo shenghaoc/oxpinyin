@@ -14,8 +14,8 @@ use std::ffi::CStr;
 
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
-use crate::database::{Database, Loaded, exit_on_short_single_gram};
-use crate::records::{
+use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
+use crate::k_mixture_model::records::{
     ArrayItemWithToken, KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader,
     KmmGram,
 };
@@ -173,7 +173,7 @@ fn merge_magic_header(target: &Database, new_one: &Database) -> bool {
 #[cfg(test)]
 mod tests {
     use super::merge_two_phrase_array;
-    use crate::records::{ArrayItemWithToken, KMixtureModelArrayItem};
+    use crate::k_mixture_model::records::{ArrayItemWithToken, KMixtureModelArrayItem};
 
     fn entry(token: u32, wc: u32, mr: u32) -> ArrayItemWithToken<KMixtureModelArrayItem> {
         ArrayItemWithToken {
@@ -206,24 +206,28 @@ mod tests {
     /// (`:156`).
     #[test]
     fn a_short_target_row_aborts_at_the_targets_header() {
-        use crate::database::tests::{SHORT, TOKEN, WHOLE, assert_aborts, child_dir, plant};
+        use crate::k_mixture_model::database::tests::{
+            SHORT, TOKEN, WHOLE, assert_aborts, child_dir, plant,
+        };
         if let Some(dir) = child_dir() {
             let target = plant(&dir, "target.db", &[(TOKEN, SHORT)]);
             let source = plant(&dir, "source.db", &[(TOKEN, WHOLE)]);
             let _ = super::merge_array_items(
-                &crate::database::Database::open_read_write(Some(&target)),
-                &crate::database::Database::open_read_only(Some(&source)),
+                &crate::k_mixture_model::database::Database::open_read_write(Some(&target)),
+                &crate::k_mixture_model::database::Database::open_read_only(Some(&source)),
             );
             return;
         }
-        assert_aborts("merge::tests::a_short_target_row_aborts_at_the_targets_header");
+        assert_aborts(
+            "k_mixture_model::merge::tests::a_short_target_row_aborts_at_the_targets_header",
+        );
     }
 
     /// A short source row that the target lacks: the pin stores the gram it
     /// loaded, its bytes unchanged (`:142-146`), and the merge goes on.
     #[test]
     fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
-        use crate::database::tests::{SHORT, TOKEN, plant};
+        use crate::k_mixture_model::database::tests::{SHORT, TOKEN, plant};
         use oxpinyin_store::{
             AttachMode, DefaultStore, HashAttach, MAGIC_KEY, RawReadStore as _, WriteStore as _,
         };
@@ -231,8 +235,8 @@ mod tests {
         let target = plant(dir.path(), "target.db", &[]);
         let source = plant(dir.path(), "source.db", &[(TOKEN, SHORT)]);
         {
-            let target = crate::database::Database::open_read_write(Some(&target));
-            let source = crate::database::Database::open_read_only(Some(&source));
+            let target = crate::k_mixture_model::database::Database::open_read_write(Some(&target));
+            let source = crate::k_mixture_model::database::Database::open_read_only(Some(&source));
             assert!(super::merge_array_items(&target, &source));
         }
         let HashAttach::Opened(db) = DefaultStore::attach_hash(

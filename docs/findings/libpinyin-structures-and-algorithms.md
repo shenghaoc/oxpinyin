@@ -142,7 +142,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Wiring done in `pinyin_init` | `oxpinyin-runtime` |
 | Context and instance state shared by both APIs | `oxpinyin-facade` |
 | `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
-| `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries), over `oxpinyin-kmm` |
+| `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries and the `k_mixture_model` operations) |
 
 The differences are deliberate:
 
@@ -168,7 +168,7 @@ is to remove the coupling of the pin and keep its behaviour.
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
-| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `oxpinyin-store/src/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-kmm` and `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([source and verification](eio-test-flexible-attach-empty.md)) |
+| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `oxpinyin-store/src/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([source and verification](eio-test-flexible-attach-empty.md)) |
 
 Flexible attach follows `src/storage/flexible_ngram_tkrzwdb.h:128-187`,
 `flexible_ngram_kyotodb.h:129-179` and `flexible_ngram_bdb.h:94-152` at
@@ -652,7 +652,7 @@ per-token map and requires no new per-item storage.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-kmm`, audited term by term in `kmm-arithmetic-audit` | same / argued (`kmm-arithmetic-audit`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
+| K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-utils` `k_mixture_model`, audited term by term in `kmm-arithmetic-audit` | same / argued (`kmm-arithmetic-audit`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
 | System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-utils`' utilities of the same names, run in the pin's `data/Makefile.am` sequence | different / argued — byte-identical output (recorded evidence: regenerated `fixtures/w3` sets compared equal to the committed ones) |
 
 ## 9. Constants

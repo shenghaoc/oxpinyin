@@ -9,7 +9,7 @@
 
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
-use crate::database::Database;
+use super::database::Database;
 
 /// `validate_unigram` then `validate_bigram` (`main`, `:162-170`).
 ///

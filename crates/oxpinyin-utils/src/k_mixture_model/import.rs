@@ -10,23 +10,17 @@
 //! aborts (`:103-256`, `:307-312`). The header's three `atol` values are
 //! assigned to `guint32` fields, and an empty input is `ENODATA`.
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::BufRead;
 
 use oxpinyin_input::tool::{self, LineReader, k_mixture_model as edge};
 
-use crate::database::{Database, Loaded, exit_on_short_single_gram};
-use crate::phrase::PhraseIndex;
-use crate::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KmmGram};
-use crate::taglib::{Required, TagLib};
-
-/// `enum LINE_TYPE` (`:42-49`).
-const BEGIN_LINE: i32 = 1;
-const END_LINE: i32 = 2;
-const GRAM_1_LINE: i32 = 3;
-const GRAM_2_LINE: i32 = 4;
-const GRAM_1_ITEM_LINE: i32 = 5;
-const GRAM_2_ITEM_LINE: i32 = 6;
+use super::database::{Database, Loaded, exit_on_short_single_gram};
+use super::phrase::PhraseIndex;
+use super::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KmmGram};
+use crate::utils_helper::{
+    BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
+};
 
 /// `null_token` (`src/include/novel_types.h:121`).
 const NULL_TOKEN: u32 = 0;
@@ -47,20 +41,17 @@ pub fn run<R: BufRead>(
         bigram: &bigram,
         phrases,
         input,
-        taglib: TagLib::init(),
-        line_type: 0,
-        values: Vec::new(),
-        required: Required::new(),
+        model: TaggedModel::new(),
     };
 
-    if !converter.my_getline() {
+    if !converter.input.getline() {
         edge::report_empty_input();
         tool::exit(tool::ENODATA);
     }
     if !converter.parse_headline() {
         tool::exit(tool::ENODATA);
     }
-    if converter.my_getline() {
+    if converter.input.getline() {
         converter.parse_body();
     }
 }
@@ -70,71 +61,28 @@ struct Converter<'a, R> {
     bigram: &'a Database,
     phrases: &'a dyn PhraseIndex,
     input: &'a mut LineReader<R>,
-    taglib: TagLib,
-    line_type: i32,
-    values: Vec<CString>,
-    required: Required,
+    model: TaggedModel,
 }
 
 impl<R: BufRead> Converter<'_, R> {
-    /// `my_getline` (`:68-70`).
-    fn my_getline(&mut self) -> bool {
-        self.input.getline()
-    }
-
-    /// `taglib_read(linebuf, line_type, values, required)`, with the pin's
-    /// undefined reads aborted (class (b)).
-    fn read(&mut self) -> bool {
-        let line = self.input.c_str();
-        match self.taglib.read(
-            line,
-            &mut self.line_type,
-            &mut self.values,
-            &mut self.required,
-        ) {
-            Ok(answer) => answer,
-            Err(_) => std::process::abort(),
-        }
-    }
-
-    /// `check_result(taglib_read(…))`.
-    fn check_read(&mut self) {
-        if !self.read() {
-            std::process::abort();
-        }
-    }
-
-    /// `g_ptr_array_index(values, index)`, which a successful read filled.
-    fn value(&self, index: usize) -> &CStr {
-        self.values.get(index).map_or(c"", CString::as_c_str)
-    }
-
-    /// `TAGLIB_GET_TAGVALUE`'s lookup (`utils_helper.h:42-49`); a successful
-    /// read holds every required tag.
-    fn tag_value(&self, name: &[u8]) -> &CStr {
-        self.required.get(name).map_or(c"", CString::as_c_str)
-    }
-
-    /// `TAGLIB_GET_TOKEN(var, index)`: `atoi` into a `guint32`.
-    fn token(&self, index: usize) -> u32 {
-        tool::atoi(self.value(index)) as u32
-    }
-
     /// `parse_headline` (`:72-101`).
     fn parse_headline(&mut self) -> bool {
-        self.taglib
+        self.model
+            .tags
             .add_tag(BEGIN_LINE, c"\\data", 0, c"model:count:N:total_freq", c"");
-        if !self.read() || self.tag_value(b"model") != c"k mixture model" {
+        if !self.model.read_or_abort(self.input.c_str())
+            || self.model.value(b"model") != c"k mixture model"
+        {
             edge::report_model_expected();
             return false;
         }
 
-        let count = tool::atol(self.tag_value(b"count"));
-        let n = tool::atol(self.tag_value(b"N"));
-        let total_freq = tool::atol(self.tag_value(b"total_freq"));
+        let count = tool::atol(self.model.value(b"count"));
+        let n = tool::atol(self.model.value(b"N"));
+        let total_freq = tool::atol(self.model.value(b"total_freq"));
 
         self.bigram
-            .set_magic_header(&crate::records::KMixtureModelMagicHeader {
+            .set_magic_header(&super::records::KMixtureModelMagicHeader {
                 m_wc: count as u32,
                 m_n: n as u32,
                 m_total_freq: total_freq as u32,
@@ -144,49 +92,54 @@ impl<R: BufRead> Converter<'_, R> {
 
     /// `parse_body` (`:103-134`).
     fn parse_body(&mut self) {
-        self.taglib.push_state();
-        self.taglib.add_tag(END_LINE, c"\\end", 0, c"", c"");
-        self.taglib.add_tag(GRAM_1_LINE, c"\\1-gram", 0, c"", c"");
-        self.taglib.add_tag(GRAM_2_LINE, c"\\2-gram", 0, c"", c"");
+        self.model.tags.push_state();
+        self.model.tags.add_tag(END_LINE, c"\\end", 0, c"", c"");
+        self.model
+            .tags
+            .add_tag(GRAM_1_LINE, c"\\1-gram", 0, c"", c"");
+        self.model
+            .tags
+            .add_tag(GRAM_2_LINE, c"\\2-gram", 0, c"", c"");
 
         loop {
-            self.check_read();
-            match self.line_type {
+            self.model.check_read(self.input.c_str());
+            match self.model.line_type {
                 END_LINE => break,
                 GRAM_1_LINE => {
-                    self.my_getline();
+                    self.input.getline();
                     self.parse_unigram();
                 }
                 GRAM_2_LINE => {
-                    self.my_getline();
+                    self.input.getline();
                     self.parse_bigram();
                 }
                 _ => std::process::abort(),
             }
         }
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
     }
 
     /// `parse_unigram` (`:136-174`).
     fn parse_unigram(&mut self) {
-        self.taglib.push_state();
-        self.taglib
+        self.model.tags.push_state();
+        self.model
+            .tags
             .add_tag(GRAM_1_ITEM_LINE, c"\\item", 2, c"count:freq", c"");
 
         loop {
-            self.check_read();
-            match self.line_type {
+            self.model.check_read(self.input.c_str());
+            match self.model.line_type {
                 GRAM_1_ITEM_LINE => {
-                    let token = self.token(0);
-                    let word = self.value(1).to_owned();
+                    let token = self.model.token(0) as u32;
+                    let word = self.model.phrase(1).to_owned();
                     if !self
                         .phrases
                         .validate_token_with_string(token, word.to_bytes())
                     {
                         std::process::abort();
                     }
-                    let count = tool::atol(self.tag_value(b"count"));
-                    let freq = tool::atol(self.tag_value(b"freq"));
+                    let count = tool::atol(self.model.value(b"count"));
+                    let freq = tool::atol(self.model.value(b"freq"));
 
                     self.bigram.set_array_header(
                         token,
@@ -199,35 +152,36 @@ impl<R: BufRead> Converter<'_, R> {
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => std::process::abort(),
             }
-            if !self.my_getline() {
+            if !self.input.getline() {
                 break;
             }
         }
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
     }
 
     /// `parse_bigram` (`:176-256`).
     fn parse_bigram(&mut self) {
-        self.taglib.push_state();
-        self.taglib
+        self.model.tags.push_state();
+        self.model
+            .tags
             .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count:T:N_n_0:n_1:Mr", c"");
 
         let mut last_token = NULL_TOKEN;
         let mut last_single_gram: Option<KmmGram> = None;
         loop {
-            self.check_read();
-            match self.line_type {
+            self.model.check_read(self.input.c_str());
+            match self.model.line_type {
                 GRAM_2_ITEM_LINE => {
-                    let token1 = self.token(0);
-                    let word1 = self.value(1).to_owned();
+                    let token1 = self.model.token(0) as u32;
+                    let word1 = self.model.phrase(1).to_owned();
                     if !self
                         .phrases
                         .validate_token_with_string(token1, word1.to_bytes())
                     {
                         std::process::abort();
                     }
-                    let token2 = self.token(2);
-                    let word2 = self.value(3).to_owned();
+                    let token2 = self.model.token(2) as u32;
+                    let word2 = self.model.phrase(3).to_owned();
                     if !self
                         .phrases
                         .validate_token_with_string(token2, word2.to_bytes())
@@ -235,14 +189,14 @@ impl<R: BufRead> Converter<'_, R> {
                         std::process::abort();
                     }
 
-                    let count = tool::atol(self.tag_value(b"count"));
-                    let t = tool::atol(self.tag_value(b"T"));
+                    let count = tool::atol(self.model.value(b"count"));
+                    let t = tool::atol(self.model.value(b"T"));
                     if count != t {
                         std::process::abort();
                     }
-                    let n_n_0 = tool::atol(self.tag_value(b"N_n_0"));
-                    let n_1 = tool::atol(self.tag_value(b"n_1"));
-                    let mr = tool::atol(self.tag_value(b"Mr"));
+                    let n_n_0 = tool::atol(self.model.value(b"N_n_0"));
+                    let n_1 = tool::atol(self.model.value(b"n_1"));
+                    let mr = tool::atol(self.model.value(b"Mr"));
 
                     let array_item = KMixtureModelArrayItem {
                         m_wc: count as u32,
@@ -278,7 +232,7 @@ impl<R: BufRead> Converter<'_, R> {
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => std::process::abort(),
             }
-            if !self.my_getline() {
+            if !self.input.getline() {
                 break;
             }
         }
@@ -289,6 +243,6 @@ impl<R: BufRead> Converter<'_, R> {
             self.bigram.store(last_token, &single_gram);
         }
 
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
     }
 }

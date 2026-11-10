@@ -16,9 +16,9 @@ use std::ffi::CStr;
 
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
 
-use crate::database::Database;
-use crate::math::compute_pr_g_3_with_count;
-use crate::records::{ArrayItemWithToken, KMixtureModelArrayItem, KMixtureModelMagicHeader};
+use super::database::Database;
+use super::math::compute_pr_g_3_with_count;
+use super::records::{ArrayItemWithToken, KMixtureModelArrayItem, KMixtureModelMagicHeader};
 
 /// Default `-k` (`prune_k_mixture_model.cpp:34`).
 pub const DEFAULT_PRUNE_K: i32 = 3;
@@ -92,7 +92,7 @@ pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
 /// `prune_k_mixture_model` over one single gram (`:45-105`).
 fn prune_k_mixture_model(
     magic_header: &mut KMixtureModelMagicHeader,
-    single_gram: &mut crate::records::KmmGram,
+    single_gram: &mut super::records::KmmGram,
     removed_array: &mut Vec<ArrayItemWithToken<KMixtureModelArrayItem>>,
     prune_k: i32,
     cdf: f64,

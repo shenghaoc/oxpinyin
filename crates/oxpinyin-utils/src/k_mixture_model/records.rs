@@ -20,7 +20,7 @@
 
 use oxpinyin_store::{BackendError, DefaultFlexibleBigram, SpecGram, StoreError};
 
-pub use oxpinyin_store::{ArrayItemWithToken, FixedRecord, FlexibleGramSpec, SingleGram};
+pub use oxpinyin_store::{ArrayItemWithToken, FixedRecord, FlexibleGramSpec};
 
 /// `KMixtureModelMagicHeader` (`k_mixture_model.h:117-124`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

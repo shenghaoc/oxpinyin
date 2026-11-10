@@ -13,6 +13,8 @@
 //! moves past its NUL before the next `*cur` (`:122`, `:132-141`,
 //! `:149-157`).
 
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
+
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_int};
 

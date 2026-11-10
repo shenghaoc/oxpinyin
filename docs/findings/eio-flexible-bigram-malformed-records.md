@@ -21,7 +21,7 @@ Updated 2026-11-09 UTC (#1760). For such a value,
 `FlexibleBigram::get_array_header` and `FlexibleBigram::load`
 (`crates/oxpinyin-store/src/flexible_ngram.rs`) return
 `StoreError::ShortArrayHeader`. The K-mixture tools' `Database`
-(`crates/oxpinyin-kmm/src/database.rs`) then follows the pin at each site.
+(`crates/oxpinyin-utils/src/k_mixture_model/database.rs`) then follows the pin at each site.
 
 **The pin asserts: the tools abort.** `FlexibleBigram::get_array_header`
 asserts the header's length (`flexible_ngram_bdb.h:388`,

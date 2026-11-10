@@ -25,13 +25,14 @@ use oxpinyin_input::tool::OptionValue;
 use oxpinyin_input::tool::storage::TableFile;
 
 use crate::storage::dbm::Tree;
-use crate::storage::libraries::save_library;
+use crate::storage::libraries::items_of;
 use crate::storage::pinyin;
 use crate::storage::punctuation::append_punctuation;
 use crate::storage::table_text::{read_pinyin_record, read_punct_record};
 use crate::storage::{
     gen_punct_entry, load_table_conf, name_c_string, parse_options, table_dir, table_dir_entry,
 };
+use crate::utils_helper::save_and_reload_library;
 
 /// `main` (`gen_binary_files.cpp:111-152`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -396,18 +397,8 @@ fn save_chunks(
             // loaded: the eight-byte zero header.
             None => vec![0; 8],
         };
-        save_library(&name, &file);
-        let reloaded =
-            oxpinyin_data::phrase_library::PhraseLibrary::from_payload(file[8..].to_vec())
-                .unwrap_or_else(|_| tool::abort());
-        let mut items = ChunkMap::new();
-        for (slot, view) in reloaded.items() {
-            items.insert(
-                slot,
-                crate::storage::libraries::item_of(&view).unwrap_or_else(|| tool::abort()),
-            );
-        }
-        libraries[index] = Some(items);
+        let reloaded = save_and_reload_library(&name, &file);
+        libraries[index] = Some(items_of(&reloaded).unwrap_or_else(|| tool::abort()));
     }
 }
 

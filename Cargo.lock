@@ -655,15 +655,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-kmm"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-input",
- "oxpinyin-store",
- "tempfile",
-]
-
-[[package]]
 name = "oxpinyin-runtime"
 version = "0.1.0"
 dependencies = [
@@ -713,7 +704,6 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-input",
- "oxpinyin-kmm",
  "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",

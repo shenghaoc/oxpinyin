@@ -17,7 +17,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             long_name: c"pruneK",
             short_name: b'k',
             flags: 0,
-            arg: OptionArg::Int(oxpinyin_kmm::prune::DEFAULT_PRUNE_K),
+            arg: OptionArg::Int(crate::k_mixture_model::prune::DEFAULT_PRUNE_K),
             description: Some(c"k parameter"),
             arg_description: None,
         },
@@ -25,7 +25,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             long_name: c"CDF",
             short_name: 0,
             flags: 0,
-            arg: OptionArg::Double(oxpinyin_kmm::prune::DEFAULT_CDF),
+            arg: OptionArg::Double(crate::k_mixture_model::prune::DEFAULT_CDF),
             description: Some(c"CDF parameter"),
             arg_description: None,
         },
@@ -47,5 +47,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         _ => 0.0,
     };
     let filename = CString::new(parsed.args[1].clone()).unwrap_or_default();
-    oxpinyin_kmm::prune::run(Some(&filename), prune_k, cdf);
+    crate::k_mixture_model::prune::run(Some(&filename), prune_k, cdf);
 }

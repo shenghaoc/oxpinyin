@@ -20,15 +20,9 @@ use std::io::{BufRead, Write as _};
 use oxpinyin_input::tool::k_mixture_model_to_interpolation as edge;
 use oxpinyin_input::tool::{self, LineReader, OutputStream};
 
-use crate::taglib::{Required, TagLib};
-
-/// `enum LINE_TYPE` (:32-39).
-const BEGIN_LINE: c_int = 1;
-const END_LINE: c_int = 2;
-const GRAM_1_LINE: c_int = 3;
-const GRAM_2_LINE: c_int = 4;
-const GRAM_1_ITEM_LINE: c_int = 5;
-const GRAM_2_ITEM_LINE: c_int = 6;
+use crate::utils_helper::{
+    BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
+};
 
 /// `sentence_start` (`src/include/novel_types.h:122`).
 const SENTENCE_START: u32 = 1;
@@ -153,38 +147,20 @@ impl Sink for Vec<u8> {
     }
 }
 
-/// `g_ptr_array_index(values, index)`, which a successful read filled.
-fn value(values: &[CString], index: usize) -> &CStr {
-    values.get(index).map_or(c"", CString::as_c_str)
-}
-
 /// The pin's statics (:41-44) over `main`'s streams (:189-190); the
 /// reader's line is the pin's `linebuf`.
 struct Converter<'a, R, S> {
     input: &'a mut LineReader<R>,
     output: &'a mut S,
-    taglib: TagLib,
-    line_type: c_int,
-    values: Vec<CString>,
-    required: Required,
+    model: TaggedModel,
 }
 
 impl<R: BufRead, S: Sink> Converter<'_, R, S> {
-    /// `my_getline` (:51-53).
-    fn my_getline(&mut self) -> bool {
-        self.input.getline()
-    }
-
     /// `taglib_read(linebuf, line_type, values, required)`.
     fn read(&mut self) -> Result<bool, Failure> {
         let line = self.input.c_str();
-        self.taglib
-            .read(
-                line,
-                &mut self.line_type,
-                &mut self.values,
-                &mut self.required,
-            )
+        self.model
+            .read(line)
             .map_err(|undefined| Failure::Undefined {
                 reason: undefined.reason(),
                 line: line.to_owned(),
@@ -200,23 +176,12 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
         }
     }
 
-    /// `TAGLIB_GET_TOKEN(var, index)` (`utils/utils_helper.h:27-33`): `atoi`
-    /// into a `phrase_token_t`, which the pin prints with `%d`.
-    fn token(&self, index: usize) -> c_int {
-        tool::atoi(value(&self.values, index))
-    }
-
-    /// The value `TAGLIB_GET_TAGVALUE` looks up (`utils_helper.h:42-49`);
-    /// a successful read holds every required tag.
-    fn tag_value(&self, name: &[u8]) -> &CStr {
-        self.required.get(name).map_or(c"", CString::as_c_str)
-    }
-
     /// `parse_headline` (:55-77).
     fn parse_headline(&mut self) -> Result<(), Failure> {
-        self.taglib
+        self.model
+            .tags
             .add_tag(BEGIN_LINE, c"\\data", 0, c"model", c"count:N:total_freq");
-        if !self.read()? || self.tag_value(b"model") != c"k mixture model" {
+        if !self.read()? || self.model.value(b"model") != c"k mixture model" {
             return Err(Failure::NotKmm);
         }
         self.output.header();
@@ -226,85 +191,91 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
     /// `parse_body` (:79-111). Every case leaves the loop or re-reads the
     /// line, so its `while (my_getline(input))` is never tested.
     fn parse_body(&mut self) -> Result<(), Failure> {
-        self.taglib.push_state();
-        self.taglib.add_tag(END_LINE, c"\\end", 0, c"", c"");
-        self.taglib.add_tag(GRAM_1_LINE, c"\\1-gram", 0, c"", c"");
-        self.taglib.add_tag(GRAM_2_LINE, c"\\2-gram", 0, c"", c"");
+        self.model.tags.push_state();
+        self.model.tags.add_tag(END_LINE, c"\\end", 0, c"", c"");
+        self.model
+            .tags
+            .add_tag(GRAM_1_LINE, c"\\1-gram", 0, c"", c"");
+        self.model
+            .tags
+            .add_tag(GRAM_2_LINE, c"\\2-gram", 0, c"", c"");
         loop {
             self.check_read()?;
-            match self.line_type {
+            match self.model.line_type {
                 END_LINE => {
                     self.output.end();
                     break;
                 }
                 GRAM_1_LINE => {
                     self.output.gram_1();
-                    self.my_getline();
+                    self.input.getline();
                     self.parse_unigram()?;
                 }
                 GRAM_2_LINE => {
                     self.output.gram_2();
-                    self.my_getline();
+                    self.input.getline();
                     self.parse_bigram()?;
                 }
                 _ => return Err(Failure::LineTypeUnlisted),
             }
         }
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
         Ok(())
     }
 
     /// `parse_unigram` (:113-149).
     fn parse_unigram(&mut self) -> Result<(), Failure> {
-        self.taglib.push_state();
-        self.taglib
+        self.model.tags.push_state();
+        self.model
+            .tags
             .add_tag(GRAM_1_ITEM_LINE, c"\\item", 2, c"freq", c"count");
         loop {
             self.check_read()?;
-            match self.line_type {
+            match self.model.line_type {
                 GRAM_1_ITEM_LINE => {
-                    let token = self.token(0);
+                    let token = self.model.token(0);
                     // The "<start>" of the KMM unigram is not printed.
                     if token.cast_unsigned() != SENTENCE_START {
-                        let freq = tool::atol(self.tag_value(b"freq"));
+                        let freq = tool::atol(self.model.value(b"freq"));
                         if freq != 0 {
-                            self.output.unigram(token, value(&self.values, 1), freq);
+                            self.output.unigram(token, self.model.phrase(1), freq);
                         }
                     }
                 }
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => return Err(Failure::LineTypeUnlisted),
             }
-            if !self.my_getline() {
+            if !self.input.getline() {
                 break;
             }
         }
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
         Ok(())
     }
 
     /// `parse_bigram` (:151-186).
     fn parse_bigram(&mut self) -> Result<(), Failure> {
-        self.taglib.push_state();
-        self.taglib
+        self.model.tags.push_state();
+        self.model
+            .tags
             .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count", c"T:N_n_0:n_1:Mr");
         loop {
             self.check_read()?;
-            match self.line_type {
+            match self.model.line_type {
                 GRAM_2_ITEM_LINE => {
-                    let count = tool::atol(self.tag_value(b"count"));
-                    let (token1, token2) = (self.token(0), self.token(2));
-                    let (word1, word2) = (value(&self.values, 1), value(&self.values, 3));
+                    let count = tool::atol(self.model.value(b"count"));
+                    let (token1, token2) = (self.model.token(0), self.model.token(2));
+                    let (word1, word2) = (self.model.phrase(1), self.model.phrase(3));
                     self.output.bigram(token1, word1, token2, word2, count);
                 }
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => return Err(Failure::LineTypeUnlisted),
             }
-            if !self.my_getline() {
+            if !self.input.getline() {
                 break;
             }
         }
-        self.taglib.pop_state();
+        self.model.tags.pop_state();
         Ok(())
     }
 }
@@ -324,16 +295,13 @@ pub fn convert<R: BufRead>(
     let mut converter = Converter {
         input,
         output,
-        taglib: TagLib::init(),
-        line_type: 0,
-        values: Vec::new(),
-        required: Required::new(),
+        model: TaggedModel::new(),
     };
-    if !converter.my_getline() {
+    if !converter.input.getline() {
         return Err(Failure::EmptyInput);
     }
     converter.parse_headline()?;
-    if converter.my_getline() {
+    if converter.input.getline() {
         converter.parse_body()?;
     }
     Ok(())

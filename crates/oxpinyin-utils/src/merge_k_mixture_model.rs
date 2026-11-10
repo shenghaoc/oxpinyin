@@ -37,5 +37,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         .collect();
     let sources: Vec<&std::ffi::CStr> = sources.iter().map(CString::as_c_str).collect();
 
-    oxpinyin_kmm::merge::run(result_filename.as_deref(), &sources);
+    crate::k_mixture_model::merge::run(result_filename.as_deref(), &sources);
 }

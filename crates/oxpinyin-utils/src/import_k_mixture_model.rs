@@ -31,5 +31,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 
     let phrases = crate::phrase_index::load_system_phrases();
     let mut input = LineReader::stdin();
-    oxpinyin_kmm::import::run(filename.as_deref(), &phrases, &mut input);
+    crate::k_mixture_model::import::run(filename.as_deref(), &phrases, &mut input);
 }

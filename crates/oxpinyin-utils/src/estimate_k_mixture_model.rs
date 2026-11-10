@@ -40,5 +40,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     };
     let bigram_filename = filename(&parsed.values[0]);
     let deleted_filename = filename(&parsed.values[1]);
-    oxpinyin_kmm::estimate::run(bigram_filename.as_deref(), deleted_filename.as_deref());
+    crate::k_mixture_model::estimate::run(bigram_filename.as_deref(), deleted_filename.as_deref());
 }

@@ -34,5 +34,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let Some(mut output) = OutputStream::stdout() else {
         tool::abort();
     };
-    oxpinyin_kmm::export::run(filename.as_deref(), &phrases, &mut output);
+    crate::k_mixture_model::export::run(filename.as_deref(), &phrases, &mut output);
 }

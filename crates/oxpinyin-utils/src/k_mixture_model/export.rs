@@ -14,8 +14,8 @@ use std::io::Write as _;
 
 use oxpinyin_input::tool::{self, OutputStream, k_mixture_model as edge};
 
-use crate::database::Database;
-use crate::phrase::PhraseIndex;
+use super::database::Database;
+use super::phrase::PhraseIndex;
 
 /// The output stream's `fprintf` calls, so the in-memory tests can compare
 /// the pin's bytes without a file.

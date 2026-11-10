@@ -18,7 +18,6 @@ kyotocabinet = [
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-store/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
-    "oxpinyin-kmm/kyotocabinet",
 ]
 bdb = [
     "oxpinyin-capi/bdb",
@@ -26,7 +25,6 @@ bdb = [
     "oxpinyin-data/bdb",
     "oxpinyin-store/bdb",
     "oxpinyin-user/bdb",
-    "oxpinyin-kmm/bdb",
 ]
 tkrzw = [
     "oxpinyin-capi/tkrzw",
@@ -34,7 +32,6 @@ tkrzw = [
     "oxpinyin-data/tkrzw",
     "oxpinyin-store/tkrzw",
     "oxpinyin-user/tkrzw",
-    "oxpinyin-kmm/tkrzw",
 ]
 
 [lints]
@@ -59,10 +56,6 @@ oxpinyin-store = { workspace = true, features = ["tools"] }
 oxpinyin-user = { workspace = true, features = ["tools"] }
 # The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
-# The seven k-mixture-model operations on the pin's flexible-bigram
-# container; the utilities under the pin's names parse options and load the
-# system tables before calling them.
-oxpinyin-kmm = { path = "../oxpinyin-kmm", default-features = false }
 
 [dev-dependencies]
 assert_cmd = "2.2"
