@@ -209,12 +209,14 @@ These rules govern the CI gates. State each rule here only. A workflow or a runb
 
 1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the called store-backends gate.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
+   The nightly runs their Rust checks. It runs the tools Python harness on those platforms only on a manual dispatch of `verify-nightly.yml` with `tools_harness` set.
+   Dispatch it on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
    A lane never dispatches a workflow.
 2. **tkrzw is the default backend.** Berkeley DB and Kyoto Cabinet are tested only in CI, and only when their KV code changes.
    Rule 2 decides that by path, not by judgement.
    The full-data contract tests run on tkrzw only.
 3. **Fuzzing runs nightly, never on the PR gate.** Do not change its schedule.
-4. **Coverage is advisory.** It never drives new tests.
+4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
 5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds each job's paths.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
    The generated Rust tables are such files.

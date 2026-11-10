@@ -424,7 +424,6 @@ class CompileCommand:
 
 CACHE_LANES = ("lint", "test", "store-features")
 BACKENDS = cell.BACKENDS
-BACKEND_EXCLUDES = ()
 
 
 def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileCommand, ...]:
@@ -439,7 +438,7 @@ def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileComm
         if backend not in BACKENDS:
             raise ValueError("cache refresh requires a store backend")
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
-                                *cell.feature_flags(backend), *BACKEND_EXCLUDES)),)
+                                *cell.feature_flags(backend))),)
 
 
 def refresh_cache(lane: str, backend: str | None = None) -> None:
