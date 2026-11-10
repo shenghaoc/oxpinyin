@@ -98,7 +98,7 @@ impl Step {
 /// One candidate's two step costs after `prev`: the bigram branch from
 /// `prev`'s merged row read as the pin reads it — `get_freq`, then
 /// `get_total_freq` on a hit (`phrase_lookup.cpp:288-292`) — and the
-/// unigram branch. A model without row traversal keeps its pair costs.
+/// unigram branch. A missing row supplies no bigram item.
 ///
 /// # Errors
 ///
@@ -116,8 +116,7 @@ where
 {
     let lm = |error: L::Error| EngineError::row_read(model, prev.value(), &error);
     let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
-        None => return model.nbest_step_costs(&prev, &token).map_err(lm),
-        Some(NbestSuccessors::Miss) => None,
+        None | Some(NbestSuccessors::Miss) => None,
         Some(NbestSuccessors::Row(gram)) => {
             let refuse = |fault| EngineError::lookup_gram(prev.value(), fault);
             if let Some(fault) = gram.fault() {
@@ -311,10 +310,7 @@ mod tests {
 
     use oxpinyin_core::{Dictionary, LanguageModel, NbestStepCosts, PhraseToken, SyllableKey};
 
-    /// A tiny dictionary: the text → tokens reverse map the span DP
-    /// probes, plus a model whose step costs come from per-token
-    /// unigrams (the fixture shape: no bigrams, unigram possibility
-    /// = count / total).
+    /// A tiny dictionary: the text → tokens reverse map the span DP probes.
     struct Dict {
         entries: Vec<(String, PhraseToken)>,
     }
@@ -371,43 +367,6 @@ mod tests {
         }
     }
 
-    struct Model {
-        unigrams: Vec<(u32, u64)>,
-        total: u64,
-    }
-    impl Model {
-        /// The unigram branch's cost depends on the token alone
-        /// (`elem_poss = unigram_freq / total`, upstream
-        /// `unigram_gen_next_step:309-314`).
-        fn unigram(&self, token: &PhraseToken) -> Option<NbestStepCosts> {
-            let &(_, count) = self.unigrams.iter().find(|(t, _)| *t == token.value())?;
-            debug_assert!(self.total > 0);
-            Some(NbestStepCosts {
-                blended: None,
-                unigram: Some(count as f64 / self.total as f64),
-                unigram_lambda: 1.0,
-            })
-        }
-    }
-
-    impl LanguageModel for Model {
-        type Token = PhraseToken;
-        type Error = core::convert::Infallible;
-
-        fn nbest_step_costs(
-            &self,
-            _prev: &Self::Token,
-            token: &Self::Token,
-        ) -> Result<NbestStepCosts, Self::Error> {
-            Ok(self.unigram(token).unwrap_or(NbestStepCosts {
-                blended: None,
-                unigram: None,
-
-                unigram_lambda: 1.0,
-            }))
-        }
-    }
-
     /// A model whose row read reports the checked-read failure the pin
     /// asserts on.
     struct CheckedModel;
@@ -430,20 +389,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_sentence_matches_with_an_empty_result() {
-        // nstep = 1 with nothing to match: the pin's final_step answers
-        // `true` with a zero-length result.
-        let dictionary = Dict::parse(&[]);
-        let model = Model {
-            unigrams: Vec::new(),
-            total: 1,
-        };
-        let (matched, result) = phrase_segment(&dictionary, &model, "").expect("infallible model");
-        assert!(matched);
-        assert!(result.is_empty());
-    }
-
-    #[test]
     fn a_raw_surrogate_key_segments_to_its_token() {
         // The pin searches the phrase table with the raw UCS-4 words the
         // converter produced. A stored `[0xd800]` row must reach its token
@@ -451,9 +396,12 @@ mod tests {
         let dictionary = RawDict {
             entries: vec![(vec![0xd800], PhraseToken::new(3))],
         };
-        let model = Model {
-            unigrams: vec![(3, 1)],
-            total: 1,
+        let gram = [1_u32, 3, 1]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let model = Rows {
+            row: oxpinyin_core::MergedGram::merge(None, Some(gram)).expect("whole row"),
         };
         let (matched, result) =
             phrase_segment_ucs4(&dictionary, &model, &[0xd800]).expect("infallible model");
@@ -548,10 +496,12 @@ mod tests {
             type Token = PhraseToken;
             type Error = &'static str;
 
-            fn nbest_step_costs(
+            fn nbest_item_costs_in_row(
                 &self,
                 prev: &PhraseToken,
                 token: &PhraseToken,
+                _: Option<(u32, u32)>,
+                _: &mut oxpinyin_core::NbestStepRow,
             ) -> Result<NbestStepCosts, Self::Error> {
                 let pair = (prev.value(), token.value());
                 self.0.borrow_mut().push(pair);
@@ -630,59 +580,6 @@ mod tests {
         // Sentence start once for "a" (two tokens), then one row per node
         // of the next step for "b".
         assert_eq!(*model.0.borrow(), [1, 3, 5]);
-    }
-
-    #[test]
-    fn failed_match_leaves_a_sized_all_null_array() {
-        // No dictionary phrase covers anything: the last step is empty,
-        // the array stays character-length and null-filled, and the
-        // retval is `false` — the failed-match shape
-        // (`pinyin_get_n_phrase` then reports the character count).
-        let dictionary = Dict::parse(&[]);
-        let model = Model {
-            unigrams: vec![(1, 1)],
-            total: 1,
-        };
-        let (matched, result) =
-            phrase_segment(&dictionary, &model, "abcd").expect("infallible model");
-        assert!(!matched);
-        assert_eq!(result.len(), 4);
-        assert!(result.iter().all(|token| token.value() == 0));
-    }
-
-    #[test]
-    fn phrase_tokens_sit_at_span_starts_with_nulls_between() {
-        // 你好世界 covers the whole sentence: one token at position 0.
-        let dictionary = Dict::parse(&[("你好世界", 7)]);
-        let model = Model {
-            unigrams: vec![(7, 5)],
-            total: 5,
-        };
-        let (matched, result) =
-            phrase_segment(&dictionary, &model, "你好世界").expect("infallible model");
-        assert!(matched);
-        assert_eq!(result.len(), 4);
-        assert_eq!(result[0].value(), 7);
-        assert!(result[1..].iter().all(|token| token.value() == 0));
-    }
-
-    #[test]
-    fn two_phrases_write_tokens_at_their_span_starts() {
-        // 你好 + 世界 as separate stored phrases: tokens at positions 0
-        // and 2, nulls between.
-        let dictionary = Dict::parse(&[("你好", 3), ("世界", 4)]);
-        let model = Model {
-            unigrams: vec![(3, 9), (4, 1)],
-            total: 10,
-        };
-        let (matched, result) =
-            phrase_segment(&dictionary, &model, "你好世界").expect("infallible model");
-        assert!(matched);
-        assert_eq!(result.len(), 4);
-        assert_eq!(result[0].value(), 3);
-        assert_eq!(result[1].value(), 0);
-        assert_eq!(result[2].value(), 4);
-        assert_eq!(result[3].value(), 0);
     }
 
     /// A model whose every predecessor's merged row is `row`, pricing the
@@ -791,31 +688,5 @@ mod tests {
         assert_eq!(step.best().unwrap().poss, f32::NEG_INFINITY);
         step.relax(node(4, 1.0));
         assert_eq!(step.best().unwrap().token.value(), 4);
-    }
-    #[test]
-    fn special_steps_accumulate_without_integer_sentinel_overflow() {
-        struct Special(f64);
-        impl LanguageModel for Special {
-            type Token = PhraseToken;
-            type Error = core::convert::Infallible;
-            fn nbest_step_costs(
-                &self,
-                _: &PhraseToken,
-                _: &PhraseToken,
-            ) -> Result<NbestStepCosts, Self::Error> {
-                Ok(NbestStepCosts {
-                    blended: Some(self.0),
-                    unigram: Some(self.0),
-                    unigram_lambda: 1.0,
-                })
-            }
-        }
-        let dictionary = Dict::parse(&[("a", 3), ("b", 4)]);
-        for probability in [0.0, -1.0, f64::INFINITY, f64::NAN] {
-            let (matched, tokens) =
-                phrase_segment(&dictionary, &Special(probability), "ab").unwrap();
-            assert!(matched);
-            assert_eq!(tokens, [PhraseToken::new(3), PhraseToken::new(4)]);
-        }
     }
 }

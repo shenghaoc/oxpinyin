@@ -254,6 +254,79 @@ mod tests {
         );
     }
 
+    // Real model rows feed the accumulation in the span DP. The pin
+    // weights the unigram by 1 - lambda and takes log after weighting;
+    // it also divides by a present bigram's stored total before blending
+    // (074a2219 phrase_lookup.cpp:288-344).
+    #[rstest::rstest]
+    #[case::zero_weight("1", false)]
+    #[case::negative_weight("2", false)]
+    #[case::nan_weight("nan", false)]
+    #[case::infinite_bigram("1", true)]
+    fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] infinite: bool) {
+        use crate::test_support::{
+            TempUserDir, craft_hash, cstr, gram_bytes, lookup, private_system,
+        };
+
+        // These are the committed w3 tokens for 你 and 好.
+        const NI: u32 = 0x0100_1225;
+        const HAO: u32 = 16_779_429;
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = private_system(scratch.path());
+        let conf = system.join("table.conf");
+        let text = std::fs::read_to_string(&conf).expect("fixture table.conf");
+        std::fs::remove_file(&conf).expect("unlink fixture config");
+        std::fs::write(
+            &conf,
+            text.replace(
+                "lambda parameter:0.312699",
+                &format!("lambda parameter:{lambda}"),
+            ),
+        )
+        .expect("private table.conf");
+        let rows = if infinite {
+            vec![
+                (1_u32.to_le_bytes().to_vec(), gram_bytes(0, &[(NI, 1)])),
+                (NI.to_le_bytes().to_vec(), gram_bytes(0, &[(HAO, 1)])),
+            ]
+        } else {
+            Vec::new()
+        };
+        craft_hash(&system.join("bigram.db"), &rows);
+
+        let user = TempUserDir::new("segment-ieee");
+        let system = cstr(system.to_str().expect("UTF-8 path"));
+        let user_path = cstr(user.path.to_str().expect("UTF-8 path"));
+        let context = crate::context::pinyin_init(system.as_ptr(), user_path.as_ptr());
+        assert!(!context.is_null());
+        let instance = crate::instance::pinyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        assert_eq!(lookup(instance, "你"), [NI]);
+        assert!(lookup(instance, "你你").is_empty());
+
+        // The infinite path must beat the one-phrase 你好 path, whose
+        // unigram gets zero weight. The other cases have only the two
+        // successive unigram steps and no bigrams.
+        let (sentence, expected) = if infinite {
+            assert_eq!(lookup(instance, "好"), [HAO]);
+            assert!(!lookup(instance, "你好").is_empty());
+            (c"你好", [NI, HAO])
+        } else {
+            (c"你你", [NI, NI])
+        };
+        assert!(pinyin_phrase_segment(instance, sentence.as_ptr()));
+        let mut count = 0;
+        assert!(pinyin_get_n_phrase(instance, &raw mut count));
+        assert_eq!(count, 2);
+        for (index, expected_token) in (0..count).zip(expected) {
+            let mut token = 0;
+            assert!(pinyin_get_phrase_token(instance, index, &raw mut token));
+            assert_eq!(token, expected_token);
+        }
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
     #[test]
     fn surrogate_segment_matches_pin_length_and_no_critical() {
         let user = crate::test_support::TempUserDir::new("surrogate-segment");
