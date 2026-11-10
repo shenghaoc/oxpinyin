@@ -83,7 +83,7 @@ asks for it.
    mounted read-only for the run, and nothing commits them.
 
    The utility runs need `CACHE/oracle/<cell>`, which `prefix_ok` accepts, and
-   `CACHE/data-<cell>/src/libpinyin-<commit>`, the tree `build-oracle.sh --regen-data` built.
+   `CACHE/data-<cell>/src/libpinyin-<commit>`, the tree `build.py --regen-data` built.
    `gen_ngram`, `gen_deleted_ngram` and `import_k_mixture_model` are `noinst_PROGRAMS`
    (`utils/training/Makefile.am:35` at 074a2219), so no prefix installs them, and they link the
    pin's static archives, not the prefix's library: the tree that built the verified library is

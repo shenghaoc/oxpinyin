@@ -550,7 +550,7 @@ scope](#native-rust-implementation)).
 > UTC.)** tkrzw is the workspace default backend and the differential
 > reference cell, because tkrzw is maintained upstream and Berkeley DB and
 > Kyoto Cabinet are not. Every crate that selects a store backend now
-> carries `default = ["tkrzw"]`, and `tools/oracle/build-oracle.sh`
+> carries `default = ["tkrzw"]`, and `tools/oracle/build.py`
 > defaults to `--dbm tkrzw`. This supersedes the ruling above as to the
 > default and the reference cell only: the reference build is still the
 > pin's autoconf build, and a bare `./configure` still selects Berkeley

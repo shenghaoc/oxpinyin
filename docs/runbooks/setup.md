@@ -601,9 +601,7 @@ Apple `container`, as a macOS run with it verified:
   `system status`; JSON inspect records, whose image `Id` is the config
   descriptor's digest.
 - **Mounts.** Read-only binds are `--mount ...,readonly`. It has no
-  single-file binds, so the library and data runs run `build-oracle.sh` from
-  the mounted recipe at `/opt/oracle-recipe` instead of binding the script,
-  the Bash floor and the pin one by one.
+  single-file binds.
 - **Memory.** Its VM is small by default: image builds get `--cpus 4
   --memory 6G`, and the library and data runs `--memory 6G`.
 - **Network.** There is no `--network host`: it is dropped with a one-line
@@ -620,6 +618,10 @@ Apple `container`, as a macOS run with it verified:
   (each blob checked against its digest, the layers applied in order).
 - **Provisioning.** The libraries are built in the `deps` image instead of
   copied from the published image.
+
+On every runtime, the library and data runs mount the checkout read-only at
+`/opt/oracle-recipe` and run `python3 /opt/oracle-recipe/tools/oracle/build.py`
+in the `deps` image. No run binds a single file, and no host needs Bash for them.
 
 `just provision-oracle` builds the performance image when absent and runs
 `provision oracle` in it with the provisioning cache mounted at

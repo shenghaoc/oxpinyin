@@ -24,7 +24,7 @@ Three separate reasons, and each one alone would be enough:
    The `core-trait-seam.md` traits exist precisely so the decoder can be
    written against one implementation and run against another.
 2. **The oracle is Linux-only and must be built.** A decoder test that needs
-   `tools/oracle/build-oracle.sh` cannot run in portable CI, which is where
+   `tools/oracle/build.py` cannot run in portable CI, which is where
    most of these tests have to run.
 3. **The model archive is not vendored.** `model-provenance.md`'s no-vendor
    rule: `interpolation2.text`, the eighteen `.table` files, and **converted

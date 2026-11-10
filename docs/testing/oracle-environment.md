@@ -33,7 +33,7 @@ consumed by libpinyin's own data-generation targets.
 
 ## Build recipe
 
-Canonical recipe: `tools/oracle/build-oracle.sh`. Its header comment lists
+Canonical recipe: `tools/oracle/build.py`. `tools/oracle/dependencies.json` lists
 the build dependencies a host needs.
 
 The script fetches each upstream source tree by pinned commit SHA
@@ -61,7 +61,7 @@ recorded as `data_unstable_manifest_sha256`; that manifest is tamper-evident
 within a prefix but two clean builds of the same pin legitimately disagree on
 it, so only `data_manifest_sha256` is comparable across prefixes. See
 `docs/findings/oracle-data-reproducibility.md`. Run
-`tools/oracle/build-oracle.sh --help` for flags.
+`python3 tools/oracle/build.py --help` for flags.
 
 ## Oracle boundary
 

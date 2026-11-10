@@ -122,7 +122,8 @@ Follow the [Python orchestration and shell-placement rule](docs/plans/tooling-py
 
 Use only the toolchain selected by `rust-toolchain.toml`.
 Portable crates support Linux, macOS and Windows, on x86_64 and arm64.
-Oracle and capi work is Linux-first.
+The oracle is built and run only in a Linux container; Windows, macOS and Linux hosts start it ([oracle](docs/runbooks/oracle.md)).
+capi work is Linux-first.
 Linux/amd64 is the reference for pin comparisons.
 Do not use emulation for work that does not compare against the pin.
 

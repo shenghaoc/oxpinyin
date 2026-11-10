@@ -17,7 +17,7 @@ Stop at the first step that settles the behaviour:
 2. Read called functions when they determine behaviour.
    Use GLib `g_*`, libc and DBM C/C++ sources at the reference container's versions.
    Identify product behaviour and artefacts, rather than reproducing library internals.
-3. Read disassembly of the relevant object from `tools/oracle/build-oracle.sh`.
+3. Read disassembly of the relevant object from `tools/oracle/build.py`.
    Use the [default reference build](../../runbooks/backends.md).
    Use `--dbm bdb|kc` for backend-specific code, such as `chewing_large_table2_kyotodb.cpp`.
    That code exists only in its own build.

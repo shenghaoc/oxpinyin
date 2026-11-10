@@ -367,7 +367,7 @@ Derive behaviour by reading the pin, never by running experiments:
    Read the called GLib, libc and DBM functions when they determine the behaviour.
 2. Read the relevant pin-built object's disassembly when source does not settle the question.
    This includes unresolved macros, templates, inline helpers, implementation-defined behaviour, undefined behaviour and compiler-selected evaluation order.
-   Use objects from [`tools/oracle/build-oracle.sh`](../tools/oracle/build-oracle.sh).
+   Use objects from [`tools/oracle/build.py`](../tools/oracle/build.py).
    Use the [default reference-cell build](runbooks/backends.md).
    Use `--dbm bdb|kc` for backend-specific code compiled only into that backend's build.
    Use `libzhuyin.so.15` from an `--enable-libzhuyin` build for the Zhuyin facade.
