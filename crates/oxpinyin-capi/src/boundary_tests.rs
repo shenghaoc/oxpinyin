@@ -582,6 +582,34 @@ fn user_row_of_dada(user: &Path) -> (*mut PinyinInstance, *mut LookupCandidate) 
     (instance, candidate_at(instance, index))
 }
 
+// Removing a real imported candidate must mutate the retained store even
+// after the public handle is gone; no pin call is valid in that state.
+#[rstest::rstest]
+fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] finalized: bool) {
+    let user = TempUserDir::new("remove-retained-owner");
+    let token = saved_user_phrase(&user.path);
+    let (instance, candidate) = user_row_of_dada(&user.path);
+    let context = crate::instance::pinyin_get_context(instance);
+    if finalized {
+        crate::test_support::finalize_public_context(context, instance);
+    }
+    assert!(pinyin_remove_user_candidate(instance, candidate));
+    // SAFETY: the instance remains live; the removal's exclusive borrow ended.
+    let inst = unsafe { crate::state::instance_ref(instance) };
+    assert!(
+        inst.core
+            .user
+            .expect("user store")
+            .phrase(token)
+            .expect("read")
+            .is_none()
+    );
+    crate::instance::pinyin_free_instance(instance);
+    if !finalized {
+        crate::context::pinyin_fini(context);
+    }
+}
+
 /// `remove_user_candidate` asserts where the user phrase table is gone
 ///.
 #[test]

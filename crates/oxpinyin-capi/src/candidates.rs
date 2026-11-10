@@ -269,10 +269,9 @@ pub extern "C" fn pinyin_remove_user_candidate(
     if !is_user_token(token.value()) {
         std::process::abort();
     }
-    let context = inst.context;
-    // SAFETY: the candidate reads are complete and the live context is now
+    // SAFETY: the candidate reads are complete and the retained owner is now
     // borrowed exclusively for the store mutation.
-    let ctx = unsafe { crate::state::context_mut(context) };
+    let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
@@ -415,16 +414,14 @@ pub extern "C" fn pinyin_choose_candidate(
         let Some(token) = inst.state.candidates[index].token else {
             return -1;
         };
-        let context = inst.context;
         // SAFETY: the instance read is finished; this serialized C operation
-        // exclusively borrows its live context for the unigram write.
-        let ctx = unsafe { crate::state::context_mut(context) };
+        // exclusively borrows its retained owner for the unigram write.
+        let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
-    let context = inst.context;
-    // SAFETY: the prior view is no longer used. Promotion borrows the live
-    // context only for its own reads and write, before the new instance view.
-    let addon_token = unsafe { try_promote_addon(instance, context, index) };
+    // SAFETY: the prior view is no longer used. Promotion borrows the retained
+    // owner only for its own reads and write, before the new instance view.
+    let addon_token = unsafe { try_promote_addon(instance, index) };
     // SAFETY: promotion has released its context borrow; the live instance
     // is re-borrowed for the remainder of this serialized operation.
     let mut inst = unsafe { instance_mut(instance) };
@@ -443,10 +440,9 @@ pub extern "C" fn pinyin_choose_candidate(
         let Some(token) = addon_token.or(inst.state.candidates[index].token) else {
             return -1;
         };
-        let context = inst.context;
         // SAFETY: the instance read is finished; this serialized C operation
-        // exclusively borrows its live context for the unigram write.
-        let ctx = unsafe { crate::state::context_mut(context) };
+        // exclusively borrows its retained owner for the unigram write.
+        let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let source_index = inst.state.candidates[index].source_index as usize;
@@ -544,11 +540,7 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 /// `None` — leaving a plain selection — when the candidate is not an addon
 /// candidate, the addon item cannot be resolved, there is no user store to
 /// promote into, or the store write fails.
-unsafe fn try_promote_addon(
-    instance: *mut PinyinInstance,
-    context: *mut crate::types::PinyinContext,
-    index: usize,
-) -> Option<PhraseToken> {
+unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Option<PhraseToken> {
     let item = {
         // SAFETY: the caller supplies a live instance and snapshot index.
         let inst = unsafe { instance_ref(instance) };
@@ -564,7 +556,7 @@ unsafe fn try_promote_addon(
     let promoted = {
         // SAFETY: the read view above has ended; the caller serializes this
         // context mutation with every other operation on its instances.
-        let ctx = unsafe { crate::state::context_mut(context) };
+        let ctx = unsafe { crate::state::instance_context_mut(instance) };
         ctx.core
             .user_store_mut()?
             .promote_addon_phrase(text, &item.readings, item.unigram)
@@ -657,10 +649,9 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
         // and the prefix branch still answers true.
         if inst.core.dict.phrase_table_token_enabled(token.value()) {
-            let context = inst.context;
-            // SAFETY: the read view is no longer used; the live context is
+            // SAFETY: the read view is no longer used; the retained owner is
             // exclusively borrowed for this serialized unigram mutation.
-            let ctx = unsafe { crate::state::context_mut(context) };
+            let ctx = unsafe { crate::state::instance_context_mut(instance) };
             let _ = ctx.core.runtime.add_unigram_delta(token.value(), 483);
         }
         return true;
@@ -668,10 +659,9 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     let last = previous_token(&inst.read());
     let prefix = inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
-    let context = inst.context;
-    // SAFETY: all candidate and prefix reads are complete; the live context
+    // SAFETY: all candidate and prefix reads are complete; the retained owner
     // is exclusively borrowed for the prediction training write.
-    let ctx = unsafe { crate::state::context_mut(context) };
+    let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let Some(user) = ctx.core.user_store_mut() else {
         return false;
     };
@@ -1010,6 +1000,28 @@ mod unloaded_library_tests {
             crate::instance::pinyin_free_instance(self.instance);
             crate::context::pinyin_fini(self.context);
         }
+    }
+
+    // Both unigram-only choose branches must use the instance's owner, not
+    // its finalized public context. Keep the ordinary lifetime as a control.
+    #[rstest::rstest]
+    #[case::longer(IBUS_DEFAULT_SORT, lookup_candidate_type_t::LONGER_CANDIDATE)]
+    #[case::sort_bit(DEFAULT_SORT | WITHOUT_SENTENCE, lookup_candidate_type_t::NORMAL_CANDIDATE)]
+    fn choosing_a_unigram_row_keeps_the_instance_owner(
+        #[case] sort: c_uint,
+        #[case] kind: lookup_candidate_type_t,
+        #[values(false, true)] finalized: bool,
+    ) {
+        let mut open = Open::new("choose-retained-owner");
+        assert!(pinyin_guess_sentence(open.instance));
+        let (row, _) = open.row_of(sort, |candidate_kind, _| candidate_kind == kind);
+        if finalized {
+            crate::test_support::finalize_public_context(open.context, open.instance);
+            open.context = ptr::null_mut();
+        }
+        let before = open.amplified_total();
+        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 1);
+        assert_eq!(open.amplified_total() - before, 483);
     }
 
     /// `pinyin_train` after the unload. `train_result3` trains the chosen

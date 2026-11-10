@@ -115,8 +115,10 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     crate::context::pinyin_fini(context);
 }
 
-#[test]
-fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
+#[rstest::rstest]
+fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
+    #[values(false, true)] finalized: bool,
+) {
     let system = TempSystemDir::new("addon-promote");
     system.write(
         "interpolation2.text",
@@ -157,6 +159,9 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         &raw mut cand
     ));
     assert!(!cand.is_null());
+    if finalized {
+        crate::test_support::finalize_public_context(context, instance);
+    }
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
 
     // The snapshot candidate is rewritten to a NORMAL candidate at a nibble-5
@@ -224,7 +229,9 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
     );
 
     crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    if !finalized {
+        crate::context::pinyin_fini(context);
+    }
 }
 
 #[test]
