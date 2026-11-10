@@ -266,8 +266,8 @@ runs:
     # SHA-256. A source build took seven minutes. The version and the hash
     # move together, by hand. A failed download, another hash, another runner
     # or another version fails the step: nothing falls back to a source
-    # build. Any cargo-c at or above the minimum that `just doctor` reports
-    # builds the same objects (docs/packaging.md, "Regeneration").
+    # build. See the `just doctor` tool minimums in docs/runbooks/setup.md
+    # (Linux).
     - name: Install cargo-c
       if: inputs.cargo-c == 'true'
       shell: bash
