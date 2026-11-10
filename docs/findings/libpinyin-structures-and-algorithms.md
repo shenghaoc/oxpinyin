@@ -1337,6 +1337,13 @@ candidate string getters return the stored pointer (`pinyin.cpp:2873-2878`,
 an empty-matrix refusal (`pinyin.cpp:2183-2196`, `zhuyin.cpp:1460-1471`);
 reset also frees it (`pinyin.cpp:2693-2704`, `zhuyin.cpp:1718-1729`).
 
+Prediction invalidates the old phonetic candidate list before resolving
+prefixes, including when there is no matching prefix (`pinyin.cpp:2420-2427`).
+The punctuation entry calls that same path (`:2459`). Oxpinyin releases
+the old window alongside the snapshot it indexed. This moves the existing
+O(N) row cleanup earlier and releases the retained text storage at that
+boundary. No new allocation or candidate traversal is introduced.
+
 Both Rust ABI parse modules therefore retain their `CandidateSnapshot` until
 those invalidation boundaries. Parse resets also preserve its anchored engine
 window: a subsequent normal choose uses the retained token/span
