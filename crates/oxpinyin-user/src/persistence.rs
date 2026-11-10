@@ -63,7 +63,6 @@ use oxpinyin_store::{
 };
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
-use crate::store::SaveReport;
 use crate::user_index::UserIndex;
 use crate::user_library::UserLibrary;
 use crate::user_phrase_table::UserPhraseTable;
@@ -2210,7 +2209,7 @@ pub fn system_new_total(
 
 /// The reporting save for a held [`UserState`], without a session's arenas:
 /// every file of the set is written, renamed and marked whatever fails on the
-/// way, and the failures come back in the [`SaveReport`]. A caller that needs
+/// way. Soft failures are printed to stderr. A caller that needs
 /// a profile on disk but not a session (the crate's tests and the facade
 /// fixtures) uses this.
 ///
@@ -2223,7 +2222,7 @@ pub fn save_state_reporting(
     originals: &impl OriginalLibraries,
     versions: &SystemVersions,
     open_counter: i32,
-) -> Result<SaveReport, PersistenceError> {
+) -> Result<(), PersistenceError> {
     let index = UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
     let mut reporting = SaveReporting {
         versions,
@@ -2331,7 +2330,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     source: SaveSource<'_>,
     originals: &impl OriginalLibraries,
     reporting: &mut SaveReporting<'_, B>,
-) -> Result<SaveReport, PersistenceError> {
+) -> Result<(), PersistenceError> {
     // `_write_files` writes every file whatever the one before did
     // (`pinyin.cpp:940-1020`): a write that fails leaves no `.tmp` and the
     // next file is written anyway.
@@ -2344,26 +2343,20 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     // prints the ones that fail (`:1025-1130`), a file whose write failed
     // among them: the unaffected files are updated and the profile can mix
     // two saves.
-    let mut outcome = SaveReport::default();
-    if reporting.interleaved {
-        // `zhuyin_save` renames each file as soon as it has written it.
-        outcome.renames_failed = staged.failed;
-    } else {
+    // `zhuyin_save` has already renamed each file as it was written.
+    if !reporting.interleaved {
         for name in pin_rename_order(originals.layout(), &staged.unloaded) {
             let tmp = build_path(dir, name.with_suffix(".tmp").as_ref());
             let final_path = build_path(dir, name.as_ref());
             if rename(&tmp, &final_path).is_err() {
                 report_rename_failed(&tmp, &final_path);
-                outcome.renames_failed.push((tmp, final_path));
             }
         }
     }
     // `mark_version` (`pinyin.cpp:1143`, `zhuyin.cpp:695`): a failed save
     // has written the pin's `write %s failed.` line itself.
-    if !write_marker(dir, reporting.versions, reporting.open_counter) {
-        outcome.user_conf_write_failed = Some(build_path(dir, OsStr::new(USER_CONF)));
-    }
-    Ok(outcome)
+    write_marker(dir, reporting.versions, reporting.open_counter);
+    Ok(())
 }
 /// The line a failed rename of a reporting save writes where the pin's
 /// `_rename_files` (`pinyin.cpp:1061-1123`) or `zhuyin_save`
@@ -2382,8 +2375,6 @@ fn report_rename_failed(tmp: &Path, final_path: &Path) {
 struct Staged {
     /// Rename on the spot (libzhuyin).
     immediate: bool,
-    /// The immediate renames that failed.
-    failed: Vec<(PathBuf, PathBuf)>,
     /// The unloaded libraries the write pass skipped, which the rename pass
     /// skips too (`pinyin.cpp:1032-1035`).
     unloaded: Vec<u8>,
@@ -2413,7 +2404,6 @@ impl Staged {
     fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
         if self.immediate && rename(&tmp, &final_path).is_err() {
             report_rename_failed(&tmp, &final_path);
-            self.failed.push((tmp, final_path));
         }
     }
 }

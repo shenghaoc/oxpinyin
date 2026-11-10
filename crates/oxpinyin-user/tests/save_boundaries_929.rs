@@ -75,7 +75,7 @@ fn change(store: &mut UserStore) {
 fn seed(dir: &Path, law: UserConfLaw) {
     let mut store = open(dir, law);
     store.mark_modified();
-    assert_eq!(store.save_reporting().unwrap(), Default::default());
+    store.save_reporting().unwrap();
 }
 
 fn bytes(dir: &Path) -> BTreeMap<OsString, Vec<u8>> {
@@ -181,7 +181,7 @@ fn interruption_after_user_chunks_keeps_indexes_and_bigram_at_previous_save() {
 #[test]
 fn interruption_after_save_or_fini_retains_every_saved_data_byte() {
     if let Some(mut store) = child_store() {
-        assert_eq!(store.save_reporting().unwrap(), Default::default());
+        store.save_reporting().unwrap();
         assert!(!store.is_modified());
         if std::env::var("OXPINYIN_929_LATE_BOUNDARY").unwrap() == "fini" {
             drop(store);

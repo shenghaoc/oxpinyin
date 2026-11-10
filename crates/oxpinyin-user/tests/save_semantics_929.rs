@@ -42,70 +42,127 @@ fn open(dir: &Path, law: UserConfLaw) -> UserStore {
 fn seed(dir: &Path, law: UserConfLaw) -> UserStore {
     let mut store = open(dir, law);
     store.mark_modified();
-    assert_eq!(
-        store.save_reporting().expect("seed save"),
-        Default::default()
-    );
+    store.save_reporting().expect("seed save");
     store
+}
+
+fn save_destinations(dir: &Path) -> Vec<std::path::PathBuf> {
+    let layout = originals();
+    let mut libraries: Vec<_> = layout
+        .layout()
+        .system_logs()
+        .iter()
+        .chain(layout.layout().user_libraries())
+        .collect();
+    libraries.sort_by_key(|(index, _)| *index);
+    let mut names: Vec<_> = libraries
+        .into_iter()
+        .map(|(_, name)| oxpinyin_input::path::build_path(dir, name.as_ref()))
+        .collect();
+    names.extend(
+        [
+            "user_pinyin_index.bin",
+            "user_phrase_index.bin",
+            "user_bigram.db",
+        ]
+        .map(|name| dir.join(name)),
+    );
+    names
+}
+
+fn staged_path(path: &Path) -> std::path::PathBuf {
+    let mut staged = path.as_os_str().to_owned();
+    staged.push(".tmp");
+    staged.into()
 }
 
 #[test]
 fn failed_renames_report_exact_order_and_preserve_destinations() {
-    for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = seed(dir.path(), law);
-        let layout = originals();
-        let mut libraries: Vec<_> = layout
-            .layout()
-            .system_logs()
-            .iter()
-            .chain(layout.layout().user_libraries())
-            .collect();
-        libraries.sort_by_key(|(index, _)| *index);
-        let mut names: Vec<_> = libraries
-            .into_iter()
-            .map(|(_, name)| oxpinyin_input::path::build_path(dir.path(), name.as_ref()))
-            .collect();
-        names.extend(
-            [
-                "user_pinyin_index.bin",
-                "user_phrase_index.bin",
-                "user_bigram.db",
-            ]
-            .map(|name| dir.path().join(name)),
-        );
-        for path in &names {
-            std::fs::remove_file(path).unwrap();
-            std::fs::create_dir(path).unwrap();
-            std::fs::write(path.join("keep"), b"previous data").unwrap();
+    const CHILD: &str = "OXPINYIN_929_RENAME_CHILD";
+    const MISSING: &str = "OXPINYIN_929_RENAME_MISSING";
+    const ZHUYIN: &str = "OXPINYIN_929_RENAME_ZHUYIN";
+    if let Some(dir) = std::env::var_os(CHILD) {
+        let dir = Path::new(&dir);
+        let law = if std::env::var_os(ZHUYIN).is_some() {
+            UserConfLaw::Zhuyin
+        } else {
+            UserConfLaw::Pinyin
+        };
+        let mut store = seed(dir, law);
+        let missing = std::env::var_os(MISSING).is_some();
+        if missing {
+            std::fs::remove_dir_all(dir).unwrap();
+        } else {
+            for path in save_destinations(dir) {
+                std::fs::remove_file(&path).unwrap();
+                std::fs::create_dir(&path).unwrap();
+                std::fs::write(path.join("keep"), b"previous data").unwrap();
+            }
         }
         store.mark_modified();
-        let report = store.save_reporting().expect("rename failures are soft");
-        assert_eq!(
-            report
-                .renames_failed
-                .iter()
-                .map(|(_, path)| path)
-                .collect::<Vec<_>>(),
-            names.iter().collect::<Vec<_>>()
-        );
+        store
+            .save_reporting()
+            .expect("rename and marker failures are soft");
         assert!(
             !store.is_modified(),
             "the pin clears dirty even after failed renames"
         );
-        assert!(report.user_conf_write_failed.is_none());
-        for (tmp, final_path) in report.renames_failed {
-            assert!(tmp.is_file(), "failed rename keeps the staged file");
-            assert_eq!(
-                std::fs::read(final_path.join("keep")).unwrap(),
-                b"previous data"
-            );
+        store.save_reporting().expect("clean save does not retry");
+        if missing {
+            // Allow the separate fini marker write after the failed save.
+            std::fs::create_dir(dir).unwrap();
         }
-        assert_eq!(
-            store.save_reporting().unwrap(),
-            Default::default(),
-            "clean save does not retry"
-        );
+        return;
+    }
+
+    for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+        for missing in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "failed_renames_report_exact_order_and_preserve_destinations",
+                ])
+                .env(CHILD, dir.path());
+            if missing {
+                child.env(MISSING, "1");
+            }
+            if law == UserConfLaw::Zhuyin {
+                child.env(ZHUYIN, "1");
+            }
+            let output = child.output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{law:?}: {stderr}");
+            let mut expected = Vec::new();
+            for path in save_destinations(dir.path()) {
+                let tmp = staged_path(&path);
+                expected.push(format!(
+                    "rename {} to {} failed.",
+                    tmp.display(),
+                    path.display()
+                ));
+                if !missing {
+                    assert!(tmp.is_file(), "failed rename keeps the staged file");
+                    assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"previous data");
+                }
+            }
+            let marker_failure =
+                format!("write {} failed.", dir.path().join("user.conf").display());
+            if missing {
+                expected.push(marker_failure.clone());
+            }
+            let actual: Vec<_> = stderr
+                .lines()
+                .filter_map(|line| {
+                    // Some earlier open diagnostics have no newline.
+                    line.find("rename ")
+                        .or_else(|| line.find(&marker_failure))
+                        .map(|start| &line[start..])
+                })
+                .collect();
+            assert_eq!(actual, expected, "{law:?}, missing={missing}");
+        }
     }
 }
 
@@ -172,7 +229,7 @@ fn sync_rejecting_chunk_target_does_not_stop_later_files() {
         let mut store = seed(dir.path(), law);
         std::os::unix::fs::symlink("/dev/null", dir.path().join("gb_char.dbin.tmp")).unwrap();
         store.mark_modified();
-        assert_eq!(store.save_reporting().unwrap(), Default::default());
+        store.save_reporting().unwrap();
         assert_eq!(
             std::fs::read_link(dir.path().join("gb_char.dbin")).unwrap(),
             Path::new("/dev/null")

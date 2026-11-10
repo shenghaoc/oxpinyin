@@ -72,8 +72,8 @@ pub use phrase::{
 };
 pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
-    ExportedPhrase, SENTENCE_START, SaveReport, Token, TrainingCheck, TrainingFault, UserStore,
-    UserStoreError, add_system_reading,
+    ExportedPhrase, SENTENCE_START, Token, TrainingCheck, TrainingFault, UserStore, UserStoreError,
+    add_system_reading,
 };
 
 fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
