@@ -69,7 +69,8 @@ pub struct InstanceState {
     /// The candidate window from the most recent guess, as `(anchor, window)`.
     /// Retained across parsing so a later choose resolves its index against
     /// the same window the caller saw, including a guess at offset zero.
-    /// Selection consumes it; a new guess replaces it and full reset drops it.
+    /// A new guess replaces it and full reset drops it. Pinyin drops it on
+    /// an accepted choose. Zhuyin retains it for further choices.
     pub anchored_window: Option<(usize, CandidateList)>,
     /// Most recent double-pinyin parse, when the last parse call was the
     /// double-pinyin entry point. Used for aux text and
@@ -434,8 +435,7 @@ impl<
     /// Selects the candidate at `source_index` in the window the caller saw,
     /// or its promoted token when the facade promoted an addon row first.
     /// Returns the selection outcome and the chosen row's absolute end when
-    /// anchored. A refused span preserves the window for another choose;
-    /// an accepted selection clears it.
+    /// anchored. The caller controls the window's lifetime.
     ///
     /// # Errors
     ///
@@ -466,11 +466,7 @@ impl<
             };
             (window_end, selection)
         };
-        let selection = selection?;
-        if selection != oxpinyin_engine::Selection::Refused {
-            self.state.borrow_mut().anchored_window = None;
-        }
-        Ok((selection, window_end))
+        Ok((selection?, window_end))
     }
 
     /// Clears the constraint at `offset`, mapping the caller's original-input
