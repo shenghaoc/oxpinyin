@@ -232,7 +232,7 @@ Any later CI host change needs separate approval.
 | `python -m tools.dev check` | Selected native storage/C-API setup tests. |
 | `python -m tools.dev backend-matrix`; store-features | Native backend feature validity and tests. |
 | `python -m tools.dev sanitize`; tkrzw-sanitizers | Native backend tests without a reference installation. |
-| `coverage.yml`; native fuzz-soak selections | Existing coverage/fuzz targets without pin inputs. |
+| Native fuzz-soak selections | Existing fuzz targets without pin inputs. |
 | `run-cpp-smoke.sh`; `check-exports.sh` including `--shipped`; `check-alloc-pairing.sh` | Direct subject-only CI gates against committed headers/fixtures. Keep existing platform limits. |
 | `check-pc-version.sh` | Static checked-in version consistency; no reference installation or live pin execution. |
 | `tools/dev/lint-crate-cfg-placement.test.py` | Keep the native lint-checker harness. |

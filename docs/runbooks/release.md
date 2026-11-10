@@ -14,10 +14,11 @@ and attaches them with a `SHA256SUMS` to the release.
 ## Before tagging
 
 1. `main` green on `CI` and `Store backends`, and on every job of the last
-   `verify-nightly` except the advisory coverage job.
-2. Manually dispatch `verify-nightly.yml` on the release commit. Publish only
-   if its macOS, Windows, fuzz soak and overflow lane jobs pass. Coverage is
-   advisory. For the merge rule, see
+   `verify-nightly`.
+2. Manually dispatch `verify-nightly.yml` on the release commit with
+   `tools_harness` set. Publish only if its macOS, Windows, fuzz soak and
+   overflow lane jobs pass on that commit; a green run of another commit
+   does not count. For the merge rule, see
    [verification rule 10](verification.md#10-ci-merge-conditions).
 3. The ABI export gate passed on the tip (`just abi exports
    --shipped`; CI runs it on every change).

@@ -474,7 +474,7 @@ The job also installs vcpkg's `glib` port, found through the same
 the full workspace, including `oxpinyin-utils`, `oxpinyin-training`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
 Text expectations use the host newline. All 18 local KMM tests passed.
-`WINDOWS_EXCLUDES` in `verify-nightly.yml` is empty. The oracle's Linux FFI feature is
+The `test-windows` job in `verify-nightly.yml` excludes no crate. The oracle's Linux FFI feature is
 not selected. Native Windows oracle behavior is not established by those
 tests. Physical Windows hardware is not needed to use
 this CI coverage.
