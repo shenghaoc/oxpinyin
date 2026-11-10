@@ -189,6 +189,16 @@ clippy *args:
 clippy *args:
     @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
 
+# Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin-core
+# Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.
+[unix]
+mutants *args:
+    @cargo mutants "$@"
+
+[windows]
+mutants *args:
+    @{{windows_args}} cargo mutants @forwarded; exit $LASTEXITCODE
+
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 # cargo fuzz runs in fuzz/, where rustup selects the nightly that
 # fuzz/rust-toolchain.toml names. No recipe names the nightly.
