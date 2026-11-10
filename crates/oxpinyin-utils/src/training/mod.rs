@@ -6,7 +6,7 @@
 //! (`src/pinyin_internal.h:55-60`) through the same boundary the storage
 //! utilities use; the chunk files, the `SingleGram` bigram rows and the
 //! phrase items are the bytes `oxpinyin-data`'s layouts describe, and the
-//! correction-rate decode is `oxpinyin_training::eval`'s port of
+//! correction-rate decode is `eval`'s port of
 //! `PhoneticLookup<1, 1>`.
 
 #![forbid(unsafe_code)]
@@ -26,6 +26,7 @@ use oxpinyin_input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 use crate::storage::dbm::Hash;
 
 pub mod estimate_interpolation;
+mod eval;
 pub mod eval_correction_rate;
 pub mod gen_deleted_ngram;
 pub mod gen_ngram;

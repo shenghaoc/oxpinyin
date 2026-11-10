@@ -31,8 +31,8 @@ use std::collections::HashMap;
 
 use oxpinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
 
-use crate::eval::error::EvalError;
-use crate::eval::model::EvalLanguageModel;
+use super::error::EvalError;
+use super::model::EvalLanguageModel;
 
 /// `sentence_start` (`novel_types.h:122`).
 const SENTENCE_START: u32 = 1;
@@ -44,8 +44,7 @@ const MAX_PHRASE_KEYS: usize = 16;
 const NBEAM: usize = 32;
 
 /// Supplies each token's best pronunciation and its text — the
-/// `get_possible_pinyin` and `convert_to_utf8` inputs — and the phrase
-/// lexicon the evaluation model is floored over.
+/// `get_possible_pinyin` and `convert_to_utf8` inputs.
 pub trait PhraseSource {
     /// The highest-frequency pronunciation of `token` as syllable keys, or
     /// `None` when the token has no pronunciation.
@@ -53,11 +52,6 @@ pub trait PhraseSource {
 
     /// The phrase text of `token`, or `None` when it is unknown.
     fn text(&self, token: PhraseToken) -> Option<String>;
-
-    /// Every token of the loaded phrase index — the items `gen_unigram`
-    /// floors (`utils/training/gen_unigram.cpp:45-68`) and
-    /// `get_phrase_index_total_freq` sums over.
-    fn lexicon_tokens(&self) -> Vec<PhraseToken>;
 }
 
 /// The evaluation result.
@@ -461,15 +455,15 @@ fn i32_from_step(step: usize) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhraseSource, correction_rate};
-    use crate::eval::counts::Counts;
-    use crate::eval::model::EvalLanguageModel;
+    use super::super::counts::Counts;
+    use super::super::fixture_doubles::FixtureDictionary;
+    use super::{EvalError, EvalLanguageModel, PhraseSource, correction_rate};
     use oxpinyin_core::{PhraseToken, SyllableKey};
     use oxpinyin_data::Lambda;
     use std::collections::BTreeMap;
 
-    // The full decode is exercised by the crate's integration test (the
-    // hand-computable homophone fixture); here we pin the error paths.
+    // The hand-computable homophone fixture in eval/tests.rs exercises the
+    // full decode. These tests cover the error paths.
 
     /// A minimal map-backed `PhraseSource` for the error tests: keys and text
     /// per token, either absent.
@@ -484,19 +478,13 @@ mod tests {
         fn text(&self, token: PhraseToken) -> Option<String> {
             self.text.get(&token.value()).cloned()
         }
-        fn lexicon_tokens(&self) -> Vec<PhraseToken> {
-            self.keys
-                .keys()
-                .map(|&token| PhraseToken::new(token))
-                .collect()
-        }
     }
 
-    fn fixture() -> (crate::fixture_doubles::FixtureDictionary, EvalLanguageModel) {
+    fn fixture() -> (FixtureDictionary, EvalLanguageModel) {
         // The real fixture dictionary; an evaluation model that gives every
         // fixture token a unigram count.
-        let vocab = include_str!("../../../../fixtures/w4/mini-vocab.txt");
-        let dict = crate::fixture_doubles::FixtureDictionary::parse(vocab).expect("vocab");
+        let vocab = include_str!("../../../../../fixtures/w4/mini-vocab.txt");
+        let dict = FixtureDictionary::parse(vocab).expect("vocab");
         let mut counts = Counts::default();
         counts.unigrams.insert(1, 10);
         let model = EvalLanguageModel::from_counts(&counts, Lambda::PINNED);
@@ -512,10 +500,7 @@ mod tests {
         };
         let sentences = vec![vec![PhraseToken::new(1)]];
         let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-        assert!(matches!(
-            err,
-            crate::eval::error::EvalError::NoPronunciation { token: 1 }
-        ));
+        assert!(matches!(err, EvalError::NoPronunciation { token: 1 }));
     }
 
     #[test]
@@ -529,10 +514,7 @@ mod tests {
         };
         let sentences = vec![vec![PhraseToken::new(1)]];
         let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-        assert!(
-            matches!(err, crate::eval::error::EvalError::NoText { token: 1 }),
-            "{err}"
-        );
+        assert!(matches!(err, EvalError::NoText { token: 1 }), "{err}");
     }
 
     #[test]
@@ -547,9 +529,6 @@ mod tests {
         let source = MapSource { keys, text };
         let sentences = vec![vec![PhraseToken::new(1)]];
         let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-        assert!(
-            matches!(err, crate::eval::error::EvalError::Undecodable { keys: 1 }),
-            "{err}"
-        );
+        assert!(matches!(err, EvalError::Undecodable { keys: 1 }), "{err}");
     }
 }

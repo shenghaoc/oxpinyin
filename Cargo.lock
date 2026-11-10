@@ -688,15 +688,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-training"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-data",
- "oxpinyin-store",
-]
-
-[[package]]
 name = "oxpinyin-user"
 version = "0.1.0"
 dependencies = [
@@ -725,7 +716,6 @@ dependencies = [
  "oxpinyin-kmm",
  "oxpinyin-runtime",
  "oxpinyin-store",
- "oxpinyin-training",
  "oxpinyin-user",
  "oxpinyin-zhuyin-capi",
  "regex",

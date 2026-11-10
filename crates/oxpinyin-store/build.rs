@@ -20,9 +20,8 @@
 //! this package's `[package.metadata.system-deps]`, and the
 //! `SYSTEM_DEPS_<NAME>_*` variables are the only overrides
 //! (`docs/runbooks/backends.md`). It emits the link-search and link-lib
-//! directives. This script reads the resolved include and link paths from
-//! it for what `system-deps` does not configure: bindgen's and
-//! `cxx-build`'s include paths, and the rpath.
+//! directives. This script passes the resolved include paths to bindgen
+//! and `cxx-build`.
 //!
 //! Each backend is found as libpinyin's `configure.ac` finds it: tkrzw and
 //! Kyoto Cabinet through their `.pc` file (`PKG_CHECK_MODULES`), Berkeley
@@ -236,30 +235,9 @@ mod kyotocabinet {
         println!("cargo:rerun-if-changed=src/kyotocabinet/adapter.h");
         println!("cargo:rerun-if-changed=src/kyotocabinet/adapter.cc");
 
-        // `system-deps` emits the link-search paths and libraries. A
-        // `rustc-link-arg` is package-scoped: cargo applies it only to the
-        // targets it builds from THIS package — this crate's lib and its
-        // own test artifacts — never to another package's binaries. The
-        // rpath below therefore covers `cargo test -p oxpinyin-store` and
-        // nothing else. `oxpinyin-training` links a final binary against
-        // Kyoto Cabinet, so the directories are also published as the
-        // `lib_dir` links metadata, which its build script reads
-        // (`DEP_OXPINYIN_STORE_LIB_DIR`) for its own rpath. That rpath is a
-        // convenience, not the contract: any other artifact built without
-        // it must still find the library via LD_LIBRARY_PATH or its own
-        // rpath setting. System link paths are not in `link_paths`, as
-        // pkg-config itself leaves them out, so no rpath names one.
         let library = dependencies
             .get_by_name("kyotocabinet")
             .expect("system-deps probes kyotocabinet when the feature is on");
-        for path in &library.link_paths {
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-        }
-        if !library.link_paths.is_empty() {
-            let joined = std::env::join_paths(&library.link_paths)
-                .expect("a library directory holds no path-list separator");
-            println!("cargo:lib_dir={}", joined.to_string_lossy());
-        }
         let Some(header) = library
             .include_paths
             .iter()
@@ -337,23 +315,6 @@ mod tkrzw {
         super::native::add_includes(&mut bridge, &library.include_paths);
         bridge.compile("oxpinyin_tkrzw_bridge");
         super::native::link_after_archive(library);
-
-        // PE targets have no rpath, and link.exe reports the raw flag as
-        // LNK4044, which the `linker_messages` lint turns into a failed
-        // build under `-D warnings`; see the Berkeley DB module.
-        if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
-            for path in &library.link_paths {
-                // A library outside the loader's default path would
-                // otherwise link but fail to start.
-                //
-                // Package-scoped, like every build-script `rustc-link-arg`
-                // (see the Kyoto Cabinet module): this rpath reaches this
-                // package's own lib, test and bench artifacts and nothing
-                // else. Any other artifact finds the library through the
-                // runtime library path or its own rpath.
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-            }
-        }
     }
 }
 
@@ -426,22 +387,6 @@ mod bdb {
         let library = dependencies
             .get_by_name("bdb")
             .expect("system-deps probes bdb when the feature is on");
-        // The rpath is GNU-ld/ELF syntax; PE targets have no rpath, and the
-        // raw flag reaches the Windows linker as at best a warning it
-        // ignores — link.exe's LNK4044 "unrecognized option; ignored"
-        // (documented) or lld-link's "ignoring unknown argument"
-        // (observed) — so it is emitted only where it means something.
-        // CARGO_CFG_TARGET_OS describes the TARGET cargo is building for,
-        // unlike `cfg!`, which describes this build script's host.
-        //
-        // Package-scoped, like every build-script `rustc-link-arg` (see the
-        // Kyoto Cabinet module): reaches this package's own lib, test and
-        // bench artifacts and nothing else.
-        if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
-            for path in &library.link_paths {
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path.display());
-            }
-        }
         // With no `SYSTEM_DEPS_BDB_INCLUDE`, `<db.h>` is resolved on the
         // compiler's default include path, as the pin's configure does.
         let clang_args: Vec<String> = library

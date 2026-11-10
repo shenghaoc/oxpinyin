@@ -16,7 +16,6 @@
 | oxpinyin-runtime | Shared concrete assembly of tables, model and user wiring into Session. | forbid | yes | via capi |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
-| oxpinyin-training | The `eval` module: the decode behind `eval_correction_rate`. `oxpinyin-utils` carries the pin-named utilities. | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model operations on the pin's `FlexibleBigram` container: generate, estimate, merge, validate, prune, export and import; `oxpinyin-utils` carries the seven pin-named binaries. | forbid | yes | never |
 
 `oxpinyin-core` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.

@@ -150,8 +150,8 @@ reads.
 
 ## The evaluation dump reader
 
-`oxpinyin_training::eval::parse_interpolation_dump`
-(`crates/oxpinyin-training/src/eval/counts.rs`) is a separate, lenient
+`parse_interpolation_dump`
+(`crates/oxpinyin-utils/src/training/eval/counts.rs`) is a separate, lenient
 reader for `export_interpolation` dumps that feed the correction-rate
 evaluator. It skips any line it cannot parse, keeps the last count on a
 duplicate token, and reads the tokens from fixed field positions. Its
