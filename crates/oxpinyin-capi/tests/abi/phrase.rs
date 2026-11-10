@@ -107,6 +107,7 @@ fn segment_two_adjacent_phrases() {
     // wins is the pinned oracle differential's business, not a unit
     // test's.)
     assert_eq!(phrase_token(&fixture, 2), Some(zhongguo));
+    assert_eq!(phrase_token(&fixture, 3), Some(0));
     let _ = nihao;
 
     // Out-of-range: false with the out-param zeroed.
@@ -117,6 +118,16 @@ fn segment_two_adjacent_phrases() {
         &raw mut token
     ));
     assert_eq!(token, 0, "zeroed before the bounds check");
+}
+
+#[test]
+fn empty_segment_succeeds_with_an_empty_result() {
+    // The pin's final step matches the start node for zero input
+    // (074a2219 phrase_lookup.cpp:36-53,382-428).
+    let fixture = Fixture::new("phrase-empty");
+    assert!(segment(&fixture, ""));
+    assert_eq!(n_phrase(&fixture), 0);
+    assert_eq!(phrase_token(&fixture, 0), None);
 }
 
 /// The failed-match shape: an ASCII sentence matches no phrase, the
