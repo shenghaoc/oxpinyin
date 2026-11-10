@@ -602,7 +602,6 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            kind: cand.kind(),
             type_tag: match cand.kind() {
                 oxpinyin_engine::CandidateKind::Sentence => {
                     lookup_candidate_type_t::NBEST_MATCH_CANDIDATE

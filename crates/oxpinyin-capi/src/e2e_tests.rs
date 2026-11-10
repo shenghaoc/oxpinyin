@@ -16,7 +16,6 @@
 //! `InvalidPhrase` → `false`.
 
 use oxpinyin_core::{Dictionary as _, PhraseToken};
-use oxpinyin_engine::CandidateKind;
 use oxpinyin_facade::TextSpan;
 use std::ffi::c_uint;
 use std::ptr;
@@ -420,7 +419,6 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
     inst.state.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),
-        kind: CandidateKind::Phrase,
         type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
         nbest_index: 0,
         token: Some(PhraseToken::new(token)),
