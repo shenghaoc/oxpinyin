@@ -81,9 +81,10 @@ residual (496 1-best, 492 distinct-set and 491 ordered of 500) is asserted by th
 
 ## 3. The oracle pin
 
-`tools/oracle/oracle-pin.txt` plus the constants in
-`tools/oracle/build-oracle.sh` (libpinyin commit, ibus-libpinyin commit,
-model SHA-256, DBM) are one identity; change every field together. The
+`tools/oracle/oracle-pin.txt` is the pin identity (libpinyin version and
+commit, ibus-libpinyin tag and commit, model SHA-256, DBM). No other file
+repeats its values: `tools/oracle/build.py` and `tools/dev/cell.py` read it.
+Change every field of one pin move together. The
 2026-09-06 move to 074a2219 is the worked example
 (`oracle-pin-074a221-verification`,
 `docs/testing/oracle-environment.md`, "Amendment — pin 074a2219"):

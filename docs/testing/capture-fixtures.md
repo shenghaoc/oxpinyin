@@ -17,7 +17,7 @@ libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff
 Reproduce from a clean ignored build directory:
 
 ```bash
-tools/oracle/build-oracle.sh --dbm tkrzw --work-dir target/oracle --jobs 4
+python3 tools/oracle/build.py --dbm tkrzw --work-dir target/oracle --jobs 4
 # The `just compat capture` recipe was removed on 2026-11-06 UTC with the
 # compat launcher; no replacement recipe exists yet.
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt

@@ -38,7 +38,7 @@ upgrades (typo edges, model changes) now say Stage 3.
 Authoritative freeze: `docs/testing/oracle-environment.md`  
 (libpinyin `2.11.92` / ibus-libpinyin `1.16.5` / model archive SHA-256s).
 
-Build: `tools/oracle/build-oracle.sh`; the local `performance` stage of `tools/oracle/Dockerfile.oracle`
+Build: `tools/oracle/build.py`, started by `just provision-oracle`; the local `performance` stage of `tools/oracle/Dockerfile.oracle`
 carries a prebuilt oracle at `/opt/libpinyin-tkrzw` for the perf work.
 
 ## How work proceeds

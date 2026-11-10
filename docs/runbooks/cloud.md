@@ -248,7 +248,7 @@ by the inherited value. The remaining overwrites were classified as follows:
 | `measure callgrind-differential`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
 | `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
 | `just cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
-| `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
+| `tools/oracle/build.py`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
 | `tools/dev/provision.py`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 
 No listed remaining measurement overwrite is exempt as never-tkrzw.
@@ -310,7 +310,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    of the recipe and `oracle-pin.txt`), it is pulled and the cells are copied out of it. A cell
    whose pin/recipe stamp or recorded bytes fail validation is discarded and built
    instead, as is every cell when no image exists: the pinned image's
-   `deps` stage is built and `tools/oracle/build-oracle.sh --libs-only
+   `deps` stage is built and `python3 tools/oracle/build.py --libs-only
    --enable-libzhuyin --dbm <cell>` runs inside it, at the same in-image
    paths as the Dockerfile (`/build/<cell>`, `/opt/pinyin-oracle/<cell>`).
    Apple container skips the published image and always builds the cells
@@ -361,7 +361,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
    build when the cached revision is present and loads its own library.
 4. Uses model20 fetched early with the model fetch (`tools/dev/model.py`) into
-   `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
+   `<cache>/model20`, runs `build.py --regen-data` per cell inside
    the image, and re-verifies the installed files with the shared
    [data verification](#data-verification). The data is generated in a
    staging area and published with its own manifest hashes. Reuse checks these
