@@ -126,25 +126,13 @@ jobs:
         run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flag
         id: gate
+        # The event's base: the PR base sha, or the previous pushed head. The
+        # script decides what a base it cannot diff from means:
+        # --run-without-base makes an empty base, one that is not a commit here
+        # or one with no merge base print run=true, the over-trigger direction.
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            base='${{ github.event.pull_request.base.sha }}'
-          else
-            base='${{ github.event.before }}'
-          fi
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            echo "base $base unavailable; running every job"
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # cells-for-diff.py diffs from the merge base; a base with none (an
-          # unrelated history) over-triggers like an unavailable one.
-          if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
-            echo "no merge base with $base; running every job"
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
           # a path under crates/oxpinyin-store/, a feature = "<backend>" line
@@ -156,7 +144,7 @@ jobs:
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
-          python3 tools/bisection/cells-for-diff.py --run-flag \
+          python3 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
             --also crates/oxpinyin-utils/ \
@@ -170,7 +158,7 @@ jobs:
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
             --also fuzz/rust-toolchain.toml \
-            "$base" >> "$GITHUB_OUTPUT"
+            "$BASE" >> "$GITHUB_OUTPUT"
 
   store-features:
     needs: changes

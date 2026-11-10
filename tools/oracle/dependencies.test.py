@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -24,6 +25,17 @@ class OracleDependenciesTests(unittest.TestCase):
         for line in copies:
             self.assertRegex(line, pattern)
 
+    def test_builder_guards_the_floor_source_line(self):
+        """Static, on every host: the guard is the command after the source line. What it does at run time is the next test."""
+        lines = (ROOT / 'tools/oracle/build-oracle.sh').read_text(encoding='utf-8').splitlines()
+        source = lines.index('. "${0%/*}/../lib/bash-floor.sh"')
+        self.assertEqual(lines[source + 1], '[[ $? -eq 0 && -n ${OXPINYIN_BASH_FLOOR-} ]] || '
+                         '{ echo "FAIL: $0: Bash floor not sourced" >&2; exit 2; }')
+        self.assertLess(source, lines.index('set -euo pipefail'))
+
+    # build-oracle.sh is a Unix builder. Windows has no Bash this repository supports: a bare `bash`
+    # there is the WSL launcher, so this run-time check belongs to the hosts that build the oracle.
+    @unittest.skipIf(sys.platform == 'win32', 'build-oracle.sh runs under Bash on Unix only')
     def test_missing_bash_floor_fails_closed_even_with_inherited_sentinel(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / 'build-oracle.sh'
