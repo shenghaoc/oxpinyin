@@ -60,7 +60,7 @@ Before a push for review or merge, and after any rebase, run one `cargo clippy -
   - `cargo deny --locked --all-features --log-level error check`
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
 - ShellCheck when a shell script changed.
-- Lizard 1.24.0 (`lizard crates/ -l rust -C 40`) when Rust functions changed.
+- Lizard 1.24.0 (`lizard crates/ -l rust -C 40 -w`) when Rust functions changed. CCN 40 is the limit. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
 - `just test-tools` when `tools/` changed.
 
 WIP checkpoint pushes: `cargo fmt --all --check` only.
@@ -205,7 +205,7 @@ If none is available, report "tkrzw: not run (no sound libtkrzw on this host)" a
 
 ## 10. CI merge conditions
 
-These four rules govern the CI gates. State each rule here only. A workflow or a runbook that needs a rule links to this section.
+These rules govern the CI gates. State each rule here only. A workflow or a runbook that needs a rule links to this section.
 
 1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the called store-backends gate.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
@@ -215,3 +215,9 @@ These four rules govern the CI gates. State each rule here only. A workflow or a
    The full-data contract tests run on tkrzw only.
 3. **Fuzzing runs nightly, never on the PR gate.** Do not change its schedule.
 4. **Coverage is advisory.** It never drives new tests.
+5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds each job's paths.
+   A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
+   The generated Rust tables are such files.
+   Within a job, no step depends on the changed paths, so a job's success always means the same checks.
+   The Python version request rule reads every tracked file, so it runs on every change.
+   A later run of the same tree reuses a pull request run only when that run passed every job the later run selects, within 24 hours.

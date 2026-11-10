@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -296,6 +297,169 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(self.evidence(api), 100)
 
 
+def source_jobs(ran):
+    """A source run's jobs: the lanes in ran succeeded, every other lane was skipped."""
+    lanes = [successful_job(name) if name in ran else dict(name=name, status='completed', conclusion='skipped')
+             for name in PROFILE.lanes]
+    return lanes + [successful_job(PROFILE.aggregate), successful_job('tested tree ' + TREE)]
+
+
+class SelectedLaneEvidenceTests(unittest.TestCase):
+    """Reuse needs source evidence for each lane the current run selects, and for no other lane."""
+
+    def evidence(self, ran, selected, change=None, event_name='push'):
+        api = API()
+        api.jobs = source_jobs(ran)
+        if change:
+            change(api.jobs)
+        event = {'ref': 'refs/heads/main', 'after': REBASED, 'pull_request': pr_fixture()}
+        return ci_tree.find_evidence(api, PROFILE, event, event_name, TREE, 1, 200, now=NOW,
+                                     lanes=tuple(selected))
+
+    def test_the_truth_table_of_source_and_current_selections(self):
+        rust, everything = ('lint', 'test'), PROFILE.lanes
+        cases = (
+            # (lanes the source ran, lanes the current run selects, reused)
+            (rust, rust, True),
+            (rust, ('lint',), True),
+            (everything, rust, True),
+            (everything, everything, True),
+            (everything, (), True),
+            ((), (), True),
+            (rust, ('lint', 'test', 'deny'), False),
+            (rust, everything, False),
+            (rust, ('harness',), False),
+            (('lint',), rust, False),
+            ((), ('deny',), False),
+        )
+        for ran, selected, reused in cases:
+            for event_name in ('push', 'pull_request'):
+                with self.subTest(ran=ran, selected=selected, event_name=event_name):
+                    self.assertEqual(self.evidence(ran, selected, event_name=event_name), 100 if reused else None)
+
+    def test_a_selected_lane_that_did_not_succeed_freshly_once_never_authorizes_reuse(self):
+        selected = ('lint', 'test')
+
+        def job(jobs, name):
+            return next(job for job in jobs if job['name'] == name)
+        changes = {
+            'failure': lambda jobs, name: job(jobs, name).update(conclusion='failure'),
+            'cancelled': lambda jobs, name: job(jobs, name).update(conclusion='cancelled'),
+            'skipped': lambda jobs, name: job(jobs, name).update(conclusion='skipped'),
+            'no conclusion': lambda jobs, name: job(jobs, name).update(conclusion=None),
+            'in progress': lambda jobs, name: job(jobs, name).update(status='in_progress'),
+            'missing': lambda jobs, name: jobs.remove(job(jobs, name)),
+            'duplicate': lambda jobs, name: jobs.append(deepcopy(job(jobs, name))),
+            'stale': lambda jobs, name: job(jobs, name).update(
+                started_at=(NOW - ci_tree.EVIDENCE_MAX_AGE - timedelta(seconds=1)).isoformat()),
+            'no timestamp': lambda jobs, name: job(jobs, name).pop('started_at'),
+        }
+        for name in (*selected, PROFILE.aggregate, 'tested tree ' + TREE):
+            for label, change in changes.items():
+                with self.subTest(name=name, change=label):
+                    self.assertIsNone(self.evidence(PROFILE.lanes, selected, lambda jobs: change(jobs, name)))
+
+    def test_a_lane_the_current_run_does_not_select_is_not_read(self):
+        for conclusion in ('skipped', 'failure', 'cancelled', None):
+            with self.subTest(conclusion=conclusion):
+                def change(jobs):
+                    for job in jobs:
+                        if job['name'] in ('deny', 'harness'):
+                            job['conclusion'] = conclusion
+                self.assertEqual(self.evidence(PROFILE.lanes, ('lint', 'test'), change), 100)
+        self.assertEqual(self.evidence(PROFILE.lanes, ('lint', 'test'),
+                                       lambda jobs: jobs.__delitem__(slice(2, 4))), 100)
+
+    def test_a_marker_for_another_tree_or_a_changed_tree_is_no_evidence(self):
+        def other_marker(jobs):
+            jobs[-1]['name'] = 'tested tree ' + 'f' * 40
+        self.assertIsNone(self.evidence(('lint',), ('lint',), other_marker))
+        api = API()
+        api.jobs = source_jobs(('lint',))
+        api.tree = 'f' * 40
+        event = {'ref': 'refs/heads/main', 'after': REBASED}
+        self.assertIsNone(ci_tree.find_evidence(api, PROFILE, event, 'push', TREE, 1, 200, now=NOW, lanes=('lint',)))
+
+    def test_no_selection_requires_every_lane(self):
+        api = API()
+        api.jobs = source_jobs(('lint', 'test'))
+        event = {'ref': 'refs/heads/main', 'after': REBASED}
+        self.assertIsNone(ci_tree.find_evidence(api, PROFILE, event, 'push', TREE, 1, 200, now=NOW))
+        self.assertFalse(ci_tree.complete_jobs(api.jobs, PROFILE, TREE, NOW))
+        self.assertTrue(ci_tree.complete_jobs(api.jobs, PROFILE, TREE, NOW, ('lint', 'test')))
+
+    def test_a_lane_outside_the_workflow_is_no_evidence(self):
+        self.assertFalse(ci_tree.complete_jobs(job_fixture(), PROFILE, TREE, NOW, ('lint', 'shipping-sizes')))
+
+    def test_a_reused_run_is_revalidated_against_the_current_selection(self):
+        api = API()
+        api.jobs = source_jobs(('lint', 'test'))
+        latest = {**run_fixture(), 'id': 101}
+        jobs = [dict(name=name, status='completed', conclusion='skipped') for name in PROFILE.skipped_lanes]
+        jobs += [successful_job(PROFILE.aggregate), successful_job('reused tree ' + TREE + ' from run 100')]
+        original_get = api.get
+        api.get = lambda path: run_fixture() if path == '/actions/runs/100' else original_get(path)
+
+        def source(lanes):
+            return ci_tree.full_source(api, latest, jobs, PROFILE, TREE, 1, 2, 200, now=NOW, lanes=lanes)
+        self.assertEqual(source(('lint', 'test')), 100)
+        self.assertEqual(source(()), 100)
+        self.assertIsNone(source(('lint', 'test', 'deny')))
+        self.assertIsNone(source(None))
+        api.jobs[0]['started_at'] = (NOW - timedelta(days=2)).isoformat()
+        self.assertIsNone(source(('lint', 'test')))
+        self.assertEqual(source(('test',)), 100)
+
+    def test_selected_lanes_follow_the_flags_and_refuse_invalid_ones(self):
+        flags = {'lint': 'true', 'test': 'true', 'deny': 'false', 'harness': 'false', 'ship': 'true', 'shell': 'false'}
+        self.assertEqual(ci_tree.selected_lanes(PROFILE, flags), ('lint', 'test'))
+        self.assertEqual(ci_tree.selected_lanes(PROFILE, every('false')), ())
+        store = ci_tree.WORKFLOWS['store']
+        self.assertEqual(ci_tree.selected_lanes(store, {'run': 'true'}), store.lanes)
+        self.assertEqual(ci_tree.selected_lanes(store, {'run': 'false'}), ())
+        for invalid in ({**flags, 'deny': ''}, {**flags, 'deny': 'yes'}, {**flags, 'deny': True},
+                        {name: value for name, value in flags.items() if name != 'harness'}, {}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    ci_tree.selected_lanes(PROFILE, invalid)
+
+    def run_main(self, gate_flags):
+        """The `evidence ci` command over a source run that ran lint and test; returns its outputs."""
+        api = API()
+        api.jobs = source_jobs(('lint', 'test'))
+        # The command reads the real clock, so the source jobs ran an hour ago.
+        recent = datetime.now(timezone.utc) - timedelta(hours=1)
+        for job in api.jobs:
+            if 'started_at' in job:
+                job.update(started_at=recent.isoformat(), completed_at=recent.isoformat())
+        with tempfile.TemporaryDirectory() as directory:
+            output, summary, event = (Path(directory, name) for name in ('output', 'summary', 'event.json'))
+            event.write_text(json.dumps({'ref': 'refs/heads/main', 'after': REBASED}))
+            env = {'GITHUB_REPOSITORY': 'owner/repo', 'GH_TOKEN': 'unit-test-placeholder',
+                   'GITHUB_EVENT_NAME': 'push', 'GITHUB_EVENT_PATH': str(event),
+                   'GITHUB_REPOSITORY_ID': '1', 'GITHUB_RUN_ID': '200',
+                   'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)}
+            if gate_flags is not None:
+                env['GATE_FLAGS'] = gate_flags
+            with mock.patch.dict(ci_tree.os.environ, env, clear=True), \
+                    mock.patch.object(ci_tree, 'GitHub', return_value=api), \
+                    mock.patch.object(ci_tree, 'git_tree', return_value=TREE), \
+                    mock.patch.object(sys, 'argv', ['ci_tree.py', 'evidence', 'ci']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ci_tree.main(), 0)
+            return output.read_text()
+
+    def test_the_command_reads_the_gate_flags_and_fails_closed(self):
+        flags = {'lint': 'true', 'test': 'true', 'deny': 'false', 'harness': 'false'}
+        self.assertIn('source_run=100\n', self.run_main(json.dumps(flags)))
+        self.assertIn('reuse=true\n', self.run_main(json.dumps(flags)))
+        for gate_flags in (json.dumps({**flags, 'deny': 'true'}), json.dumps({**flags, 'harness': ''}),
+                           json.dumps({'lint': 'true'}), '{}', '[]', 'null', '', 'not json', None):
+            with self.subTest(gate_flags=gate_flags):
+                self.assertIn('source_run=\n', self.run_main(gate_flags))
+                self.assertIn('reuse=false\n', self.run_main(gate_flags))
+
+
 class RefreshTests(unittest.TestCase):
     def test_other_cache_lanes_keep_their_test_compile_selections(self):
         self.assertEqual(ci_tree.refresh_commands('test')[0].argv,
@@ -456,12 +620,13 @@ class GateTests(unittest.TestCase):
 
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
-            'docs/note.md': {'harness'},
+            'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
             'docs/findings/glib-libc-call-sites.tsv': {'harness'},
-            'AGENTS.md': {'harness'},
+            'AGENTS.md': set(),
+            # cells-for-diff.test.py runs the gate script in this workflow.
             '.github/workflows/store-backends.yml': {'harness'},
-            '.github/workflows/verify-nightly.yml': {'harness'},
+            '.github/workflows/verify-nightly.yml': set(),
             'tools/bisection/contract_axis_c.py': {'harness'},
             'tools/dev/ci_tree.test.py': {'harness'},
             'tools/oracle/build-oracle.sh': {'lint', 'harness'},
@@ -471,18 +636,33 @@ class GateTests(unittest.TestCase):
             'tools/oracle/oracle-pin.txt': {'lint', 'test', 'harness', 'ship'},
             'tools/bisection/startup_profile.py': {'lint', 'test', 'harness'},
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
-            'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'harness', 'ship'},
+            # A Rust-only change does not select the harness.
+            'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin-core/tests/suite.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin-core/src/table_data/mod.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin-store/examples/bdb_write_profile.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin-engine/benches/new.rs': {'lint', 'test', 'ship'},
+            # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
+            'crates/oxpinyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
+            'crates/oxpinyin-capi/build_pin_version.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
+            'crates/oxpinyin-capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
+            'crates/oxpinyin-zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},
             'fixtures/w3/tkt/bigram.db': {'lint', 'test', 'harness'},
-            'fuzz/Cargo.lock': {'lint', 'deny', 'harness'},
-            'fuzz/fuzz_targets/x.rs': {'lint', 'harness'},
-            'deny.toml': {'deny', 'harness'},
-            'clippy.toml': {'lint', 'harness'},
-            '.config/nextest.toml': {'test', 'harness'},
+            'fuzz/Cargo.lock': {'lint', 'deny'},
+            'fuzz/fuzz_targets/x.rs': {'lint'},
+            'fuzz/rust-toolchain.toml': {'lint', 'harness'},
+            'deny.toml': {'deny'},
+            'clippy.toml': {'lint'},
+            '.config/nextest.toml': {'test'},
             'Cargo.lock': {'lint', 'test', 'deny', 'harness', 'ship'},
+            'rust-toolchain.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
+            '.python-version': {'lint', 'test', 'harness'},
+            'justfile': {'lint', 'test', 'harness', 'ship'},
+            '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
-            'scripts/new.sh': {'lint', 'harness'},
+            'scripts/new.sh': {'lint'},
             'tools/bisection/契约.py': {'harness'},
         }
         for path, jobs in cases.items():
@@ -496,6 +676,35 @@ class GateTests(unittest.TestCase):
                              'R100\tcrates/oxpinyin-core/lib\tdocs/lib')
             flags = ci_tree.gate(self.base, root=self.root)
             self.assertEqual({name for name, value in flags.items() if value}, {'lint', 'test', 'harness', 'ship'})
+
+    def test_every_generated_table_selects_the_harness(self):
+        from tools.dev import rust_tables
+        self.assertEqual(set(ci_tree.GENERATED_TABLES), set(rust_tables.render()),
+                         'GENERATED_TABLES must name exactly the files rust-tables writes')
+        self.assertEqual(len(ci_tree.GENERATED_TABLES), 13)
+        for path in ci_tree.GENERATED_TABLES:
+            with self.subTest(path=path):
+                self.assertTrue((ROOT / path).is_file())
+                self.assertEqual(self.selected(path), {'lint', 'test', 'harness', 'ship'})
+
+    def test_no_step_of_a_lane_depends_on_a_path_flag(self):
+        # Evidence is read per lane: a successful `lint` in the source run stands for every
+        # check of `lint`, ShellCheck included. A step that ran only for some path selection
+        # would let a later run with another selection reuse a result that never ran it.
+        workflow = (ROOT / PROFILE.path).read_text()
+        outputs = set(re.findall(r'needs\.changes\.outputs\.(\w+)', workflow))
+        self.assertEqual(outputs, {*PROFILE.flags, 'ship', 'reuse', 'tree', 'source_run'})
+        self.assertEqual(set(ci_tree.CI_INPUTS), {*PROFILE.flags, 'ship'})
+        steps = re.findall(r'^ {6,}(?:- )?if: (.*)$', workflow, re.MULTILINE)
+        self.assertGreater(len(steps), 20)
+        for condition in steps:
+            with self.subTest(condition=condition):
+                self.assertEqual(set(re.findall(r'needs\.changes\.outputs\.(\w+)', condition)) - {'reuse'}, set())
+        shellcheck = re.search(r'- name: ShellCheck tracked scripts[^\n]*\n +if: (.*)\n', workflow)
+        self.assertEqual(shellcheck[1], "needs.changes.outputs.reuse != 'true'")
+        # The lint job is selected by every tracked script.
+        self.assertTrue(ci_tree.CI_INPUTS['lint'].selects('tools/oracle/build-oracle.sh'))
+        self.assertTrue(ci_tree.CI_INPUTS['lint'].selects('new.sh'))
 
     def test_event_base(self):
         self.assertEqual(ci_tree.event_base('pull_request', {'pull_request': {'base': {'sha': HEAD}}}), HEAD)
