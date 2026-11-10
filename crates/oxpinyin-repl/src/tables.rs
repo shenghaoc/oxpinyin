@@ -1,11 +1,14 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
-use super::*;
-use crate::storage::dbm::Tree;
+use crate::{load_text_tables, present};
 use oxpinyin_core::{ChewingKey, PINYIN_INCOMPLETE, USE_TONE};
 use oxpinyin_data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
 use oxpinyin_data::{chewing_index_key as index_key, search_chewing_row as search_row};
+use oxpinyin_input::tool;
 use oxpinyin_input::tool::table_tests as output;
+use oxpinyin_user::tool::Index;
+use oxpinyin_utils::storage::dbm::Tree;
 use std::ops::Range;
+use std::{ffi::CString, path::Path};
 
 /// The source's compressed ranges, in library and stored item order.
 pub(crate) type Ranges = [Vec<Range<u32>>; 16];
@@ -17,13 +20,13 @@ pub(crate) struct Tables {
 }
 
 impl Tables {
-    pub(crate) fn load(chewing: bool) -> Self {
-        let conf = conf();
+    pub(crate) fn load(data: &Path, chewing: bool) -> Self {
+        let conf = crate::conf(data);
         let table = Tree::memory().unwrap_or_else(|_| tool::abort());
         let indices = if chewing {
-            load_text_tables(&conf, Some(&table), None)
+            load_text_tables(data, &conf, Some(&table), None)
         } else {
-            load_text_tables(&conf, None, Some(&table))
+            load_text_tables(data, &conf, None, Some(&table))
         };
         Self { table, indices }
     }
@@ -121,9 +124,9 @@ impl Tables {
     }
 }
 
-/// test_phrase_table: timed token lookup, continuation prefixes and final mask.
-pub fn phrase_main() {
-    let tables = Tables::load(false);
+/// test_phrase_table: token lookup, continuation prefixes and final mask.
+pub fn phrase_main(data: &Path) {
+    let tables = Tables::load(data, false);
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
@@ -145,11 +148,6 @@ pub fn phrase_main() {
         if length == 0 {
             continue;
         }
-        let start = tool::timer::record_time();
-        for _ in 0..1000 {
-            let _ = tables.phrase_search(&words);
-        }
-        tool::timer::print_time(start, 1000);
         for length in 1..words.len() {
             if tables.phrase_search(&words[..length]).0 {
                 output::continued(length);
@@ -167,8 +165,8 @@ pub fn phrase_main() {
 }
 
 /// test_chewing_table: full-pinyin queries and the source's exact range dump.
-pub fn chewing_main() {
-    let tables = Tables::load(true);
+pub fn chewing_main(data: &Path) {
+    let tables = Tables::load(data, true);
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
@@ -180,11 +178,10 @@ pub fn chewing_main() {
             continue;
         }
         let keys: Vec<_> = parsed.keys.into_iter().map(|key| key.key).collect();
-        let start = tool::timer::record_time();
-        for _ in 0..1000 {
-            let _ = tables.chewing_search(&keys);
-        }
-        tool::timer::print_time(start, 1000);
+        // Not a timing leftover: the pin's first whole-key search
+        // (`tests/storage/test_chewing_table.cpp:86` at 074a2219) aborts or
+        // refuses before any continuation line is printed.
+        let _ = tables.chewing_search(&keys);
         for length in 1..keys.len() {
             if tables.chewing_search(&keys[..length]).0 {
                 output::continued(length);

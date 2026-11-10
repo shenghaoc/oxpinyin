@@ -498,26 +498,34 @@ fn an_existing_empty_file_follows_the_backends_open() {
     }
 }
 
+/// tests/storage/test_flexible_ngram.cpp:59-60 at 074a2219 is the
+/// read-write-create attach, there of `/tmp/training.db`.
 #[test]
 fn a_failed_create_retry_follows_the_backends_rule() {
     // Kyoto Cabinet keeps the object whose CREATE retry failed
     // (`flexible_ngram_kyotodb.h:154-155`); tkrzw deletes it
     // (`flexible_ngram_tkrzwdb.h:154-158`); Berkeley DB closes the handle.
     let scratch = Scratch::new("retry");
-    let path = scratch.path().join("no-such-directory").join("model.db");
-    let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
-    assert!(!model.attached());
-    if cfg!(feature = "kyotocabinet") {
-        assert!(model.store(11, &gram_with_header()).is_err(), "INVALID");
-        assert_eq!(
-            model.get_all_items(),
-            Some(Vec::new()),
-            "the unopened HashDB stays"
-        );
-    } else {
-        assert!(model.get_all_items().is_none());
-        assert!(!model.store(11, &gram_with_header()).expect("closed store"));
+    let absent_parent = scratch.path().join("no-such-directory").join("model.db");
+    let directory = scratch.path().join("training.db");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("keep"), b"occupied").unwrap();
+    for path in [&absent_parent, &directory] {
+        let model = Model::attach(Some(path), AttachMode::ReadWriteCreate).expect("attach");
+        assert!(!model.attached());
+        if cfg!(feature = "kyotocabinet") {
+            assert!(model.store(11, &gram_with_header()).is_err(), "INVALID");
+            assert_eq!(
+                model.get_all_items(),
+                Some(Vec::new()),
+                "the unopened HashDB stays"
+            );
+        } else {
+            assert!(model.get_all_items().is_none());
+            assert!(!model.store(11, &gram_with_header()).expect("closed store"));
+        }
     }
+    assert_eq!(fs::read(directory.join("keep")).unwrap(), b"occupied");
 }
 
 #[test]

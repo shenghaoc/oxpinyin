@@ -107,6 +107,11 @@ packaging *args:
     @{{windows_args}} echo "packaging is unsupported on Windows: the assemblies need chmod, readelf, dpkg and the Linux package layout."
     @{{windows_args}} exit 1
 
+# Nonshipping interactive modes use disposable W3 data. Linux and macOS only.
+[unix]
+repl mode *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.repl "$@"
+
 # Stage built utilities in the tree expected by epico/trainer.
 [unix]
 trainer-layout target *args: python

@@ -52,6 +52,14 @@ The remaining stage binaries keep their names and arguments.
 To run or test them, select the consolidated Cargo package, for example:
 `cargo run --locked -p oxpinyin-utils --bin ngseg -- --help`.
 
+The nonshipping `oxpinyin-repl` combines the ten interactive upstream test
+modes. It runs on Linux and macOS and needs GLib, as `oxpinyin-utils` does.
+Run `just repl pinyin` (or `just repl parser2 -- --parser zhuyin`).
+Each invocation copies `fixtures/w3` to a temporary directory; training and
+other writes are discarded on exit. Select a backend with `--backend bdb`
+or `--backend kyotocabinet`. The two text-table modes also stage the authored `fixtures/datagen-toned`
+text tables. The 21 utilities keep their drop-in interfaces.
+
 ## Upstream
 
 - Behaviour oracle: [libpinyin](https://github.com/libpinyin/libpinyin).

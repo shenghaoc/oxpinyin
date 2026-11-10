@@ -724,6 +724,30 @@ mod tests {
         assert_eq!(conf.system_libraries().count(), 0);
     }
 
+    /// tests/storage/test_table_info.cpp:26-83 at 074a2219: each default
+    /// and addon row by its index, file type and NULL-able names.
+    #[test]
+    fn addon_replacement_and_null_columns_keep_their_indexed_types() {
+        let text = format!(
+            "{STOCK}default GB_DICTIONARY NULL NULL NULL SYSTEM_FILE\naddon 15 old.table old.bin old.user SYSTEM_FILE\naddon 15 new.table new.bin NULL DICTIONARY\naddon 3 NULL NULL NULL USER_FILE\n"
+        );
+        let conf = parse(&text).unwrap();
+        let system = conf.default_row(1).unwrap();
+        assert_eq!(system.file_type, FileType::SystemFile);
+        assert_eq!(
+            (&system.table, &system.system, &system.user),
+            (&None, &None, &None)
+        );
+        let addon = conf.addon_row(15).unwrap();
+        assert_eq!(addon.file_type, FileType::Dictionary);
+        assert_eq!(addon.table, Some(FileName::from_bytes(b"new.table")));
+        assert_eq!(addon.system, Some(FileName::from_bytes(b"new.bin")));
+        assert_eq!(addon.user, None);
+        let user = conf.addon_row(3).unwrap();
+        assert_eq!(user.file_type, FileType::UserFile);
+        assert_eq!(user.user, None);
+    }
+
     /// `to_index_of_addon_tables` is `atoi` cut to a `guint8`, and only the
     /// assert after it refuses (`table_info.cpp:159-161`, `:276`).
     #[test]

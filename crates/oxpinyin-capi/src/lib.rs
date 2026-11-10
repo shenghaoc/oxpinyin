@@ -120,326 +120,69 @@ pub use state::ExportedBigramRow;
 pub use types::{ChewingKey, ChewingKeyRest, GChar, LookupCandidate, PinyinInstance};
 pub use types::{GArray, ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};
 
-use std::os::raw::{c_char, c_int};
-use types::{GUint, PinyinOptionT};
-
 // ── candidates ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_choose_candidate` ABI symbol (see the C header).
-pub fn pinyin_choose_candidate(
-    instance: *mut PinyinInstance,
-    _offset: usize,
-    candidate: *mut LookupCandidate,
-) -> c_int {
-    candidates::pinyin_choose_candidate(instance, _offset, candidate)
-}
-/// In-process wrapper for the `pinyin_get_candidate` ABI symbol (see the C header).
-pub fn pinyin_get_candidate(
-    instance: *mut PinyinInstance,
-    index: GUint,
-    candidate: *mut *mut LookupCandidate,
-) -> bool {
-    candidates::pinyin_get_candidate(instance, index, candidate)
-}
-/// In-process wrapper for the `pinyin_get_candidate_string` ABI symbol (see the C header).
-pub fn pinyin_get_candidate_string(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-    utf8_str: *mut *const GChar,
-) -> bool {
-    candidates::pinyin_get_candidate_string(instance, candidate, utf8_str)
-}
-/// In-process wrapper for the `pinyin_get_candidate_type` ABI symbol (see the C header).
-pub fn pinyin_get_candidate_type(
-    instance: *mut PinyinInstance,
-    candidate: *mut LookupCandidate,
-    candidate_type: *mut lookup_candidate_type_t,
-) -> bool {
-    candidates::pinyin_get_candidate_type(instance, candidate, candidate_type)
-}
-/// In-process wrapper for the `pinyin_get_n_candidate` ABI symbol (see the C header).
-pub fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
-    candidates::pinyin_get_n_candidate(instance, num)
-}
-/// In-process wrapper for the `pinyin_train` ABI symbol (see the C header).
-pub fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> bool {
-    candidates::pinyin_train(instance, _index)
-}
+pub use candidates::pinyin_choose_candidate;
+pub use candidates::pinyin_get_candidate;
+pub use candidates::pinyin_get_candidate_string;
+pub use candidates::pinyin_get_candidate_type;
+pub use candidates::pinyin_get_n_candidate;
+pub use candidates::pinyin_train;
 
 // ── config ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_unload_addon_phrase_library` ABI symbol (see the C header).
-pub fn pinyin_unload_addon_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
-    config::pinyin_unload_addon_phrase_library(context, index)
-}
-/// In-process wrapper for the `pinyin_mask_out` ABI symbol (see the C header).
-pub fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value: u32) -> bool {
-    config::pinyin_mask_out(context, mask, value)
-}
-/// In-process wrapper for the `pinyin_set_double_pinyin_scheme` ABI symbol (see the C header).
-pub fn pinyin_set_double_pinyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
-    config::pinyin_set_double_pinyin_scheme(context, scheme)
-}
-/// In-process wrapper for the `pinyin_set_full_pinyin_scheme` ABI symbol (see the C header).
-pub fn pinyin_set_full_pinyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
-    config::pinyin_set_full_pinyin_scheme(context, scheme)
-}
-/// In-process wrapper for the `pinyin_set_options` ABI symbol (see the C header).
-pub fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
-    config::pinyin_set_options(context, options)
-}
-/// In-process wrapper for the `pinyin_set_zhuyin_scheme` ABI symbol (see the C header).
-pub fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
-    config::pinyin_set_zhuyin_scheme(context, scheme)
-}
+pub use config::pinyin_mask_out;
+pub use config::pinyin_set_double_pinyin_scheme;
+pub use config::pinyin_set_full_pinyin_scheme;
+pub use config::pinyin_set_options;
+pub use config::pinyin_set_zhuyin_scheme;
+pub use config::pinyin_unload_addon_phrase_library;
 
 // ── instance ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_alloc_instance` ABI symbol (see the C header).
-pub fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance {
-    instance::pinyin_alloc_instance(context)
-}
-/// In-process wrapper for the `pinyin_free_instance` ABI symbol (see the C header).
-pub fn pinyin_free_instance(instance: *mut PinyinInstance) {
-    instance::pinyin_free_instance(instance);
-}
-/// In-process wrapper for the `pinyin_get_context` ABI symbol (see the C header).
-pub fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {
-    instance::pinyin_get_context(instance)
-}
-/// In-process wrapper for the `pinyin_reset` ABI symbol (see the C header).
-pub fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
-    instance::pinyin_reset(instance)
-}
+pub use instance::pinyin_alloc_instance;
+pub use instance::pinyin_free_instance;
+pub use instance::pinyin_get_context;
+pub use instance::pinyin_reset;
 
 // ── parse ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_parse_more_chewings` ABI symbol (see the C header).
-pub fn pinyin_parse_more_chewings(instance: *mut PinyinInstance, chewings: *const c_char) -> usize {
-    parse::pinyin_parse_more_chewings(instance, chewings)
-}
-/// In-process wrapper for the `pinyin_parse_more_double_pinyins` ABI symbol (see the C header).
-pub fn pinyin_parse_more_double_pinyins(
-    instance: *mut PinyinInstance,
-    pinyins: *const c_char,
-) -> usize {
-    parse::pinyin_parse_more_double_pinyins(instance, pinyins)
-}
-/// In-process wrapper for the `pinyin_parse_more_full_pinyins` ABI symbol (see the C header).
-pub fn pinyin_parse_more_full_pinyins(
-    instance: *mut PinyinInstance,
-    pinyins: *const c_char,
-) -> usize {
-    parse::pinyin_parse_more_full_pinyins(instance, pinyins)
-}
+pub use parse::pinyin_parse_more_chewings;
+pub use parse::pinyin_parse_more_double_pinyins;
+pub use parse::pinyin_parse_more_full_pinyins;
 
-/// In-process wrapper for the `pinyin_get_zhuyin_string` ABI symbol (see the C header).
-pub fn pinyin_get_zhuyin_string(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-    utf8_str: *mut *mut GChar,
-) -> bool {
-    cursor::pinyin_get_zhuyin_string(instance, key, utf8_str)
-}
-/// In-process wrapper for the `pinyin_get_pinyin_string` ABI symbol (see the C header).
-pub fn pinyin_get_pinyin_string(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-    utf8_str: *mut *mut GChar,
-) -> bool {
-    cursor::pinyin_get_pinyin_string(instance, key, utf8_str)
-}
-/// In-process wrapper for the `pinyin_get_pinyin_strings` ABI symbol (see the C header).
-pub fn pinyin_get_pinyin_strings(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-    shengmu: *mut *mut GChar,
-    yunmu: *mut *mut GChar,
-) -> bool {
-    cursor::pinyin_get_pinyin_strings(instance, key, shengmu, yunmu)
-}
+pub use cursor::pinyin_get_pinyin_string;
+pub use cursor::pinyin_get_pinyin_strings;
+pub use cursor::pinyin_get_zhuyin_string;
 // ── dict ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_token_add_unigram_frequency` ABI symbol (see the C header).
-pub fn pinyin_token_add_unigram_frequency(
-    instance: *mut PinyinInstance,
-    token: PhraseTokenT,
-    delta: GUint,
-) -> bool {
-    dict::pinyin_token_add_unigram_frequency(instance, token, delta)
-}
-/// In-process wrapper for the `pinyin_token_get_n_pronunciation` ABI symbol (see the C header).
-pub fn pinyin_token_get_n_pronunciation(
-    instance: *mut PinyinInstance,
-    token: PhraseTokenT,
-    num: *mut GUint,
-) -> bool {
-    dict::pinyin_token_get_n_pronunciation(instance, token, num)
-}
-/// In-process wrapper for the `pinyin_token_get_nth_pronunciation` ABI symbol (see the C header).
-pub fn pinyin_token_get_nth_pronunciation(
-    instance: *mut PinyinInstance,
-    token: PhraseTokenT,
-    nth: GUint,
-    keys: *mut GArray,
-) -> bool {
-    dict::pinyin_token_get_nth_pronunciation(instance, token, nth, keys)
-}
-/// In-process wrapper for the `pinyin_token_get_phrase` ABI symbol (see the C header).
-pub fn pinyin_token_get_phrase(
-    instance: *mut PinyinInstance,
-    token: PhraseTokenT,
-    len: *mut GUint,
-    utf8_str: *mut *mut GChar,
-) -> bool {
-    dict::pinyin_token_get_phrase(instance, token, len, utf8_str)
-}
-/// In-process wrapper for the `pinyin_token_get_unigram_frequency` ABI symbol (see the C header).
-pub fn pinyin_token_get_unigram_frequency(
-    instance: *mut PinyinInstance,
-    token: PhraseTokenT,
-    freq: *mut GUint,
-) -> bool {
-    dict::pinyin_token_get_unigram_frequency(instance, token, freq)
-}
-/// In-process wrapper for the `pinyin_token_get_nth_pronunciation`'s load sibling - see the C header.
-pub fn pinyin_load_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
-    config::pinyin_load_phrase_library(context, index)
-}
-/// In-process wrapper for the `pinyin_unload_phrase_library` ABI symbol (see the C header).
-pub fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
-    config::pinyin_unload_phrase_library(context, index)
-}
-/// In-process wrapper for the `pinyin_lookup_tokens` ABI symbol (see the C header).
-pub fn pinyin_lookup_tokens(
-    instance: *mut PinyinInstance,
-    phrase: *const c_char,
-    tokenarray: *mut GArray,
-) -> bool {
-    dict::pinyin_lookup_tokens(instance, phrase, tokenarray)
-}
+pub use config::pinyin_load_phrase_library;
+pub use config::pinyin_unload_phrase_library;
+pub use dict::pinyin_lookup_tokens;
+pub use dict::pinyin_token_add_unigram_frequency;
+pub use dict::pinyin_token_get_n_pronunciation;
+pub use dict::pinyin_token_get_nth_pronunciation;
+pub use dict::pinyin_token_get_phrase;
+pub use dict::pinyin_token_get_unigram_frequency;
 
-/// In-process wrapper for the `pinyin_get_luoma_pinyin_string` ABI symbol (see the C header).
-pub fn pinyin_get_luoma_pinyin_string(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-    utf8_str: *mut *mut GChar,
-) -> bool {
-    keys::pinyin_get_luoma_pinyin_string(instance, key, utf8_str)
-}
-/// In-process wrapper for the `pinyin_get_pinyin_is_incomplete` ABI symbol (see the C header).
-pub fn pinyin_get_pinyin_is_incomplete(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-) -> bool {
-    keys::pinyin_get_pinyin_is_incomplete(instance, key)
-}
-/// In-process wrapper for the `pinyin_get_secondary_zhuyin_string` ABI symbol (see the C header).
-pub fn pinyin_get_secondary_zhuyin_string(
-    instance: *mut PinyinInstance,
-    key: *mut ChewingKey,
-    utf8_str: *mut *mut GChar,
-) -> bool {
-    keys::pinyin_get_secondary_zhuyin_string(instance, key, utf8_str)
-}
-/// In-process wrapper for the `pinyin_parse_chewing` ABI symbol (see the C header).
-pub fn pinyin_parse_chewing(
-    instance: *mut PinyinInstance,
-    onechewing: *const c_char,
-    onekey: *mut ChewingKey,
-) -> bool {
-    keys::pinyin_parse_chewing(instance, onechewing, onekey)
-}
-/// In-process wrapper for the `pinyin_parse_double_pinyin` ABI symbol (see the C header).
-pub fn pinyin_parse_double_pinyin(
-    instance: *mut PinyinInstance,
-    onepinyin: *const c_char,
-    onekey: *mut ChewingKey,
-) -> bool {
-    keys::pinyin_parse_double_pinyin(instance, onepinyin, onekey)
-}
-/// In-process wrapper for the `pinyin_parse_full_pinyin` ABI symbol (see the C header).
-pub fn pinyin_parse_full_pinyin(
-    instance: *mut PinyinInstance,
-    onepinyin: *const c_char,
-    onekey: *mut ChewingKey,
-) -> bool {
-    keys::pinyin_parse_full_pinyin(instance, onepinyin, onekey)
-}
+pub use keys::pinyin_get_luoma_pinyin_string;
+pub use keys::pinyin_get_pinyin_is_incomplete;
+pub use keys::pinyin_get_secondary_zhuyin_string;
+pub use keys::pinyin_parse_chewing;
+pub use keys::pinyin_parse_double_pinyin;
+pub use keys::pinyin_parse_full_pinyin;
 
 // ── sentence ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_get_sentence` ABI symbol (see the C header).
-pub fn pinyin_get_sentence(
-    instance: *mut PinyinInstance,
-    index: u8,
-    sentence: *mut *mut c_char,
-) -> bool {
-    sentence::pinyin_get_sentence(instance, index, sentence)
-}
-/// In-process wrapper for the `pinyin_guess_candidates` ABI symbol (see the C header).
-pub fn pinyin_guess_candidates(
-    instance: *mut PinyinInstance,
-    offset: usize,
-    sort_option: GUint,
-) -> bool {
-    sentence::pinyin_guess_candidates(instance, offset, sort_option)
-}
-/// In-process wrapper for the `pinyin_guess_sentence` ABI symbol (see the C header).
-pub fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
-    sentence::pinyin_guess_sentence(instance)
-}
-/// In-process wrapper for the `pinyin_guess_predicted_candidates` ABI symbol (see the C header).
-pub fn pinyin_guess_predicted_candidates(
-    instance: *mut PinyinInstance,
-    prefix: *const c_char,
-) -> bool {
-    predict::pinyin_guess_predicted_candidates(instance, prefix)
-}
-/// In-process wrapper for the `pinyin_guess_sentence_with_prefix` ABI symbol (see the C header).
-pub fn pinyin_guess_sentence_with_prefix(
-    instance: *mut PinyinInstance,
-    prefix: *const c_char,
-) -> bool {
-    sentence::pinyin_guess_sentence_with_prefix(instance, prefix)
-}
-/// In-process wrapper for the `pinyin_guess_predicted_candidates_with_punctuations` ABI symbol (see the C header).
-pub fn pinyin_guess_predicted_candidates_with_punctuations(
-    instance: *mut PinyinInstance,
-    prefix: *const c_char,
-) -> bool {
-    sentence::pinyin_guess_predicted_candidates_with_punctuations(instance, prefix)
-}
+pub use predict::pinyin_guess_predicted_candidates;
+pub use sentence::pinyin_get_sentence;
+pub use sentence::pinyin_guess_candidates;
+pub use sentence::pinyin_guess_predicted_candidates_with_punctuations;
+pub use sentence::pinyin_guess_sentence;
+pub use sentence::pinyin_guess_sentence_with_prefix;
 
 // ── phrase ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_get_n_phrase` ABI symbol (see the C header).
-pub fn pinyin_get_n_phrase(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
-    phrase::pinyin_get_n_phrase(instance, num)
-}
-/// In-process wrapper for the `pinyin_get_phrase_token` ABI symbol (see the C header).
-pub fn pinyin_get_phrase_token(
-    instance: *mut PinyinInstance,
-    index: GUint,
-    token: *mut PhraseTokenT,
-) -> bool {
-    phrase::pinyin_get_phrase_token(instance, index, token)
-}
-/// In-process wrapper for the `pinyin_phrase_segment` ABI symbol (see the C header).
-pub fn pinyin_phrase_segment(instance: *mut PinyinInstance, sentence: *const c_char) -> bool {
-    phrase::pinyin_phrase_segment(instance, sentence)
-}
+pub use phrase::pinyin_get_n_phrase;
+pub use phrase::pinyin_get_phrase_token;
+pub use phrase::pinyin_phrase_segment;
 
 // ── text ─────────────────────────────────────────────
-/// In-process wrapper for the `pinyin_get_chewing_auxiliary_text` ABI symbol (see the C header).
-pub fn pinyin_get_chewing_auxiliary_text(
-    instance: *mut PinyinInstance,
-    cursor: usize,
-    aux_text: *mut *mut GChar,
-) -> bool {
-    text::pinyin_get_chewing_auxiliary_text(instance, cursor, aux_text)
-}
-/// In-process wrapper for the `pinyin_get_full_pinyin_auxiliary_text` ABI symbol (see the C header).
-pub fn pinyin_get_full_pinyin_auxiliary_text(
-    instance: *mut PinyinInstance,
-    cursor: usize,
-    aux_text: *mut *mut GChar,
-) -> bool {
-    text::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, aux_text)
-}
+pub use text::pinyin_get_chewing_auxiliary_text;
+pub use text::pinyin_get_full_pinyin_auxiliary_text;
 
 // The ABI-driven black-box suites live in `tests/abi.rs`. These three mods
 // are white-box unit tests of the ABI layer: they drive the C symbols for

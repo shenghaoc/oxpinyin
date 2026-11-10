@@ -1,4 +1,4 @@
-//! Heap-loaded test-program data, assembled beside the runtime's other readers.
+//! Heap-loaded lookup data for the nonshipping REPL, assembled beside the runtime readers.
 use super::*;
 use oxpinyin_data::{PhraseLibraries, dict::SystemTables};
 
@@ -23,19 +23,24 @@ impl Lookup {
     /// # Errors
     /// Returns the first required chunk failure. Native construction failures
     /// before a handle exists terminate through the shared boundary.
-    pub fn open(conf: &TableConf, phonetic: bool, bigram: bool) -> Result<Self, LoadError> {
-        let path = Path::new(if phonetic {
-            "../../data/pinyin_index.bin"
+    pub fn open(
+        data: &Path,
+        conf: &TableConf,
+        phonetic: bool,
+        bigram: bool,
+    ) -> Result<Self, LoadError> {
+        let path = data.join(if phonetic {
+            "pinyin_index.bin"
         } else {
-            "../../data/phrase_index.bin"
+            "phrase_index.bin"
         });
-        let tables = SystemTables::for_lookup(path, phonetic)
+        let tables = SystemTables::for_lookup(&path, phonetic)
             .unwrap_or_else(|_| oxpinyin_input::tool::abort());
         let mut libraries = PhraseLibraries::empty();
         for (index, row) in conf.system_libraries() {
             let name = row.system.as_ref().map(|name| PathBuf::from(name.as_ref()));
             let path = oxpinyin_input::path::build_path(
-                Path::new("../../data"),
+                data,
                 name.as_deref().unwrap_or(Path::new("")).as_os_str(),
             );
             libraries
@@ -43,9 +48,8 @@ impl Lookup {
                 .map_err(|cause| LoadError { name, cause })?;
         }
         let model = bigram.then(|| {
-            let mut model =
-                oxpinyin_data::lm::BigramTables::attach(Path::new("../../data/bigram.db"))
-                    .unwrap_or_else(|_| oxpinyin_input::tool::abort());
+            let mut model = oxpinyin_data::lm::BigramTables::attach(&data.join("bigram.db"))
+                .unwrap_or_else(|_| oxpinyin_input::tool::abort());
             model.set_lambda_from_conf(conf);
             model
         });

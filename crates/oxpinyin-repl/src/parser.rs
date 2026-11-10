@@ -106,12 +106,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         if input.line() == b"quit" {
             break;
         }
-        let start = tool::timer::record_time();
-        let mut result = Parse::default();
-        for _ in 0..1000 {
-            result = parser.parse(input.line(), options);
-        }
-        tool::timer::print_time(start, 1000);
+        let result = parser.parse(input.line(), options);
         tool::parser::print_counts(result.consumed, result.keys.len());
         // A single Key carries both arrays' entries: the pin's assertion
         // at :132 is an invariant of this representation.

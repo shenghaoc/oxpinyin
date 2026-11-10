@@ -1024,7 +1024,7 @@ impl<'a, 'l> Merge<'a, 'l> {
         self.set_total(self.content.total.wrapping_sub(delta));
     }
 
-    #[cfg(any(test, feature = "tools"))]
+    #[cfg(test)]
     pub(crate) fn apply(&mut self, record: LogRecord<&'l [u8]>) -> Result<(), Stop> {
         self.apply_backfilling(record, &mut |_| {})
     }
@@ -3367,6 +3367,110 @@ mod tests {
         assert_eq!(overrides.get(&1), Some(&None));
         assert_eq!(overrides[&2].as_ref().expect("two").prons[1].1, 88);
         assert!(overrides[&6].is_some());
+    }
+
+    /// tests/storage/test_phrase_index_logger.cpp:32-63 at 074a2219: one
+    /// unigram add per slot of the range, then diff, merge and the total.
+    #[test]
+    fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() {
+        use crate::persistence::{LiveSubIndex, diff_live_records};
+        use oxpinyin_data::user_files::{encode_log_records, log_records};
+
+        for total in [7, u32::MAX] {
+            let old = SystemLibrary {
+                total,
+                range_end: 4,
+                items: BTreeMap::from([(1, item(&[97], 2, &[])), (3, item(&[99], 5, &[]))]),
+                mapped: None,
+            };
+            let mut live = ReplayedLibrary::pristine(old.view());
+            let mut expected = vec![LogRecord::ModifyHeader {
+                old_total: total,
+                new_total: if total == 7 { 9 } else { total },
+            }];
+            for (slot, before) in &old.items {
+                let outcome = live.add_unigram(*slot, 1);
+                if total == 7 {
+                    assert!(matches!(outcome, UnigramAdd::Accepted));
+                    let mut after = before.clone();
+                    after.unigram += 1;
+                    expected.push(modify(
+                        *slot,
+                        journal_item_bytes(before),
+                        journal_item_bytes(&after),
+                    ));
+                } else {
+                    assert!(matches!(outcome, UnigramAdd::Refused));
+                }
+            }
+            assert!(matches!(live.add_unigram(2, 1), UnigramAdd::Missing));
+            let records = diff_live_records(LiveSubIndex::Buffer(&live), old.view(), live.total());
+            assert_eq!(records, expected);
+            let payload = encode_log_records(&records).unwrap();
+            let file = oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap();
+            let decoded =
+                log_records(oxpinyin_data::user_files::read_chunk_payload(&file).unwrap())
+                    .map(|record| record.map(LogRecord::into_owned))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+            assert_eq!(decoded, expected);
+            let (result, new_total, changed) = merge_of(&old, decoded);
+            assert!(result.is_ok());
+            assert_eq!(new_total, Some(live.total()));
+            assert!(!changed.contains_key(&2));
+            for (slot, before) in &old.items {
+                assert_eq!(
+                    changed.get(slot).and_then(Option::as_ref).unwrap_or(before),
+                    &live.item(*slot).unwrap()
+                );
+            }
+        }
+    }
+
+    /// tests/storage/test_phrase_index.cpp:10-71 at 074a2219: two readings,
+    /// the store/load round trip, the 0.75 possibility (`:54`) and 0.5 after
+    /// the increase, on the item (`:62`) and on a fresh read (`:70`).
+    #[test]
+    fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
+        use oxpinyin_data::PhraseLibraries;
+
+        fn possibility(item: &ChunkItem, key: oxpinyin_core::ChewingKey) -> (u64, u64) {
+            let frame = oxpinyin_data::chunk_write::build_chunk(&[(1, item.clone())]).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("gb_char.bin");
+            oxpinyin_input::chunk::save(&path, &frame).unwrap();
+            let mut libraries = PhraseLibraries::empty();
+            assert!(libraries.load_heap(0, &path).unwrap());
+            libraries.pronunciation_possibility(1, &[key]).unwrap()
+        }
+
+        let cheng = oxpinyin_core::ChewingKey::from_pinyin("cheng").unwrap();
+        let shang = oxpinyin_core::ChewingKey::from_pinyin("shang").unwrap();
+        let mut stored = item(&[2], 0, &[]);
+        crate::add_system_reading(&mut stored, &[cheng.to_packed()], 100);
+        crate::add_system_reading(&mut stored, &[shang.to_packed()], 300);
+        // `:54`: 300 of 400 is the pin's 0.75.
+        assert_eq!(possibility(&stored, shang), (300, 400));
+        let frame = oxpinyin_data::chunk_write::build_chunk(&[(1, stored.clone())]).unwrap();
+        let library = PhraseLibrary::from_payload(frame[8..].to_vec()).unwrap();
+        let baseline = SystemLibrary::from_library(library);
+        let mut live = ReplayedLibrary::pristine(baseline.view());
+        assert_eq!(live.item(1), Some(stored));
+        assert!(live.train(1, [vec![cheng]].into_iter(), 200));
+        let trained = live.item(1).unwrap();
+        assert_eq!(
+            trained,
+            item(
+                &[2],
+                0,
+                &[
+                    (vec![cheng.to_packed()], 300),
+                    (vec![shang.to_packed()], 300)
+                ]
+            )
+        );
+        // `:62`, `:70`: 300 of 600 is the pin's 0.5.
+        assert_eq!(possibility(&trained, cheng), (300, 600));
     }
 
     /// Each reading walks the item's readings with a running `guint32`

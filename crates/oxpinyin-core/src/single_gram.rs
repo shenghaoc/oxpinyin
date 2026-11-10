@@ -657,6 +657,28 @@ mod tests {
         assert_eq!(get_length(&bytes), 0);
     }
 
+    #[test]
+    fn row_edits_keep_the_stored_total_and_half_open_order() {
+        // tests/storage/test_ngram.cpp:12-49 at 074a2219.
+        let mut row = gram(16, &[]);
+        for (token, count) in [(2, 1), (6, 2), (4, 4), (3, 8), (1, 16)] {
+            assert!(insert_freq(&mut row, token, count));
+        }
+        assert!(set_freq(&mut row, 3, 32));
+        assert_eq!(
+            search(&row, 0, 8).collect::<Vec<_>>(),
+            [(1, 16), (2, 1), (3, 32), (4, 4), (6, 2)]
+        );
+        assert_eq!(
+            search(&row, 2, 6).collect::<Vec<_>>(),
+            [(2, 1), (3, 32), (4, 4)]
+        );
+        assert!(insert_freq(&mut row, 5, 8));
+        assert_eq!(remove_freq(&mut row, 1), Some(16));
+        assert_eq!(get_total_freq(&row), Some(16));
+        assert_eq!(items(&row), [(2, 1), (3, 32), (4, 4), (5, 8), (6, 2)]);
+    }
+
     /// Removal subtracts from the stored total with wrap; a mask that
     /// matches nothing leaves the bytes as they were.
     #[test]

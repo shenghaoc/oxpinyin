@@ -1,18 +1,17 @@
 //! The pin's C-API test programs (074a2219 tests/test_*.cpp).
-//! Arguments are ignored; the input strings, fixed paths and call order
-//! remain those of the source programs.
+//! The caller supplies the isolated data path; product call order is retained.
 
 use oxpinyin_input::tool::{LineReader, pin_tests as output};
 use pinyin_capi::tool::Driver;
 
 /// tests/test_pinyin.cpp:34-101.
-pub fn pinyin() {
+pub fn pinyin(data: &std::ffi::CStr) {
     let options = oxpinyin_core::PINYIN_INCOMPLETE
         | oxpinyin_core::PINYIN_CORRECT_ALL
         | oxpinyin_core::USE_DIVIDED_TABLE
         | oxpinyin_core::USE_RESPLIT_TABLE
         | oxpinyin_core::DYNAMIC_ADJUST;
-    let mut driver = Driver::new(c"../data", c"../data", Some(options));
+    let mut driver = Driver::new(data, data, Some(options));
     let mut input = LineReader::stdin();
     loop {
         output::prefix_prompt();
@@ -42,8 +41,8 @@ pub fn pinyin() {
 }
 
 /// tests/test_phrase.cpp:34-72.
-pub fn phrase() {
-    let mut driver = Driver::new(c"../data", c"../data", None);
+pub fn phrase(data: &std::ffi::CStr) {
+    let mut driver = Driver::new(data, data, None);
     let mut input = LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
@@ -63,8 +62,8 @@ pub fn phrase() {
 }
 
 /// tests/test_chewing.cpp:34-72.
-pub fn chewing() {
-    let mut driver = Driver::new(c"../data", c"../data", None);
+pub fn chewing(data: &std::ffi::CStr) {
+    let mut driver = Driver::new(data, data, None);
     let mut input = LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
@@ -87,8 +86,8 @@ pub fn chewing() {
 }
 
 /// tests/test_zhuyin.cpp:34-66, from the pin's --enable-libzhuyin build.
-pub fn zhuyin() {
-    let mut driver = zhuyin_capi::tool::Driver::new(c"../data", c"../data");
+pub fn zhuyin(data: &std::ffi::CStr) {
+    let mut driver = zhuyin_capi::tool::Driver::new(data, data);
     let mut input = LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {

@@ -36,6 +36,14 @@ Stage 3 构建需显式启用。只改变可观察输出的 Stage 3 构建保留
 
 保留下来的各阶段二进制保持其名称和参数。运行或测试这些命令时，请选择整合后的 Cargo 包，例如：`cargo run --locked -p oxpinyin-utils --bin ngseg -- --help`。
 
+不随产品发布的 `oxpinyin-repl` 整合了上游十个交互测试模式。它与
+`oxpinyin-utils` 一样在 Linux 和 macOS 上运行，并需要 GLib。运行
+`just repl pinyin`，或 `just repl parser2 -- --parser zhuyin`。每次运行都会
+把 `fixtures/w3` 复制到临时目录；训练等写入在退出后丢弃。可以用
+`--backend bdb` 或 `--backend kyotocabinet` 选择后端。21 个实用工具
+仍保留其兼容接口。两个文本表模式还会复制手写的 `fixtures/datagen-toned`
+文本表。
+
 ## 上游
 
 - 行为 oracle：[libpinyin](https://github.com/libpinyin/libpinyin)——pin 见 [`tools/oracle/oracle-pin.txt`](tools/oracle/oracle-pin.txt)（[pin 说明](docs/runbooks/oracle.md#pin-identity)）；其 [wiki](https://github.com/libpinyin/libpinyin/wiki) 是上游文档（n-gram 模型格式、内部实现、多词库）

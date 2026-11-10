@@ -80,6 +80,11 @@ pub fn mask_pinyin_index_row(key: &[u8], value: &mut [u8]) -> Result<(), Failure
 /// Undoes the harness's own `/tmp` override in a diagnostic: the program and its
 /// DBM library print the path they open, which the pin opens as `/tmp/<name>`.
 pub fn undo_tmp_override(stderr: &[u8], directory: &Path) -> Vec<u8> {
+    replace_directory(stderr, directory, b"/tmp")
+}
+
+/// Substitute only the isolated directory bytes, preserving arbitrary diagnostics.
+pub fn replace_directory(stderr: &[u8], directory: &Path, replacement: &[u8]) -> Vec<u8> {
     let directory = directory.as_os_str().as_encoded_bytes();
     let mut out = Vec::with_capacity(stderr.len());
     let mut rest = stderr;
@@ -88,7 +93,7 @@ pub fn undo_tmp_override(stderr: &[u8], directory: &Path) -> Vec<u8> {
         .position(|part| part == directory)
     {
         out.extend_from_slice(&rest[..at]);
-        out.extend_from_slice(b"/tmp");
+        out.extend_from_slice(replacement);
         rest = &rest[at + directory.len()..];
     }
     out.extend_from_slice(rest);

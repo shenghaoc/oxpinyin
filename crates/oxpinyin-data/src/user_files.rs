@@ -994,6 +994,39 @@ mod tests {
         ));
     }
 
+    /// tests/include/test_memory_chunk.cpp:44-65 at 074a2219: the two
+    /// surviving words, then `save`, `load` and `mmap` of one file.
+    #[test]
+    fn framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map() {
+        use crate::chunk_format::{build_memory_chunk, chunk_checksum};
+        use oxpinyin_input::chunk::{self, ChunkSaveError, MappingSource};
+
+        // The file the pin's test_memory_chunk leaves after the removal.
+        let payload = [10_u32.to_le_bytes(), 12_u32.to_le_bytes()].concat();
+        let file = build_memory_chunk(&payload).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.bin");
+        std::fs::write(&path, b"old bytes that must be truncated").unwrap();
+        chunk::save(&path, &file).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), file);
+        assert_eq!(load_chunk_payload(&path).unwrap(), payload);
+
+        let mut source = MappingSource::open(&path).unwrap();
+        assert_eq!(source.read_word().unwrap(), 8_u32.to_le_bytes());
+        assert_eq!(
+            source.read_word().unwrap(),
+            chunk_checksum(&payload).to_le_bytes()
+        );
+        let mapped = source.map().unwrap();
+        assert_eq!(read_chunk_payload(mapped.as_slice()).unwrap(), payload);
+
+        assert!(matches!(
+            chunk::save(dir.path(), &file),
+            Err(ChunkSaveError::Io(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), file);
+    }
+
     fn parse(bytes: &[u8]) -> Result<UserTableInfo, UserConfError> {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("user.conf");
@@ -1112,6 +1145,37 @@ mod tests {
             parse(b""),
             Err(UserConfError::Line("binary format version"))
         ));
+    }
+
+    /// tests/storage/test_table_info.cpp:85-97 at 074a2219: a fresh marker
+    /// does not conform, `make_conform` does, and so does its saved copy.
+    #[test]
+    fn a_fresh_zero_version_marker_requires_conformance_for_either_source_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("table.conf");
+        let profile = dir.path().join("user.conf");
+        let filename = oxpinyin_input::c_path(&profile).unwrap();
+        for (source, backend) in [("pinyin", "Tkrzw"), ("zhuyin", "KyotoCabinet")] {
+            std::fs::write(&config, format!("binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:{source}\ndatabase format:{backend}\n")).unwrap();
+            let conf = crate::table_info::TableConf::load_from_dir(dir.path()).unwrap();
+            let versions = SystemVersions::from_conf(&conf);
+            let fresh = UserTableInfo {
+                binary_format_version: 0,
+                model_data_version: 0,
+                database_format: None,
+                open_counter: 0,
+            };
+            assert!(!fresh.is_conform(&versions));
+            let conformed = UserTableInfo::conform_to(&versions);
+            assert!(conformed.save(&filename));
+            let reloaded = UserTableInfo::load(&filename).unwrap();
+            assert_eq!(reloaded.database_format.as_deref(), Some(backend));
+            assert!(reloaded.is_conform(&versions));
+            assert_eq!(reloaded, conformed);
+        }
+        let directory = oxpinyin_input::c_path(dir.path()).unwrap();
+        assert!(!UserTableInfo::load(&filename).unwrap().save(&directory));
+        assert!(profile.is_file());
     }
 
     /// Each directive is one `fscanf`: a field stops where `%d` stops, a

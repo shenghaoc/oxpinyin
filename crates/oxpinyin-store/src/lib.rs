@@ -2307,6 +2307,57 @@ mod user_bigram_db_tests {
         assert!(value.is_empty());
     }
 
+    /// tests/storage/test_ngram.cpp:39-46 and :69-79 at 074a2219: attach,
+    /// the two stored rows, `get_all_items`, `save_db` and `load_db`.
+    #[test]
+    fn a_native_hash_snapshot_keeps_both_predecessor_rows() {
+        use super::{DefaultStore, RawReadStore, WriteStore, WriteTxn};
+
+        let dir = temp_dir("attached-snapshot");
+        let path = dir.join("test.db");
+        // The fixed program also covers an existing empty input file.
+        std::fs::write(&path, []).unwrap();
+        let bigram = DefaultStore::create_hash(&path).expect("attach empty file");
+        let rows = [
+            [16_u32, 1, 16, 2, 1, 3, 32, 4, 4, 6, 2],
+            [32_u32, 2, 1, 3, 32, 4, 4, 5, 8, 6, 2],
+        ];
+        let rows = rows.map(|row| {
+            row.into_iter()
+                .flat_map(u32::to_ne_bytes)
+                .collect::<Vec<_>>()
+        });
+        for (token, row) in [1_u32, 2].into_iter().zip(&rows) {
+            bigram
+                .write(|txn| txn.put_raw(&token.to_ne_bytes(), row))
+                .unwrap();
+        }
+        let keys = bigram.native_keys().unwrap();
+        let order: [u32; 2] = if cfg!(feature = "bdb") {
+            [2, 1]
+        } else {
+            [1, 2]
+        };
+        assert_eq!(keys, order.map(|token| token.to_ne_bytes().to_vec()));
+
+        let snapshot = dir.join("snapshot.db");
+        bigram.save_bigram_db(&snapshot).expect("snapshot");
+        let blocked = dir.join("directory");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("keep"), b"kept").unwrap();
+        assert!(bigram.save_bigram_db(&blocked).is_err());
+        assert!(DefaultStore::create_hash(&blocked).is_err());
+        assert_eq!(std::fs::read(blocked.join("keep")).unwrap(), b"kept");
+        drop(bigram);
+
+        let copy = DefaultUserBigramDb::load_db(&snapshot).expect("load snapshot");
+        for (token, row) in [1_u32, 2].into_iter().zip(rows) {
+            assert_eq!(copy.read_gram(&token.to_ne_bytes()).unwrap(), Some(row));
+        }
+        drop(copy);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn save_then_load_keeps_every_record() {
         let dir = temp_dir("round-trip");
