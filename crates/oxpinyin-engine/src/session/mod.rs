@@ -153,6 +153,9 @@ pub struct SessionState {
     /// The last sentence lookup's decoded rows and what a chosen row needs
     /// — the `m_nbest_results` surface.
     sentence: SentenceState,
+    /// Prefix tokens retained for offset-zero dynamic ranking. Parsing preserves
+    /// them; sentence/prediction guesses replace them and full reset clears them.
+    candidate_prefixes: Vec<PhraseToken>,
     /// Reused scan buffers, threaded through one window scan and handed
     /// straight back — allocation reuse, never observable state.
     scratch: Scratch,

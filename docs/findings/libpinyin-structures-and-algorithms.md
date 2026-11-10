@@ -542,6 +542,27 @@ costs for inlined code and do not add a callee's inclusive cost again.
 | Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text (#913); other text remains under #894/#927 |
 | Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
 
+Offset-zero dynamic ranking retains the prefix tokens independently of
+parsing (#1776). The pin's `_get_previous_token` (`pinyin.cpp:1711-1740`,
+`zhuyin.cpp:1146-1175`) reads each current phrase item's stored length,
+skips missing/unloaded items and chooses the first longest prefix, falling
+back to sentence_start. `Session::previous_token` now follows that scan;
+`RuntimeDict::phrase_length_for_token` reads live item headers, not text
+or a fallback to the original system item. Prefix sentence guesses and
+Pinyin prediction replace the tokens before any lookup refusal; ordinary
+sentence guesses and full reset clear them. Parsing preserves them.
+
+For P retained tokens, replacement copies O(P) words and the scan performs
+P item reads with O(1) auxiliary space. Retained storage is O(P), with Vec
+capacity reused between replacements. The C producers bound P by 64:
+16 suffix lengths, at most four tokens per successful `reduce_tokens`
+(`pinyin.cpp:1404-1420`, `phrase_large_table3.h:95`). Internal Rust callers
+have no such bound. Item reads reuse the existing live-index lookup and
+locking costs; this change adds no text decoding or database traversal.
+The pin likewise retains O(P) tokens and scans P item headers. The previous
+Rust offset-zero branch used O(1) time/storage but omitted this observable
+prefix state. Nonzero offsets retain their existing decoded-result walk.
+
 `order_window_tail` (`oxpinyin-engine/src/session/mod.rs`) skips its
 stable library sort and token-membership set only when every row has a
 token and the tokens are strictly increasing. This implies ascending

@@ -521,6 +521,7 @@ impl<
         matrix_has_keys: bool,
     ) -> Result<bool, EngineError> {
         if !matrix_has_keys {
+            self.session.set_candidate_prefixes(core::iter::empty());
             self.session.discard_composition();
             return Ok(false);
         }
@@ -539,6 +540,8 @@ impl<
         matrix_has_keys: bool,
     ) -> Result<bool, EngineError> {
         if !matrix_has_keys {
+            self.session
+                .set_candidate_prefixes(prefixes.iter().copied().map(PhraseToken::new));
             self.session.discard_composition();
             return Ok(false);
         }

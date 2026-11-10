@@ -166,15 +166,19 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
     assert_eq!(packed(&runtime, user, 2), None);
     for (library, token) in [(1, system), (7, user)] {
         assert!(runtime.dict().token_exists(token));
+        assert_eq!(runtime.dict().phrase_length_for_token(token), Some(1));
         assert!(runtime.unload_library(library));
         assert!(!runtime.dict().token_exists(token));
+        assert_eq!(runtime.dict().phrase_length_for_token(token), None);
         assert!(runtime.dict().token_nth_pronunciation(token, 0).is_none());
         assert_eq!(runtime.dict().token_pronunciation_count(token), None);
         assert!(runtime.load_library(library));
         assert!(runtime.dict().token_exists(token));
+        assert_eq!(runtime.dict().phrase_length_for_token(token), Some(1));
     }
     for token in [0, 0x01ff_ffff, 0x07ff_ffff, u32::MAX] {
         assert!(!runtime.dict().token_exists(token));
+        assert_eq!(runtime.dict().phrase_length_for_token(token), None);
         assert!(runtime.dict().token_nth_pronunciation(token, 0).is_none());
     }
 }

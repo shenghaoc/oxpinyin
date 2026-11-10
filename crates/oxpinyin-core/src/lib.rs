@@ -634,6 +634,15 @@ pub trait Dictionary {
         None
     }
 
+    /// The current phrase item's stored length, or `None` for a missing or
+    /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
+    /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
+    /// Dictionaries without separate item storage may use their token text.
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        self.phrase_text_for_token(token)
+            .map(|text| text.phrase_length())
+    }
+
     /// The pin's user-chewing-table over-long-key gate
     /// (`src/storage/chewing_large_table2_bdb.cpp:282`): `true` when the
     /// dictionary's user index holds a reading past `MAX_PHRASE_LENGTH`

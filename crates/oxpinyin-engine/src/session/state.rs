@@ -39,6 +39,7 @@ where
                 constraints: crate::constraint::ConstraintStore::default(),
                 lookup: Lookup::default(),
                 sentence: SentenceState::default(),
+                candidate_prefixes: Vec::new(),
                 scratch: Scratch::default(),
                 scan_unreadable: false,
                 scan_ranked_phrase: false,
@@ -198,6 +199,15 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
+    /// Replaces the prefix tokens used for candidate ranking at offset zero.
+    /// The longest currently readable phrase wins; no readable prefix means
+    /// sentence_start (074a2219, pinyin.cpp:1711-1740, zhuyin.cpp:1146-1175).
+    pub fn set_candidate_prefixes(&mut self, prefixes: impl IntoIterator<Item = PhraseToken>) {
+        self.candidate_prefixes.clear();
+        self.candidate_prefixes.extend(prefixes);
+        self.lookup.stale = true;
+    }
+
     /// Discards the composition.
     ///
     /// The full reset — upstream's `pinyin_reset`: the input, the
@@ -207,6 +217,7 @@ where
     pub fn reset(&mut self) {
         self.discard_composition();
         self.sentence.reset();
+        self.candidate_prefixes.clear();
     }
 
     /// Discards the composition but keeps the last sentence lookup's
