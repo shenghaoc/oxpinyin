@@ -15,7 +15,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -39,27 +38,6 @@ mod arena;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
-
-/// What a save left undone, in the pin's own terms.
-///
-/// The pin's `pinyin_save` and `zhuyin_save` never stop at a failure: a
-/// write that fails leaves a missing `.tmp`, the rename of it fails and is
-/// printed (`rename %s to %s failed.`, `pinyin.cpp:1061`…`:1123`), the
-/// marker write fails and is printed (`write %s failed.`,
-/// `table_info.cpp:382`), and the save answers `true`
-/// (`pinyin.cpp:1132-1147`). [`UserStore::save_reporting`] prints
-/// each line where the pin does, as the failure happens, and also returns
-/// the failures.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SaveReport {
-    /// `(tmp, final)` of every rename that failed, in the pin's order: the
-    /// libraries by index, then the pinyin index, the phrase index and the
-    /// bigram.
-    pub renames_failed: Vec<(PathBuf, PathBuf)>,
-    /// The `user.conf` whose write failed, if it did; `UserTableInfo::save`
-    /// has written its `write %s failed.` line, after every rename line.
-    pub user_conf_write_failed: Option<PathBuf>,
-}
 
 /// One §9 export row for a user phrase: the phrase text, one pronunciation's
 /// `'`-joined pinyin spelling, and that pronunciation's stored count.
@@ -2067,7 +2045,7 @@ impl UserStore {
 
     /// The save the C facades use: the file set is written and renamed and
     /// the marker rewritten whatever fails on the way, and the failures come
-    /// back in the [`SaveReport`] instead of ending the save. A store with no
+    /// on stderr instead of ending the save. A store with no
     /// libpinyin target (no directory to write) reports nothing. A completed
     /// save leaves the store clean; a guard return leaves its state
     /// unchanged.
@@ -2077,7 +2055,7 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the session cannot be exported or
     /// encoded — failures the pin has no counterpart for. A filesystem
     /// failure is never one.
-    pub fn save_reporting(&mut self) -> Result<SaveReport, UserStoreError> {
+    pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
         self.save_reporting_compacted(&[])
     }
 
@@ -2085,10 +2063,7 @@ impl UserStore {
     /// the pin's `compact` rebuilt from no items: their saved log records a
     /// new header total of zero even though the system chunk's old total is
     /// the one the failed load read (`phrase_index.cpp:648-675`).
-    pub fn save_reporting_compacted(
-        &mut self,
-        compacted: &[u8],
-    ) -> Result<SaveReport, UserStoreError> {
+    pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
         self.save_reporting_inner(
             compacted,
             None::<fn(u8, &crate::SystemOriginals) -> crate::persistence::SaveBaseline>,
@@ -2104,7 +2079,7 @@ impl UserStore {
         &mut self,
         compacted: &[u8],
         baseline: impl FnMut(u8, &crate::SystemOriginals) -> crate::persistence::SaveBaseline,
-    ) -> Result<SaveReport, UserStoreError> {
+    ) -> Result<(), UserStoreError> {
         self.save_reporting_inner(compacted, Some(baseline))
     }
 
@@ -2114,14 +2089,13 @@ impl UserStore {
         &mut self,
         compacted: &[u8],
         mut baseline: Option<B>,
-    ) -> Result<SaveReport, UserStoreError> {
-        let mut report = SaveReport::default();
+    ) -> Result<(), UserStoreError> {
         if !self.is_modified() {
-            return Ok(report);
+            return Ok(());
         }
         let target = Arc::clone(&self.inner.libpinyin);
         let Some(dir) = target.dir.as_deref() else {
-            return Ok(report);
+            return Ok(());
         };
         self.compact_libraries();
         let originals = &self.originals;
@@ -2139,7 +2113,7 @@ impl UserStore {
                     .as_mut()
                     .map(|baseline| |nibble| baseline(nibble, originals)),
             };
-            report = crate::persistence::save_reporting(
+            crate::persistence::save_reporting(
                 dir,
                 crate::persistence::SaveSource {
                     state: &state,
@@ -2156,7 +2130,7 @@ impl UserStore {
         drop(bigram_db);
         *self.count_cache() = None;
         self.inner.dirty.store(false, Ordering::Relaxed);
-        Ok(report)
+        Ok(())
     }
 
     /// `Bigram::get_all_items` (`pinyin.cpp:779`): every predecessor with
@@ -3384,23 +3358,23 @@ mod tests {
             let (_dir, mut store) = in_dir(no_originals());
 
             assert!(!store.is_modified());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            store.save_reporting().unwrap();
+            store.save_reporting().unwrap();
 
             store.observe_selection(SENTENCE_START, 10).unwrap();
             assert!(store.is_modified());
             store.save_reporting().unwrap();
             assert!(!store.is_modified());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            store.save_reporting().unwrap();
 
             store.observe_predicted(10, 20).unwrap();
             assert!(!store.is_modified());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            store.save_reporting().unwrap();
             store
                 .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
                 .unwrap();
             assert!(!store.is_modified());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            store.save_reporting().unwrap();
 
             store.observe_selection(SENTENCE_START, 10).unwrap();
             assert!(store.is_modified());
@@ -3730,7 +3704,7 @@ mod tests {
             // (`phrase_index.cpp:624-646`) and the next import reuses it.
             assert_eq!(next_user_token(&store), FIRST_USER_TOKEN);
             assert!(!store.is_modified());
-            assert_eq!(store.save_reporting().unwrap(), Default::default());
+            store.save_reporting().unwrap();
 
             store.mask_out(0x0, 0x0).unwrap();
             assert_eq!(store.bigram_count(SYSTEM_A, SYSTEM_B).unwrap(), 0);
@@ -4102,14 +4076,13 @@ mod tests {
                         store.system_library_total(1).unwrap(),
                         store.is_modified(),
                     );
-                    let report = match entry {
+                    match entry {
                         0 => store.save_reporting(),
                         1 => store.save_reporting_compacted(&[]),
                         _ => store
                             .save_reporting_with_baseline(&[], |_, _| panic!("guarded baseline")),
                     }
                     .expect("guarded save");
-                    assert_eq!(report, crate::SaveReport::default());
                     assert_eq!(
                         (
                             store.system_unigram(token),

@@ -90,11 +90,7 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
         .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
         .expect("learn it");
     store.mark_modified();
-    assert_eq!(
-        store.save_reporting().expect("save"),
-        Default::default(),
-        "a dirty save reports no failure"
-    );
+    store.save_reporting().expect("save");
     let saved = names(&second);
     for name in ["user.conf", "user.bin", "user_bigram.db"] {
         assert!(

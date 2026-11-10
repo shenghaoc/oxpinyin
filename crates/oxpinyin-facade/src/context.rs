@@ -457,9 +457,8 @@ impl ContextCore {
     /// The pin never stops at a failing write or rename: it prints what
     /// failed (`rename %s to %s failed.`, `write %s failed.`, raw
     /// `fprintf(stderr, …)`, `pinyin.cpp:1061`…`:1123`,
-    /// `table_info.cpp:382`) and answers `true`. The store's
-    /// [`oxpinyin_user::SaveReport`] says what failed; the lines are
-    /// printed here, one per failure, in the pin's order.
+    /// `table_info.cpp:382`) and answers `true`. The store prints one line
+    /// per soft failure on stderr in the pin's order.
     ///
     /// A chunk header write is the exception: `MemoryChunk::save`'s
     /// `assert`s (`memory_chunk.h:543`, `:547`) kill the process there, so
@@ -507,8 +506,8 @@ impl ContextCore {
                 }
             }
         };
-        let report = match store.save_reporting_with_baseline(&compacted, baseline) {
-            Ok(report) => report,
+        match store.save_reporting_with_baseline(&compacted, baseline) {
+            Ok(()) => (),
             Err(UserStoreError::ChunkHeaderWrite(field)) => {
                 return SaveOutcome::ChunkWriteFailed(field);
             }
@@ -524,7 +523,6 @@ impl ContextCore {
         // Each failed rename's `rename %s to %s failed.` line and a failed
         // marker's `write %s failed.` line were written as they happened,
         // in the pin's order, by the save itself.
-        let _ = report;
         SaveOutcome::Saved
     }
 

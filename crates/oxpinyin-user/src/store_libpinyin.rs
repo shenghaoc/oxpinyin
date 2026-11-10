@@ -2464,9 +2464,7 @@ mod tests {
         // This fixture explicitly exercises serialization after the raw mask;
         // the reporting helper now enforces the pin's modified guard too.
         store.mark_modified();
-        let report = store.save_reporting().expect("save masked gram");
-        assert!(report.renames_failed.is_empty());
-        assert!(report.user_conf_write_failed.is_none());
+        store.save_reporting().expect("save masked gram");
         let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
         let persisted_after_mask = gram(&raw, &key).expect("raw masked get");
         assert_eq!(
@@ -2824,9 +2822,7 @@ mod tests {
         // This fixture explicitly exercises serialization after the raw mask;
         // the reporting helper now enforces the pin's modified guard too.
         store.mark_modified();
-        let report = store.save_reporting().expect("save masked gram");
-        assert!(report.renames_failed.is_empty());
-        assert!(report.user_conf_write_failed.is_none());
+        store.save_reporting().expect("save masked gram");
         let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
         let persisted_after_mask = gram(&raw, &key).expect("raw masked get");
         match persisted_after_mask {
@@ -4346,62 +4342,6 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
-    /// The pin's save never stops at a failure (`pinyin.cpp:1132-1147`): with
-    /// the user dir gone every rename and the marker write fail, each one is
-    /// reported in the pin's order, and the save has still run. A save that
-    /// works reports nothing.
-    #[test]
-    fn save_reporting_names_each_failure_in_the_pins_order() {
-        let dir = tempdir("report");
-        let mut store =
-            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open");
-        store.observe_selection(1, 0x0100_0001).expect("train");
-        let clean = store.save_reporting().expect("save");
-        assert_eq!(clean, crate::SaveReport::default());
-
-        store.observe_selection(1, 0x0100_0001).expect("train");
-        std::fs::remove_dir_all(&dir).expect("remove the user dir");
-        let report = store
-            .save_reporting()
-            .expect("a missing dir is not an error");
-        assert!(!store.is_modified(), "the store is clean after the save");
-        let finals: Vec<&str> = report
-            .renames_failed
-            .iter()
-            .map(|(_, target)| target.file_name().and_then(|n| n.to_str()).expect("name"))
-            .collect();
-        assert_eq!(
-            finals,
-            [
-                "gb_char.dbin",
-                "gbk_char.dbin",
-                "opengram.dbin",
-                "merged.dbin",
-                "addon.bin",
-                "network.bin",
-                "user.bin",
-                "user_pinyin_index.bin",
-                "user_phrase_index.bin",
-                "user_bigram.db",
-            ]
-        );
-        for (tmp, target) in &report.renames_failed {
-            assert_eq!(tmp.parent(), target.parent());
-            assert_eq!(
-                tmp.file_name().and_then(|n| n.to_str()),
-                Some(
-                    format!(
-                        "{}.tmp",
-                        target.file_name().and_then(|n| n.to_str()).expect("name")
-                    )
-                    .as_str()
-                )
-            );
-        }
-        assert_eq!(report.user_conf_write_failed, Some(dir.join("user.conf")));
-    }
-
     #[test]
     fn train_save_reopen_carries_the_learning() {
         let dir = tempdir("cycle");
@@ -4433,16 +4373,10 @@ mod tests {
 
             // §2.1 training: the seed arithmetic runs in the session
             // store; §4 gating: save only after a modification.
-            assert_eq!(
-                store.save_reporting().expect("save gate"),
-                Default::default()
-            );
+            store.save_reporting().expect("save gate");
             store.observe_selection(1, 0x0100_0001).expect("train");
             store.save_reporting().expect("save");
-            assert_eq!(
-                store.save_reporting().expect("second save is a no-op"),
-                Default::default()
-            );
+            store.save_reporting().expect("second save is a no-op");
 
             // A user phrase under the user dictionary. `_add_phrase`
             // does not arm the §4 gate (the pin sets `m_modified` only
@@ -4452,10 +4386,7 @@ mod tests {
                 .add_phrase(&"你好".into(), &keys[..], None)
                 .expect("add phrase");
             assert_eq!(token & 0x0F00_0000, 0x0700_0000);
-            assert_eq!(
-                store.save_reporting().expect("gate holds"),
-                Default::default()
-            );
+            store.save_reporting().expect("gate holds");
             store.mark_modified();
             store.save_reporting().expect("save 2");
         }
@@ -4748,11 +4679,7 @@ mod tests {
         assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
         assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 0);
 
-        assert_eq!(
-            second.save_reporting().expect("save 2"),
-            Default::default(),
-            "the second session changed nothing"
-        );
+        second.save_reporting().expect("save 2");
         first.save_reporting().expect("save 1");
         assert_eq!(
             recorded_counter(&dir),

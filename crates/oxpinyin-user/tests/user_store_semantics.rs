@@ -131,11 +131,7 @@ fn a_bigram_table_roundtrips_through_the_store_file() {
             store.bigram_count(a, b).unwrap(),
             store.bigram_total(a).unwrap(),
         );
-        assert_eq!(
-            store.save_reporting().unwrap(),
-            Default::default(),
-            "nothing changed, nothing is written"
-        );
+        store.save_reporting().unwrap();
         counts
     };
     let store = session_in(dir.path());
