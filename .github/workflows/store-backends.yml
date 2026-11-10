@@ -63,7 +63,7 @@ name: Store backends
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model,
-# tools/oracle/build-oracle.sh) is a LOCAL workflow, and no CI job may
+# tools/oracle/build.py) is a LOCAL workflow, and no CI job may
 # download model20.text.tar.gz or anything like it. The oracle-gated
 # differentials and the model cache live on developer machines only.
 

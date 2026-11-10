@@ -165,22 +165,22 @@ class ImageTests(unittest.TestCase):
             self.assertEqual(self.invoke(['verify-image'], args).returncode, 2)
         self.assertEqual(self.invoke(['verify-image'], []).returncode, 2)
 
-    def test_reference_tag_keeps_its_original_input_order_and_digest(self):
+    def test_reference_tag_follows_every_recipe_input(self):
         result = self.invoke(['image-tag'], [])
         self.assertEqual(result.stdout.decode().strip(), images.image_tag())
         before = images.image_tag()
         copied = self.directory / 'tree'
-        for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build-oracle.sh', 'tools/oracle/version-manifest.json',
-                     'tools/oracle/versions.py', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt'):
+        for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build.py', 'tools/oracle/version-manifest.json',
+                     'tools/oracle/versions.py', 'tools/oracle/oracle-pin.txt'):
             dest = copied / path
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / path, dest)
         self.assertEqual(images.image_tag(copied), before)
-        floor = copied / 'tools/lib/bash-floor.sh'
-        original_floor = floor.read_bytes()
-        floor.write_bytes(b'changed floor')
+        builder = copied / 'tools/oracle/build.py'
+        original_builder = builder.read_bytes()
+        builder.write_bytes(b'changed builder')
         self.assertNotEqual(images.image_tag(copied), before)
-        floor.write_bytes(original_floor)
+        builder.write_bytes(original_builder)
         (copied / 'tools/oracle/version-manifest.json').write_bytes(b'changed input')
         self.assertNotEqual(images.image_tag(copied), before)
 
@@ -442,7 +442,7 @@ class WslcAdapterTests(unittest.TestCase):
 class RuntimeAdapterTests(unittest.TestCase):
     """runtime_command for every runtime select_runtime returns; no container runs."""
     RUN = ['run', '--rm', '--platform', 'linux/amd64', '--network', 'host', '-v', '/r:/opt/r:ro,z',
-           '-v', '/o:/opt/o:z', 'image', 'build-oracle.sh']
+           '-v', '/o:/opt/o:z', 'image', 'python3', '/opt/r/tools/oracle/build.py']
 
     def setUp(self):
         as_macos(self)
@@ -457,7 +457,7 @@ class RuntimeAdapterTests(unittest.TestCase):
     def test_wslc_drops_platform_relabelling_and_host_networking(self):
         # wslc run: "host mode networking is not supported"; --network none is kept.
         self.assertEqual(images.runtime_command(['wslc', *self.RUN]),
-                         ['wslc', 'run', '--rm', '-v', '/r:/opt/r:ro', '-v', '/o:/opt/o', 'image', 'build-oracle.sh'])
+                         ['wslc', 'run', '--rm', '-v', '/r:/opt/r:ro', '-v', '/o:/opt/o', 'image', 'python3', '/opt/r/tools/oracle/build.py'])
         self.assertEqual(images.runtime_command(['wslc', 'run', '--network', 'none', 'i']), ['wslc', 'run', '--network', 'none', 'i'])
         self.assertEqual(images.runtime_command(['wslc', 'build', '--platform', 'linux/amd64', '--network', 'host',
                                                  '--target', 'deps', '.']), ['wslc', 'build', '--target', 'deps', '.'])
@@ -470,7 +470,7 @@ class RuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(images.runtime_command(['container', *self.RUN]),
                          ['container', 'run', '--rm', '--platform', 'linux/amd64',
                           '--mount', 'type=bind,source=/r,target=/opt/r,readonly', '-v', '/o:/opt/o',
-                          'image', 'build-oracle.sh'])
+                          'image', 'python3', '/opt/r/tools/oracle/build.py'])
         for command, expected in ((['info'], ['system', 'status']),
                                   (['pull', '--quiet', '--platform', 'linux/arm64', 'i'],
                                    ['image', 'pull', '--platform', 'linux/arm64', 'i']),

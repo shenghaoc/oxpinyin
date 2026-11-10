@@ -13,7 +13,7 @@ Network: downloads.sourceforge.net over HTTPS; SourceForge may redirect to a
 mirror. There is no vendored copy and no alternate URL: model-provenance.md
 classifies model20 as not redistributable, so no project-owned mirror exists.
 No CI job downloads it. A developer machine fetches it once into the cache,
-and build-oracle.sh reuses that cache through --model-dir.
+and tools/oracle/build.py reuses that cache through --model-dir.
 
 Default cache: <repo>/target/model20/
   downloads/model20.text.tar.gz
@@ -33,17 +33,14 @@ import tempfile
 
 from .process import ROOT, fail, run
 from .runners import guarded
+from tools.oracle.build import MODEL_FILES
 
 MODEL_URL = 'https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'
 MODEL20_SHA256 = '59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
 ARCHIVE_NAME = 'model20.text.tar.gz'
 MARKER_SCHEMA = 'pinyin-model-cache-v1'
-# Inventory from docs/findings/model-provenance.md (eighteen files).
-EXPECTED_MODEL_FILES = (
-    'art.table', 'culture.table', 'economy.table', 'gb_char.table', 'gbk_char.table',
-    'geology.table', 'history.table', 'interpolation2.text', 'life.table', 'merged.table',
-    'nature.table', 'opengram.table', 'people.table', 'punct.table', 'science.table',
-    'society.table', 'sport.table', 'technology.table')
+# The eighteen-file inventory; the guest builder owns it and cannot import tools.dev.
+EXPECTED_MODEL_FILES = MODEL_FILES
 FETCH_HINT = 'just fetch-model'
 
 USAGE = """\
