@@ -65,7 +65,7 @@ pub use offsets::{
     zhuyin_lookup_session_offset, zhuyin_offset_is_mid_key, zhuyin_original_begin,
     zhuyin_original_offset, zhuyin_session_offset,
 };
-pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
+pub use parse::{PinyinCorrections, ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 

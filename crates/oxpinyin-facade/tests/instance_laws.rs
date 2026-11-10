@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use oxpinyin_engine::EngineError;
 use oxpinyin_facade::{
-    ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, ToneForwarding,
+    ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, PinyinCorrections, ToneForwarding,
     ZHUYIN_DEFAULT_OPTION_WORD,
 };
 use oxpinyin_user::{SENTENCE_START, SystemVersions, UserConfLaw, persistence};
@@ -270,12 +270,12 @@ fn one_key_probes_follow_the_live_schemes() {
     let (context, mut inst) = pinyin_instance();
     assert!(
         inst.bind(&context.runtime)
-            .parse_one_full_pinyin("ni", false)
+            .parse_one_full_pinyin("ni", PinyinCorrections::FromOptions)
             .is_some()
     );
     assert!(
         inst.bind(&context.runtime)
-            .parse_one_full_pinyin("xyz", false)
+            .parse_one_full_pinyin("xyz", PinyinCorrections::FromOptions)
             .is_none()
     );
     let (zhuyin_context, mut zhuyin) = zhuyin_instance();
