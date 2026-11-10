@@ -40,6 +40,7 @@ if __name__ == '__main__' and __package__ in (None, ''):
 from tools.dev import cell
 from tools.dev.process import ROOT, capture, fail, run, text
 from tools.dev.runners import Finished, guarded
+from tools.oracle.build import fields, recipe_hash
 
 VERIFY_IMAGE_USAGE = '''Check a built oracle image against tools/oracle/oracle-pin.txt (issue #818).
 
@@ -264,12 +265,6 @@ def digest_file(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def fields(path):
-    """Read the oracle's key=value record without interpreting shell syntax."""
-    return dict(line.split('=', 1) for line in Path(path).read_text().splitlines()
-                if line and not line.startswith('#') and '=' in line)
-
-
 def platform_field(pin, platform, key):
     """Read a platform input field; unsupported platforms have no value."""
     suffix = {'linux/amd64': '', 'linux/arm64': '_linux_arm64'}.get(platform)
@@ -277,7 +272,7 @@ def platform_field(pin, platform, key):
 
 
 def image_tag(root=ROOT):
-    """Hash the original recipe inputs in their original byte order."""
+    """The oracle image tag: the pinned commit, the base image and the recipe hash."""
     directory = Path(root) / 'tools/oracle'
     pin = directory / 'oracle-pin.txt'
     record = fields(pin)
@@ -292,16 +287,6 @@ def image_tag(root=ROOT):
         fail(f'FAIL: Dockerfile.oracle does not use base_image {base}')
     slug = re.sub(r'[^A-Za-z0-9_.-]', '-', base)
     return f'{commit[:12]}-{slug}-{recipe_hash(root)[:12]}'
-
-
-def recipe_hash(root=ROOT):
-    """Hash the recipe inputs in the same order as build-oracle.sh."""
-    directory = Path(root) / 'tools/oracle'
-    digest = hashlib.sha256()
-    for name in ('Dockerfile.oracle', 'build-oracle.sh', 'version-manifest.json', 'versions.py',
-                 '../lib/bash-floor.sh', 'oracle-pin.txt'):
-        digest.update((directory / name).read_bytes())
-    return digest.hexdigest()
 
 
 def prefix_ok(prefix, backend, root=ROOT, pin=None, expected_platform=None):
@@ -914,7 +899,6 @@ def check_reproducible(argv, *, root=ROOT):
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--jobs', default='2')
     args = parser.parse_args(argv)
-    child = dict(os.environ, OXPINYIN_ORACLE_RECIPE_ROOT=str(root))
     for backend in args.cells:
         builds = []
         prefix = args.work_dir / backend / 'prefix'
@@ -927,9 +911,9 @@ def check_reproducible(argv, *, root=ROOT):
                 fail(f'reproducibility work directory already exists: {directory}')
         try:
             for directory in directories:
-                run(['bash', Path(root) / 'tools/oracle/build-oracle.sh', '--libs-only', '--enable-libzhuyin',
+                run([sys.executable, Path(root) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',
                      '--dbm', backend, '--work-dir', directory / 'build', '--prefix', prefix,
-                     '--jobs', args.jobs], env=child, heavy=True)
+                     '--jobs', args.jobs], heavy=True)
                 saved = directory / 'libraries'
                 shutil.copytree(prefix / 'lib', saved, symlinks=True)
                 builds.append(saved)

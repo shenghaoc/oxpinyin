@@ -629,7 +629,7 @@ class GateTests(unittest.TestCase):
             '.github/workflows/verify-nightly.yml': set(),
             'tools/bisection/contract_axis_c.py': {'harness'},
             'tools/dev/ci_tree.test.py': {'harness'},
-            'tools/oracle/build-oracle.sh': {'lint', 'harness'},
+            'tools/oracle/build.py': {'lint', 'test', 'harness'},
             'tools/dev/lint-crate-cfg-placement.test.py': {'lint', 'harness'},
             'tools/dev/abi.py': {'lint', 'test', 'harness'},
             'tools/dev/new_module.py': {'lint', 'test', 'harness'},

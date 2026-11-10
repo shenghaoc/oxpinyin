@@ -107,7 +107,7 @@ PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
               "tools/bisection/startup_profile.py", 
-              "tools/oracle/image.py", "tools/oracle/versions.py",
+              "tools/oracle/build.py", "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
 # The shipping-size job's path gate. `crates` over-selects the three crates
 # outside the capi closure; the gate must not need a Cargo toolchain.

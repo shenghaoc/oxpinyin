@@ -631,8 +631,8 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertNotIn('--network', commands['container'])
         for ctr in ('wslc', 'container'):
             self.assertFalse(any(str(part).endswith(('z', ',z')) and ':' in str(part) for part in commands[ctr]), ctr)
-            script = '/opt/oracle-recipe/tools/oracle/build-oracle.sh' if ctr == 'container' else 'build-oracle.sh'
-            self.assertEqual(commands[ctr][-2:], [script, '--libs-only'])
+        for ctr, command in commands.items():
+            self.assertEqual(command[-3:], ['python3', '/opt/oracle-recipe/tools/oracle/build.py', '--libs-only'], ctr)
 
     def test_runtime_readiness_asks_each_runtime_its_own_way(self):
         for ctr, expected in (('docker', ['docker', 'info']), ('podman', ['podman', 'info']),
@@ -881,24 +881,25 @@ class ManifestCheckTests(unittest.TestCase):
 
 
 class InImageCommandTests(unittest.TestCase):
-    def test_deps_image_run_mounts_the_bash_floor_next_to_the_build_script(self):
-        # build-oracle.sh sources ../lib/bash-floor.sh relative to /usr/local/bin; a deps image
-        # published before the floor existed does not carry it.
+    def test_deps_image_run_takes_the_builder_from_the_mounted_checkout(self):
+        # The checkout is the only bind that carries recipe inputs: the builder, its pin record
+        # and the hashed files all come from it, never from a stale copy in a pulled deps image.
         run = object.__new__(provision.Provision)
         run.ctr, run.platform = 'podman', 'linux/amd64'
         run.net_flags, run.env_flags = [], []
         run.root, run.pin = Path('/checkout'), Path('/checkout/tools/oracle/oracle-pin.txt')
         run.cache, run.model_cache, run.deps_image = Path('/cache'), Path('/model'), 'deps:tag'
         command = run.in_image_command(['--libs-only'])
-        self.assertIn(f'{run.root / "tools/oracle/build-oracle.sh"}:/usr/local/bin/build-oracle.sh:ro,z', command)
-        self.assertIn(f'{run.root / "tools/lib/bash-floor.sh"}:/usr/local/lib/bash-floor.sh:ro,z', command)
+        self.assertIn(f'{run.root}:/opt/oracle-recipe:ro,z', command)
+        self.assertEqual(command[-3:], ['python3', '/opt/oracle-recipe/tools/oracle/build.py', '--libs-only'])
+        self.assertFalse(any('/usr/local/' in str(part) for part in command))
         run.ctr = 'container'
         # `container` names Apple's CLI only on macOS; on Windows it is wslc's alias.
         with mock.patch.object(provision.images, 'host_system', return_value='Darwin'):
             command = run.in_image_command(['--libs-only'])
         self.assertIn(f'type=bind,source={run.root},target=/opt/oracle-recipe,readonly', command)
         self.assertEqual(command[command.index('--memory') + 1], '6G')
-        self.assertIn('/opt/oracle-recipe/tools/oracle/build-oracle.sh', command)
+        self.assertEqual(command[-3:], ['python3', '/opt/oracle-recipe/tools/oracle/build.py', '--libs-only'])
         self.assertFalse(any(f'source={run.root / "tools"}' in part for part in command))
 
 

@@ -299,7 +299,7 @@ key=(lambda value:tuple(int(part) for part in value.split(b'.'))) if 'V' in flag
 if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator)
 """)
 
-            shutil.copy(ROOT / 'tools/oracle/build-oracle.sh', self.root / 'tools/oracle/build-oracle.sh')
+            shutil.copy(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
             self.fake('uv', 'import sys; from pathlib import Path; sys.argv[1:3] == ["python", "install"] and sys.exit(0); sys.path.insert(0, ' + repr(str(ROOT)) + '); from tools.dev.cell import main; sys.exit(main(["--shell"], root=Path.cwd()))')
 
         def fake(self, name, source):

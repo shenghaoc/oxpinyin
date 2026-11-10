@@ -1,10 +1,9 @@
 schema=oracle-provisioning-pin-v6
 # Exact on purpose (#1074): every pin below identifies the reference libpinyin and its inputs, not a tool version a newer one could replace.
-# Composite pin identity for the locally built oracle. Every field mirrors
-# a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
-# developers verify the two sides agree before trusting a prefix. When a
-# pin component changes, update it here and in its owner file in the same
-# commit — a stale prefix must be rebuilt from scratch.
+# Composite pin identity for the locally built oracle, and its only record:
+# tools/oracle/build.py, tools/dev/cell.py and tools/oracle/image.py read
+# these fields, and no other file repeats them. This file is a recipe input,
+# so any change here gives a new recipe_sha256 and every prefix is rebuilt.
 #
 # v2 (2026-09-06 UTC): drops libpinyin_archive_sha256. libpinyin is now
 # verified by commit SHA (git fetch --depth=1); no release tag carries
@@ -28,14 +27,7 @@ ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
 # ibus-libpinyin: verified by commit SHA (git fetch --depth=1); the
 # lightweight tag 1.16.5 points at this commit upstream.
 model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
-# 2026-09-27 UTC: dbm moves Tkrzw -> BerkeleyDB, mirroring
-# build-oracle.sh's new --dbm default (human ruling: the parity oracle
-# follows Q1, the bare ./configure reference build). The tkrzw and kc
-# cells stay selectable; the frozen capture goldens remain the tkrzw
-# cell.
-# 2026-10-30 UTC: dbm moves BerkeleyDB -> Tkrzw with build-oracle.sh's
-# --dbm default (maintainer decision: tkrzw, maintained upstream, is the
-# reference cell; this supersedes the 2026-09-27 ruling). bdb and kc stay
+# dbm is the builder's --dbm default, the reference cell; bdb and kc stay
 # selectable. Generated output digests are recorded per build.
 dbm=Tkrzw
 #
@@ -43,7 +35,8 @@ dbm=Tkrzw
 # pin commits, recipe SHA-256, installed versions, library hashes and generated
 # data manifest hashes. check-reproducible compares two same-environment builds.
 # Frozen contract references and package-data hashes are unchanged.
-# SOURCE_DATE_EPOCH is an input derived from the pinned source commit.
+# source_date_epoch is the pinned libpinyin commit's time. The builder takes
+# SOURCE_DATE_EPOCH from git log of the verified checkout, not from this field.
 base_image=debian:testing
 source_date_epoch=1788427579
 platform=linux/amd64

@@ -23,7 +23,7 @@ scheme numbers are listed in `transformed-options-inputs.json`: Hanyu
 
 ## Run
 
-Build the pin with `tools/oracle/build-oracle.sh --dbm CELL
+Build the pin with `python3 tools/oracle/build.py --dbm CELL
 --enable-libzhuyin` and the subject with the matching feature (`bdb`,
 `kyotocabinet`, or `tkrzw`). Both sides read that cell's pin data:
 

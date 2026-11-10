@@ -2,7 +2,7 @@
 
 The shell entry point owns only uv/interpreter bootstrap. Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
-Reference images receive build-oracle.sh and pin inputs, never tools.dev.
+Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
 """
 from . import cell as backend_cell
 from contextlib import ExitStack
@@ -432,15 +432,14 @@ class Provision:
         self.inside_image, self.pull = True, False
         self.oracle_root.mkdir(parents=True, exist_ok=True)
         self.libraries()
-        child = dict(self.env, OXPINYIN_ORACLE_RECIPE_ROOT=str(self.root))
         for backend in self.cells:
             prefix = self.oracle_root / backend
-            common = ['bash', self.root / 'tools/oracle/build-oracle.sh', '--dbm', backend,
+            common = [sys.executable, self.root / 'tools/oracle/build.py', '--dbm', backend,
                       '--prefix', prefix, '--enable-libzhuyin', '--jobs', self.jobs]
             if not self.data_ok(backend):
                 extracted = model.fetch(self.model_cache, root=self.root, env=self.env)
                 run([*common, '--regen-data', '--model-dir', extracted,
-                     '--work-dir', self.cache / ('data-' + backend)], env=child, heavy=True)
+                     '--work-dir', self.cache / ('data-' + backend)], env=self.env, heavy=True)
             if not self.data_ok(backend):
                 self.die(f'{backend}: generated data failed provenance validation')
             self.log(f'{backend}: current pin/recipe, recorded library hashes and data manifests OK')
@@ -750,19 +749,17 @@ class Provision:
             env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2, heavy=True)
 
     def in_image_command(self, args, flags=()):
-        """The container command that runs build-oracle.sh with ARGS."""
+        """The container command that runs the checkout's tools/oracle/build.py with ARGS.
+
+        The checkout is mounted over the image's /opt/oracle-recipe, so the builder, its pin
+        record and the recipe hash are the checkout's; Debian's python3 runs it."""
         apple = images.is_apple(self.ctr)
-        files = [] if apple else [
-            '-v', f'{self.root / "tools/oracle/build-oracle.sh"}:/usr/local/bin/build-oracle.sh:ro,z',
-            '-v', f'{self.root / "tools/lib/bash-floor.sh"}:/usr/local/lib/bash-floor.sh:ro,z',
-            '-v', f'{self.pin}:/usr/local/bin/oracle-pin.txt:ro,z']
         return runtime_command([
             self.ctr, 'run', '--rm', '--platform', self.platform, *(['--memory', '6G'] if apple else []),
             *self.net_flags, *self.env_flags, *flags,
             '-v', f'{self.root}:/opt/oracle-recipe:ro,z',
-            *files,
             '-v', f'{self.oracle_root}:/opt/pinyin-oracle:z', '-v', f'{self.model_cache}:/model-cache:ro,z',
-            self.deps_image, '/opt/oracle-recipe/tools/oracle/build-oracle.sh' if apple else 'build-oracle.sh', *args])
+            self.deps_image, 'python3', '/opt/oracle-recipe/tools/oracle/build.py', *args])
 
     def pool_phase(self, label, cells, log, args):
         """Reuse #1233's exact pool phase and owned-container cancellation."""
@@ -780,9 +777,8 @@ class Provision:
                     arguments.append(value)
                 self.log(f'{backend}: {label} with current pin/recipe')
                 with Path(str(log).format(item=backend)).open('wb') as output:
-                    status = run(['bash', self.root / 'tools/oracle/build-oracle.sh', *arguments],
-                                 env=dict(self.env, OXPINYIN_ORACLE_RECIPE_ROOT=str(self.root)),
-                                 stdout=output, heavy=True, check=False)
+                    status = run([sys.executable, self.root / 'tools/oracle/build.py', *arguments],
+                                 env=self.env, stdout=output, heavy=True, check=False)
                 if status:
                     return status
             return 0
@@ -953,7 +949,7 @@ class Provision:
             self.published_deps = self.published + '-deps'
             digest = hashlib.sha256()
             # .python-version: the deps stage installs the managed interpreter it names.
-            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/lib/bash-floor.sh', 'tools/oracle/oracle-pin.txt', '.python-version'):
+            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/oracle/oracle-pin.txt', '.python-version'):
                 digest.update((self.root / path).read_bytes())
             self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
             self.ctr = images.select_runtime(env=self.env)
