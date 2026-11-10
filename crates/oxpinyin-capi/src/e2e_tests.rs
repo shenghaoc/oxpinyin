@@ -342,12 +342,15 @@ fn predicted_row(
 /// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): a predicted
 /// bigram is trained after the longest token of the prediction prefix, not
 /// after `sentence_start`.
-#[test]
-fn a_predicted_bigram_trains_from_the_prediction_prefix() {
+#[rstest::rstest]
+fn a_predicted_bigram_trains_from_the_prediction_prefix(#[values(false, true)] finalized: bool) {
     use crate::predict::pinyin_guess_predicted_candidates;
 
     let user_dir = TempUserDir::new("predicted-prefix");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    if finalized {
+        crate::test_support::finalize_public_context(context, instance);
+    }
     let prefix = cstr("你");
     let ni = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
@@ -368,7 +371,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         0
     );
     // SAFETY: the live context has no reader retained across this write.
-    unsafe { crate::state::context_mut(context) }
+    unsafe { crate::state::instance_context_mut(instance) }
         .core
         .user_store_mut()
         .unwrap()
@@ -397,17 +400,24 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     );
 
     crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    if !finalized {
+        crate::context::pinyin_fini(context);
+    }
 }
 
 /// A sole missing prefix row still chooses. The facade total takes the
 /// fixed 483 (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`), wrapping,
 /// while the absent item is not written; an unloaded library leaves the
 /// total alone and still answers true (#1231 ruling).
-#[test]
-fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
+#[rstest::rstest]
+fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
+    #[values(false, true)] finalized: bool,
+) {
     let user_dir = TempUserDir::new("missing-prefix-choose");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    if finalized {
+        crate::test_support::finalize_public_context(context, instance);
+    }
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let inst = unsafe { instance_mut(instance) };
     // Library 1 is loaded; this slot is absent from the mini fixture, so the
@@ -447,7 +457,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
 
     assert!(
         // SAFETY: the preceding instance read has ended before the owner write.
-        unsafe { crate::state::context_mut(context) }
+        unsafe { crate::state::instance_context_mut(instance) }
             .core
             .runtime
             .unload_library(1)
@@ -465,7 +475,9 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total() {
     );
 
     crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    if !finalized {
+        crate::context::pinyin_fini(context);
+    }
 }
 
 /// Forces a phrase after the last sentence lookup that the decoded result

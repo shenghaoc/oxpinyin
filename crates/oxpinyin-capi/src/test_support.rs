@@ -10,6 +10,16 @@ use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
+// Oxpinyin retains the owner for a surviving instance. This is a safety
+// contract, not a pin oracle: the returned public handle keeps its identity
+// but is no longer live and must not be dereferenced.
+pub(crate) fn finalize_public_context(context: *mut PinyinContext, instance: *mut PinyinInstance) {
+    assert_eq!(crate::instance::pinyin_get_context(instance), context);
+    crate::context::pinyin_fini(context);
+    assert!(!crate::live::is_live(context));
+    assert_eq!(crate::instance::pinyin_get_context(instance), context);
+}
+
 /// Serialises the tests that read the pin's process-wide key slots
 /// (`pinyin_get_pinyin_key`, `pinyin_get_pinyin_key_rest`): the slots are
 /// statics, so two such tests running on different threads overwrite each
