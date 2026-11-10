@@ -2072,8 +2072,10 @@ impl Runtime {
         };
 
         Ok(Self {
-            paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
-                .with_system_dirs([system_dir]),
+            paths: StoragePaths::new(
+                user_dir.map(Path::to_path_buf).unwrap_or_default(),
+                vec![system_dir.to_path_buf()],
+            ),
             system: dict,
             model: lm,
             originals,
