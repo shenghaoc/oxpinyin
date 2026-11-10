@@ -312,23 +312,27 @@ mod tests {
         );
         // No candidate guess: selection must still use 好 over the second key.
         // Unlike Pinyin, refusal still returns the original m_begin/m_end.
-        assert_eq!(
-            zhuyin_choose_candidate(instance, if before { 6 } else { 3 }, original),
-            if before { 3 } else { 6 }
-        );
         let expected_tokens = [token];
-        assert_eq!(
-            // SAFETY: the choose completed and the instance is still live.
-            unsafe { crate::state::instance_ref(instance) }
-                .core
-                .session
-                .selected_tokens(),
-            if refused {
-                &[][..]
-            } else {
-                &expected_tokens[..]
-            }
-        );
+        // The pin leaves the candidates intact on choose, so a second
+        // choose still sees this same token and span (zhuyin.cpp:1646-1666).
+        for _ in 0..2 {
+            assert_eq!(
+                zhuyin_choose_candidate(instance, if before { 6 } else { 3 }, original),
+                if before { 3 } else { 6 }
+            );
+            assert_eq!(
+                // SAFETY: the choose completed and the instance is still live.
+                unsafe { crate::state::instance_ref(instance) }
+                    .core
+                    .session
+                    .selected_tokens(),
+                if refused {
+                    &[][..]
+                } else {
+                    &expected_tokens[..]
+                }
+            );
+        }
         assert!(!zhuyin_clear_constraint(instance, 0));
         assert_eq!(zhuyin_clear_constraint(instance, 3), !refused);
         close(context, instance);

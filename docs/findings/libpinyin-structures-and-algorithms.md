@@ -1346,6 +1346,12 @@ O(N + B) storage remains live across parsing; removing the parse-time clear
 adds no allocation, copy or loop. The snapshot already retained its capacity
 on clear. This changes the lifetime of its contents, not its allocation bound.
 
+Zhuyin also keeps the window after a successful choose. The pin's
+`zhuyin_choose_candidate` reads the retained token and span on each call
+and leaves the list intact (`zhuyin.cpp:1635-1667`). Further choices reuse
+the same rows until a new guess or reset invalidates them. This extends
+the existing O(N + B) lifetime without adding a copy or allocation.
+
 A retained normal span may overrun the new constraint array after a shorter
 parse. `ForwardPhoneticConstraints::add_constraint` refuses `end > len`
 without a write (`lookup/phonetic_lookup.cpp:61-65`). Both choose functions
