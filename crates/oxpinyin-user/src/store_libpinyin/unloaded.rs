@@ -95,7 +95,6 @@ fn a_new_reading_for_an_item_of_an_unloaded_library_is_refused() {
 fn training_an_unloaded_library_keeps_the_bigram_and_nothing_else() {
     let (_profile, mut store) = unloaded("train");
     let before = totals(&store);
-    store.begin_training_steps();
     store
         .observe_selection(SENTENCE_START, LIBRARY | 1)
         .expect("the bigram trains");

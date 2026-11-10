@@ -936,25 +936,6 @@ pub trait UserModel {
     /// Observation failure reported by this model.
     type Error;
 
-    /// Checks one training step before any step is observed: the store
-    /// reads the gram `token`'s step will load after `history` and refuses
-    /// what the pin dies on. The training walk calls it per step, in step
-    /// order, between the step's constraint check and its span checks
-    /// (`phonetic_lookup.h:858-933` at the pin `074a2219`), so the first
-    /// failing check in step order wins. The default accepts every step.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the step would make the pin abort or
-    /// read past a value.
-    fn check_step(
-        &mut self,
-        _history: &[Self::Token],
-        _token: &Self::Token,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     /// Records an accepted `token` after `history`.
     ///
     /// Learning-off callers omit this operation entirely.

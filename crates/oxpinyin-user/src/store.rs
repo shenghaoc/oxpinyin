@@ -791,8 +791,6 @@ pub struct UserStore {
     _fini: FiniGuard,
     inner: StoreInner,
     pub(crate) originals: crate::persistence::SystemOriginals,
-    /// This handle's current training call's step checks.
-    training: TrainingCheck,
 }
 
 /// Which pin abort or read-past a training step's store check met, with
@@ -845,7 +843,6 @@ impl UserStore {
             _fini: fini,
             originals,
             inner,
-            training: TrainingCheck::default(),
         }
     }
 }
@@ -1043,38 +1040,12 @@ impl UserStore {
         gram_mask_fault_over(&ContainerGrams(&self.container()), keys, mask, value).unwrap_or(None)
     }
 
-    /// Starts one training call's step checks ([`Self::check_training_step`]):
-    /// forgets the grams replayed and the fault recorded by the last one.
-    pub fn begin_training_steps(&mut self) {
-        self.training = TrainingCheck::default();
-    }
-
-    /// One training step's store checks, in the pin's order inside the
-    /// step (`phonetic_lookup.h:876-909` at 074a2219): a gram too short for
-    /// its total (`get_total_freq`, :884; `memory_chunk.h:390`), a partial
-    /// item tail the `get_freq` walk reads past (:888, register row 100),
-    /// and a `set_freq` that misses the item `insert_freq` just added
-    /// (:903). The step runs on the gram the earlier steps of this call
-    /// left, replayed on copies: nothing is stored. The fault is recorded
-    /// for [`Self::check_training_step`].
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError::ShortUserBigramValue`] for a short value,
-    /// [`UserStoreError::PartialUserBigramTail`] for a partial tail,
-    /// [`UserStoreError::TrainingSetFreqMiss`] for the miss,
-    /// or the store's read error.
-    pub fn check_training_step(&mut self, prev: Token, cur: Token) -> Result<(), UserStoreError> {
-        let mut check = std::mem::take(&mut self.training);
-        let result = self.check_training_step_with(&mut check, prev, cur);
-        self.training = check;
-        result
-    }
-
     /// Check a step using operation-owned bookkeeping while phrase storage is borrowed.
+    /// Replays earlier checked steps on copies of the grams without writing the store.
+    /// The check follows the pin's step order (`phonetic_lookup.h:876-909` at 074a2219).
     ///
     /// # Errors
-    /// The same store and malformed-gram failures as [`Self::check_training_step`].
+    /// Returns the store's read error or a short, partial, or malformed gram failure.
     pub fn check_training_step_with(
         &self,
         check: &mut TrainingCheck,
