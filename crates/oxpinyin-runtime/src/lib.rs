@@ -1681,6 +1681,21 @@ impl Dictionary for RuntimeDict<'_> {
             .and_then(|phrase| phrase.phrase_text())
     }
 
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+            return self
+                .live_items()
+                .read(token, |item| item.phrase_length())
+                .found();
+        }
+        match token >> 24 {
+            5..=7 if self.library_visible(token >> 24) => {
+                self.user?.phrase_length(token).ok().flatten()
+            }
+            _ => None,
+        }
+    }
+
     /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):
     /// the item a library mask hides is the pin's freed sub-index, an item
     /// the user store replaced or owns is read from there, and any other

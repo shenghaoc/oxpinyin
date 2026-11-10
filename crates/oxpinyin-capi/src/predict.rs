@@ -109,6 +109,12 @@ fn guess_predicted_result(
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
     inst.state.prefixes.clone_from(&prefixes);
+    inst.core.session.set_candidate_prefixes(
+        prefixes
+            .iter()
+            .copied()
+            .map(oxpinyin_core::PhraseToken::new),
+    );
     let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
     };
@@ -228,6 +234,9 @@ pub fn clear_borrowed_prefix(
     if borrowed {
         inst.state.candidates.clear();
         inst.state.prefixes.clear();
+        inst.core
+            .session
+            .set_candidate_prefixes(core::iter::empty());
     }
     borrowed
 }

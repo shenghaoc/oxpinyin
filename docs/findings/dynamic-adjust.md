@@ -22,11 +22,11 @@ store:
 `sentence_start = 1`), then scans `instance->m_prefixes` for the
 **longest** non-`sentence_start` token and takes that if one exists.
 
-`m_prefixes` is populated only by `pinyin_guess_sentence_with_prefix`,
-which **neither reference consumer calls** — it was in the retired
-28-symbol complement and absent from fcitx's live set. So for the
-drop-in surface `m_prefixes` is always empty and offset 0 yields exactly
-`sentence_start`, deterministically.
+Correction (#1776): the full exported surface includes sentence guesses
+with prefixes in both ABIs and Pinyin prediction guesses. These populate
+`m_prefixes` even when the subsequent lookup refuses. Consumer call sets
+do not make this branch unreachable. Missing or unloaded phrase items
+are skipped; equal lengths retain the first token.
 
 **`offset > 0`** — from `m_nbest_results.get_result(0)`, the 1-best
 result. Returns `null_token` immediately if there are no results. Then a
@@ -184,10 +184,13 @@ same numbers. So the in-tree test counts the merges (below).
 
 ### Gate 1
 
-`previous_token(0)` answers `sentence_start` (1), matching the pin. The
-`m_prefixes` scan the pin performs there is unreachable on the drop-in
-surface (only `pinyin_guess_sentence_with_prefix` populates it, and
-neither reference consumer calls it), so offset 0 is deterministic.
+`previous_token(0)` scans the retained prefix tokens and chooses the
+longest current phrase item, keeping the first tie. It falls back to
+`sentence_start` (1) when no readable prefix has positive length.
+The engine retains these tokens across parsing. Sentence guesses replace
+them before lookup, including refused guesses; Pinyin prediction also
+replaces them. Full reset clears them. The runtime reads the live item's
+stored length without decoding text or resurrecting a removed system item.
 
 Above 0 the pin's guard is carried verbatim: `result[offset]` is
 inspected **first**, and only when a phrase begins at `offset` does the

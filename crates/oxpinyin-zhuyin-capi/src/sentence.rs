@@ -596,3 +596,94 @@ mod tests {
         close(context, instance);
     }
 }
+
+#[cfg(test)]
+mod prefix_ranking_tests {
+    use super::*;
+    use crate::test_support::{TempUserDir, cstr, open_with_user};
+    use oxpinyin_core::{DYNAMIC_ADJUST, Dictionary};
+
+    // 074a2219: pinyin.cpp:1711-1740,2200-2215 and
+    // zhuyin.cpp:1146-1175,1473-1489 choose the longest live prefix at zero.
+    // Prefixes are stored even when the sentence lookup refuses an empty matrix.
+    #[test]
+    fn dynamic_ranking_uses_the_longest_retained_prefix() {
+        let user = TempUserDir::new("prefix-ranking");
+        let (context, instance) = open_with_user(&user.path);
+        let (short, long, hao, number) = {
+            // SAFETY: the newly allocated instance is live; no mutation overlaps.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            let token = |text| inst.core.dict.tokens_for_text(text)[0].value();
+            (token("好"), token("你好"), token("好"), token("号"))
+        };
+        {
+            // SAFETY: the preceding reader ended; this test serializes all calls.
+            let ctx = unsafe { crate::state::instance_context_mut(instance) };
+            let store = ctx.core.user_store_mut().expect("user store");
+            for (previous, next) in [
+                (oxpinyin_user::SENTENCE_START, hao),
+                (short, hao),
+                (long, number),
+            ] {
+                store
+                    .set_bigram_count(previous, next, 1_000_000)
+                    .expect("seed real bigram row");
+            }
+        }
+        assert!(crate::config::zhuyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(!zhuyin_guess_sentence_with_prefix(
+            instance,
+            cstr("你好").as_ptr()
+        ));
+        assert_eq!(
+            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        let rank = || {
+            assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+            // SAFETY: the guess completed; its snapshot remains live for this read.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            let position = |text| {
+                inst.state
+                    .candidates
+                    .iter()
+                    .position(|row| row.text_str() == Ok(text))
+                    .expect("candidate is present")
+            };
+            position("号") < position("好")
+        };
+        assert!(
+            rank(),
+            "the longer prefix's gram must outrank sentence_start and the shorter suffix"
+        );
+        assert!(crate::config::zhuyin_set_options(context, 0));
+        assert!(!rank(), "without DYNAMIC_ADJUST only unigram order remains");
+        assert!(crate::config::zhuyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(rank(), "option changes preserve the prefix tokens");
+
+        // A plain sentence guess clears prefixes even when its matrix is empty.
+        assert_eq!(
+            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("").as_ptr()),
+            0
+        );
+        assert!(!zhuyin_guess_sentence(instance));
+        assert_eq!(
+            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        assert!(!rank(), "plain guess restores sentence_start");
+
+        assert!(zhuyin_guess_sentence_with_prefix(
+            instance,
+            cstr("你好").as_ptr()
+        ));
+        assert!(crate::instance::zhuyin_reset(instance));
+        assert_eq!(
+            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        assert!(!rank(), "full reset clears prefixes");
+        crate::instance::zhuyin_free_instance(instance);
+        crate::context::zhuyin_fini(context);
+    }
+}

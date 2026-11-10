@@ -79,6 +79,7 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails during the lookup.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
+        self.set_candidate_prefixes(core::iter::empty());
         self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
@@ -175,6 +176,7 @@ where
         &mut self,
         prefix_tokens: &[PhraseToken],
     ) -> Result<bool, EngineError> {
+        self.set_candidate_prefixes(prefix_tokens.iter().copied());
         self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {

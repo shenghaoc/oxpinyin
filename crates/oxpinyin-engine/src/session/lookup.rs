@@ -411,11 +411,9 @@ where
     /// The previous token at `offset`, as upstream's `_get_previous_token`
     /// resolves it (`pinyin.cpp:1711-1767`).
     ///
-    /// At offset 0 upstream answers `sentence_start` and then prefers the
-    /// longest token in `m_prefixes`. `m_prefixes` is populated only by
-    /// `pinyin_guess_sentence_with_prefix`, which neither reference consumer
-    /// calls, so the drop-in surface always takes the `sentence_start`
-    /// answer there.
+    /// At offset zero prefer the longest still-readable token in the retained
+    /// prefixes, keeping the first on equal lengths. Missing or unloaded items
+    /// are skipped; no eligible item leaves sentence_start.
     ///
     /// Above 0 upstream reads the 1-best result — `last_result` here — and
     /// carries a guard worth reproducing: it inspects `result[offset]` FIRST
@@ -423,7 +421,20 @@ where
     /// an offset no phrase starts at contributes no bigram term at all.
     pub(super) fn previous_token(&self, offset: usize) -> Option<PhraseToken> {
         if offset == 0 {
-            return Some(PhraseToken::new(crate::nbest::SENTENCE_START));
+            let mut previous = PhraseToken::new(crate::nbest::SENTENCE_START);
+            let mut longest = 0;
+            for &token in &self.candidate_prefixes {
+                if token.value() == crate::nbest::SENTENCE_START {
+                    continue;
+                }
+                if let Some(length) = self.dictionary.phrase_length_for_token(token.value())
+                    && length > longest
+                {
+                    previous = token;
+                    longest = length;
+                }
+            }
+            return Some(previous);
         }
         if self.sentence.last_result.is_empty() {
             return None;
