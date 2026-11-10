@@ -396,6 +396,16 @@ performance measurement campaign.
 
 ## 3. Phonetic key matrix
 
+Plain full-pinyin auxiliary text uses the option word from the last parse.
+The pin stores a live context word separately from the matrix already filled
+by a parse (`pinyin.cpp:1299-1306,1497-1524,3381-3438`). Rust reconstructs the
+selected key path for this display and retains one option word to reproduce
+the same generation after a context write or candidate refresh. The same
+path supplies the empty-matrix and leading-separator checks. The existing
+bounded O(7n) graph reconstruction and O(n) rendering bounds remain for n
+consumed bytes. The getter no longer builds a separate auxiliary matrix
+to check aborts on this path.
+
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
 | Layout | `PhoneticKeyMatrix`: two parallel tables of columns (keys and key rests) | one `Vec<Vec<ScanKey>>` from `build_scan_matrix` (`oxpinyin-engine/src/session/mod.rs`); apostrophe zero keys as a side array in `ParsedMatrix` | different / unverified |
