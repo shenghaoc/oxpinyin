@@ -323,29 +323,54 @@ class ContainerOwnershipTests(unittest.TestCase):
     def cli(self, *args):
         return [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', *args]
 
+    def run_two_at_once(self, items, name, script, **environment):
+        """Run `pool run` in this process with four allowed CPUs; return its status and messages.
+
+        `--cpus` only lowers the host's count, and a host with fewer than four CPUs plans one
+        worker, so the second item would never start. The fixed count makes two items overlap on
+        every host; the command, the plan, the launcher and the fake runtime are the real ones.
+        """
+        parser = argparse.ArgumentParser()
+        pool.add_arguments(parser)
+        args = parser.parse_args(self.arguments(items, name, script))
+        args.command = args.command[1:]
+        out = io.StringIO()
+        with mock.patch.object(pool.host, 'allowed_cpus', return_value=set(range(4))):
+            status = pool.run_command(
+                args, out, lambda: pool.ProcessLauncher(env=dict(os.environ, **environment)))
+        self.assertIn('with 2 at once', out.getvalue())
+        return status, out.getvalue()
+
+    def wait_for_both(self, then):
+        """An item script: a waits until both containers are recorded, then runs THEN; b sleeps.
+
+        a gives up with status 4 after 30 seconds, so a run that never starts b fails, not hangs.
+        """
+        return ('import os, sys, time\n'
+                'if sys.argv[1] == "a":\n'
+                '    deadline = time.monotonic() + 30\n'
+                f'    while len([n for n in os.listdir({str(self.state)!r}) if not n.endswith(".tmp")]) < 3:\n'
+                '        if time.monotonic() > deadline:\n'
+                '            sys.exit(4)\n'
+                '        time.sleep(0.01)\n'
+                f'    {then}\n'
+                'time.sleep(60)\n')
+
     def test_a_failed_item_and_the_started_containers_are_removed_and_a_bystander_is_not(self):
-        script = 'import sys, time; sys.exit(3) if sys.argv[1] == "a" else time.sleep(60)'
-        result = subprocess.run(self.cli(*self.arguments('a,b', 'owned-{token}-{item}', script)), cwd=ROOT,
-                                capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('a: failed with status 3', result.stderr)
+        # b's container exists and its item is running when a fails.
+        status, messages = self.run_two_at_once('a,b', 'owned-{token}-{item}', self.wait_for_both('sys.exit(3)'))
+        self.assertEqual(status, 1, messages)
+        self.assertIn('a: failed with status 3', messages)
         self.assertEqual(self.left(), [self.bystander])
 
     def test_a_container_created_before_its_cidfile_is_written_is_removed_too(self):
         # The runtime records the container, then writes the cidfile. Item b stays between the two
         # while item a fails, so the pool stops b's runtime with an empty cidfile. Only the label,
         # which carries this run's token, still names b's container.
-        script = ('import os, sys, time\n'
-                  'if sys.argv[1] == "a":\n'
-                  f'    while len([n for n in os.listdir({str(self.state)!r}) if not n.endswith(".tmp")]) < 3:\n'
-                  '        time.sleep(0.01)\n'
-                  '    sys.exit(3)\n'
-                  'time.sleep(60)\n')
-        result = subprocess.run(self.cli(*self.arguments('a,b', 'owned-{token}-{item}', script)), cwd=ROOT,
-                                capture_output=True, text=True, timeout=60,
-                                env=dict(os.environ, FAKE_CID_DELAY_ITEM='b'))
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn('a: failed with status 3', result.stderr)
+        status, messages = self.run_two_at_once('a,b', 'owned-{token}-{item}', self.wait_for_both('sys.exit(3)'),
+                                                FAKE_CID_DELAY_ITEM='b')
+        self.assertEqual(status, 1, messages)
+        self.assertIn('a: failed with status 3', messages)
         self.assertEqual(self.left(), [self.bystander])
 
     def test_a_name_collision_with_a_container_this_run_did_not_create_removes_nothing(self):
