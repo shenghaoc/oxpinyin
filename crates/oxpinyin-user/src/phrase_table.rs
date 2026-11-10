@@ -55,20 +55,6 @@ impl PhraseTableEntry {
         &self.bytes
     }
 
-    /// Token count (`phrase_large_table3.cpp:93-97`).
-    #[must_use]
-    pub fn get_length(&self) -> usize {
-        self.bytes.len() / 4
-    }
-
-    /// Append enabled tokens without clearing the destination.
-    ///
-    /// `enabled` receives each token, allowing the caller to implement pin's
-    /// disabled-library filtering (`phrase_large_table3.cpp:29-51`).
-    pub fn search(&self, tokens: &mut Vec<u32>, enabled: impl FnMut(u32) -> bool) -> i32 {
-        search_tokens(&self.bytes, tokens, enabled)
-    }
-
     /// Insert before the first greater token; detect equality only before it.
     pub fn add_index(&mut self, token: u32) -> i32 {
         let mut offset = self.bytes.len();
@@ -132,7 +118,7 @@ impl PhraseTableEntry {
     }
 }
 
-/// [`PhraseTableEntry::search`] over a stored record read in place, after
+/// The pin's `PhraseTableEntry::search` over a stored record read in place, after
 /// [`PhraseTableEntry::from_bytes`]'s check, with no entry built.
 ///
 /// # Errors
