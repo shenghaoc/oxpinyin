@@ -10,7 +10,6 @@ use std::collections::HashSet;
 use std::os::raw::c_char;
 
 use oxpinyin_core::{PhraseText, single_gram};
-use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
 use crate::state::{CapiCandidate, SharedDict, SharedLm, instance_mut};
@@ -164,7 +163,6 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text: oxpinyin_facade::TextSpan::NULL,
             text_ptr: std::ptr::null(),
-            kind: CandidateKind::Phrase,
             type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
             nbest_index: 0,
             token: Some(oxpinyin_core::PhraseToken::new(token)),
@@ -196,7 +194,6 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            kind: CandidateKind::Phrase,
             type_tag: item.candidate_type.tag(),
             nbest_index: 0,
             token: Some(oxpinyin_core::PhraseToken::new(item.token)),
@@ -322,7 +319,6 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>, prefixes: 
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            kind: CandidateKind::Phrase,
             type_tag: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag(),
             nbest_index: 0,
             token: None,

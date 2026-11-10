@@ -16,7 +16,6 @@ use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
 
 use oxpinyin_core::{OptionBits, PhraseToken};
-use oxpinyin_engine::CandidateKind;
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
 ///
@@ -181,7 +180,6 @@ pub struct CapiCandidate {
     /// The pointer `pinyin_get_candidate_string` answers: the row's string
     /// inside the snapshot's buffer, kept current by the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
-    pub(crate) kind: CandidateKind,
     /// [`Self::candidate_type`]'s tag.
     pub(crate) type_tag: u8,
     pub(crate) nbest_index: u8,

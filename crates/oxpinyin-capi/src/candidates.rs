@@ -3,7 +3,6 @@
 use std::os::raw::c_int;
 
 use oxpinyin_core::PhraseToken;
-use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::{SENTENCE_START, UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
@@ -551,7 +550,8 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
     let item = {
         // SAFETY: the caller supplies a live instance and snapshot index.
         let inst = unsafe { instance_ref(instance) };
-        if inst.state.candidates[index].kind != CandidateKind::Addon {
+        if inst.state.candidates[index].candidate_type() != lookup_candidate_type_t::ADDON_CANDIDATE
+        {
             return None;
         }
         let addon_token = inst.state.candidates[index].token?;
@@ -574,7 +574,6 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
     let inst = unsafe { instance_mut(instance) };
     let snapshot = &mut inst.state.candidates[index];
     snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
-    snapshot.kind = CandidateKind::Phrase;
     snapshot.token = Some(promoted);
     Some(promoted)
 }
