@@ -71,6 +71,22 @@ The checksum mirrors `memory_chunk.h::get_check_sum`.
 The payload follows the header.
 Verify the checksum before use.
 
+## Internal API simplicity
+
+The Rust interfaces are internal ([interface ruling](constitution.md#external-interfaces)).
+Write each interface for its callers in the tree.
+
+Use concrete types, borrowed parameters and direct implementations.
+Add a generic parameter, a trait, a wrapper, a macro or a configurable builder only in one of these conditions:
+
+- The callers in the tree need it, for example two callers that use different types.
+- It removes duplication that is in the tree now.
+
+Use a named type, not a Boolean argument, when the Boolean hides behaviour at the call site ([C-CUSTOM-TYPE](https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type)).
+Use a struct with named fields, not a tuple, when the tuple hides the meaning of its fields.
+Write comments for contracts, invariants and rationale that the code does not show.
+Do not refactor code only for style.
+
 ## Tests and style
 
 Use fixtures first.
