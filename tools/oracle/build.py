@@ -41,6 +41,8 @@ MODEL_FILES = (
 # --dbm value (also the pin ref's +dbm- suffix) to the name libpinyin's configure takes.
 DBM_NAMES = {'tkrzw': 'Tkrzw', 'kc': 'KyotoCabinet', 'bdb': 'BerkeleyDB'}
 DATA_DIRECTORY = 'lib/libpinyin/data'
+PIN_RECORD = 'oracle-pin.txt'
+DATA_MANIFESTS = ('oracle-data.sha256', 'oracle-data-unstable.sha256')
 # Two clean builds of one pin in one image differ in exactly these six files, which the
 # DBM-backed generation path writes. They get their own manifest; neither manifest is frozen
 # across compiler, libc or DBM updates.
@@ -130,7 +132,7 @@ def parser(pin):
     result.add_argument('--regen-data', action='store_true',
                         help="into an existing --libs-only prefix of this pin, recipe and dbm, build the pin's "
                              'data from the model in a staging area beside the prefix, then publish the data '
-                             'and its manifests together')
+                             'with its manifests, committing the pin record last')
     return result
 
 
@@ -157,8 +159,11 @@ def check_prefix(prefix, mode, pin_ref, recipe):
     if prefix.exists() and not prefix.is_dir():
         raise BuildError(f'installation prefix is not a directory: {prefix}')
     if mode == 'data':
+        backup = data_backup(prefix)
+        if os.path.lexists(backup):
+            raise BuildError(f'data publication in progress or requires recovery: {backup}')
         try:
-            record = (prefix / 'oracle-pin.txt').read_text().splitlines()
+            record = (prefix / PIN_RECORD).read_text().splitlines()
         except OSError:
             record = []
         if f'pin_ref={pin_ref}' not in record or f'recipe_sha256={recipe}' not in record:
@@ -339,7 +344,7 @@ def data_manifests(content_root, out_dir):
     stable = sorted({path.relative_to(content_root).as_posix() for path in data.rglob('*')
                      if path.is_file() and not path.is_symlink()} - set(unstable))
     digests = []
-    for manifest, names in (('oracle-data.sha256', stable), ('oracle-data-unstable.sha256', unstable)):
+    for manifest, names in zip(DATA_MANIFESTS, (stable, unstable)):
         (out_dir / manifest).write_bytes(''.join(f'{file_sha256(content_root / name)}  {name}\n' for name in names).encode())
         digests.append(file_sha256(out_dir / manifest))
     return digests
@@ -349,12 +354,74 @@ def record_versions(args, out_dir):
     """versions.txt: the libraries' own record for a data build, else the image's, else this host's."""
     target = out_dir / 'versions.txt'
     if args.mode == 'data':
-        shutil.copyfile(args.prefix / 'versions.txt', target)
-    elif IMAGE_VERSIONS.is_file():
+        return file_sha256(args.prefix / 'versions.txt')
+    if IMAGE_VERSIONS.is_file():
         shutil.copyfile(IMAGE_VERSIONS, target)
     else:
         run([sys.executable, HERE / 'versions.py', '--print', '--record', target])
     return file_sha256(target)
+
+
+def data_backup(prefix):
+    """A sibling so replacing or removing the prefix cannot delete the recovery copies."""
+    return prefix.parent / (prefix.name + '.data-backup')
+
+
+def publish_data(prefix, content_root, out_dir):
+    """Publish only the generated data, utilities and provenance, with rollback on I/O error."""
+    backup = data_backup(prefix)
+    try:
+        backup.mkdir()
+    except FileExistsError:
+        raise BuildError(f'data publication in progress or requires recovery: {backup}') from None
+
+    moves = []
+
+    def move(source, target):
+        source.replace(target)
+        moves.append((target, source))
+
+    try:
+        data = Path(DATA_DIRECTORY)
+        # The pin installs data under lib/libpinyin and the utilities under bin.
+        # Move a whole parent if it is new. Otherwise keep unrelated siblings.
+        if not os.path.lexists(prefix / data.parent):
+            data = data.parent
+        names = [data]
+        binaries = content_root / 'bin'
+        if binaries.is_dir():
+            if not os.path.lexists(prefix / 'bin'):
+                names.append(Path('bin'))
+            else:
+                for binary in sorted(binaries.iterdir()):
+                    name = Path('bin') / binary.name
+                    if (prefix / name).is_dir():
+                        raise IsADirectoryError(f'cannot publish utility over a directory: {prefix / name}')
+                    names.append(name)
+        files = [(content_root / name, name) for name in names]
+        files.extend((out_dir / name, Path(name)) for name in (*DATA_MANIFESTS, PIN_RECORD))
+
+        # A missing pin record makes validators refuse the prefix throughout publication.
+        # Restore it last on rollback, just as we publish the new one last on success.
+        move(prefix / PIN_RECORD, backup / PIN_RECORD)
+        for _, name in files[:-1]:
+            if os.path.lexists(prefix / name):
+                (backup / name).parent.mkdir(parents=True, exist_ok=True)
+                move(prefix / name, backup / name)
+        for staged, name in files:
+            move(staged, prefix / name)
+    except OSError as error:
+        try:
+            for current, original in reversed(moves):
+                current.replace(original)
+        except OSError as rollback:
+            raise BuildError(f'data publication failed: {error}\n'
+                             f'rollback failed: {rollback}\n'
+                             f'preserved recovery files in {backup}') from rollback
+        shutil.rmtree(backup)
+        raise BuildError(f'data publication failed: {error}') from error
+
+    shutil.rmtree(backup)
 
 
 def build(args, pin):
@@ -366,12 +433,12 @@ def build(args, pin):
     for command in ('git', 'autoreconf', 'make', 'pkg-config'):
         if shutil.which(command) is None:
             raise BuildError(f'required command not found: {command}')
+    args.work_dir, args.prefix = Path(os.path.abspath(args.work_dir)), Path(os.path.abspath(args.prefix))
     check_prefix(args.prefix, args.mode, pin_ref, recipe)
     if args.model_dir:
         check_model_dir(Path(args.model_dir), model_digest)
     for directory in (args.work_dir / 'downloads', args.work_dir / 'src', args.prefix):
         directory.mkdir(parents=True, exist_ok=True)
-    args.work_dir, args.prefix = Path(os.path.abspath(args.work_dir)), Path(os.path.abspath(args.prefix))
     prefix = args.prefix
 
     source = fetch_commit('libpinyin', LIBPINYIN_GIT_URL, commit, args.work_dir)
@@ -389,8 +456,7 @@ def build(args, pin):
     if patches:
         pin_ref += f'+patches-{patches}'
 
-    # A data build generates beside the prefix, on its filesystem, and touches the prefix only
-    # once the data, manifests and pin record all exist: a failed run leaves it as it was.
+    # Stage on the prefix filesystem. Publication starts only after generation and hashing.
     stage = Path(tempfile.mkdtemp(prefix=prefix.name + '.stage.', dir=prefix.parent)) if args.mode == 'data' else None
     try:
         content_root = stage / prefix.relative_to(prefix.anchor) if stage else prefix
@@ -419,12 +485,9 @@ def build(args, pin):
             record['patches_manifest_sha256'] = patches
         new = out_dir / 'oracle-pin.txt.new'
         new.write_bytes(''.join(f'{key}={value}\n' for key, value in record.items()).encode())
-        new.replace(out_dir / 'oracle-pin.txt')
+        new.replace(out_dir / PIN_RECORD)
         if stage:
-            shutil.rmtree(prefix / DATA_DIRECTORY, ignore_errors=True)
-            shutil.copytree(content_root, prefix, symlinks=True, dirs_exist_ok=True)
-            for name in ('oracle-data.sha256', 'oracle-data-unstable.sha256', 'oracle-pin.txt', 'versions.txt'):
-                (out_dir / name).replace(prefix / name)
+            publish_data(prefix, content_root, out_dir)
     finally:
         if stage:
             shutil.rmtree(stage, ignore_errors=True)
@@ -441,6 +504,9 @@ def main(argv=None):
     except BuildError as error:
         print(error, file=sys.stderr)
         return error.status
+    except OSError as error:
+        print(error, file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as error:
         print(f'command failed with status {error.returncode}: {" ".join(error.cmd)}', file=sys.stderr)
         return error.returncode if error.returncode > 0 else 1
