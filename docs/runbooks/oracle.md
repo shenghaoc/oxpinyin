@@ -33,8 +33,8 @@ The image holds the libraries only and ships no model-derived data (section 2a).
 ## Pin identity
 
 [`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt) is the
-only record of the pin identity. The builder, `tools/dev/cell.py` and the
-image tools all read it; no other file repeats its values. To change it, follow
+authoritative pin record. The builder, host model fetcher, cell settings and
+image tools read it. To change it, follow
 [changing the pin](goldens-and-pins.md#3-the-oracle-pin). Its fields are:
 
 | field | meaning |
@@ -72,8 +72,8 @@ the repository.
    `version-manifest.json`, `versions.py` and `oracle-pin.txt`.
    `RECIPE_INPUTS` in `build.py` is the one list; `tools.oracle.image` reads
    it for the image tag and for prefix checks. A change to any of the five
-   files changes the hash and the image tag, and every prefix built before
-   it is rebuilt. A recipe change is not a pin change: the pinned inputs and
+   files changes the hash and the image tag. Prefixes and oracle images
+   from the old recipe fail the identity check and must be replaced. A recipe change is not a pin change: the pinned inputs and
    the frozen contract captures stay as they are.
 3. **Installed toolchain versions.** The base image is unpinned Debian
    testing. Its contents change over time: libtkrzw, Berkeley DB, Kyoto
@@ -123,10 +123,10 @@ just fetch-model
 export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
 ```
 
-The command verifies the SHA-256 and extracts the archive into
-`target/model20/`. The last stdout line is the extracted directory.
-`target/model20/verified` records the archive digest; `--model-dir` below
-refuses an extraction without that marker.
+The command reads the expected SHA-256 from the pin, verifies the archive
+and extracts it into `target/model20/`. The last stdout line is the extracted
+directory. Both `just fetch-model` and the builder's `--model-dir` check the
+digest in `target/model20/verified` before reusing the extraction.
 
 ## 2. Build the oracle
 
@@ -326,14 +326,21 @@ cells.
    area beside the prefix.
 4. It writes `oracle-data.sha256`, `oracle-data-unstable.sha256` and the
    data fields of `oracle-pin.txt` in the staging area.
-5. It publishes the generated data, both manifests and the record together.
-   The libraries of the prefix stay unchanged.
+5. It moves the old pin record and the generated paths it replaces into a
+   sibling `<prefix>.data-backup` directory. It renames the staged data,
+   utilities and manifests into place, then installs the new pin record last.
+   The libraries, headers, pkg-config files and `versions.txt` stay in place.
 
-A run that fails or is interrupted before step 5 removes its staging area
-and leaves the prefix as it was.
+Failures before step 5 leave the prefix untouched. A publication I/O error
+rolls back completed moves and restores the old pin record last. If rollback
+fails or publication is interrupted, keep the sibling backup for recovery.
+Another regeneration refuses to start while the backup exists. A prefix
+without its pin record fails validation. A process killed before cleanup may
+also leave a staging directory. The renames do not provide a crash-atomic
+transaction or power-loss durability.
+
 When a tool reuses the prefix, it checks both manifest digests and all listed
-files against the record of this prefix, not against the output of another
-toolchain.
+files against that prefix's record.
 
 Then use the prefix as if it had been built locally:
 

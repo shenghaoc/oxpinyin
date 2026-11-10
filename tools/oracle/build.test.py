@@ -18,7 +18,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import cell  # noqa: E402
+from tools.dev import cell, provision  # noqa: E402
 from tools.oracle import build, image  # noqa: E402
 
 PIN = build.fields(ROOT / 'tools/oracle/oracle-pin.txt')
@@ -32,8 +32,9 @@ def sha(data):
 class Upstream:
     """Stands in for every build command, records them, and fails where FAIL says."""
 
-    def __init__(self, fail=None, head=None):
+    def __init__(self, fail=None, head=None, data_suffix=b''):
         self.fail, self.head = fail or {}, head
+        self.data_suffix = data_suffix
         self.calls, self.environments = [], []
 
     def __call__(self, command, **options):
@@ -60,9 +61,11 @@ class Upstream:
                 self.write(root / f'include/libpinyin-{PIN["libpinyin_tag"]}/pinyin.h', b'header')
                 if self.zhuyin:
                     self.write(root / 'lib/libzhuyin.so', b'zhuyin')
+            if where in ('utils', 'all'):
+                self.write(root / 'bin/gen_unigram', b'utility' + self.data_suffix)
             if where in ('data', 'all'):
                 for name in (*build.DATA_UNSTABLE_FILES, 'table.conf', 'gb_char.bin'):
-                    self.write(root / build.DATA_DIRECTORY / name, name.encode())
+                    self.write(root / build.DATA_DIRECTORY / name, name.encode() + self.data_suffix)
         if command[0] == 'versions':
             Path(command[-1]).write_text('host versions\n')
         return types.SimpleNamespace(stdout=stdout, returncode=0)
@@ -83,7 +86,7 @@ class BuildTests(unittest.TestCase):
         versions = self.directory / 'image-versions.txt'
         versions.write_bytes(b'image versions\n')
         self.enterContext(mock.patch.object(build, 'IMAGE_VERSIONS', versions))
-        self.enterContext(mock.patch.object(build.shutil, 'which', side_effect=lambda name: name))
+        self.enterContext(mock.patch.object(build.shutil, 'which', side_effect=lambda name, **_: name))
         for name in ('CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'PKG_CONFIG_PATH'):
             self.enterContext(mock.patch.dict(os.environ)), os.environ.pop(name, None)
 
@@ -323,6 +326,8 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.libs()[0], 0)
         (self.prefix / 'versions.txt').write_bytes(b'the libraries versions\n')
         libraries = self.record()
+        Upstream.write(self.prefix / 'lib/pkgconfig/libpinyin.pc', b'pkg-config')
+        Upstream.write(self.prefix / 'bin/unrelated', b'keep me')
         self.model()
         status, out, _, upstream = self.regenerate()
         self.assertEqual(status, 0)
@@ -330,26 +335,134 @@ class BuildTests(unittest.TestCase):
         self.assertIn(['make', '-C', 'data', 'install', mock.ANY], upstream.calls)
         self.assertFalse(any(call[:2] == ['make', 'install'] for call in upstream.calls))
         self.assertTrue((self.prefix / build.DATA_DIRECTORY / 'bigram.db').is_file())
+        self.assertEqual((self.prefix / 'bin/gen_unigram').read_bytes(), b'utility')
+        self.assertEqual((self.prefix / 'bin/unrelated').read_bytes(), b'keep me')
+        self.assertEqual((self.prefix / 'lib/pkgconfig/libpinyin.pc').read_bytes(), b'pkg-config')
         record = self.record()
         libraries['versions_sha256'] = sha(b'the libraries versions\n')
         self.assertEqual({key: record[key] for key in libraries}, libraries)
         self.assertEqual(record['data_manifest_sha256'], sha((self.prefix / 'oracle-data.sha256').read_bytes()))
         self.assertEqual((self.prefix / 'versions.txt').read_bytes(), b'the libraries versions\n')
-        self.assertEqual(sorted(path.name for path in self.directory.iterdir() if '.stage.' in path.name), [])
+        self.assert_no_publication_files()
 
     def test_failed_data_regeneration_leaves_the_prefix_as_it_was(self):
         self.assertEqual(self.libs()[0], 0)
         self.model()
         old = self.prefix / build.DATA_DIRECTORY / 'kept.bin'
         Upstream.write(old, b'old')
-        before = sorted((str(path), path.read_bytes() if path.is_file() else None) for path in self.prefix.rglob('*'))
+        before = self.prefix_contents()
         for fail in ({('make', 'data', 'install'): 2}, {('make', '-j1'): 130}):
             with self.subTest(fail=fail):
                 status = self.regenerate(upstream=Upstream(fail=fail))[0]
                 self.assertEqual(status, next(iter(fail.values())))
-                after = sorted((str(path), path.read_bytes() if path.is_file() else None) for path in self.prefix.rglob('*'))
-                self.assertEqual(after, before)
-                self.assertEqual([path.name for path in self.directory.iterdir() if '.stage.' in path.name], [])
+                self.assertEqual(self.prefix_contents(), before)
+                self.assert_no_publication_files()
+
+    def prefix_contents(self):
+        return {path.relative_to(self.prefix): path.read_bytes() if path.is_file() else None
+                for path in self.prefix.rglob('*')}
+
+    def assert_no_publication_files(self):
+        self.assertEqual(list(self.directory.glob('prefix.stage.*')), [])
+        self.assertFalse(build.data_backup(self.prefix).exists())
+
+    def data_ok(self):
+        validator = provision.Provision(root=ROOT, env={})
+        validator.host = 'Linux'  # Use the on-disk validator on every host.
+        with contextlib.redirect_stderr(io.StringIO()):
+            return validator.data_ok('tkrzw', self.prefix)
+
+    def previous_data(self):
+        self.assertEqual(self.libs()[0], 0)
+        Upstream.write(self.prefix / 'lib/libpinyin.so', b'pinyin')
+        Upstream.write(self.prefix / 'lib/pkgconfig/libpinyin.pc', b'pkg-config')
+        self.model()
+        self.assertEqual(self.regenerate(upstream=Upstream(data_suffix=b' old'))[0], 0)
+        self.assertTrue(self.data_ok())
+        return self.prefix_contents()
+
+    def test_manifest_preparation_error_keeps_the_previous_prefix(self):
+        before = self.previous_data()
+        write = Path.write_bytes
+
+        def fail_manifest(path, data):
+            if path.name == build.DATA_MANIFESTS[1]:
+                raise OSError('cannot stage manifest')
+            return write(path, data)
+
+        with mock.patch.object(Path, 'write_bytes', fail_manifest):
+            status, out, err, _ = self.regenerate()
+        self.assertEqual((status, out), (1, ''))
+        self.assertIn('cannot stage manifest', err)
+        self.assertEqual(self.prefix_contents(), before)
+        self.assertTrue(self.data_ok())
+        self.assert_no_publication_files()
+
+    def test_data_publish_failures_restore_the_previous_prefix(self):
+        before = self.previous_data()
+        replace = Path.replace
+        for name in (build.DATA_DIRECTORY, build.DATA_MANIFESTS[1], build.PIN_RECORD):
+            with self.subTest(name=name):
+                def fail_publication(source, target):
+                    if target == self.prefix / name and source.is_relative_to(self.directory):
+                        if source.relative_to(self.directory).parts[0].startswith('prefix.stage.'):
+                            self.assertFalse(self.data_ok())
+                            raise OSError('cannot publish ' + name)
+                    return replace(source, target)
+
+                with mock.patch.object(Path, 'replace', fail_publication):
+                    status, out, err, _ = self.regenerate()
+                self.assertEqual((status, out), (1, ''))
+                self.assertIn('cannot publish ' + name, err)
+                self.assertEqual(self.prefix_contents(), before)
+                self.assertTrue(self.data_ok())
+                self.assert_no_publication_files()
+
+    def test_failed_rollback_preserves_the_backup_and_refuses_reuse(self):
+        before = self.previous_data()
+        replace = Path.replace
+        backup = build.data_backup(self.prefix)
+        data = Path(build.DATA_DIRECTORY)
+
+        def fail_publish_and_restore(source, target):
+            if target == self.prefix / build.PIN_RECORD:
+                raise OSError('cannot publish pin record')
+            if source == backup / data:
+                raise OSError('cannot restore data')
+            return replace(source, target)
+
+        with mock.patch.object(Path, 'replace', fail_publish_and_restore):
+            status, out, err, _ = self.regenerate()
+        self.assertEqual((status, out), (1, ''))
+        for diagnostic in ('cannot publish pin record', 'cannot restore data', str(backup)):
+            self.assertIn(diagnostic, err)
+        self.assertEqual((backup / data / 'bigram.db').read_bytes(), before[data / 'bigram.db'])
+        self.assertEqual((backup / build.PIN_RECORD).read_bytes(), before[Path(build.PIN_RECORD)])
+        self.assertEqual(list(self.directory.glob('prefix.stage.*')), [])
+        self.assertFalse(self.data_ok())
+        status, _, err, upstream = self.regenerate()
+        self.assertEqual((status, upstream.calls), (1, []))
+        self.assertIn('requires recovery', err)
+        self.assertEqual((backup / data / 'bigram.db').read_bytes(), before[data / 'bigram.db'])
+
+    def test_interrupted_publication_leaves_the_prefix_invalid_and_backup_intact(self):
+        before = self.previous_data()
+        replace = Path.replace
+
+        def interrupt_before_commit(source, target):
+            if target == self.prefix / build.PIN_RECORD:
+                raise KeyboardInterrupt
+            return replace(source, target)
+
+        with mock.patch.object(Path, 'replace', interrupt_before_commit):
+            with self.assertRaises(KeyboardInterrupt):
+                self.regenerate()
+        data = Path(build.DATA_DIRECTORY) / 'bigram.db'
+        self.assertEqual((self.prefix / data).read_bytes(), b'bigram.db')
+        self.assertFalse((self.prefix / build.PIN_RECORD).exists())
+        self.assertFalse(self.data_ok())
+        self.assertEqual((build.data_backup(self.prefix) / data).read_bytes(), before[data])
+        self.assertEqual(list(self.directory.glob('prefix.stage.*')), [])
 
     def test_interrupted_data_regeneration_removes_its_stage_and_propagates(self):
         self.assertEqual(self.libs()[0], 0)
