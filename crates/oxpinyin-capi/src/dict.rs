@@ -5,9 +5,9 @@
 //! Upstream these run against `FacadePhraseIndex`/`PhraseItem`
 //! (`pinyin.cpp:2648-2665, 2774-2843`, `phrase_index.h:607-636`). The
 //! reads dispatch by library nibble across oxpinyin's seams (system
-//! monolith, loaded addons, user store); the unigram write is an
-//! in-memory overlay — nothing persists system counts, matching
-//! upstream where `pinyin_save` flushes user data exclusively.
+//! monolith, loaded addons, user store). Unigram writes update live
+//! phrase items without arming the save-dirty gate. A subsequent armed
+//! save can serialize the updated item counts.
 //!
 //! The `GArray`-taking symbols (`pinyin_lookup_tokens`,
 //! `pinyin_token_get_nth_pronunciation`) delegate to glib itself —
@@ -352,8 +352,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
 /// ```
 ///
 /// `*freq` is zeroed before the dispatch, so a `false` still delivers
-/// 0 (`pinyin.cpp:2821-2831`); the read includes the
-/// `pinyin_token_add_unigram_frequency` overlay.
+/// 0 (`pinyin.cpp:2821-2831`). The count comes from the live phrase item.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_token_get_unigram_frequency(
     instance: *mut PinyinInstance,
@@ -373,12 +372,7 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
             *freq = 0;
         }
     }
-    // The pin's `PhraseItem::get_unigram_frequency` is the chunk
-    // item's stored field (`gen_unigram`'s +1 included), which the
-    // language model hands out as is; the user store's trained delta
-    // rides on it there, the overlay delta below. A token whose
-    // library owns no item answers `false`, as `get_phrase_item`
-    // failing does upstream.
+    // `get_phrase_item` fails if the default index owns no item.
     let Some(count) = inst.core.token_unigram_frequency(token) else {
         return false;
     };
@@ -400,13 +394,10 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
 ///                                          guint delta);
 /// ```
 ///
-/// In-memory only — nothing persists it, matching upstream where the
-/// facade total and the item count move in RAM and `pinyin_save`
-/// flushes user data exclusively. The facade-total bump is
-/// unconditional once the token's library is loaded
-/// (`phrase_index.h:632`, before the item dispatch), so an absent-token
-/// add answers `false` yet still shifts the amplified-law denominator
-/// (`pinyin.cpp:1817`) — reproduced exactly.
+/// Updates the live item without arming `pinyin_save`. A later armed save
+/// serializes that item. A loaded sub-index takes the facade-total bump
+/// before dispatching to its item, so a missing item can still shift the
+/// denominator (`phrase_index.h:628-635`, `pinyin.cpp:1817`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_token_add_unigram_frequency(
     instance: *mut PinyinInstance,

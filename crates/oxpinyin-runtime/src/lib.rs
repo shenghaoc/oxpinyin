@@ -36,9 +36,8 @@
 
 mod sentence_facts;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
@@ -399,66 +398,6 @@ struct TextTokens {
 
 type TextLookupCache = Mutex<Option<TextTokens>>;
 
-#[derive(Default)]
-struct UnigramOverlay {
-    tokens: HashMap<u32, u64>,
-    libraries: HashMap<u32, u32>,
-}
-
-/// What `add_unigram_frequency` did to the default facade
-/// (074a2219 `phrase_index.h:628-634`, `phrase_index.cpp:150-177`), shared
-/// by the dictionary that applies it and the model that prices with it.
-#[derive(Default)]
-struct FacadeBumps {
-    /// Every bump the facade total took, accepted or not: a `guint32`
-    /// that wraps.
-    total: AtomicU32,
-    /// Whether `overlay` holds any token, so a step with no bump in the
-    /// session takes no lock.
-    live: AtomicBool,
-    /// The accepted bumps: per token, as the item's own frequency rose,
-    /// and per library, as its sub-index total did.
-    overlay: Mutex<UnigramOverlay>,
-}
-
-impl FacadeBumps {
-    fn overlay(&self) -> std::sync::MutexGuard<'_, UnigramOverlay> {
-        self.overlay
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// The accepted bumps on `token`'s item.
-    fn token(&self, token: u32) -> u64 {
-        if !self.live.load(Ordering::SeqCst) {
-            return 0;
-        }
-        self.overlay().tokens.get(&token).copied().unwrap_or(0)
-    }
-
-    /// Drops the accepted bumps of every library `replaced` names: the
-    /// facade takes the old sub-index's total away, accepted bumps
-    /// included, and the library's items come back as stored
-    /// (`phrase_index.cpp:237-248`, `:261-269`). A bump the sub-index
-    /// refused never reached it, so it stays in the facade total.
-    fn drop_libraries(&self, replaced: impl Fn(u32) -> bool) {
-        let mut overlay = self.overlay();
-        overlay.tokens.retain(|token, _| !replaced(token >> 24));
-        let mut removed = 0_u32;
-        overlay.libraries.retain(|&nibble, delta| {
-            if replaced(nibble) {
-                removed = removed.wrapping_add(*delta);
-                false
-            } else {
-                true
-            }
-        });
-        self.live
-            .store(!overlay.tokens.is_empty(), Ordering::SeqCst);
-        self.total.fetch_sub(removed, Ordering::SeqCst);
-    }
-}
-
 /// The system dictionary with the user-phrase lookup merged in.
 ///
 /// `SystemDictionary` holds DBM handles and mappings, so it rides an
@@ -473,10 +412,6 @@ pub struct RuntimeDict<'a> {
     text_lookup_cache: &'a TextLookupCache,
     addons: &'a RwLock<AddonSet>,
     punct: &'a PunctTable,
-    /// Transient bumps for libraries without canonical store ownership,
-    /// plus rejected calls' unconditional facade-total changes. Accepted
-    /// system-item bumps live in the user store alongside training/replay.
-    bumps: &'a FacadeBumps,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
     /// `library_visible_token`, `visible_item_count`, and the
@@ -839,12 +774,7 @@ impl<'a> RuntimeDict<'a> {
             return false;
         }
         let mask = 1u32 << index;
-        let newly_unloaded = self.library_mask.fetch_or(mask, Ordering::SeqCst) & mask == 0;
-        // The freed sub-index takes its accepted bumps with it, and a
-        // reload maps the library's items as stored (`phrase_index.cpp:261-269`).
-        if newly_unloaded {
-            self.bumps.drop_libraries(|nibble| nibble == index);
-        }
+        self.library_mask.fetch_or(mask, Ordering::SeqCst);
         true
     }
 
@@ -893,7 +823,7 @@ impl<'a> RuntimeDict<'a> {
     /// outside the u32 bit range both answer `true` — those nibbles
     /// have no bit to be masked off, so they are trivially visible.
     /// Every other visibility surface (`library_visible_token`,
-    /// `visible_item_count`, `add_unigram_delta`,
+    /// `visible_item_count`,
     /// `pinyin_token_add_unigram_frequency` callers) routes through
     /// this to keep the shift and the `mask == 0` shortcut in one
     /// place.
@@ -904,122 +834,6 @@ impl<'a> RuntimeDict<'a> {
             return true;
         }
         mask & (1u32 << nibble) == 0
-    }
-
-    /// The in-memory unigram delta for `token`, if the overlay carries
-    /// one. The caller applies its library-loaded rules first.
-    #[must_use]
-    pub fn unigram_delta(&self, token: u32) -> Option<u64> {
-        self.bumps.overlay().tokens.get(&token).copied()
-    }
-
-    /// Applies `add_unigram_frequency`'s effects for a loaded library:
-    /// the facade-total bump is unconditional (`phrase_index.h:632`,
-    /// before the item dispatch — an absent-token add still moves the
-    /// amplified-law denominator), and the item delta lands only when
-    /// the token exists and its library total accepts the addition. Answers
-    /// what the pin's `add_unigram_frequency` does: [`UnigramAdd::Refused`] is
-    /// its `ERROR_INTEGER_OVERFLOW`, [`UnigramAdd::Missing`] every other
-    /// refusal. A token
-    /// whose library is unloaded is invisible on both edges: neither
-    /// the total nor the overlay moves, matching the visibility filter
-    /// the rest of the surface honours.
-    #[must_use]
-    fn add_unigram_delta(&self, token: u32, delta: u64) -> UnigramAdd {
-        if !self.library_visible(token >> 24) {
-            return UnigramAdd::Missing;
-        }
-        let found = {
-            let system_found = self.live_items().read(token, |_| ()).found().is_some();
-            let addons = self
-                .addons
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let addon_found = addons.unigram_freq(token).is_some();
-            let user_found = self
-                .user
-                .and_then(|store| store.phrase(token).ok())
-                .flatten()
-                .is_some();
-            system_found || addon_found || user_found
-        };
-        // The facade total moves before the sub-index overflow check, and it
-        // is a `guint32` that wraps (`m_total_freq += delta`,
-        // `phrase_index.h:633`): a wrap to zero is the `0 < total_freq`
-        // assert of `pinyin.cpp:1859`, which the capi layer answers (class
-        // (c)) instead of dividing by it. `fetch_add` wraps in debug and
-        // release alike.
-        let Ok(delta) = u32::try_from(delta) else {
-            return UnigramAdd::Missing;
-        };
-        self.bumps.total.fetch_add(delta, Ordering::SeqCst);
-        if !found {
-            return UnigramAdd::Missing;
-        }
-        let mut overlay = self.bumps.overlay();
-        let library = token >> 24;
-        let base = self
-            .system
-            .libraries()
-            .library(library << 24)
-            .map_or(0, |lib| lib.total_freq());
-        let accepted = overlay.libraries.get(&library).copied().unwrap_or(0);
-        let user_bound = match self.user.map(|user| user.unigram_total()).transpose() {
-            Ok(total) => total.unwrap_or(0),
-            Err(_) => return UnigramAdd::Missing,
-        };
-        // Ordinary additions need only the cached/global bound. Scan the
-        // user library only at the overflow edge, not on every training bump.
-        // Until the next compact the library still holds its stored total,
-        // not its items' sum (`phrase_index.cpp:170-171`): the difference
-        // the user store keeps is part of the guarded sum, and it breaks the
-        // item-sum bound. One atomic load when no library carries one.
-        let offset = match self
-            .user
-            .map(|user| user.library_offset(library as u8))
-            .transpose()
-        {
-            Ok(offset) => offset.unwrap_or(0),
-            Err(_) => return UnigramAdd::Missing,
-        };
-        let bound = u64::from(base) + u64::from(accepted);
-        if offset != 0
-            || bound
-                .saturating_add(user_bound)
-                .saturating_add(u64::from(delta))
-                > u64::from(u32::MAX)
-        {
-            let user_total = match self
-                .user
-                .map(|user| user.unigram_library_total(library as u8))
-                .transpose()
-            {
-                Ok(total) => total.unwrap_or(0),
-                Err(_) => return UnigramAdd::Missing,
-            };
-            let total = base
-                .wrapping_add(accepted)
-                .wrapping_add(user_total)
-                .wrapping_add(offset);
-            if total.checked_add(delta).is_none() {
-                return UnigramAdd::Refused;
-            }
-        }
-        overlay
-            .libraries
-            .insert(library, accepted.wrapping_add(delta));
-        let entry = overlay.tokens.entry(token).or_insert(0);
-        *entry = entry.saturating_add(u64::from(delta));
-        self.bumps.live.store(true, Ordering::SeqCst);
-        UnigramAdd::Accepted
-    }
-
-    /// The overlay total — the amplified-law denominator's live shift
-    /// (`pinyin.cpp:1817` reads the facade total this mirrors). A `guint32`
-    /// that wraps, as the facade total does.
-    #[must_use]
-    pub fn unigram_total_delta(&self) -> u32 {
-        self.bumps.total.load(Ordering::SeqCst)
     }
 
     /// The visible item count for the amplified-law denominator: the
@@ -1739,10 +1553,6 @@ pub struct RuntimeLm<'a> {
     user: Option<&'a UserStore>,
     libraries: &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
     addons: &'a RwLock<AddonSet>,
-    /// The dictionary's `add_unigram_frequency` bumps: the total's is part
-    /// of the one facade total every reader divides by, and a token's is
-    /// part of its item's frequency, which every reader prices with.
-    bumps: &'a FacadeBumps,
 }
 
 /// `m_user_bigram->load`'s answer to a failed read: no gram, which
@@ -1777,21 +1587,11 @@ impl RuntimeLm<'_> {
                 .count_delta(prev, token)
                 .map_err(|error| LmError::User(error.to_string()))?,
         };
-        delta.unigram_delta = delta.unigram_delta.saturating_add(self.bumps.token(token));
         if let Some(store) = self.user {
             delta.unigram_total_delta =
                 store.unigram_total_over(|nibble| self.inner.is_visible(nibble));
         }
-        delta.unigram_total_delta = self.total_extra(delta.unigram_total_delta);
         Ok(delta)
-    }
-
-    /// What the facade total holds beyond the visible libraries' stored
-    /// totals: `user_total`, the user store's part, plus every
-    /// `add_unigram_frequency` bump (`phrase_index.h:633`). The model
-    /// adds it to the libraries' total wrapping, as the `guint32` does.
-    fn total_extra(&self, user_total: u64) -> u64 {
-        user_total.wrapping_add(u64::from(self.bumps.total.load(Ordering::SeqCst)))
     }
 
     /// `prev`'s merged row: the system gram and the user gram, one point
@@ -1809,7 +1609,7 @@ impl RuntimeLm<'_> {
     /// The phrase-index total the pin's amplified law divides by
     /// (`pinyin.cpp:1813-1814`, `get_phrase_index_total_freq`, live per
     /// call): the visible libraries' stored totals, the user store's extra
-    /// and the `add_unigram_frequency` bumps, wrapped at `guint32`. Must
+    /// (including unapplied increments), wrapped at `guint32`. Must
     /// not be snapshotted — training changes it.
     #[must_use]
     pub fn amplified_total(&self) -> u64 {
@@ -1844,18 +1644,17 @@ impl LanguageModel for RuntimeLm<'_> {
             .user
             .and_then(|store| store.system_unigram(token.value()));
         let extra = if live.is_some() && self.inner.is_visible((token.value() >> 24) as u8) {
-            // The model uses only the live field on this branch, ignoring even
-            // facade bumps. A live value also implies a libpinyin session,
+            // The model uses only the live field on this branch.
+            // A live value also implies a libpinyin session,
             // where unigram_delta is infallible: skipping it loses no error.
             0
         } else {
-            let delta = match self.user {
+            match self.user {
                 None => 0,
                 Some(store) => store
                     .unigram_delta(token.value())
                     .map_err(|error| LmError::User(error.to_string()))?,
-            };
-            delta.saturating_add(self.bumps.token(token.value()))
+            }
         };
         Ok(self
             .inner
@@ -1866,7 +1665,7 @@ impl LanguageModel for RuntimeLm<'_> {
         let user_total = self.user.map_or(0, |store| {
             store.unigram_total_over(|nibble| self.inner.is_visible(nibble))
         });
-        Ok(Some(self.inner.facade_total(self.total_extra(user_total))))
+        Ok(Some(self.inner.facade_total(user_total)))
     }
 
     fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
@@ -2003,7 +1802,6 @@ pub struct Runtime {
     text_lookup_cache: TextLookupCache,
     addons: RwLock<AddonSet>,
     punct: PunctTable,
-    bumps: FacadeBumps,
     library_mask: AtomicU32,
 }
 
@@ -2309,7 +2107,6 @@ impl Runtime {
             text_lookup_cache: TextLookupCache::default(),
             addons,
             punct,
-            bumps: FacadeBumps::default(),
             library_mask,
         })
     }
@@ -2358,7 +2155,6 @@ impl Runtime {
             text_lookup_cache: &self.text_lookup_cache,
             addons: &self.addons,
             punct: &self.punct,
-            bumps: &self.bumps,
             library_mask: &self.library_mask,
         }
     }
@@ -2371,7 +2167,6 @@ impl Runtime {
             user: self.user.as_ref(),
             libraries: self.libraries(),
             addons: &self.addons,
-            bumps: &self.bumps,
         }
     }
 
@@ -2468,20 +2263,17 @@ impl Runtime {
     /// [`UnigramAdd::Missing`].
     #[must_use]
     pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
+        // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
+        // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
+        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
         if !self.dict().library_visible(token >> 24) {
             return UnigramAdd::Missing;
         }
-        if u8::try_from(token >> 24).is_ok_and(|index| self.dict().is_system_library(index))
-            && let Some(user) = self.user.as_mut()
-        {
-            let Ok(delta) = u32::try_from(delta) else {
-                return UnigramAdd::Missing;
-            };
-            return user
-                .add_system_unigram_outcome(token, delta)
-                .unwrap_or(UnigramAdd::Missing);
-        }
-        self.dict().add_unigram_delta(token, delta)
+        let (Ok(delta), Some(user)) = (u32::try_from(delta), self.user.as_mut()) else {
+            return UnigramAdd::Missing;
+        };
+        user.add_unigram_outcome(token, delta)
+            .unwrap_or(UnigramAdd::Missing)
     }
 
     /// Publish dictionary remaps while retaining any unreplaced journal originals.
@@ -2715,15 +2507,9 @@ impl Runtime {
     }
 
     /// Ends a remap walk and returns the libraries it mapped.
-    /// add_unigram_frequency's accepted deltas belong to the replaced
-    /// sub-index too, so they go; overlays of every library the walk did not
-    /// map stay.
     #[must_use]
     pub fn finish_system_remap(&mut self, walk: RemapWalk) -> oxpinyin_user::SystemOriginals {
-        let RemapWalk { originals, .. } = walk;
-        self.bumps
-            .drop_libraries(|nibble| originals.contains_key(&(nibble as u8)));
-        originals
+        walk.originals
     }
 
     fn remap_system_libraries(
@@ -2815,7 +2601,7 @@ mod tests {
             let total = store.unigram_total().unwrap();
             assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
             assert_eq!(
-                store.add_system_unigram_outcome(token, 7).unwrap(),
+                store.add_unigram_outcome(token, 7).unwrap(),
                 UnigramAdd::Missing
             );
             assert_eq!(store.unigram_total().unwrap(), total);
@@ -2902,7 +2688,7 @@ mod tests {
             let store = runtime.user_store_mut().unwrap();
             let total = store.unigram_total().unwrap();
             assert_eq!(
-                store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+                store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
                 UnigramAdd::Missing
             );
             assert_eq!(store.unigram_total().unwrap(), total);
@@ -2958,7 +2744,7 @@ mod tests {
     }
 
     #[test]
-    fn unigram_freq_live_count_ignores_bumps_until_library_is_masked() {
+    fn unigram_freq_uses_the_live_count_while_the_library_is_visible() {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         let library = runtime.libraries().library(token).unwrap();
@@ -2970,15 +2756,10 @@ mod tests {
         let initial = runtime.user_store().unwrap().system_unigram(token).unwrap();
         assert!(initial > 0);
 
-        // Exercise an overlay alongside a live system item. Public system
-        // increments now belong to the store, so seed the older overlay here.
-        runtime.bumps.overlay().tokens.insert(token, 17);
-        runtime.bumps.live.store(true, Ordering::SeqCst);
         for (increment, delta) in [(0, 0), (9, 9)] {
             if increment != 0 {
                 assert!(runtime.add_unigram_delta(token, increment));
             }
-            assert_eq!(runtime.bumps.token(token), 17);
             // A session keeps no delta for a system item: the increment is in
             // the live field.
             assert_eq!(
@@ -2991,7 +2772,7 @@ mod tests {
                 "visible live count wins, including when the original is detached"
             );
 
-            // Mask directly to retain the bump: public unload drops it.
+            // Keep the live buffer while masking the library.
             runtime
                 .library_mask
                 .store(1 << (token >> 24), Ordering::SeqCst);
@@ -3003,13 +2784,10 @@ mod tests {
                 runtime.user_store().unwrap().system_unigram(token),
                 Some(initial + delta as u32)
             );
-            // No public call leaves a masked library its live buffer and its
-            // bump: unload drops both. Masked here, the token prices from
-            // the bump alone.
             assert_eq!(
                 runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-                Some(17),
-                "the masked token uses the bump alone"
+                Some(0),
+                "the masked token cannot use the live system count"
             );
             runtime.library_mask.store(0, Ordering::SeqCst);
             runtime
@@ -3097,8 +2875,7 @@ mod tests {
         assert_captures_price_as_the_model(&runtime, &entries);
 
         // A masked library leaves no entry to capture, and the model's
-        // fallback answer for its token is untouched (the mask is set
-        // directly, as the bump test does, so the bump stays).
+        // fallback answer for its token omits the live system item.
         runtime
             .library_mask
             .store(1 << (token >> 24), Ordering::SeqCst);
@@ -3118,7 +2895,7 @@ mod tests {
         assert_eq!(
             runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
             Some(delta),
-            "the masked token still prices from its delta and bumps"
+            "the masked token prices from its user delta"
         );
         runtime.library_mask.store(0, Ordering::SeqCst);
         runtime
@@ -3184,7 +2961,7 @@ mod tests {
     }
 
     #[test]
-    fn unigram_freq_preserves_user_library_counts_and_bumps() {
+    fn unigram_freq_reads_increments_from_the_user_item() {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         let ni = SyllableKey::from_text("ni").unwrap();
         let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
@@ -3299,17 +3076,11 @@ mod tests {
         let entries = candidate_entries(&runtime, "ni");
         assert!(entry_for(&entries, token).is_none());
         assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
-        runtime.bumps.overlay().tokens.insert(token, 17);
-        runtime.bumps.live.store(true, Ordering::SeqCst);
         assert_eq!(
             runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(17)
+            Some(0)
         );
         runtime.user = None;
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(17)
-        );
         assert_eq!(
             runtime
                 .lm()

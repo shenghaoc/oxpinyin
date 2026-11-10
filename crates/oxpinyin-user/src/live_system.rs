@@ -327,10 +327,8 @@ impl<'a> LiveSystemItems<'a> {
             .map_or(Lookup::Absent, Lookup::Found)
     }
 
-    /// The live unigram of `token`'s effective item. Runtime bumps are not
-    /// included; the caller adds `RuntimeDict::unigram_delta` once. `None`
-    /// when the token is hidden or holds no item. Consumer: predicted
-    /// candidate frequency in `predict.rs`.
+    /// The live unigram of `token`'s effective system item. Returns `None`
+    /// when the token is hidden or holds no item.
     #[must_use]
     pub fn effective_unigram(&self, token: Token) -> Option<u64> {
         if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index))
