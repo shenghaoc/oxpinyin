@@ -133,7 +133,7 @@ pub enum OpenError {
     /// and [`TableConfError::Header`] are the pin's ordinary `false` returns
     /// (`open %s failed.` and `load %s failed!`), an ordinary init failure
     /// the C adapters answer with NULL and no warning. Every other kind
-    /// aborts in the C adapters where `table_conf_aborts` says the pin does
+    /// aborts in the C adapters at the pin's abort sites
     /// (rows 79 and 80), and is a class (b) site the C ABI answers with NULL
     /// and one warning otherwise.
     TableConf(TableConfError),

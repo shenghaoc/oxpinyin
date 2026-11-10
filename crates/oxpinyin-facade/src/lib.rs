@@ -46,8 +46,8 @@ mod predict;
 mod snapshot;
 
 pub use context::{
-    ContextCore, FALLBACK_CLEARED_BIT, LibraryLoadFault, LibraryRowAssert, LiveOptions,
-    LiveOptionsInner, MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
+    ContextCore, FALLBACK_CLEARED_BIT, InitRefusal, LibraryLoadFault, LibraryRowAssert,
+    LiveOptions, LiveOptionsInner, MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
 };
 pub use cursor::{KeyAt, ModeKeys, SpanSource};
 pub use export_rows::{
@@ -57,7 +57,7 @@ pub use export_rows::{
 pub use import::{ImportPlan, plan_add};
 pub use instance::{
     BEFORE_CURSOR_ANCHOR, InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView,
-    refuse_lookup_gram,
+    TrainingRefusal, refuse_lookup_gram, training_answer,
 };
 pub use offsets::{
     double_offset_is_mid_key, double_original_offset, double_session_offset,
