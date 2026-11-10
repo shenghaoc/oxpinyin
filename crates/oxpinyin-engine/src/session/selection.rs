@@ -377,21 +377,14 @@ where
     /// # Errors
     ///
     /// Same as [`Session::select`]: [`EngineError::CandidateIndexOutOfRange`]
-    /// for an index the given window does not hold, and
-    /// [`EngineError::LookupOffsetOutOfRange`] for an anchor past the raw
-    /// input's end.
+    /// for an index the given window does not hold. A retained normal span
+    /// beyond the current matrix returns [`Selection::Refused`].
     pub fn select_anchored(
         &mut self,
         index: usize,
         window: &CandidateList,
         anchor: usize,
     ) -> Result<Selection, EngineError> {
-        if anchor > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset: anchor,
-                len: self.input.len(),
-            });
-        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -414,12 +407,6 @@ where
         anchor: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
-        if anchor > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset: anchor,
-                len: self.input.len(),
-            });
-        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -438,6 +425,19 @@ where
         candidate: &Candidate,
         token_override: Option<PhraseToken>,
     ) -> Result<Selection, EngineError> {
+        let span_end = anchor.saturating_add(candidate.consumed_bytes());
+        if candidate.nbest_row().is_none()
+            && token_override.or_else(|| candidate.token()).is_some()
+            && span_end > self.selection_constraint_size()?
+        {
+            // Both choose functions validate before and after add_constraint,
+            // even when it returns zero (074a2219 pinyin.cpp:2578-2587;
+            // zhuyin.cpp:1646-1666). Do not clip the retained span or add its
+            // token/text to the record. The ABI owns the refusal cursor.
+            self.validate_selection_constraints()?;
+            self.validate_selection_constraints()?;
+            return Ok(Selection::Refused);
+        }
         // The chosen phrase's own text, stored words included: the pin's
         // choose reads no text (`add_constraint(m_begin, m_end, token)`,
         // `pinyin.cpp:2577-2587`, `zhuyin.cpp:1646-1666` at 074a2219), and
@@ -572,6 +572,44 @@ where
         self.refresh()?;
 
         Ok(self.selection_outcome())
+    }
+
+    /// Revalidate existing forcings on a refused choose, preserving the pin's
+    /// resize and spelling checks without attempting sentence decoding.
+    fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
+        self.ensure_matrix()?;
+        let size = self.selection_constraint_size()?;
+        let mut store = core::mem::take(&mut self.constraints);
+        let result = (|| {
+            let retained = self.retained_parse()?;
+            let bound = retained.matrix.bound;
+            let spelling = crate::nbest::ConstraintSpelling::new(
+                &retained.scan,
+                bound,
+                self.input.physical_separators(),
+                self.input.as_bytes(),
+            );
+            store.validate(size, |start, end, token, text_len| {
+                spelling.spells(&self.dictionary, start, end, token, text_len)
+            })
+        })();
+        self.constraints = store;
+        if result? || (self.constraints.is_active() && self.record.history().is_empty()) {
+            self.rebuild_selection_from_constraints();
+        }
+        Ok(())
+    }
+
+    /// `fill_matrix` clears the matrix and returns early for zero keys;
+    /// otherwise its size is parsed_len + 1, not the raw input length
+    /// (074a2219 storage/phonetic_key_matrix.cpp:30-48). Read the retained
+    /// key path and matrix rather than keeping another parse-length field.
+    fn selection_constraint_size(&self) -> Result<usize, EngineError> {
+        if self.selected_path()?.edges.is_empty() {
+            Ok(0)
+        } else {
+            Ok(self.retained_parse()?.matrix.bound + 1)
+        }
     }
 
     /// A choose whose span starts before the composition offset (register

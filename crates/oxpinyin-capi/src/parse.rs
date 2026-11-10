@@ -19,10 +19,8 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    // The parse path clears the candidate snapshot before anything else —
-    // main's `begin_parse` did this through `reset_parse_state`; the core
-    // seam cannot see this layer's snapshot, so the clear lives here.
-    inst.state.candidates.clear();
+    // The pin preserves candidate rows and strings across parsing; only a
+    // candidate guess, reset or instance destruction invalidates them.
     inst.core.parse_full_more(text)
 }
 
@@ -79,8 +77,6 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
     );
     // SAFETY: `instance` is non-null (checked above).
     let mut inst = unsafe { instance_mut(instance) };
-    // Parse-path snapshot clear (main's begin_parse law).
-    inst.state.candidates.clear();
     inst.core.parse_double_more(&text)
 }
 
@@ -108,8 +104,6 @@ pub extern "C" fn pinyin_parse_more_chewings(
     );
     // SAFETY: `instance` is non-null (checked above).
     let mut inst = unsafe { instance_mut(instance) };
-    // Parse-path snapshot clear (main's begin_parse law).
-    inst.state.candidates.clear();
     inst.core
         .parse_chewing_more(&text, ToneForwarding::PinFacade)
 }
@@ -195,7 +189,7 @@ mod tests {
     use rstest::rstest;
 
     use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
-    use crate::candidates::{pinyin_get_candidate, pinyin_get_n_candidate};
+    use crate::candidates::pinyin_get_candidate;
     use crate::config::pinyin_set_options;
     use crate::cursor::{
         pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest, pinyin_get_pinyin_key_rest_positions,
@@ -242,29 +236,119 @@ mod tests {
         crate::context::pinyin_fini(context);
     }
 
-    /// A re-parse clears the candidate snapshot even when no guess follows —
-    /// upstream's `begin_parse` reset law, which a reads-between-parse-and-
-    /// guess consumer observes as an empty list. Regression pin for the
-    /// extraction, where the clear moved out of `begin_parse`'s reach.
-    #[test]
-    fn reparse_clears_the_candidate_snapshot_before_any_guess() {
-        let user_dir = TempUserDir::new("reparse-clears");
+    // At 074a2219, pinyin.cpp:1497-1609,2183-2196,2693-2704,2873-2878: parsing
+    // leaves candidate storage alone; guessing and reset free it. Keep the
+    // original C pointers, not just copied text or a row fetched after parse.
+    #[rstest]
+    #[case::full(crate::parse::pinyin_parse_more_full_pinyins, "ni")]
+    #[case::double(crate::parse::pinyin_parse_more_double_pinyins, "ni")]
+    #[case::chewing(crate::parse::pinyin_parse_more_chewings, "su3")]
+    fn reparse_preserves_candidate_strings_until_guess_or_reset(
+        #[case] parse: extern "C" fn(
+            *mut crate::types::PinyinInstance,
+            *const std::ffi::c_char,
+        ) -> usize,
+        #[case] input: &str,
+    ) {
+        use crate::candidates::{
+            pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
+        };
+        use std::ffi::CStr;
+        use std::ptr;
+
+        let user_dir = TempUserDir::new("candidate-lifetime");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            5
+        );
+        assert!(crate::sentence::pinyin_guess_candidates(
+            instance,
+            0,
+            DEFAULT_SORT
+        ));
+        let mut count = 0;
+        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert!(count > 0);
+        let mut original = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, 0, &raw mut original));
+        let mut string = ptr::null();
+        assert!(pinyin_get_candidate_string(
+            instance,
+            original,
+            &raw mut string
+        ));
+        assert!(!string.is_null());
+        // SAFETY: the freshly guessed candidate owns a NUL-terminated string.
+        let expected = unsafe { CStr::from_ptr(string) }.to_owned();
 
-        let nihao = cstr("nihao");
-        assert!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()) > 0);
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-        let mut populated = 0_u32;
-        assert!(pinyin_get_n_candidate(instance, &raw mut populated));
-        assert!(populated > 0, "a guess populates the snapshot");
-
-        // Parse again with no guess in between: the snapshot must be empty.
-        let ni = cstr("ni");
-        assert!(pinyin_parse_more_full_pinyins(instance, ni.as_ptr()) > 0);
-        let mut after = u32::MAX;
+        assert_eq!(parse(instance, cstr(input).as_ptr()), input.len());
+        let mut after = 0;
         assert!(pinyin_get_n_candidate(instance, &raw mut after));
-        assert_eq!(after, 0, "parse clears the snapshot without a guess");
+        assert_eq!(after, count, "a reparse preserves the original list");
+        let mut current = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, 0, &raw mut current));
+        assert_eq!(current, original);
+        let mut current_string = ptr::null();
+        assert!(pinyin_get_candidate_string(
+            instance,
+            original,
+            &raw mut current_string
+        ));
+        assert_eq!(current_string, string);
+        // SAFETY: parsing has preserved the original snapshot, as checked above;
+        // no guess or reset has invalidated either saved pointer.
+        assert_eq!(unsafe { CStr::from_ptr(string) }, expected.as_c_str());
 
+        // A successful guess replaces the old list with the reparsed input's
+        // candidates. Read only newly obtained pointers after this boundary.
+        assert!(crate::sentence::pinyin_guess_candidates(
+            instance,
+            0,
+            DEFAULT_SORT
+        ));
+        assert!(pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(pinyin_get_candidate_string(
+            instance,
+            current,
+            &raw mut current_string
+        ));
+        assert_ne!(
+            // SAFETY: this pointer comes from the new candidate list.
+            unsafe { CStr::from_ptr(current_string) },
+            expected.as_c_str()
+        );
+
+        // Even a refused empty-input guess invalidates the preceding list.
+        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert!(count > 0);
+        assert_eq!(parse(instance, cstr("").as_ptr()), 0);
+        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(after, count);
+        assert!(!crate::sentence::pinyin_guess_candidates(
+            instance,
+            0,
+            DEFAULT_SORT
+        ));
+        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(after, 0);
+        assert!(!pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(current.is_null());
+
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            5
+        );
+        assert!(crate::sentence::pinyin_guess_candidates(
+            instance,
+            0,
+            DEFAULT_SORT
+        ));
+        assert!(crate::instance::pinyin_reset(instance));
+        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(after, 0);
+        assert!(!pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(current.is_null());
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }

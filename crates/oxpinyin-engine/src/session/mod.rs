@@ -33,6 +33,9 @@ pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 /// What choosing a candidate left behind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Selection {
+    /// The retained span overruns the current constraint array. No selection
+    /// was recorded; the C facade supplies its own refusal cursor.
+    Refused,
     /// Input remains; more candidates are offered.
     Continued,
     /// The whole composition is chosen and can be committed.

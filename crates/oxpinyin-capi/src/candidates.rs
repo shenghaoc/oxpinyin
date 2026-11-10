@@ -323,8 +323,10 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// ```
 ///
 /// Returns -1 on failure (consistent with the `int` return type). The
-/// returned cursor is the chosen candidate's absolute end position in the
-/// active parse mode's own coordinates — never past the parsed input, even
+/// returned cursor for an accepted normal span is its absolute end position in
+/// the active parse mode's coordinates. A retained span that overruns the
+/// current constraint array returns the caller's offset without selection
+/// (`074a2219` pinyin.cpp:2581-2589). This avoids overshooting even
 /// when the caller offset sits one position past a separator run the
 /// candidate's span also covers (the ibus idiom commits exactly at
 /// `cursor == length`).
@@ -449,7 +451,10 @@ pub extern "C" fn pinyin_choose_candidate(
     // Resolve the selection against the window the caller actually saw,
     // and keep the row's end in that window for the answer below.
     let window_end = match inst.core.select_candidate(source_index, addon_token) {
-        Ok(window_end) => window_end,
+        Ok((oxpinyin_engine::Selection::Refused, _)) => {
+            return c_int::try_from(offset).unwrap_or(c_int::MAX);
+        }
+        Ok((_, window_end)) => window_end,
         Err(_) => return -1,
     };
     // The candidate's absolute end. The snapshot span is anchored at

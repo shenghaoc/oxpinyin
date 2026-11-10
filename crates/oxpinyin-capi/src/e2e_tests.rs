@@ -1471,14 +1471,44 @@ fn a_mid_key_lookup_under_double_pinyin_lists_only_the_sentence_rows() {
     crate::context::pinyin_fini(context);
 }
 
-#[test]
-fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
+#[rstest::rstest]
+#[case::unchanged(None, 5, false)]
+#[case::longer(Some("nihaoma"), 7, false)]
+#[case::shorter(Some("ni"), 2, true)]
+#[case::empty(Some(""), 0, true)]
+#[case::stale_constraint(Some("ma"), 2, true)]
+#[case::unconsumed_suffix(Some("ni!hao"), 2, true)]
+#[case::zero_keys(Some("''''''''"), 8, true)]
+fn choosing_from_a_reanchored_window_uses_the_anchored_span(
+    #[case] reparse: Option<&str>,
+    #[case] consumed: usize,
+    #[case] refused: bool,
+) {
     let user_dir = TempUserDir::new("c2-reanchor-choose");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     // The composition is anchored at 0 after a parse. Guessing at offset 2
     // BEFORE any choose re-anchors the window there (no cached list at 2),
     // so the rows the caller sees come from the offset-2 window.
     let _ = candidate(instance, "nihao", 0);
+    if reparse == Some("ma") {
+        let mut original = ptr::null_mut();
+        let index = {
+            // SAFETY: the guess completed; the instance remains live.
+            let inst = unsafe { instance_ref(instance) };
+            inst.candidates
+                .iter()
+                .position(|row| row.text_bytes() == "你".as_bytes())
+                .expect("你 candidate")
+        };
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small index"),
+            &raw mut original
+        ));
+        assert_eq!(pinyin_choose_candidate(instance, 0, original), 2);
+        // This forcing becomes invalid under "ma". Even a refused choose
+        // must validate it away (phonetic_lookup.cpp:120-168 at 074a2219).
+    }
     assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
     let hao = {
         // SAFETY: live instance immediately after the guess.
@@ -1496,11 +1526,46 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         ));
         cand
     };
+    let expected_token = token_of(instance, hao);
+    let expected_tokens = [PhraseToken::new(expected_token)];
+    if let Some(input) = reparse {
+        // At 074a2219 pinyin.cpp:1497-1525 leaves the candidate intact;
+        // :2580-2587 chooses its saved token and span, not a new row index.
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr(input).as_ptr()),
+            consumed
+        );
+    }
     // The chosen row's span is anchor-relative (hao covers raw 2..5). With
     // the fix the composition advances from the ANCHOR (2 + 3 = 5);
     // resolving the index against the composition-anchored cached list
     // instead would select a different row and answer a different cursor.
-    assert_eq!(pinyin_choose_candidate(instance, 2, hao), 5);
+    // add_constraint refuses end > matrix.size(); Pinyin returns offset + 0
+    // (074a2219 phonetic_lookup.cpp:61-65; pinyin.cpp:2581-2589).
+    assert_eq!(
+        pinyin_choose_candidate(instance, 2, hao),
+        if refused { 2 } else { 5 }
+    );
+    assert_eq!(
+        // SAFETY: the choose completed and the instance is still live.
+        unsafe { instance_ref(instance) }
+            .core
+            .session
+            .selected_tokens(),
+        if refused {
+            &[][..]
+        } else {
+            &expected_tokens[..]
+        }
+    );
+    assert!(!crate::candidates::pinyin_clear_constraint(instance, 0));
+    if refused {
+        assert_eq!(pinyin_choose_candidate(instance, 2, hao), 2);
+        assert!(!crate::candidates::pinyin_clear_constraint(instance, 2));
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+        return;
+    }
 
     // The skipped prefix (the raw bytes [0, 2) before the anchor) is
     // retained in the committed text: a re-anchored selection must not
@@ -1520,6 +1585,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         committed, "ni好",
         "the typed prefix survives the re-anchored choose"
     );
+    assert!(crate::candidates::pinyin_clear_constraint(instance, 2));
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
