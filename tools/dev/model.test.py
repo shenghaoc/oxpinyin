@@ -35,6 +35,7 @@ class FetchTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.work = Path(scratch.name)
         self.cache = self.work / 'cache'
+        self.pin = self.work / 'oracle-pin.txt'
         self.bin = self.work / 'bin'
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=f'{self.bin}{os.pathsep}{os.environ.get("PATH", os.defpath)}')
@@ -51,8 +52,10 @@ class FetchTests(unittest.TestCase):
             status = model.main(list(argv), env=self.env if env is None else env)
         return status, out.getvalue(), err.getvalue()
 
-    def pinned(self, archive):
-        return mock.patch.object(model, 'MODEL20_SHA256', write_archive(archive))
+    def pinned(self, archive, names=model.EXPECTED_MODEL_FILES):
+        digest = write_archive(archive, names)
+        self.pin.write_text(f'# fixture pin\nmodel_archive_sha256={digest}\n')
+        return mock.patch.object(model, 'PIN_FILE', self.pin)
 
     def test_help_and_option_errors(self):
         status, out, err = self.main('--help')
@@ -71,7 +74,7 @@ class FetchTests(unittest.TestCase):
         actual = hashlib.sha256(b'not-the-pinned-archive').hexdigest()
         status, out, err = self.main('--cache-dir', str(self.cache), '--archive', str(archive))
         self.assertEqual((status, out), (1, ''))
-        self.assertEqual(err, f'checksum mismatch: model20.text.tar.gz\n  expected: {model.MODEL20_SHA256}\n'
+        self.assertEqual(err, f'checksum mismatch: model20.text.tar.gz\n  expected: {model.archive_sha256()}\n'
                               f'  actual:   {actual}\n')
         self.assertFalse((self.cache / 'extracted').exists())
 
@@ -107,7 +110,7 @@ class FetchTests(unittest.TestCase):
             self.assertTrue(model.extraction_complete(extracted))
             self.assertTrue((self.cache / 'downloads/model20.text.tar.gz').is_file())
             self.assertEqual((self.cache / 'verified').read_text(),
-                             f'schema=pinyin-model-cache-v1\nurl={model.MODEL_URL}\nsha256={model.MODEL20_SHA256}\n')
+                             f'schema=pinyin-model-cache-v1\nurl={model.MODEL_URL}\nsha256={model.archive_sha256()}\n')
             self.assertEqual([path.name for path in self.cache.iterdir() if path.name.startswith('.extract.')], [])
             self.fake('curl', 'import sys\nsys.exit(99)\n')
             status, out, err = self.main('--cache-dir', str(self.cache))
@@ -117,10 +120,28 @@ class FetchTests(unittest.TestCase):
             self.assertEqual(self.main('--cache-dir', str(self.cache))[0], 0)
             self.assertEqual(self.main('--cache-dir', str(self.cache), '--force')[0], 1)
 
+    def test_pin_change_refuses_the_previous_marker_and_archive(self):
+        archive = self.work / 'old.tar.gz'
+        marker = self.cache / 'verified'
+        options = ('--cache-dir', str(self.cache), '--archive', str(archive))
+        with self.pinned(archive):
+            old_digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            status, _, err = self.main(*options)
+            self.assertEqual(status, 0, err)
+            self.assertIn(f'sha256={old_digest}', marker.read_text().splitlines())
+
+            new_digest = 'f' * 64
+            self.pin.write_text(f'model_archive_sha256={new_digest}\n')
+            status, out, err = self.main(*options)
+            self.assertEqual((status, out), (1, ''))
+            self.assertIn(f'expected: {new_digest}', err)
+            self.assertIn(f'actual:   {old_digest}', err)
+            self.assertIn(f'sha256={old_digest}', marker.read_text().splitlines())
+
     def test_local_archive_with_a_missing_file_names_it(self):
         archive = self.work / 'short.tar.gz'
         names = [name for name in model.EXPECTED_MODEL_FILES if name not in ('art.table', 'punct.table')]
-        with mock.patch.object(model, 'MODEL20_SHA256', write_archive(archive, names)):
+        with self.pinned(archive, names):
             status, _, err = self.main('--cache-dir', str(self.cache), '--archive', str(archive))
         self.assertEqual((status, err), (1, 'extracted archive is missing art.table\n'
                                             'extracted archive is missing punct.table\n'))
