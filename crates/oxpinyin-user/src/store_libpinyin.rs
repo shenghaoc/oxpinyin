@@ -1596,7 +1596,7 @@ mod tests {
         let originals: SystemOriginals =
             BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
         let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
-        let live = LiveSystemItems::unmasked(store.originals().phrase_libraries(), Some(&store));
+        let live = LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store);
         assert_eq!(live.pronunciation_count(0x0100_0001), Lookup::Found(17));
         assert!(live.read(0x0100_0001, |_| ()).found().is_none());
         drop(store);
@@ -1780,7 +1780,7 @@ mod tests {
     fn frequency_of(store: &UserStore, token: u32) -> crate::Lookup<(crate::ItemOrigin, u32)> {
         let unloaded = std::sync::atomic::AtomicU32::new(0);
         let libraries = store.originals().phrase_libraries();
-        crate::LiveSystemItems::new(libraries, Some(store), &unloaded).read(token, |item| {
+        crate::LiveSystemItems::new(libraries, store, &unloaded).read(token, |item| {
             (
                 item.origin(),
                 item.pronunciation(0).map_or(0, |reading| reading.frequency),
@@ -1871,11 +1871,8 @@ mod tests {
         // marker; the shipped original must not reappear for an over-read.
         store.test_forget_removal(token(2));
         let unloaded = std::sync::atomic::AtomicU32::new(0);
-        let live = crate::LiveSystemItems::new(
-            store.originals().phrase_libraries(),
-            Some(&store),
-            &unloaded,
-        );
+        let live =
+            crate::LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         assert_eq!(live.read(token(2), |_| ()), Lookup::Absent);
         assert_eq!(live.pronunciation_count(token(2)), Lookup::Absent);
         assert_eq!(
@@ -1970,7 +1967,7 @@ mod tests {
                 let unloaded = std::sync::atomic::AtomicU32::new(0);
                 let live = crate::LiveSystemItems::new(
                     store.originals().phrase_libraries(),
-                    Some(&store),
+                    &store,
                     &unloaded,
                 );
                 live.read(first, |item| {
@@ -2077,7 +2074,7 @@ mod tests {
             let unloaded = std::sync::atomic::AtomicU32::new(0);
             let live = crate::LiveSystemItems::new(
                 store.originals().phrase_libraries(),
-                Some(&store),
+                &store,
                 &unloaded,
             );
             live.read(first, |item| {
@@ -2225,11 +2222,7 @@ mod tests {
             .expect("open");
 
         let unloaded = AtomicU32::new(0);
-        let live = LiveSystemItems::new(
-            store.originals().phrase_libraries(),
-            Some(&store),
-            &unloaded,
-        );
+        let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         let (replayed, removed, untouched, absent) = (
             (1_u32 << 24) | 1,
             (1_u32 << 24) | 2,
@@ -2316,11 +2309,7 @@ mod tests {
 
         // An unloaded library hides every token, whatever it holds.
         let unloaded = AtomicU32::new(1 << 1);
-        let hidden = LiveSystemItems::new(
-            store.originals().phrase_libraries(),
-            Some(&store),
-            &unloaded,
-        );
+        let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         for token in [replayed, removed, untouched, absent] {
             assert_eq!(hidden.read(token, summary), Lookup::Unloaded);
             assert_eq!(hidden.pronunciation_count(token), Lookup::Unloaded);

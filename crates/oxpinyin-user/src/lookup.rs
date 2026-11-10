@@ -14,44 +14,25 @@ use crate::user_library::SessionPhrases;
 /// A query handle over the user store. Session handles borrow the canonical
 /// owner; they never hold a second index, phrase table or copy of item text.
 /// Each method releases the phrase guard before returning to its caller.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct UserLookup<'a> {
-    source: Source<'a>,
-}
-
-#[derive(Clone, Debug, Default)]
-enum Source<'a> {
-    #[default]
-    Empty,
-    /// The session's arenas and, for system libraries with an original, the
-    /// live buffers that hold their appended items.
-    Session(
-        &'a Mutex<SessionPhrases>,
-        &'a Mutex<crate::system_items::SystemItems>,
-    ),
+    /// The session's arenas.
+    phrases: &'a Mutex<SessionPhrases>,
+    /// For system libraries with an original, the live buffers that hold
+    /// their appended items.
+    items: &'a Mutex<crate::system_items::SystemItems>,
 }
 
 impl<'a> UserLookup<'a> {
-    /// Empty lookup (zero user-file data).
-    #[must_use]
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
     pub(crate) fn session(
         phrases: &'a Mutex<SessionPhrases>,
         items: &'a Mutex<crate::system_items::SystemItems>,
     ) -> Self {
-        Self {
-            source: Source::Session(phrases, items),
-        }
+        Self { phrases, items }
     }
 
     fn with_index<R>(&self, read: impl FnOnce(&UserIndex) -> R) -> R {
-        match &self.source {
-            Source::Empty => read(&UserIndex::new()),
-            Source::Session(phrases, _) => read(&lock_result_or_abort(phrases.lock()).index),
-        }
+        read(&lock_result_or_abort(self.phrases.lock()).index)
     }
 
     /// Phrases whose stored pinyin matches `syllables` under upstream's
@@ -82,21 +63,16 @@ impl<'a> UserLookup<'a> {
     }
 
     fn entries_for(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<PhraseEntry> {
-        match &self.source {
-            Source::Empty => Vec::new(),
-            Source::Session(phrases, items) => {
-                let phrases = lock_result_or_abort(phrases.lock());
-                phrases
-                    .index
-                    .search(keys)
-                    .into_iter()
-                    .filter_map(|token| {
-                        let text = session_text(&phrases, items, token)?;
-                        Some(PhraseEntry::new(PhraseToken::new(token), text))
-                    })
-                    .collect()
-            }
-        }
+        let phrases = lock_result_or_abort(self.phrases.lock());
+        phrases
+            .index
+            .search(keys)
+            .into_iter()
+            .filter_map(|token| {
+                let text = session_text(&phrases, self.items, token)?;
+                Some(PhraseEntry::new(PhraseToken::new(token), text))
+            })
+            .collect()
     }
 
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
@@ -108,24 +84,18 @@ impl<'a> UserLookup<'a> {
     /// Phrase text from the current item, without decoding its readings.
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
-        match &self.source {
-            Source::Empty => None,
-            Source::Session(phrases, items) => session_text(
-                &lock_result_or_abort::<MutexGuard<'_, SessionPhrases>>(phrases.lock()),
-                items,
-                token,
-            ),
-        }
+        session_text(
+            &lock_result_or_abort::<MutexGuard<'_, SessionPhrases>>(self.phrases.lock()),
+            self.items,
+            token,
+        )
     }
 
     /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
     /// included.
     #[must_use]
     pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
-        let Source::Session(phrases, _) = &self.source else {
-            return Vec::new();
-        };
-        lock_result_or_abort(phrases.lock())
+        lock_result_or_abort(self.phrases.lock())
             .phrase_table
             .tokens(&crate::phrase_table::key_ucs4(words))
             .unwrap_or_default()
@@ -166,11 +136,8 @@ impl<'a> UserLookup<'a> {
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
     pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
-        let Source::Session(phrases, _) = &self.source else {
-            return Vec::new();
-        };
         let prefix = crate::phrase_table::key_ucs4(prefix);
-        let Ok(rows) = lock_result_or_abort(phrases.lock())
+        let Ok(rows) = lock_result_or_abort(self.phrases.lock())
             .phrase_table
             .suggest_after(&prefix)
         else {

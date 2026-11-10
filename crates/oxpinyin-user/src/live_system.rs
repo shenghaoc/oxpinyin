@@ -177,7 +177,7 @@ impl<R> Lookup<R> {
 /// or can be cloned out of the borrow.
 pub struct LiveSystemItems<'a> {
     libraries: &'a PhraseLibraries,
-    user: Option<&'a UserStore>,
+    user: &'a UserStore,
     unloaded: &'a AtomicU32,
 }
 
@@ -187,7 +187,7 @@ impl<'a> LiveSystemItems<'a> {
     #[must_use]
     pub const fn new(
         libraries: &'a PhraseLibraries,
-        user: Option<&'a UserStore>,
+        user: &'a UserStore,
         unloaded: &'a AtomicU32,
     ) -> Self {
         Self {
@@ -202,7 +202,7 @@ impl<'a> LiveSystemItems<'a> {
     /// library's visibility once when it probes and then reads the items it
     /// probed whatever the mask says.
     #[must_use]
-    pub fn unmasked(libraries: &'a PhraseLibraries, user: Option<&'a UserStore>) -> Self {
+    pub fn unmasked(libraries: &'a PhraseLibraries, user: &'a UserStore) -> Self {
         static ALL_LOADED: AtomicU32 = AtomicU32::new(0);
         Self::new(libraries, user, &ALL_LOADED)
     }
@@ -215,17 +215,14 @@ impl<'a> LiveSystemItems<'a> {
     /// Whether the facade's table layout names this library as a system chunk.
     #[must_use]
     pub fn is_system_library(&self, library: u8) -> bool {
-        self.user.map_or_else(
-            || self.libraries.is_loaded(library),
-            |store| store.is_system_library(library),
-        )
+        self.user.is_system_library(library)
     }
 
     /// Whether the session holds items beyond the shipped chunks.
     /// Consumer: the pricing overlay gate, `RuntimeDict::effective_query`.
     #[must_use]
     pub fn has_overlay(&self) -> bool {
-        self.user.is_some_and(UserStore::has_system_items)
+        self.user.has_system_items()
     }
 
     /// Whether any entry-level filter can hide a token: a library is
@@ -233,8 +230,7 @@ impl<'a> LiveSystemItems<'a> {
     /// `RuntimeDict::token_filter_active`.
     #[must_use]
     pub fn filter_active(&self) -> bool {
-        self.unloaded.load(Ordering::SeqCst) != 0
-            || self.user.is_some_and(UserStore::has_removed_system_items)
+        self.unloaded.load(Ordering::SeqCst) != 0 || self.user.has_removed_system_items()
     }
 
     /// Whether the token's library is loaded and no journal REMOVE took its
@@ -242,10 +238,7 @@ impl<'a> LiveSystemItems<'a> {
     /// probe's removed check.
     #[must_use]
     pub fn is_visible(&self, token: Token) -> bool {
-        self.library_loaded(token >> 24)
-            && !self
-                .user
-                .is_some_and(|store| store.system_item_removed(token))
+        self.library_loaded(token >> 24) && !self.user.system_item_removed(token)
     }
 
     /// Reads the effective item behind `token` in a configured system
@@ -267,25 +260,24 @@ impl<'a> LiveSystemItems<'a> {
             return Lookup::Unloaded;
         }
         let mut read = Some(read);
-        if let Some(store) = self.user {
-            if store.system_item_removed(token) {
-                return Lookup::Removed;
-            }
-            // The library's live buffer holds the session's item, or the
-            // shipped one it was made from.
-            if let Some(found) = store
-                .with_live_item(token, |bytes| {
-                    let view = PhraseItemView::from_bytes(bytes)?;
-                    let f = read.take()?;
-                    Some(f(SystemItem::Replayed(view)))
-                })
-                .flatten()
-            {
-                return Lookup::Found(found);
-            }
-            if store.live_item_past_buffer(token) {
-                return Lookup::Absent;
-            }
+        let store = self.user;
+        if store.system_item_removed(token) {
+            return Lookup::Removed;
+        }
+        // The library's live buffer holds the session's item, or the
+        // shipped one it was made from.
+        if let Some(found) = store
+            .with_live_item(token, |bytes| {
+                let view = PhraseItemView::from_bytes(bytes)?;
+                let f = read.take()?;
+                Some(f(SystemItem::Replayed(view)))
+            })
+            .flatten()
+        {
+            return Lookup::Found(found);
+        }
+        if store.live_item_past_buffer(token) {
+            return Lookup::Absent;
         }
         match (
             self.libraries
@@ -310,16 +302,15 @@ impl<'a> LiveSystemItems<'a> {
         if !self.library_loaded(token >> 24) {
             return Lookup::Unloaded;
         }
-        if let Some(store) = self.user {
-            if store.system_item_removed(token) {
-                return Lookup::Removed;
-            }
-            if let Some(found) = store.live_pronunciation_count(token) {
-                return Lookup::Found(found);
-            }
-            if store.live_item_past_buffer(token) {
-                return Lookup::Absent;
-            }
+        let store = self.user;
+        if store.system_item_removed(token) {
+            return Lookup::Removed;
+        }
+        if let Some(found) = store.live_pronunciation_count(token) {
+            return Lookup::Found(found);
+        }
+        if store.live_item_past_buffer(token) {
+            return Lookup::Absent;
         }
         self.libraries
             .library(token)
@@ -350,9 +341,7 @@ impl<'a> LiveSystemItems<'a> {
     /// Returns the store's error when the unigram delta of a held item cannot
     /// be read.
     pub fn is_imported(&self, token: Token) -> Result<bool, UserStoreError> {
-        let Some(store) = self.user else {
-            return Ok(false);
-        };
+        let store = self.user;
         if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
             return Ok(false);
         }
@@ -367,7 +356,7 @@ impl<'a> LiveSystemItems<'a> {
     /// the export range probe, `appended_end`.
     #[must_use]
     pub fn overlay_end(&self, library: u8) -> Option<Token> {
-        self.user?.system_item_end(library)
+        self.user.system_item_end(library)
     }
 }
 
@@ -435,7 +424,7 @@ mod tests {
         assert!(store.live_item_past_buffer(0x0100_0001));
         store.test_forget_removal(0x0100_0001);
         let unloaded = AtomicU32::new(0);
-        let live = LiveSystemItems::new(&shipped, Some(&store), &unloaded);
+        let live = LiveSystemItems::new(&shipped, &store, &unloaded);
         assert_eq!(
             live.read(0x0100_0001, |item| item.unigram()),
             Lookup::Absent
@@ -447,6 +436,12 @@ mod tests {
     /// the configured library index is not restricted to the stock 1..=4.
     #[test]
     fn a_nonstock_loaded_library_is_a_system_library() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use oxpinyin_data::{
+            phrase_library::PhraseLibrary,
+            user_files::{SystemVersions, UserTableInfo},
+        };
+        use std::collections::BTreeMap;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("six.bin");
         let item = ChunkItem {
@@ -457,8 +452,28 @@ mod tests {
         std::fs::write(&path, build_chunk(&[(1, item)]).unwrap()).unwrap();
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load(6, &path).unwrap());
+        let original = PhraseLibrary::open(&path).unwrap();
+        let originals = SystemOriginals::from(BTreeMap::from([(
+            6,
+            SystemLibrary {
+                total: original.total_freq(),
+                range_end: original.token_range().end,
+                mapped: Some(original),
+                items: BTreeMap::new(),
+            },
+        )]));
+        let versions = SystemVersions::for_this_build(7, 14);
+        let user = dir.path().join("user");
+        std::fs::create_dir(&user).unwrap();
+        std::fs::write(
+            user.join("user.conf"),
+            UserTableInfo::conform_to(&versions).to_text(),
+        )
+        .unwrap();
+        let store =
+            UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
         let unloaded = AtomicU32::new(0);
-        let live = LiveSystemItems::new(&libraries, None, &unloaded);
+        let live = LiveSystemItems::new(&libraries, &store, &unloaded);
         assert!(live.is_system_library(6));
         assert!(!live.is_system_library(5));
         assert_eq!(

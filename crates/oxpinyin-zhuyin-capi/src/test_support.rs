@@ -139,11 +139,7 @@ pub fn with_store<R>(
     // `zhuyin_alloc_instance`; the store is a value field, and the shared
     // reference lives only for the duration of `f`.
     let inst = unsafe { instance_mut(instance) };
-    f(inst
-        .core
-        .user
-        .as_ref()
-        .expect("instance carries a user store"))
+    f(inst.core.user)
 }
 
 /// The token of the window row the candidate pointer was snapshotted from.

@@ -28,22 +28,20 @@ use oxpinyin_user::UserStore;
 /// prediction uses any token. The C adapters abort on it.
 pub fn compute_prefixes(
     dict: &RuntimeDict,
-    user: Option<&UserStore>,
+    user: &UserStore,
     prefix: Option<&PhraseText>,
 ) -> Result<Vec<u32>, oxpinyin_engine::EngineError> {
     let Some(prefix) = prefix else {
         return Ok(Vec::new());
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
-    let user_lookup = user.map(UserStore::lookup);
+    let user_lookup = user.lookup();
     let max = prefix.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix = &prefix[prefix.len() - length..];
         let mut matches = dict.system().tokens_for_ucs4(suffix).unwrap_or_default();
-        if let Some(lookup) = user_lookup.as_ref() {
-            matches.extend(lookup.tokens_for_ucs4(suffix).iter().copied());
-        }
+        matches.extend(user_lookup.tokens_for_ucs4(suffix).iter().copied());
         matches.retain(|token| dict.phrase_table_token_enabled(*token));
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
         if matches.len() > 4 {
@@ -75,7 +73,7 @@ pub fn compute_prefixes(
 #[must_use]
 pub fn merged_suggestions(
     dict: &RuntimeDict,
-    user: Option<&UserStore>,
+    user: &UserStore,
     prefix: &PhraseText,
 ) -> Vec<(u32, Option<PhraseText>)> {
     let prefix: Vec<u32> = prefix.outward_words().collect();
@@ -86,7 +84,7 @@ pub fn merged_suggestions(
         .into_iter()
         .filter(|token| dict.phrase_table_token_enabled(*token))
         .collect();
-    let mut user_rows = user.map_or_else(Vec::new, |store| store.lookup().suggest_after(&prefix));
+    let mut user_rows = user.lookup().suggest_after(&prefix);
     // PhraseTableEntry::search skips disabled library arrays
     // (074a2219 phrase_large_table3.cpp:40-42) in both tables.
     user_rows.retain(|(token, _)| dict.phrase_table_token_enabled(*token));
@@ -132,7 +130,6 @@ mod tests {
         let key = toned_key(SyllableKey::from_text("da").unwrap().index(), 2).unwrap();
         let token = ctx
             .user_store_mut()
-            .unwrap()
             .add_phrase(&PhraseText::from("龘龘"), &[key, key], Some(7))
             .unwrap();
         let rows = merged_suggestions(&ctx.runtime.dict(), ctx.user_store(), &prefix);

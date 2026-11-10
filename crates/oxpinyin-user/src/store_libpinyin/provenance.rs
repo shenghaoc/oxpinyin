@@ -575,8 +575,7 @@ fn earlier_modify_presence_wins_over_later_add_after_overlap() {
         assert!(!removed(&store, 1));
         assert_eq!(store.system_unigram(LIBRARY | 1), Some(77));
         assert_eq!(store.live_pronunciation_count(LIBRARY | 1), Some(2));
-        let live =
-            crate::LiveSystemItems::unmasked(store.originals().phrase_libraries(), Some(&store));
+        let live = crate::LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store);
         assert!(!live.is_imported(LIBRARY | 1).expect("classification"));
         assert_eq!(
             store

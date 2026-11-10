@@ -71,9 +71,7 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
     // Init: the store opens on the working directory, and libpinyin's
     // check_format writes the raised marker there.
     let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("open");
-    let store = runtime
-        .user_store_mut()
-        .expect("an empty user path is a user dir, not the absence of one");
+    let store = runtime.user_store_mut();
     assert_eq!(names(&first), ["user.conf"]);
     assert_eq!(open_counter(&first), 1);
 
@@ -117,7 +115,7 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
         std::fs::write(stray, b"stale").expect("plant a stray file");
     }
     let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("reopen");
-    let store = runtime.user_store_mut().expect("the profile reopens");
+    let store = runtime.user_store_mut();
     assert!(
         store
             .token_for_phrase(phrase)

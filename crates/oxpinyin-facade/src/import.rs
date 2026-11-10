@@ -34,7 +34,7 @@ pub enum ImportPlan {
 #[must_use]
 pub fn plan_add(
     index: u8,
-    dict: Option<&RuntimeDict<'_>>,
+    dict: &RuntimeDict<'_>,
     user: &UserStore,
     phrase: PhraseText,
     keys: Vec<PinyinKey>,
@@ -62,14 +62,7 @@ pub fn plan_add(
         return ImportPlan::Abort;
     }
     if let Some(&token) = same_library.first() {
-        let item_text = if let Some(dict) = dict {
-            dict.token_text(token)
-        } else {
-            user.phrase_text(token)
-                .ok()
-                .flatten()
-                .and_then(|words| PhraseText::from_stored_words(words.into_iter().map(Some)))
-        };
+        let item_text = dict.token_text(token);
         // A missing item leaves the pin's PhraseItem at length zero, which
         // asserts before any import mutation. The stored length first, then
         // every stored word.
@@ -103,19 +96,13 @@ pub fn plan_add(
 /// observable.
 fn phrase_table_tokens(
     user: &UserStore,
-    dict: Option<&RuntimeDict<'_>>,
+    dict: &RuntimeDict<'_>,
     phrase: &PhraseText,
 ) -> Result<Vec<u32>, ()> {
     let words: Vec<u32> = phrase.outward_words().collect();
-    let mut tokens = if let Some(dict) = dict {
-        dict.system().tokens_for_ucs4(&words).map_err(|_| ())?
-    } else {
-        Vec::new()
-    };
+    let mut tokens = dict.system().tokens_for_ucs4(&words).map_err(|_| ())?;
     tokens.extend(user.phrase_table_tokens_for_ucs4(&words).map_err(|_| ())?);
-    if let Some(dict) = dict {
-        tokens.retain(|token| dict.phrase_table_token_enabled(*token));
-    }
+    tokens.retain(|token| dict.phrase_table_token_enabled(*token));
     tokens.sort_by_key(|token| token >> 24);
     Ok(tokens)
 }

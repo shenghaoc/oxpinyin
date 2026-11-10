@@ -53,7 +53,6 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
     );
     runtime
         .user_store_mut()
-        .unwrap()
         .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
         .expect("live system item");
     assert_eq!(
@@ -66,7 +65,6 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
     );
     let user = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"词".into(), &keys, Some(5))
         .expect("user item");
     assert_eq!(
@@ -99,7 +97,6 @@ fn token_text_reads_live_items_and_obeys_library_visibility() {
         let text = oxpinyin_core::PhraseText::from_stored_parts(words.clone(), words.len());
         let token = runtime
             .user_store_mut()
-            .unwrap()
             .add_phrase(&text, &vec![keys[0]; words.len()], Some(0))
             .expect("stored user words");
         let actual = runtime.dict().token_text(token);
@@ -135,20 +132,17 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
     runtime
         .user_store_mut()
-        .unwrap()
         .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
         .expect("override");
     assert_eq!(packed(&runtime, system, 0).as_ref(), Some(&original));
     // Descending tones make insertion order differ from table-key order.
     let user = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"词".into(), &keys, Some(5))
         .unwrap();
     let second = [oxpinyin_user::toned_key(ni.index(), 1).unwrap()];
     runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"词".into(), &second, Some(9))
         .unwrap();
     for (nth, tone) in [(0, 3), (1, 1)] {
@@ -206,7 +200,6 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
         .collect();
     let token = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"你鎄".into(), &keys, Some(5))
         .unwrap();
     let records = runtime.dict().trellis_records(&syllables, &[3, 3]).unwrap();
@@ -380,7 +373,6 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
 
     let token = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&oxpinyin_core::PhraseText::from(phrase), &keys, None)
         .expect("learn it");
 
@@ -400,7 +392,6 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // own delta.
     let store_before = runtime
         .user_store_mut()
-        .unwrap()
         .unigram_total()
         .expect("store total");
     // Capture the overlay total *before* the observation so the branch
@@ -408,12 +399,10 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     let lm_before = LanguageModel::unigram_total(&runtime.lm()).expect("total query");
     runtime
         .user_store_mut()
-        .unwrap()
         .observe_selection(SENTENCE_START, FIRST_USER_TOKEN)
         .expect("observe a selection");
     let store_after = runtime
         .user_store_mut()
-        .unwrap()
         .unigram_total()
         .expect("store total");
     assert!(
@@ -456,7 +445,7 @@ fn regular_file_as_user_dir_keeps_user_state() {
         panic!("expected open to succeed over a file user dir: {error}");
     }
     let mut runtime = runtime.expect("open");
-    assert!(runtime.user_store_mut().unwrap().has_user_directory());
+    assert!(runtime.user_store_mut().has_user_directory());
     drop(runtime);
     marker.close().expect("cleanup temp file");
 }
@@ -468,7 +457,7 @@ fn no_user_path_means_transient_user_state() {
     // working directory, as the pin's `""` is — and writes there, so it
     // has an executable of its own: `tests/empty_user_dir.rs`.
     let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
-    assert!(!runtime.user_store_mut().unwrap().has_user_directory());
+    assert!(!runtime.user_store_mut().has_user_directory());
 }
 
 #[test]
@@ -620,7 +609,6 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     let live = |runtime: &Runtime, token: u32| {
         runtime
             .user_store()
-            .unwrap()
             .system_unigram(token)
             .expect("live item")
     };
@@ -657,7 +645,6 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     let token = PhraseToken::new(
         runtime
             .user_store_mut()
-            .unwrap()
             .add_phrase(&"你鎄".into(), &keys, Some(5))
             .unwrap(),
     );
@@ -665,12 +652,10 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     // the tested count changes, so a stale row cannot pass by normalization.
     let other = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"你鎬".into(), &keys, Some(5))
         .unwrap();
     runtime
         .user_store_mut()
-        .unwrap()
         .set_bigram_count(SENTENCE_START, other, 1000)
         .unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
@@ -688,21 +673,18 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     let before = fresh(&runtime);
     runtime
         .user_store_mut()
-        .unwrap()
         .observe_selection(SENTENCE_START, token.value())
         .unwrap();
     let trained = fresh(&runtime);
     assert_ne!(trained, before);
     runtime
         .user_store_mut()
-        .unwrap()
         .set_bigram_count(SENTENCE_START, token.value(), 1000)
         .unwrap();
     let written = fresh(&runtime);
     assert_ne!(written, trained);
     runtime
         .user_store_mut()
-        .unwrap()
         .mask_out(u32::MAX, token.value())
         .unwrap();
     let masked = fresh(&runtime);
@@ -721,7 +703,7 @@ fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
         .into_iter()
         .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
         .collect();
-    let user = runtime.user_store_mut().unwrap();
+    let user = runtime.user_store_mut();
     let prev = user.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
     let next = user.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
     user.set_bigram_count(prev, next, 7).unwrap();
@@ -753,18 +735,15 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     let token = PhraseToken::new(
         runtime
             .user_store_mut()
-            .unwrap()
             .add_phrase(&"你鎄".into(), &keys, Some(5))
             .unwrap(),
     );
     let other = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"你鎬".into(), &keys, Some(5))
         .unwrap();
     runtime
         .user_store_mut()
-        .unwrap()
         .set_bigram_count(SENTENCE_START, other, 1000)
         .unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
@@ -811,7 +790,7 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     // The cached query row survives an exclusive write operation; no
     // dictionary/model reader is retained while the owner changes.
     std::thread::scope(|scope| {
-        let writer = runtime.user_store_mut().unwrap();
+        let writer = runtime.user_store_mut();
         scope
             .spawn(move || {
                 writer
@@ -826,7 +805,7 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     assert!(carries(&runtime, &mut row, token.value()));
     assert_eq!(costs(&runtime, &mut row), trained);
     std::thread::scope(|scope| {
-        let writer = runtime.user_store_mut().unwrap();
+        let writer = runtime.user_store_mut();
         scope
             .spawn(move || writer.mask_out(u32::MAX, other).unwrap())
             .join()
@@ -917,12 +896,10 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     };
     runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"你鎄".into(), &user(&["ni", "hao"]), Some(5))
         .unwrap();
     runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"坐坐坐".into(), &user(&["zuo", "zuo", "zuo"]), Some(5))
         .unwrap();
     compare(&runtime, "with user phrases");
@@ -960,12 +937,10 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
         .collect();
     let token = runtime
         .user_store_mut()
-        .unwrap()
         .add_phrase(&"你鎄".into(), &keys, Some(5))
         .unwrap();
     runtime
         .user_store_mut()
-        .unwrap()
         .set_bigram_count(SENTENCE_START, token, 1000)
         .unwrap();
     assert_eq!(
@@ -974,11 +949,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
         "the second guess prices the added phrase"
     );
 
-    runtime
-        .user_store_mut()
-        .unwrap()
-        .mask_out(u32::MAX, token)
-        .unwrap();
+    runtime.user_store_mut().mask_out(u32::MAX, token).unwrap();
     assert_eq!(
         guess(&runtime),
         "你好",

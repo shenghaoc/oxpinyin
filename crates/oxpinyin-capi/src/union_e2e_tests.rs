@@ -187,11 +187,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     // The user store now carries the phrase under nibble 5, with a reading.
     // SAFETY: live instance.
     let inst = unsafe { instance_ref(instance) };
-    let store = inst
-        .core
-        .user
-        .as_ref()
-        .expect("fixture context has a user store");
+    let store = inst.core.user;
     assert_eq!(
         store
             .token_for_phrase_in(oxpinyin_user::ADDON_DICTIONARY, &text)

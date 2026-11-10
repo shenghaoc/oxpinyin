@@ -272,10 +272,7 @@ fn save_stops_at_the_directory_with_the_pins_files() {
         let reaches = reaches_the_assert(&system);
         let mut context =
             ContextCore::open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law).expect("open");
-        context
-            .user_store_mut()
-            .expect("user store")
-            .mark_modified();
+        context.user_store_mut().mark_modified();
         let before = listing(&user);
         make_directory(&system, "merged.bin");
         let outcome = context.save_user();

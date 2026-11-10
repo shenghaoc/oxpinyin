@@ -103,8 +103,8 @@ struct ImportHandle {
 
 pub(crate) struct ImportRead<'a> {
     pub(crate) index: u8,
-    pub(crate) user: Option<&'a UserStore>,
-    pub(crate) dict: Option<oxpinyin_runtime::RuntimeDict<'a>>,
+    pub(crate) user: &'a UserStore,
+    pub(crate) dict: oxpinyin_runtime::RuntimeDict<'a>,
 }
 
 /// Begin adding phrases to an index.
@@ -225,9 +225,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     if is_system && !dict.library_visible(u32::from(handle.index)) {
         return false;
     }
-    let Some(user) = context.core.user_store_mut() else {
-        return false;
-    };
+    let user = context.core.user_store_mut();
     if is_system {
         // The selected token comes from the combined phrase-table search,
         // including prior imported system-library items.
@@ -252,7 +250,7 @@ fn import_read<'a>(
     ImportRead {
         index: handle.index,
         user: context.core.user_store(),
-        dict: Some(context.core.runtime.dict()),
+        dict: context.core.runtime.dict(),
     }
 }
 
@@ -270,9 +268,7 @@ fn plan_import(
     let pinyin = oxpinyin_capi_marshal::input::parser_prefix(
         oxpinyin_capi_marshal::borrow_c_string!(pinyin),
     );
-    let Some(user) = handle.user.as_ref() else {
-        return ImportPlan::Refuse;
-    };
+    let user = handle.user;
     let Some(keys) = parse_import_pinyin(&pinyin) else {
         return ImportPlan::Refuse;
     };
@@ -282,7 +278,7 @@ fn plan_import(
     if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
         return ImportPlan::Refuse;
     }
-    plan_add(handle.index, handle.dict.as_ref(), user, phrase, keys)
+    plan_add(handle.index, &handle.dict, user, phrase, keys)
 }
 
 /// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
