@@ -17,6 +17,28 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
+    /// Offset-zero predecessor for candidate ranking and predicted bigram
+    /// training (074a2219, pinyin.cpp:1711-1740 and zhuyin.cpp:1146-1175).
+    /// The longest readable phrase wins, with the first token kept on a tie.
+    /// If none can be read, use sentence_start.
+    #[must_use]
+    pub fn prefix_predecessor(&self) -> PhraseToken {
+        let mut previous = PhraseToken::new(crate::nbest::SENTENCE_START);
+        let mut longest = 0;
+        for &token in &self.candidate_prefixes {
+            if token.value() == crate::nbest::SENTENCE_START {
+                continue;
+            }
+            if let Some(length) = self.dictionary.phrase_length_for_token(token.value())
+                && length > longest
+            {
+                previous = token;
+                longest = length;
+            }
+        }
+        previous
+    }
+
     /// Builds the candidate window anchored at byte `anchor` in the raw
     /// buffer into `out`, returning the filtered parse length of the
     /// remaining slice from `anchor`.
@@ -411,9 +433,7 @@ where
     /// The previous token at `offset`, as upstream's `_get_previous_token`
     /// resolves it (`pinyin.cpp:1711-1767`).
     ///
-    /// At offset zero prefer the longest still-readable token in the retained
-    /// prefixes, keeping the first on equal lengths. Missing or unloaded items
-    /// are skipped; no eligible item leaves sentence_start.
+    /// At offset zero this uses [`Session::prefix_predecessor`].
     ///
     /// Above 0 upstream reads the 1-best result — `last_result` here — and
     /// carries a guard worth reproducing: it inspects `result[offset]` FIRST
@@ -421,20 +441,7 @@ where
     /// an offset no phrase starts at contributes no bigram term at all.
     pub(super) fn previous_token(&self, offset: usize) -> Option<PhraseToken> {
         if offset == 0 {
-            let mut previous = PhraseToken::new(crate::nbest::SENTENCE_START);
-            let mut longest = 0;
-            for &token in &self.candidate_prefixes {
-                if token.value() == crate::nbest::SENTENCE_START {
-                    continue;
-                }
-                if let Some(length) = self.dictionary.phrase_length_for_token(token.value())
-                    && length > longest
-                {
-                    previous = token;
-                    longest = length;
-                }
-            }
-            return Some(previous);
+            return Some(self.prefix_predecessor());
         }
         if self.sentence.last_result.is_empty() {
             return None;

@@ -185,6 +185,12 @@ where
         self.record.consumed()
     }
 
+    /// Retained suffix tokens in the order the last prefix guess found them.
+    #[must_use]
+    pub fn candidate_prefixes(&self) -> &[PhraseToken] {
+        &self.candidate_prefixes
+    }
+
     /// The dictionary backend.
     #[must_use]
     pub fn dictionary(&self) -> &D {
@@ -199,9 +205,8 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// Replaces the prefix tokens used for candidate ranking at offset zero.
-    /// The longest currently readable phrase wins; no readable prefix means
-    /// sentence_start (074a2219, pinyin.cpp:1711-1740, zhuyin.cpp:1146-1175).
+    /// Replaces the retained prefixes after a sentence or prediction guess.
+    /// This can change the candidate ranking at offset zero.
     pub fn set_candidate_prefixes(&mut self, prefixes: impl IntoIterator<Item = PhraseToken>) {
         self.candidate_prefixes.clear();
         self.candidate_prefixes.extend(prefixes);

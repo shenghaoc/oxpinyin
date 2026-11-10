@@ -3,7 +3,7 @@
 use std::os::raw::c_int;
 
 use oxpinyin_core::PhraseToken;
-use oxpinyin_user::{SENTENCE_START, UnigramAdd, is_user_token};
+use oxpinyin_user::{UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{
@@ -662,7 +662,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         }
         return true;
     }
-    let last = previous_token(&inst.read());
+    let last = inst.core.session.prefix_predecessor().value();
     let prefix = inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
     // SAFETY: all candidate and prefix reads are complete; the retained owner
@@ -694,36 +694,6 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
             Err(_) => false,
         }
     }
-}
-
-/// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): the longest
-/// phrase among the instance's prefixes, `sentence_start` when there is none.
-fn previous_token(inst: &crate::state::CapiInstanceRead<'_>) -> u32 {
-    let mut previous = SENTENCE_START;
-    let Some(store) = inst.core.user else {
-        return previous;
-    };
-    let mut longest = 0;
-    for &token in &inst.state.prefixes {
-        if token == SENTENCE_START {
-            continue;
-        }
-        // `get_phrase_item` answers `ERROR_NO_SUB_PHRASE_INDEX` for an
-        // unloaded library and the pin's loop skips the token
-        // (`pinyin.cpp:1722-1730`).
-        if !inst.core.dict.library_visible_token(token) {
-            continue;
-        }
-        let Some(text) = crate::predict::phrase_text(&inst.core.dict, store, token) else {
-            continue;
-        };
-        let length = text.phrase_length();
-        if length > longest {
-            previous = token;
-            longest = length;
-        }
-    }
-    previous
 }
 
 /// Train the current sentence with the given n-best index.
@@ -816,7 +786,6 @@ pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
 
 #[cfg(test)]
 mod previous_token_tests {
-    use super::previous_token;
     use crate::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
     use crate::parse::pinyin_parse_more_full_pinyins;
     use crate::sentence::pinyin_guess_candidates;
@@ -846,7 +815,10 @@ mod previous_token_tests {
             .expect("the fixture carries a GBK candidate under ni");
 
         // SAFETY: as above.
-        unsafe { instance_mut(instance) }.prefixes = vec![gbk];
+        unsafe { instance_mut(instance) }
+            .core
+            .session
+            .set_candidate_prefixes([oxpinyin_core::PhraseToken::new(gbk)]);
         assert_eq!(previous(instance), gbk);
 
         assert!(pinyin_unload_phrase_library(context, 2));
@@ -861,7 +833,11 @@ mod previous_token_tests {
 
     fn previous(instance: *mut crate::types::PinyinInstance) -> u32 {
         // SAFETY: a live `pinyin_alloc_instance` handle of the caller.
-        previous_token(&unsafe { instance_ref(instance) })
+        unsafe { instance_ref(instance) }
+            .core
+            .session
+            .prefix_predecessor()
+            .value()
     }
 }
 

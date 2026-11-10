@@ -9,7 +9,7 @@ use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use std::collections::HashSet;
 use std::os::raw::c_char;
 
-use oxpinyin_core::{PhraseText, single_gram};
+use oxpinyin_core::{PhraseText, PhraseToken, single_gram};
 use oxpinyin_user::UserStore;
 
 use crate::state::{CapiCandidate, SharedDict, SharedLm, instance_mut};
@@ -60,14 +60,14 @@ pub fn guess_predicted(
 /// is never reached.
 fn predicted_bigram_items(
     user: Option<&UserStore>,
-    prefixes: &[u32],
+    prefixes: &[PhraseToken],
 ) -> Result<Vec<(u32, u32)>, &'static str> {
     let Some(store) = user else {
         return Ok(Vec::new());
     };
     let mut merged = single_gram::new_gram();
-    for &prev in prefixes.iter().rev() {
-        if let Ok(Some(row)) = store.bigram_row(prev) {
+    for prev in prefixes.iter().rev() {
+        if let Ok(Some(row)) = store.bigram_row(prev.value()) {
             single_gram::merge_single_gram(&mut merged, None, Some(&row));
         }
         if single_gram::get_length(&merged) != 0 {
@@ -110,13 +110,10 @@ fn guess_predicted_result(
     };
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
-    inst.state.prefixes.clone_from(&prefixes);
-    inst.core.session.set_candidate_prefixes(
-        prefixes
-            .iter()
-            .copied()
-            .map(oxpinyin_core::PhraseToken::new),
-    );
+    inst.core
+        .session
+        .set_candidate_prefixes(prefixes.into_iter().map(PhraseToken::new));
+    let prefixes = inst.core.session.candidate_prefixes();
     let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
     };
@@ -125,7 +122,7 @@ fn guess_predicted_result(
     // gram the pin reads past in its walk is refused here: one warning and
     // `false`, with the candidate list left empty in both APIs (the short
     // and the residual-total grams abort inside the walk).
-    let successors = match predicted_bigram_items(inst.core.user, &prefixes) {
+    let successors = match predicted_bigram_items(inst.core.user, prefixes) {
         Ok(successors) => successors,
         Err(message) => {
             crate::ffi::log_warning(message);
@@ -234,7 +231,6 @@ pub fn clear_borrowed_prefix(
     if borrowed {
         inst.core.anchored_window = None;
         inst.state.candidates.clear();
-        inst.state.prefixes.clear();
         inst.core
             .session
             .set_candidate_prefixes(core::iter::empty());
@@ -286,8 +282,7 @@ pub fn guess_predicted_with_punctuations(
         return false;
     }
     // The pin walks `m_prefixes` as the prediction left it (`pinyin.cpp:2463`).
-    let prefixes = inst.state.prefixes.clone();
-    prepend_punctuations(inst, &prefixes);
+    prepend_punctuations(inst);
     true
 }
 
@@ -297,11 +292,11 @@ pub fn guess_predicted_with_punctuations(
 /// `g_str_equal`; `phrase_text_bytes` is that string, so equal bytes are
 /// the test. Existing candidates take no part, and the reverse
 /// `g_array_prepend_val` leaves the punctuations first in this order.
-fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>, prefixes: &[u32]) {
+fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
     let mut puncts: Vec<Vec<u8>> = Vec::new();
     let mut seen: HashSet<Vec<u8>> = HashSet::new();
-    for token in prefixes {
-        for punct in inst.core.dict.punctuations(*token) {
+    for token in inst.core.session.candidate_prefixes() {
+        for punct in inst.core.dict.punctuations(token.value()) {
             let bytes = phrase_text_bytes(&punct).into_owned();
             if seen.insert(bytes.clone()) {
                 puncts.push(bytes);
@@ -490,7 +485,7 @@ fn predicted_frequency(
     oxpinyin_engine::amplified_frequency(unigram, total, lambda)
 }
 
-pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
+fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
     if let Ok(Some(phrase)) = store.phrase(token) {
         return phrase.phrase_text();
     }

@@ -99,6 +99,5 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
     let mut inst = unsafe { instance_mut(instance) };
     inst.core.full_reset();
     inst.state.candidates.clear();
-    inst.state.prefixes.clear();
     true
 }
