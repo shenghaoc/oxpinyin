@@ -173,7 +173,7 @@ the staged utilities ([packaging](../packaging.md#trainer-utility-layout)).
 | KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | `oxpinyin-utils` `k_mixture_model_to_interpolation` |
 | eval runtime model build | `evaluate.py` `make` | `data/Makefile.am:60-62` | `oxpinyin-utils` `gen_binary_files`, `import_interpolation`, `gen_unigram` |
 | λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | `oxpinyin-utils` `estimate_interpolation` |
-| correction rate | `evaluate.py` | `eval_correction_rate.cpp` | `oxpinyin-utils` `eval_correction_rate` over `oxpinyin-training::eval` |
+| correction rate | `evaluate.py` | `eval_correction_rate.cpp` | `oxpinyin-utils` `eval_correction_rate` over its `training::eval` module |
 | orchestration, status, word recognition, punctuation | the Python scripts | *(Python)* | external (the trainer's own scripts) |
 | legacy gen_ngram, gen_unigram, gen_deleted_ngram, export_interpolation | *(off-path)* | `utils/training`, `utils/storage` | `oxpinyin-utils` binaries |
 | OpenGram dict tools | `tools/*.py` | `gen_pinyin_table.cpp` | `oxpinyin-utils` `gen_pinyin_table`; the Python helpers stay external (§11) |
@@ -402,7 +402,7 @@ The evaluator is therefore a *decode round-trip*. The
 
 - reads the binary chunks and `bigram.db` that the data `Makefile` built;
 - decodes with a term-for-term port of
-  `PhoneticLookup<1,1>::get_nbest_match` (`oxpinyin-training::eval`: beam
+  `PhoneticLookup<1,1>::get_nbest_match` (its `training::eval` module: beam
   of 32, bigram before unigram expansion,
   `log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` at the pin's float widths);
 - reports the same rate.

@@ -8,11 +8,9 @@
 //! two sentences. The final `correction rate:%f` is
 //! `passed_count / tested_count`, a C double division.
 //!
-//! The decode is `oxpinyin_training::eval`'s port of `PhoneticLookup<1, 1>`
-//! (`crates/oxpinyin-training/src/eval/decode.rs`); its model here is built
-//! from the data directory's own chunks and `bigram.db` instead of an
-//! `interpolation2.text`, and its phrase lookup is the pinyin index
-//! (`FacadeChewingTable2`) resolved through the loaded phrase libraries.
+//! The decode in `eval` ports `PhoneticLookup<1, 1>`. Its model uses the
+//! data directory's own chunks and `bigram.db`. Phrase lookup resolves the
+//! pinyin index (`FacadeChewingTable2`) through the loaded phrase libraries.
 //! The pin's failing `user_bigram.attach(NULL, ATTACH_CREATE|ATTACH_READWRITE)`
 //! (`:156-157`) leaves the user bigram `NULL`, so `merge_single_gram`
 //! always sees the system row alone and no user row is read.
@@ -26,8 +24,8 @@ use oxpinyin_data::phrase_library::{LibraryError, RowFault};
 use oxpinyin_data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin_input::tool;
 use oxpinyin_input::tool::LineReader;
-use oxpinyin_training::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 
+use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
@@ -250,20 +248,6 @@ impl PhraseSource for LibraryPhraseSource<'_> {
         self.libraries
             .phrase_text(token.value())
             .and_then(|text| text.as_str().map(ToOwned::to_owned))
-    }
-
-    fn lexicon_tokens(&self) -> Vec<PhraseToken> {
-        let mut tokens = Vec::new();
-        for nibble in 0..16_u32 {
-            let base = nibble << 24;
-            let Some(library) = self.libraries.library(base) else {
-                continue;
-            };
-            for (slot, _item) in library.items() {
-                tokens.push(PhraseToken::new(base | slot));
-            }
-        }
-        tokens
     }
 }
 

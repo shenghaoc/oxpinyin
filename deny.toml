@@ -30,14 +30,13 @@ highlight = "simplest-path"
 # dependents only, so every crate that reaches storage is listed, and any new
 # edge into this set must be added here.
 deny = [
-  { crate = "oxpinyin-store", wrappers = ["oxpinyin-capi", "oxpinyin-data", "oxpinyin-kmm", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
+  { crate = "oxpinyin-store", wrappers = ["oxpinyin-capi", "oxpinyin-data", "oxpinyin-kmm", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "cxx", wrappers = ["oxpinyin-store"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin-store"] },
   { crate = "bindgen", wrappers = ["oxpinyin-store"] },
-  { crate = "oxpinyin-data", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-training", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
+  { crate = "oxpinyin-data", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-user", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-user", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-runtime", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-kmm", wrappers = ["oxpinyin-utils"] },
-  { crate = "oxpinyin-training", wrappers = ["oxpinyin-utils"] },
   { crate = "oxpinyin-runtime", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-utils", "oxpinyin-zhuyin-capi"] },
   { crate = "oxpinyin-facade", wrappers = ["oxpinyin-capi", "oxpinyin-zhuyin-capi"] },
   # The zhuyin capi crate's edge is dev-only: its contract tests export a saved profile through libpinyin.

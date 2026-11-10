@@ -638,7 +638,7 @@ The scope includes both installed and `noinst_PROGRAMS` utilities.
 | `export_k_mixture_model` | `oxpinyin-utils` `export_k_mixture_model` | **Ported** at stage 5 (2026-10-31 UTC): native token order, `taglib_token_to_string`, and `exit(ENODATA)` on a missing header. |
 | `k_mixture_model_to_interpolation` | `oxpinyin-utils` `k_mixture_model_to_interpolation` | **Ported** at stage 5 (2026-10-31 UTC): no options or arguments, the pin's messages, `std::cin` and `stdout`, taglib's GLib calls, the pin's aborts with its check macros' text not imitated ([eio-tool-check-messages](eio-tool-check-messages.md)), and registered `tool-diff` cases. `oxpinyin-kmm to-interpolation` is removed. |
 | `validate_k_mixture_model` | `oxpinyin-utils` `validate_k_mixture_model` | **Ported** at stage 5 (2026-10-31 UTC): the pin's checks, lines and `ENODATA`. |
-| `eval_correction_rate` | `oxpinyin-utils` `eval_correction_rate` | **Ported** at stage 5 (2026-10-31 UTC): `evals2.text`, the pinyin index resolved through the phrase libraries, the `PhoneticLookup<1,1>` decode port (`oxpinyin-training::eval`) over the binary chunks and `bigram.db`, and the `correction rate:%f` line. `oxpinyin-eval` is removed. |
+| `eval_correction_rate` | `oxpinyin-utils` `eval_correction_rate` | **Ported** at stage 5 (2026-10-31 UTC): `evals2.text`, the pinyin index resolved through the phrase libraries, the `PhoneticLookup<1,1>` decode port (`oxpinyin-utils`' `training::eval`) over the binary chunks and `bigram.db`, and the `correction rate:%f` line. `oxpinyin-eval` is removed. |
 
 ## Test-program coverage
 
@@ -788,10 +788,10 @@ specifications before the stage that owns them.
      `oxpinyin-kmm to-interpolation`. The same change moves the three
      tools off `native/tool.c` and the C++ stream shim onto `libc`,
      `glib-sys` and `std::io` (2026-10-31 UTC ruling, item 5).
-   - The trainer runs the utility's conversion in memory. It still links
-     GLib, because taglib's character classes and warnings are GLib's calls
-     (`g_unichar_isspace`/`isgraph`, `g_log`). So the Windows lane
-     excludes `oxpinyin-training` until GLib-on-Windows.
+   - The utility links GLib, because taglib's character classes and
+     warnings are GLib's calls (`g_unichar_isspace`/`isgraph`, `g_log`).
+     The Windows job installs the vcpkg `glib` port and excludes no crate
+     ([setup](../runbooks/setup.md)).
    - The DBM-attached KMM family (`estimate_`, `merge_`, `prune_`,
      `validate_k_mixture_model`) needs neither stage 2 nor stage 3, and is
      the next stack.

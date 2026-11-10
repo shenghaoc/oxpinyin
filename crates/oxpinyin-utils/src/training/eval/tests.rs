@@ -14,13 +14,10 @@
 
 use std::collections::BTreeMap;
 
+use super::counts::parse_interpolation_dump;
+use super::fixture_doubles::FixtureDictionary;
+use super::{EvalLanguageModel, PhraseSource, correction_rate};
 use oxpinyin_core::{PhraseToken, SyllableKey};
-use oxpinyin_training::eval::{PhraseSource, build_model, correction_rate, parse_interpolation2};
-
-#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
-mod fixture_doubles;
-
-use fixture_doubles::FixtureDictionary;
 
 const VOCAB: &str = "\
 token=10\tkeys=zhong\ttext=中\tunigram=100
@@ -66,6 +63,10 @@ impl FixtureSource {
         text.insert(30, "国".to_owned());
         Self { best, text }
     }
+
+    fn lexicon_tokens(&self) -> impl Iterator<Item = PhraseToken> + '_ {
+        self.text.keys().copied().map(PhraseToken::new)
+    }
 }
 
 impl PhraseSource for FixtureSource {
@@ -74,12 +75,6 @@ impl PhraseSource for FixtureSource {
     }
     fn text(&self, token: PhraseToken) -> Option<String> {
         self.text.get(&token.value()).cloned()
-    }
-    fn lexicon_tokens(&self) -> Vec<PhraseToken> {
-        self.text
-            .keys()
-            .map(|&token| PhraseToken::new(token))
-            .collect()
     }
 }
 
@@ -92,13 +87,13 @@ fn sentences() -> Vec<Vec<PhraseToken>> {
 
 #[test]
 fn interpolation2_parses_to_the_expected_counts() {
-    let counts = parse_interpolation2(INTERPOLATION2);
+    let counts = parse_interpolation_dump(INTERPOLATION2);
     assert_eq!(counts.unigrams.get(&10), Some(&100));
     assert_eq!(counts.bigrams.get(&(10, 30)), Some(&40));
     assert_eq!(counts.bigrams.get(&(1, 20)), Some(&1));
     // A zero count is a value like any other: the pin's taglib returns true
     // for it, and the dump carries it through.
-    let zero = parse_interpolation2("\\1-gram\n\\item 10 中 count 0\n");
+    let zero = parse_interpolation_dump("\\1-gram\n\\item 10 中 count 0\n");
     assert_eq!(zero.unigrams.get(&10), Some(&0));
 }
 
@@ -106,12 +101,13 @@ fn interpolation2_parses_to_the_expected_counts() {
 fn correction_rate_is_lambda_independent_here() {
     // The homophone ranking holds for every λ, so the rate is 0.5 whether λ
     // is 0 (pure unigram), 1 (pure bigram), or anything between.
-    let counts = parse_interpolation2(INTERPOLATION2);
+    let counts = parse_interpolation_dump(INTERPOLATION2);
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
     for value in ["0.000000", "0.312699", "1.000000"] {
         let lambda = oxpinyin_data::Lambda::from_decimal(value).expect("lambda");
-        let model = build_model(&counts, lambda, source.lexicon_tokens());
+        let model =
+            EvalLanguageModel::from_counts_with_lexicon(&counts, lambda, source.lexicon_tokens());
         // The gen_unigram floor: every lexicon token carries count + 1
         // (101, 11, 51) and the total is their sum, 163. Without the floor
         // this would be 100 / 160.

@@ -26,36 +26,17 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+#[cfg(test)]
 mod counts;
 mod decode;
 mod error;
 mod model;
 
-pub use counts::{Counts, parse_interpolation_dump};
-pub use decode::{EvalReport, PhraseSource, correction_rate};
-pub use error::EvalError;
-pub use model::EvalLanguageModel;
+#[cfg(test)]
+#[path = "../../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
+#[cfg(test)]
+mod tests;
 
-use oxpinyin_core::PhraseToken;
-use oxpinyin_data::Lambda;
-
-/// Parses a candidate `interpolation2.text` into its unigram/bigram counts
-/// ([`parse_interpolation_dump`]), the input to the eval model.
-#[must_use]
-pub fn parse_interpolation2(text: &str) -> Counts {
-    parse_interpolation_dump(text)
-}
-
-/// Builds the native evaluation model from the candidate counts with λ
-/// applied, floored over the phrase lexicon (`lexicon`).
-///
-/// The way `evaluate.py`'s `make` rebuilt the runtime model
-/// (`gen_binary_files` + `import_interpolation` + `gen_unigram`).
-#[must_use]
-pub fn build_model(
-    counts: &Counts,
-    lambda: Lambda,
-    lexicon: impl IntoIterator<Item = PhraseToken>,
-) -> EvalLanguageModel {
-    EvalLanguageModel::from_counts_with_lexicon(counts, lambda, lexicon)
-}
+pub(super) use decode::{PhraseSource, correction_rate};
+pub(super) use model::EvalLanguageModel;

@@ -142,7 +142,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Wiring done in `pinyin_init` | `oxpinyin-runtime` |
 | Context and instance state shared by both APIs | `oxpinyin-facade` |
 | `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
-| `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries), over `oxpinyin-kmm` and `oxpinyin-training` |
+| `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries), over `oxpinyin-kmm` |
 
 The differences are deliberate:
 

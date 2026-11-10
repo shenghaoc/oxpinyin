@@ -483,7 +483,7 @@ The recipe runs no `distro-probe.sh` and needs no `sh`.
 
 The job also installs the vcpkg `glib` port, which it finds through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`. It therefore builds and tests
-the full workspace, including `oxpinyin-utils`, `oxpinyin-training`, KMM
+the full workspace, including `oxpinyin-utils`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
 Text expectations use the newline of the host.
 The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is

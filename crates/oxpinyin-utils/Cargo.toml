@@ -18,7 +18,6 @@ kyotocabinet = [
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-store/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
-    "oxpinyin-training/kyotocabinet",
     "oxpinyin-kmm/kyotocabinet",
 ]
 bdb = [
@@ -27,7 +26,6 @@ bdb = [
     "oxpinyin-data/bdb",
     "oxpinyin-store/bdb",
     "oxpinyin-user/bdb",
-    "oxpinyin-training/bdb",
     "oxpinyin-kmm/bdb",
 ]
 tkrzw = [
@@ -36,7 +34,6 @@ tkrzw = [
     "oxpinyin-data/tkrzw",
     "oxpinyin-store/tkrzw",
     "oxpinyin-user/tkrzw",
-    "oxpinyin-training/tkrzw",
     "oxpinyin-kmm/tkrzw",
 ]
 
@@ -62,9 +59,6 @@ oxpinyin-store = { workspace = true, features = ["tools"] }
 oxpinyin-user = { workspace = true, features = ["tools"] }
 # The utilities' edge calls: GLib options and text, input streams, C stdio.
 oxpinyin-input = { workspace = true, features = ["tools"] }
-# `eval_correction_rate`'s decode: the training crate's term-for-term port
-# of `PhoneticLookup<1, 1>`.
-oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
 # The seven k-mixture-model operations on the pin's flexible-bigram
 # container; the utilities under the pin's names parse options and load the
 # system tables before calling them.

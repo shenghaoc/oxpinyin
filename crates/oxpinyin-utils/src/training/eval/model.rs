@@ -1,22 +1,16 @@
-//! The native evaluation model: an interpolated bigram language model built
-//! from a candidate `interpolation2.text` and an applied λ.
+//! The interpolated bigram model for the evaluator's binary tables.
 //!
-//! This is the native replacement for `evaluate.py`'s `make`-rebuilt runtime
-//! model — `gen_binary_files` + `import_interpolation` + `gen_unigram`, so
-//! [`EvalLanguageModel::from_counts_with_lexicon`] floors every phrase-index
-//! token at count + 1 and sums the total over the whole lexicon, exactly as
-//! the pin's `get_phrase_index_total_freq` sees it after that `make`. The
-//! evaluator's decode (`decode.rs`) reads the float probabilities
-//! ([`EvalLanguageModel::unigram_poss`], [`EvalLanguageModel::bigram_poss`])
-//! the pin's `PhoneticLookup` scores with. The counts come from
-//! `interpolation2.text` (`\1-gram` unigrams, `\2-gram` pair counts, bigram
-//! total per prev = Σ its successor counts, as `import_interpolation`
-//! stores them).
+//! The decoder reads the phrase index's unigram counts and the stored
+//! bigram counts and row totals. It scores with the float probabilities
+//! used by the pin's `PhoneticLookup`.
 
 use std::collections::BTreeMap;
 
-use crate::eval::counts::Counts;
+#[cfg(test)]
+use super::counts::Counts;
+#[cfg(test)]
 use oxpinyin_core::PhraseToken;
+#[cfg(test)]
 use oxpinyin_data::Lambda;
 
 /// An interpolated bigram model built from `interpolation2.text` counts or
@@ -36,6 +30,7 @@ impl EvalLanguageModel {
     /// bigram total per prev is Σ of its successor counts, exactly as the
     /// compiled bigram table stores it.
     #[must_use]
+    #[cfg(test)]
     pub fn from_counts(counts: &Counts, lambda: Lambda) -> Self {
         let unigram_total = counts.unigrams.values().sum();
         Self {
@@ -54,6 +49,7 @@ impl EvalLanguageModel {
     /// outside the lexicon is dropped, as `import_interpolation` cannot
     /// store it.
     #[must_use]
+    #[cfg(test)]
     pub fn from_counts_with_lexicon(
         counts: &Counts,
         lambda: Lambda,
@@ -143,6 +139,7 @@ impl EvalLanguageModel {
 }
 
 /// The bigram total per prev: Σ of its successor counts.
+#[cfg(test)]
 fn bigram_totals(counts: &Counts) -> BTreeMap<u32, u64> {
     let mut totals: BTreeMap<u32, u64> = BTreeMap::new();
     for (&(prev, _next), &count) in &counts.bigrams {
@@ -153,8 +150,8 @@ fn bigram_totals(counts: &Counts) -> BTreeMap<u32, u64> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::counts::Counts;
     use super::EvalLanguageModel;
-    use crate::eval::counts::Counts;
     use oxpinyin_data::Lambda;
 
     fn model() -> EvalLanguageModel {
