@@ -585,6 +585,19 @@ neither implementation's output allocation is removed by this guard.
 
 ## 6. Training and user phrases
 
+### Live bigram export items
+
+Each qualifying bigram pair reads both current phrase items (`pinyin.cpp:809-815` at
+`074a2219`). The walk retains the active pair and its pronunciation rows. `get_next`
+copies the current row before advancing the walk (`:904-910`), so an import between
+calls affects the next pair load and leaves the buffered pair intact.
+
+For a pair with P and Q readings and maximum reading length L, the walk renders
+both items in O((P + Q) × L) time and forms the cross product in O(P × Q × L) time
+and space. Item lookup uses the existing sub-index readers. Live rendering adds two
+item reads per qualifying pair, as at the pin, and removes the previous iteration-wide
+memo whose storage grew with the number of distinct tokens.
+
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
 | Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `TrainingPlan::observe` over `Session::prepare_training` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](1297-gram-partition-training.md)) |
