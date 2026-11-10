@@ -28,9 +28,6 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    // `m_prefixes` becomes `[sentence_start]` before the lookup runs
-    // (`pinyin.cpp:1376-1377`).
-    inst.state.prefixes.clear();
     let matrix_has_keys = matrix_has_keys(&inst.read());
     match inst.core.guess_sentence_with_matrix(matrix_has_keys) {
         Ok(found) => found,
@@ -144,7 +141,6 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     else {
         std::process::abort();
     };
-    inst.state.prefixes.clone_from(&prefixes);
     let matrix_has_keys = matrix_has_keys(&inst.read());
     match inst
         .core

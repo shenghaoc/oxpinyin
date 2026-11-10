@@ -375,6 +375,12 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix(#[values(false, true)] f
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
     );
     assert_eq!(bigram_word, word, "the bigram row is the trained word");
+    // Parsing replaces the matrix but leaves the prediction and its
+    // prefixes intact (074a2219, pinyin.cpp:1497-1525).
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+        3
+    );
     let before = with_store(instance, |store| store.bigram_count(ni, word)).unwrap();
     let sentence_start_before =
         with_store(instance, |store| store.bigram_count(SENTENCE_START, word)).unwrap();
