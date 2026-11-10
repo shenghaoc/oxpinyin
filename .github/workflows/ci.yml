@@ -247,8 +247,8 @@ jobs:
         run: just cpp-smoke
       # The exported-symbol gate: each cdylib exports exactly its pin
       # version script's set and nothing else, in the development build
-      # (fixture hooks allowed) and in the packaged one (--features shipped,
-      # hooks compiled out). The packaged mode is the last step of this job.
+      # and in the packaged one (--features shipped). The packaged mode is
+      # the last step of this job.
       - name: ABI export gate (development build)
         if: needs.changes.outputs.reuse != 'true'
         run: just abi exports

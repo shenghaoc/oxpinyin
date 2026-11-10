@@ -4,8 +4,6 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::state::{CapiContext, box_context, context_mut};
-// Only the harness-gated test hook below takes a shared context ref; the
-// shipped build (--features shipped) does not compile it.
 use crate::types::PinyinContext;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
@@ -146,15 +144,12 @@ pub extern "C" fn pinyin_init(
 
 /// Test-only: overwrite a user-bigram successor count by phrase text.
 ///
-/// Not in `pinyin.h`. Public `pinyin_train` first-seeds 69 (`23 * 3`), so
+/// Public `pinyin_train` first-seeds 69 (`23 * 3`), so
 /// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
 /// reached through the C ABI. Looks up `prev` and `cur` in the user
 /// phrase index.
-/// Not in `pinyin.h`: compiled out of the shipped artifact
-/// (`--features shipped`) so it exports exactly the pin's own set.
-#[cfg(not(feature = "shipped"))]
-#[unsafe(no_mangle)]
-pub extern "C" fn oxpinyin_test_set_user_bigram(
+#[cfg(test)]
+pub(crate) fn oxpinyin_test_set_user_bigram(
     context: *mut PinyinContext,
     prev: *const c_char,
     cur: *const c_char,

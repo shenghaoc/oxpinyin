@@ -2,7 +2,7 @@
 //!
 //! Pointer borrowing stays at the entry point. These functions consume a
 //! nullable borrowed C string and return native Rust values. Scalar-only
-//! conversion is appropriate for parser spellings and fixture hooks; a pin
+//! conversion is appropriate for parser spellings and test helpers; a pin
 //! `g_utf8_to_ucs4` site instead needs [`utf8_to_ucs4`].
 
 use std::ffi::CStr;
