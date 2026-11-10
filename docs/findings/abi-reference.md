@@ -869,8 +869,7 @@ the surface stays minimal.
 
 Every exported `pinyin_*` symbol is in scope and implemented live, with
 no placeholder bodies. The shipped build (`--features shipped`) compiles
-out the test-only fixture hooks, which are not part of the drop-in
-surface.
+out the `fuzz-api` helpers only; no build exports a test hook.
 
 Before freeze, every C-ABI symbol requires:
 

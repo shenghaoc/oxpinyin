@@ -41,21 +41,19 @@ default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw"]
-# Compiles out the one export that is not in pinyin.h, the test-only
-# `oxpinyin_test_set_user_bigram`, and the `fuzz-api` helpers
-# `oxpinyin_import_aborts` and `oxpinyin_train_aborts`, which are Rust
-# functions and not exports. The shipped drop-in artifact enables it
-# (`cargo capi install --features shipped`), so every in-tree harness keeps
-# working. Nothing in libpinyin.ver
-# is gated: `pinyin_set_full_pinyin_scheme` was, under the retired
-# subset scoping. The export gate (`just abi exports`) runs in CI in
-# both modes.
+# Compiles out the `fuzz-api` helpers `oxpinyin_import_aborts` and
+# `oxpinyin_train_aborts`, which are Rust functions and not exports. It
+# gates no exported symbol: the development and shipped builds both export
+# exactly the set in libpinyin.ver. The shipped drop-in artifact enables it
+# (`cargo capi install --features shipped`). `pinyin_set_full_pinyin_scheme`
+# was gated under the retired subset scoping. The export gate
+# (`just abi exports`) runs in CI in both modes.
 #
 # Deliberately a subtractive feature, which cargo features usually should not
 # be. The additive spelling (a default-on `harness` feature switched off with
-# --no-default-features) would tie the hook to the SAME switch that selects
+# --no-default-features) would tie the helpers to the SAME switch that selects
 # the store backend: `default = ["tkrzw"]` already rides on default features,
-# so every non-default-backend build would silently drop the hook too and
+# so every non-default-backend build would silently drop the helpers too and
 # every in-tree harness build would have to spell `--features tkrzw,harness`.
 # (An earlier note here claimed cargo-c does not forward
 # --no-default-features; that was wrong — cargo-c registers cargo's full
