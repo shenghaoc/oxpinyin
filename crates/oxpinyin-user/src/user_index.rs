@@ -37,7 +37,7 @@ use crate::records::RecordArena;
 /// empties it (`:233`, `:216`) and the mask walk stores its whole chunk
 /// back (`:471`, `:439`). Berkeley DB points the entry at each record
 /// (`chewing_large_table2_bdb.cpp:189, 498`), so nothing carries over.
-pub(crate) const ENTRY_PER_LENGTH: bool = cfg!(any(feature = "kyotocabinet", feature = "tkrzw"));
+pub(crate) const ENTRY_PER_LENGTH: bool = cfg!(not(feature = "bdb"));
 
 /// What one key length's table entry holds between operations.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub(crate) enum Slot {
     /// The record stored under this key, as the table holds it now.
     Record(Vec<u8>),
     /// The chunk a mask walk left.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     Bytes(Vec<u8>),
 }
 
@@ -424,7 +424,7 @@ impl UserIndex {
     /// The records are rewritten into a new arena in the same pass and the
     /// overlay is emptied, so no record is held twice.
     pub(crate) fn mask(&mut self, mask: u32, value: u32) {
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        #[cfg(not(feature = "bdb"))]
         let mut chunks: [Vec<u8>; MAX_PHRASE_LENGTH + 1] = std::array::from_fn(|len| {
             if len == 0 {
                 Vec::new()
@@ -432,7 +432,7 @@ impl UserIndex {
                 self.slot_bytes(len)
             }
         });
-        #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
+        #[cfg(feature = "bdb")]
         let mut scratch = Vec::new();
         self.records.rebuild(|key, record, kept| {
             let len = key.len() / 2;
@@ -440,7 +440,7 @@ impl UserIndex {
                 kept.extend_from_slice(record);
                 return;
             }
-            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            #[cfg(not(feature = "bdb"))]
             {
                 let chunk = &mut chunks[len];
                 if chunk.len() < record.len() {
@@ -450,7 +450,7 @@ impl UserIndex {
                 Entry::new(chunk, len).mask_out(mask, value);
                 kept.extend_from_slice(chunk);
             }
-            #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
+            #[cfg(feature = "bdb")]
             {
                 scratch.clear();
                 scratch.extend_from_slice(record);
@@ -458,7 +458,7 @@ impl UserIndex {
                 kept.extend_from_slice(&scratch);
             }
         });
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        #[cfg(not(feature = "bdb"))]
         for (len, chunk) in chunks.into_iter().enumerate().skip(1) {
             *self.slot_mut(len) = if chunk.is_empty() {
                 Slot::Empty
@@ -472,7 +472,7 @@ impl UserIndex {
         &mut self.slots[len]
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     fn slot_bytes(&self, len: usize) -> Vec<u8> {
         match &self.slots[len] {
             Slot::Empty => Vec::new(),
@@ -932,7 +932,7 @@ mod tests {
     /// Two length-2 keys, `short` sorting first with one item and `long`
     /// after it with two, as the Kyoto Cabinet and tkrzw mask walk visits
     /// them (ascending key order).
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     fn short_then_long() -> (Vec<ChewingKey>, Vec<ChewingKey>) {
         let (x, y) = (pair(1, 1), pair(2, 2));
         if encode_complete_key(&x) < encode_complete_key(&y) {
@@ -942,7 +942,7 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     fn long_record(long: &[ChewingKey]) -> Vec<u8> {
         record(&[(2, long), (3, long)])
     }
@@ -950,7 +950,7 @@ mod tests {
     /// The short record after a mask that removes nothing, with `tail`
     /// appended: the previous record's items beyond its length that a
     /// reused chunk keeps.
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     fn masked_short(short: &[ChewingKey], tail: &[u8]) -> Vec<u8> {
         let mut expected = record(&[(1, short)]);
         expected.extend_from_slice(tail);
@@ -999,7 +999,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     #[test]
     fn a_search_hit_leaves_its_record_in_the_entry_the_next_mask_starts_from() {
         // `search_internal` loads a non-empty record into the length's
@@ -1040,7 +1040,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     #[test]
     fn a_second_mask_starts_from_the_chunks_the_first_left_in_the_entries() {
         // `m_entries` outlives each `mask_out` call: the entry of a length
@@ -1073,7 +1073,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     #[test]
     fn a_suggestion_empties_the_entries_of_the_lengths_it_visits() {
         // `search_suggestion` checks the prefix key, jumps to it, and steps
@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(index.record(&encode_complete_key(prefix)), Some(&[][..]));
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     #[test]
     fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
         // The pin's first call is `m_db->check(prefix)`; `-1` returns before

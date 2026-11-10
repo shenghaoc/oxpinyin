@@ -107,7 +107,7 @@ impl PhraseTableEntry {
         true
     }
 
-    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    #[cfg(not(feature = "bdb"))]
     pub(crate) fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         validate(bytes)?;
         if bytes.len() > self.bytes.len() {
