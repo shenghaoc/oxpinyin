@@ -641,10 +641,10 @@ impl LineReader<BufReader<std::fs::File>> {
     }
 }
 
+#[cfg(test)]
 impl<'a> LineReader<&'a [u8]> {
     /// An `std::istringstream` over `text`: no tie, no file.
-    #[must_use]
-    pub fn from_bytes(text: &'a [u8]) -> Self {
+    fn from_bytes(text: &'a [u8]) -> Self {
         Self::over(Some(text), false)
     }
 }
