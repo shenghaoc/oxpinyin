@@ -554,6 +554,59 @@ impl<
     }
 }
 
+/// How the C facade reports a shared training fault.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrainingRefusal {
+    /// The pin asserts or aborts during the training walk.
+    Abort,
+    /// A user bigram has a partial item tail. The C facade warns and refuses.
+    PartialBigram,
+}
+
+/// Classifies the shared result of `train_result3`. The ABI keeps any
+/// facade-specific index check and performs the terminal action.
+///
+/// # Errors
+///
+/// Returns the pin's abort sites or the partial-item refusal. Earlier
+/// training steps have already made the same changes when this runs.
+pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, TrainingRefusal> {
+    match result {
+        Ok(trained) => Ok(trained),
+        // 074a2219: phonetic_lookup.h:868 (the forced token), and
+        // phonetic_key_matrix.cpp:661, :663, :664 (the current matrix).
+        // The predecessor's total and set_freq/store checks are at
+        // phonetic_lookup.h:884, :903-904 (register rows 85 and 113).
+        Err(
+            EngineError::StaleTrainingConstraint { .. }
+            | EngineError::StaleTrainingSpan { .. }
+            | EngineError::ShortTrainingPredecessor { .. }
+            | EngineError::TrainingSetFreqMiss { .. }
+            | EngineError::FailedUserBigramStore { .. },
+        ) => Err(TrainingRefusal::Abort),
+        // ngram.cpp:190, :241, :261 walks a partial item past its end.
+        Err(EngineError::UnsafeTrainingPredecessor { .. }) => Err(TrainingRefusal::PartialBigram),
+        Err(
+            EngineError::TonedIncompleteKey
+            | EngineError::ShortLookupPredecessor { .. }
+            | EngineError::ReadAfterCheck { .. }
+            | EngineError::UnsafeLookupPredecessor { .. }
+            | EngineError::CandidateIndexOutOfRange { .. }
+            | EngineError::LookupOffsetPastSeparator { .. }
+            | EngineError::LookupOffsetOutOfRange { .. }
+            | EngineError::LookupOffsetInsideCharacter { .. }
+            | EngineError::SelectionAnchorBeforeComposition { .. }
+            | EngineError::ZeroKeyOffsetCheck { .. }
+            | EngineError::MatrixColumnAssert { .. }
+            | EngineError::OverlongUserIndexKey { .. }
+            | EngineError::ReduceTokensCount { .. }
+            | EngineError::UserModel(_)
+            | EngineError::Graph(_)
+            | EngineError::Scoring(_),
+        ) => Ok(false),
+    }
+}
+
 /// The lookup faults of a predecessor's user bigram. A value too short for
 /// its total is the pin's assert in `get_total_freq`; a Kyoto Cabinet read
 /// that fails after its size check also aborts. A read past the value logs

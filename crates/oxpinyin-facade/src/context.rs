@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicI32, AtomicU32};
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
 use oxpinyin_engine::SessionSettings;
 use oxpinyin_runtime::{
-    FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, directory_reads_as_a_chunk,
+    FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
+    directory_reads_as_a_chunk,
 };
 use oxpinyin_user::c_stderr;
 use oxpinyin_user::{
@@ -148,63 +149,75 @@ impl std::error::Error for OpenFailure {
     }
 }
 
+/// How the C facade reports a failed init. The ABI adapter performs the
+/// abort or writes the diagnostic in its own log domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InitRefusal {
+    /// The pin asserts or aborts.
+    Abort,
+    /// The pin writes the raw table-conf load-failed line.
+    TableConfLoadFailed,
+    /// A table-conf fault covered by the class (b) warning policy.
+    TableConfWarning(&'static str),
+    /// An ordinary open failure, reported with the caller's ABI name.
+    OpenWarning,
+}
+
 impl OpenFailure {
-    /// Whether this failure is the user marker's unknown format: a
-    /// `user.conf` whose `database format:` field upstream's
-    /// `to_table_database_format_type` does not know, and therefore
-    /// `abort()`s on (`table_info.cpp:122-133`, reached from `:353-354`,
-    /// register row 44).
+    /// Classifies the failure at the point where init stopped.
     ///
-    /// The C facades abort the process for it; nothing was cleaned and no
-    /// marker was written, which is also where upstream stops.
+    /// Unknown format aborts while reading user.conf (074a2219,
+    /// table_info.cpp:122-133, :353-354). Journal and session faults stop
+    /// after the earlier libraries and profile handling (phrase_index_logger.h:202,
+    /// memory_chunk.h:390, ngram_bdb.cpp:51-52). A directory read can assert
+    /// at memory_chunk.h:493, including a table row that names no chunk.
     #[must_use]
-    pub fn unknown_database_format(&self) -> bool {
-        matches!(
-            self,
-            Self::Runtime(oxpinyin_runtime::OpenError::UnknownDatabaseFormat(_))
-        )
-    }
-
-    /// Whether a system library is a directory the pin's
-    /// `MemoryChunk::mmap` asserts on while it loads at init
-    /// (`memory_chunk.h:493`). The C facades answer NULL with one warning.
-    #[must_use]
-    pub fn chunk_header_read(&self) -> bool {
-        matches!(self, Self::Runtime(error) if error.chunk_header_read())
-    }
-
-    /// The system `table.conf` failure behind this open, if that is why it
-    /// failed: [`TableConfError::Header`] is the pin's ordinary `false`
-    /// return (the facade writes `load %s failed!`, no warning); every
-    /// other kind is a site the pin dies on, answered with one warning.
-    #[must_use]
-    pub fn table_conf_error(&self) -> Option<TableConfError> {
-        match self {
-            Self::Runtime(oxpinyin_runtime::OpenError::TableConf(error)) => Some(*error),
-            Self::Runtime(_) => None,
-        }
-    }
-
-    /// Whether the user session could not be built after the library loop
-    /// handed it the system libraries ([`oxpinyin_runtime::OpenError::UserSession`]):
-    /// the pin's counterparts die (`bad_alloc`, or its in-memory loads'
-    /// asserts, `ngram_bdb.cpp:51-52`). The C facades abort on it.
-    #[must_use]
-    pub fn user_session_fault(&self) -> bool {
-        matches!(
-            self,
-            Self::Runtime(oxpinyin_runtime::OpenError::UserSession(_))
-        )
-    }
-
-    /// The pin assertion a default library's `.dbin` merge reached at init
-    /// ([`JournalFault`], rows 91 and 108), if that is why the open stopped.
-    /// The C facades abort on it.
-    #[must_use]
-    pub fn journal_fault(&self) -> Option<JournalFault> {
-        match self {
-            Self::Runtime(oxpinyin_runtime::OpenError::Journal(fault)) => Some(*fault),
-            Self::Runtime(_) => None,
+    pub fn init_refusal(&self, system_path: &Path) -> InitRefusal {
+        let Self::Runtime(error) = self;
+        match error {
+            OpenError::UnknownDatabaseFormat(_)
+            | OpenError::Journal(_)
+            | OpenError::UserSession(_) => InitRefusal::Abort,
+            OpenError::TableConf(conf) => {
+                // table_info.cpp:119, :132, :142, :156, :175 and :276
+                // abort/assert on malformed rows and enums. A chunkless
+                // row depends on whether the host reads the directory as
+                // a chunk. The missing source-format line keeps its warning.
+                let aborts = match conf {
+                    TableConfError::Abort(TableConfSite::NullSystemFile) => {
+                        null_chunk_asserts(system_path)
+                    }
+                    TableConfError::Abort(
+                        TableConfSite::SourceFormat
+                        | TableConfSite::DatabaseFormat
+                        | TableConfSite::Target
+                        | TableConfSite::DefaultIndex
+                        | TableConfSite::FileType
+                        | TableConfSite::AddonIndex
+                        | TableConfSite::DefaultDictionary
+                        | TableConfSite::NullUserFile,
+                    ) => true,
+                    TableConfError::Unopenable
+                    | TableConfError::Header
+                    | TableConfError::UninitialisedSourceFormat => false,
+                };
+                if aborts {
+                    InitRefusal::Abort
+                } else {
+                    conf.warning().map_or(
+                        InitRefusal::TableConfLoadFailed,
+                        InitRefusal::TableConfWarning,
+                    )
+                }
+            }
+            OpenError::Dict(_) => {
+                if error.chunk_header_read() {
+                    InitRefusal::Abort
+                } else {
+                    InitRefusal::OpenWarning
+                }
+            }
+            OpenError::Io(..) | OpenError::Lm(_) => InitRefusal::OpenWarning,
         }
     }
 }

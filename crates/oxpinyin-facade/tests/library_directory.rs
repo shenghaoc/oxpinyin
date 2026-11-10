@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use oxpinyin_facade::SaveOutcome;
-use oxpinyin_facade::{ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD};
+use oxpinyin_facade::{
+    ContextCore, InitRefusal, MaskOutOutcome, OpenFailure, PINYIN_DEFAULT_OPTION_WORD,
+};
 use oxpinyin_user::{SystemVersions, UserConfLaw, persistence};
 
 /// The committed fixture set the compiled backend opens.
@@ -141,11 +143,20 @@ fn init_returns_the_fault_where_its_library_loop_maps_the_directory() {
         make_directory(&system, "gbk_char.bin");
         plant_header_token_log(&user, "opengram.dbin");
         match ContextCore::try_open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law) {
-            Err(failure) if reaches => {
-                assert!(failure.chunk_header_read(), "{law:?}: {failure}");
-                assert!(failure.journal_fault().is_none(), "{law:?}");
+            Err(failure) => {
+                let OpenFailure::Runtime(error) = &failure;
+                if reaches {
+                    // The directory's abort, not library 3's journal.
+                    assert_eq!(
+                        failure.init_refusal(&system),
+                        InitRefusal::Abort,
+                        "{law:?}: {failure}"
+                    );
+                    assert!(error.chunk_header_read(), "{law:?}: {failure}");
+                } else {
+                    assert!(!error.chunk_header_read(), "{law:?}: {failure}");
+                }
             }
-            Err(failure) => assert!(!failure.chunk_header_read(), "{law:?}: {failure}"),
             Ok(_) => panic!("{law:?}: a directory library must fail the open"),
         }
 
@@ -154,7 +165,16 @@ fn init_returns_the_fault_where_its_library_loop_maps_the_directory() {
             .err()
             .expect("the open fails");
         if reaches {
-            assert!(failure.journal_fault().is_some(), "{law:?}: {failure}");
+            let OpenFailure::Runtime(error) = &failure;
+            assert_eq!(
+                failure.init_refusal(&system),
+                InitRefusal::Abort,
+                "{law:?}: {failure}"
+            );
+            assert!(
+                matches!(error, oxpinyin_runtime::OpenError::Journal(_)),
+                "{law:?}: {failure}"
+            );
         }
         let _ = std::fs::remove_dir_all(&system);
         let _ = std::fs::remove_dir_all(&user);

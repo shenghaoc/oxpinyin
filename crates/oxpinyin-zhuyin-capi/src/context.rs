@@ -70,82 +70,16 @@ pub extern "C" fn zhuyin_init(
 /// process aborts where the pin dies, and a refusal writes the pin's line or
 /// one warning.
 fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Path) {
-    // Register row 44, `table_info.cpp:132` via `:353-354`: the
-    // pin's `check_format` loads `user.conf` first and aborts on a
-    // `database format:` token it does not know, before it writes
-    // or unlinks anything (`zhuyin.cpp:126-132`); the open stopped
-    // at the same point.
-    if error.unknown_database_format() {
-        std::process::abort();
-    }
-    if let Some(conf_error) = error.table_conf_error()
-        && table_conf_aborts(conf_error, system_path)
-    {
-        std::process::abort();
-    }
-    // Register rows 91 and 108: a default library's `.dbin` merge
-    // reached `next_record`'s `assert(token == null_token)`
-    // (`phrase_index_logger.h:202`) or `add_phrase_item`'s unigram
-    // read (`memory_chunk.h:390`, via `phrase_index.cpp:457`,
-    // `:215`). The open stopped there, after `check_format`'s
-    // writes and the libraries before it, as the pin's init does.
-    if error.journal_fault().is_some() {
-        std::process::abort();
-    }
-    // The user session could not be built once the library loop had
-    // handed it the system libraries: the session store's seed, a
-    // loaded item's placement, or the user bigram's container. The
-    // pin dies at each counterpart (`std::bad_alloc`, or
-    // `ngram_bdb.cpp:51-52`'s assert), after the same writes.
-    if error.user_session_fault() {
-        std::process::abort();
-    }
-    // Register row 96, `memory_chunk.h:493`: a default library is a
-    // directory whose reported size passes the header check and the
-    // pin's `MemoryChunk::mmap` asserts on reading it. The open stopped
-    // there, after `check_format`'s writes and the libraries before it.
-    if error.chunk_header_read() {
-        std::process::abort();
-    }
-    if let Some(conf_error) = error.table_conf_error() {
-        // A `table.conf` the pin refuses is `false` and one raw
-        // line (after the load's own `open %s failed.` when it
-        // could not be opened, #545); one it dies on without an
-        // assert or `abort()` (class (b): the missing source format
-        // line, a row without a chunk where the directory does not
-        // read as one) is one warning (#694, #525).
-        match conf_error.warning() {
-            Some(text) => crate::ffi::log_warning(text),
-            None => oxpinyin_data::c_stderr::table_conf_load_failed(Some(system_path)),
+    use oxpinyin_facade::InitRefusal;
+    match error.init_refusal(system_path) {
+        InitRefusal::Abort => std::process::abort(),
+        InitRefusal::TableConfLoadFailed => {
+            oxpinyin_data::c_stderr::table_conf_load_failed(Some(system_path));
         }
-    } else {
-        crate::ffi::log_warning(&format!("zhuyin_init: {error} (systemdir {system_path:?})"));
-    }
-}
-
-/// Whether the pin dies of an `abort()` or `assert` on this `table.conf`
-/// refusal (register row 79): `table_info.cpp:119`, `:132`, `:142`, `:156`
-/// and `:175` (`abort()`) and `:276` inside `SystemTableInfo2::load`, with
-/// nothing written; `zhuyin.cpp:330` and `memory_chunk.h:434` after
-/// `check_format` unlinked a non-conforming profile's files
-/// (`zhuyin.cpp:134-159`; libzhuyin writes no `user.conf` there), which the
-/// open has unlinked too; and `memory_chunk.h:493` for a row without a
-/// system chunk where the system directory reads as one. The missing
-/// source-format line (row 80) and the chunkless row on a directory that
-/// does not read as a chunk are class (b) and keep their warning.
-fn table_conf_aborts(
-    error: oxpinyin_data::table_info::TableConfError,
-    system_path: &std::path::Path,
-) -> bool {
-    use oxpinyin_data::table_info::{TableConfError, TableConfSite};
-    match error {
-        TableConfError::Abort(TableConfSite::NullSystemFile) => {
-            oxpinyin_facade::null_chunk_asserts(system_path)
+        InitRefusal::TableConfWarning(message) => crate::ffi::log_warning(message),
+        InitRefusal::OpenWarning => {
+            crate::ffi::log_warning(&format!("zhuyin_init: {error} (systemdir {system_path:?})"));
         }
-        TableConfError::Abort(_) => true,
-        TableConfError::Unopenable
-        | TableConfError::Header
-        | TableConfError::UninitialisedSourceFormat => false,
     }
 }
 

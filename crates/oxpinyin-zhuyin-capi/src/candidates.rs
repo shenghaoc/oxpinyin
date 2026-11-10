@@ -272,42 +272,17 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
 fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
-    match result {
+    use oxpinyin_facade::TrainingRefusal;
+    match oxpinyin_facade::training_answer(result) {
         Ok(trained) => trained,
-        // Register rows 6 and 82: `phonetic_lookup.h:868` (a forcing added
-        // after the last sentence lookup no longer matches the decoded
-        // result) and `storage/phonetic_key_matrix.cpp:661`/`:663`/`:664` (a
-        // re-parse shortened the input under that result, so the walk
-        // leaves the current matrix). `zhuyin_train` reaches them through
-        // the same `train_result3` (`zhuyin.cpp:1712-1713`); what the walk
-        // changed before is in memory.
-        //
-        // Register row 85: `phonetic_lookup.h:884` through
-        // `memory_chunk.h:390` (a predecessor's gram too short for its
-        // total) and `phonetic_lookup.h:903` (on an unsorted gram the step's
-        // `set_freq` misses the item its `insert_freq` added).
-        //
-        // `phonetic_lookup.h:904`: the step's `store` into the failed
-        // Berkeley DB user bigram container answers false, and its
-        // `check_result` dies (register row 113).
-        Err(
-            oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. },
-        ) => std::process::abort(),
-        // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
-        // load a predecessor whose value has a partial item tail, which the
-        // pin's `insert_freq`/`set_freq` walks read past. Nothing changed.
-        Err(oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }) => {
+        Err(TrainingRefusal::Abort) => std::process::abort(),
+        Err(TrainingRefusal::PartialBigram) => {
             crate::ffi::log_warning(
                 "zhuyin_train: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:190)",
             );
             false
         }
-        Err(_) => false,
     }
 }
 
