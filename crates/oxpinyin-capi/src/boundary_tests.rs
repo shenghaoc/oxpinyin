@@ -2014,6 +2014,37 @@ fn auxiliary_text_cuts_before_a_tone() {
     close(context, instance);
 }
 
+/// The getter reads the keys made by the last parse. Setting options only
+/// stores the context word (074a2219 pinyin.cpp:1299-1306, 1497-1524,
+/// 3381-3438). A candidate guess may apply those options to the Rust
+/// session without changing the parse that the getter should display.
+#[rstest::rstest]
+fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess: bool) {
+    let user = TempUserDir::new("aux-parse-options");
+    let (context, instance) = open_at(&user.path);
+    let incomplete = oxpinyin_core::PINYIN_INCOMPLETE;
+    assert!(pinyin_set_options(
+        context,
+        incomplete | oxpinyin_core::USE_TONE
+    ));
+    assert_eq!(parse(instance, "ni3hao3"), 7);
+    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
+
+    assert!(pinyin_set_options(context, incomplete));
+    if after_guess {
+        assert!(pinyin_guess_candidates(
+            instance,
+            0,
+            crate::test_support::DEFAULT_SORT
+        ));
+    }
+    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
+
+    assert_eq!(parse(instance, "ni3hao3"), 2);
+    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni |"));
+    close(context, instance);
+}
+
 /// The chewing renderer clamps a cursor past the input to the end.
 #[test]
 fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
