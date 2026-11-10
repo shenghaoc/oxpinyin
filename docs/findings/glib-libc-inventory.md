@@ -491,7 +491,7 @@ used only by `utils/storage/gen_binary_files.cpp`.
 `PunctTableEntry` writer methods have no exported caller.
 
 The tools make the pin's calls through `oxpinyin-input` `tool.rs`
-(external-I/O stage 5): `taglib` is `oxpinyin-kmm` `taglib.rs`, and
+(external-I/O stage 5): `taglib` is `oxpinyin-utils/src/utils_helper/taglib.rs`, and
 `atoi`, `atol`, `g_strsplit_set` and `g_unichar_isgraph` are the host's.
 `oxpinyin-utils` builds `gen_pinyin_table`, `gen_zhuyin_table` and the
 other utilities under the pin's names.
@@ -685,7 +685,7 @@ Buckets:
 | 24 | `oxpinyin-data` `table_info.rs` `TableConf::parse`; `user_files.rs` `UserTableInfo::parse`, `to_text` | `table_info.cpp:122-131,194-294,338-394` | Boundary | The `table.conf` / `user.conf` reads and write are the pin's `fscanf` / `fprintf` calls through `oxpinyin-input` (#1404); the domain checks stay here. |
 | 25 | `oxpinyin-capi` `aux_matrix.rs` `full`, `double`, `chewing`, `split_zhuyin` | `pinyin.cpp:3295-3576` | Behaviour | The byte delta used as a character offset is libpinyin's defect, reproduced (limb 4). |
 | 26 | The tools' numeric fields, `printf("%f")` output and Unicode categories: `oxpinyin-input` `tool.rs` `atoi`, `atol`, `unichar_isgraph`, `fprintf` | `tag_utility.cpp:127-264`; `utils_helper.h:23-69`; `printf("%f")` at `estimate_interpolation.cpp:116-139`, `eval_correction_rate.cpp:201-203` | Boundary | The pin's calls through `libc` and `glib-sys` (external-I/O stage 5). |
-| 27 | `oxpinyin-kmm` `taglib.rs`; `oxpinyin-input` `tool.rs`, `native.rs` | `tag_utility.cpp:70-299`; the tools' GLib and libc calls | Boundary | libpinyin's own taglib in Rust; its GLib and libc calls are real (`glib-sys`, `libc`). `Required` is a `HashMap`, no hash order reaches output. |
+| 27 | `oxpinyin-utils/src/utils_helper/taglib.rs`; `oxpinyin-input` `tool.rs`, `native.rs` | `tag_utility.cpp:70-299`; the tools' GLib and libc calls | Boundary | libpinyin's own taglib in Rust; its GLib and libc calls are real (`glib-sys`, `libc`). `Required` is a `HashMap`, no hash order reaches output. |
 | 29 | Wrapping in-memory totals: `oxpinyin-runtime` unigram total; `oxpinyin-data` `phrase_libraries.rs`, `lm/mod.rs`; `oxpinyin-user` `store.rs`, `registry.rs`, `seed.rs`; the `guint8` pronunciation count in `store_libpinyin.rs` | `phrase_index.h:615,633`; `phrase_index.cpp:28` | Boundary | On-disk `guint32` / `guint8` widths; defined unsigned wrap. |
 | 30 | `oxpinyin-engine` `nbest.rs` node index (`HashMap` beside the node `Vec`) | `phonetic_lookup.h:314-315` | Behaviour | Creation order lives in the `Vec`; the map is a lookup only. |
 

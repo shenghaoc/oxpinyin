@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use oxpinyin_store::{AttachMode, StoreError};
 
-use crate::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
+use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 
 /// `filename` as a Rust path: on Unix the C string's bytes are the path;
 /// Windows takes its UTF-8 and refuses bytes that are not UTF-8.
@@ -276,7 +276,7 @@ pub(crate) mod tests {
         let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
             .args([
                 "--exact",
-                "database::tests::an_attach_error_is_never_a_missing_object",
+                "k_mixture_model::database::tests::an_attach_error_is_never_a_missing_object",
                 "--test-threads=1",
             ])
             .env(CHILD, "1")
@@ -392,7 +392,9 @@ pub(crate) mod tests {
             let _ = super::Database::open_read_only(Some(&model)).get_array_header(TOKEN);
             return;
         }
-        assert_aborts("database::tests::a_short_array_header_aborts_without_a_panic");
+        assert_aborts(
+            "k_mixture_model::database::tests::a_short_array_header_aborts_without_a_panic",
+        );
     }
 
     /// `check_result(load(…))` on a short single gram, as export, validate,
@@ -407,7 +409,7 @@ pub(crate) mod tests {
             return;
         }
         assert_short_single_gram_exit(
-            "database::tests::a_checked_load_of_a_short_row_takes_the_store_error_exit",
+            "k_mixture_model::database::tests::a_checked_load_of_a_short_row_takes_the_store_error_exit",
         );
     }
 }

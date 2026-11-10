@@ -25,9 +25,9 @@ use std::ffi::{CStr, CString};
 
 use oxpinyin_input::tool::{self, DirectHashTable, LineReader, k_mixture_model as edge};
 
-use crate::database::{Database, Loaded, exit_on_short_single_gram};
-use crate::phrase::PhraseIndex;
-use crate::records::{KMixtureModelArrayItem, KmmGram};
+use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
+use crate::k_mixture_model::phrase::PhraseIndex;
+use crate::k_mixture_model::records::{KMixtureModelArrayItem, KmmGram};
 
 /// Default `--maximum-occurs-allowed` (`gen_k_mixture_model.cpp:50`).
 pub const DEFAULT_MAX_OCCURS: i32 = 20;
@@ -335,8 +335,10 @@ fn post_processing_unigram(bigram: &Database, hash_of_unigram: &DirectHashTable)
 #[cfg(test)]
 mod tests {
     use super::{GenerateParams, train_second_word};
-    use crate::database::Database;
-    use crate::database::tests::{SHORT, TOKEN, assert_short_single_gram_exit, child_dir, plant};
+    use crate::k_mixture_model::database::Database;
+    use crate::k_mixture_model::database::tests::{
+        SHORT, TOKEN, assert_short_single_gram_exit, child_dir, plant,
+    };
     use oxpinyin_input::tool::DirectHashTable;
 
     /// A first word whose stored row is shorter than the array header: the
@@ -365,7 +367,7 @@ mod tests {
             return;
         }
         assert_short_single_gram_exit(
-            "generate::tests::a_short_first_word_row_takes_the_store_error_exit",
+            "k_mixture_model::generate::tests::a_short_first_word_row_takes_the_store_error_exit",
         );
     }
 }

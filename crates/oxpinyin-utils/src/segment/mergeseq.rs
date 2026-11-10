@@ -10,16 +10,15 @@
 //! and is echoed verbatim; end of input feeds a synthetic `"0 "` line
 //! (`mergeseq.cpp:272-276`).
 
-use std::ffi::{CStr, CString, OsString};
+use std::ffi::{CStr, OsString};
 
 use oxpinyin_input::tool::{self, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
-use crate::segment::{
-    MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START, abort_on_pin_assert, c_string, text_of,
-};
+use crate::segment::{MAX_PHRASE_LENGTH, NULL_TOKEN, abort_on_pin_assert, c_string};
+use crate::utils_helper::tag_token_text;
 
 /// A queued token and its length in characters (`TokenInfo`).
 #[derive(Clone, Copy)]
@@ -48,34 +47,19 @@ impl Merger {
         self.queue.iter().map(|info| info.token_len).sum()
     }
 
-    /// `taglib_token_to_string` (`src/storage/tag_utility.cpp:384-405`):
-    /// the special `<start>` for `sentence_start`, the phrase item's text
-    /// otherwise. `None` is the pin's NULL, after it wrote
-    /// `error: unknown token`.
-    fn token_text(&self, search: &PhraseSearch<'_>, token: u32) -> Option<CString> {
-        if (token >> 24) & 0x0F == 0 {
-            return if token == SENTENCE_START {
-                Some(CString::new("<start>").unwrap_or_default())
-            } else {
-                tool::segmentation::report_unknown_token(token as i32);
-                None
-            };
-        }
-        match search.item(token) {
-            Some(item) => text_of(&item.words),
-            None => {
-                tool::segmentation::report_unknown_token(token as i32);
-                None
-            }
-        }
-    }
-
     /// `taglib_validate_token_with_string` (`tag_utility.cpp:407-417`)
     /// then `check_result`'s `assert`. A token with no item, or an item
     /// GLib cannot convert, is where the pin's `strcmp(NULL, …)` is
     /// undefined: oxpinyin refuses instead of reproducing the fault.
     fn validate(&self, search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
-        let Some(text) = self.token_text(search, token) else {
+        let text = tag_token_text(
+            token,
+            oxpinyin_core::phrase_index_library(token) == 0,
+            |token| search.item(token),
+            |item| Some(item.words),
+            |token| tool::segmentation::report_unknown_token(token as i32),
+        );
+        let Some(text) = text.as_deref().and_then(c_string) else {
             tool::exit(1);
         };
         text.as_bytes() == phrase.to_bytes()

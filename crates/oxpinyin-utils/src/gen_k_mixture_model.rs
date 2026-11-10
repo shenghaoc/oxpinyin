@@ -26,7 +26,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             long_name: c"maximum-occurs-allowed",
             short_name: 0,
             flags: 0,
-            arg: OptionArg::Int(oxpinyin_kmm::generate::DEFAULT_MAX_OCCURS),
+            arg: OptionArg::Int(crate::k_mixture_model::generate::DEFAULT_MAX_OCCURS),
             description: Some(c"maximum occurs allowed"),
             arg_description: None,
         },
@@ -34,7 +34,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             long_name: c"maximum-increase-rates-allowed",
             short_name: 0,
             flags: 0,
-            arg: OptionArg::Double(oxpinyin_kmm::generate::DEFAULT_MAX_INCREASE_RATE),
+            arg: OptionArg::Double(crate::k_mixture_model::generate::DEFAULT_MAX_INCREASE_RATE),
             description: Some(c"maximum increase rates allowed"),
             arg_description: None,
         },
@@ -51,14 +51,14 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         Ok(parsed) => parsed,
         Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
     };
-    let params = oxpinyin_kmm::generate::GenerateParams {
+    let params = crate::k_mixture_model::generate::GenerateParams {
         max_occurs: match parsed.values[1] {
             OptionValue::Int(value) => value,
-            _ => oxpinyin_kmm::generate::DEFAULT_MAX_OCCURS,
+            _ => crate::k_mixture_model::generate::DEFAULT_MAX_OCCURS,
         },
         max_increase_rate: match parsed.values[2] {
             OptionValue::Double(value) => value,
-            _ => oxpinyin_kmm::generate::DEFAULT_MAX_INCREASE_RATE,
+            _ => crate::k_mixture_model::generate::DEFAULT_MAX_INCREASE_RATE,
         },
         train_pi_gram: match parsed.values[0] {
             OptionValue::Flag(value) => value,
@@ -76,5 +76,5 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let documents: Vec<&std::ffi::CStr> = documents.iter().map(CString::as_c_str).collect();
 
     let phrases = crate::phrase_index::load_system_phrases();
-    oxpinyin_kmm::generate::run(filename.as_deref(), params, &documents, &phrases);
+    crate::k_mixture_model::generate::run(filename.as_deref(), params, &documents, &phrases);
 }

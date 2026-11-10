@@ -4,7 +4,8 @@
 
 use std::path::Path;
 
-use oxpinyin_kmm::{Database, KMixtureModelMagicHeader};
+use super::database::Database;
+use super::records::{KMixtureModelMagicHeader, KmmGram};
 
 fn c_path(path: &Path) -> std::ffi::CString {
     oxpinyin_input::c_path(path).expect("path has no NUL")
@@ -22,7 +23,7 @@ fn removing_every_row_leaves_a_readable_container() {
         let db = open(&path);
         db.set_magic_header_checked(&KMixtureModelMagicHeader::default());
         for token in [1_u32, 2, 3, 16802309] {
-            db.store_checked(token, &oxpinyin_kmm::KmmGram::new());
+            db.store_checked(token, &KmmGram::new());
         }
         for token in [1_u32, 2, 3, 16802309] {
             db.remove_checked(token);

@@ -22,6 +22,9 @@ use oxpinyin_data::chunk_write::PHRASE_MASK;
 use oxpinyin_input::tool;
 
 use crate::storage::name_c_string;
+use crate::utils_helper::{
+    SystemLibraryError, load_library_rows, save_and_reload_library, tag_token_text,
+};
 
 /// One loaded library: its `SYSTEM_FILE` name and resident items in
 /// ascending slot order.
@@ -89,31 +92,9 @@ impl Libraries {
     ) -> Self {
         let mut by_index: [Option<Library>; 16] = Default::default();
         let mut total = 0_u32;
-        for index in 0..16_u8 {
-            let row = if addon {
-                conf.addon_row(index)
-            } else {
-                conf.default_row(index)
-            };
-            let Some(row) = row else {
-                continue;
-            };
-            if !types.contains(&row.file_type) {
-                continue;
-            }
-            let Some(name) = row.system.as_ref() else {
-                // `MemoryChunk::load(NULL)` in the pin.
-                tool::abort();
-            };
+        let loaded = load_library_rows(conf, addon, types, |index, name| {
             let c_name = name_c_string(name.as_ref());
-            let library = match PhraseLibrary::load_heap(Path::new(name.as_ref())) {
-                Ok(library) => library,
-                Err(LibraryError::Row(_)) => tool::abort(),
-                Err(_) => {
-                    tool::storage::report_load_failed(c_name.as_deref());
-                    tool::exit(failure_status);
-                }
-            };
+            let library = PhraseLibrary::load_heap(Path::new(name.as_ref()))?;
             if !library.is_layout_failed() {
                 total = total.wrapping_add(library.total_freq());
             }
@@ -125,6 +106,20 @@ impl Libraries {
                 items,
                 total: library.total_freq(),
             });
+            Ok(())
+        });
+        match loaded {
+            Ok(()) => {}
+            // `MemoryChunk::load(NULL)` in the pin, or a row fault.
+            Err(
+                SystemLibraryError::MissingName
+                | SystemLibraryError::Chunk(_, LibraryError::Row(_)),
+            ) => tool::abort(),
+            Err(SystemLibraryError::Chunk(name, _)) => {
+                let c_name = name_c_string(name.as_ref());
+                tool::storage::report_load_failed(c_name.as_deref());
+                tool::exit(failure_status);
+            }
         }
         Self { by_index, total }
     }
@@ -223,9 +218,7 @@ impl Libraries {
             let name = library.name.clone();
             let old_total = library.total;
             let file = library.chunk();
-            save_library(&name, &file);
-            let reloaded =
-                PhraseLibrary::from_payload(file[8..].to_vec()).unwrap_or_else(|_| tool::abort());
+            let reloaded = save_and_reload_library(&name, &file);
             let items = items_of(&reloaded).unwrap_or_else(|| tool::abort());
             self.total = self.total.wrapping_sub(old_total);
             if !reloaded.is_layout_failed() {
@@ -244,36 +237,18 @@ impl Libraries {
 /// phrase text of `token`, the special `"<start>"` for token 1, or `None`
 /// after the pin's `error: unknown token:%d.` line.
 pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CString> {
-    if oxpinyin_core::phrase_index_library(token) as u8 == 0 {
-        if token == 1 {
-            return Some(c"<start>".to_owned());
-        }
-        tool::storage::report_unknown_token(c_int::try_from(token).unwrap_or(c_int::MAX));
-        return None;
-    }
-    let Some(item) = libraries.item(token) else {
-        tool::storage::report_unknown_token(c_int::try_from(token).unwrap_or(c_int::MAX));
-        return None;
-    };
-    let words: Vec<u32> = item.phrase.clone();
-    crate::segment::c_string(&tool::ucs4_to_utf8(&words)?)
-}
-
-/// Saves one fully framed `MemoryChunk` through `MemoryChunk::save`'s
-/// calls.
-pub(crate) fn save_library(name: &CString, file: &[u8]) {
-    let path = crate::training::path_of(name);
-    if let Err(error) = oxpinyin_input::chunk::save(&path, file) {
-        if matches!(error, oxpinyin_input::chunk::ChunkSaveError::Header { .. }) {
-            tool::abort();
-        }
-        tool::storage::report_save_failed(name);
-        tool::exit(tool::ENOENT);
-    }
+    let text = tag_token_text(
+        token,
+        oxpinyin_core::phrase_index_library(token) == 0,
+        |token| libraries.item(token),
+        |item| Some(item.phrase.as_slice()),
+        |token| tool::storage::report_unknown_token(c_int::try_from(token).unwrap_or(c_int::MAX)),
+    )?;
+    crate::segment::c_string(&text)
 }
 
 /// Every resident item of `library` as a writable chunk item.
-fn items_of(
+pub(crate) fn items_of(
     library: &PhraseLibrary,
 ) -> Option<BTreeMap<u32, oxpinyin_data::chunk_write::ChunkItem>> {
     let mut items = BTreeMap::new();
@@ -284,7 +259,7 @@ fn items_of(
 }
 
 /// One loaded item as a chunk item.
-pub(crate) fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::ChunkItem> {
+fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::ChunkItem> {
     let phrase: Option<Vec<u32>> = view.phrase_codes().collect();
     let mut prons = Vec::new();
     for pronunciation in view.pronunciations() {

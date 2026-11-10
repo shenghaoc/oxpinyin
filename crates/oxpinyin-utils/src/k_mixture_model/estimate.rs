@@ -21,8 +21,8 @@ use std::ffi::CStr;
 
 use oxpinyin_input::tool::k_mixture_model as edge;
 
-use crate::database::{Database, Loaded, exit_on_short_single_gram};
-use crate::records::KmmGram;
+use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
+use crate::k_mixture_model::records::KmmGram;
 
 /// Seed `next_lambda` (`estimate_k_mixture_model.cpp:40`).
 pub const SEED_LAMBDA: f64 = 0.6;
@@ -119,7 +119,7 @@ fn compute_interpolation(
 
 #[cfg(test)]
 mod tests {
-    use crate::database::tests::{
+    use crate::k_mixture_model::database::tests::{
         SHORT, TOKEN, WHOLE, assert_short_single_gram_exit, child_dir, plant,
     };
 
@@ -137,7 +137,7 @@ mod tests {
             return;
         }
         assert_short_single_gram_exit(
-            "estimate::tests::a_short_candidate_row_takes_the_store_error_exit",
+            "k_mixture_model::estimate::tests::a_short_candidate_row_takes_the_store_error_exit",
         );
     }
 }

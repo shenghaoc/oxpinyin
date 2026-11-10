@@ -25,6 +25,8 @@ pub mod gen_zhuyin_table;
 
 pub mod import_k_mixture_model;
 
+mod k_mixture_model;
+
 pub mod k_mixture_model_to_interpolation;
 
 pub mod segment;
@@ -42,7 +44,9 @@ pub mod validate_k_mixture_model;
 
 /// The pin's line tagger, shared with the KMM operations that read its text
 /// models. Its edge calls are `oxpinyin-input`'s.
-pub use oxpinyin_kmm::taglib;
+pub use utils_helper::taglib;
+
+mod utils_helper;
 
 pub mod test_parser2;
 

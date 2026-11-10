@@ -5,8 +5,8 @@
 //! and the dead `print_help` text is not part of the parser. `argc` must be
 //! exactly two, or `wrong arguments.` and `EINVAL` (`:146-155`).
 
+use crate::k_mixture_model::database::Database;
 use oxpinyin_input::tool;
-use oxpinyin_kmm::Database;
 
 /// `main` (`:141-173`).
 pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) {
@@ -22,5 +22,5 @@ pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) {
 
     let filename = std::ffi::CString::new(parsed.args[1].clone()).unwrap_or_default();
     let bigram = Database::open_read_only(Some(&filename));
-    oxpinyin_kmm::validate::run(&bigram);
+    crate::k_mixture_model::validate::run(&bigram);
 }

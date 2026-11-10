@@ -30,32 +30,3 @@ pub trait PhraseIndex {
         })
     }
 }
-
-/// A phrase source that knows only the pin's special table: `sentence_start`
-/// is `<start>` and every other token is unknown. For an import or export
-/// fixture that carries no phrase index; a real utility builds
-/// [`PhraseIndex`] over the loaded `SYSTEM_FILE` chunks instead.
-pub struct SpecialTokens;
-
-impl PhraseIndex for SpecialTokens {
-    fn token_to_string(&self, token: u32) -> Option<Vec<u8>> {
-        if token == 1 {
-            Some(b"<start>".to_vec())
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{PhraseIndex, SpecialTokens};
-
-    #[test]
-    fn sentence_start_is_the_special_table() {
-        assert_eq!(SpecialTokens.token_to_string(1), Some(b"<start>".to_vec()));
-        assert_eq!(SpecialTokens.token_to_string(2), None);
-        assert!(SpecialTokens.validate_token_with_string(1, b"<start>"));
-        assert!(!SpecialTokens.validate_token_with_string(2, b"x"));
-    }
-}

@@ -27,6 +27,7 @@ use oxpinyin_input::tool::LineReader;
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};
+use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
 const EVALS_TEXT: &std::ffi::CStr = c"evals2.text";
@@ -43,7 +44,20 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `load_phrase_index(phrase_files, &phrase_index)`: every default
     // `SYSTEM_FILE` row; a refused chunk writes `load %s failed!` and ends
     // the program at `ENOENT`.
-    let libraries = load_libraries(&conf);
+    let libraries = match load_system_libraries(&conf) {
+        Ok(libraries) => libraries,
+        Err(SystemLibraryError::MissingName) => tool::abort(),
+        // `MemoryChunk::load`'s header assertion on a directory
+        // (`memory_chunk.h:429`).
+        Err(SystemLibraryError::Chunk(_, LibraryError::Row(RowFault::ChunkHeaderRead))) => {
+            tool::abort()
+        }
+        Err(SystemLibraryError::Chunk(name, _)) => {
+            let c_name = oxpinyin_input::c_path(Path::new(name.as_ref()));
+            tool::storage::report_load_failed(c_name.as_deref());
+            tool::exit(tool::ENOENT);
+        }
+    };
 
     // `system_bigram.attach(SYSTEM_BIGRAM, ATTACH_READONLY)`: ignored.
     let bigram = Some(
@@ -100,31 +114,6 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `parameter_t rate = passed_count / (parameter_t) tested_count;`
     let rate = passed_count as f64 / tested_count as f64;
     tool::training::print_correction_rate(rate);
-}
-
-/// `load_phrase_index` over `table.conf`'s default `SYSTEM_FILE` rows
-/// (`utils/utils_helper.h:73-95`), into the data layer's facade so the
-/// evaluation model and the pinyin lookup read the same items.
-fn load_libraries(conf: &oxpinyin_data::table_info::TableConf) -> PhraseLibraries {
-    let mut libraries = PhraseLibraries::empty();
-    for (index, row) in conf.system_libraries() {
-        let Some(name) = row.system.as_ref() else {
-            // `MemoryChunk::load(NULL)`.
-            tool::abort();
-        };
-        let c_name = oxpinyin_input::c_path(Path::new(name.as_ref()));
-        match libraries.load_heap(index, Path::new(name.as_ref())) {
-            Ok(_) => {}
-            // `MemoryChunk::load`'s header `assert` on a directory named as
-            // a chunk (`memory_chunk.h:429`).
-            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => tool::abort(),
-            Err(_) => {
-                tool::storage::report_load_failed(c_name.as_deref());
-                tool::exit(tool::ENOENT);
-            }
-        }
-    }
-    libraries
 }
 
 /// The pin's evaluation model over the binary tables.
@@ -199,28 +188,14 @@ fn c_string(text: &str) -> std::ffi::CString {
 /// text otherwise, and the pin's `error: unknown token:%d.` line before
 /// `None`.
 fn token_text(libraries: &PhraseLibraries, token: u32) -> Option<std::ffi::CString> {
-    if oxpinyin_core::phrase_index_library(token) == 0 {
-        if token == 1 {
-            return Some(c"<start>".to_owned());
-        }
-        tool::storage::report_unknown_token(token as core::ffi::c_int);
-        return None;
-    }
-    let Some(library) = libraries.library(token) else {
-        tool::storage::report_unknown_token(token as core::ffi::c_int);
-        return None;
-    };
-    let Some(item) = library.item(token) else {
-        tool::storage::report_unknown_token(token as core::ffi::c_int);
-        return None;
-    };
-    // `item.get_phrase_string(buffer)` then `g_ucs4_to_utf8(buffer,
-    // length)`: a word that cannot be read leaves the pin's buffer partly
-    // unset (class (b)); a word at or above `0x8000_0000` makes the call
-    // answer NULL, which the caller's `strcmp` reads (class (b)).
-    let words: Option<Vec<u32>> = item.phrase_codes().collect();
-    let words = words?;
-    crate::segment::c_string(&tool::ucs4_to_utf8(&words)?)
+    let text = tag_token_text(
+        token,
+        oxpinyin_core::phrase_index_library(token) == 0,
+        |token| libraries.library(token)?.item(token),
+        |item| item.phrase_codes().collect::<Option<Vec<_>>>(),
+        |token| tool::storage::report_unknown_token(token as core::ffi::c_int),
+    )?;
+    crate::segment::c_string(&text)
 }
 
 /// `get_possible_pinyin` and `convert_to_utf8` over the loaded phrase

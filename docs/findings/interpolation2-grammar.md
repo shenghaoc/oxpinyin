@@ -8,13 +8,13 @@ pin; `tools/oracle/oracle-pin.txt` is authoritative).
 
 `interpolation2.text` is the model's tagged text form. Upstream reads it
 with `taglib_read` (`src/storage/tag_utility.cpp`). oxpinyin has one port
-of that tagger, `oxpinyin_kmm::taglib` (`crates/oxpinyin-kmm/src/taglib.rs`),
-re-exported as `oxpinyin_utils::taglib`. These readers use it:
+of that tagger, `oxpinyin_utils::taglib`
+(`crates/oxpinyin-utils/src/utils_helper/taglib.rs`). These readers use it:
 
 - `oxpinyin-utils` `import_interpolation`
   (`crates/oxpinyin-utils/src/storage/import_interpolation.rs`);
 - `oxpinyin-utils` `k_mixture_model_to_interpolation`;
-- the k-mixture-model tools in `oxpinyin-kmm`.
+- the k-mixture-model tools in `oxpinyin-utils` `k_mixture_model`.
 
 The tagger's character steps and warnings are GLib's, through the tool
 boundary (`oxpinyin_input::tool`), including `g_unichar_isgraph`

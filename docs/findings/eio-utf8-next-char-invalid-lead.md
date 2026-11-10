@@ -26,9 +26,8 @@
   `g_unichar_isgraph` are false.
 - **Rust counterpart:** `oxpinyin_input::tool::utf8_next_char_step`. It
   returns the length of the UTF-8 sequence that the byte leads
-  (`u8::leading_ones` of 2, 3 or 4), else 1. Its one caller is `oxpinyin_kmm::taglib::split_line`
-  (`crates/oxpinyin-kmm/src/taglib.rs`, re-exported as
-  `oxpinyin_utils::taglib`).
+  (`u8::leading_ones` of 2, 3 or 4), else 1. Its one caller is `oxpinyin_utils::taglib::split_line`
+  (`crates/oxpinyin-utils/src/utils_helper/taglib.rs`).
   `g_utf8_get_char`, `g_unichar_isspace` and `g_unichar_isgraph` stay
   GLib's, through `glib-sys`.
 - **Forward trace:** `k_mixture_model_to_interpolation` stdin →
@@ -36,7 +35,7 @@
   tokens → tag and value lookup → output or refusal.
 - **Backward trace:** `utf8_next_char_step` has no other caller.
   The interpolation grammar of `oxpinyin-data`, the text reader of
-  `oxpinyin-kmm` and the C facades decode UTF-8 through their own code.
+  `oxpinyin-utils` `k_mixture_model` and the C facades decode UTF-8 through their own code.
   They do not call the table. The table generators (`gen_pinyin_table`,
   `gen_zhuyin_table`) and `ngseg` call GLib's own `g_utf8_strlen` and
   `g_utf8_to_ucs4` through `glib-sys`. These functions step GLib's table
@@ -78,7 +77,7 @@
   | `F5 'abc d'` (control) | `["", "d"]` | `["", "d"]` |
 
 - **Tests:** `split_line_steps_one_byte_from_a_byte_that_leads_no_sequence`
-  (`crates/oxpinyin-kmm/src/taglib.rs`) holds the oxpinyin tokens and the
+  (`crates/oxpinyin-utils/src/utils_helper/taglib.rs`) holds the oxpinyin tokens and the
   control. The `tool.rs` boundary test of `oxpinyin-input` holds the step
   for each byte class. The frozen `k_mixture_model_to_interpolation`
   cases in `crates/oxpinyin-utils/tests/` feed valid UTF-8 text, so none
@@ -86,5 +85,5 @@
   derived from source.
 - **Prior rulings:** none reversed.
 - **Evidence:** the pin derivation above, from source, and the tests
-  above (`cargo test -p oxpinyin-input -p oxpinyin-kmm -p oxpinyin-utils`).
+  above (`cargo test -p oxpinyin-input -p oxpinyin-utils`).
 - **Conclusion:** accepted, 2026-10-31 UTC.

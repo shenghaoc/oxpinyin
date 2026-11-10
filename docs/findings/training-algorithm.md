@@ -16,7 +16,7 @@ EM) apply to both paths; the λ EM runs inside `evaluate.py`.
 This finding records, with source file and line citations, the algorithm
 oxpinyin reproduces to train a model that is *algorithmically identical* to
 libpinyin's on identical input. `oxpinyin-utils` provides the utilities
-under their libpinyin names; `oxpinyin-kmm` holds the k-mixture-model
+under their libpinyin names; its `k_mixture_model` module holds the k-mixture-model
 operations.
 
 Every algorithmic claim below is tagged **SHOWN** (read directly from the cited
