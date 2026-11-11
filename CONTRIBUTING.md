@@ -64,7 +64,7 @@ Do not publish or install a Python package, and add no console entry point witho
 
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
-The documented shell entry points (`tools/cloud/setup.sh`, `tools/tkrzw/distro-probe.sh`) remain supported.
+The documented bootstrap shell entry point `tools/cloud/setup.sh` remains supported.
 
 Report the conclusion, relevant final results and reproduction commands.
 Identify only the revisions, inputs, build options and environment details needed to interpret and repeat the result.

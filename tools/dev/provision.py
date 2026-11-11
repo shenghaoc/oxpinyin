@@ -31,7 +31,7 @@ from tools import cachedir
 from tools.oracle import image as images
 from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime
-from tools.tkrzw.build import TKRZW_REV
+from . import vcpkg
 
 CELLS = backend_cell.CELLS
 SELECT = '''case $_oxp_provisioned in
@@ -104,31 +104,6 @@ def tkrzw_env_prefix(path):
     return lib[:-4] if lib.endswith('/lib') else ''
 
 
-def without_prefix(value, prefix, env):
-    """Remove every sourced cache and the current cache from a host search path."""
-    excluded = [*env.get('OXPINYIN_TKRZW_PREFIXES', '').split(':'), str(prefix or ''),
-                tkrzw_env_prefix(env.get('OXPINYIN_ORACLE_ENV', str(Path.home() / '.oxpinyin-oracle.env')))]
-    # Bash keeps leading/internal empty fields and discards a final empty field.
-    entries = value.split(':') if value else []
-    if value.endswith(':'):
-        entries.pop()
-    return ':'.join(entry for entry in entries
-                    if not any(p and (entry == p or entry.startswith(p + '/')) for p in excluded))
-
-
-def resolve_tkrzw(obj, env, root=ROOT):
-    """Use the shared loader's historical host-probe view and exact statuses."""
-    try:
-        host, done, matches = runtime.resolve(obj, env=env, cwd=root, probe=True)
-    except runtime.LoaderOverride:
-        fail('REFUSED: otool -L reports the recorded libtkrzw install name, which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass; unset both to probe the host library.')
-    except runtime.LoaderFailure as error:
-        raise Finished(error.status) from error
-    if done.returncode:
-        raise Finished(128 - done.returncode if done.returncode < 0 else done.returncode)
-    return '\n'.join(matches[:1] if host == 'Darwin' else matches)
-
-
 def check_manifest(manifest, cwd):
     """`sha256sum --check --quiet MANIFEST` in CWD, in Python: answer the status and the output.
 
@@ -171,68 +146,24 @@ def check_manifest(manifest, cwd):
 # failure (the interpreter, an import, the runtime) means the check did not run.
 PREFIX_INVALID = 10
 
-OS_RELEASE = Path('/etc/os-release')
-OS_RELEASE_FALLBACK = Path('/usr/lib/os-release')
 
-
-def os_release_record(os_release=OS_RELEASE, fallback=OS_RELEASE_FALLBACK):
-    """os-release's fields from OS_RELEASE, else FALLBACK (os-release(5)); None when neither reads."""
-    for path in (os_release, fallback):
-        try:
-            return dict(line.split('=', 1) for line in Path(path).read_text().splitlines() if '=' in line)
-        except OSError:
-            continue
-    return None
-
-
-def ubuntu_host(os_release=OS_RELEASE, fallback=OS_RELEASE_FALLBACK):
-    """Whether os-release names Ubuntu or a distribution built on its packages."""
-    record = os_release_record(os_release, fallback) or {}
-    names = [record.get('ID', '').strip('"\''), *record.get('ID_LIKE', '').strip('"\'').split()]
-    return 'ubuntu' in names
-
-
-def probe_host(prefix='', *, env=None, root=ROOT, probe=None, out=None, os_release=OS_RELEASE,
-               os_release_fallback=OS_RELEASE_FALLBACK):
-    """Certify the host utility and loaded object after excluding all caches.
-
-    distro-probe.sh runs only on an Ubuntu host: the defect it detects is in Ubuntu's
-    packaged libtkrzw (docs/findings/tkrzw-distro-compat.md), and no other host's
-    distribution package needs it."""
-    def refused(reason):
-        print(f'host check: {reason}; no healthy host libtkrzw was certified',
-              file=sys.stderr, flush=True)
-        return ''
-
+def probe_host(*, env=None, root=ROOT, out=None):
+    """Certify the configured overlay install by its utility's actual loader."""
     environment = dict(os.environ if env is None else env)
-    child = dict(environment, PATH=without_prefix(environment.get('PATH', ''), prefix, environment),
-                 LD_LIBRARY_PATH=without_prefix(environment.get('LD_LIBRARY_PATH', ''), prefix, environment))
-    if platform.system() == 'Linux' and os_release_record(os_release, os_release_fallback) is None:
-        return refused(f'neither {os_release} nor {os_release_fallback} can be read, so the host cannot be named')
-    if ubuntu_host(os_release, os_release_fallback):
-        status = run(['sh', probe or Path(root) / 'tools/tkrzw/distro-probe.sh'], env=child,
-                     cwd=root, stdout=out, check=False)
-        if status:
-            return refused(f'host distro-probe.sh failed (status {status})')
-    util = shutil.which('tkrzw_dbm_util', path=child['PATH'])
-    if not util:
-        return refused('tkrzw_dbm_util is not on the host PATH after excluding cached runtimes')
     try:
-        so = resolve_tkrzw(util, child, root)
-    except Finished as error:
-        return refused(f'the host utility loader check failed (status {error.status})')
-    libname = 'libtkrzw.dylib' if text(['uname', '-s'], env=child) == 'Darwin' else 'libtkrzw.so.1'
-    print(f'host check: {util} resolves {libname} to {so or "nothing"}', file=out or sys.stdout, flush=True)
-    if not so:
-        return refused('the host utility did not resolve libtkrzw')
-    if not Path(so).is_file():
-        return refused(f'resolved host libtkrzw is not a file: {so}')
-    if without_prefix(so, prefix, environment) != so:
-        return refused(f'resolved libtkrzw belongs to an excluded cache: {so}')
-    real = str(Path(so).resolve())
-    if without_prefix(real, prefix, environment) != real:
-        return refused(f'resolved host libtkrzw points into an excluded cache: {real}')
-    return real
+        installed = vcpkg.prefix(environment)
+        child = vcpkg.environment(environment)
+        utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
+        if not utility.is_file():
+            raise ValueError(f'missing vcpkg utility: {utility}')
+        library = runtime.check('tkrzw', 'host check', 'subject', utility, env=child, cwd=root)
+        if library is None:
+            raise ValueError('the vcpkg utility does not load libtkrzw')
+        print(f'host check: {utility} resolves libtkrzw to {library}', file=out or sys.stdout)
+        return str(library)
+    except (ValueError, runtime.RuntimeRefused) as error:
+        print(f'host check: {error}; no healthy host libtkrzw was certified', file=sys.stderr)
+        return ''
 
 
 class Provision:
@@ -292,7 +223,7 @@ class Provision:
 
     @property
     def tkrzw_prefix(self):
-        return (cachedir.root(self.env) / f'tkrzw-{TKRZW_REV[:12]}').resolve()
+        return vcpkg.prefix(self.env)
 
     @property
     def env_file(self):
@@ -606,7 +537,7 @@ class Provision:
         if self.tkrzw_local:
             lines += ['export PKG_CONFIG_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}',
                       'export LD_LIBRARY_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}',
-                      'export PATH=' + quote(self.tkrzw_prefix, always=True) + '/bin:$PATH']
+                      'export PATH=' + quote(self.tkrzw_prefix, always=True) + '/tools/tkrzw/bin:$PATH']
         elif library and not runtime_prefix:
             lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent, always=True) + '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}')
         elif kept_paths:
@@ -885,59 +816,18 @@ class Provision:
     def sound_tkrzw(self):
         if 'tkrzw' not in self.cells:
             return
-        prefix = self.tkrzw_prefix
-        child = dict(self.env, PATH=str(prefix / 'bin') + ':' + self.env.get('PATH', ''),
-                     LD_LIBRARY_PATH=str(prefix / 'lib') + (':' + self.env['LD_LIBRARY_PATH'] if self.env.get('LD_LIBRARY_PATH') else ''))
-        # A build from tools/tkrzw/build.py needs no distro-probe.sh (Ubuntu's package only).
-        def built_ok():
-            # A missing utility is an invalid build; a loader check that did not run keeps the cache.
-            if not (prefix / 'bin/tkrzw_dbm_util').is_file():
-                return False
-            try:
-                return resolve_tkrzw(prefix / 'bin/tkrzw_dbm_util', child, self.root) == str(prefix / 'lib/libtkrzw.so.1')
-            except Finished as error:
-                self.die(f'tkrzw: the loader check of {prefix} did not run (status {error.status}); the cache is kept')
-        # Redirect both Python and child probe streams to this run's local file.
-        command = [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.provision', 'probe-host', str(prefix)]
-        with (self.cache / 'tkrzw-host-probe.log').open('wb') as output:
-            done = capture(command, cwd=self.root, env=self.env, check=False, stderr=False)
-            output.write(done.stdout + done.stderr)
-        if not done.status:
-            self.tkrzw_host_library = done.stdout.decode().splitlines()[-1]
-            self.log('tkrzw: the host libtkrzw is certified')
-            return
-        self.log(f'tkrzw: the host libtkrzw is broken or missing (probe: {self.cache}/tkrzw-host-probe.log)')
+        try:
+            vcpkg.install(self.env, self.root, jobs=self.jobs)
+            prefix = self.tkrzw_prefix
+            child = vcpkg.environment(self.env)
+            utility = prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
+            for side, binary in (('subject', utility), ('pin', self.oracle_root / 'tkrzw/lib/libpinyin.so')):
+                if runtime.check('tkrzw', 'provision', side, binary, env=child, cwd=self.root) is None:
+                    raise ValueError(f'{side} binary does not load libtkrzw: {binary}')
+        except (ValueError, runtime.RuntimeRefused) as error:
+            self.die(str(error))
         self.tkrzw_local = True
-        revision = prefix / 'REV'
-        if revision.is_file() and revision.read_text().rstrip('\n') == TKRZW_REV and built_ok():
-            self.log(f'tkrzw: cached build {TKRZW_REV[:7]} loads its own libtkrzw')
-        else:
-            for name in ('g++', 'make'):
-                if not self.which(name):
-                    self.die(f'building tkrzw needs {name} (apt-get install -y build-essential)')
-            self.log(f'tkrzw: building upstream {TKRZW_REV[:7]}')
-            source = self.cache / 'tkrzw-src'
-            shutil.rmtree(prefix, ignore_errors=True)
-            shutil.rmtree(source, ignore_errors=True)
-            source.mkdir(parents=True)
-            # All compilation, including the local runtime, uses slot.run_command
-            # through compat.process; the build remains one sequential unit.
-            # tools/tkrzw/build.py is the one recipe; CI's tkrzw action runs it too.
-            status = run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.tkrzw.build', 'build',
-                          '--prefix', str(prefix), '--source', str(source), '--jobs', str(self.jobs)], cwd=self.root,
-                         env=self.env, stdout=(output := (self.cache / 'tkrzw-build.log').open('wb')), heavy=True, check=False)
-            output.close()
-            if status:
-                self.tail(self.cache / 'tkrzw-build.log', 40)
-                self.die(f'the tkrzw build failed (full log: {self.cache}/tkrzw-build.log)')
-            shutil.rmtree(source)
-            if not built_ok():
-                self.die(f'the built tkrzw_dbm_util does not load {prefix}/lib/libtkrzw.so.1 (refusing to use it)')
-            revision.write_text(TKRZW_REV + '\n')
-        resolved = resolve_tkrzw(self.oracle_root / 'tkrzw/lib/libpinyin.so', dict(self.env, LD_LIBRARY_PATH=str(prefix / 'lib')), self.root)
-        if resolved != str(prefix / 'lib/libtkrzw.so.1'):
-            self.die(f"the tkrzw oracle libpinyin.so resolves libtkrzw.so.1 to '{resolved or 'nothing'}', not {prefix}/lib")
-        self.log(f'tkrzw: oracle libpinyin.so resolves libtkrzw.so.1 to {resolved}')
+        self.log(f'tkrzw: certified vcpkg install at {prefix}')
 
     def execute(self, argv):
         self.options(argv)
@@ -1032,7 +922,7 @@ def main(argv=None):
                 service = Provision()
                 return service.oracle(args[1:])
             if args[:1] == ['probe-host']:
-                library = probe_host(args[1] if len(args) > 1 else '')
+                library = probe_host()
                 if not library:
                     return 1
                 print(library)

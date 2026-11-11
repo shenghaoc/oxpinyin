@@ -448,17 +448,6 @@ class OtherFormatTests(ToolCase):
 
 
 class WindowsCompilerTests(unittest.TestCase):
-    def test_windows_reports_the_probe_shell_or_its_path_fix(self):
-        for shell in (None, 'C:/Git/usr/bin/sh.exe'):
-            with self.subTest(shell=shell), mock.patch.object(doctor.sys, 'platform', 'win32'), \
-                    mock.patch.object(doctor.shutil, 'which', side_effect=lambda name, **kwargs:
-                                      shell if name == 'sh' else None), \
-                    mock.patch.object(doctor, 'windows_compiler', return_value='MSVC installed'):
-                lines = doctor.host_lines({'PATH': 'session-path'})
-            expected = (f'tkrzw probe shell: sh at {shell}' if shell else
-                        "tkrzw probe shell: missing sh; put Git for Windows' usr\\bin on PATH")
-            self.assertIn(expected, lines)
-
     def test_installer_finds_compiler_without_path(self):
         for architecture, folder in (('AMD64', 'x64'), ('ARM64', 'arm64')):
             with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as directory:

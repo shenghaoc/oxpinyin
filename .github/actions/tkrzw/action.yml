@@ -1,121 +1,48 @@
 name: 'tkrzw'
 description: |-
-  Upstream tkrzw at the revision tools/cloud/setup.sh provisions
-  (tools/tkrzw/build.py, TKRZW_REV), built by that recipe and cached, on
-  Linux. Those CI jobs use this build: the fixed upstream
-  release is not yet in every distro (docs/findings/tkrzw-distro-compat.md).
+  Install the Linux tkrzw overlay port with a vcpkg binary cache.
 
-  The cache key names everything the build depends on: the tkrzw revision,
-  the OS and architecture, the runner image (compiler and SDK), the
-  toolchain inside a container job (the compiler and /etc/os-release; a
-  rolling debian:testing changes them without changing the runner image),
-  the install prefix (tkrzw.pc records it), and a
-  hash of the build recipe and shared pin. The runtime check and
-  this action are not inputs: neither changes the installed files. A miss
-  builds and checks the install; main saves it. A hit restores and checks
-  the install. A build from this recipe needs no distro-probe.sh, which is
-  for Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
-
-  Afterwards the build is found the way a developer points at a self-built
-  tkrzw: DIR/lib/pkgconfig first on PKG_CONFIG_PATH, DIR/lib on
-  LD_LIBRARY_PATH and DIR/bin on PATH. It
-  also sets OXPINYIN_TKRZW_PREFIX, the verified runtime the loader checks in
-  tools/tkrzw/runtime.py certify against.
-
-  The recipe runs with the runner's own Python, not the managed one: it is
-  standard-library Python 3.9, and some Linux jobs install
-  no managed interpreter. Call this after checkout and, in container jobs,
-  after the apt step that installs g++, make and git.
-
+  tools/dev/vcpkg.py holds every vcpkg step; only the package install and the
+  cache actions stay here. It runs with the image's own Python: the Debian
+  container jobs call this before any managed interpreter exists.
 outputs:
   prefix:
-    description: 'The installed prefix.'
-    value: ${{ steps.key.outputs.prefix }}
+    description: 'The installed triplet prefix.'
+    value: ${{ steps.key.outputs.installed }}
   cache-hit:
-    description: "'true' when the build was restored from the cache."
+    description: "Whether the binary cache was restored exactly."
     value: ${{ steps.restore.outputs.cache-hit }}
-
 runs:
   using: composite
   steps:
-    - name: Compute the tkrzw cache key
+    # Debian container jobs do not inherit the runner's vcpkg checkout.
+    # Install these from Debian, including on a binary-cache hit.
+    - name: Install the vcpkg build tools (apt)
+      shell: bash
+      run: apt-get install -y --no-install-recommends build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake ninja-build
+    - name: Bootstrap vcpkg
+      shell: bash
+      run: python3 -m tools.dev.vcpkg bootstrap
+    - name: Compute the vcpkg binary cache key
       id: key
       shell: bash
-      run: |
-        set -euo pipefail
-        python=$(command -v python3 || command -v python) || { echo '::error::the tkrzw action needs python3 or python'; exit 1; }
-        prefix="${RUNNER_TEMP//\\//}/tkrzw"
-        rev=$("$python" -m tools.tkrzw.build rev)
-        {
-          printf '%s\n' "$prefix"
-          if [ "$RUNNER_OS" != Windows ]; then
-            c++ --version 2>&1 | head -1 || true
-            cat /etc/os-release 2>/dev/null || true
-          fi
-        } > "$RUNNER_TEMP/tkrzw-toolchain"
-        toolchain=$("$python" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:16])' "$RUNNER_TEMP/tkrzw-toolchain")
-        {
-          echo "python=$python"
-          echo "prefix=$prefix"
-          echo "key=tkrzw-$rev-$RUNNER_OS-$RUNNER_ARCH-${ImageOS:-unknown}-${ImageVersion:-unknown}-$toolchain"
-        } >> "$GITHUB_OUTPUT"
-        echo "tkrzw $rev into $prefix"
-
-    - name: Restore the tkrzw build
+      run: python3 -m tools.dev.vcpkg cache-key --triplet x64-linux-oxpinyin
+    - name: Restore the vcpkg binary cache
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.key.outputs.prefix }}
-        key: ${{ steps.key.outputs.key }}-recipe-${{ hashFiles('tools/tkrzw/build.py', 'vcpkg-overlays/tkrzw/pin.json') }}
-
-    - name: Check the restored tkrzw build
-      if: steps.restore.outputs.cache-hit == 'true'
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.key }}-${{ hashFiles('vcpkg-overlays/**', 'triplets/**') }}
+        restore-keys: |
+          ${{ steps.key.outputs.key }}-
+    # Installs the overlay port, then publishes the compilation and runtime
+    # certification environment and the tools directory.
+    - name: Install tkrzw
       shell: bash
-      env:
-        PYTHON: ${{ steps.key.outputs.python }}
-        PREFIX: ${{ steps.key.outputs.prefix }}
-      run: |
-        set -euo pipefail
-        "$PYTHON" -m tools.tkrzw.build check --prefix "$PREFIX"
-
-    - name: Build tkrzw (cache miss)
-      if: steps.restore.outputs.cache-hit != 'true'
-      shell: bash
-      env:
-        PYTHON: ${{ steps.key.outputs.python }}
-        PREFIX: ${{ steps.key.outputs.prefix }}
-      run: |
-        set -euo pipefail
-        rm -rf "$PREFIX"
-        "$PYTHON" -m tools.tkrzw.build build --prefix "$PREFIX"
-
-    # Saved right after the build, before the caller's own steps, so a red
-    # test run still keeps the build; skipped on an exact hit. Only main
-    # writes the cache; every other ref restores only.
-    - name: Save the tkrzw build
+      run: python3 -m tools.dev.vcpkg install --triplet x64-linux-oxpinyin
+    - name: Save the vcpkg binary cache
       if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.key.outputs.prefix }}
+        path: ${{ steps.key.outputs.dir }}
         key: ${{ steps.restore.outputs.cache-primary-key }}
-
-    - name: Point pkg-config and the loader at the tkrzw build
-      shell: bash
-      env:
-        PREFIX: ${{ steps.key.outputs.prefix }}
-      run: |
-        set -euo pipefail
-        sep=:
-        {
-          echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+$sep$PKG_CONFIG_PATH}"
-          case $RUNNER_OS in
-            # OXPINYIN_TKRZW_PREFIX names this checked build as the verified
-            # runtime that tools/tkrzw/runtime.py certifies loaders against
-            # (docs/runbooks/verification.md rule 9), as tools/cloud/setup.sh's environment does.
-            Linux) echo "LD_LIBRARY_PATH=$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                   echo "OXPINYIN_TKRZW_PREFIX=$PREFIX" ;;
-          esac
-        } | tee -a "$GITHUB_ENV"
-        echo "$PREFIX/bin" >> "$GITHUB_PATH"
-        pkg_config=pkg-config
-        PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+$sep$PKG_CONFIG_PATH}" "$pkg_config" --modversion --cflags --libs tkrzw

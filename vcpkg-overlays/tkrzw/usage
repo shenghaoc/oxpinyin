@@ -8,7 +8,10 @@ With MSVC, pkgconf can print native compiler/linker flags:
 
 Put the installed triplet's lib/pkgconfig directory on PKG_CONFIG_PATH.
 For dynamic Windows builds, put its bin directory on PATH when running
-consumers. On macOS the utilities are in tools/tkrzw/bin.
+consumers. On Linux, put its lib directory on LD_LIBRARY_PATH.
+On Linux and macOS the utilities are in tools/tkrzw/bin.
+For Linux runtime certification, set OXPINYIN_TKRZW_PREFIX to the installed
+triplet directory. oxpinyin adds no rpath.
 The installed headers select the linkage; no export/import macro is required
 from consumers. Compile C++ consumers with the same CRT and configuration
 as the selected library.

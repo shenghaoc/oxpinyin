@@ -4,11 +4,12 @@ Status: **record** (cross-distro matrix measured 2026-08-29; tkrzw
 1.0.34 measured 2026-10-01 and 2026-10-05). tkrzw 1.0.34 (`9ee8416`,
 2026-09-20) fixes defect 1 upstream and leaves defect 2. Everything below
 about defect 1 therefore describes 1.0.33 and earlier. tkrzw is
-oxpinyin's default backend and reference cell. oxpinyin builds and CI use
-upstream tkrzw at `TKRZW_REV` (`tools/tkrzw/build.py`, 1.0.34), which
-needs no probe. `tools/tkrzw/distro-probe.sh` checks Ubuntu's packaged
-libtkrzw
-([verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)).
+oxpinyin's default backend and reference cell. Development builds and CI use
+the repository's vcpkg overlay port, whose
+source revision is in `vcpkg-overlays/tkrzw/pin.json`. Debian release packaging,
+shipping-size measurements and oracle/reference images retain Debian's library.
+The former Ubuntu-only `distro-probe.sh` has been removed; references below
+record the historical experiments.
 
 Ubuntu's packaged libtkrzw breaks tkrzw's pointer-identity protocol.
 `./configure && make` on the same sources is correct. This note states
@@ -332,10 +333,8 @@ is why `tkrzw_dbm_util` triggers it and libpinyin does not.
 tkrzw is the default backend and the reference cell. `build.rs` requires
 `pkg-config` to find tkrzw. It does **not** verify the origin or health of
 the tkrzw that `pkg-config` finds, so a broken distro `libtkrzw-dev` on
-`PKG_CONFIG_PATH` would link. oxpinyin's builds therefore use upstream
-tkrzw at `TKRZW_REV` (`just tkrzw-build`, the CI tkrzw action and
-`tools/cloud/setup.sh`). `tools/tkrzw/distro-probe.sh` checks a packaged
-library before use. A result against a defective libtkrzw is invalid
+`PKG_CONFIG_PATH` would link. development builds therefore use the repository's vcpkg overlay port.
+A result against a defective libtkrzw is invalid
 ([verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)).
 
 The quickest check on a candidate library needs no build and no test
