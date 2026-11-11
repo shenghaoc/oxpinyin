@@ -311,7 +311,25 @@ pub fn snapshot_candidates(
     } else {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
     };
-    let zhuyin_parse = inst.core.zhuyin_parse.clone();
+    let offsets = inst.core.zhuyin_parse.as_ref().map(|parse| {
+        let mut transformed = 0;
+        let ends: Vec<_> = parse
+            .keys()
+            .iter()
+            .map(|key| {
+                let boundary = transformed + key.key().text().len();
+                transformed = boundary + 1;
+                (boundary, key.end())
+            })
+            .collect();
+        (ends, parse.consumed())
+    });
+    let original_end = |offset| {
+        offsets.as_ref().map_or(offset, |(ends, consumed)| {
+            let index = ends.partition_point(|&(boundary, _)| boundary < offset);
+            ends.get(index).map_or(*consumed, |&(_, end)| end)
+        })
+    };
     // One row vector and one text buffer, each sized once for the window.
     // The size is the texts' encoded length, so each text is encoded once,
     // by the loop.
@@ -332,22 +350,7 @@ pub fn snapshot_candidates(
         if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
-        let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.state.candidates.intern(&bytes) else {
-            continue;
-        };
-        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
-            || cand.consumed_bytes(),
-            |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
-        );
-        let span_begin_session = anchor.saturating_add(cand.span_start());
-        let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
-            oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
-        });
-        let span_end_session = anchor.saturating_add(cand.consumed_bytes());
-        let span_end = zhuyin_parse.as_ref().map_or(span_end_session, |parse| {
-            oxpinyin_facade::zhuyin_original_offset(parse, span_end_session)
-        });
+        let consumed_bytes = original_end(cand.consumed_bytes());
         // Before-cursor law: only candidates whose span ENDS at the requested
         // original-offset. At offset 0 no span ends there (nothing precedes
         // the first key), so the before-cursor window is empty — not the whole
@@ -362,6 +365,17 @@ pub fn snapshot_candidates(
         {
             continue;
         }
+        let span_begin_session = anchor.saturating_add(cand.span_start());
+        let span_begin = if offsets.is_some() {
+            span_begin_session.checked_sub(1).map_or(0, original_end)
+        } else {
+            span_begin_session
+        };
+        let span_end = original_end(anchor.saturating_add(cand.consumed_bytes()));
+        let bytes = phrase_text_bytes(cand.text());
+        let Some(text) = inst.state.candidates.intern(&bytes) else {
+            continue;
+        };
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
