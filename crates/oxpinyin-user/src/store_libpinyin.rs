@@ -398,7 +398,7 @@ impl UserStore {
         let system_items = crate::system_items::SystemItems::new(replayed)
             .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
 
-        let inner = Arc::new(StoreInner {
+        let inner = StoreInner {
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
             system_items: std::sync::Mutex::new(system_items),
             has_removed_system_items: std::sync::atomic::AtomicBool::new(has_removed_system_items),
@@ -412,7 +412,7 @@ impl UserStore {
             bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
             bigram_db: std::sync::Mutex::new(bigram_db),
             libpinyin: target,
-        });
+        };
         Ok(Self::from_parts(
             inner,
             fini,
