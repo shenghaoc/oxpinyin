@@ -84,10 +84,10 @@ class KeyTests(unittest.TestCase):
 
 
 class ExportTests(unittest.TestCase):
-    def test_missing_extra_and_fixture_hooks_fail(self):
+    def test_missing_and_extra_symbols_fail(self):
         for text, label in ((NM.replace('pinyin_free@@LIBPINYIN', 'x'), 'MISSING pinyin_free'),
                             (NM + '1 T pinyin_extra@@LIBPINYIN\n', 'EXTRA   pinyin_extra'),
-                            (NM + '1 T oxpinyin_init_for_fixtures\n', 'EXTRA   oxpinyin_init_for_fixtures')):
+                            (NM + '1 T oxpinyin_extra\n', 'EXTRA   oxpinyin_extra')):
             with self.subTest(label=label), self.assertRaises(ship_sizes.Failure) as raised:
                 ship_sizes.check_exports('libpinyin', text, VER)
             self.assertIn(label, str(raised.exception))

@@ -43,8 +43,7 @@
 //! Symbol scope is therefore enforced in the source — the shipped
 //! artifact defines every symbol in `libpinyin.ver` and nothing else —
 //! not by a linker script. (Without `--features shipped` the crate also
-//! exports its own test hooks, `oxpinyin_init_for_fixtures` and friends;
-//! they are not part of the drop-in set.)
+//! exports its own test-only `oxpinyin_test_set_user_bigram` hook.)
 //!
 //! # The complete `libpinyin.pc`
 //!

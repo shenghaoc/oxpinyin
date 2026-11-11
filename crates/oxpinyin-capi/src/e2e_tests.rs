@@ -62,7 +62,7 @@ use crate::candidates::{
     pinyin_get_candidate, pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
 use crate::config::{pinyin_mask_out, pinyin_set_options};
-use crate::context::{oxpinyin_init_for_fixtures, pinyin_save};
+use crate::context::{pinyin_init, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
@@ -594,7 +594,7 @@ fn directories_with_non_utf8_names_open() {
         CString::new(path.as_os_str().to_owned().into_vec()).expect("no NUL in the path")
     };
     let (system_c, user_c) = (c_path(&system), c_path(&user));
-    let context = oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr());
+    let context = pinyin_init(system_c.as_ptr(), user_c.as_ptr());
     assert!(!context.is_null(), "a non-UTF-8 name is a directory");
     let instance = pinyin_alloc_instance(context);
     assert!(!instance.is_null());
@@ -613,7 +613,7 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     // No user store is a NULL user dir. An empty string is a user dir —
     // the working directory, as the pin's is (#619).
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let context = oxpinyin_init_for_fixtures(system.as_ptr(), ptr::null());
+    let context = pinyin_init(system.as_ptr(), ptr::null());
     assert!(!context.is_null(), "a NULL user dir is not an init failure");
     let instance = pinyin_alloc_instance(context);
     assert!(!instance.is_null());
@@ -2031,7 +2031,7 @@ fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
 fn init_at(user_dir: &std::path::Path) -> *mut crate::types::PinyinContext {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir.to_str().expect("UTF-8 path"));
-    oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr())
+    pinyin_init(system.as_ptr(), user.as_ptr())
 }
 
 /// Register row 91: init's library loop merges `gb_char.dbin` and
@@ -2070,7 +2070,7 @@ fn init_aborts_on_a_log_before_an_unmappable_library() {
             );
             let system_c = cstr(system.to_str().expect("UTF-8 path"));
             let user_c = cstr(user.path.to_str().expect("UTF-8 path"));
-            let _ = oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr());
+            let _ = pinyin_init(system_c.as_ptr(), user_c.as_ptr());
         },
     );
 }
@@ -2514,10 +2514,7 @@ fn init_private(
     std::fs::create_dir_all(&user).expect("user dir");
     let system_c = cstr(system.to_str().expect("UTF-8 path"));
     let user_c = cstr(user.to_str().expect("UTF-8 path"));
-    (
-        system,
-        oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr()),
-    )
+    (system, pinyin_init(system_c.as_ptr(), user_c.as_ptr()))
 }
 
 /// Register row 96 at init: the library loop maps `merged.bin`
@@ -2538,7 +2535,7 @@ fn init_aborts_on_a_directory_library() {
         let user = TempUserDir::new("init-directory-library");
         let system_c = cstr(system.to_str().expect("UTF-8 path"));
         let user_c = cstr(user.path.to_str().expect("UTF-8 path"));
-        oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr())
+        pinyin_init(system_c.as_ptr(), user_c.as_ptr())
     };
     if directory_reads_as_a_chunk_here() {
         crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_directory_library", || {

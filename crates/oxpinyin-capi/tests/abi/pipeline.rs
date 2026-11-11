@@ -21,11 +21,11 @@ use std::ffi::CStr;
 use std::os::raw::{c_char, c_uint};
 
 use pinyin_capi::{
-    LookupCandidate, PinyinInstance, oxpinyin_init_for_fixtures, pinyin_alloc_instance,
-    pinyin_choose_candidate, pinyin_free_instance, pinyin_get_candidate,
-    pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_get_sentence,
-    pinyin_guess_candidates, pinyin_guess_sentence, pinyin_mask_out, pinyin_parse_more_chewings,
-    pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_save, pinyin_train,
+    LookupCandidate, PinyinInstance, pinyin_alloc_instance, pinyin_choose_candidate,
+    pinyin_free_instance, pinyin_get_candidate, pinyin_get_candidate_string,
+    pinyin_get_n_candidate, pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence,
+    pinyin_init, pinyin_mask_out, pinyin_parse_more_chewings, pinyin_parse_more_full_pinyins,
+    pinyin_reset, pinyin_save, pinyin_train,
 };
 
 use crate::common::{TempUserDir, cstr, system_dir};
@@ -35,7 +35,7 @@ fn open_fixture(user_dir: &str) -> (*mut pinyin_capi::PinyinContext, *mut Pinyin
     let user = cstr(user_dir);
     // SAFETY: the returned handles are live until `pinyin_free_instance`/
     // `pinyin_fini` below; all calls are single-threaded within the test.
-    let context = oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+    let context = pinyin_init(system.as_ptr(), user.as_ptr());
     assert!(!context.is_null(), "fixture init opens the mini tables");
     let instance = pinyin_alloc_instance(context);
     assert!(!instance.is_null());

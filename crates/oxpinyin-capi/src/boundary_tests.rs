@@ -14,7 +14,7 @@ use crate::candidates::{
     pinyin_is_user_candidate, pinyin_remove_user_candidate,
 };
 use crate::config::{pinyin_load_phrase_library, pinyin_mask_out, pinyin_set_options};
-use crate::context::{oxpinyin_init_for_fixtures, pinyin_fini, pinyin_save};
+use crate::context::{pinyin_fini, pinyin_init, pinyin_save};
 use crate::cursor::{
     pinyin_get_left_pinyin_offset, pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest,
     pinyin_get_right_pinyin_offset,
@@ -64,7 +64,7 @@ const SEPARATOR_OPTIONS: u32 = 0x18a;
 fn init_at(system: &Path, user: &Path) -> *mut PinyinContext {
     let system = cstr(system.to_str().expect("UTF-8 path"));
     let user = cstr(user.to_str().expect("UTF-8 path"));
-    oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr())
+    pinyin_init(system.as_ptr(), user.as_ptr())
 }
 
 /// A context and instance on the mini fixture and `user`.
@@ -1197,7 +1197,7 @@ fn init_refuses_a_system_directory_without_table_conf() {
         "boundary_tests::init_refuses_a_system_directory_without_table_conf",
         |user| {
             let user_c = cstr(user.to_str().expect("UTF-8 path"));
-            assert!(oxpinyin_init_for_fixtures(ptr::null(), user_c.as_ptr()).is_null());
+            assert!(pinyin_init(ptr::null(), user_c.as_ptr()).is_null());
             assert!(init_at(Path::new("/nonexistent-system-dir"), user).is_null());
             let system = private_system(user.parent().expect("the child's scratch"));
             std::fs::remove_file(system.join("table.conf")).expect("unlink table.conf");
@@ -1229,7 +1229,7 @@ fn a_null_user_directory_reports_its_empty_path() {
         "boundary_tests::a_null_user_directory_reports_its_empty_path",
         |_| {
             let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-            let context = oxpinyin_init_for_fixtures(system.as_ptr(), ptr::null());
+            let context = pinyin_init(system.as_ptr(), ptr::null());
             assert!(!context.is_null());
             pinyin_fini(context);
         },

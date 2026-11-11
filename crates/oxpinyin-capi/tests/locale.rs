@@ -84,7 +84,7 @@ fn lc_numeric_follows_the_pins_table_info_sites() {
     let user = tempfile::tempdir().expect("user directory");
     let user = CString::new(user.path().to_str().expect("UTF-8 path")).expect("no NUL");
     let open = || {
-        let context = pinyin_capi::oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+        let context = pinyin_capi::pinyin_init(system.as_ptr(), user.as_ptr());
         assert!(!context.is_null());
         context
     };
