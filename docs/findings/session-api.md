@@ -1,112 +1,54 @@
 # Framework-neutral session API SPEC
 
-Date: 2026-08-09 · Status: **frozen for W4-T0** (behavioural contract); the
-Rust-signature freeze below was **retired 2026-10-18 UTC** by the maintainer's
-ruling that the C APIs/ABIs are the only supported external interfaces
-([interface ruling](../constitution.md#external-interfaces))
+Date: 2026-08-09 · Status: **current reference**.
 
-This SPEC freezes the `oxpinyin-engine` session surface before any decoder work
-lands on top of it. Every later W4 task fills these signatures in; none of them
-may change one. A signature change after this branch is an Architect+human
-correction, recorded in the log at the end of this file.
+This page describes the design of the internal `oxpinyin-engine` session surface. It is not a compatibility contract ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
+What binds is the pin's behaviour as the C APIs show it — candidate order, preedit coverage, selection and commit, and errors — under the [compatibility policy](compatibility-policy.md).
+The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces), 2026-10-18 UTC).
+The code is the reference for the current surface: `crates/oxpinyin-engine/src/lib.rs` lists the public items, and `crates/oxpinyin-engine/src/session/` defines `Session`.
 
-The rules it implements are already stated in `docs/architecture.md`
-under **Portability seam**. This finding turns them into a named, frozen API so
-that a shell author — IBus today, TSF/IMK/ArkTS later — can read one document
-and know exactly what they consume.
+`docs/architecture.md` states the rules that this surface implements, under **Portability**.
 
 ## What this seam is for
 
-`oxpinyin-engine` is the in-tree session layer under the C facades; since
-2026-10-18 UTC the supported external interfaces are the C APIs/ABIs alone
-(`oxpinyin-capi`, `oxpinyin-zhuyin-capi`). This crate and everything below it —
-`oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user` — is internal and carries no
-stability promise.
+`oxpinyin-engine` is the in-tree session layer under the C facades.
+The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`).
+This crate and the crates below it (`oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`) are internal and carry no stability promise.
 
-A shell supplies platform facts as **data** and receives platform-free results:
-
-| Shell supplies | Engine returns |
-|---|---|
-| `KeyInput` — logical key, modifiers, committed text | `KeyOutcome` |
-| `StoragePaths` — where user and system data live | preedit spans + candidates |
-| `SessionSettings` — the typed settings a session opens with | deterministic commits |
+The engine receives its inputs as data.
+`Session::new` takes a `SessionSettings` value, a dictionary and a language model.
+`Session::replace_raw` takes the raw input as text.
+The engine has no key dispatch, no display model and no path discovery.
 
 ## Deliberately absent
 
-Naming these matters as much as naming what is present, because each one is a
-place a portable API usually leaks:
+Each item below is a place where a portable API usually leaks:
 
-- **No keysyms.** `LogicalKey` is an abstract key, never an IBus/X11 keyval.
-  Translation from `IBUS_KEY_*` lives in `oxpinyin-capi` and nowhere else.
-- **No GSettings, no dconf, no registry.** Settings arrive as a
-  `SessionSettings` value; a settings store is a shell concern outside the
-  engine.
-- **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%`
-  or `NSSearchPathForDirectoriesInDomains`. It uses the `StoragePaths` it is
-  handed.
-- **No `cfg(target_os)`, no platform types, anywhere in the portable crates.**
+- **No keys.** The engine has no key type and no key dispatch.
+  A caller supplies raw input text.
+- **No GSettings, no dconf, no registry.** Settings arrive as a `SessionSettings` value.
+  A settings store is a shell concern outside the engine.
+- **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%` or `NSSearchPathForDirectoriesInDomains`.
+  `StoragePaths` carries the directories as data, and `oxpinyin-runtime` holds the value.
+- **No `cfg(target_os)` and no platform types** anywhere in the portable crates.
 - **No threading contract.** `Session` is not required to be `Send` or `Sync`.
-  Sessions are instance-per-context and main-thread-friendly, which is what the
-  TSF, IMK and ArkTS models want.
-- **No clock, no locale, no environment reads.** Output stays a pure function
-  of (input, user state, config), per constitution item 6.
-
-## Key input
-
-```rust
-pub struct Modifiers(u8);          // SHIFT | CONTROL | ALT | SUPER
-pub enum LogicalKey {              // #[non_exhaustive]
-    Character(char),
-    Backspace, Delete, Enter, Escape, Space, Tab,
-    Left, Right, Up, Down, Home, End, PageUp, PageDown,
-    Unknown,
-}
-pub struct KeyInput { /* private */ }
-```
-
-`KeyInput` carries the logical key, the modifier set, and the **text** the key
-would commit if the engine ignored it (empty for non-text keys). Fields are
-private with constructors and accessors so the struct can grow without breaking
-the freeze; `LogicalKey` is `#[non_exhaustive]` for the same reason.
-
-A shell that only knows how to send characters can use
-`KeyInput::character(ch)`. `Unknown` exists so a shell never has to invent a
-key: an unmapped key is reported as unmapped, and the engine leaves it alone.
-
-## Preedit
-
-```rust
-pub enum SpanStyle { Raw, Converted, Selected }   // #[non_exhaustive]
-pub struct PreeditSpan { /* byte range + style */ }
-pub struct Preedit { /* text, spans, cursor */ }
-```
-
-The preedit is **text plus spans**, never markup and never platform attribute
-objects. Spans are non-overlapping half-open byte ranges into the preedit text,
-in ascending order, and together they cover it exactly. `cursor` is a byte
-offset into the same text and always lands on a character boundary.
-
-`Raw` is un-converted input the user typed, `Converted` is engine output not
-yet chosen, `Selected` is text the user has already picked in this composition.
-A shell maps the three to its own underline/highlight conventions.
+  Sessions are instance-per-context and main-thread-friendly, which is what the TSF, IMK and ArkTS models want.
+- **No clock, no locale, no environment reads.** Output stays a pure function of (input, user state, config), per constitution item 6.
 
 ## Candidates
 
 ```rust
-pub enum CandidateKind { Phrase, Sentence, Fallback }   // #[non_exhaustive]
+pub enum CandidateKind { Phrase, Addon, Sentence, Fallback }
 pub struct Candidate { /* text, kind, consumed keys and bytes, cost */ }
 pub struct CandidateList { /* ordered, deterministic */ }
 ```
 
-`CandidateList` supports `len`, `is_empty`, `get` and `iter`. Indexing is
-always checked: `get` returns `Option`, and `Session::select` on an
-out-of-range index returns `Err`, never a panic. That is the standing
-requirement behind F-E-02 (`robustness-evidence.md`), where the upstream defect
-is precisely an unchecked candidate index after the list was regenerated.
+`CandidateList` supports `len`, `is_empty`, `get` and `iter`.
+Indexing is always checked: `get` returns `Option`, and `Session::select` on an out-of-range index returns `Err`, never a panic.
+That is the requirement behind F-E-02 ([robustness-evidence.md](robustness-evidence.md)), where the upstream defect is an unchecked candidate index after the list is regenerated.
 
-`consumed_keys` and `consumed_bytes` say how much of the composition a
-candidate would absorb, so a shell can render partial acceptance without
-re-deriving it.
+`consumed_keys` and `consumed_bytes` state how much of the composition a candidate would absorb.
+A shell can then render partial acceptance without re-deriving it.
 
 ## Storage and configuration
 
@@ -116,190 +58,88 @@ pub struct StoragePaths { user_data_dir: PathBuf, system_data_dirs: Vec<PathBuf>
 pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
 ```
 
-A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
-USE_RESPLIT_TABLE`, with `PINYIN_INCOMPLETE` taken from `incomplete_pinyin`.
-Every other option bit arrives through `Session::set_options` from the C ABI's
-option word. The keyed `ConfigSource`, the layered `Config` and its captured
-upstream defaults were removed; see the correction log.
+A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, with `PINYIN_INCOMPLETE` taken from `incomplete_pinyin`.
+Every other option bit arrives through `Session::set_options` from the C ABI's option word.
+There is no keyed configuration source or layered configuration; see the correction log.
 
 ## Session
 
-```rust
-pub struct Session<D, L> { /* private */ }
+`Session<D, L, S = SessionState>` is one input context over a dictionary `D` and a language model `L`.
+`SessionState` holds the composition, so a facade can keep the state and borrow its storage for each operation.
 
-impl<D, L> Session<D, L>
-where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
-    D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
-    L::Error: Display,
-{
-    pub fn new(settings: SessionSettings, dictionary: D, model: L)
-        -> Result<Self, EngineError>;
+| Operation | Methods |
+|---|---|
+| Open | `Session::new(settings, dictionary, model) -> Self`; it cannot fail |
+| Supply input | `replace_raw(&str)`, which replaces the whole raw input; `replace_raw_exact` and `replace_raw_full_pinyin` for the facade parse paths |
+| Read | `raw_input`, `candidates`, `candidates_at`, `is_composing`, `composition_offset`, `selected_text`, `selected_tokens` |
+| Select | `select(index) -> Result<Selection, EngineError>`, `select_promoted`, `select_anchored` |
+| Reset | `reset`, `reset_composition` |
+| Options | `set_options`, `set_sort_options`, `set_candidate_ranking`, `set_nbest_shape` |
+| Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
+| Deferred list | `set_defer_list_builds`, `refresh_candidates` |
+| Training | `prepare_training`, then `TrainingPlan::observe` |
 
-    pub fn process_key(&mut self, input: &KeyInput) -> Result<KeyOutcome, EngineError>;
-    pub fn select(&mut self, index: usize) -> Result<Selection, EngineError>;
-    pub fn commit(&mut self) -> Result<String, EngineError>;
-    pub fn reset(&mut self);
+`Selection` is `Refused`, `Continued` or `Completed`.
 
-    pub fn preedit(&self) -> Preedit;
-    pub fn candidates(&self) -> &CandidateList;
-    pub fn raw_input(&self) -> &str;
-    pub fn is_composing(&self) -> bool;
-    pub fn page_size(&self) -> usize;
-    pub fn paths(&self) -> &StoragePaths;
-    pub fn dictionary(&self) -> &D;
-    pub fn language_model(&self) -> &L;
+The bounds name concrete `oxpinyin-core` types (`SyllableKey`, `PhraseToken`).
+The `Display` bounds exist because the [core-trait-seam.md](core-trait-seam.md) traits leave `Error` unbounded.
+The engine type-erases backend failures into `EngineError` and does not put an associated type into its public surface.
 
-    // W6-T3 added the training surface. The frozen W4-T0 methods above
-    // did not change; these are additions. `train` is method-generic over
-    // `UserModel` so the engine stays user-agnostic.
-    pub fn train<U>(&self, user: &mut U) -> Result<(), EngineError>
-    where
-        U: UserModel<Token = PhraseToken>,
-        U::Error: Display;
-    pub fn selected_tokens(&self) -> &[PhraseToken];
-    pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError>;
-
-    // W14 added the sentence surface (docs/findings/sentence-surface.md).
-    // Additions again; nothing frozen above changed. `guess_sentence` is
-    // the m_nbest_results gate: rows live until the next guess or reset,
-    // and `candidates` prepends them as NBEST rows while they do.
-    pub fn guess_sentence(&mut self) -> Result<bool, EngineError>;
-    pub fn sentence_lookup_active(&self) -> bool;
-    pub fn sentence_text(&self, index: u8) -> Option<&str>;
-
-    // #757 added the deferred list build (human approval, 2026-10-16).
-    // Additions again; nothing frozen above changed. Off by default, so
-    // the parse seams and sentence guesses build `candidates` eagerly as
-    // before; on (the C facades), they leave it stale, `select`,
-    // `select_promoted` and `Space` rebuild it before indexing it, and a
-    // reader of `candidates` calls `refresh_candidates` first.
-    pub const fn set_defer_list_builds(&mut self, defer: bool);
-    pub fn refresh_candidates(&mut self) -> Result<(), EngineError>;
-}
-
-pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]
-pub enum Selection { Continued, Completed }                 // #[non_exhaustive]
-```
-
-The bounds are part of the freeze. They name concrete `oxpinyin-core` types
-(`SyllableKey`, `PhraseEntry`, `PhraseToken`) precisely so the decoder can be
-added later without widening them, and the `Display` bounds exist because the
-frozen `core-trait-seam.md` traits leave `Error` unbounded — the engine
-type-erases backend failures into `EngineError` rather than leaking an
-associated type into its public surface.
-
-`Session` owns its dictionary and language model. Swapping W4's fixture
-adapters for W3's table-backed loaders is a change of the two type arguments
-and nothing else.
+`Session` owns its dictionary and language model.
+To replace the fixture adapters with the table-backed loaders, change the two type arguments and nothing else.
 
 ### Behavioural contract
 
-- `process_key` appends characters the parser has syntax for (ASCII lowercase
-  and apostrophe) to the raw input buffer; `Backspace` removes the last
-  character, or undoes a selection when nothing else remains; `Escape` clears
-  the composition; `Enter` commits it; `Space` chooses the first candidate, and
-  commits when that finishes the composition.
-- A key the session does not use is `KeyOutcome::Ignored`, and the session is
-  unchanged. Any key held with Control, Alt or Super is ignored: the shell is
-  invoking a command. Shift is not such a modifier — `Shift`+letter is ordinary
-  typing. (A full input buffer also reported `Ignored` until #1501 removed
-  the buffer's limit.)
-- `MAX_INPUT_BYTES` was 4,096, matching the largest input the frozen F-A and
-  parity-corpus fixtures carry; 32,767 after #540, and removed by #1501: the
-  session has no input length limit
-  ([1501-gint16-input-cap](1501-gint16-input-cap.md)).
-- `select` appends the chosen candidate to the selected prefix and advances
-  over the bytes it consumed, returning `Completed` once nothing is left.
-- `commit` returns the committed text and resets the session. It never fails on
-  an empty composition; it returns an empty string.
-- A composition with no dictionary result still offers one candidate: the
-  remaining raw input, as `CandidateKind::Fallback`. Before the decoder exists
-  that is the only candidate a session can honestly produce, and it keeps
-  `Space` and `select` meaningful at every stage.
+- `replace_raw` replaces the raw input and passes every byte to the decoder; it does not filter characters.
+- `select` returns `EngineError::CandidateIndexOutOfRange` for an index that the current list does not hold, and the session stays usable.
+- `reset` discards the input, the selection record, the sentence rows and the constraints.
+- The session has no input length limit (#1501; [1501-gint16-input-cap](1501-gint16-input-cap.md)).
+- `select` appends the chosen candidate to the selected prefix and advances over the bytes that it consumed.
+  It returns `Completed` when nothing is left.
+- A composition with no dictionary result still offers one candidate: the remaining raw input, as `CandidateKind::Fallback`.
+  This keeps `select` meaningful in every state.
 - Every method is deterministic for the same (input, state, config).
 
-`SessionSettings::default()` serves callers that have no settings of their
-own: incomplete pinyin on, with the divided and resplit tables.
+`SessionSettings::default()` serves callers that have no settings of their own: incomplete pinyin on, with the divided and resplit tables.
 
 ## Errors
 
-```rust
-pub enum EngineError {                    // #[non_exhaustive]
-    CandidateIndexOutOfRange { index: usize, len: usize },
-    Dictionary(String),
-    LanguageModel(String),
-    UserModel(String),                    // W6-T3
-    Graph(GraphError),
-    Decode(DecodeError),
-    Scoring(ScoringError),
-}
-```
-
-`#[non_exhaustive]`, `Display` and `std::error::Error`. Later tasks add
-variants; adding a variant to a `#[non_exhaustive]` enum is the documented
-growth path and is not a freeze violation. Removing or renaming one is.
+`EngineError` is the one error type of the engine.
+`crates/oxpinyin-engine/src/error.rs` lists the variants.
+It implements `Display` and `std::error::Error`.
 
 ## Decoder vocabulary types
 
-`oxpinyin-core` gains the types the bounds above name:
+`oxpinyin-core` defines the types that the bounds above name:
 
 ```rust
 pub struct SyllableKey(u16);       // dense id over the frozen key inventory
 pub struct PhraseToken(u32);
-pub struct PhraseEntry { token: PhraseToken, text: String }
+pub struct PhraseEntry { /* token, text: PhraseText, pronunciation, unigram */ }
 ```
 
-The key inventory is the 405 complete syllables of `parser-spec.md` in their
-frozen numeric-ID order, followed by the initial-only keys in ascending byte
-order. An initial-only key is a non-empty proper prefix of a complete syllable
-that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself a
-complete syllable; that rule yields exactly 23 keys and is asserted against the
-frozen inventory by test. W4-T1 records the oracle evidence that these 23 are
-the pin's incomplete-key set and makes them graph edges.
+The key inventory has 440 keys in Stage 1: the 405 complete syllables of [parser-spec.md](parser-spec.md) in their frozen numeric-ID order, the 23 initial-only keys, two option-only keys (`eng`, `nun`) and ten zhuyin-only syllables.
+An initial-only key is a non-empty proper prefix of a complete syllable that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself a complete syllable.
+That rule gives exactly 23 keys, and a test asserts it against the frozen inventory.
+[segment-graph.md](segment-graph.md) records the oracle evidence that these 23 are the pin's incomplete-key set and makes them graph edges.
 
 ## Acceptance
 
-- Compiles on Linux, macOS and Windows; no `cfg(target_os)` and no platform
-  dependency anywhere in `oxpinyin-engine`.
-- Every public item carries a doc comment.
-- Candidate indexing, preedit span coverage and buffer bounds are unit-tested.
+- `oxpinyin-engine` compiles on Linux, macOS and Windows, with no `cfg(target_os)` and no platform dependency.
+- Every public item has a doc comment.
+- Unit tests cover candidate indexing.
 
 ## Architect correction log
 
-**2026-08-15 — W6-T3 training surface.** `Session` gained `train`,
-`selected_tokens`, and `composition_keys`. `EngineError` gained
-`UserModel`. None of the frozen W4-T0 signatures changed; these are
-additions. `train` is method-generic over `UserModel` so the engine
-stays user-agnostic. Recorded by W6-T4 so the SPEC and the code agree.
-
 **2026-10-16 — #757 deferred candidate list (human approval, 2026-10-16).**
-`Session` gained `set_defer_list_builds` and `refresh_candidates`. None
-of the frozen W4-T0 signatures changed; these are additions, and the
-default keeps the eager list, its parse length and the errors the parse
-seams and sentence guesses return. The C facades turn the mode on: the
-pin builds candidates only in `pinyin_guess_candidates`
-(`pinyin.cpp:2184-2308` at 074a2219), and the C ABI answers from the
-window it re-anchors there, so in that mode a sort-word change on a
-composing session (`set_sort_options`) also leaves the list stale, the
-pin taking the word as that call's argument (`pinyin.cpp:2198`).
-Recorded by the #757 change so the SPEC and the code agree.
+`Session` gained `set_defer_list_builds` and `refresh_candidates`.
+The default keeps the eager list, its parse length and the errors that the parse seams and sentence guesses return.
+The C facades turn the mode on, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
+The C ABI answers from the window that it re-anchors there.
+So in that mode, a sort-word change on a composing session (`set_sort_options`) also leaves the list stale: the pin takes the word as an argument of that call (`pinyin.cpp:2198`).
 
-**2026-10-18 UTC — Rust-signature freeze retired (maintainer ruling).** The
-C APIs/ABIs are the only supported external library interfaces; no external
-Rust consumers are expected or supported. This SPEC's frozen signatures, the
-"none of them may change one" rule and the Architect+human correction process
-for a signature change no longer bind. Its behavioural contract (candidate
-order, preedit coverage, selection and commit semantics, error conditions that
-the C facades surface) stays in force. Entries above are history and are not
-rewritten.
-
-**2026-11-07 UTC — configuration framework removed (maintainer ruling).** The
-ibus-libpinyin defaults do not belong in oxpinyin. `Config`, `ConfigValue`,
-`ConfigSource`, `EmptyConfigSource` and the 69 captured upstream defaults
-are gone; `Session::new` and `Runtime::new_session` take a
-`SessionSettings` value. The session's default options, each C facade's
-initial option word and the point at which an option change reaches existing
-instances are unchanged. `upstream-schema.md` stays as a historical finding
-that no code reads.
+**2026-11-07 UTC — configuration framework removed (maintainer ruling).**
+The ibus-libpinyin defaults do not belong in oxpinyin.
+`Config`, `ConfigValue`, `ConfigSource`, `EmptyConfigSource` and the 69 captured upstream defaults are removed.
+`Session::new` and `Runtime::new_session` take a `SessionSettings` value.
+These do not change: the session's default options, each C facade's initial option word, and the point at which an option change reaches existing instances.

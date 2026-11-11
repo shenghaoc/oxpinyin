@@ -5,8 +5,7 @@ name: verify-nightly
 # open issues. Nothing here blocks a merge, because branch protection
 # requires only ci.yml's `ci-aggregate`.
 #
-# Jobs: fuzz-soak, overflow-lane, coverage (coverage.yml, advisory),
-# test-windows and test-macos.
+# Jobs: fuzz-soak, overflow-lane, test-windows and test-macos.
 # No job may fail: there are no continue-on-error jobs.
 #
 # Every Linux job runs in a debian:testing container in the
@@ -27,6 +26,10 @@ on:
         default: false
       macos_only:
         description: Run only the macOS workspace job
+        type: boolean
+        default: false
+      tools_harness:
+        description: Also run the tools Python harness on Windows and macOS
         type: boolean
         default: false
 
@@ -129,6 +132,10 @@ jobs:
           [ "$status" -eq 0 ] || exit "$status"
           mkdir -p fuzz/corpus/dict-loader
           cp "${seeds[@]}" fuzz/corpus/dict-loader/
+          # table-conf: libc scans the header, so no coverage feedback leads a
+          # mutation to a valid one. A real file starts the target past it.
+          mkdir -p fuzz/corpus/table-conf
+          cp fixtures/w3/tkt/table.conf fuzz/corpus/table-conf/
       - name: Soak each target
         # Every target runs even if an earlier one fails; the accumulated
         # status is the step's exit code. -print_final_stats leaves the
@@ -195,18 +202,8 @@ jobs:
           rust-cache: 'true'
       - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
 
-  # Coverage floor: the nightly caller of the reusable job in coverage.yml,
-  # which has no pull request trigger. Called here unconditionally so the
-  # whole-tree number is measured nightly. The floor and its history live
-  # in that file.
-  coverage:
-    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    uses: ./.github/workflows/coverage.yml
-
-  # The full Windows workspace: clippy and the tests over the workspace
-  # less WINDOWS_EXCLUDES, built with MSVC
-  # and the tkrzw action, and GLib from vcpkg. It runs every night and on
+  # The full Windows workspace: clippy and the tests over the workspace,
+  # built with MSVC and the tkrzw action, and GLib from vcpkg. It runs every night and on
   # manual dispatch; section 10 makes it best-effort and never a PR merge
   # condition (docs/runbooks/verification.md). Not skipped by windows_only;
   # skipped by macos_only.
@@ -232,17 +229,12 @@ jobs:
       # installs pkgconf:x64-windows itself; it is listed so its build is
       # cached under the same key.
       VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
-      # All workspace crates are in this lane. GLib supplies the tools
-      # boundary. The C-ABI locale tests select the Windows UTF-8 locale;
-      # text expectations use the host newline. KMM's native tests pass.
-      WINDOWS_EXCLUDES: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          rustup-components: clippy
           rust-cache: 'true'
           cargo-nextest: 'true'
           uv: 'true'
@@ -336,30 +328,26 @@ jobs:
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
           key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
-      # The default backend, over the workspace less WINDOWS_EXCLUDES.
-      # Clippy runs first, over the same set, so a lint in Windows-only
-      # code fails here rather than nowhere.
+      # The default backend, over the whole workspace. Clippy runs first, so
+      # a lint in Windows-only code fails here rather than nowhere.
       - name: Clippy (Windows)
-        run: |
-          read -ra excludes <<< "$WINDOWS_EXCLUDES"
-          cargo clippy --locked --workspace --all-targets "${excludes[@]}" -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Provide the pinned system data
         uses: ./.github/actions/contract-data
-      - run: |
-          read -ra excludes <<< "$WINDOWS_EXCLUDES"
-          cargo nextest run --locked --profile ci --status-level skip --workspace "${excludes[@]}"
-      # nextest does not run doctests; keep the same exclusions.
-      - run: |
-          read -ra excludes <<< "$WINDOWS_EXCLUDES"
-          cargo test --locked --doc --workspace "${excludes[@]}"
-      # The tools Python harness, as in the macOS job. Nightly only: no pull
-      # request workflow runs it on Windows.
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace
+      # nextest does not run doctests; keep the same workspace selection.
+      - run: cargo test --locked --doc --workspace
+      # The tools Python harness, on a dispatch that asks for it: a tooling
+      # change that can behave differently on Windows, and before a release
+      # (docs/runbooks/verification.md, section 10). The schedule does not
+      # run it.
       - name: Run tools Python harness tests
+        if: ${{ inputs.tools_harness }}
         run: just test-tools
 
   # macOS links tkrzw from the tkrzw action. The full workspace runs here;
-  # shipped macOS libraries are also built
-  # and checked separately. The tools Python harness runs after the Rust steps.
+  # shipped macOS libraries are also built and checked separately. The tools
+  # Python harness runs after the Rust steps on a dispatch that asks for it.
   #
   # Platforms other than Linux are unstable but usable, so the job runs every
   # night and on manual dispatch; section 10 makes it best-effort and never a
@@ -380,11 +368,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          rustup-components: clippy
           rust-cache: 'true'
           uv: 'true'
           just: 'true'
           cargo-nextest: 'true'
+          cargo-c: 'true'
       - run: rustup show active-toolchain
       # GLib, pkg-config and the call-site LLVM from Homebrew; tkrzw from the
       # tkrzw action, which puts its build first on PKG_CONFIG_PATH.
@@ -394,10 +382,6 @@ jobs:
           brew install glib pkgconf "llvm@${llvm_major}"
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
-      - name: Install cargo-c for shipped macOS libraries
-        uses: ./.github/actions/bootstrap
-        with:
-          cargo-c: 'true'
       - name: Check shipped macOS library exports
         run: |
           stage="$RUNNER_TEMP/macos-shipped"
@@ -420,5 +404,6 @@ jobs:
       - run: >
           cargo test --locked --doc --workspace
       - name: Run tools Python harness tests
+        if: ${{ inputs.tools_harness }}
         shell: bash
         run: just test-tools

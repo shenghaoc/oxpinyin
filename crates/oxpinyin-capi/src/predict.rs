@@ -98,6 +98,9 @@ fn guess_predicted_result(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     prefix: Option<&PhraseText>,
 ) -> Result<bool, ()> {
+    // Prediction frees the previous list first (074a2219 pinyin.cpp:2420).
+    // Its replacement has no phonetic lookup window.
+    inst.core.anchored_window = None;
     inst.state.candidates.clear();
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
@@ -109,6 +112,12 @@ fn guess_predicted_result(
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
     inst.state.prefixes.clone_from(&prefixes);
+    inst.core.session.set_candidate_prefixes(
+        prefixes
+            .iter()
+            .copied()
+            .map(oxpinyin_core::PhraseToken::new),
+    );
     let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
     };
@@ -226,8 +235,12 @@ pub fn clear_borrowed_prefix(
             .iter()
             .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
     if borrowed {
+        inst.core.anchored_window = None;
         inst.state.candidates.clear();
         inst.state.prefixes.clear();
+        inst.core
+            .session
+            .set_candidate_prefixes(core::iter::empty());
     }
     borrowed
 }
@@ -458,8 +471,7 @@ fn predicted_total(lm: &SharedLm) -> u64 {
 }
 
 /// Both predicted row kinds read the live item counter. Imports, training
-/// and system ABI increments share store rows; remaining transient increments
-/// live in the dictionary overlay.
+/// and ABI increments share the same live phrase items.
 fn predicted_frequency(
     dict: &SharedDict,
     user: Option<&UserStore>,
@@ -471,14 +483,11 @@ fn predicted_frequency(
         user.and_then(|store| store.unigram_delta(token).ok())
             .unwrap_or(0)
     };
-    // System items carry their full live count. User items without a live
-    // system chunk use the store's count; runtime bumps are added once.
-    let item_count = dict
+    // Read the system item or the user arena's count.
+    let unigram = dict
         .live_items()
         .effective_unigram(token)
         .unwrap_or_else(store_count);
-    let unigram =
-        item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
     // The pin's candidate `m_freq` for predicted rows is the same
     // expression as the lookup candidates' (`pinyin.cpp:1811-1824`, the
     // `PREDICTED_PREFIX` branch), so the engine's function computes it.
@@ -494,6 +503,75 @@ pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> O
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::{DEFAULT_SORT, cstr};
+
+    #[rstest::rstest]
+    #[case::plain("你", false, false, true)]
+    #[case::missing("🦀", false, false, false)]
+    #[case::punctuated("你", true, false, true)]
+    #[case::borrowed("", false, true, false)]
+    #[case::borrowed_punctuated("", true, true, true)]
+    fn prediction_releases_the_window_of_the_replaced_snapshot(
+        #[case] prefix: &str,
+        #[case] punctuated: bool,
+        #[case] borrowed: bool,
+        #[case] accepted: bool,
+    ) {
+        let user = TempUserDir::new("prediction-window");
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            5
+        );
+        assert!(crate::sentence::pinyin_guess_candidates(
+            instance,
+            2,
+            DEFAULT_SORT
+        ));
+        // SAFETY: the live instance is read between serialized ABI calls.
+        let prior_window = unsafe { crate::state::instance_ref(instance) }
+            .core
+            .anchored_window
+            .is_some();
+        assert!(prior_window);
+        let owned = cstr(prefix);
+        let prefix = if borrowed {
+            let mut candidate = std::ptr::null_mut();
+            let mut text = std::ptr::null();
+            assert!(crate::candidates::pinyin_get_candidate(
+                instance,
+                0,
+                &raw mut candidate
+            ));
+            assert!(crate::candidates::pinyin_get_candidate_string(
+                instance,
+                candidate,
+                &raw mut text
+            ));
+            assert!(!text.is_null());
+            text
+        } else {
+            owned.as_ptr()
+        };
+        let answer = if punctuated {
+            crate::sentence::pinyin_guess_predicted_candidates_with_punctuations(instance, prefix)
+        } else {
+            super::pinyin_guess_predicted_candidates(instance, prefix)
+        };
+        assert_eq!(answer, accepted);
+        // The pin frees its former candidate list before reading prefixes
+        // (pinyin.cpp:2420-2427, 2459). Prediction has no parse window to
+        // retain, even when it leaves an empty snapshot.
+        // SAFETY: the live instance is read between serialized ABI calls.
+        let window_cleared = unsafe { crate::state::instance_ref(instance) }
+            .core
+            .anchored_window
+            .is_none();
+        assert!(window_cleared);
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
     #[test]
     fn predicted_sort_is_stable_and_uses_wrapping_frequency_after_length() {
         use super::{Predicted, sort_predicted};

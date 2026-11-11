@@ -6,7 +6,7 @@
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
 // Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.
@@ -632,6 +632,15 @@ pub trait Dictionary {
     /// text (the row is then not built).
     fn phrase_text_for_token(&self, _token: u32) -> Option<PhraseText> {
         None
+    }
+
+    /// The current phrase item's stored length, or `None` for a missing or
+    /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
+    /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
+    /// Dictionaries without separate item storage may use their token text.
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        self.phrase_text_for_token(token)
+            .map(|text| text.phrase_length())
     }
 
     /// The pin's user-chewing-table over-long-key gate

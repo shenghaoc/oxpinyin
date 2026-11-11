@@ -1,6 +1,6 @@
 # FlexibleBigram malformed records (class (b), 2026-11-01 UTC)
 
-**Class (b), registered by name.** The pin's three `FlexibleBigram`
+**Class (b), registered by name.** The pin has three `FlexibleBigram`
 implementations (`src/storage/flexible_ngram_bdb.h:165-187`,
 `flexible_ngram_kyotodb.h:192-216`, `flexible_ngram_tkrzwdb.h:200-225` at
 074a2219) hand a whole stored value to `FlexibleSingleGram`, which treats
@@ -10,7 +10,7 @@ header, or a value whose tail is not a whole number of items, is read
 past its end when the pin later asks for its header or an item, or walks
 its items.
 
-Only a malformed or corrupted container reaches these paths; a container
+Only a malformed or corrupted container reaches these paths. A container
 written by either implementation has whole headers and items. No
 tool-diff case plants such a file, so the behaviour is recorded here
 rather than bound to a case.
@@ -37,10 +37,10 @@ The missing glibc assertion line is POLICY-ACCEPTED.
 The pin's `load` succeeds on a short value. The pin then reads outside it
 through `FlexibleSingleGram::get_array_header`
 (`flexible_single_gram.h:300-306`), `insert_array_item` (`:151-181`) or
-`retrieve_all` (`:88-105`). At that point oxpinyin takes the tools'
-store-error exit (`oxpinyin_input::tool::exit_on_store_error`): the line
-`flexible bigram single gram is shorter than its array header` on stderr,
-then `exit(1)`, after the pin's earlier work. The sites are:
+`retrieve_all` (`:88-105`). At that point, oxpinyin takes the tools'
+store-error exit (`oxpinyin_input::tool::exit_on_store_error`). The exit writes the line
+`flexible bigram single gram is shorter than its array header` on stderr
+and then calls `exit(1)`, after the pin's earlier work. The sites are:
 
 - `gen_k_mixture_model.cpp:252`, read at `:220`;
 - `estimate_k_mixture_model.cpp:127` and `:130`, read at `:134` and `:136`;
@@ -55,8 +55,8 @@ every row.
 **Merge copies a source row that the target lacks.** The pin loads the
 source row (`merge_k_mixture_model.cpp:142`), finds no target row (`:143`)
 and stores the loaded gram (`:145`), which writes the bytes it read
-unchanged. A short source row is therefore copied into the result, and
-the merge goes on. oxpinyin copies the stored value with
+unchanged. The merge therefore copies a short source row into the result
+and continues. oxpinyin copies the stored value with
 `FlexibleBigram::copy_single_gram`. When the target has the row, a short
 row on either side aborts at the asserts at `:155-156`.
 

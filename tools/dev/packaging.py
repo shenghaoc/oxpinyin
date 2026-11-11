@@ -4,6 +4,12 @@ One layout and process adapter serve every entry point.
 Cargo and package builders run supervised (slot.run_command); captured tools use
 pool.UnitContext, which reaps their process groups on cancellation.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
@@ -43,7 +49,7 @@ if loaded != os.path.realpath(path):
 '''
 ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'compare-installs', 'sizes',
+         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
          'trainer-layout')
 
 # libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am.
@@ -221,7 +227,7 @@ class Layout:
 
     @classmethod
     def parse(cls, argv, tools):
-        usage = ('usage: tools/packaging/install.sh <libpinyin|libzhuyin> --prefix=DIR '
+        usage = ('usage: just packaging install <libpinyin|libzhuyin> --prefix=DIR '
                  '[--libdir=DIR] [--includedir=DIR] [--destdir=DIR] [-- <extra cargo cinstall args>]\n'
                  '       one library per invocation; run twice to install both')
         if not argv or argv[0] not in LIBRARIES:
@@ -467,7 +473,7 @@ def relink(argv, tools):
     values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
                   cc=tools.env.get('CC') or 'cc')
     index = 0
-    usage = ('usage: tools/packaging/relink-versioned.sh --staticlib PATH --ver PATH --soname NAME '
+    usage = ('usage: just packaging relink-versioned --staticlib PATH --ver PATH --soname NAME '
              '--dest PATH [--backend BACKEND] [--features LIST] [--cc CC]')
     while index < len(argv):
         key, value, index = option(argv, index)
@@ -479,7 +485,7 @@ def relink(argv, tools):
     if not all((archive, ver, soname, dest)):
         fail(usage, 2)
     if tools.text(['uname', '-s']) != 'Linux':
-        fail('error: relink-versioned.sh is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
+        fail('error: just packaging relink-versioned is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
     cc = values['cc']
     for tool in (cc, 'nm', 'readelf'):
         if not tools.which(tool):
@@ -786,7 +792,7 @@ def release_stage(argv, tools):
     from . import packaging_templates as templates
     from tools.tkrzw.runtime import RuntimeRefused, check
     pcver = version(tools.root)
-    usage = 'usage: tools/packaging/release-stage.sh <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
+    usage = 'usage: just packaging release-stage <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
     if not argv or argv[0] not in cell.BACKENDS:
         fail(usage, 2)
     backend, values, index = argv[0], dict(prefix='', libdir='', dest=''), 1
@@ -879,7 +885,7 @@ def release_stage(argv, tools):
             for library in LIBRARIES:
                 program = Path(smoke) / ('smoke_' + library[3:])
                 try:
-                    check(backend, 'release-stage.sh', 'subject', program, env=env)
+                    check(backend, 'just packaging release-stage', 'subject', program, env=env)
                     tools.run([program], env=env)
                 except (RuntimeRefused, Finished) as error:
                     if isinstance(error, RuntimeRefused):
@@ -1001,92 +1007,6 @@ def metadata(argv, tools):
     return 0
 
 
-def installed_tree(root):
-    """Relative entries, including directories and symlinks, without following them."""
-    return {str(path.relative_to(root)): path for path in root.rglob('*')}
-
-
-def compare_trees(left, right):
-    """Compare all installed bytes, modes and symlink targets; refuse any difference."""
-    import filecmp
-    import stat
-    before, after = installed_tree(left), installed_tree(right)
-    if before.keys() != after.keys():
-        fail('installed tree paths differ: ' + ', '.join(sorted(before.keys() ^ after.keys())))
-    for name, path in before.items():
-        other = after[name]
-        if stat.S_IFMT(path.lstat().st_mode) != stat.S_IFMT(other.lstat().st_mode):
-            fail('installed file type differs: ' + name)
-        if path.is_symlink():
-            same = os.readlink(path) == os.readlink(other)
-        elif path.is_dir():
-            same = True
-        else:
-            same = filecmp.cmp(path, other, shallow=False)
-        if not same or stat.S_IMODE(path.lstat().st_mode) != stat.S_IMODE(other.lstat().st_mode):
-            fail('installed bytes, mode or link target differ: ' + name)
-    return len(before)
-
-
-def compare_installs(argv, tools):
-    """The real U4 comparison: each facade, BDB, identical release inputs.
-
-    BASE is a preserved checkout with the shell entry points; WORK owns this
-    comparison's targets, separate one-facade staging roots and stripped copies.
-    Rust source/build paths are remapped equally on both sides. No oracle is
-    executed and no measurement or other lane's artifacts are used.
-    """
-    values = dict(base='', work='')
-    for word in argv:
-        key, separator, value = word.partition('=')
-        if not separator or key not in ('--base', '--work') or not value:
-            fail('usage: just packaging compare-installs --base=CHECKOUT --work=DIR', 2)
-        values[key[2:]] = value
-    if not all(values.values()):
-        fail('usage: just packaging compare-installs --base=CHECKOUT --work=DIR', 2)
-    base, work = Path(values['base']).resolve(), Path(values['work']).resolve()
-    legacy = base / 'tools/packaging/install.sh'
-    if not legacy.is_file():
-        fail('preserved base has no packaging install entry point: ' + str(legacy))
-    work.mkdir(parents=True, exist_ok=True)
-    environment = dict(tools.env)
-    remaps = [(str(base), '/oxpinyin'), (str(tools.root), '/oxpinyin'),
-              (str(work / 'base-target'), '/oxpinyin-target'), (str(work / 'new-target'), '/oxpinyin-target')]
-    flags = ' '.join('--remap-path-prefix=' + source + '=' + target for source, target in remaps)
-    environment['RUSTFLAGS'] = ((environment.get('RUSTFLAGS') or '') + ' ' + flags).strip()
-    environment['PINYIN_ORACLE_DBM'] = 'bdb'
-    current = Tools(environment, root=tools.root)
-    for library in LIBRARIES:
-        stages = []
-        for side in ('base', 'new'):
-            stage = work / side / library
-            shutil.rmtree(stage, ignore_errors=True)
-            stages.append(stage)
-            arguments = [library, '--prefix=/usr', '--libdir=/usr/lib', '--destdir=' + str(stage), '--',
-                         '--target-dir=' + str(work / (side + '-target')), '--locked', '--release',
-                         '--no-default-features', '--features', 'bdb' + (',shipped' if library == 'libpinyin' else '')]
-            if side == 'base':
-                tools.heavy(['bash', legacy, *arguments], env=environment)
-            else:
-                install(arguments, current)
-        count = compare_trees(*stages)
-        objects = [stage / 'usr/lib' / (library + '.so.15.0.0') for stage in stages]
-        for arguments in (['readelf', '-d'], ['nm', '-D', '--defined-only']):
-            if tools.text([*arguments, objects[0]]) != tools.text([*arguments, objects[1]]):
-                fail(library + ': ELF identity differs')
-        sizes = []
-        for side, source in zip(('base', 'new'), objects):
-            stripped = work / (side + '-' + library + '.stripped.so')
-            shutil.copyfile(source, stripped)
-            tools.run(['strip', '--strip-unneeded', '--', stripped])
-            sizes.append(stripped.stat().st_size)
-        if sizes[0] != sizes[1]:
-            fail(library + ': stripped sizes differ')
-        emit(f'{library}: {count} installed entries byte-identical; headers, pkg-config, SONAME, versions and exports match; '
-             f'stripped bytes base={sizes[0]} new={sizes[1]}')
-    return 0
-
-
 def sizes(argv, tools):
     """Base and head stripped sizes; orchestration lives in ship_sizes."""
     from . import ship_sizes
@@ -1097,10 +1017,10 @@ def main(argv=None, *, tools=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     tools = tools or Tools()
     if not argv or argv[0] not in NAMES:
-        emit('usage: python -m tools.dev packaging {' + ','.join(NAMES) + '} ...', error=True)
+        emit('usage: python -m tools.dev.packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2
     name, rest = argv[0], argv[1:]
-    functions = {'compare-installs': compare_installs, 'install': install, 'relink-versioned': relink,
+    functions = {'install': install, 'relink-versioned': relink,
                  'trainer-layout': trainer_layout,
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,
@@ -1119,3 +1039,7 @@ def main(argv=None, *, tools=None):
         except (pool.UnitStopped, pool.UnitsCancelled, slot.Cancelled):
             raise Finished(slot.cancellation_status()) from None
     return guarded(quiet_cancellation)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

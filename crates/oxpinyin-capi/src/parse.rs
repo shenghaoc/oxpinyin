@@ -21,7 +21,9 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     let mut inst = unsafe { instance_mut(instance) };
     // The pin preserves candidate rows and strings across parsing; only a
     // candidate guess, reset or instance destruction invalidates them.
-    inst.core.parse_full_more(text)
+    let parsed = inst.core.parse_full_more(text);
+    inst.state.full_aux_options = inst.core.session.options();
+    parsed
 }
 
 fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {

@@ -27,10 +27,9 @@ fn render_shared(
     Some(text)
 }
 
-/// The plain full-pinyin renderers walk the session's own keys, not the pin's
-/// matrix, so the matrix walk's aborts (`pinyin.cpp:3311`: a leading `'`
-/// leaves column 0 empty) are looked for on the shared matrix first, and
-/// the process aborts where the pin does (register row 63).
+/// The index-based full-pinyin renderer walks the stored parser keys.
+/// Check the corresponding parse-time matrix for the pin's aborts first
+/// (`pinyin.cpp:3311`, register row 63).
 fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) {
     if SharedMatrix::of(&inst.read()).is_some_and(|matrix| matrix.full(cursor).is_none()) {
         std::process::abort();
@@ -100,20 +99,26 @@ fn full_index_aux_text(
     aux
 }
 
-fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> AuxText {
+fn full_aux_text(
+    raw: &str,
+    parsed_len: usize,
+    cursor: usize,
+    options: OptionBits,
+) -> Option<AuxText> {
     let parsed = &raw[..parsed_len.min(raw.len())];
-    if parsed.is_empty() {
-        return AuxText::default();
-    }
     let cursor = cursor.min(parsed.len());
-    let Ok(graph) = SegmentGraph::build_with_options(parsed.as_bytes(), options) else {
-        return AuxText::default();
-    };
+    let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options).ok()?;
+    let keys = graph.fewest_keys(options.has_incomplete());
+    if keys.first()?.syllable_start() != 0 {
+        // A leading separator leaves the first column empty. The pin's
+        // prefix walk asserts there (074a2219 pinyin.cpp:3307-3311).
+        std::process::abort();
+    }
 
     let mut aux = AuxText::default();
     let mut inserted = false;
 
-    for edge in graph.fewest_keys(true) {
+    for edge in keys {
         let start = edge.syllable_start();
         let end = edge.to();
         // `ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
@@ -154,7 +159,7 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBit
     if !inserted {
         aux.middle.push('|');
     }
-    aux
+    Some(aux)
 }
 
 fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> AuxText {
@@ -266,30 +271,29 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     // Upstream returns false with an allocated empty string when
     // the matrix is empty — no parse, or a parse that placed no key
     // (`pinyin.cpp:3382-3386`).
-    if inst.core.parsed_len == 0 || !matrix_has_keys(&inst.read()) {
+    if inst.core.parsed_len == 0 {
         return write_aux(aux_text, None);
     }
-    let text = if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
+    let text = if let Some(parse) = inst.core.full_parse.as_ref() {
+        if !matrix_has_keys(&inst.read()) {
+            return write_aux(aux_text, None);
+        }
+        abort_on_full_walk(&inst.read(), cursor);
+        Some(full_index_aux_text(&inst.core.full_input, parse, cursor))
+    } else if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
         // all the same (register row 55).
         render_shared(&inst.read(), |m| m.full(cursor))
     } else {
-        abort_on_full_walk(&inst.read(), cursor);
-        Some(inst.core.full_parse.as_ref().map_or_else(
-            || {
-                full_aux_text(
-                    inst.core.session.raw_input(),
-                    inst.core.parsed_len,
-                    cursor,
-                    inst.core.options(),
-                )
-            },
-            // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
-            // canonical spellings (tone digit appended when a tone was
-            // parsed, like `ChewingKey::get_pinyin_string`) over raw
-            // spans.
-            |parse| full_index_aux_text(&inst.core.full_input, parse, cursor),
-        ))
+        // The pin uses the matrix made by the last parse. A context
+        // option write or candidate refresh does not replace those keys
+        // (pinyin.cpp:1299-1306, 1497-1524, 3381-3438).
+        full_aux_text(
+            inst.core.session.raw_input(),
+            inst.core.parsed_len,
+            cursor,
+            inst.state.full_aux_options,
+        )
     };
     write_aux(aux_text, text)
 }
@@ -377,7 +381,9 @@ mod tests {
 
     /// The rendered text, as the final `g_strconcat` joins its parts.
     fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
-        super::full_aux_text(raw, parsed_len, cursor, options).to_string()
+        super::full_aux_text(raw, parsed_len, cursor, options)
+            .expect("a non-empty key path")
+            .to_string()
     }
 
     #[test]
@@ -471,16 +477,17 @@ mod tests {
     #[test]
     fn full_aux_text_matches_the_oracle_for_incomplete_tails() {
         // nih parses as ni + incomplete h with PINYIN_INCOMPLETE set.
+        let options = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE);
         for (cursor, expected) in [(0, "|ni h "), (2, "ni |h "), (3, "ni h |"), (4, "ni h |")] {
             assert_eq!(
-                full_aux_text("nih", 3, cursor, OptionBits::default()),
+                full_aux_text("nih", 3, cursor, options),
                 expected,
                 "nih cursor {cursor}"
             );
         }
 
         // A bare incomplete initial renders as the initial itself.
-        assert_eq!(full_aux_text("n", 1, 0, OptionBits::default()), "|n ");
-        assert_eq!(full_aux_text("n", 1, 1, OptionBits::default()), "n |");
+        assert_eq!(full_aux_text("n", 1, 0, options), "|n ");
+        assert_eq!(full_aux_text("n", 1, 1, options), "n |");
     }
 }

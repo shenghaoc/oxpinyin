@@ -1,16 +1,11 @@
 # Core trait seam SPEC
 
-Date: 2026-08-09 · Status: frozen for Foundation. **Superseded 2026-10-18 UTC
-in part:** the trait *signatures*, unsealed shape, object safety and
-"grow by defaulted methods only" rule were a Rust-source-compatibility
-freeze, retired by the maintainer ruling that the C APIs/ABIs are the only
-supported external interfaces ([interface ruling](../constitution.md#external-interfaces)). The
-behavioural rules below (totality, determinism, ordering, costs) remain.
+Date: 2026-08-09 · Status: **current reference**.
 
-This SPEC freezes the dependency-free `oxpinyin-core` seam before downstream
-implementation. The traits are public and unsealed. Existing required methods
-are the minimum contract; future growth must use methods with default
-implementations unless an Architect correction is merged first.
+This page describes the internal `oxpinyin-core` trait seam and its behavioural rules: totality, determinism, ordering and costs.
+It is not a compatibility contract ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)); the traits and their rules change with the code.
+Failure behaviour is set by the [compatibility policy](compatibility-policy.md#failure-behaviour), and candidate order by the C APIs' pin-derived behaviour.
+The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces), 2026-10-18 UTC).
 
 ## Shared cost
 
@@ -18,9 +13,8 @@ implementations unless an Architect correction is merged first.
 pub type Cost = i64;
 ```
 
-Costs are signed integers so ordering and accumulation remain deterministic.
-The scale is owned by the decoder/scoring SPEC; this seam fixes only the
-representation.
+Costs are signed integers, so ordering and accumulation stay deterministic.
+The decoder and scoring SPEC owns the scale ([scoring-spec.md](scoring-spec.md)); this seam fixes only the representation.
 
 ## `Dictionary`
 
@@ -37,15 +31,28 @@ pub trait Dictionary {
 }
 ```
 
-An empty lookup is `Ok(Vec::new())`. Implementations return entries in stable,
-deterministic order. The trait does not prescribe storage, token layout or
-ranking.
+An empty lookup is `Ok(Vec::new())`.
+Implementations return entries in a stable, deterministic order.
+The trait does not prescribe storage, token layout or ranking.
 
-2026-10-16: #825 adds defaulted `Dictionary::phrase_item_pronunciations(token)`, answering `PhraseItemRead::Unsupported` unless overridden; it reads the stored pronunciations of the phrase item behind a token so a forcing is revalidated as the pin's `validate_constraint` does (`phonetic_lookup.cpp:120-165` at 074a2219). A defaulted addition under the paragraph above (human approval, 2026-10-16).
+The trait also has these methods:
 
-2026-10-16: #821 (#757) changes `Dictionary::trellis_ranges` to fill token-only ranges (`PhraseIndexRanges<()>` in place of `PhraseIndexRanges<Self::Entry>`, as the pin's `convert` does), a signature change. A step prices a ranged token through the new defaulted `trellis_item(syllables, tones, token) -> Option<TrellisItem>`, and a result's text is read through the new defaulted `trellis_text(syllables, tones, token)` when it is emitted; `TrellisItem { chars, pronunciation }` is new. The helper trait `PhraseIndexToken` gains two required methods, `phrase_index_item` and `phrase_index_text`, which `PhraseEntry` implements. The defaults read `trellis_records`, so dictionaries that override none of them need no change. It also adds defaulted `trellis_ranges_continued`, the ranges and the `SEARCH_CONTINUED` probe from one read, whose default is `trellis_ranges` then `phrase_prefix_exists` (human approval, 2026-10-16).
-
-2026-10-16: #831 (#757) adds defaulted `Dictionary::trellis_item_on_path(syllables, tones, token, memo)`, whose default is `trellis_item`, and `TrellisPathMemo`, a fill-once slot the n-best caller holds per key path for one span search. `RuntimeDict` keeps the path's user lookup and tone-less keys there in place of recomputing them per token; a memo holding another type is not read, and the answer is `trellis_item`'s (human approval, 2026-10-16).
+- **`phrase_item_pronunciations(token)`** (#825, defaulted; the default answers `PhraseItemRead::Unsupported`).
+  It reads the stored pronunciations of the phrase item behind a token.
+  A forcing is then revalidated as the pin's `validate_constraint` does it (`phonetic_lookup.cpp:120-165` at 074a2219).
+- **`trellis_ranges`** (#821, #757) fills token-only ranges: `PhraseIndexRanges<()>` in place of `PhraseIndexRanges<Self::Entry>`, as the pin's `convert` does.
+  This is a signature change.
+  - A step prices a ranged token through the defaulted `trellis_item(syllables, tones, token) -> Option<TrellisItem>`.
+  - When a result is emitted, its text is read through the defaulted `trellis_text(syllables, tones, token)`.
+  - `TrellisItem { chars, pronunciation }` carries the item.
+  - The helper trait `PhraseIndexToken` has two required methods, `phrase_index_item` and `phrase_index_text`, which `PhraseEntry` implements.
+  - The defaults read `trellis_records`, so a dictionary that overrides none of them needs no change.
+  - The defaulted `trellis_ranges_continued` gives the ranges and the `SEARCH_CONTINUED` probe from one read.
+    Its default is `trellis_ranges` then `phrase_prefix_exists`.
+- **`trellis_item_on_path(syllables, tones, token, memo)`** (#831, #757, defaulted; the default is `trellis_item`).
+  `TrellisPathMemo` is a fill-once slot that the n-best caller holds per key path for one span search.
+  `RuntimeDict` keeps the path's user lookup and tone-less keys there, and does not recompute them per token.
+  A memo that holds another type is not read, and the answer is then the answer of `trellis_item`.
 
 ## `UserModel`
 
@@ -68,11 +75,12 @@ pub trait UserModel {
 }
 ```
 
-2026-10-01: #615 adds defaulted `UserModel::observe_with_keys(history, token, readings)`, delegating to `observe`; its lazy tone-bearing readings preserve the trained matrix span and path multiplicity (human approval, 2026-10-01).
+The trait also has the defaulted `observe_with_keys(history, token, readings)` (#615), which delegates to `observe`.
+Its lazy tone-bearing readings keep the trained matrix span and the path multiplicity.
 
-`score` is read-only. `observe` is the explicit learning boundary; callers can
-omit it entirely in learning-off modes. Neither method may depend on hidden
-process-global state.
+`score` is read-only.
+`observe` is the explicit learning boundary; callers can omit it entirely in learning-off modes.
+Neither method may depend on hidden process-global state.
 
 ## `LanguageModel`
 
@@ -90,9 +98,9 @@ pub trait LanguageModel {
 }
 ```
 
-The edge cost is present from the first signature. A model may combine it with
-its own cost but must do so deterministically and report arithmetic or backend
-failure through `Result`.
+The edge cost is part of the signature.
+A model may combine it with its own cost, but it must do so deterministically.
+It must report arithmetic or backend failure through `Result`.
 
 ## `InputParser`
 
@@ -105,19 +113,14 @@ pub trait InputParser {
 }
 ```
 
-The byte-slice input makes the totality domain explicit. Malformed, junk and
-partial bytes are represented by parse outputs and remainders rather than a
-panic. The returned vector contains every valid segmentation in the frozen
-path-set order; selection belongs to the decoder. The parser/path-set SPEC
-freezes the concrete parse type and ordering before implementation.
+The byte-slice input makes the totality domain explicit.
+Parse outputs and remainders represent malformed, junk and partial bytes; these bytes never cause a panic.
+The returned vector contains every valid segmentation in the frozen path-set order, and selection belongs to the decoder.
+[parser-spec.md](parser-spec.md) and [parser-path-set.md](parser-path-set.md) freeze the concrete parse type and the order.
 
 ## Cross-trait rules
 
-- Every fallible public method returns `Result`; no method panics on caller
-  input.
-- The seam imposes no `Send`, `Sync`, `'static`, serialization or object-store
-  requirement.
-- Associated types prevent `oxpinyin-core` from depending on data, user, engine
-  or platform crates.
-- Implementations must be deterministic for the same explicit input and
-  state.
+- Every fallible public method returns `Result`; no method panics on caller input.
+- The seam imposes no `Send`, `Sync`, `'static`, serialization or object-store requirement.
+- Associated types prevent `oxpinyin-core` from depending on data, user, engine or platform crates.
+- Implementations must be deterministic for the same explicit input and state.

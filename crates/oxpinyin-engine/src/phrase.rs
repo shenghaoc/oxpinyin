@@ -219,13 +219,15 @@ where
         // once per step (stable during the step's own span walk —
         // relaxations write to later steps only).
         let uni_from = steps[i].best().cloned();
-        let predecessors = steps[i].content.clone();
+        let (previous, later) = steps.split_at_mut(i + 1);
+        let predecessors = &previous[i].content;
         let upper = n.min(i + MAX_PHRASE_LENGTH);
         // Spans precede predecessor rows, and all bigram branches precede
         // the span's unigram branch (`phrase_lookup.cpp:137-149,
         // 255-302`). A later span's bad gram must not hide an earlier
         // span's refusal.
-        for (end, step) in steps.iter_mut().enumerate().take(upper + 1).skip(i + 1) {
+        for (offset, step) in later.iter_mut().take(upper - i).enumerate() {
+            let end = i + 1 + offset;
             let (tokens, continued) = tokens_for(i, end);
             if tokens.is_empty() {
                 if !continued {
@@ -234,7 +236,7 @@ where
                 continue;
             }
             let mut unigrams = Vec::new();
-            for node in &predecessors {
+            for node in predecessors {
                 // The predecessor's merged row, loaded at its first phrase
                 // in this span: `search_bigram2` loads and merges it on
                 // every `SEARCH_OK` (`phrase_lookup.cpp:268-276`), and

@@ -566,8 +566,8 @@ pub extern "C" fn pinyin_guess_candidates(
     );
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
-        // session-API affordance (`session-api.md`: it keeps `Space`
-        // and `select` meaningful before a decoder result exists) —
+        // session-API affordance (`session-api.md`: it keeps `select`
+        // meaningful when no phrase is found) —
         // the pin has no raw-input fallback: an empty matrix answers
         // false (`pinyin.cpp:2193`), an empty result answers true
         // with no rows. The C ABI translates the engine shape, it
@@ -675,7 +675,7 @@ mod character_offset_tests {
     /// `'`), with the out-param untouched. At 3 and 4 they abort
     /// (`_check_offset` on the separator's zero key, then the range
     /// assert), and so does the facade: `abort-get-character-offset-*` of
-    /// `contract-diff.py` hold those shapes.
+    /// the recorded contract diff harness hold those shapes.
     #[test]
     fn a_non_hanzi_phrase_answers_false_before_the_separator() {
         let (context, instance, _user_dir) = parity_instance("char-offset-non-hanzi");
@@ -793,6 +793,108 @@ mod sentence_chain_tests {
         let mut sentence = std::ptr::null_mut();
         assert!(super::pinyin_get_sentence(instance, 0, &raw mut sentence));
         assert!(!crate::ffi::take_owned_cstr(sentence).is_empty());
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+#[cfg(test)]
+mod prefix_ranking_tests {
+    use super::*;
+    use crate::test_support::{TempUserDir, cstr, open};
+    use oxpinyin_core::{DYNAMIC_ADJUST, Dictionary};
+
+    // 074a2219: pinyin.cpp:1711-1740,2200-2215 and
+    // zhuyin.cpp:1146-1175,1473-1489 choose the longest live prefix at zero.
+    // Prefixes are stored even when the sentence lookup refuses an empty matrix.
+    #[rstest::rstest]
+    fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] prediction: bool) {
+        let user = TempUserDir::new("prefix-ranking");
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+        let (short, long, hao, number) = {
+            // SAFETY: the newly allocated instance is live; no mutation overlaps.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            let token = |text| inst.core.dict.tokens_for_text(text)[0].value();
+            (token("好"), token("你好"), token("好"), token("号"))
+        };
+        {
+            // SAFETY: the preceding reader ended; this test serializes all calls.
+            let ctx = unsafe { crate::state::instance_context_mut(instance) };
+            let store = ctx.core.user_store_mut().expect("user store");
+            for (previous, next) in [
+                (oxpinyin_user::SENTENCE_START, hao),
+                (short, hao),
+                (long, number),
+            ] {
+                store
+                    .set_bigram_count(previous, next, 1_000_000)
+                    .expect("seed real bigram row");
+            }
+        }
+        assert!(crate::config::pinyin_set_options(context, DYNAMIC_ADJUST));
+        if prediction {
+            assert!(crate::predict::pinyin_guess_predicted_candidates(
+                instance,
+                cstr("你好").as_ptr()
+            ));
+        } else {
+            assert!(!pinyin_guess_sentence_with_prefix(
+                instance,
+                cstr("你好").as_ptr()
+            ));
+        }
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        let rank = || {
+            assert!(pinyin_guess_candidates(
+                instance,
+                0,
+                crate::test_support::DEFAULT_SORT
+            ));
+            // SAFETY: the guess completed; its snapshot remains live for this read.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            let position = |text| {
+                inst.state
+                    .candidates
+                    .iter()
+                    .position(|row| row.text_str() == Ok(text))
+                    .expect("candidate is present")
+            };
+            position("号") < position("好")
+        };
+        assert!(
+            rank(),
+            "the longer prefix's gram must outrank sentence_start and the shorter suffix"
+        );
+        assert!(crate::config::pinyin_set_options(context, 0));
+        assert!(!rank(), "without DYNAMIC_ADJUST only unigram order remains");
+        assert!(crate::config::pinyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(rank(), "option changes preserve the prefix tokens");
+
+        // A plain sentence guess clears prefixes even when its matrix is empty.
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, cstr("").as_ptr()),
+            0
+        );
+        assert!(!pinyin_guess_sentence(instance));
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        assert!(!rank(), "plain guess restores sentence_start");
+
+        assert!(pinyin_guess_sentence_with_prefix(
+            instance,
+            cstr("你好").as_ptr()
+        ));
+        assert!(crate::instance::pinyin_reset(instance));
+        assert_eq!(
+            crate::parse::pinyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            3
+        );
+        assert!(!rank(), "full reset clears prefixes");
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }

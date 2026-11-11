@@ -1,8 +1,7 @@
 //! Reader for the per-library phrase-index files (the `MemoryChunk` +
 //! `SubPhraseIndex` pair).
 //!
-//! P1 of the data-layer rework
-//! (`docs/findings/libpinyin-system-data-formats-2026-09-01.md`): these
+//! The layout record is `docs/findings/data-formats.md` §2. These
 //! are the native library files on every backend (`gb_char.bin`,
 //! `gbk_char.bin`, `opengram.bin`, `merged.bin`, and the addon `*.bin`
 //! libraries), the same ones a libpinyin build ships — no conversion.

@@ -117,7 +117,7 @@ version = "2.11.92"
 requires = "glib-2.0"
 # cargo-c cannot emit the extra variables real consumers read (database_format,
 # libzhuyinincludedir, libzhuyin_binary_version), so build.rs bakes them and
-# tools/packaging/install.sh fills the install-time prefix — the same wrapper
+# `just packaging install` fills the install-time prefix — the same wrapper
 # contract oxpinyin-capi uses (docs/findings/installed-naming.md).
 generate = false
 

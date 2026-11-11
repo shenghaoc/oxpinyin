@@ -199,7 +199,7 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
     env = build_env(source, target, cell.cell)
     for library in LIBRARIES:
         features = cell.feature + (',shipped' if library == 'libpinyin' else '')
-        run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'packaging', 'install', library,
+        run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.packaging', 'install', library,
              '--prefix=/usr', '--libdir=/usr/lib', f'--destdir={stage}', '--',
              '--release', '--locked', '--no-default-features', '--features', features,
              f'--target-dir={target}'], cwd=source, env=env, capture=False)

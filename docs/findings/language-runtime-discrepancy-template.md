@@ -1,25 +1,23 @@
 # Language/runtime discrepancy record — template
 
-Status: **current template** (policy, 2026-10-24 UTC; #915/#916;
-amended 2026-10-26 UTC, #1303) · Not
-itself a register entry. Canonical policy:
-`docs/findings/compatibility-policy.md`, "The language/runtime-quirk
-exception". Owner issue: #915.
+Status: **current template** (policy; #915/#916, #1303) · Not itself a
+register entry. Canonical policy:
+[compatibility policy, "Internal language artefacts"](compatibility-policy.md#internal-language-artefacts)
+and [dispositions and discrepancy records](compatibility-policy.md#dispositions-and-discrepancy-records).
+Owner issue: #915.
 
-Use this record for a proposed difference from the pinned libpinyin that
-is a GLib, glibc or C++ language/runtime quirk rather than class (a)
-math, (b) memory safety or (c) availability: a behaviour of another
-language or of a library written for one, which oxpinyin does not
-reproduce (decision-order limb 3, 2026-10-26 UTC). No approval is
-needed. One record per independent
-semantic difference, named `docs/findings/<issue-or-topic>-<slug>.md`.
-The record is linked from the register entry in
-`docs/findings/upstream-divergences.md` and from the contract-diff case.
+Use this record for a GLib, glibc or C++ language/runtime quirk under
+[decision-order limb 3](compatibility-policy.md#decision-order).
+It is neither class (a) maths nor class (b) memory safety. No approval is needed.
 
-The record must be complete before code changes. It is not a place to
-record a result discovered by running the oracle; derive the pin's
-behaviour from its source (and its disassembly where the source does not
-settle it).
+- Write one record for each independent semantic difference.
+- Name it `docs/findings/<issue-or-topic>-<slug>.md`.
+- Link it from the register entry in `docs/findings/upstream-divergences.md`.
+- Name its cases in the record.
+
+The record must be complete before code changes. Do not use it to record a
+result found by running the oracle. Derive the pin's behaviour from its
+source, and from its disassembly where the source does not settle it.
 
 ## Record
 
@@ -28,7 +26,7 @@ settle it).
 
 - **Status:** proposed | accepted | superseded · <YYYY-MM-DD> UTC · issue #N · PR #N
 - **Disposition:** POLICY-ACCEPTED (never MATCH)
-- **Policy limb:** language artefact. Why not (a), (b) or (c), and why
+- **Policy limb:** language artefact. Why not (a) or (b), and why
   a language-neutral requirement would not mention it: <one or two
   sentences>.
 - **Pin:** libpinyin 2.11.92 at 074a2219; tree read: <checkout path,
@@ -62,14 +60,15 @@ settle it).
   artefact reaches, characterised as precisely as the source permits,
   with representative pin and oxpinyin results and controls showing
   that product behaviour elsewhere is unchanged.
-- **Tests:** contract-diff case IDs and expected disposition
-  (`MATCH` or `POLICY-ACCEPTED`); unit/contract tests; malformed-input
-  witnesses; controls. Name the existing driver; a new driver needs the
-  reason no existing one can take the cases.
+- **Cases:** the case IDs and their disposition (`MATCH` or
+  `POLICY-ACCEPTED`); the record lists the `POLICY-ACCEPTED` cases.
+- **Tests:** the Rust tests that hold the accepted behaviour and its
+  controls, by crate, target and test name; malformed-input witnesses.
 - **Prior rulings:** none reversed. If one is involved, STOP and cite
   it.
-- **Evidence:** commands that produced the figures; no captures are
-  committed. Say where the capture environment is ephemeral.
+- **Evidence:** the pin citation, the exact inputs, the pin and oxpinyin
+  observations, the `POLICY-ACCEPTED` cases and the Rust tests above. No
+  captures or logs are committed.
 - **Conclusion:** accepted | retained as normal parity | needs a
   ruling. Reviewer and date.
 ```
@@ -79,20 +78,20 @@ settle it).
 1. **The contract is never the quirk.** If the difference changes the C
    ABI, ownership, an on-disk format or data ownership, it is not
    eligible. If it changes product behaviour (a ranking rule, a limit, a
-   logic defect), it is not an artefact: record `NEEDS-RULING` and stop.
+   logic defect), it is not a language artefact. Record `NEEDS-RULING` and stop.
 2. **Trace both directions.** A forwards-only trace does not establish
    that another producer cannot reach the same observable.
 3. **Partition the input.** "Malformed only" is a claim to prove, not a
    label to apply. The record names the exact bytes or state that reach
    the difference.
 4. **Never call it MATCH.** The case keeps its pin and subject evidence
-   and carries the `POLICY-ACCEPTED` disposition. Deleting the case or
-   relabelling it erases the record's evidence.
-5. **One record, one difference.** Shared mechanism does not merge
+   and has the `POLICY-ACCEPTED` disposition. If you delete or relabel the
+   case, you erase the evidence of the record.
+5. **One record, one difference.** A shared mechanism does not merge
    independent observable behaviours into one record.
-6. **No dependency for aesthetics.** Replacing a GLib helper with normal
-   Rust is the point; adding a crate to avoid a documented difference is
-   a dependency change and stops for approval.
+6. **No dependency for appearance.** The purpose is to replace a GLib helper
+   with normal Rust. To add a crate that avoids a documented difference is
+   a dependency change, and it stops for approval.
 
 ## Tests of an accepted case
 

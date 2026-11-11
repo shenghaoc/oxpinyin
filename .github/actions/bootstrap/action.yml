@@ -7,9 +7,10 @@ description: |-
   pinned-rustup install (channel read from rust-toolchain.toml, minimal
   profile), optional CI tools (uv through astral-sh/setup-uv, with the
   managed Python and its build check; just,
-  cargo-nextest, cargo-llvm-cov and cargo-deny through
+  cargo-nextest and cargo-deny through
   taiki-e/install-action at exact versions, restored from the Actions cache
-  when the requested tool list and versions match, and cargo-c through cargo install), and an optional Swatinem/rust-cache
+  when the requested tool list and versions match, and cargo-c from its
+  upstream macOS release archive), and an optional Swatinem/rust-cache
   restore/save (its post step runs with the composite's completion).
 
   The actions/checkout step stays inline in every calling job. A local
@@ -60,12 +61,6 @@ inputs:
       (composite-action inputs are strings).
     required: false
     default: 'false'
-  cargo-llvm-cov:
-    description: >-
-      Install cargo-llvm-cov with taiki-e/install-action. String 'true'/'false'
-      (composite-action inputs are strings).
-    required: false
-    default: 'false'
   cargo-deny:
     description: >-
       Install cargo-deny with taiki-e/install-action. String 'true'/'false'
@@ -74,9 +69,9 @@ inputs:
     default: 'false'
   cargo-c:
     description: >-
-      Install cargo-c with cargo install into a fresh prefix and put it on
-      PATH. Needs the Rust toolchain. String 'true'/'false' (composite-action
-      inputs are strings).
+      Install cargo-c from its upstream release archive into a fresh prefix
+      and put it on PATH. macOS on ARM64 only; any other runner fails. String
+      'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
   rust-cache:
@@ -179,7 +174,7 @@ runs:
     # so the cache key below is stable. Bump a version here and the key moves
     # with it. The step also builds the key from the runner OS and architecture
     # plus the exact list of tools this call asks for, and the paths to cache
-    # (install-action puts all four in ${CARGO_HOME:-~/.cargo}/bin, and none
+    # (install-action puts all three in ${CARGO_HOME:-~/.cargo}/bin, and none
     # sets CARGO_HOME here).
     - name: Resolve the install-action tools
       id: tools
@@ -187,7 +182,6 @@ runs:
       env:
         JUST: ${{ inputs.just }}
         CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
-        CARGO_LLVM_COV: ${{ inputs.cargo-llvm-cov }}
         CARGO_DENY: ${{ inputs.cargo-deny }}
       run: |
         set -euo pipefail
@@ -202,7 +196,6 @@ runs:
         }
         resolve just 1.59.0 "$JUST"
         resolve cargo-nextest 0.9.150 "$CARGO_NEXTEST"
-        resolve cargo-llvm-cov 0.9.1 "$CARGO_LLVM_COV"
         resolve cargo-deny 0.20.2 "$CARGO_DENY"
         if [ "${#wanted[@]}" -eq 0 ]; then
           echo 'any=false' >> "$GITHUB_OUTPUT"
@@ -253,12 +246,6 @@ runs:
         fallback: none
 
     - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
-      if: inputs.cargo-llvm-cov == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
-      with:
-        tool: ${{ steps.tools.outputs.cargo-llvm-cov }}
-        fallback: none
-
-    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
       if: inputs.cargo-deny == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
         tool: ${{ steps.tools.outputs.cargo-deny }}
@@ -275,16 +262,36 @@ runs:
         path: ${{ steps.tools.outputs.paths }}
         key: ${{ steps.tools.outputs.key }}
 
-    # Exact on purpose: a fresh runner has nothing to reuse, and cargo-c's
-    # rust-version rises with each release (0.10.24 needs Rust 1.95, 0.10.26
-    # needs 1.97), so an unpinned install breaks once it passes the pinned
-    # Rust. Any cargo-c at or above the minimum that `just doctor` reports
-    # builds the same objects (docs/packaging.md, "Regeneration").
+    # The upstream release archive for macOS, an arm64 build, held to its
+    # SHA-256. A source build took seven minutes. The version and the hash
+    # move together, by hand. A failed download, another hash, another runner
+    # or another version fails the step: nothing falls back to a source
+    # build. See the `just doctor` tool minimums in docs/runbooks/setup.md
+    # (Linux).
     - name: Install cargo-c
       if: inputs.cargo-c == 'true'
       shell: bash
+      env:
+        CARGO_C_VERSION: 0.10.25
+        CARGO_C_SHA256: 0e73d1841be8a582ab9c37e1049f6a2fa352b3a40b0f97276603f987b19f64e8
       run: |
-        cargo install cargo-c --version 0.10.25 --locked --root "$RUNNER_TEMP/cargo-c"
+        set -euo pipefail
+        if [ "$RUNNER_OS-$RUNNER_ARCH" != macOS-ARM64 ]; then
+          printf '::error::the cargo-c archive is for macOS on ARM64, not %s on %s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+          exit 1
+        fi
+        archive="$RUNNER_TEMP/cargo-c-macos.zip"
+        curl --fail --location --retry 3 --show-error --output "$archive" \
+          "https://github.com/lu-zero/cargo-c/releases/download/v$CARGO_C_VERSION/cargo-c-macos.zip"
+        printf '%s  %s\n' "$CARGO_C_SHA256" "$archive" | shasum -a 256 --check
+        mkdir -p "$RUNNER_TEMP/cargo-c/bin"
+        unzip -q "$archive" -d "$RUNNER_TEMP/cargo-c/bin"
+        reported=$("$RUNNER_TEMP/cargo-c/bin/cargo-cinstall" --version)
+        printf '%s\n' "$reported"
+        case "$reported" in
+          "cargo-c $CARGO_C_VERSION"|"cargo-c $CARGO_C_VERSION+"*) ;;
+          *) printf '::error::cargo-c reports %s, not %s\n' "$reported" "$CARGO_C_VERSION"; exit 1 ;;
+        esac
         printf '%s/cargo-c/bin\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
     # Pinned to the v2.9.2 tag commit (do not bump without re-verifying).

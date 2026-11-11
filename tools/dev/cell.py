@@ -1,4 +1,10 @@
 """Explicit cell settings and shared build/identity services."""
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import datetime
@@ -167,13 +173,16 @@ class Settings:
         if cell not in choices:
             raise CellError(f'fatal: PINYIN_ORACLE_DBM={bash_word(cell)} is not one of: bdb kc tkrzw', 3)
         feature, extension, name = choices[cell]
-        source = root / 'tools/oracle/build-oracle.sh'
-        constants = dict(re.findall(r'^(LIBPINYIN_VERSION|LIBPINYIN_SHA|MODEL_SHA256)=(.+)$',
-                                    source.read_text(), re.M))
-        if len(constants) != 3:
-            raise CellError(f'fatal: could not read the pin constants from {source}')
-        expected = (f'pin_ref=libpinyin-{constants["LIBPINYIN_VERSION"]}-'
-                    f'{constants["LIBPINYIN_SHA"]}+model20-{constants["MODEL_SHA256"]}+dbm-{cell}')
+        source = root / 'tools/oracle/oracle-pin.txt'
+        try:
+            pin = dict(re.findall(r'^(libpinyin_tag|libpinyin_commit|model_archive_sha256)=(.+)$',
+                                  source.read_text(), re.M))
+        except OSError:
+            pin = {}
+        if len(pin) != 3:
+            raise CellError(f'fatal: could not read the pin from {source}')
+        expected = (f'pin_ref=libpinyin-{pin["libpinyin_tag"]}-'
+                    f'{pin["libpinyin_commit"]}+model20-{pin["model_archive_sha256"]}+dbm-{cell}')
         target = Path(environment.get('CARGO_TARGET_DIR') or
                       str(Path(environment.get('OXPINYIN_TARGET_ROOT') or root / 'target/cells') / cell))
         if not target.is_absolute():
@@ -300,3 +309,7 @@ def cdylib(stem: str) -> str:
 
 def utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

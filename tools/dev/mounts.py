@@ -1,4 +1,4 @@
-"""Mount-type reader shared by teardown.py and test_runner.py. Standard library only."""
+"""Mount-type reader used by test_runner.py. Standard library only."""
 from pathlib import Path
 import re
 

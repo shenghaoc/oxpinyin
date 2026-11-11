@@ -70,7 +70,7 @@ pub extern "C" fn pinyin_parse_full_pinyin(
         *onekey = ChewingKey::ZERO;
     }
     inst.core
-        .parse_one_full_pinyin(&text, false)
+        .parse_one_full_pinyin(&text, oxpinyin_facade::PinyinCorrections::FromOptions)
         .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };

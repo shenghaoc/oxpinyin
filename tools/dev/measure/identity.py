@@ -57,8 +57,7 @@ def processors(proc: Path = PROC, cgroup_root: Path = Path('/sys/fs/cgroup')) ->
 
     The shell runners printed GNU `nproc`, which rounds a fractional cgroup v2 quota to the nearest CPU,
     reads no cgroup v1 quota and honours OMP_NUM_THREADS and OMP_THREAD_LIMIT. This count is the budget
-    that cargo's job default uses; the differences are recorded in
-    docs/plans/tooling-python.md (U2).
+    that cargo's job default uses.
     """
     return host.cpu_snapshot(proc, cgroup_root)['cargo_cpus']
 

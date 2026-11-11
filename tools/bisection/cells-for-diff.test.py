@@ -3,10 +3,12 @@
 import os
 from pathlib import Path
 import runpy
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name('cells-for-diff.py')
 cells_for_diff = runpy.run_path(str(SCRIPT))
@@ -292,29 +294,87 @@ class RunFlagTests(unittest.TestCase):
         self.assertEqual(result.stdout, '')
         self.assertIn('--also needs --run-flag', result.stderr)
 
-    def gate_step(self):
-        """store-backends.yml's gate script, for a push whose previous head is the branch `base`."""
-        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
-        step = workflow.split('      - name: Compute the path-gate flag\n', 1)[1]
-        script = step.split('        run: |\n', 1)[1].split('\n\n', 1)[0]
-        lines = [line[10:] for line in script.split('\n')]
-        return '\n'.join(lines).replace("'${{ github.event.before }}'", '"$(git rev-parse base)"')
+    def test_run_without_base_needs_run_flag(self):
+        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--run-without-base', 'base')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('--run-without-base needs --run-flag', result.stderr)
 
-    def test_the_workflow_runs_every_job_for_a_base_with_no_merge_base(self):
+    def gate_arguments(self):
+        """The arguments store-backends.yml's gate step gives the script, less the base they end with."""
+        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
+        step = workflow.split('      - name: Compute the path-gate flag\n', 1)[1].split('\n\n', 1)[0]
+        self.assertIn("\n          BASE: ${{ github.event_name == 'pull_request' && "
+                      'github.event.pull_request.base.sha || github.event.before }}\n', step)
+        command = step.split('          python3 tools/bisection/cells-for-diff.py ', 1)[1]
+        *arguments, base, redirect, output = shlex.split(command.replace('\\\n', ' '))
+        self.assertEqual((base, redirect, output), ('$BASE', '>>', '$GITHUB_OUTPUT'))
+        return arguments
+
+    def unrelated(self):
+        """A repository whose branch `base` shares no history with HEAD."""
         repo = Repo(self, self.BASE, {'README.md': 'b\n'})
         repo.git('checkout', '-q', '--orphan', 'unrelated')
         repo.git('rm', '-rq', '--cached', '.')
         repo.commit({'other.txt': 'a\n'})
         repo.git('branch', '-f', 'base')
         repo.git('checkout', '-q', '-f', 'main')
-        output = repo.root.parent / (repo.root.name + '.output')
-        self.addCleanup(output.unlink, missing_ok=True)
-        env = {**BUILD_ENV, 'GITHUB_EVENT_NAME': 'push', 'GITHUB_OUTPUT': str(output)}
-        result = subprocess.run(('bash', '-c', self.gate_step()), cwd=repo.root, env=env,
-                                capture_output=True, text=True)
+        return repo
+
+    def test_the_workflow_runs_every_job_for_a_base_with_no_merge_base(self):
+        repo = self.unrelated()
+        result = repo.cli(*self.gate_arguments(), repo.git('rev-parse', 'base'))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('no merge base with ', result.stdout)
-        self.assertEqual(output.read_text(), 'run=true\n')
+        self.assertIn('no merge base with ', result.stderr)
+        self.assertEqual(result.stdout, 'run=true\n')
+
+    def test_the_workflow_runs_every_job_for_an_unavailable_base(self):
+        repo = Repo(self, self.BASE, {'README.md': 'b\n'})
+        for name, base in (('no base', ''), ('a commit that is not here', '0' * 40)):
+            with self.subTest(name):
+                result = repo.cli(*self.gate_arguments(), base)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'base {base} unavailable; running every job', result.stderr)
+                self.assertEqual(result.stdout, 'run=true\n')
+
+    def test_the_workflow_applies_the_rule_to_a_usable_base(self):
+        arguments = self.gate_arguments()
+        self.assertEqual(arguments[:2], ['--run-flag', '--run-without-base'])
+        for name, head, expected in (('docs-only change', {'README.md': 'b\n'}, 'false'),
+                                     ('infrastructure change', {'tools/bdb/build.sh': 'b\n'}, 'true')):
+            with self.subTest(name):
+                result = Repo(self, self.BASE, head).cli(*arguments, 'base')
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'run={expected}\n', ''))
+
+    def test_a_base_with_no_merge_base_fails_without_the_option(self):
+        result = self.unrelated().cli('--run-flag', 'base')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('have no common ancestor', result.stderr)
+
+    def test_run_without_base_still_fails_when_git_fails(self):
+        """A git command that fails while reading the base is an error, not an unavailable base."""
+        repo = Repo(self, self.BASE, {'README.md': 'b\n'})
+        run_flag = cells_for_diff['run_flag']
+        run_git = cells_for_diff['run_git']
+        for command in ('rev-parse', 'merge-base'):
+            def failing(*args, repo=None, command=command):
+                if args[0] == command and 'HEAD^{commit}' not in args and '--show-toplevel' not in args:
+                    return subprocess.CompletedProcess(args, 128, b'', b'fatal: broken\n')
+                return run_git(*args, repo=repo)
+            with self.subTest(command), mock.patch.dict(run_flag.__globals__, run_git=failing):
+                with self.assertRaisesRegex(ValueError, rf'git {command} failed \(128\): fatal: broken') as caught:
+                    run_flag('base', repo=repo.root, without_base=True)
+                self.assertNotIsInstance(caught.exception, cells_for_diff['NoDiffBase'])
+
+    def test_run_without_base_still_fails_outside_a_work_tree(self):
+        with tempfile.TemporaryDirectory(prefix='cells-for-diff-') as directory:
+            env = {**BUILD_ENV, 'GIT_CEILING_DIRECTORIES': str(Path(directory).resolve().parent)}
+            result = subprocess.run((sys.executable, str(SCRIPT), '--run-flag', '--run-without-base', 'base'),
+                                    cwd=directory, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('not inside a git work tree', result.stderr)
 
 
 if __name__ == '__main__':

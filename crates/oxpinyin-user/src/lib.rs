@@ -26,7 +26,7 @@
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
 // Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.
@@ -75,6 +75,13 @@ pub use store::{
     ExportedPhrase, SENTENCE_START, SaveReport, Token, TrainingCheck, TrainingFault, UserStore,
     UserStoreError, add_system_reading,
 };
+
+fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
+}
 
 #[cfg(feature = "tools")]
 pub use replay::tool;
