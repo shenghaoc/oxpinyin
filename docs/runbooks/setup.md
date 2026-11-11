@@ -58,26 +58,42 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev tkrzw-utils libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev zip unzip cmake ninja-build libglib2.0-dev
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel tkrzw-devel glib2-devel
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel zip unzip cmake ninja-build glib2-devel
 ```
 
-The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as the
-configure of libpinyin does. Debian's `tkrzw.pc` names `-llzma -llz4 -lzstd
--lz`, but `libtkrzw-dev` does not depend on their development packages. The
-apt line therefore installs them. Without them, every link fails with `cannot find
--llzma`. To use a tkrzw that you built yourself, put its `lib/pkgconfig`
-first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`.
-`just tkrzw-build DIR` builds the upstream revision that CI uses into `DIR`.
-Ubuntu's packaged libtkrzw is defective
-([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md)).
-`tools/tkrzw/distro-probe.sh` checks the library on `PATH`, and provisioning runs
-it on an Ubuntu host. A `just tkrzw-build` build, the Debian package and the
-macOS and Windows vcpkg builds need no probe.
+tkrzw comes from the repository's vcpkg overlay port on Linux, macOS and
+Windows. GLib stays on the system package manager (Homebrew on macOS).
+Windows also uses vcpkg for GLib because it has no system package route.
+Install [vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started),
+run `bootstrap-vcpkg.bat` on Windows or `bootstrap-vcpkg.sh` on Linux and
+macOS, and set `VCPKG_ROOT` to that checkout.
+On Linux x86_64, run from the repository root:
+
+```bash
+"$VCPKG_ROOT/vcpkg" install tkrzw:x64-linux-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
+export OXPINYIN_TKRZW_PREFIX="$VCPKG_ROOT/installed/x64-linux-oxpinyin"
+export PKG_CONFIG_PATH="$OXPINYIN_TKRZW_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$OXPINYIN_TKRZW_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$OXPINYIN_TKRZW_PREFIX/tools/tkrzw/bin:$PATH"
+pkg-config --modversion tkrzw
+```
+
+The build discovers tkrzw through pkg-config. The Linux triplet selects shared
+libraries and release-only builds. The loader uses `LD_LIBRARY_PATH`; oxpinyin
+adds no rpath. Keep these exports when running product binaries and tests,
+including `just sanitize tkrzw address`. `tools/tkrzw/runtime.py` checks the
+resolved library against `OXPINYIN_TKRZW_PREFIX`.
+The port itself keeps vcpkg's linkage defaults. Stock `x64-linux` installs
+static debug and release libraries.
+Linux CI uses the same overlay and a vcpkg binary cache. Release packaging,
+shipping-size measurements and oracle/reference images keep Debian's tkrzw.
+Ubuntu's packaged tkrzw is defective; development uses the overlay instead
+([finding](../findings/tkrzw-distro-compat.md)).
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
@@ -608,7 +624,7 @@ The name of each entry carries its pin, so a new pin gets a new entry:
 
 - `contract-data/<version>`: the pinned libpinyin-data package.
 - `model20-<digest>`: the model20 archive and its extraction.
-- `tkrzw-<revision>`: the tkrzw build of `just provision`.
+- `vcpkg/` and `vcpkg-binary-cache/`: the overlay checkout and binary cache of `just provision`, unless `VCPKG_ROOT` selects an existing checkout.
 - `pin-<commit>`: the provisioning cache, with the pin prefixes and their build trees.
 
 The model and contract-data fetchers allow one active fetch per pinned entry on a

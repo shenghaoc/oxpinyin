@@ -78,7 +78,7 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
+      - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).

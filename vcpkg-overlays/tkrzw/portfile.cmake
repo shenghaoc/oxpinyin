@@ -47,7 +47,7 @@ else()
             file(REMOVE "${lib}/libtkrzw.a")
         endif()
         # configure records -lstdc++; macOS links libc++ and has no libstdc++.
-        if(EXISTS "${lib}/pkgconfig/tkrzw.pc")
+        if(VCPKG_TARGET_IS_OSX AND EXISTS "${lib}/pkgconfig/tkrzw.pc")
             file(READ "${lib}/pkgconfig/tkrzw.pc" module)
             string(REPLACE "-lstdc++" "-lc++" module "${module}")
             file(WRITE "${lib}/pkgconfig/tkrzw.pc" "${module}")

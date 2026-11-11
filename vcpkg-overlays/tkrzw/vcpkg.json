@@ -4,7 +4,7 @@
   "description": "Thread-safe DBM library",
   "homepage": "https://dbmx.net/tkrzw/",
   "license": "Apache-2.0",
-  "supports": "(windows & !uwp & !mingw) | osx",
+  "supports": "(windows & !uwp & !mingw) | osx | linux",
   "dependencies": [
     {
       "name": "vcpkg-cmake",
@@ -14,7 +14,7 @@
     {
       "name": "vcpkg-make",
       "host": true,
-      "platform": "osx"
+      "platform": "osx | linux"
     }
   ],
   "features": {

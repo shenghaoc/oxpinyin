@@ -665,6 +665,7 @@ class GateTests(unittest.TestCase):
             'rust-toolchain.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.python-version': {'lint', 'test', 'harness'},
             'justfile': {'lint', 'test', 'harness', 'ship'},
+            'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness'},
             '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             'scripts/new.sh': {'lint'},

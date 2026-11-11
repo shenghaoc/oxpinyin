@@ -75,22 +75,18 @@ Valgrind, backend utilities or container runtime.
 
 ## Setup command
 
-Ubuntu's packaged tkrzw is defective, and [verification rule 9](verification.md#9-sound-tkrzw-library)
-requires a sound build. Before you run workspace tests in a cloud session,
-build the upstream revision and select it for both linking and runtime:
-
-```sh
-revision="$(uv run --no-project --managed-python python -m tools.tkrzw.build rev)"
-prefix="$(just cache-root)/tkrzw-$(printf %s "$revision" | cut -c 1-12)"
-just tkrzw-build "$prefix"
-export OXPINYIN_TKRZW_PREFIX="$prefix"
-export PKG_CONFIG_PATH="$prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-```
-
-Use an empty prefix for the build. `tools/tkrzw/runtime.py` needs
-`OXPINYIN_TKRZW_PREFIX` to trust the tkrzw that Python tooling loads. The full
-oracle setup below can also provision and select a sound build.
+Before workspace tests in a cloud session, install the tkrzw vcpkg overlay
+and export its compilation and runtime paths as described in
+[Linux setup](setup.md#linux). The full oracle setup below also installs the
+overlay and writes those exports. Set `VCPKG_ROOT` to reuse an existing vcpkg
+checkout; provisioning leaves that checkout unchanged and uses vcpkg to install
+and upgrade its tkrzw package with the repository overlay. Classic-mode
+`vcpkg upgrade tkrzw:<triplet> --no-dry-run --classic` replaces an outdated
+installed version; both install and upgrade receive the overlay ports and
+triplets. Without `VCPKG_ROOT`, provisioning creates and bootstraps a checkout
+under the cache root. Install
+`build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake
+ninja-build` from Debian packages before that step. GLib stays on the system.
 
 **When to run it.** Run the setup only when the work needs the pin oracle:
 a differential, a same-run measurement against the pin, or a data check.
@@ -359,30 +355,17 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    that does not run (the interpreter, an import, the runtime) stops
    provisioning with its error, and setup keeps the prefix.
 
-   3b. Linux only: the host library of the tkrzw cell. On macOS and Windows the
-   oracle loads only in containers, and setup skips this step.
-   - The `tkrzw_dbm_util` of the host (on `PATH`)
-     must load a host `libtkrzw` outside every cache.
-   - On an Ubuntu host
-     (`ID` or `ID_LIKE` in `/etc/os-release`), `tools/tkrzw/distro-probe.sh`
-     must also exit 0 against it. The package of no other host needs the probe.
-   - Setup uses a certified host library as it is.
-   - If no library is certified, or there
-     is no tkrzw, `tools/tkrzw/build.py` builds upstream tkrzw from source
-     (the recipe that CI's `.github/actions/tkrzw` also runs) at
-     `9ee84164cf45e441aa8186418c03a02c9b89f08b` (1.0.34: its sentinel fix
-     makes defect 1 immune to LTO; 1.0.32 is healthy only without LTO,
-     `docs/findings/tkrzw-distro-compat.md`). The build runs `env -u CFLAGS -u CXXFLAGS
-     -u LDFLAGS ./configure --prefix=<root>/tkrzw-<revision> && make && make install`,
-     so no LTO or `-Bsymbolic-functions` can come in from the environment.
-   - Setup refuses the build unless its `tkrzw_dbm_util` loads the own
-     `libtkrzw` of the cache. It runs no probe.
-   - The environment file puts `<root>/tkrzw-<revision>` first on `PKG_CONFIG_PATH`,
-     `LD_LIBRARY_PATH` and `PATH` (so `tkrzw_dbm_util` is the built one).
-     The script uses `ldd` to make sure that the tkrzw oracle `libpinyin.so`
-     resolves `libtkrzw.so.1` to `<root>/tkrzw-<revision>/lib`.
-   - A second run skips the
-     build when the cached revision is present and loads its own library.
+   3b. Linux only: install tkrzw through the repository's vcpkg overlay.
+   macOS and Windows load the oracle only in containers and skip this step.
+   - Use `VCPKG_ROOT`, or bootstrap a checkout under `<root>/vcpkg`.
+   - Install `tkrzw:x64-linux-oxpinyin`, with binaries cached under
+     `<root>/vcpkg-binary-cache` unless `VCPKG_BINARY_SOURCES` is configured.
+     The port alone reads `vcpkg-overlays/tkrzw/pin.json`.
+   - Certify the installed utility and extracted oracle library against the
+     installed `libtkrzw.so.1` with `tools/tkrzw/runtime.py`.
+   - Write `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`, the utility `PATH` and
+     `OXPINYIN_TKRZW_PREFIX` for that install to the environment file.
+   - Every invocation runs vcpkg install; its ABI checks decide cache reuse.
 4. Uses model20, which the model fetch (`tools/dev/model.py`) got early into
    `<root>/model20-<digest>`. It runs `build.py --regen-data` for each cell inside
    the image, and verifies the installed files again with the shared
@@ -458,11 +441,10 @@ A second run with everything present only verifies again. To drop the build-cach
 
 ### tkrzw step and the CI child
 
-The tkrzw jobs of CI use the build of upstream 1.0.34 (`9ee8416`) from the tkrzw action,
-named by `OXPINYIN_TKRZW_PREFIX`. Setup builds the same
-revision when no host library is certified. Neither runs
-`tools/tkrzw/distro-probe.sh`: the defect that it detects is in the packaged
-`libtkrzw` of Ubuntu, so setup runs it only on the library of an Ubuntu host.
+Linux development and CI use the vcpkg overlay port and binary cache.
+The runtime is named by `OXPINYIN_TKRZW_PREFIX` and certified through the
+actual loader resolution. Oracle/reference images, release packaging and
+shipping-size measurements retain Debian's tkrzw.
 
 ### When the published image cannot be pulled
 

@@ -57,9 +57,8 @@ name: Store backends
 # from it); RHEL, the other ecosystem's root, is the primary development
 # platform, so CI on Debian Testing covers both lineages. Do NOT pin
 # this image by digest or let a later change "stabilise" it. libtkrzw
-# comes from the tkrzw action (.github/actions/tkrzw): upstream tkrzw at
-# the revision tools/cloud/setup.sh provisions, built and cached, found
-# through PKG_CONFIG_PATH. libdb and libkyotocabinet come from the image.
+# comes from the vcpkg overlay through .github/actions/tkrzw, with a binary
+# cache and PKG_CONFIG_PATH discovery. libdb and libkyotocabinet come from the image.
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model,
@@ -156,7 +155,10 @@ jobs:
             --also tools/bdb \
             --also tools/tkrzw \
             --also .github/actions/tkrzw \
+            --also vcpkg-overlays \
+            --also triplets \
             --also tools/dev/check.py \
+            --also tools/dev/vcpkg.py \
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
             --also fuzz/rust-toolchain.toml \
@@ -407,10 +409,9 @@ jobs:
         # libclang-dev is bindgen's runtime dependency.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libglib2.0-dev
 
-      # The library the backend links against: the action's source build,
-      # named by OXPINYIN_TKRZW_PREFIX. It needs no distro-probe.sh, which
-      # is for Ubuntu's packaged libtkrzw only.
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
+      # Certify each binary against the overlay install named by
+      # OXPINYIN_TKRZW_PREFIX; the loader finds it through LD_LIBRARY_PATH.
+      - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
 
       - name: Install nightly Rust (sanitizer support)

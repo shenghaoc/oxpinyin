@@ -56,6 +56,9 @@ def run(*args, host='Darwin', arch='arm64', tools=None, environment=None):
     out, err = io.StringIO(), io.StringIO()
     env = dict(os.environ, OXPINYIN_SANITIZER_HOST_OS=host,
                OXPINYIN_SANITIZER_HOST_ARCH=arch)
+    # Runtime discovery belongs to each fixture, not the invoking shell.
+    for name in ('OXPINYIN_TKRZW_LIBRARY', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+        env.pop(name, None)
     env.update(environment or {})
     status = test_runner.sanitize(list(args), out=out, err=err, environment=env,
                                   tools=tools)
@@ -213,7 +216,7 @@ class BackendTests(unittest.TestCase):
                              environment=self.environment())
         self.assertEqual(status, 1)
         self.assertIn('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', err)
-        self.assertIn("Ubuntu's packaged libtkrzw fails it", err)
+        self.assertIn('Install the overlay port and set VCPKG_ROOT', err)
 
 
 if __name__ == '__main__':

@@ -132,14 +132,6 @@ check backend="": python
 check backend="": python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.check @forwarded; exit $LASTEXITCODE
 
-# A distro tkrzw is found through pkg-config with nothing more. To use this
-# build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
-# runtime library path, as CI's tkrzw action does.
-# Build upstream tkrzw at the provisioning revision into an empty DIR.
-# macOS and Windows install the vcpkg overlay port instead (docs/runbooks/setup.md).
-[linux]
-tkrzw-build prefix: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
 
 # Run the native Rust tests through nextest.
 [unix]
