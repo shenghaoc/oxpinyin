@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -174,6 +175,69 @@ if Path(sys.argv[0]).name == 'import_interpolation':
             self.assertEqual(self.stage(target=dangling), 2)
             self.assertFalse((self.work / 'absent').exists())
 
+        def init_repository(self, worktree, *options):
+            environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+            subprocess.run(['git', 'init', '--quiet', *options, worktree],
+                           env=environment, check=True, capture_output=True, timeout=20)
+
+        def test_refuses_nested_and_symlinked_targets(self):
+            checkout = self.work / 'checkout'
+            self.init_repository(checkout)
+            nested = checkout / 'nested'
+            self.init_repository(nested)
+            alias = self.work / 'alias'
+            alias.symlink_to(nested, target_is_directory=True)
+            for parent in (checkout, nested, alias):
+                with self.subTest(parent=parent):
+                    missing_parent = parent / 'not-created'
+                    self.assertEqual(self.stage(target=missing_parent / 'trainer'), 2)
+                    self.assertFalse(missing_parent.exists())
+            self.assertEqual(self.stage(), 0)
+
+        def test_refuses_gitfile_worktree(self):
+            worktree = self.work / 'worktree'
+            self.init_repository(worktree, '--separate-git-dir', self.work / 'repository')
+            self.assertTrue((worktree / '.git').is_file())
+            self.assertEqual(self.stage(target=worktree / 'trainer'), 2)
+            self.assertFalse((worktree / 'trainer').exists())
+
+        def test_refuses_symlink_git_entry(self):
+            parent = self.work / 'linked entry'
+            parent.mkdir()
+            (parent / '.git').symlink_to(self.work / 'absent repository')
+            self.assertEqual(self.stage(target=parent / 'trainer'), 2)
+            self.assertFalse((parent / 'trainer').exists())
+
+        def test_uninspectable_paths_are_refused_without_writes(self):
+            blocker = self.work / 'regular file'
+            blocker.write_bytes(b'not a directory')
+            locked = self.work / 'locked'
+            (locked / 'inner').mkdir(parents=True)
+            locked.chmod(0)
+            self.addCleanup(locked.chmod, 0o700)
+            cases = {NotADirectoryError: blocker / 'missing' / 'trainer'}
+            if os.geteuid():
+                cases[PermissionError] = locked / 'inner' / 'trainer'
+            for error, target in cases.items():
+                with self.subTest(error=error.__name__):
+                    with self.assertRaises(error):
+                        target.lstat()
+                    self.assertEqual(self.stage(target=target), 2)
+            self.assertEqual(blocker.read_bytes(), b'not a directory')
+            locked.chmod(0o700)
+            self.assertEqual(list(locked.rglob('*')), [locked / 'inner'])
+
+        def test_uninspectable_git_entry_is_refused_without_writes(self):
+            lstat = Path.lstat
+            for error in (PermissionError, NotADirectoryError):
+                def refusing(path, error=error):
+                    if path.name == '.git':
+                        raise error(f'fixture refusal: {path}')
+                    return lstat(path)
+                with self.subTest(error=error.__name__), mock.patch.object(Path, 'lstat', refusing):
+                    self.assertEqual(self.stage(), 2)
+                self.assertFalse(self.target.exists())
+
         def test_missing_or_nonexecutable_tool_fails_before_creating_target(self):
             tool = self.binaries / 'gen_unigram'
             tool.chmod(0o644)
@@ -194,7 +258,10 @@ if Path(sys.argv[0]).name == 'import_interpolation':
             data = self.target / 'data'
             model = b'caller-supplied interpolation model\n'
             (data / 'interpolation2.text').write_bytes(model)
-            initial = 'lambda parameter:0.312699\ndatabase format:Tkrzw\n'
+            template = data / 'table.conf.in'
+            self.assertEqual(template.read_bytes(), (ROOT / 'data/table.conf.in').read_bytes())
+            self.assertNotRegex((data / 'Makefile').read_text(), r'\bgit\b')
+            initial = template.read_text().replace('@DATABASE_FORMAT@', 'Tkrzw')
             (data / 'table.conf').write_text(initial)
             self.make()
             calls = [json.loads(line) for line in (data / 'calls').read_text().splitlines()]

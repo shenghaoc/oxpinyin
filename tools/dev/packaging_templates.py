@@ -3,8 +3,8 @@
 TRAINER_MAKEFILE = r'''# External interface: epico/trainer evaluate.py invokes /usr/bin/make here.
 # Thin recipes adapted from libpinyin 074a2219 data/Makefile.am:18-69
 # (Copyright (C) 2011 Peng Wu, GPL-3.0-or-later).
-# Supply the model's textual tables, interpolation2.text and configured
-# table.conf before running make. This tree never downloads or installs data.
+# Supply the model's textual tables and interpolation2.text, and fill in
+# the backend in table.conf.in to make table.conf before running make.
 top_srcdir = ..
 tablefiles = gb_char.table gbk_char.table opengram.table merged.table \
              art.table culture.table economy.table geology.table history.table \
@@ -31,9 +31,8 @@ addon_phrase_index.bin phrase_index.bin addon_pinyin_index.bin pinyin_index.bin 
 clean:
 	$(RM) $(binary_model_data)
 
-# The pin resets its source checkout before substituting lambda. This tree
-# has no source checkout: retain the initial table.conf locally instead.
-# Do not run git reset here: the target may be inside an unrelated checkout.
+# Retain the initial table.conf locally so every lambda update starts
+# from the same baseline.
 export LAMBDA_PARAMETER
 modify: table.conf
 	test -f .trainer-table.conf || cp table.conf .trainer-table.conf

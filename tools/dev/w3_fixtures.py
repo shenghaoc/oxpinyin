@@ -23,6 +23,8 @@ import shutil
 
 from . import model
 
+ROOT = Path(__file__).resolve().parents[2]
+
 # The spellings whose phrases the mini set keeps: single syllables, two
 # multi-syllable phrases, and the `xian` / `xi'an` pair whose distinctness
 # is what the apostrophe-separated key format exists to preserve.
@@ -33,38 +35,6 @@ MINI_ART_KEYS = ("er'huang", "bo'cai", "ban'she")
 # rows) and the one addon library the subset reaches.
 SYSTEM_TABLES = ('gb_char', 'gbk_char', 'opengram', 'merged')
 ADDON_TABLE = 'art'
-# The committed `table.conf`: the pin's `data/table.conf.in` with its
-# `@DATABASE_FORMAT@` filled in for the backend.
-TABLE_CONF = '''binary format version:7
-model data version:14
-lambda parameter:0.312699
-
-source table format:pinyin
-database format:{format}
-
-default RESERVED NULL NULL NULL NOT_USED
-default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE
-default GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE
-default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE
-default MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE
-default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE
-default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE
-default USER_DICTIONARY NULL NULL user.bin USER_FILE
-
-addon 4 art.table art.bin NULL DICTIONARY
-addon 5 culture.table culture.bin NULL DICTIONARY
-addon 6 economy.table economy.bin NULL DICTIONARY
-addon 7 geology.table geology.bin NULL DICTIONARY
-addon 8 history.table history.bin NULL DICTIONARY
-
-addon 9 life.table life.bin NULL DICTIONARY
-addon 10 nature.table nature.bin NULL DICTIONARY
-addon 11 people.table people.bin NULL DICTIONARY
-addon 12 science.table science.bin NULL DICTIONARY
-addon 13 society.table society.bin NULL DICTIONARY
-addon 14 sport.table sport.bin NULL DICTIONARY
-addon 15 technology.table technology.bin NULL DICTIONARY
-'''
 
 
 class Refused(Exception):
@@ -168,7 +138,8 @@ def table_conf(dbm_name, *, build=False):
     rows in art alone, so the build's `table.conf` lists that one addon
     library and the committed rendering keeps the pin's full list.
     """
-    text = TABLE_CONF.format(format=dbm_name)
+    template = (ROOT / 'data/table.conf.in').read_text(encoding='utf-8')
+    text = template.replace('@DATABASE_FORMAT@', dbm_name)
     if build:
         lines = [line for line in text.splitlines() if not line.startswith('addon ') or line.startswith('addon 4 ')]
         text = ''.join(line + '\n' for line in lines)

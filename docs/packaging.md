@@ -18,9 +18,13 @@ just trainer-layout /absolute/path/trainer-evals --bin-dir target/debug
 ```
 
 The recipe delegates to `tools.dev.packaging`.
-It copies all 21 pin-named utilities into `utils/storage/`, `utils/segment/` and `utils/training/` and writes `data/Makefile`.
+It copies all 21 pin-named utilities into `utils/storage/`, `utils/segment/` and `utils/training/`.
+It writes `data/Makefile` and copies the [configuration template](../data/table.conf.in) to `data/table.conf.in`.
 The copies keep executable permissions and survive a Cargo clean; native shared-library dependencies must still be available.
 The destination must not exist.
+The recipe resolves symlinks in the destination path and refuses a destination under a directory that has a `.git` entry (a directory, a gitfile or a symlink).
+It also refuses, before it writes anything, when it cannot inspect the destination or one of those entries.
+It does not detect a work tree that has no `.git` entry, such as a `core.worktree` setup.
 `--bin-dir` selects another build or profile directory; its default is `$CARGO_TARGET_DIR/debug` or `target/debug`.
 The recipe installs nothing system-wide and copies no trainer code or model data.
 
@@ -29,8 +33,16 @@ Set `m_evals_dir` (returned by `getEvalsDir()`) to `/absolute/path/trainer-evals
 Use the tree roots, not their `data/` subdirectories.
 Keep the two trees separate: evaluation replaces `interpolation2.text` and regenerates its binary data.
 
-Put into each `data/` the model's textual tables, `interpolation2.text` and a configured `table.conf` that matches the DBM backend of the tools.
-Then run `make -C /absolute/path/trainer-tools/data`, and the same command for the eval tree.
+Put into each `data/` the model's textual tables and `interpolation2.text`.
+From that directory, render `table.conf` for the DBM backend of the tools and run `make`.
+Use these commands for the default tkrzw build:
+
+```sh
+sed 's/@DATABASE_FORMAT@/Tkrzw/' table.conf.in > table.conf
+make
+```
+
+For the peer backends, use `BerkeleyDB` or `KyotoCabinet` in place of `Tkrzw`.
 Also supply the trainer's held-out inputs: `data/estimates.db` for the tools tree, and `data/deleted_bigram.db` and `data/evals2.text` for the eval tree.
 This recipe stages a layout; it does not prepare a corpus, download model20 or run the trainer.
 
@@ -38,7 +50,7 @@ The generated Makefile provides the trainer's default build, `clean` and `modify
 Build and clean use the pin's file lists and the exact relative utility calls from
 [`data/Makefile.am:18–69` at `074a2219c90feaf962d0d24f034514033ece5f99`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/data/Makefile.am#L18-L69).
 `modify` keeps the first `table.conf` as `data/.trainer-table.conf` and applies the pin's lambda substitution again to that baseline on every call.
-It does not run the pin's checkout-wide `git reset --hard` in a caller's directory.
+The generated Makefile runs no `git` command; it does not run the pin's checkout-wide `git reset --hard`.
 Remove that baseline when you deliberately replace the configuration.
 
 The trainer requires `/usr/bin/make`; the staged Makefile uses `rm`, `cp` and `sed`.

@@ -66,24 +66,32 @@ TRAINER_TOOLS = {
 
 
 def trainer_layout(argv, tools):
-    """Copy built tools into a new, private trainer tree; never install data."""
+    """Copy built tools and the configuration template into a new trainer tree."""
     import argparse
     from .packaging_templates import TRAINER_MAKEFILE
 
     parser = argparse.ArgumentParser(prog='just trainer-layout')
-    parser.add_argument('target', type=Path, help='new output directory (must not exist)')
+    parser.add_argument('target', type=Path, help='new output directory, not under a directory with a .git entry')
     build = Path(tools.env.get('CARGO_TARGET_DIR') or tools.root / 'target')
     parser.add_argument('--bin-dir', type=Path, default=build / 'debug',
                         help='directory containing built oxpinyin-utils binaries (default: target/debug)')
     args = parser.parse_args(argv)
     target = args.target.absolute()
-    if target.exists() or target.is_symlink():
+    if entry_exists(target):
         fail(f'error: trainer layout target already exists: {target}', 2)
+    target = target.resolve()
+    # Check every ancestor, including beyond nested repositories. A .git
+    # entry can be a directory, a gitfile (linked worktree or submodule) or
+    # a symlink. A work tree with no .git entry (core.worktree) is not detected.
+    for parent in target.parents:
+        if entry_exists(parent / '.git'):
+            fail(f'error: trainer layout target is under a directory with a .git entry: {parent}', 2)
     sources = [(Path('utils') / group / name, args.bin_dir / name)
                for group, names in TRAINER_TOOLS.items() for name in names]
     for _, source in sources:
         if not source.is_file() or not os.access(source, os.X_OK):
             fail(f'error: missing executable {source}; build oxpinyin-utils --bins first', 2)
+    template = (tools.root / 'data/table.conf.in').read_bytes()
     # Claim the directory before writing. In particular, never merge into a
     # trainer tree containing a user's models or follow an existing target link.
     target.mkdir(parents=True)
@@ -94,8 +102,24 @@ def trainer_layout(argv, tools):
     data = target / 'data'
     data.mkdir()
     (data / 'Makefile').write_text(TRAINER_MAKEFILE, encoding='utf-8')
+    (data / 'table.conf.in').write_bytes(template)
     emit(f'trainer layout: copied {len(sources)} utilities to {target}; populate data/ before training')
     return 0
+
+
+def entry_exists(path):
+    """Whether path names a directory entry; a final symlink is not followed.
+
+    Refuse when the entry cannot be inspected: an ancestor that denies search
+    permission or is not a directory proves neither answer.
+    """
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        fail(f'error: trainer layout cannot inspect {path}: {error}', 2)
+    return True
 
 
 def fail(message='', code=1):
