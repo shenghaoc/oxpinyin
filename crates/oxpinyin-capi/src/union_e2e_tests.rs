@@ -1,6 +1,9 @@
 //! W11 union surface: user/addon candidates and phrase prediction.
 
-use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate};
+use crate::candidates::{
+    pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_candidate_string,
+    pinyin_get_candidate_type,
+};
 use crate::config::{pinyin_load_addon_phrase_library, pinyin_unload_addon_phrase_library};
 use crate::context::{oxpinyin_test_set_user_bigram, pinyin_init};
 use crate::instance::pinyin_alloc_instance;
@@ -42,6 +45,7 @@ fn imported_user_phrase_surfaces_as_a_user_candidate() {
     assert!(
         found
             .token
+            .get()
             .is_some_and(|token| oxpinyin_user::is_user_token(token.value()))
     );
     assert_eq!(
@@ -163,6 +167,19 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         crate::test_support::finalize_public_context(context, instance);
     }
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+    let mut kind = lookup_candidate_type_t::ADDON_CANDIDATE;
+    assert!(pinyin_get_candidate_type(instance, cand, &raw mut kind));
+    assert_eq!(kind, lookup_candidate_type_t::NORMAL_CANDIDATE);
+    let mut rendered = std::ptr::null();
+    assert!(pinyin_get_candidate_string(
+        instance,
+        cand,
+        &raw mut rendered
+    ));
+    assert!(!rendered.is_null());
+    // SAFETY: the original candidate still owns a terminated display string.
+    let rendered = unsafe { std::ffi::CStr::from_ptr(rendered) };
+    assert_eq!(rendered.to_bytes(), text.as_bytes());
 
     // The snapshot candidate is rewritten to a NORMAL candidate at a nibble-5
     // token (`pinyin.cpp:2559-2560`).
@@ -175,7 +192,10 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             lookup_candidate_type_t::NORMAL_CANDIDATE,
             "the chosen addon candidate becomes NORMAL"
         );
-        let token = snapshot.token.expect("promoted candidate carries a token");
+        let token = snapshot
+            .token
+            .get()
+            .expect("promoted candidate carries a token");
         assert_eq!(
             oxpinyin_user::phrase_index_library_index(token.value()),
             oxpinyin_user::ADDON_DICTIONARY,
@@ -297,7 +317,7 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
         inst.state.candidates[0].candidate_type(),
         lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     );
-    assert!(inst.state.candidates[0].token.is_none());
+    assert!(inst.state.candidates[0].token.get().is_none());
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -478,7 +498,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
         .candidates
         .iter()
         .skip(1)
-        .find_map(|row| row.token)
+        .find_map(|row| row.token.get())
         .expect("no trailing row carries a token");
 
     // The huge engineered delta through the ABI write path.

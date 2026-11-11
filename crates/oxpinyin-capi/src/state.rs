@@ -13,7 +13,10 @@
 //! user-data export machinery.
 
 use std::path::Path;
-use std::{cell::UnsafeCell, rc::Rc};
+use std::{
+    cell::{Cell, UnsafeCell},
+    rc::Rc,
+};
 
 use oxpinyin_core::{OptionBits, PhraseToken};
 
@@ -177,14 +180,14 @@ pub struct CapiCandidate {
     /// inside the snapshot's buffer, kept current by the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
     /// [`Self::candidate_type`]'s tag.
-    pub(crate) type_tag: u8,
+    pub(crate) type_tag: Cell<u8>,
     pub(crate) nbest_index: u8,
     /// The candidate's scoring token, snapshotted so the training entry
     /// points (`pinyin_train`'s observation, predicted-candidate training,
     /// `pinyin_is_user_candidate`) can resolve it without re-decoding.
     /// `None` for sentence-level and fallback candidates, which carry no
     /// token and are not trained (§2: only pinned phrases train).
-    pub(crate) token: Option<PhraseToken>,
+    pub(crate) token: Cell<Option<PhraseToken>>,
     /// The index this candidate held in the window it was snapshotted from.
     /// The snapshot (`Vec<CapiCandidate>`) may omit entries (the engine's
     /// `Fallback` row, a `CString` conversion failure), so a candidate's position in the snapshot is NOT its
@@ -195,20 +198,20 @@ pub struct CapiCandidate {
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
+const _: () = {
+    assert!(core::mem::size_of::<CapiCandidate>() == 32);
+    assert!(core::mem::align_of::<CapiCandidate>() == 8);
+};
 
 impl CapiCandidate {
     /// The row's `lookup_candidate_type_t`.
-    pub(crate) const fn candidate_type(&self) -> crate::types::lookup_candidate_type_t {
-        crate::types::lookup_candidate_type_t::from_tag(self.type_tag)
+    pub(crate) fn candidate_type(&self) -> crate::types::lookup_candidate_type_t {
+        crate::types::lookup_candidate_type_t::from_tag(self.type_tag.get())
     }
 
     /// Sets the row's `lookup_candidate_type_t`.
-    pub(crate) const fn set_candidate_type(
-        &mut self,
-        candidate_type: crate::types::lookup_candidate_type_t,
-    ) {
-        self.type_tag = candidate_type.tag();
+    pub(crate) fn set_candidate_type(&self, candidate_type: crate::types::lookup_candidate_type_t) {
+        self.type_tag.set(candidate_type.tag());
     }
 }
 

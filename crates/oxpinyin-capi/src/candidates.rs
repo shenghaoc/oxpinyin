@@ -218,7 +218,9 @@ pub extern "C" fn pinyin_is_user_candidate(
     ) {
         return false;
     }
-    cand.token.is_some_and(|token| is_user_token(token.value()))
+    cand.token
+        .get()
+        .is_some_and(|token| is_user_token(token.value()))
 }
 
 /// Remove a user candidate from the dictionary.
@@ -262,7 +264,7 @@ pub extern "C" fn pinyin_remove_user_candidate(
     if inst.state.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
         std::process::abort();
     }
-    let Some(token) = inst.state.candidates[index].token else {
+    let Some(token) = inst.state.candidates[index].token.get() else {
         return false;
     };
     if !is_user_token(token.value()) {
@@ -409,7 +411,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // into the phrase-index overlay and answers as the pin does
     // ([`unigram_leg_answer`]).
     if inst.state.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
-        let Some(token) = inst.state.candidates[index].token else {
+        let Some(token) = inst.state.candidates[index].token.get() else {
             return -1;
         };
         // SAFETY: the instance read is finished; this serialized C operation
@@ -435,7 +437,7 @@ pub extern "C" fn pinyin_choose_candidate(
             // after the addon promotion above, which is in memory.
             std::process::abort();
         }
-        let Some(token) = addon_token.or(inst.state.candidates[index].token) else {
+        let Some(token) = addon_token.or(inst.state.candidates[index].token.get()) else {
             return -1;
         };
         // SAFETY: the instance read is finished; this serialized C operation
@@ -551,7 +553,7 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         {
             return None;
         }
-        let addon_token = inst.state.candidates[index].token?;
+        let addon_token = inst.state.candidates[index].token.get()?;
         inst.core.dict.addon_phrase_item(addon_token.value())?
     };
     // The user store's phrase text is UTF-8; a non-scalar addon item has no
@@ -568,10 +570,10 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
     };
     let promoted = PhraseToken::new(promoted);
     // SAFETY: the context write has ended and the same live snapshot remains.
-    let inst = unsafe { instance_mut(instance) };
-    let snapshot = &mut inst.state.candidates[index];
+    let inst = unsafe { crate::state::instance_state_ref(instance) };
+    let snapshot = &inst.state.candidates[index];
     snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
-    snapshot.token = Some(promoted);
+    snapshot.token.set(Some(promoted));
     Some(promoted)
 }
 
@@ -636,7 +638,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     {
         return true;
     }
-    let Some(token) = inst.state.candidates[index].token else {
+    let Some(token) = inst.state.candidates[index].token.get() else {
         return false;
     };
     // A sole missing prefix item is still selectable. The pin advances the
@@ -786,7 +788,7 @@ mod previous_token_tests {
         let gbk = unsafe { instance_ref(instance) }
             .candidates
             .iter()
-            .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
+            .filter_map(|c| c.token.get().map(oxpinyin_core::PhraseToken::value))
             .find(|token| token >> 24 == 2)
             .expect("the fixture carries a GBK candidate under ni");
 
@@ -908,7 +910,7 @@ mod unloaded_library_tests {
                     .iter()
                     .enumerate()
                     .find_map(|(index, row)| {
-                        let token = row.token.map(PhraseToken::value)?;
+                        let token = row.token.get().map(PhraseToken::value)?;
                         wanted(row.candidate_type(), token).then_some((index, token))
                     })
                     .expect("the fixture holds a row of this kind")

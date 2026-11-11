@@ -17,6 +17,7 @@
 
 use oxpinyin_core::{Dictionary as _, PhraseToken};
 use oxpinyin_facade::TextSpan;
+use std::cell::Cell;
 use std::ffi::c_uint;
 use std::ptr;
 
@@ -101,7 +102,7 @@ fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
         .candidates
         .iter()
         .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
-        .and_then(|c| c.token)
+        .and_then(|c| c.token.get())
         .expect("a phrase candidate carries its token")
         .value()
 }
@@ -267,6 +268,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         inst.state.candidates[longer_index]
             .token
+            .get()
             .expect("a LONGER row carries its token")
     };
 
@@ -319,7 +321,7 @@ fn predicted_row(
     let index = inst
         .candidates
         .iter()
-        .position(|c| c.candidate_type() == kind && c.token.is_some())
+        .position(|c| c.candidate_type() == kind && c.token.get().is_some())
         .expect("the prediction holds a row of this kind");
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(pinyin_get_candidate(
@@ -424,12 +426,12 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
     inst.state.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),
-        type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+        type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
         nbest_index: 0,
-        token: Some(PhraseToken::new(token)),
+        token: Cell::new(Some(PhraseToken::new(token))),
         source_index: 0,
     });
-    let candidate = &mut inst.state.candidates[0] as *mut CapiCandidate as *mut LookupCandidate;
+    let candidate = crate::state::candidate_ptr(&inst.state.candidates[0]);
     let before = inst.core.lm.amplified_total();
     assert!(pinyin_choose_predicted_candidate(instance, candidate));
     // SAFETY: the C operation completed; re-borrow its live instance.
@@ -497,7 +499,8 @@ fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
             .candidates
             .iter()
             .rposition(|c| {
-                c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
+                c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE
+                    && c.token.get().is_some()
             })
             .expect("a word candidate")
     };
@@ -1308,7 +1311,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| {
-            let baked = c.token.map_or(0, |token| {
+            let baked = c.token.get().map_or(0, |token| {
                 inst.core
                     .dict
                     .live_items()
@@ -1665,7 +1668,7 @@ fn collect_gbk_candidate_tokens(instance: *mut PinyinInstance, input: &str) -> V
     inst.state
         .candidates
         .iter()
-        .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
+        .filter_map(|c| c.token.get().map(oxpinyin_core::PhraseToken::value))
         .filter(|token| (token >> 24) == 2)
         .collect()
 }
