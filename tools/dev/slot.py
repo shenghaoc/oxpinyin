@@ -421,12 +421,14 @@ def supervised(command, **options):
         release(process)
 
 
-def wait_child(process, timeout=None):
+def wait_child(process, timeout=None, *, usage=False):
     """Wait for a child status while checking cancellation and an optional timeout.
 
     Timeout is in seconds. On any exception, terminate the process group and
     reap the leader before propagating the error.
     """
+    if usage and not hasattr(os, "wait4"):
+        raise ValueError("per-child rusage requires wait4")
     deadline = None if timeout is None else time.monotonic() + timeout
     try:
         while True:
@@ -434,6 +436,16 @@ def wait_child(process, timeout=None):
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise subprocess.TimeoutExpired(process.args, timeout)
+            if usage:
+                # This is the sole reaper. Do not call poll/wait before wait4.
+                pid, status, rusage = os.wait4(process.pid, os.WNOHANG)
+                if pid:
+                    process.returncode = os.waitstatus_to_exitcode(status)
+                    process.rusage = rusage
+                    check_cancelled()
+                    return process.returncode
+                CANCELLED.wait(min(0.01, remaining) if remaining is not None else 0.01)
+                continue
             try:
                 rc = process.wait(timeout=min(0.1, remaining) if remaining is not None else 0.1)
                 check_cancelled()

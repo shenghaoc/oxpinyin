@@ -38,6 +38,12 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <mach-o/loader.h>
+#include <mach/mach_time.h>
+#include <sys/resource.h>
+#endif
 #if defined(__linux__)
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
@@ -554,6 +560,11 @@ static int dump_malloc_info(const char *dir, const char *tag) {
 /* One 20-input cycle. For every input the instance is reset, then each
  * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
  * drives the keystroke path: parse, guess candidates, read the count. */
+#if defined(__APPLE__) && defined(MEASURE_LINKED)
+static bool measure_failed;
+static uint64_t measure_operations;
+#endif
+
 static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst) {
     uint64_t checksum = 1469598103934665603ULL;
 
@@ -564,8 +575,12 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
 
         if (length + 1 > sizeof prefix)
             return checksum;
-        if (!s->reset(inst))
+        if (!s->reset(inst)) {
+#if defined(__APPLE__) && defined(MEASURE_LINKED)
+            measure_failed = true;
+#endif
             return checksum;
+        }
 
         for (size_t j = 0; j < length; j++) {
             prefix[j] = input[j];
@@ -575,6 +590,10 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
             bool guessed = s->guess_candidates(inst, 0, DEFAULT_SORT);
             guint candidate_count = 0;
             bool counted = s->get_n_candidate(inst, &candidate_count);
+#if defined(__APPLE__) && defined(MEASURE_LINKED)
+            measure_operations++;
+            if (!consumed || !guessed || !counted) measure_failed = true;
+#endif
 
             checksum ^= (uint64_t)consumed;
             checksum ^= guessed ? 0x9e3779b97f4a7c15ULL : 0xbf58476d1ce4e5b9ULL;
@@ -1060,12 +1079,132 @@ static int run_perf_mode(int argc, char **argv) {
     return 0;
 }
 
+/* Native measurement uses normal linkage; the legacy pin drivers retain dlopen. */
+#if defined(__APPLE__) && defined(MEASURE_LINKED)
+extern pinyin_context_t *pinyin_init(const char *, const char *);
+extern void pinyin_fini(pinyin_context_t *);
+extern pinyin_instance_t *pinyin_alloc_instance(pinyin_context_t *);
+extern void pinyin_free_instance(pinyin_instance_t *);
+extern bool pinyin_set_options(pinyin_context_t *, pinyin_option_t);
+extern size_t pinyin_parse_more_full_pinyins(pinyin_instance_t *, const char *);
+extern bool pinyin_guess_candidates(pinyin_instance_t *, size_t, guint);
+extern bool pinyin_get_n_candidate(pinyin_instance_t *, guint *);
+extern bool pinyin_reset(pinyin_instance_t *);
+
+static bool measure_image(const char *path, const char *expected_uuid) {
+    Dl_info info;
+    char actual[4096], expected[4096], uuid[33];
+    if (!dladdr((void *)pinyin_init, &info) || !info.dli_fname ||
+        !realpath(info.dli_fname, actual) || !realpath(path, expected) ||
+        strcmp(actual, expected)) return false;
+    const struct mach_header_64 *header = info.dli_fbase;
+    if (header->magic != MH_MAGIC_64) return false;
+    const unsigned char *cursor = (const unsigned char *)(header + 1);
+    const unsigned char *end = cursor + header->sizeofcmds;
+    for (uint32_t i = 0; i < header->ncmds; i++) {
+        if ((size_t)(end - cursor) < sizeof(struct load_command)) return false;
+        const struct load_command *command = (const void *)cursor;
+        if (command->cmdsize < sizeof *command || command->cmdsize > (size_t)(end - cursor)) return false;
+        if (command->cmd == LC_UUID) {
+            if (command->cmdsize != sizeof(struct uuid_command)) return false;
+            const struct uuid_command *id = (const void *)cursor;
+            for (int j = 0; j < 16; j++) snprintf(uuid + 2*j, 3, "%02x", id->uuid[j]);
+            return !strcmp(uuid, expected_uuid);
+        }
+        cursor += command->cmdsize;
+    }
+    return false;
+}
+
+static double measure_cpu(const struct rusage *usage) {
+    return (double)usage->ru_utime.tv_sec + (double)usage->ru_stime.tv_sec +
+        ((double)usage->ru_utime.tv_usec + (double)usage->ru_stime.tv_usec) / 1000000.0;
+}
+
+static int run_measure(int argc, char **argv) {
+    if (argc != 5 || !measure_image(argv[2], argv[3])) {
+        fputs("measurement: wrong loaded image or UUID\n", stderr);
+        return 1;
+    }
+    const char *setting = getenv("PERF_CYCLES");
+    char *end = NULL;
+    long cycles = setting ? strtol(setting, &end, 10) : 0;
+    if (!setting || !*setting || *end || cycles < 1 || cycles > 100000) {
+        fputs("measurement: invalid cycle count\n", stderr);
+        return 1;
+    }
+    struct symbols sym = {.init=pinyin_init, .fini=pinyin_fini,
+        .alloc_instance=pinyin_alloc_instance, .free_instance=pinyin_free_instance,
+        .set_options=pinyin_set_options, .parse_full=pinyin_parse_more_full_pinyins,
+        .guess_candidates=pinyin_guess_candidates, .get_n_candidate=pinyin_get_n_candidate,
+        .reset=pinyin_reset};
+    char user[4096];
+    if (!user_dir_template(user, sizeof user, "bisect-measure") || !mkdtemp(user)) return 1;
+    pinyin_context_t *ctx = sym.init(argv[4], user);
+    if (!ctx) { perf_remove_user_dir(user); return 1; }
+    pinyin_instance_t *instance = sym.alloc_instance(ctx);
+    if (!instance || !sym.set_options(ctx, DEFAULT_FLAGS)) {
+        if (instance) sym.free_instance(instance);
+        sym.fini(ctx);
+        perf_remove_user_dir(user);
+        return 1;
+    }
+    uint64_t expected = 0, fingerprint = 1469598103934665603ULL;
+    for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++) expected += strlen(PERF_CYCLE_INPUTS[i]);
+    expected *= (uint64_t)cycles;
+    struct rusage before, after;
+    /* The kernel's own per-process counters, read around the same loop. */
+    struct rusage_info_v4 entered, left;
+    mach_timebase_info_data_t timebase;
+    bool captured = mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.denom != 0;
+    captured = proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&entered) == 0 && captured;
+    captured = getrusage(RUSAGE_SELF, &before) == 0 && captured;
+    uint64_t start = now_ns();
+    for (long i = 0; i < cycles; i++) {
+        fingerprint ^= run_perf_cycle(&sym, instance);
+        fingerprint *= 1099511628211ULL;
+    }
+    uint64_t stop = now_ns();
+    captured = getrusage(RUSAGE_SELF, &after) == 0 && captured;
+    captured = proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&left) == 0 && captured;
+    sym.free_instance(instance);
+    sym.fini(ctx);
+    struct rusage_info_v4 memory;
+    captured = proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&memory) == 0 && captured;
+    perf_remove_user_dir(user);
+    double cpu = captured ? measure_cpu(&after) - measure_cpu(&before) : 0;
+    /* ri_runnable_time is in Mach absolute time units: on a core or waiting for one.
+     * The kernel advances it at scheduling events only, so a short loop may read 0. */
+    double runnable = captured ? (double)(left.ri_runnable_time - entered.ri_runnable_time)
+                                 * timebase.numer / timebase.denom / 1e9 : 0;
+    if (!captured || !start || stop <= start || cpu <= 0 ||
+        left.ri_instructions <= entered.ri_instructions || left.ri_cycles <= entered.ri_cycles ||
+        !memory.ri_lifetime_max_phys_footprint || measure_failed || measure_operations != expected) {
+        fputs("measurement: incomplete workload or broken required capture\n", stderr);
+        return 1;
+    }
+    printf("{\"pid\":%d,\"operations\":%llu,\"cycles\":%ld,"
+           "\"fingerprint\":\"%016llx\",\"wall_seconds\":%.9f,"
+           "\"cpu_seconds\":%.9f,\"loop_instructions\":%llu,\"loop_cpu_cycles\":%llu,"
+           "\"loop_runnable_seconds\":%.9f,\"lifetime_max_phys_footprint_bytes\":%llu}\n",
+           getpid(), (unsigned long long)measure_operations, cycles,
+           (unsigned long long)fingerprint, (double)(stop-start)/1e9, cpu,
+           (unsigned long long)(left.ri_instructions - entered.ri_instructions),
+           (unsigned long long)(left.ri_cycles - entered.ri_cycles), runnable,
+           (unsigned long long)memory.ri_lifetime_max_phys_footprint);
+    return 0;
+}
+#endif
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 #include "teardown.h"
 #include "sentence_perf.h"
 
 int main(int argc, char **argv) {
+#if defined(__APPLE__) && defined(MEASURE_LINKED)
+    if (argc > 1 && !strcmp(argv[1], "--measure")) return run_measure(argc, argv);
+#endif
     if (argc > 1 && (strcmp(argv[1], "--perf-sentence") == 0 ||
                      strcmp(argv[1], "--perf-typing-sequence") == 0))
         return run_sentence_perf_mode(argc, argv);

@@ -502,6 +502,24 @@ else:
                     self.assertFalse((self.work / 'strip-calls').exists())
                     self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
 
+        def test_macos_dsym_consumes_retained_lto_object_before_cleanup(self):
+            self.darwin_fakes()
+            self.fake('xcrun', r'''import json, os, sys
+from pathlib import Path
+args=sys.argv[1:]
+assert args[0]=='dsymutil'
+commands=json.loads(Path(os.environ['LINK_CALLS']).read_text())[0]
+option=next(word for word in commands if word.startswith('-Wl,-object_path_lto,'))
+assert Path(option.split(',',2)[2]).parent.exists()
+assert Path(args[1]).exists()
+Path(args[args.index('-o')+1]).mkdir()
+''')
+            result, stage = self.install(env={'CARGO_BUILD_TARGET':'aarch64-apple-darwin',
+                'FIXTURE_HOST':'aarch64-apple-darwin', 'OXPINYIN_DSYM':'1'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((stage/'usr/lib/libpinyin.15.0.0.dylib.dSYM').is_dir())
+            self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
+
         def test_macos_relink_rejects_bad_exports_or_identity_before_replacement(self):
             self.darwin_fakes()
             for environment, diagnostic in [({'LINK_EXIT':'7'}, ''), ({'NM_EXTRA':'1'}, 'extra:'),
