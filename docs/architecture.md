@@ -22,7 +22,7 @@
 
 See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
-CI's Linux, macOS and Windows lanes build tkrzw with `.github/actions/tkrzw`.
+CI's Linux lanes build tkrzw with `.github/actions/tkrzw`; its macOS and Windows lanes install the vcpkg overlay port.
 The peer matrix remains on Linux.
 
 The data generators in `oxpinyin-utils` use `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chunk_format`.

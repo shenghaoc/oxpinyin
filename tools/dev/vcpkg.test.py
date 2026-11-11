@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from tools.dev import vcpkg
 
 WINDOWS = 'x64-windows'
+MACOS = 'arm64-osx-oxpinyin'
 PACKAGES = 'glib:x64-windows pkgconf:x64-windows tkrzw:x64-windows'
 
 
@@ -77,6 +78,39 @@ class RunnerCheckout(unittest.TestCase):
         self.assertNotEqual(other['outputs']['packages'], selected['outputs']['packages'])
         self.assertNotIn('packages', vcpkg.binary_cache(self.env, WINDOWS, capture=git(0, b'abc123\n'))['outputs'])
 
+    def test_macos_key_also_names_the_checkout_path(self):
+        env = {**self.env, 'ImageOS': 'macos26'}
+        selected = vcpkg.binary_cache(env, MACOS, capture=git(0, b'abc123\n'))
+        root = hashlib.sha256(self.root.as_posix().encode()).hexdigest()[:16]
+        self.assertEqual(selected['outputs'], {
+            'dir': (self.root.parent / 'tmp/vcpkg-binary-cache').as_posix(),
+            'prefix': f'vcpkg-bin-macos26-{MACOS}-{root}-',
+            'key': f'vcpkg-bin-macos26-{MACOS}-{root}-abc123-macos26-20261111.1'})
+        other = self.root.parent / 'other'
+        self.root.rename(other)
+        moved = vcpkg.binary_cache({**env, 'VCPKG_INSTALLATION_ROOT': str(other)}, MACOS, capture=git(0, b'abc123\n'))
+        self.assertNotEqual(moved['outputs']['prefix'], selected['outputs']['prefix'])
+
+    def test_macos_install_uses_the_overlays_and_checks_the_installed_library(self):
+        calls = []
+        env = {'VCPKG_ROOT': str(self.root), 'PKG_CONFIG_PATH': '/opt/homebrew/lib/pkgconfig'}
+        result = vcpkg.runner_install(env, MACOS,
+                                      run=lambda command, **options: calls.append((list(map(str, command)), options)))
+        installed = self.root / 'installed' / MACOS
+        own = (installed / 'lib/pkgconfig').as_posix()
+        self.assertEqual(result, {
+            'environment': {'PKG_CONFIG_PATH': own + os.pathsep + '/opt/homebrew/lib/pkgconfig'},
+            'path': [(installed / 'tools/tkrzw/bin').as_posix()]})
+        self.assertEqual([command for command, _ in calls], [
+            [str(self.program), 'install', f'tkrzw:{MACOS}', f'--overlay-ports={ROOT / "vcpkg-overlays"}',
+             f'--overlay-triplets={ROOT / "triplets"}'],
+            ['pkg-config', '--modversion', '--cflags', '--libs', 'tkrzw'],
+            ['otool', '-D', str(installed / 'lib/libtkrzw.dylib')]])
+        self.assertEqual(calls[1][1]['env']['PKG_CONFIG_PATH'], own)
+        self.assertEqual(vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, MACOS,
+                                              run=lambda command, **options: None)['environment'],
+                         {'PKG_CONFIG_PATH': own})
+
     def test_checkout_without_git_metadata_is_keyed_on_its_baseline(self):
         digest = hashlib.sha256(b'{"default": {}}').hexdigest()[:40]
         key = vcpkg.binary_cache(self.env, WINDOWS, capture=git(128))['outputs']['key']
@@ -94,7 +128,7 @@ class RunnerCheckout(unittest.TestCase):
                                       run=lambda command, **options: calls.append((list(map(str, command)), options)))
         installed = self.root / 'installed' / WINDOWS
         own = (installed / 'lib/pkgconfig').as_posix()
-        triplets = [f'--overlay-triplets={ROOT / "triplets"}'] if (ROOT / 'triplets').is_dir() else []
+        triplets = [f'--overlay-triplets={ROOT / "triplets"}']
         self.assertEqual([command for command, _ in calls], [
             [str(self.program), 'install', *PACKAGES.split(), f'--overlay-ports={ROOT / "vcpkg-overlays"}', *triplets],
             [str(installed / 'tools/pkgconf/pkgconf.exe'), '--modversion', '--cflags', '--libs', 'glib-2.0', 'tkrzw']])
@@ -146,6 +180,14 @@ class Workflow(unittest.TestCase):
             self.assertIn(f'        run: uv run --no-project --managed-python python -X lazy_imports=normal'
                           f' -m tools.dev.vcpkg {command}\n', text)
         for shell in ('sha256sum', ' vcpkg install', 'specs', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'rev-parse'):
+            self.assertNotIn(shell, text)
+
+    def test_macos_job_delegates_to_this_module(self):
+        text = job('test-macos')
+        for command in ('cache-key', 'install'):
+            self.assertIn(f'        run: uv run --no-project --managed-python python -X lazy_imports=normal'
+                          f' -m tools.dev.vcpkg {command} --triplet "$VCPKG_TRIPLET"\n', text)
+        for shell in ('shasum', 'readlink', '"$VCPKG_ROOT/vcpkg" install', 'vcpkg_cache', 'GITHUB_ENV'):
             self.assertNotIn(shell, text)
 
 

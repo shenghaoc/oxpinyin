@@ -77,7 +77,7 @@ Ubuntu's packaged libtkrzw is defective
 ([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md)).
 `tools/tkrzw/distro-probe.sh` checks the library on `PATH`, and provisioning runs
 it on an Ubuntu host. A `just tkrzw-build` build, the Debian package and the
-Windows vcpkg build need no probe.
+macOS and Windows vcpkg builds need no probe.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
@@ -327,12 +327,37 @@ put the Homebrew `bin` directory before `/bin` on `PATH` in your shell profile,
 and open a new terminal.
 
 ```bash
-brew install tkrzw glib pkgconf
+brew install glib pkgconf
 mkdir -p ~/src
 cd ~/src
 git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
+
+The vcpkg route for tkrzw supports Apple silicon only; there is no Intel
+triplet. tkrzw comes from the repository's vcpkg overlay port, which builds the pinned
+upstream revision with upstream's own configure script and Makefile. Clone
+[vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started) and run its
+`bootstrap-vcpkg.sh`. Export `VCPKG_ROOT` as that checkout, here and in your
+shell profile; the `just` recipes read it. Then, from the repository root:
+
+```bash
+export VCPKG_ROOT=<your vcpkg checkout>
+"$VCPKG_ROOT/vcpkg" install tkrzw:arm64-osx-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
+export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/tools/tkrzw/bin:$PATH"
+pkg-config --modversion tkrzw
+```
+
+`triplets/arm64-osx-oxpinyin.cmake` is vcpkg's `arm64-osx-dynamic` triplet with
+two settings. It builds the release variant only. It also leaves the install
+name of `libtkrzw` as upstream's build records it, the absolute path in
+`$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib`, so every binary linked against
+it loads it with no rpath and no `DYLD_LIBRARY_PATH`. Do not move the vcpkg
+checkout afterwards; reinstall the port instead. The triplet makes
+`VCPKG_ROOT` part of the package's identity, so an install from a new root
+builds from source and never restores the library of another root from
+vcpkg's binary cache.
 
 Run the uv, just and interpreter commands from the Linux section, in that
 order (`brew install just` supplies just). For the checksum step on macOS, replace
@@ -344,20 +369,16 @@ and run:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-core -p oxpinyin-engine
-export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
 
 `export` sets a value that the commands in this terminal inherit. pkg-config
-finds Homebrew's tkrzw, the selected backend. Its `tkrzw.pc` names
-the lz4, lzma and zstd libraries without their directory, and
-`LIBRARY_PATH` supplies that directory. To use a tkrzw that you built yourself (`just tkrzw-build
-DIR`), put `DIR/lib/pkgconfig` first on `PKG_CONFIG_PATH` and `DIR/lib` on
-`DYLD_LIBRARY_PATH` instead. This is a real storage link/run check; a
+finds the vcpkg install of tkrzw, the selected backend, through the
+`PKG_CONFIG_PATH` export above. This is a real storage link/run check; a
 `cargo check` alone does not run the tests.
 In a fresh Bash terminal, go back to the checkout, source the Cargo environment,
-and repeat both exports and the check. Linux C-ABI packaging and Linux reference
+and repeat the exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
 The nightly macOS CI job uses this broader portable scope:
@@ -366,8 +387,8 @@ The nightly macOS CI job uses this broader portable scope:
 cargo test --locked --workspace
 ```
 
-The macOS job of CI builds tkrzw with `.github/actions/tkrzw` instead of
-using Homebrew's. Berkeley DB is a non-default backend. To use it:
+The macOS job of CI installs tkrzw the same way. Berkeley DB is a non-default
+backend. To use it:
 
 1. Run `brew install berkeley-db@5`.
 2. Export the keg-only `SYSTEM_DEPS_BDB_*` overrides
@@ -378,7 +399,8 @@ using Homebrew's. Berkeley DB is a non-default backend. To use it:
 Keep the target and user-data directories of each backend separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
-select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. They use the one
+select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
+tkrzw under `VCPKG_ROOT`. They use the one
 nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 `setarch`. In `fuzz/`, rustup installs the toolchain that the file names:
 
@@ -395,7 +417,7 @@ just sanitize tkrzw thread
 ```
 
 `capi-commands` also runs natively. pkg-config finds the GLib and
-tkrzw of the facade, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitizer runs with leak detection off on
+tkrzw of the facade. AddressSanitizer runs with leak detection off on
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target. Both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
@@ -463,7 +485,7 @@ workspace on the [default backend](backends.md). It also runs the tools Python
 harness (`just test-tools`).
 
 - Windows installs the repository's tkrzw overlay port and GLib through vcpkg.
-  The overlay reads the same pinned revision as the Linux/macOS build recipe.
+  The overlay reads the same pinned revision as the Linux build recipe.
   CMake exports functions and vtables; patched public data declarations export
   from the DLL and import in consumers. The release library uses the dynamic CRT
   (`/MD`), matching oxpinyin's C++ bridge and vcpkg's `x64-windows` triplet.
@@ -739,7 +761,7 @@ and stop after the required checks.
   `pkg-config --modversion glib-2.0` and `pkg-config --modversion tkrzw`
   check discovery. The setup check prints the backend version and the missing-libclang diagnostic of bindgen,
   so keep those lines too.
-- macOS cannot link the lz4/lzma/zstd libraries of tkrzw: repeat the `LIBRARY_PATH` export
+- macOS cannot find tkrzw: repeat the `PKG_CONFIG_PATH` export
   above. For Berkeley DB, repeat the `SYSTEM_DEPS_BDB_*` exports
   ([backends](backends.md#discovery-and-overrides)). Do not treat a
   successful Clippy/check as a link test.

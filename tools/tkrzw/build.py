@@ -1,11 +1,11 @@
 """Build upstream tkrzw at the provisioning revision into a prefix.
 
 tools/cloud/setup.sh builds this revision when no certified host libtkrzw is
-available, and CI's tkrzw composite action builds it on Linux and macOS. The source
+available, and CI's tkrzw composite action builds it on Linux. The source
 is fetched by commit and the checkout is checked against that commit before
-anything is built. Linux and macOS use
-`./configure --prefix=DIR && make && make install`. Windows uses the vcpkg
-overlay port, which reads the same pin. Every
+anything is built. Linux uses
+`./configure --prefix=DIR && make && make install`. macOS and Windows use the
+vcpkg overlay port, which reads the same pin. Every
 build leaves DIR/lib/pkgconfig/tkrzw.pc, so a consumer finds it through
 PKG_CONFIG_PATH, and must hold its headers, library, tkrzw.pc and utility (with
 the utility loading DIR's own shared libtkrzw) before DIR/REV is written.
@@ -44,7 +44,7 @@ TKRZW_REV = PIN['revision']
 TKRZW_URL = 'https://github.com/estraier/tkrzw'
 # Written last, so a prefix carrying it holds a complete, checked build.
 MARKER = 'REV'
-LIBRARY = {'Linux': 'lib/libtkrzw.so.1', 'Darwin': 'lib/libtkrzw.dylib'}
+LIBRARY = {'Linux': 'lib/libtkrzw.so.1'}
 
 
 class RecipeError(RuntimeError):
@@ -116,12 +116,6 @@ def posix_build(source, prefix, jobs, env):
     run(['make', 'install'], cwd=source, env=env)
 
 
-def darwin_pc(text):
-    """configure writes `-lstdc++` into tkrzw.pc on every host; macOS SDKs have
-    no libstdc++, and the library itself links libc++."""
-    return re.sub(r'(?<=\s)-lstdc\+\+(?=\s|$)', '-lc++', text)
-
-
 def msvc_environment(env, *, capture=subprocess.run):
     """The Visual Studio developer environment: the caller's, or vcvars' via vswhere."""
     if lookup(env, 'VCToolsInstallDir'):
@@ -152,9 +146,6 @@ def install_environment(prefix, env, system):
     child = dict(env)
     path = next((key for key in child if key.upper() == 'PATH'), 'PATH')
     child[path] = str(Path(prefix) / 'bin') + os.pathsep + child.get(path, '')
-    # otool -L must read the recorded install name, not a dyld override.
-    for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
-        child.pop(name, None)
     if system == 'Linux':
         child['LD_LIBRARY_PATH'] = str(Path(prefix) / 'lib') + (':' + env['LD_LIBRARY_PATH'] if env.get('LD_LIBRARY_PATH') else '')
     return child
@@ -209,9 +200,6 @@ def build(prefix, *, source=None, jobs=None, env=None):
         fetch(tree, env)
         prefix.mkdir(parents=True, exist_ok=True)
         posix_build(tree, prefix, jobs, env)
-    if system == 'Darwin':
-        pc = prefix / 'lib/pkgconfig/tkrzw.pc'
-        pc.write_text(darwin_pc(pc.read_text()))
     check_install(prefix, env, system=system)
     (prefix / MARKER).write_text(TKRZW_REV + '\n')
     print(f'tkrzw: {TKRZW_REV[:7]} installed in {prefix}; set PKG_CONFIG_PATH={prefix / "lib" / "pkgconfig"} '

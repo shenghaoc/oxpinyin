@@ -7,9 +7,11 @@ With MSVC, pkgconf can print native compiler/linker flags:
     pkgconf --msvc-syntax --cflags --libs tkrzw
 
 Put the installed triplet's lib/pkgconfig directory on PKG_CONFIG_PATH.
-For dynamic builds, put its bin directory on PATH when running consumers.
+For dynamic Windows builds, put its bin directory on PATH when running
+consumers. On macOS the utilities are in tools/tkrzw/bin.
 The installed headers select the linkage; no export/import macro is required
 from consumers. Compile C++ consumers with the same CRT and configuration
 as the selected library.
 
-Optional compression features are zlib, zstd, lz4 and lzma. All default off.
+Optional compression features are zlib, zstd, lz4 and lzma, on Windows only.
+All default off.

@@ -59,7 +59,10 @@ def revision(root, *, capture):
 def binary_cache(env, triplet, packages='', *, capture, which=shutil.which):
     """The environment and step outputs that select the binary cache for TRIPLET.
 
-    The key changes with the checkout revision and the runner image. PACKAGES,
+    The key changes with the checkout revision and the runner image. A macOS
+    key also names the checkout path: the installed libtkrzw records its own
+    path there as its install name, so an archive built under another root is
+    not reused. PACKAGES,
     the space-separated specs a job installs, adds a `packages` output for the
     workflow to append: a different request is a different cache entry.
     Paths are published with forward slashes; the Windows steps run in bash.
@@ -70,6 +73,8 @@ def binary_cache(env, triplet, packages='', *, capture, which=shutil.which):
     root = runner_checkout(env, which=which)
     directory = (Path(env['RUNNER_TEMP']) / 'vcpkg-binary-cache').as_posix()
     prefix = f"vcpkg-bin-{env['ImageOS']}-{triplet}-"
+    if 'osx' in triplet:
+        prefix += hashlib.sha256(root.as_posix().encode()).hexdigest()[:16] + '-'
     outputs = {'dir': directory, 'prefix': prefix,
                'key': f"{prefix}{revision(root, capture=capture)}-{env['ImageOS']}-{env['ImageVersion']}"}
     if packages.split():
@@ -113,6 +118,13 @@ def runner_install(env, triplet, packages='', *, run, root=ROOT):
             env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
         return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
                     path=[(installed / 'bin').as_posix()])
+    if 'osx' in triplet:
+        # The installed library must answer pkg-config by itself and name its own path.
+        run(['pkg-config', '--modversion', '--cflags', '--libs', 'tkrzw'], env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
+        run(['otool', '-D', installed / 'lib/libtkrzw.dylib'], env=env, cwd=root)
+        inherited = os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else ''
+        return dict(environment={'PKG_CONFIG_PATH': own + inherited},
+                    path=[(installed / 'tools/tkrzw/bin').as_posix()])
     raise ValueError(f'no install rule for triplet {triplet}')
 
 
