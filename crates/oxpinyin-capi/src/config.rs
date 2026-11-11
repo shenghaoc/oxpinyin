@@ -52,11 +52,8 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// the process, as `set_scheme`'s `default: abort()` does
 /// (`pinyin_parser2.cpp:398`, register row 5d).
 ///
-/// Exported in every build: it is in the pin's `libpinyin.ver`. It was
-/// compiled out of the shipped artifact while the subset scoping
-/// (exception (d), retired 2026-09-06) stood; the export gate
-/// (`tools/abi/check-exports.sh --shipped`) found the packaged library
-/// one symbol short of the version script on 2026-09-08.
+/// Exported in every build: it is in the pin's `libpinyin.ver`, and the
+/// export gate (`just abi exports`) checks the shipped artifact.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_full_pinyin_scheme(
     context: *mut PinyinContext,

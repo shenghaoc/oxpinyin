@@ -26,7 +26,7 @@ from . import bench, identity, reports
 from .bench import Arm, Bench, fail, setting
 
 SCRATCH = Path('/performance/tmp')
-CALLGRIND = 'run-callgrind-differential.sh'
+CALLGRIND = 'just measure-callgrind-differential'
 SYSTEM_IMPORT = 'system-import-profile'
 LP_ROOT = Path('/opt/libpinyin-tkrzw')
 DATA = LP_ROOT / 'lib/libpinyin/data'
@@ -370,7 +370,3 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
         if not (slot.CANCELLED.is_set() and isinstance(stop.code, str)):
             raise
         fail(stop.code, slot.cancellation_status())
-
-
-RECIPES = {'callgrind-control': callgrind_control, 'callgrind-differential': callgrind_differential,
-           'system-import-profile': system_import_profile}

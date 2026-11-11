@@ -7,7 +7,7 @@
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
 // Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.

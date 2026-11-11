@@ -1,7 +1,8 @@
 # Pin-built libpinyin on arm64: five non-crash contract cases, two out-of-range float-to-`guint32` stores (#1137)
 
-Recorded 2026-10-24 UTC. No captures or logs are committed; the commands
-below reproduce every figure.
+Recorded 2026-10-24 UTC. No captures or logs are committed. The
+observations are recorded evidence; the disassembly commands below
+reproduce the instruction figures.
 
 This document diagnoses the five #1132 contract cases that exit 0 and
 are byte-identical between the amd64 pin and oxpinyin, but return a
@@ -13,16 +14,19 @@ different candidate order from the arm64 pin:
 - `table-conf-lambda-one-and-a-half-zhuyin`
 - `table-conf-lambda-two-zhuyin`
 
-They reduce to two independent defects, both the same C++ undefined
+They reduce to two independent defects. Both are the same C++ undefined
 behaviour at two separate sites: a `float` expression assigned to a
 `guint32` when the value is negative or at least 2³². Neither plain
-`char` signedness nor an uninitialised read is involved. The eight crash
-cases are covered by a short note at the end; their different arm64
-signals do not require a second source defect.
+`char` signedness nor an uninitialised read is involved. A short note at the
+end covers the eight crash cases. Their different arm64 signals do not
+require a second source defect.
 
 ## Result
 
-| case | defect | arm64 pin | amd64 pin = arm64 subject |
+The table is recorded evidence from before #1416, when oxpinyin on arm64 gave the amd64 pin's result.
+Since #1416, oxpinyin gives the arm64 pin's result for the two candidate-frequency defects on every architecture.
+
+| case | defect | arm64 pin | amd64 pin |
 | --- | --- | --- | --- |
 | `row58-unsigned-score-off` | pinyin predicted-prefix candidate frequency, `src/pinyin.cpp:1821-1824` | `甲甲` is last of the 65 two-character rows (index 64, after `们的`) | `甲甲` first (index 0) |
 | `row58-unsigned-score-on` | the same site; the option bit does not reach this branch | identical to `-off` | identical to `-off` |
@@ -31,14 +35,13 @@ signals do not require a second source defect.
 | `table-conf-lambda-two-zhuyin` | the same site | the same arm64 pin rows as `million` | `禰 妳 堄 儗 輗 鉨 齯 鶂 貎 膩` |
 
 The arm64 pin's three zhuyin observations are byte-identical to one
-another (bdb canonical hash `d4a2282014a0`), while the three amd64-pin
-observations differ (`ce9baa647ac0`, `7fd8ff5fcf7f`,
-`49e68e3f23f7`). That is the signature of every negative candidate
-frequency becoming the same value on arm64, not of a scanner difference
-or a heap-dependent read. The two `row58` arm64-pin observations are
-likewise identical (`5e04d6ce4a92`), as are the two amd64-pin
-observations (`6f99d0e60bdb`); the `DYNAMIC_ADJUST` bit cannot change
-the predicted-prefix branch, which reads no bigram.
+another (bdb canonical hash `d4a2282014a0`). The three amd64-pin
+observations differ (`ce9baa647ac0`, `7fd8ff5fcf7f`, `49e68e3f23f7`). This
+shows that every negative candidate frequency becomes the same value on
+arm64. It does not show a scanner difference or a heap-dependent read. The
+two `row58` arm64-pin observations are also identical (`5e04d6ce4a92`), and
+so are the two amd64-pin observations (`6f99d0e60bdb`). The `DYNAMIC_ADJUST`
+bit cannot change the predicted-prefix branch, which reads no bigram.
 
 ## Artifacts and revision
 
@@ -69,8 +72,7 @@ the predicted-prefix branch, which reads no bigram.
   and
   `e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5`,
   equal to the `_linux_arm64` rows of `tools/oracle/oracle-pin.txt`.
-  Build and host details are in
-  [`oracle-arm64-1132.md`](oracle-arm64-1132.md).
+  Build and host details were recorded in #1132.
 - Observations: the arm64 side is #1132's `--observations` JSONL for the
   13 excluded cases (`arm64-13-{bdb,kc,tkrzw}.jsonl` in that lane). The
   amd64 side is the #1132 amd64 capture recorded in issue comment
@@ -97,16 +99,16 @@ the predicted-prefix branch, which reads no bigram.
   ```
 
   The kc and tkrzw observations show the same five candidate-order
-  differences; only the `user.conf` backend word differs, as #1132
-  records. The bdb objects are cited for disassembly; the source is the
-  same at the pin and the observed candidate rows are the same on all
+  differences. Only the `user.conf` backend word differs, as #1132
+  records. This record cites the bdb objects for disassembly. The source is
+  the same at the pin, and the observed candidate rows are the same on all
   three cells.
 
 ## Method
 
-The pin's source is read first. Where the source leaves the generated
-code open — which instruction performs the `guint32` assignment — the
-two pin-built objects are disassembled with
+The pin's source is read first. The source does not settle which
+instruction performs the `guint32` assignment. For that question, the two
+pin-built objects are disassembled with
 
 ```sh
 objdump -dlS -C --no-show-raw-insn \
@@ -115,11 +117,11 @@ objdump -dlS -C --no-show-raw-insn \
   <prefix>/lib/libpinyin.so.15.0.0
 ```
 
-The host's `/usr/bin/objdump` is Apple LLVM 21.0.0; its
-`--prefix-strip` is a directory-count. GNU objdump takes the same
+The host's `/usr/bin/objdump` is Apple LLVM 21.0.0. Its
+`--prefix-strip` is a directory count. GNU objdump takes the same
 numeric level (`--prefix-strip=3`), not a pathname. Level 3 strips the
 three directory names `usr`, `src` and `libpinyin` from the recorded
-`/usr/src/libpinyin/src/pinyin.cpp`, leaving `src/pinyin.cpp`;
+`/usr/src/libpinyin/src/pinyin.cpp`, which leaves `src/pinyin.cpp`.
 `--prefix` then supplies the pin checkout. The check
 
 ```sh
@@ -135,9 +137,9 @@ any figure below.
 
 ### Case input
 
-Both `row58-unsigned-score-*` cases do the same thing; `-on` sets the
-`DYNAMIC_ADJUST` bit and `-off` clears it. The probe is
-`row58_signed_score` in `tools/bisection/contract-diff.py`:
+Both `row58-unsigned-score-*` cases do the same thing. `-on` sets the
+`DYNAMIC_ADJUST` bit, and `-off` clears it. The probe (recorded
+evidence) does this:
 
 1. Import one phrase `我甲甲` (`wo3'jia3'jia3`) with count
    `1431655631`. `_add_phrase` stores `count * 3`
@@ -153,8 +155,8 @@ Both `row58-unsigned-score-*` cases do the same thing; `-on` sets the
    candidate list.
 
 The phrase `我甲甲` reaches the list as a `PREDICTED_PREFIX_CANDIDATE`:
-`m_begin = 1`, phrase length 2, text `甲甲`. Its unigram is now larger
-than the facade total, violating the source's `possibility value <=
+`m_begin = 1`, phrase length 2, text `甲甲`. Its unigram is then larger
+than the facade total, which violates the source's `possibility value <=
 1.0` comment.
 
 ### Source
@@ -185,18 +187,18 @@ item->m_freq = freq;                                  /* :1866 */
 
 `lambda` is `gfloat`, `get_unigram_frequency()` is `guint32` promoted to
 `float`, `total_freq` is cast to `gfloat`, and the `256` factors are
-`int` promoted to `float`. The expression is therefore single
+`int` promoted to `float`. Thus the expression is single
 precision, and the assignment is a `float`-to-`guint32` conversion. When
 the value is negative or at least 2³², C++ [conv.fpint]/1 (the same rule
 as C11 6.3.1.4p1) makes the conversion undefined. The source's
-`possibility value <= 1.0` invariant is what normally keeps the value in
-range; a `table.conf` λ outside `[0, 1]`, or an imported unigram larger
-than the facade total, can break it.
+`possibility value <= 1.0` invariant normally keeps the value in range.
+A `table.conf` λ outside `[0, 1]`, or an imported unigram larger than the
+facade total, can break it.
 
 The conversion is the initialization of `freq` at `:1821-1823`; the
 32-bit store is `item->m_freq = freq` at `:1824`. The `row58` cases
 exercise the first site. The other two are the same defect in the same
-function; the proposed upstream report covers all three.
+function. The proposed upstream report covers all three.
 
 ### Arithmetic
 
@@ -277,7 +279,7 @@ if (freq_lhs != freq_rhs)
     return -(freq_lhs - freq_rhs); /* in descendant order */
 ```
 
-The subtraction is `guint32` arithmetic; the negation and the conversion
+The subtraction is `guint32` arithmetic. The negation and the conversion
 to `gint` wrap.
 
 - amd64 stores `0x27318a00 = 657558016`. Every other item's unigram is
@@ -289,15 +291,15 @@ to `gint` wrap.
 - arm64 stores `0xffffffff`. For any other two-character row with
   frequency `f < 2³¹`, `-(0xffffffff - f) = f + 1 > 0`, so `甲甲` sorts
   after it. Every other frequency is at most `58867856`, well below
-  2³¹, so `甲甲` sorts last among the two-character rows and before the
-  one-character rows, whose phrase-length key dominates. The observed arm64 pin index is 64,
-  immediately after `们的` and immediately before `们`; the amd64/subject
-  list has `甲甲` at 0 and `们的` at 64. This is the exact predicted
-  permutation, not a general reordering.
+  2³¹. Thus `甲甲` sorts last among the two-character rows, and before the
+  one-character rows, whose phrase-length key dominates. The observed arm64
+  pin index is 64, immediately after `们的` and immediately before `们`. The
+  amd64/subject list has `甲甲` at 0 and `们的` at 64. This is the exact
+  predicted permutation, not a general reordering.
 
 The two option states produce the same list because the
 `PREDICTED_PREFIX_CANDIDATE` branch at `:1813-1826` returns before the
-`DYNAMIC_ADJUST` test at `:1845`. The `-off`/`-on` equality is therefore
+`DYNAMIC_ADJUST` test at `:1845`. Thus the `-off`/`-on` equality is
 a control that rules out the bigram term.
 
 ### Ruled out
@@ -307,7 +309,7 @@ a control that rules out the bigram term.
   candidate frequency is `guint32`. A signedness change would not move
   one candidate by exactly the sign boundary of the comparator.
 - **An uninitialised read.** `_append_items` (`src/pinyin.cpp:1769-1792`)
-  fills every candidate's `m_freq` from the template and
+  fills every candidate's `m_freq` from the template, and
   `_compute_frequency_of_items` overwrites it. The same input produces
   the same list on both architectures except for this one key.
 - **The tail comparator.** `trellis_value_compare`
@@ -325,9 +327,9 @@ and runs `conf_session`. `conf_view` allocates an instance, parses
 `ni3hao3` (and `yi4shu4`), calls `zhuyin_guess_sentence`, then
 `zhuyin_guess_candidates_after_cursor(inst, 0)` and prints the first 12
 candidate texts. The λ values are the ordinary decimal spellings `1e6`,
-`1.5` and `2`; both the oracle image's scanner and the Debian 13 host's
-accept them, and the `host_scanf` marker applies only to the malformed
-exponent-without-digits spellings, not these.
+`1.5` and `2`. Both the scanner of the oracle image and that of the Debian 13
+host accept them. The `host_scanf` marker applies only to the malformed
+exponent-without-digits spellings, not to these.
 
 ### Source
 
@@ -393,10 +395,10 @@ For λ = 1.5, `k = trunc(0.5 · unigram/total · 2²⁴)`; for λ = 2,
 `k = trunc(unigram/total · 2²⁴)`. Because `unigram ≤ total`,
 `0 ≤ k < 2³¹` for both. amd64's wrapped keys are all in the upper half
 `(2³¹, 2³²)`, and the comparator is consistent there: a larger `k`
-gives a smaller wrapped key and sorts later. The amd64 order is
-therefore ascending `k` (before truncation ties, ascending unigram).
+gives a smaller wrapped key and sorts later. Thus the amd64 order is
+ascending `k` (before truncation ties, ascending unigram).
 arm64's keys are all 0, so GLib's stable merge keeps the collection
-order within each phrase-length group; every normal candidate in this
+order within each phrase-length group. Every normal candidate in this
 window has phrase length 1, so the rows are the collection order. The
 amd64 pin reorders them by the unigram key. The first two
 rows, `儞䝥` and `你好`, are prepended sentence candidates
@@ -404,10 +406,9 @@ rows, `儞䝥` and `你好`, are prepended sentence candidates
 after the sort at `:1533`), so they are outside the frequency sort and
 are identical on both architectures.
 
-For λ = 1e6, `k` exceeds 2³²; amd64 keeps `2³² - (k mod 2³²)` (or 0 when
-`k` is a multiple of 2³²), so the order is the low-32 residue rather
-than a monotone unigram order. It is still a varying key, while arm64
-stays all 0. This is why the three arm64 pin observations are identical
+For λ = 1e6, `k` exceeds 2³². amd64 keeps `2³² - (k mod 2³²)` (or 0 when
+`k` is a multiple of 2³²). Thus the order is the low-32 residue, not a
+monotone unigram order. It is still a varying key, and arm64 stays all 0. This is why the three arm64 pin observations are identical
 and the three amd64-pin ones are not.
 
 The cases with λ below 0, `inf` and `nan` do not appear in the #1132
@@ -419,30 +420,31 @@ exclusions because their keys do not split the two architectures:
   the same keys.
 - λ = `inf` or `nan` makes every candidate frequency NaN: the first
   term is `inf * 0` (NaN) and the second is `-inf`, and `nan` is
-  already NaN. On amd64 `cvttss2si` of a non-finite value returns
-  `INT64_MIN`, whose low 32 bits are 0; on arm64 `fcvtzu` of NaN is 0. Every key is equal within each build, so both
-  keep the collection order and the observations agree. The same
+  already NaN. On amd64, `cvttss2si` of a non-finite value returns
+  `INT64_MIN`, whose low 32 bits are 0. On arm64, `fcvtzu` of NaN is 0.
+  Every key is equal within each build, so both keep the collection order
+  and the observations agree. The same
   applies to the trellis's non-finite `m_poss` differences.
 
 ### Ruled out
 
 - **The host scanner.** The inputs are `1e6`, `1.5` and `2`, all
   ordinary decimal `%f` spellings accepted by any conforming C library.
-  The `host_scanf` marker in `contract-diff.py` covers only the malformed
+  The `host_scanf` marker covers only the malformed
   exponent-without-digits spellings (`1e` and `0x1p`); it does not cover
   these cases. A scanner that rejected them would fail init, not reorder
   candidates; the pin exits 0 and returns the full list.
 - **Uninitialised memory.** `_append_items` initialises every candidate
   and `_compute_frequency_of_items` assigns every `m_freq` before the
-  sort. The arm64 pin's three λ observations being byte-identical is
-  the opposite of a heap-dependent read; it is what the same saturated
-  key predicts.
+  sort. The three λ observations of the arm64 pin are byte-identical. A
+  heap-dependent read would not give that result; the same saturated key
+  predicts it.
 - **The tail comparator.** `trellis_value_compare`
   (`src/lookup/phonetic_lookup.h:174-178`) compiles to `fcvtzs w0,s30`
   on arm64 and `cvttss2si %xmm0,%eax` on amd64. For a NaN difference,
-  arm64 gives 0 and amd64 `INT_MIN`; as policy row 83 records, both make
-  GLib's merge take the left element on `<= 0`, so the resulting order is
-  the same. The sentences in these cases are identical on both
+  arm64 gives 0 and amd64 gives `INT_MIN`. As policy row 83 records, both
+  make GLib's merge take the left element on `<= 0`, so the resulting order
+  is the same. The sentences in these cases are identical on both
   architectures (`儞䝥` for `ni3hao3`, `苅襩` for `yi4shu4`); only the
   candidate rows differ. The tail comparator is not this defect.
 
@@ -450,7 +452,7 @@ exclusions because their keys do not split the two architectures:
 
 The eight cases are `fini-twice`, `zhuyin-fini-twice` and the six
 `replay-modify-header-overlong-*` / `replay-touched-*-invalid-*` cases.
-They crash on amd64 too; the #1132 harness expects that, so they MATCH
+They also crash on amd64. The #1132 harness expects that, so they MATCH
 there.
 
 | cases | known defect | amd64 pin signal | arm64 pin signal |
@@ -477,55 +479,30 @@ source defect for either signal change:
   filename bytes), so the pin side of that case is not stable on either
   architecture.
 - The arm64 runs use the Debian 13 host's glibc against objects built
-  in the pinned `debian:testing` image; the amd64 capture's host libc is
-  not separately recorded in #1132. The capture does not separate the
-  host libc from the architecture, and this note does not claim it
-  does. No arm64-only pin source defect is needed either way.
+  in the pinned `debian:testing` image. #1132 does not record the host libc
+  of the amd64 capture separately. The capture does not separate the
+  host libc from the architecture, and this note does not claim that it
+  does. No arm64-only pin source defect is necessary in either case.
 
-The precise arm64 first-fault instruction for these eight is not claimed:
-settling it needs an instrumented pin or a core dump, which #1137 puts
-out of scope. The question it asks — whether a cause beyond the known
-amd64 crash exists — is answered no on the source and disassembly read
-here.
+This note does not claim the precise arm64 first-fault instruction for these
+eight cases. An instrumented pin or a core dump is necessary to settle it,
+and #1137 puts those out of scope. #1137 asks whether a cause beyond the known amd64
+crash exists. The source and disassembly read here answer no.
 
 ## Oxpinyin's position
 
-**Superseded 2026-10-30 UTC (#1416).** The low-32-bit imitation
-described below was removed under decision-order limb 3 (processor and
-compiler behaviour is not reproduced; [source policy](../source-policy.md#internal-language-artefacts)). `oxpinyin_engine::session::
-amplified_frequency_with_bigram`, which the predicted rows now call too,
-stores the score with Rust's `as u32`: in range it truncates like both
-pins; a negative or NaN score is 0 and a score at or above 2³² is
-`0xffffffff`, which is what the arm64 pin's `fcvtzu` stores. The
-amd64-only wrap is class (b) (C leaves the conversion undefined), held
-POLICY-ACCEPTED by the cases named in `upstream-divergences.md`. The
-text below records the position at the time of the #1137 reading.
-
-Oxpinyin reproduced the amd64 pin, not the arm64 pin, on both
-architectures, and that was the Stage 2 target (the contributor rules, "Stage 2";
-`docs/findings/compatibility-policy.md` row 83). The relevant code was:
-
-- Predicted candidates: `oxpinyin_capi::predict::amplified_frequency`
-  computes the same `f32` expression and converts with
-  `u64::from(score as i64 as u32)`, which keeps the low 32 bits of the
-  x86-64 `cvttss2si` result for finite in-range scores. It is the same
-  law as `oxpinyin_engine::session::guint32_of_score`, which the engine
-  uses for ordinary candidate lists.
-- Ordinary candidates, both facades:
-  `oxpinyin_engine::session::amplified_frequency_with_bigram` and
-  `guint32_of_score` (`crates/oxpinyin-engine/src/session/mod.rs`). The
-  latter returns 0 for non-finite or 64-bit-out-of-range scores, which
-  is the low 32 bits of `cvttss2si`'s `INT64_MIN`.
-- Candidate order: `oxpinyin_engine::session::glib_rank_sort` and
-  `RankKey::pin_compare` reproduce the pin's `guint32` subtraction and
-  GLib's merge, as row 83 records.
-
-Both paths therefore produce `0x27318a00` for the `row58` candidate and
-`2³² - k` for the zhuyin negative frequencies on arm64 as well as amd64.
-That is why the arm64 subject hashes equal the amd64 pin hashes in the
-#1132 table. No oxpinyin change is owed. No case shows oxpinyin
-depending on pin undefined behaviour beyond the deliberate
-`cvttss2si` reproduction that row 83 already records.
+`oxpinyin_engine::session::amplified_frequency_with_bigram` computes the
+`f32` score for ordinary and predicted rows and stores it with Rust's
+`as u32` (#1416). In range, it truncates like both pins. A negative or NaN
+score is 0, and a score at or above 2³² is `0xffffffff`. These are the values
+that the arm64 pin's `fcvtzu` stores. Processor and compiler behaviour is not
+reproduced (decision-order limb 3,
+[source policy](../source-policy.md#internal-language-artefacts)). The
+amd64 pin's low-32-bit wrap is class (b), because C leaves the conversion
+undefined. The cases that tell the two apart are POLICY-ACCEPTED. They are
+named in `upstream-divergences.md` and recorded below. Candidate
+order is `candidate::rank_by_frequency`
+([1297-candidate-numeric-sort](1297-candidate-numeric-sort.md)).
 
 ## Proposed upstream issues
 
@@ -537,7 +514,7 @@ Both are drafts. Nothing has been filed.
 >
 > **Version:** libpinyin 2.11.92, commit
 > `074a2219c90feaf962d0d24f034514033ece5f99`, built with GCC 15.3.0
-> by `tools/oracle/build-oracle.sh` (autoconf `-g -O2`, assertions
+> by `tools/oracle/build.py` (autoconf `-g -O2`, assertions
 > live).
 >
 > **Summary:** `_compute_frequency_of_items` (`src/pinyin.cpp:1794-1868`)
@@ -622,38 +599,18 @@ git -C /tmp/libpinyin-074a2219 checkout \
   074a2219c90feaf962d0d24f034514033ece5f99
 ```
 
-amd64 objects (the published image, bdb cell):
-
-```sh
-TAG=$(tools/oracle/image-tag.sh)
-TOKEN=$(curl -fsSL \
-  "https://ghcr.io/token?scope=repository:shenghaoc/oxpinyin-oracle:pull" \
-  | jq -r .token)
-DIGEST=$(curl -fsSL -H "Authorization: Bearer $TOKEN" \
-  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-  "https://ghcr.io/v2/shenghaoc/oxpinyin-oracle/manifests/$TAG" \
-  | jq -r '.layers[0].digest')
-curl -fsSL -H "Authorization: Bearer $TOKEN" \
-  "https://ghcr.io/v2/shenghaoc/oxpinyin-oracle/blobs/$DIGEST" \
-  -o /tmp/oracle-amd64.tgz
-mkdir -p /tmp/oracle-amd64 && tar xzf /tmp/oracle-amd64.tgz \
-  -C /tmp/oracle-amd64
-shasum -a 256 \
-  /tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib/libpinyin.so.15.0.0 \
-  /tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib/libzhuyin.so.15.0.0
-# 754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
-# cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
-```
-
-arm64 objects: build with the recipe in
-[`oracle-arm64-1132.md`](oracle-arm64-1132.md), then verify
+Objects: a pin-built bdb prefix for each architecture
+(recorded evidence), verified against the SHA-256 values in
+`tools/oracle/oracle-pin.txt`:
 
 ```sh
 shasum -a 256 \
   <prefix>/bdb/lib/libpinyin.so.15.0.0 \
   <prefix>/bdb/lib/libzhuyin.so.15.0.0
-# 473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
-# e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
+# amd64: 754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
+#        cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
+# arm64: 473187d8d040b8a5763a188509d6be031e224a712ad9b7716defdb4ff1293a2f
+#        e90429560584cf9dfee345d41e608092032d3a1c7248e04feeedc899dcfd24b5
 ```
 
 The conversion sites (LLVM objdump; GNU objdump uses the same numeric
@@ -661,7 +618,7 @@ The conversion sites (LLVM objdump; GNU objdump uses the same numeric
 
 ```sh
 P=/tmp/libpinyin-074a2219
-A=/tmp/oracle-amd64/opt/pinyin-oracle/bdb/lib
+A=<amd64-prefix>/bdb/lib
 R=<arm64-prefix>/bdb/lib
 
 # pinyin _compute_frequency_of_items, both targets
@@ -693,50 +650,25 @@ objdump -dlS -C --no-show-raw-insn --prefix-strip=3 --prefix=$P \
   --start-address=0x79880 --stop-address=0x798a0 $R/libpinyin.so.15.0.0
 ```
 
-The five contract cases reproduce with the maintained driver command:
-
-```sh
-tools/bisection/run-contract-diff.sh bdb $PINYIN_ORACLE_PREFIX \
-  target-bdb/debug/libpinyin_capi.so target-bdb/debug/libzhuyin_capi.so \
-  -- --run-platform-excluded \
-  --cases row58-unsigned-score-off,row58-unsigned-score-on,table-conf-lambda-million-zhuyin,table-conf-lambda-one-and-a-half-zhuyin,table-conf-lambda-two-zhuyin \
-  --observations obs-bdb.jsonl
-```
-
-`--run-platform-excluded` is required on arm64: without it the five
-cases are SKIPs and `obs-bdb.jsonl` stays empty. With it, each case runs
-and a JSON line on stderr states `override: "platform-excluded"`, the
-registry reason and `note: "not an ordinary gate"`; the stdout verdict is
-then the ordinary MATCH/DIFFER.
-The flag does not bypass the backend `cells=` skip or any other skip
-kind, so a case whose fixture belongs to another cell still prints SKIP.
-On amd64 the flag changes nothing because the platform check does not
-fire. On arm64 this command exits 1 by design: the five selected cases
-are the differences this document diagnoses, so the driver reports five
-`DIFFER` verdicts; it is the reproduction, not a passing gate.
-
-The arm64 side needs the arm64 oracle and subject from #1132; the amd64
-side needs the amd64 oracle and subject. The #1132 comment records the
-amd64 command; `oracle-arm64-1132.md` records the arm64 one and the
-13-case hashes. The five arm64-pin rows quoted above are in
-`arm64-13-bdb.jsonl`.
+The five contract cases are recorded evidence from the #1132 captures.
+The two `row58-unsigned-score-*` cases are the policy cases below.
 
 ## Limits
 
 - The five diagnoses rest on the source and the two generated instruction
   sequences. The candidate rows are the observed ones from the #1132
-  capture, not a rerun.
-- The arm64 signals of the eight crash cases are recorded; their precise
-  first-fault instructions are not. That is the short note #1137 asks
-  for, not a second diagnosis of a crash amd64 already shows.
+  capture, not from a new run.
+- The arm64 signals of the eight crash cases are recorded, but their precise
+  first-fault instructions are not. #1137 asks for that short note, not for
+  a second diagnosis of a crash that amd64 already shows.
 - The arm64 runs use the Debian 13 host's glibc against objects built in
-  the pinned `debian:testing` image; the amd64 capture's host libc is not
-  separately recorded in #1132. The five conversion differences do not
+  the pinned `debian:testing` image. #1132 does not record the host libc of
+  the amd64 capture separately. The five conversion differences do not
   depend on libc (they are in the generated code), but the eight crash
   signals may.
 
 Since #1416 (2026-10-30 UTC), `row58-unsigned-score-off` and
 `row58-unsigned-score-on` are POLICY-ACCEPTED on bdb, kc and sound tkrzw
-against the amd64 pin: the amd64 pin lists `甲甲` first, and oxpinyin
+against the amd64 pin. The amd64 pin lists `甲甲` first. oxpinyin
 lists it last among the two-character rows, as the arm64 pin does
 ([upstream divergences](upstream-divergences.md), class (b)).

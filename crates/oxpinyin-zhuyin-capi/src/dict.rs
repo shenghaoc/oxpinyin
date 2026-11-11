@@ -297,8 +297,7 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
 /// `PhraseItem::get_unigram_frequency` — the stored `guint32`,
 /// `gen_unigram`'s `+1` already included for system items), system and
 /// `USER_FILE` tokens alike. `*freq` is zeroed before the dispatch, so a
-/// `false` still delivers 0; the read includes the
-/// `zhuyin_token_add_unigram_frequency` overlay.
+/// `false` still delivers 0.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_token_get_unigram_frequency(
     instance: *mut ZhuyinInstance,

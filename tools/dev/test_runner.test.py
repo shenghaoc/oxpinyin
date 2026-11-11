@@ -193,7 +193,7 @@ if __name__ == '__main__': unittest.main()
 
     def test_changed_mapping_and_unknown_fallback(self):
         sources = {name: "print('ran')" for name in
-                   ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
+                   ('tools/dev/test_runner.test.py', 'tools/dev/just.test.py',
                     'tools/dev/sanitize.test.py', 'tools/other.test.py')}
         for paths, expected in ((['tools/dev/test_runner.py'], 3),
                                 (['tools/other.test.py'], 1),

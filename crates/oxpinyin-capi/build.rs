@@ -14,8 +14,8 @@
 //!
 //! The real library defines its symbols *versioned* — `pinyin_init@@LIBPINYIN`
 //! — so every consumer linked against it records `File: libpinyin.so.15 ->
-//! Name: LIBPINYIN` in `.gnu.version_r`. Three library shapes were measured
-//! against a consumer carrying that reference:
+//! Name: LIBPINYIN` in `.gnu.version_r`. Three library shapes behave
+//! differently against a consumer carrying that reference:
 //!
 //! | shape | result |
 //! |---|---|
@@ -34,11 +34,11 @@
 //! So a version script here would turn a working drop-in into a broken one.
 //! Reaching upstream's shape needs the cdylib linked manually from the
 //! staticlib in the packaging step, where rustc's anonymous script is not in
-//! the link line. That step exists: `tools/packaging/relink-versioned.sh`,
-//! run by `tools/packaging/install.sh` on Linux after `cargo cinstall`,
+//! the link line. That step exists: `just packaging relink-versioned`,
+//! run by `just packaging install` on Linux after `cargo cinstall`,
 //! replaces the installed object with the versioned relink and verifies the
 //! export set against this crate's `libpinyin.ver` in both directions
-//! (docs/findings/drop-in-abi-identity.md §2 carries the measurement).
+//! (docs/packaging.md#drop-in-identity states the requirement).
 //!
 //! Symbol scope is therefore enforced in the source — the shipped
 //! artifact defines every symbol in `libpinyin.ver` and nothing else —
@@ -48,7 +48,7 @@
 //!
 //! # The complete `libpinyin.pc`
 //!
-//! cargo-c 0.10.24 generates a `libpinyin.pc` from
+//! cargo-c generates a `libpinyin.pc` from
 //! `[package.metadata.capi.pkg_config]`, but its field set is closed and it
 //! cannot emit the four variables real consumers read (`pkgdatadir`,
 //! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`); it
@@ -56,7 +56,7 @@
 //! `.pc` into the pkg-config dir. So this script bakes the build-time-known
 //! fields of `libpinyin.pc.in` into `$OUT_DIR/libpinyin.pc.in.baked`, leaving
 //! the install-time `@prefix@` / `@libdir@` placeholders for the packaging
-//! wrapper (`tools/packaging/install.sh`) to fill after `cargo cinstall`. See
+//! wrapper (`just packaging install`) to fill after `cargo cinstall`. See
 //! `docs/findings/installed-naming.md` for the full rationale and the
 //! verified cargo-c limits. `database_format` is the token `oxpinyin-store`'s
 //! build script selects from the backend, the value `libzhuyin.pc` carries

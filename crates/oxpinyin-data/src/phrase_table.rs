@@ -16,7 +16,7 @@
 //! shorter prefix of a stored key has an entry (empty or real) so that
 //! `search_suggestion` can walk prefixes to find continuation candidates.
 //!
-//! See `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.1
+//! See `docs/findings/phrase-dbm-format-2026-09-01.md` §2–§6
 //! and `phrase_large_table3_tkrzwdb.cpp`.
 
 use crate::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};

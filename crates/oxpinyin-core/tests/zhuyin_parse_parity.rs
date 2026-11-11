@@ -1,8 +1,8 @@
 //! The frozen zhuyin parse pin — G1's capture fixture
-//! (`testing-strategy.md` §2, the `test_zhuyin.cpp` battery).
+//! (`docs/testing/upstream-test-coverage.md` §2, the `test_zhuyin.cpp` battery).
 //!
 //! `fixtures/w4/oracle-zhuyin-parse.txt` was captured from the pinned
-//! oracle (`tools/capture/run-capture.sh` family ZH; pin ref below) by
+//! oracle (the recorded capture harness family ZH; pin ref below) by
 //! driving `pinyin_parse_more_chewings` over authored keystroke lines in
 //! the shape of upstream's `tests/test_zhuyin.cpp` — stdin-line driven,
 //! no committed corpus of its own — across every parseable keyboard and
@@ -21,7 +21,7 @@
 //! zhuyin string (`get_zhuyin_string`'s law: tone marks on tones 2..5).
 //!
 //! When the pin moves, regenerate the fixture with
-//! `tools/capture/run-capture.sh` and update `EXPECTED_PIN_REF` — a
+//! the recorded capture harness and update `EXPECTED_PIN_REF` — a
 //! change here is a re-freeze, not a silent drift.
 
 use oxpinyin_core::{USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinKey, ZhuyinParser, ZhuyinScheme};

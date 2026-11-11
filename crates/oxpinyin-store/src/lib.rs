@@ -42,7 +42,7 @@
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
 // Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.
@@ -1034,12 +1034,18 @@ pub const DEFAULT_STORE_EXT: &str = "db";
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_DB_FORMAT: &str = env!("OXPINYIN_STORE_DATABASE_FORMAT");
 
+fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
+}
+
 /// Helpers shared by the backends' raw walks and path checks; every item is
 /// gated to the backends that use it (see the module docs).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
-// The Berkeley DB attach death tests' re-run helper.
-#[cfg(all(test, feature = "bdb"))]
+#[cfg(test)]
 mod death_test;
 
 #[cfg(feature = "tkrzw")]
@@ -1093,6 +1099,21 @@ impl<D: UserBigramDb> GramReadOwned for D {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn poisoned_mutex_aborts() {
+        crate::death_test::assert_aborts("tests::poisoned_mutex_aborts", || {
+            let mutex = std::sync::Mutex::new(());
+            let panic = std::panic::catch_unwind(|| {
+                let _guard = mutex.lock().expect("unpoisoned mutex");
+                panic!("poison the mutex");
+            });
+            assert!(panic.is_err());
+            let result = mutex.lock();
+            assert!(result.is_err(), "the mutex must be poisoned");
+            drop(super::lock_result_or_abort(result));
+        });
+    }
+
     // Each peer backend can produce its own use-line tests
     // — the imports below are gated to whichever peer is compiled. Under
     // the exactly-one-backend invariant, at most one peer is enabled per

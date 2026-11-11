@@ -5,8 +5,8 @@
 use std::sync::atomic::Ordering;
 
 use oxpinyin_core::{
-    Dictionary, DoublePinyinParse, FullPinyinIndexParse, LanguageModel, OptionBits, PhraseText,
-    PhraseToken, ZhuyinParse,
+    Dictionary, DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken,
+    ZhuyinParse,
 };
 use oxpinyin_engine::{
     CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
@@ -69,7 +69,8 @@ pub struct InstanceState {
     /// The candidate window from the most recent guess, as `(anchor, window)`.
     /// Retained across parsing so a later choose resolves its index against
     /// the same window the caller saw, including a guess at offset zero.
-    /// Selection consumes it; a new guess replaces it and full reset drops it.
+    /// A new guess replaces it and full reset drops it. Pinyin drops it on
+    /// an accepted choose. Zhuyin retains it for further choices.
     pub anchored_window: Option<(usize, CandidateList)>,
     /// Most recent double-pinyin parse, when the last parse call was the
     /// double-pinyin entry point. Used for aux text and
@@ -346,37 +347,22 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         )
     }
 
-    /// The token's unigram frequency, including the in-memory add overlay:
-    /// the system library answers from the language model, the user-file
-    /// libraries from the store, and a token whose library or item is absent
-    /// answers `None`.
+    /// The default facade item's live unigram. Missing sub-indices and slots
+    /// answer `None` (074a2219 `phrase_index.h:646-652`, `pinyin.cpp:2821-2834`).
     #[must_use]
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
+        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
         let nibble = token >> 24;
-        let is_system = u8::try_from(nibble).is_ok_and(|index| self.dict.is_system_library(index));
-        let base = match nibble {
-            _ if is_system => {
-                if !self.dict.token_exists(token) {
-                    None
-                } else {
-                    self.lm
-                        .unigram_freq(&PhraseToken::new(token))
-                        .ok()
-                        .flatten()
-                }
+        match nibble {
+            _ if self.dict.is_system_library(nibble as u8) => {
+                self.dict.live_items().effective_unigram(token)
             }
             5..=7 => self
                 .user
                 .filter(|_| self.dict.library_visible(nibble))
                 .and_then(|store| store.user_unigram_frequency(token).ok().flatten()),
             _ => None,
-        }?;
-        let overlay = if is_system {
-            0
-        } else {
-            self.dict.unigram_delta(token).unwrap_or(0)
-        };
-        Some(base + overlay)
+        }
     }
 }
 
@@ -449,8 +435,7 @@ impl<
     /// Selects the candidate at `source_index` in the window the caller saw,
     /// or its promoted token when the facade promoted an addon row first.
     /// Returns the selection outcome and the chosen row's absolute end when
-    /// anchored. A refused span preserves the window for another choose;
-    /// an accepted selection clears it.
+    /// anchored. The caller controls the window's lifetime.
     ///
     /// # Errors
     ///
@@ -481,11 +466,7 @@ impl<
             };
             (window_end, selection)
         };
-        let selection = selection?;
-        if selection != oxpinyin_engine::Selection::Refused {
-            self.state.borrow_mut().anchored_window = None;
-        }
-        Ok((selection, window_end))
+        Ok((selection?, window_end))
     }
 
     /// Clears the constraint at `offset`, mapping the caller's original-input

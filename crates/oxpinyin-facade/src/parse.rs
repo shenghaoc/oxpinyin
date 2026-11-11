@@ -28,6 +28,22 @@ pub enum ToneForwarding {
     ZhuyinFacade,
 }
 
+/// Which correction bits the one-key full-pinyin probe reads.
+///
+/// Both facades run the same `parse_full_pinyin` probe on the live
+/// option word; the one difference is the `PINYIN_CORRECT_ALL` mask,
+/// which the libzhuyin facade applies (`zhuyin.cpp:1013` at the pin)
+/// and the pinyin facade does not (`pinyin.cpp:1484`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PinyinCorrections {
+    /// The pinyin facade's law: the probe reads the live option word
+    /// unchanged.
+    FromOptions,
+    /// The libzhuyin facade's law: the probe reads the live option word
+    /// minus `PINYIN_CORRECT_ALL`.
+    Masked,
+}
+
 /// The full-pinyin-scheme dispatch over the header discriminants.
 #[must_use]
 pub const fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
@@ -163,16 +179,18 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     InstanceView<'_, S, E>
 {
     /// The one-key full-pinyin probe — the `parse_full_pinyin` law. The
-    /// two facades' pins differ in exactly one bit: the libzhuyin facade
-    /// masks `PINYIN_CORRECT_ALL` off the live word before the probe
-    /// (`zhuyin.cpp:1013`), the pinyin facade passes the word raw
-    /// (`pinyin.cpp:1484`). `None` is upstream's `false`.
+    /// two facades' pins differ in exactly one bit, which
+    /// [`PinyinCorrections`] names. `None` is upstream's `false`.
     #[must_use]
-    pub fn parse_one_full_pinyin(&self, text: &str, mask_corrections: bool) -> Option<ChewingKey> {
-        let mut options = self.options().bits();
-        if mask_corrections {
-            options &= !PINYIN_CORRECT_ALL;
-        }
+    pub fn parse_one_full_pinyin(
+        &self,
+        text: &str,
+        corrections: PinyinCorrections,
+    ) -> Option<ChewingKey> {
+        let options = match corrections {
+            PinyinCorrections::FromOptions => self.options().bits(),
+            PinyinCorrections::Masked => self.options().bits() & !PINYIN_CORRECT_ALL,
+        };
         // The probe runs on the context's live full-pinyin parser, whose
         // index `pinyin_set_full_pinyin_scheme` swaps
         // (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`

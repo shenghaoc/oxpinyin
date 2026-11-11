@@ -511,7 +511,7 @@ fn token_pronunciation_surface() {
 /// `pinyin_token_get_unigram_frequency` / `_add_unigram_frequency`:
 /// read → add → shifted read; an absent-token add answers false.
 #[test]
-fn token_unigram_read_and_overlay_write() {
+fn token_unigram_read_and_live_item_write() {
     let fixture = Fixture::new("dict-unigram");
 
     let mut array = TokenArray::new();
@@ -540,7 +540,7 @@ fn token_unigram_read_and_overlay_write() {
         token,
         &raw mut freq
     ));
-    assert_eq!(freq, before + 7, "the overlay delta lands");
+    assert_eq!(freq, before + 7, "the live item count increases");
 
     // Absent token: false, and the read stays absent.
     let absent = 0x09FF_FFFF;

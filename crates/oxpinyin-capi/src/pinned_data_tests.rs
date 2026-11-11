@@ -20,27 +20,9 @@ const PARITY: u32 = 0x18a;
 const NBEST: lookup_candidate_type_t = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
 const NORMAL: lookup_candidate_type_t = lookup_candidate_type_t::NORMAL_CANDIDATE;
 
-/// Where `just fetch-contract-data` extracts the pinned version.
-fn contract_data_dir() -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let pin = std::fs::read_to_string(root.join("tools/oracle/libpinyin-data.json"))
-        .expect("the data pin is committed");
-    let version = pin
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("\"version\": \""))
-        .and_then(|rest| rest.strip_suffix("\","))
-        .expect("the data pin names a version");
-    let dir = root
-        .join("target/contract-data")
-        .join(version)
-        .join("libpinyin/data");
-    assert!(
-        dir.join("bigram.db").is_file(),
-        "pinned system data missing at {}; run just fetch-contract-data",
-        dir.display()
-    );
-    dir
-}
+#[path = "../../oxpinyin-runtime/tests/common/contract_data.rs"]
+mod contract_data;
+use contract_data::contract_data_dir;
 
 /// A context and instance on the pinned data with a fresh user directory.
 fn open_pinned(user_dir: &TempUserDir) -> (*mut PinyinContext, *mut PinyinInstance) {

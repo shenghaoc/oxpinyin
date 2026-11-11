@@ -93,6 +93,13 @@ if ! uv python install --directory "$repo"; then
 	((kept_uv)) && log "using $(uv --version)"
 	die 'managed Python provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
 fi
+# This entry does not start from a just recipe, so it asks just for the cache root that the
+# recipes export (docs/runbooks/setup.md#cache-directory). Without an answer the variable stays
+# unset: the provisioner refuses a run that needs the cache, and --python-only needs none.
+if [[ -z ${OXPINYIN_CACHE+x} ]] && root=$(just --justfile "$repo/justfile" cache-root 2>/dev/null); then
+    export OXPINYIN_CACHE=$root
+fi
+
 OXPINYIN_CLOUD_BOOTSTRAP_SECONDS=$SECONDS OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV=$kept_uv \
 exec uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal \
-    "$repo/tools/dev/__main__.py" provision "$@"
+    -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)' "$repo" "$@"

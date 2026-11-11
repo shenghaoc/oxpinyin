@@ -12,7 +12,6 @@ import sys
 import tempfile
 import time
 import unittest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -108,6 +107,16 @@ if sys.platform != 'win32':
             'training/estimate_interpolation', 'training/eval_correction_rate',
         )
 
+        @classmethod
+        def setUpClass(cls):
+            metadata = json.loads(subprocess.check_output(
+                ['cargo', 'metadata', '--no-deps', '--format-version', '1'], cwd=ROOT,
+            ))
+            package = next(package for package in metadata['packages']
+                           if package['name'] == 'oxpinyin-utils')
+            cls.bin_names = [target['name'] for target in package['targets']
+                             if 'bin' in target['kind']]
+
         def setUp(self):
             temporary = tempfile.TemporaryDirectory(prefix='trainer-layout-')
             self.addCleanup(temporary.cleanup)
@@ -116,9 +125,8 @@ if sys.platform != 'win32':
             self.binaries.mkdir()
             self.target = self.work / 'trainer tree'
             self.tools = packaging.Tools(root=ROOT)
-            self.manifest = tomllib.loads((ROOT / 'crates/oxpinyin-utils/Cargo.toml').read_text())
-            for binary in self.manifest['bin']:
-                path = self.binaries / binary['name']
+            for name in self.bin_names:
+                path = self.binaries / name
                 path.write_text('#!' + sys.executable + '\n' + '''import json, sys
 from pathlib import Path
 with Path('calls').open('a') as out:
@@ -143,7 +151,8 @@ if Path(sys.argv[0]).name == 'import_interpolation':
         def test_inventory_resolves_to_copied_executable_ports(self):
             self.assertEqual(self.stage(), 0)
             self.assert_inventory()
-            ports = {binary['name'] for binary in self.manifest['bin']}
+            # The test_* driver binaries are outside the trainer layout.
+            ports = {name for name in self.bin_names if not name.startswith('test_')}
             installed = {path.name for path in (self.target / 'utils').glob('*/*')}
             self.assertEqual(installed, ports)
             # A Cargo clean must not invalidate a staged trainer tree.
@@ -299,7 +308,7 @@ key=(lambda value:tuple(int(part) for part in value.split(b'.'))) if 'V' in flag
 if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator)
 """)
 
-            shutil.copy(ROOT / 'tools/oracle/build-oracle.sh', self.root / 'tools/oracle/build-oracle.sh')
+            shutil.copy(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
             self.fake('uv', 'import sys; from pathlib import Path; sys.argv[1:3] == ["python", "install"] and sys.exit(0); sys.path.insert(0, ' + repr(str(ROOT)) + '); from tools.dev.cell import main; sys.exit(main(["--shell"], root=Path.cwd()))')
 
         def fake(self, name, source):

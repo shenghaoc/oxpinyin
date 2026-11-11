@@ -17,7 +17,3 @@ fuzz/corpus/** -text
 # Generated, not authored — collapse them in diffs and keep them out of
 # language stats.
 **/proptest-regressions/** linguist-generated
-
-# Pin observations captured by tools/oracle/capture-contract.sh, one reference row per line.
-# Generated, not authored: collapse them in diffs and keep them out of language stats.
-fixtures/contract-refs/** linguist-generated=true
