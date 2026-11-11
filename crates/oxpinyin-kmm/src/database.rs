@@ -77,12 +77,6 @@ impl Database {
         self.inner.as_ref().is_some_and(KmmBigram::attached)
     }
 
-    /// Whether `attach` left an object (`m_db != NULL`).
-    #[must_use]
-    pub fn is_open(&self) -> bool {
-        self.inner.as_ref().is_some_and(KmmBigram::is_open)
-    }
-
     /// `get_magic_header`, preserving the backend's missing/size assertions.
     #[must_use]
     pub fn get_magic_header(&self) -> Option<KMixtureModelMagicHeader> {
@@ -234,13 +228,6 @@ impl Database {
             .is_some_and(|inner| inner.set_array_header(token, header).unwrap_or(false));
         if !stored {
             abort();
-        }
-    }
-
-    /// `remove`; the ignored-answer form.
-    pub fn remove(&self, token: u32) {
-        if let Some(inner) = self.inner.as_ref() {
-            let _ = inner.remove(token);
         }
     }
 

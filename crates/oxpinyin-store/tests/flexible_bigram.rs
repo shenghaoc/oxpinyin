@@ -224,7 +224,6 @@ fn every_operation_round_trips() {
 
     {
         let bigram = open(&path);
-        assert!(bigram.is_open());
         assert_eq!(bigram.get_magic_header().expect("magic read"), None);
         assert_eq!(bigram.get_all_items(), Some(Vec::new()));
         assert_eq!(bigram.load(7).expect("missing load"), None);
@@ -404,7 +403,10 @@ fn an_invalid_signature_answers_false_and_keeps_the_opened_object() {
     for mode in [AttachMode::ReadWriteCreate, AttachMode::ReadOnly] {
         let model = Model::attach(Some(&foreign), mode).expect("attach");
         assert!(!model.attached(), "{mode:?}: wrong magic number");
-        assert!(model.is_open(), "{mode:?}: the opened object stays");
+        assert!(
+            model.get_all_items().is_some(),
+            "{mode:?}: the opened object stays"
+        );
     }
 
     let signatureless = scratch.path().join("signatureless.db");
@@ -415,7 +417,7 @@ fn an_invalid_signature_answers_false_and_keeps_the_opened_object() {
     }
     let model = Model::attach(Some(&signatureless), AttachMode::ReadWriteCreate).expect("attach");
     assert!(!model.attached(), "a non-empty file has no magic");
-    assert!(model.is_open());
+    assert!(model.get_all_items().is_some());
 }
 
 #[test]
@@ -446,7 +448,7 @@ fn a_missing_file_is_created_only_with_create() {
 
     let created = scratch.path().join("created.db");
     let model = Model::attach(Some(&created), AttachMode::ReadWriteCreate).expect("attach");
-    assert!(model.attached() && model.is_open());
+    assert!(model.attached() && model.get_all_items().is_some());
     drop(model);
     assert!(
         raw_has(&created, &MAGIC_KEY),
@@ -462,12 +464,15 @@ fn a_missing_file_is_created_only_with_create() {
         let path = scratch.path().join(name);
         let model = Model::attach(Some(&path), mode).expect("attach");
         assert!(!model.attached(), "{mode:?}");
-        assert!(!model.is_open(), "{mode:?}: no object stays");
+        assert!(model.get_all_items().is_none(), "{mode:?}: no object stays");
         assert!(!path.exists(), "{mode:?}: no file is created");
     }
 
     let model = Model::attach(None, AttachMode::ReadWriteCreate).expect("attach");
-    assert!(!model.attached() && !model.is_open(), "a NULL filename");
+    assert!(
+        !model.attached() && model.get_all_items().is_none(),
+        "a NULL filename"
+    );
 }
 
 #[test]
@@ -481,7 +486,7 @@ fn an_existing_empty_file_follows_the_backends_open() {
     let path = scratch.path().join("empty.db");
     fs::write(&path, b"").expect("empty file");
     let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
-    assert!(model.is_open());
+    assert!(model.get_all_items().is_some());
     if cfg!(feature = "bdb") {
         assert!(model.attached());
         drop(model);
@@ -503,11 +508,14 @@ fn a_failed_create_retry_follows_the_backends_rule() {
     let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
     assert!(!model.attached());
     if cfg!(feature = "kyotocabinet") {
-        assert!(model.is_open(), "the unopened HashDB stays");
         assert!(model.store(11, &gram_with_header()).is_err(), "INVALID");
-        assert_eq!(model.get_all_items(), Some(Vec::new()));
+        assert_eq!(
+            model.get_all_items(),
+            Some(Vec::new()),
+            "the unopened HashDB stays"
+        );
     } else {
-        assert!(!model.is_open());
+        assert!(model.get_all_items().is_none());
         assert!(!model.store(11, &gram_with_header()).expect("closed store"));
     }
 }

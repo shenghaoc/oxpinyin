@@ -414,12 +414,6 @@ where
         self.attached
     }
 
-    /// Whether a handle is open (the pin's `m_db != NULL`).
-    #[must_use]
-    pub fn is_open(&self) -> bool {
-        self.db.is_some()
-    }
-
     /// Load one single gram; `None` when the token has no row, or when the
     /// handle is closed (`flexible_ngram_bdb.h:165-187` and its peers).
     ///
