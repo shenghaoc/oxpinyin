@@ -2290,24 +2290,35 @@ fn lookup_tokens_resets_the_callers_array() {
 #[test]
 fn nth_pronunciation_into_a_null_array_logs_the_glib_criticals() {
     let user = TempUserDir::new("garray-null-pronunciation");
+    let user_token = saved_user_phrase(&user.path);
     let (context, instance) = open_at(&user.path);
     let token = lookup(instance, "你好")[0];
     let logs = crate::test_support::LogCapture::new();
     let glib = (Some("GLib".to_owned()), CRITICAL);
-    assert!(crate::dict::pinyin_token_get_nth_pronunciation(
-        instance,
-        token,
-        0,
-        ptr::null_mut()
-    ));
-    assert_eq!(logs.take(), [glib.clone(), glib.clone()]);
+    for token in [token, user_token] {
+        assert!(crate::dict::pinyin_token_get_nth_pronunciation(
+            instance,
+            token,
+            0,
+            ptr::null_mut()
+        ));
+        let records = logs.take_with_messages();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].0, glib);
+        assert!(records[0].1.contains("g_array_set_size"));
+        assert_eq!(records[1].0, glib);
+        assert!(records[1].1.contains("g_array_append_vals"));
+    }
     assert!(!crate::dict::pinyin_token_get_nth_pronunciation(
         instance,
         0xFFFF_FFFF,
         0,
         ptr::null_mut()
     ));
-    assert_eq!(logs.take(), [glib]);
+    let records = logs.take_with_messages();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].0, glib);
+    assert!(records[0].1.contains("g_array_set_size"));
     close(context, instance);
 }
 

@@ -765,24 +765,40 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
 /// unknown token.
 #[test]
 fn a_null_pronunciation_array_logs_the_glib_criticals() {
-    let (context, instance) = open();
+    let user = TempUserDir::new("garray-null-pronunciation");
+    let (context, instance) = open_with_user(&user.path);
     let token = tokens_of(instance, "你好")[0];
+    assert!(import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1));
+    let user_token = tokens_of(instance, "你好")
+        .into_iter()
+        .find(|token| token >> 24 == 7)
+        .expect("the imported USER_FILE item");
     let logs = LogCapture::new();
-    assert!(zhuyin_token_get_nth_pronunciation(
-        instance,
-        token,
-        0,
-        ptr::null_mut()
-    ));
     let glib = (Some("GLib".to_owned()), CRITICAL);
-    assert_eq!(logs.take(), [glib.clone(), glib.clone()]);
+    for token in [token, user_token] {
+        assert!(zhuyin_token_get_nth_pronunciation(
+            instance,
+            token,
+            0,
+            ptr::null_mut()
+        ));
+        let records = logs.take_with_messages();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].0, glib);
+        assert!(records[0].1.contains("g_array_set_size"));
+        assert_eq!(records[1].0, glib);
+        assert!(records[1].1.contains("g_array_append_vals"));
+    }
     assert!(!zhuyin_token_get_nth_pronunciation(
         instance,
         0xFFFF_FFFF,
         0,
         ptr::null_mut()
     ));
-    assert_eq!(logs.take(), [glib]);
+    let records = logs.take_with_messages();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].0, glib);
+    assert!(records[0].1.contains("g_array_set_size"));
     drop(logs);
     close(context, instance);
 }

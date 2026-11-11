@@ -185,7 +185,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     }
     let prefix =
         oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
-    crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref())
+    let outcome = crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref());
+    crate::predict::prediction_answer(outcome)
 }
 
 /// Get a sentence string from the instance (n-best variant).
@@ -471,12 +472,12 @@ pub extern "C" fn pinyin_guess_candidates(
         // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
         // the process aborts in `refuse_lookup_gram` too.
         Err(
-            error @ (oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }),
-        ) => {
-            refuse_lookup_gram("pinyin_guess_candidates", &error);
+            oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+        ) => std::process::abort(),
+        Err(error @ oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }) => {
             inst.state.candidates.clear();
+            refuse_lookup_gram("pinyin_guess_candidates", &error);
             return false;
         }
         Err(_) => {
