@@ -263,7 +263,8 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// compacts the store and clears `m_modified`. Durability is save-gated, as
 /// at the pin: training reaches the user files only here, and a crash before
 /// the save loses it (`docs/findings/user-store.md` §6).
-pub fn save_context(context: *mut PinyinContext) -> bool {
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
@@ -275,7 +276,7 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
     // (`table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    let outcome = ctx.save_user();
+    let outcome = ctx.core.save_user();
     match outcome {
         // Register row 77, `memory_chunk.h:543`/`:547`: a chunk file's
         // header write failed and the pin `assert`s there. The save stopped
@@ -291,19 +292,6 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
         oxpinyin_facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
         outcome => outcome.is_saved(),
     }
-}
-
-/// Save user data.
-///
-/// # C signature
-/// ```c
-/// bool pinyin_save(pinyin_context_t * context);
-/// ```
-///
-/// Body and §4 semantics: `save_context`.
-#[unsafe(no_mangle)]
-pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
-    save_context(context)
 }
 
 #[cfg(test)]

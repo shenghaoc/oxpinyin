@@ -124,7 +124,7 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`;
     // the unique borrow lasts only for the mask call.
     let ctx = unsafe { context_mut(context) };
-    let outcome = ctx.mask_out(mask, value);
+    let outcome = ctx.core.mask_out(mask, value);
     match outcome {
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
         // Register rows 84 and 94, `chewing_large_table2_bdb.cpp:529` (kc
@@ -188,7 +188,7 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
     // `false` first, `:362-363`); which rows are is the context's
     // `table.conf`. The facade answers that before it maps or logs
     // anything, and the process aborts (register rows 66 and 79).
-    let outcome = ctx.load_phrase_library(u32::from(index));
+    let outcome = ctx.core.load_phrase_library(u32::from(index));
     if outcome
         == Err(oxpinyin_facade::LibraryLoadFault::Row(
             oxpinyin_facade::LibraryRowAssert::NotLoadable,
@@ -243,5 +243,5 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
     // `FacadePhraseIndex::unload` is in memory (policy row 103): the
     // session drops the library and its visibility mask sets, with nothing
     // written and nothing that can fail.
-    ctx.unload_phrase_library(index)
+    ctx.core.unload_phrase_library(index)
 }

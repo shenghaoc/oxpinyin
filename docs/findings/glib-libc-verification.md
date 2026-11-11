@@ -763,7 +763,7 @@ the source-only caller rows. No divergence is admitted.
 
 Audit #929; pin source read from a checkout of
 `074a2219c90feaf962d0d24f034514033ece5f99`. The C-facing path is
-`context::save_context` / `zhuyin_save` → `facade::ContextCore::save_user` →
+`pinyin_save` / `zhuyin_save` → `facade::ContextCore::save_user` →
 `UserStore::save_reporting_with_baseline` → `persistence::save_reporting`.
 The reporting save is the only save.
 `UserConfLaw` selects staged pinyin versus interleaved zhuyin writes.
