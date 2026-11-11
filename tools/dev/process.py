@@ -9,7 +9,6 @@ from .runners import Finished, write
 from .measure import bench
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev']
 
 
 def run(command, *, env=None, cwd=None, stdout=None, stdin=None, stderr=None, heavy=False, check=True):

@@ -370,7 +370,3 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
         if not (slot.CANCELLED.is_set() and isinstance(stop.code, str)):
             raise
         fail(stop.code, slot.cancellation_status())
-
-
-RECIPES = {'callgrind-control': callgrind_control, 'callgrind-differential': callgrind_differential,
-           'system-import-profile': system_import_profile}

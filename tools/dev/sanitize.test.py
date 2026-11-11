@@ -79,16 +79,18 @@ class ToolchainTests(unittest.TestCase):
                                       cwd=root, env=environment, capture_output=True,
                                       text=True, timeout=60)
 
-            imported = python('-c', 'from tools.dev import cli, test_runner; '
+            imported = python('-c', 'from tools.dev import test_runner; '
                                     'print(test_runner.SANITIZER_TOOLCHAIN_FILE)')
             self.assertEqual((imported.returncode, imported.stdout.strip()),
                              (0, str(missing)), imported.stderr)
             # --check never runs a gate.
-            for command in (['sanitize-toolchain'], ['sanitize', '--check', 'bdb']):
-                with self.subTest(command=command):
-                    result = python('-m', 'tools.dev', *command)
+            for operation, args in (('sanitize_toolchain', []), ('sanitize', ['--check', 'bdb'])):
+                with self.subTest(operation=operation):
+                    call = 'sanitize(sys.argv[1:])' if args else 'sanitize_toolchain()'
+                    result = python('-c', f'import sys; from tools.dev.test_runner import {operation}; '
+                                          f'raise SystemExit({call})', *args)
                     self.assertEqual((result.returncode, result.stdout), (1, ''), result.stderr)
-                    self.assertEqual(result.stderr, f'{command[0]}: {missing} is missing; '
+                    self.assertEqual(result.stderr, f'{operation.replace('_', '-')}: {missing} is missing; '
                                                     'it names the sanitizer nightly.\n')
 
 

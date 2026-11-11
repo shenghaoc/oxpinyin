@@ -738,8 +738,8 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertEqual(libs[:3], ['wslc', 'run', '--rm'])
         self.assertIn(f'{service.oracle_root}:/opt/pinyin-oracle:ro', libs)
         self.assertEqual(libs[libs.index('deps:tag'):], ['deps:tag', 'uv', 'run', '--no-project', '--managed-python', 'python',
-                                                         '-X', 'lazy_imports=normal', '-m', 'tools.dev',
-                                                         'provision', 'prefix-check', 'libs', 'tkrzw',
+                                                         '-X', 'lazy_imports=normal', '-m', 'tools.dev.provision',
+                                                         'prefix-check', 'libs', 'tkrzw',
                                                          '/opt/pinyin-oracle/tkrzw', '/run/oracle-pin.txt'])
         self.assertEqual(data[-4:], ['data', 'kc', '/opt/pinyin-oracle/kc', '/run/oracle-pin.txt'])
         self.assertEqual(remove[-4:], ['-c', 'rm -rf "/cache/oracle/$1"', 'sh', 'bdb'])

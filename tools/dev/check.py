@@ -4,6 +4,13 @@ These are setup and gate checks, not oracle or pin comparisons. The old
 optional oracle-directory display is intentionally absent: the native boundary
 does not probe an oracle installation or pass its variables to tests.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
+import argparse
 import os
 from pathlib import Path
 import platform
@@ -220,3 +227,8 @@ def lint_crate_cfg_placement(argv, *, out=sys.stdout, err=sys.stderr, root=ROOT,
         return 1
     print(f'crate-cfg-placement: {checked} file(s) checked, no violations', file=out)
     return 0
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Run native setup checks.')
+    parser.add_argument('backend', nargs='?')
+    raise SystemExit(run(parser.parse_args().backend))

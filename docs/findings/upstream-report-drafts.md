@@ -541,7 +541,7 @@ and host admission from the [compatibility runbook](../runbooks/compatibility-co
 these paths are reproduction inputs, not retained artifact links.
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -m tools.dev slot run -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.py bdb /work/reference /work/shipping/lib/libpinyin.so --zhuyin-so /work/shipping/lib/libzhuyin.so --teardown --teardown-stage attribute --teardown-attribution-case journals --teardown-work-dir /work/measure
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -c 'import sys; from tools.dev.native import shell_status; from tools.dev.runners import guarded; from tools.dev.slot import run_command; raise SystemExit(guarded(lambda: shell_status(run_command(sys.argv[1:]))))' uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.py bdb /work/reference /work/shipping/lib/libpinyin.so --zhuyin-so /work/shipping/lib/libzhuyin.so --teardown --teardown-stage attribute --teardown-attribution-case journals --teardown-work-dir /work/measure
 ```
 
 The attribution stage includes the empty-profile Memcheck loop for

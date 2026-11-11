@@ -15,6 +15,12 @@ semantic versioning for most (a pre-release of the minimum is older than it),
 the projects' own numbering for GNU ld, gcov and Valgrind. Runbooks and
 setup.sh point here instead of repeating version lists.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import json
 import os
 import platform
@@ -525,3 +531,7 @@ def main(argv=None):
     for line in lines:
         print(line)
     return status
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

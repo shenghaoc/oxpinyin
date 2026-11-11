@@ -1,5 +1,5 @@
-# Native command interface. Thin recipes only: selection and orchestration
-# stay in tools.dev. Native recipes never start a container.
+# Native command interface. Recipes call their implementations directly.
+# Native recipes never start a container.
 set positional-arguments
 set minimum-version := "1.59.0"
 
@@ -28,11 +28,11 @@ cache-root:
 # Compare scripts2-derived Rust tables offline; pass --write to regenerate.
 [unix]
 rust-tables *args:
-    @uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables "$@"
+    @uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev.rust_tables "$@"
 
 [windows]
 rust-tables *args:
-    @{{windows_args}} uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev rust-tables @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --offline --no-python-downloads --no-project --managed-python python -X lazy_imports=normal -m tools.dev.rust_tables @forwarded; exit $LASTEXITCODE
 
 # Data-only transport target for the real-just smoke tests; never starts work.
 [unix]
@@ -59,29 +59,29 @@ python:
 # Post-bootstrap cloud provisioning; the shell entry also installs uv if needed.
 [unix]
 provision *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.provision "$@"
 
 [windows]
 provision *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.provision @forwarded; exit $LASTEXITCODE
 
 # Fetch, verify and extract the pinned model20 archive into the cache root.
 [unix]
 fetch-model *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.model "$@"
 
 [windows]
 fetch-model *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.model @forwarded; exit $LASTEXITCODE
 
 # Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into the cache root.
 [unix]
 fetch-contract-data *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.contract_data "$@"
 
 [windows]
 fetch-contract-data *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.contract_data @forwarded; exit $LASTEXITCODE
 
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `just python` when the interpreter is missing.
@@ -89,18 +89,18 @@ fetch-contract-data *args: python
 doctor:
     @command -v uv >/dev/null 2>&1 || { echo 'uv is not installed: see docs/runbooks/setup.md' >&2; exit 1; }
     @uv python find --managed-python >/dev/null 2>&1 || { echo 'the managed interpreter in .python-version is not installed: run `just python`' >&2; exit 1; }
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.doctor
 
 [windows]
 doctor:
     @{{windows_args}} if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('uv is not installed: see docs/runbooks/setup.md'); exit 1 }
     @{{windows_args}} uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.doctor; exit $LASTEXITCODE
 
 # Install, validate and assemble drop-in packages through the shared service.
 [unix]
 packaging *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging "$@"
 
 [windows]
 packaging *args:
@@ -110,7 +110,7 @@ packaging *args:
 # Stage built utilities in the tree expected by epico/trainer.
 [unix]
 trainer-layout target *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging trainer-layout "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging trainer-layout "$@"
 
 [windows]
 trainer-layout target *args:
@@ -119,11 +119,11 @@ trainer-layout target *args:
 
 [unix]
 check backend="": python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.check "$1"
 
 [windows]
 check backend="": python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev check {{backend}}; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.check @forwarded; exit $LASTEXITCODE
 
 # A distro tkrzw is found through pkg-config with nothing more. To use this
 # build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
@@ -149,11 +149,11 @@ test *args:
 # Run the CI Python harness discovery and exclusions (Linux, macOS and Windows).
 [unix]
 test-tools *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.test_runner "$@"
 
 [windows]
 test-tools *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.test_runner @forwarded; exit $LASTEXITCODE
 
 # Run doctests separately; nextest does not run them.
 [unix]
@@ -277,7 +277,7 @@ provision-oracle *args: python
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
 sanitize backend="" sanitizer="address": python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
 # selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
@@ -293,7 +293,7 @@ sanitize backend="" sanitizer="address": python
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
         PATH="$(brew --prefix tkrzw)/bin:$PATH" \
-        uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize "$1" "$2"
+        uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # The gates are Linux/Darwin native builds; Windows sanitizers are unsupported.
 [windows]
@@ -304,7 +304,7 @@ sanitize backend="" sanitizer="address":
 # Compile and run the C++ pinyin.h smoke gate.
 [unix]
 cpp-smoke: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cpp-smoke
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.runners import cpp_smoke; raise SystemExit(cpp_smoke(sys.argv[1:]))'
 
 [windows]
 cpp-smoke:
@@ -313,29 +313,33 @@ cpp-smoke:
 
 [unix]
 abi *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.abi "$@"
 
 [windows]
 abi *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev abi @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.abi @forwarded; exit $LASTEXITCODE
 
 # Build or describe the registry's selected cell artifacts.
 [unix]
 cell-artifacts *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts "$@"
+    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.cell "$@"
 
 [windows]
 cell-artifacts *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev cell-artifacts @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.cell @forwarded; exit $LASTEXITCODE
 
-# Run a Valgrind recipe (tools/dev/measure/recipes.py).
-[unix]
-measure recipe *args: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure "$@"
+# Run Valgrind recipes under the shared cancellation and failure handlers.
+[linux]
+measure-callgrind-control *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.valgrind import callgrind_control; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_control))' "$@"
 
-[windows]
-measure recipe *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev measure @forwarded; exit $LASTEXITCODE
+[linux]
+measure-callgrind-differential *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.valgrind import callgrind_differential; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_differential, pin_comparison=True))' "$@"
+
+[linux]
+measure-system-import-profile *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.valgrind import system_import_profile; from tools.dev.measure.recipes import run; raise SystemExit(run(system_import_profile, pin_comparison=True))' "$@"
 
 # Build and enter the local oracle-based performance environment on the host architecture.
 [unix]

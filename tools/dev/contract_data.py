@@ -9,6 +9,12 @@ is not read. It goes into contract-data/<version> under the cache root
 read-only (the write bits cleared; on Windows the read-only attribute), a guard
 against a case writing into the data through a link, not a security boundary.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import argparse
 import hashlib
 import io
@@ -157,3 +163,7 @@ def main(argv):
     except OSError as error:
         parser.exit(1, f'fetch-contract-data: {error}\n')
     return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

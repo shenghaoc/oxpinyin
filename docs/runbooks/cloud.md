@@ -121,7 +121,7 @@ without the oracle setup:
 ```sh
 tools/cloud/setup.sh --python-only
 export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev doctor
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.doctor
 ```
 
 This mode runs the existing Linux and supported-platform checks, then the
@@ -509,7 +509,7 @@ side.
 ### Provisioning implementation and fixture checks
 
 `tools/cloud/setup.sh` retains the pre-interpreter uv/bootstrap step and then
-calls the single `tools.dev provision` service. `just provision` uses an already
+calls the `tools.dev.provision` service. `just provision` uses an already
 provisioned interpreter.
 
 Run the synthetic provisioning fixtures through normal Python discovery:

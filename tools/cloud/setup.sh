@@ -102,4 +102,4 @@ fi
 
 OXPINYIN_CLOUD_BOOTSTRAP_SECONDS=$SECONDS OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV=$kept_uv \
 exec uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal \
-    "$repo/tools/dev/__main__.py" provision "$@"
+    -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)' "$repo" "$@"

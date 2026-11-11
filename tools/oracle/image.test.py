@@ -646,8 +646,8 @@ class ProvisionOracleTests(unittest.TestCase):
                 self.assertIn('OXPINYIN_CACHE=/cache', launch)
                 self.assertNotIn(f'OXPINYIN_CACHE={self.root}', launch)
                 self.assertEqual(self.cache.parent, self.root)
-                self.assertEqual(launch[launch.index('provision'):],
-                                 ['provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
+                self.assertEqual(launch[launch.index('-m') + 1:],
+                                 ['tools.dev.provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
                 self.assertTrue(launch[launch.index('-w') + 2].startswith('oxpinyin-performance:TAG-'))
 
     def test_rootful_docker_runs_as_the_host_user_with_a_writable_uv(self):

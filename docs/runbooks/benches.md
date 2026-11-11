@@ -56,8 +56,9 @@ their resulting paths. Ordinary development remains native.
 
 Use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
 Keep the backend, artifact identity, input-digest and runtime checks for each recipe.
-Each recipe runs as `python -m tools.dev measure RECIPE [ARGS]` (`just measure RECIPE`;
-the measurement image has no `just` and runs the `uv run` form).
+Run each recipe as `just measure-RECIPE [ARGS]`. In the measurement image,
+which has no `just`, run the corresponding `uv run` command from the
+`justfile` with the arguments in place of `"$@"`.
 The sampling loops are serial and interleave the arms one process at a time,
 because a timed or resident-set sample belongs to its arm only if nothing runs
 beside it.
@@ -94,7 +95,7 @@ env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
 env CARGO_TARGET_DIR=target/tkrzw \
   cargo cinstall -v --locked --release -p oxpinyin-capi \
   --destdir=target/callgrind-tkrzw/control --prefix=/usr
-just measure callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
+just measure-callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
 ```
 
 Run from a shell with no Cargo profile or RUSTFLAGS overrides already exported.
@@ -106,7 +107,7 @@ on the profiled library displays its DWARF units.
 
 ### Sentence and typing-sequence Callgrind campaign
 
-`just measure callgrind-differential --workload sentence|typing-sequence`
+`just measure-callgrind-differential --workload sentence|typing-sequence`
 extends the existing `bisect` driver (#1348). Its no-argument campaign and
 `bisect --perf` retain their original 20-input workload. The frozen
 `system-import-profile --sentence-fixture` mode still requires its 500-row
@@ -137,11 +138,11 @@ and the sound-tkrzw runtime before collecting. It runs the harness build and
 all collections serially; do not overlap other work.
 
 ```bash
-just measure callgrind-differential --workload sentence --cell tkrzw \
+just measure-callgrind-differential --workload sentence --cell tkrzw \
   --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
   --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
   --system-dir "$DATA" --out "$WORK/sentence"
-just measure callgrind-differential --workload typing-sequence --cell tkrzw \
+just measure-callgrind-differential --workload typing-sequence --cell tkrzw \
   --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
   --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
   --system-dir "$DATA" --out "$WORK/typing-sequence"
