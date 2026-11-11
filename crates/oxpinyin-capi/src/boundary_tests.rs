@@ -2785,7 +2785,7 @@ fn gbk_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
     inst.state
         .candidates
         .iter()
-        .filter_map(|cand| cand.token.map(oxpinyin_core::PhraseToken::value))
+        .filter_map(|cand| cand.token.get().map(oxpinyin_core::PhraseToken::value))
         .filter(|token| token >> 24 == 2)
         .collect()
 }

@@ -6,6 +6,7 @@
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::os::raw::c_char;
 
@@ -141,9 +142,9 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text: oxpinyin_facade::TextSpan::NULL,
             text_ptr: std::ptr::null(),
-            type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+            type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
-            token: Some(oxpinyin_core::PhraseToken::new(token)),
+            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
             source_index: 0,
         });
         return Ok(true);
@@ -172,9 +173,9 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            type_tag: item.candidate_type.tag(),
+            type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
-            token: Some(oxpinyin_core::PhraseToken::new(item.token)),
+            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(item.token))),
             // Predicted candidates are chosen via
             // `pinyin_choose_predicted_candidate`, never the anchored-select
             // path, so the window index is unused here; record the snapshot
@@ -305,9 +306,9 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            type_tag: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag(),
+            type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag()),
             nbest_index: 0,
-            token: None,
+            token: Cell::new(None),
             source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
         });
     }
