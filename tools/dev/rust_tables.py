@@ -5,6 +5,12 @@ Only explicitly recorded fallback markers are read from their checked blobs.
 The pinyins.txt input is derived with the pin's scripts2 distiller and is
 GPL-3.0-or-later, as the pin; its model20 source is documented in README.md.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import argparse
 import ast
 from contextlib import contextmanager

@@ -793,9 +793,9 @@ pub struct BigramExportWalk {
     /// Planted grams, read when there is no `source`; `None` plants a value
     /// too short for its total.
     grams: HashMap<u32, Option<Vec<(u32, u32)>>>,
-    /// Every token rendered so far: `render` is an O(pinyin-index) scan
-    /// and a token recurs across many grams.
-    rendered: HashMap<u32, Option<(PhraseText, Vec<String>)>>,
+    /// Items for the planted-gram state machine tests.
+    #[cfg(test)]
+    test_items: HashMap<u32, (PhraseText, Vec<String>)>,
 }
 
 impl std::fmt::Debug for BigramExportWalk {
@@ -935,11 +935,16 @@ impl BigramExportWalk {
         self.pair = None;
     }
 
-    /// `token`'s rendering, memoised.
-    fn render(&mut self, token: u32, source: Option<&ExportSource<'_>>) {
-        self.rendered
-            .entry(token)
-            .or_insert_with(|| source.and_then(|source| source.render(token)));
+    fn render(
+        &self,
+        token: u32,
+        source: Option<&ExportSource<'_>>,
+    ) -> Option<(PhraseText, Vec<String>)> {
+        #[cfg(test)]
+        if source.is_none() {
+            return self.test_items.get(&token).cloned();
+        }
+        source.and_then(|source| source.render(token))
     }
 
     /// The row `has_next` builds for `(m_index_token, token)`
@@ -948,20 +953,9 @@ impl BigramExportWalk {
     /// token the phrase index does not resolve reads as the pin's empty
     /// `PhraseItem` — no text, no pronunciation.
     fn load_row(&mut self, token: u32, count: u32, source: Option<&ExportSource<'_>>) {
-        self.render(self.index_token, source);
-        self.render(token, source);
-        let empty = (PhraseText::default(), Vec::new());
-        let (first_text, first_pinyins) = self
-            .rendered
-            .get(&self.index_token)
-            .and_then(Option::as_ref)
-            .unwrap_or(&empty);
-        let (second_text, second_pinyins) = self
-            .rendered
-            .get(&token)
-            .and_then(Option::as_ref)
-            .unwrap_or(&empty);
-        self.pair = Some((first_text.clone(), second_text.clone()));
+        let (first_text, first_pinyins) = self.render(self.index_token, source).unwrap_or_default();
+        let (second_text, second_pinyins) = self.render(token, source).unwrap_or_default();
+        self.pair = Some((first_text, second_text));
         self.loads = self.loads.wrapping_add(1);
         self.count = count;
         self.pinyins = first_pinyins
@@ -1005,10 +999,8 @@ mod tests {
             (0x0100_0003, "我", "wo"),
             (0x0100_0004, "爱", "ai"),
         ] {
-            walk.rendered.insert(
-                token,
-                Some((PhraseText::from(text), vec![pinyin.to_owned()])),
-            );
+            walk.test_items
+                .insert(token, (PhraseText::from(text), vec![pinyin.to_owned()]));
         }
         walk
     }

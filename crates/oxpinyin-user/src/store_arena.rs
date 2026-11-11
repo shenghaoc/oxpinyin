@@ -20,11 +20,7 @@ impl UserStore {
     /// difference from it.
     fn library_total_of(&self, offsets: &Offsets, phrases: &SessionPhrases, library: u8) -> u32 {
         if let Some(original) = self.originals.get(&library) {
-            return self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            return lock_result_or_abort(self.inner.system_items.lock())
                 .library_total(library, Some(original))
                 .unwrap_or(original.total);
         }
@@ -41,11 +37,7 @@ impl UserStore {
     /// `library` (`phrase_index.h:669`): the facade total takes it, and a
     /// system library's total takes it too when the item's unigram was kept.
     fn take_item_in(&self, library: u8, unigram: u32, accepted: bool) {
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         match self.originals.get(&library) {
             Some(original) if accepted => {
                 let total = items
@@ -60,11 +52,7 @@ impl UserStore {
     /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
     /// facade and the library's totals lose the item's unigram.
     fn take_item_out(&self, library: u8, unigram: u32) {
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         match self.originals.get(&library) {
             Some(original) => {
                 let total = items
@@ -105,10 +93,7 @@ impl UserStore {
         let offsets_left = !offsets.is_empty();
         // The facade total takes the library's new total in and the old one
         // out (`phrase_index.cpp:237-248`).
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.inner.system_items.lock())
             .add_facade_extra(after.wrapping_sub(before).wrapping_add(u64::from(moved)));
         phrases.libraries.remove(&nibble);
         if let Some(library) = library {
@@ -138,12 +123,7 @@ impl UserStore {
             .libraries
             .values()
             .any(|library| !library.is_empty())
-            || self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .has_added()
+            || lock_result_or_abort(self.inner.system_items.lock()).has_added()
     }
 
     /// Addon selection copies the complete item to the current range end,
@@ -239,11 +219,7 @@ impl UserStore {
         drop(phrases);
         // Any system item is trained in place in its library's live buffer; a
         // removed one answers no item there and is left alone.
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         if items.train_live(
             self.originals.get(&phrase_index_library_index(token)),
             token,
@@ -292,11 +268,7 @@ impl UserStore {
             if !self.has_system_items() {
                 return None;
             }
-            return self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            return lock_result_or_abort(self.inner.system_items.lock())
                 .with_added(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
                 .flatten();
         }
@@ -460,11 +432,7 @@ impl UserStore {
                 tokens.first().copied()
             }
         };
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         // An unloaded library has no sub-index: `get_range` fails and
         // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
         if items.lacks_sub_index(library, original) {
@@ -563,11 +531,7 @@ impl UserStore {
             return UnigramAdd::Missing;
         }
         let original = self.originals.get(&library);
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         if original.is_some() {
             // An unloaded library has no sub-index: the pin answers
             // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves

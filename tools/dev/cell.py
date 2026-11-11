@@ -1,4 +1,10 @@
 """Explicit cell settings and shared build/identity services."""
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import datetime
@@ -303,3 +309,7 @@ def cdylib(stem: str) -> str:
 
 def utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

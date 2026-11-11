@@ -1,15 +1,13 @@
 # Memory & Access Safety Bugs in libpinyin / ibus-libpinyin
 
-A curated reference of bugs that are primarily caused by (or closely related to) **memory management**, **null / invalid access**, **resource lifetime**, **alignment**, or **use-after-free** issues.
-
-These are the class of defects that a careful Rust rewrite is expected to eliminate or make significantly harder by construction (ownership, `Option`/`Result`, RAII, borrow checker, no unchecked pointer arithmetic, etc.).
+This is a curated reference of bugs whose main cause is (or is closely related to) **memory management**, **null / invalid access**, **resource lifetime**, **alignment** or **use-after-free**.
 
 **Out of scope** (intentionally excluded):
 
 - Compiler version / C++ standard / MinGW portability issues
 - Pure behavioural / UX issues (e.g. “baidu.com” punctuation stripping, mode-switch quirks, Wayland candidate positioning, missing features)
 
-Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit history, and distro crash reports (as of mid-2026).
+Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit history and distro crash reports (as of mid-2026).
 
 ---
 
@@ -202,75 +200,79 @@ Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit 
 
 ## 7. Eliminated by construction — a precise accounting
 
-"Rust prevents this" is three different claims, and conflating them is how
-rewrite projects end up making promises their first release breaks. The
-tiers below sort every catalogued bug by *which mechanism* actually holds
-the guarantee in oxpinyin — the type system, the ownership model with its
-named escape hatches, or policy-plus-tests where the language holds
-nothing at all. Scope note: Tier A guarantees apply to the
-`#![forbid(unsafe_code)]` core crates; `oxpinyin-capi` is the one surface
-where C-shaped risk re-enters, governed by contract (`// SAFETY:` per
-block, ASan across the FFI, the NULL-tolerance template rule below)
-rather than by the compiler.
+"Rust prevents this" is three different claims. If they are mixed, a rewrite
+project can make promises that its first release breaks. The
+tiers below sort every catalogued bug by *which mechanism* holds
+the guarantee in oxpinyin:
+
+- the type system;
+- the ownership model, with its named escape hatches;
+- policy and tests, where the language holds nothing.
+
+Scope: Tier A guarantees apply to the
+`#![forbid(unsafe_code)]` core crates. `oxpinyin-capi` is the one surface
+where C-shaped risk enters again. A contract governs it (`// SAFETY:` per
+block, ASan across the FFI, the NULL-tolerance template rule below),
+not the compiler.
 
 ### Tier A — unrepresentable in safe Rust
 
 - **Null dereference** (1.1, parts of 1.2, 1.3): fallible lookups return
-  `Option`/`Result`; the deref-of-NULL cannot be written. *Stage-1
-  nuance:* the borrowed C++ frontend still performs the upstream call
-  sequence and will pass NULL into our shim — bug 1.1 is prevented at
-  `oxpinyin-capi` by contract (validate, return the upstream error
-  convention), not by the borrow checker. The language protects the
+  `Option`/`Result`, so a dereference of NULL cannot be written. *Stage-1
+  qualification:* the borrowed C++ frontend still performs the upstream call
+  sequence and passes NULL into the oxpinyin shim. A contract at
+  `oxpinyin-capi` prevents bug 1.1 (validate, return the upstream error
+  convention); the borrow checker does not. The language protects the
   core; the contract protects the seam.
 - **Use-after-free** (3.1): lifetimes make the dangling reference a
-  compile error. Full stop.
+  compile error.
 - **Iterator/reallocation UB** (1.2): owned candidate lists and
   bounds-checked indexing make invalidated-iterator UB inexpressible.
-  (A *logically stale* snapshot remains possible — that is a correctness
-  question for session-replay tests, not a memory-safety one.)
+  A *logically stale* snapshot stays possible. That is a correctness
+  question for session-replay tests, not a memory-safety question.
 - **Unaligned-access UB** (4.1, 4.2): safe Rust cannot perform a
-  misaligned dereference; packed on-disk data goes through explicit byte
+  misaligned dereference. Packed on-disk data goes through explicit byte
   parsing, so the failure mode becomes a checked parse error, never a
   bus error.
 - **Early-return resource leaks** (2.2, 2.3): `Drop` runs on every exit
-  path; the forgot-to-`fclose`-before-`return` pattern is unwritable.
+  path, so the pattern of a missing `fclose` before `return` cannot be written.
 
 ### Tier B — structurally prevented, escape hatches named
 
-- **Async lifetime leaks** (2.1): ownership plus cancel-on-`Drop` erases
-  the `g_timeout` destroy-notify class — but Rust async has its own
-  hatch: a detached task whose `JoinHandle` is dropped leaks by design.
+- **Async lifetime leaks** (2.1): ownership and cancel-on-`Drop` remove
+  the `g_timeout` destroy-notify class. Rust async has its own
+  escape hatch: a detached task whose `JoinHandle` is dropped leaks by design.
   Design rule: no fire-and-forget; every spawned task is owned or
   aborted.
 - **Deliberate-leak APIs** (`Box::leak`, `mem::forget`, `Rc` cycles)
-  exist on purpose. The core crates have no use for them, and their
-  appearance in review is treated as a defect requiring written
+  exist on purpose. The core crates have no use for them. Review
+  treats their appearance as a defect that requires written
   justification.
 
-Tier B is honest about the hatch: the language closes the accidental
-path and leaves the deliberate one; policy closes the remainder.
+In Tier B, the language closes the accidental
+path and leaves the deliberate one open. Policy closes the rest.
 
 ### Tier C — the language does not prevent these; policy, architecture and tests do
 
-- **Panic on user input** (6.1): `assert!` and `unwrap` abort exactly
-  like `__assert_perror_fail`. Prevention is constitution rule 4 (every
+- **Panic on user input** (6.1): `assert!` and `unwrap` abort in the same way
+  as `__assert_perror_fail`. Constitution rule 4 prevents it (every
   public API returns `Result`; a panic is a defect of the same severity
-  as data loss), enforced by proptest totality, cargo-fuzz from W1, and
-  Kani bounded proofs. This tier exists in writing because libchewing —
-  a competent Rust rewrite by the original author — still shipped
+  as data loss). Proptest totality, cargo-fuzz from W1 and
+  Kani bounded proofs enforce the rule. This tier is written down because libchewing,
+  a competent Rust rewrite by the original author, still shipped
   "panic when selecting phrases backwards at the end of buffer" in
-  v0.8.0. Memory safety eliminates one class of crash, not crashes.
+  v0.8.0. Memory safety eliminates one class of crash, not all crashes.
 - **Stale-lock hangs** (5.1): no borrow checker deletes a leftover
-  `__db.*` file. Eliminated by architecture — redb keeps state in a
-  single file with no sidecar lock artefacts — and locked by the
-  hard-kill gate (terminate mid-write, reopen, integrity asserted).
-- **Unbounded growth** (2.4): caches grow in any language. Bounded-cache
-  policy plus published memory figures; ownership makes the accounting
+  `__db.*` file. The default backend is tkrzw. Berkeley DB is a supported backend;
+  `oxpinyin-store` opens it with no environment handle, as the pin does, and so without the locking subsystem
+  (`crates/oxpinyin-store/src/bdb/ffi.rs`). No hard-kill test is in the tree.
+- **Unbounded growth** (2.4): caches grow in any language. The guard is the bounded-cache
+  policy and published memory figures. Ownership makes the accounting
   *legible*, not automatic.
-- **Foreign-library interop crashes** (6.2): shifted, not solved. Any
+- **Foreign-library interop crashes** (6.2): moved, not solved. Any
   future cloud path uses a Rust HTTP stack behind the opt-in provider
-  trait; where FFI remains (capi, oracle), ASan/LSan across the boundary
-  is the guard, because Miri cannot follow.
+  trait. Where FFI remains (capi, oracle), ASan/LSan across the boundary
+  is the guard, because Miri cannot follow the FFI.
 
 ### Per-bug verdict
 
@@ -286,38 +288,29 @@ path and leaves the deliberate one; policy closes the remainder.
 | 3.1 English-mode UAF | A | borrow checker | — (compile error) |
 | 4.1 i686 segfault | A | checked byte parsing of tables | loader fixture cross-check (W3-T0) |
 | 4.2 sparc64 bus error | A | same | 3-OS + advisory-target CI |
-| 5.1 BDB lock hang | C | redb single-file store, no sidecar locks | hard-kill gate (W6-T3) |
+| 5.1 BDB lock hang | C | tkrzw by default; the Berkeley DB backend opens no locking subsystem | — (no hard-kill test in the tree) |
 | 6.1 assert on `zhuan` | C | rule 4: `Result`, never `assert` on input | proptest, fuzz, Kani; F-E |
 | 6.2 proxy/libsoup | C | Rust stack for any cloud; FFI audited | ASan jobs (verification stack) |
 
 ### Claims discipline
 
-Every Tier A and C row is claimable only as a scoped, reproducible
-demonstration — "on input `nih` + candidate select, upstream
+A Tier A or Tier C row may be claimed only as a scoped, reproducible
+demonstration, for example: "on input `nih` + candidate select, upstream
 `<pinned ref>` crashes (ibus-libpinyin #566); oxpinyin returns an error
-and continues" — never as a blanket "memory-safe, therefore crash-free".
-Tier C is the standing proof the blanket form would be false.
-Operationally: each repro above is registered in the cross-lane evidence family
-**F-E** at foundation time; reproducible evidence is attached when the
-applicable lane and tooling exist. Upstream-reproducible bugs remain filed
-upstream regardless of our fix; and the open, user-visible ones (#566 leading,
-#179's hang second) form the demonstration set for the first typing-session
-milestone.
+and continues". Never claim the blanket form "memory-safe, therefore crash-free".
+Tier C shows that the blanket form is false.
 
-The beauty is real. The accounting is what keeps it honest.
+In practice:
+
+- Each reproduction above is registered in the cross-lane evidence family
+  **F-E** at foundation time. Reproducible evidence is attached when the
+  applicable lane and tooling exist.
+- Upstream-reproducible bugs stay filed
+  upstream, whether or not oxpinyin fixes them.
+- The open, user-visible bugs (#566 first,
+  the #179 hang second) form the demonstration set for the first typing-session
+  milestone.
 
 ---
 
-## Suggested repository layout
-
-```text
-reference/
-├── memory-safety-bugs.md          # this file
-└── memory-safety-bugs/
-    ├── 566-null-key-rest.md       # deeper write-up + minimal repro
-    ├── 179-berkeley-db-lock.md
-    ├── cloud-async-lifetime.md
-    └── ...
-```
-
-This catalogue is intended as living reference material for the Rust rewrite effort. New memory/access bugs should be added here with the same structure.
+This catalogue is living reference material for the Rust rewrite. New memory/access bugs should be added here with the same structure.

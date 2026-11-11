@@ -161,7 +161,7 @@ class InterceptionTests(World):
     def setUp(self):
         super().setUp()
         self.arm = bench.Arm('oxpinyin-tkrzw', Path('/ox/libpinyin.so'), Path('/data'), Path('/ox'))
-        self.worker = bench.Bench('run-callgrind-differential.sh', {}, Path('/h/bisect'), '0', cell='tkrzw')
+        self.worker = bench.Bench('just measure-callgrind-differential', {}, Path('/h/bisect'), '0', cell='tkrzw')
 
     def probe(self, stderr=b'', profile='', status=0, refuse=False):
         def launch(arm, mode, cycles, **options):
@@ -260,7 +260,7 @@ class DifferentialTests(World):
             with self.subTest(name=name):
                 status, out, err = self.execute(valgrind.callgrind_differential, [], {**self.env, name: '1.5'})
                 self.assertEqual((status, out, self.out.exists()), (2, '', False))
-                self.assertEqual(err, f"run-callgrind-differential.sh: {name} must be a decimal count (got '1.5')\n")
+                self.assertEqual(err, f"just measure-callgrind-differential: {name} must be a decimal count (got '1.5')\n")
 
     def test_folded_anchors_stop_after_their_table_is_kept(self):
         self.nm_output = NM.replace('1140 t', '1130 t')

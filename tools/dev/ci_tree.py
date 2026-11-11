@@ -116,7 +116,7 @@ SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "justfile", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
-# The Rust files `python -m tools.dev rust-tables` writes. A harness test regenerates them and
+# The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
 # compares, so a change to one selects the harness. The same test holds this list to the generator's.
 GENERATED_TABLES = (
     "crates/oxpinyin-chewing/src/chewing_key_tables.rs",

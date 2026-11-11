@@ -1,21 +1,23 @@
 # Release — cutting one and what the pipeline gates
 
-`docs/packaging.md` is the design record (cargo-c, the installed tree,
-the four version streams, the distro recipes). This is the procedure.
+This is the procedure to cut a release.
+[`docs/packaging.md`](../packaging.md) is the design record: cargo-c, the installed tree,
+the four version streams and the distro recipes.
 
 ## Trigger
 
-Publishing a GitHub release (a stable tag) runs
-`.github/workflows/release-packages.yml`, which builds drop-in packages
-for Debian (tkrzw), Fedora (kyotocabinet) and Arch (kyotocabinet) — each
-under the backend whose format that distro's own libpinyin data uses —
-and attaches them with a `SHA256SUMS` to the release.
+When you publish a GitHub release (a stable tag), `.github/workflows/release-packages.yml` runs.
+It builds drop-in packages for Debian (tkrzw), Fedora (kyotocabinet) and Arch (kyotocabinet).
+Each package uses the backend whose format the libpinyin data of that distro uses.
+The workflow attaches the packages and a `SHA256SUMS` to the release.
 
 ## Before tagging
 
-1. `main` green on `CI` and `Store backends`, and on every job of the last
+Make sure that each condition holds before you tag:
+
+1. `main` is green on `CI` and `Store backends`, and on every job of the last
    `verify-nightly`.
-2. Manually dispatch `verify-nightly.yml` on the release commit with
+2. Dispatch `verify-nightly.yml` manually on the release commit with
    `tools_harness` set. Publish only if its macOS, Windows, fuzz soak and
    overflow lane jobs pass on that commit; a green run of another commit
    does not count. For the merge rule, see
@@ -24,23 +26,30 @@ and attaches them with a `SHA256SUMS` to the release.
    --shipped`; CI runs it on every change).
 4. The allocator-pairing gate passed on the tip
    (`just abi alloc-pairing`; CI runs it on every change).
-   Linux only — `--static-only` is the portable half.
-5. Frozen pins unchanged since the last verified run, or re-verified
-   (`goldens-and-pins.md`).
-6. Version streams agree (`docs/packaging.md`, "The four version
-   streams"): the drop-in identity is the pin's libpinyin version
-   (`just packaging pc-version`; CI's `python -m tools.dev packaging
-   check-pc-version` holds the manifests to it); the crate version is the workspace's `0.x` lockstep.
+   This gate is Linux only; `--static-only` is the portable half.
+5. The frozen pins are unchanged since the last verified run, or they are re-verified
+   ([goldens and pins](goldens-and-pins.md)).
+6. The version streams agree ([the four version
+   streams](../packaging.md#the-four-version-streams)):
+   - the drop-in identity is the libpinyin version of the pin
+     (`just packaging pc-version`; CI's `python -m tools.dev.packaging
+     check-pc-version` holds the manifests to it);
+   - the crate version is the `0.x` lockstep of the workspace.
 
 ## What each lane gates
 
-`just packaging release-stage <backend>` builds both cdylibs through
-`just packaging install` (`cargo cinstall` plus the complete `.pc`),
-`--features shipped` on the pinyin crate, strips, and exits 0 only after:
-the SONAME, the five pkg-config reads real consumers perform, and a C
-compile/link/run smoke against the staged tree. The workflow then
+`just packaging release-stage <backend>` does these steps:
+
+1. It builds both cdylibs through
+   `just packaging install` (`cargo cinstall` plus the complete `.pc`),
+   with `--features shipped` on the pinyin crate.
+2. It strips the libraries.
+3. It exits 0 only after these checks pass: the SONAME, the five pkg-config reads that real consumers perform, and a C
+   compile/link/run smoke test against the staged tree.
+
+The workflow then
 installs the package in a fresh container and runs `pinyin_init` /
-`zhuyin_init` against the distro's own data — a null context fails the
+`zhuyin_init` against the data of the distro. A null context fails the
 lane, because a package whose init fails against the system data must
 not ship.
 
@@ -54,14 +63,14 @@ just packaging release-rpm  kyotocabinet <version> target/release-stage/kyotocab
 just packaging release-arch kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
 ```
 
-Each maker's header states its arguments; the workflow is the reference
-invocation.
+`tools/dev/packaging.py` states the arguments of each maker. The workflow is the
+reference invocation.
 
-The staged tree is the complete install (runtime + dev); the makers
-split it the way each distro splits libpinyin.
+The staged tree is the complete install (runtime + dev). The makers
+split it in the same way that each distro splits libpinyin.
 
 ## After
 
-Confirm the release assets and checksums, then record anything the
-lanes surfaced (a distro data change, a new package dependency) in
+Confirm the release assets and checksums. Then record anything that the
+lanes found (a distro data change, a new package dependency) in
 `docs/findings/tkrzw-distro-compat.md` or `docs/packaging.md`.

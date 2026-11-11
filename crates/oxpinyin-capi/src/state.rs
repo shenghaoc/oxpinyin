@@ -15,7 +15,7 @@
 use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
 
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{OptionBits, PhraseToken};
 use oxpinyin_engine::CandidateKind;
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
@@ -85,6 +85,7 @@ impl CapiContext {
             core: self.core.alloc_instance(),
             state: CapiInstanceState {
                 predicted_lambda: self.predicted_lambda,
+                full_aux_options: OptionBits::default(),
                 prefixes: Vec::new(),
                 candidates: CandidateSnapshot::new(),
             },
@@ -294,6 +295,8 @@ pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwne
 pub struct CapiInstanceState {
     /// The context's initial gfloat interpolation weight for prediction.
     pub(crate) predicted_lambda: f32,
+    /// Options used to parse the keys that plain full-pinyin aux text displays.
+    pub(crate) full_aux_options: OptionBits,
     /// The pin's `instance->m_prefixes` minus its `sentence_start` entry:
     /// the tokens `pinyin_guess_predicted_candidates` and
     /// `pinyin_guess_sentence_with_prefix` computed from their prefix text,

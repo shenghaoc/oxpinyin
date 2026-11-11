@@ -507,7 +507,7 @@ where
     /// and leaves the amplified value bit-identical to the unigram-only
     /// law. Near-ties collapse
     /// to equal keys under that truncation — the tie class
-    /// `docs/testing/corpus-tail.md` calls Class A — and equal keys fall to
+    /// `docs/findings/candidate-construction.md` §8.4 calls Class A — and equal keys fall to
     /// the collection order the stable sort keeps. `amplified_frequency`
     /// reproduces the arithmetic bit-for-bit over the model's own numbers:
     /// the item's stored unigram (`get_unigram_frequency`, `gen_unigram`'s

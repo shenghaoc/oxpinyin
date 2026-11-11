@@ -1,38 +1,33 @@
 # Source policy
 
-oxpinyin is a Rust rewrite of libpinyin under the same license, GPL-3.0-or-later.
-Reading and copying upstream C++ source is expected and encouraged.
+oxpinyin is a Rust re-expression of libpinyin under the same license, GPL-3.0-or-later.
+The project expects and encourages contributors to read and copy the upstream C++ source.
 There is no clean-room restriction.
-The original restriction avoided verbatim copying.
-Clean-room reverse engineering adds time and effort without benefit when the source is legally available.
+Clean-room reverse engineering adds time and effort and gives no benefit when the source is legally available.
 
-This page owns how contributors work against the pin: reading and citing its source, the method for each subsystem, the decision order for language and runtime differences, and the stages.
-The [compatibility policy](findings/compatibility-policy.md) owns what may diverge from the pin: the exception classes (a)–(b) (class (c) retired 2026-10-31 UTC), the standing divergences, the classification of every register entry and the `POLICY-ACCEPTED` disposition.
+The [compatibility policy](findings/compatibility-policy.md) owns what may differ from the pin: the decision order, the exception classes (a) and (b), internal language artefacts, external I/O, the maths rule, the standing rulings, the classification of every register entry and the `POLICY-ACCEPTED` disposition.
 Where this page sends a difference to a class or a discrepancy record, the compatibility policy decides it.
 
 ## Source citations
 
 Read upstream source from a checkout at the pinned commit.
-Alternatively, use a clone at the pin after verifying the cited blobs' hashes against it.
+As an alternative, use a clone at the pin after you verify the hashes of the cited blobs against it.
 Identify the tree that you read.
-The Linux host convention is `~/Documents/repos/libpinyin`.
-The repository does not guarantee that path.
+The Linux host convention is `~/Documents/repos/libpinyin`; the repository does not guarantee that path.
 
-Cite oxpinyin code by file and item name, never by line number; cite the pin by file:line at 074a2219.
+Cite oxpinyin code by file and item name, never by line number.
+Cite the pin by file:line at 074a2219.
 Dated records keep the line numbers of the tree they name.
 
 ## Method
 
 Maintainer ruling 2026-10-16 UTC.
 
-Amended 2026-10-18 UTC: binary size follows Constitution §2's recording
-and disclosure rule, separately from runtime time/space comparisons.
-
 Stage 2 requires compatibility with the pin.
-It permits internal refactoring, idiomatic Rust rewrites, and performance or memory improvements when compatibility remains intact.
-Compatibility does not require deferring internal improvements until after release.
+It permits internal refactoring, idiomatic Rust rewrites, and performance or memory improvements that keep compatibility intact.
+Compatibility does not require you to defer internal improvements until after release.
 An improvement does not close, excuse or reclassify an unrelated compatibility gap.
-Correcting an oxpinyin defect towards the pin's output is Stage 2 work.
+A correction of an oxpinyin defect towards the pin's output is Stage 2 work.
 
 For each subsystem:
 
@@ -42,15 +37,16 @@ For each subsystem:
    Cite each item as `file:line` at `074a2219`.
 2. Design and analyse oxpinyin's structures and algorithms.
    Explain how they preserve the pin's product behaviour, including tie orders and product quirks.
-   Apply the separate rules for internal language artefacts and external I/O.
+   Apply the separate rules for [internal language artefacts](findings/compatibility-policy.md#internal-language-artefacts) and [external I/O](findings/compatibility-policy.md#external-io).
    Compare time and space complexity with the pin.
 3. Implement the behaviour in natural, efficient Rust across loosely coupled crates.
 4. Verify it with the established oracle differentials.
 5. Record each policy-approved departure.
 
-Keep the algorithm record current for work that predates this ruling too.
-Use the pin's values for every coefficient.
-These include seeds, factors, ceilings, thresholds, beam widths, store widths, epsilons, penalties and discounts.
+Keep the algorithm record current, also for work that predates this ruling.
+Update it in the same PR that changes a recorded structure or algorithm.
+
+Use the pin's values for every coefficient: seeds, factors, ceilings, thresholds, beam widths, store widths, epsilons, penalties and discounts.
 Record each value with its pin citation in the algorithm record.
 Never sweep, tune or fit a coefficient to make outputs match.
 
@@ -63,25 +59,25 @@ Routine performance-measurement campaigns are not required.
 
 **Performance evidence:** read the source and argue the complexity first.
 Measure only for a concrete unresolved question that affects a decision.
-Before measuring, name the question, the arms and inputs relevant to it, and the decision rule.
+Before you measure, name the question, the arms and inputs relevant to it, and the decision rule.
+
 Use the cheapest sufficient measurement: wall time and peak RSS at full speed.
-Use Callgrind or Massif only to attribute a gap a cheaper measurement has already shown, once, on the operation that shows it.
+Use Callgrind or Massif only to attribute a gap that a cheaper measurement has already shown, once, on the operation that shows it.
 Stop as soon as the answer cannot change the decision.
 No fixed number of arms, samples, repetitions, profiles or instrumentation passes is required.
 
 Preserve external interface behaviour.
-Binary size per PR is not complexity: a change can be split into arbitrarily small PRs.
-Apply [constitution §2](constitution.md) to binary size separately.
-The target is a smaller binary, faster execution and much lower RAM than libpinyin.
+The target is a smaller binary, faster execution and much lower RAM use than libpinyin.
 Internal implementation freedom serves that target.
+Binary size follows [constitution §2](constitution.md), separately from time and space comparisons.
+Binary size per PR is not complexity: a change can be split into arbitrarily small PRs.
 
 Prefer idiomatic Rust over a line-by-line translation of C++ written in a C style.
 Use owned or borrowed slices, enums, `Result`, iterators and standard collections as appropriate.
 Do not reproduce the pin's code shape.
 Mutable byte buffers, GLib containers, raw back-pointers and integer status codes can obstruct idiomatic Rust.
-They can add copies or unsafe code and reduce compiler and standard-library benefits.
+They can add copies or unsafe code and reduce the benefits of the compiler and the standard library.
 Record internal language-artefact differences instead of imitating them.
-On Linux, use the pin's external I/O call unless source proves a Rust equivalent for every input ([platform scope](#platform-scope-of-pinned-behaviour)).
 
 #### Complexity evidence
 
@@ -91,22 +87,20 @@ Bound the loops, recursion, collection operations, allocations and relevant call
 Distinguish worst-case, amortised and expected bounds.
 State assumptions about external libraries.
 Compare with the previous code, and with the pin where the two do comparable work.
+
 If the source does not establish a bound, say so.
 Do not present an estimate as a proof.
 
 #### Measurement is the exception
 
 Do not require timing, instruction counts, heap profiles or base/PR/pin campaigns because code changed or might affect performance.
-Measure only for a concrete unresolved question that affects a decision, such as:
+Measure only under the [controlling rule](#controlling-rule), for a concrete unresolved question that affects a decision, such as:
 
 - a question the source cannot settle, including a constant-factor or memory concern;
 - an observed regression;
 - a numerical performance claim in the PR;
 - a maintainer request.
 
-Follow the [controlling rule](#controlling-rule).
-Name the question, the arms and inputs relevant to it, and the decision rule before measuring.
-Use the cheapest sufficient measurement and stop when the answer cannot change the decision.
 Reuse the existing recipes.
 New measurement tooling, drivers or instrumentation need the maintainer's approval.
 When a measurement compares arms, measure the arms relevant to the question in one run on one host.
@@ -131,205 +125,63 @@ Take the sizes from the `shipping-sizes` CI job summary.
 
 ## Compatibility decision order
 
-Read the [compatibility policy](findings/compatibility-policy.md) before recording a divergence.
-It defines class (a)–(b) and records retired class (c), the language/runtime-quirk exception, citations and register classifications.
-Class (d), consumer scope, was retired 2026-09-06.
-
-Maintainer rulings, 2026-10-24 UTC, as amended 2026-10-28 UTC: internal
-behaviour follows the language-artefact decision order below.
-
-External I/O follows the pin's call on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
-Use Rust's `std` maths at full speed under class (a).
-Do not add specialised maths dependencies, such as SIMD crates.
-
-1. **Preserve the C-facing contract.** Preserve the C ABI, layout, ownership and lifetime exactly.
-   This includes real `GArray`, `g_free`, and every other GLib-owned structure and allocation.
-   Preserve every exported symbol, system and user file format, and data ownership.
-   Preserve observable product behaviour except for class (a)–(b) or the internal language-artefact exception.
-2. **Apply class (a)–(b).** Classify each applicable difference in its class.
-   Class (c) is retired (2026-10-31 UTC): reproduce a pin `assert` or `abort()` with `std::process::abort()`.
-   Follow that class's rules.
-3. **Apply the external-I/O and internal-language rules below.**
-4. **Escalate product-level changes.** Reproduce product behaviour bug for bug.
-   Ranking rules, limits, refusals, option meanings and libpinyin logic defects are product behaviour.
-   Changing them requires a maintainer ruling or a Stage 3 feature.
-5. **Revert any other difference as a defect.**
-6. **Preserve earlier maintainer rulings.** This exception cannot reverse them.
-   `LC_NUMERIC` (policy row 39, #923) requires a new human ruling before it changes.
-
-Report an intentional difference under a still-applicable recorded exception as `POLICY-ACCEPTED`, never as `MATCH`.
-Retain its case and pin evidence.
-Existing case dispositions remain governed by the [disposition definitions](findings/compatibility-policy.md#discrepancy-records-and-the-policy-accepted-disposition).
+The compatibility policy's [decision order](findings/compatibility-policy.md#decision-order) decides every proposed difference from the pin, and its [dispositions](findings/compatibility-policy.md#dispositions-and-discrepancy-records) govern how each case is reported.
+Read the compatibility policy before you record a divergence.
 
 ### Adapter placement
 
-**Adapter placement (amended 2026-10-28 UTC).**
-
-Place external file, locale and tool I/O calls in `oxpinyin-input`.
-Place DBM backend calls in `oxpinyin-store`.
-Keep C ABI marshalling and C-facing encodings in `oxpinyin-capi`, `oxpinyin-zhuyin-capi` and `oxpinyin-capi-marshal`.
+The compatibility policy's [crate-placement rule](findings/compatibility-policy.md#crate-placement) decides which crate holds external I/O, DBM, C ABI and core code.
 `oxpinyin-input` exists from stage 1, for library configuration read/write and locale.
 The [boundary plan](findings/external-io-boundary.md) lists later stages.
-
-Core and engine types carry only the stored length, outward words and full stored words required by the pin.
-The length and outward words serve ranking, comparison, sentence, export and token-getter paths.
-Store and table maintenance require the full stored words.
-Preserve all characters in general Rust conversions.
-NUL-containing text becomes Stored, with its full declared character count and first-zero outward cut.
-`phrase_text_bytes` is the explicit C-boundary encoder.
 The broader user-library audit stays in #1198.
 
 ### External I/O
 
-**External I/O uses the pin's calls (maintainer ruling 2026-10-28
-UTC).**
-
-On Linux, use the pin's call for every library and tool call across the program's edge ([platform scope](#platform-scope-of-pinned-behaviour)).
-Use the host C library for ISO C and POSIX calls, through the `libc` crate or `extern "C"` declarations.
-Use GLib for GLib calls, through the workspace's `glib-sys`.
-Declare by hand only a function neither crate binds.
-Use Rust `std::io` under the C++ contract for C++ streams.
-
-Permit a Rust equivalent only after reading both implementations' sources proves identical observable results for every input.
-Use the pin's call when the comparison is unsettled.
-This replaces #1304's external-I/O language-artefact treatment.
-
-**External-library bindings (amended 2026-11-02 UTC).**
-Permit generated Rust–C++ interoperability and minimal semantic adapters under the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
-It supersedes the blanket prohibition on hand-written C++ shims and governs backend binding choices and their source-proof obligations.
-
-**Macro checks (maintainer ruling 2026-10-31 UTC).**
-Do not reproduce macros such as `assert`, `g_return_val_if_fail` or `G_STRFUNC`.
-Make their checks plain Rust: answer the pin's value, or abort where the pin aborts.
-Do not imitate their message text; record the stderr difference as a POLICY-ACCEPTED language artefact.
-Stop and report a call or behaviour that has no equivalent with the same documented result.
-`oxpinyin-input` has no C shim left; the Kyoto Cabinet adapter is retained under the [Kyoto Cabinet exception](#kyoto-cabinet-exception).
+The compatibility policy's [external I/O rule](findings/compatibility-policy.md#external-io) decides every call across the program's edge, including the macro-check rule; the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) governs external-library bindings.
+`oxpinyin-input` has no C shim.
 
 #### Platform scope of pinned behaviour
 
-**Maintainer ruling 2026-10-31 UTC.**
-The drop-in and pin-call rules (external I/O uses the pin's calls; observable behaviour matches the pin) bind Linux only.
-libpinyin is developed and used on Linux; its Windows and macOS support is an afterthought.
-On Windows and macOS, oxpinyin builds and is tested, and may use portable Rust abstractions (for example `memmap2` and `std::fs`) instead of the pin's calls.
+The compatibility policy's [platform scope](findings/compatibility-policy.md#platform-scope) decides where the drop-in and pin-call rules bind: on Linux only.
 Do not start a Windows libpinyin build project.
-Differences that come from a platform's native facilities (file and mapping APIs, text mode, C runtime streams) are platform-dependent behaviour, recorded where known and tested where practical.
-This does not cover platform-independent product behaviour (ranking, parsing, training, data handling), safety, determinism, the C API/ABI, its symbol names and its ownership and lifetime rules, or persistent file formats, which must be the same on every platform.
-The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) applies on every platform.
-
-<a id="kyoto-cabinet-exception"></a>**Kyoto Cabinet exception.**
-Superseded by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), which owns the frozen contract and separate migration.
-
-The call rule does not require an undefined read or abort.
-Existing class (b) records stand, including punctuation refusals.
-The class (c) assertion refusals are retired (2026-10-31 UTC); the pin's aborts are reproduced.
-`LC_NUMERIC` row 39 stands.
-Row 109's mapping call follows the pin.
-Its post-fini residual mapping remains open.
 
 ### Internal language artefacts
 
-**Internal language artefacts (2026-10-26 UTC, #1303).**
+The compatibility policy's [internal-language-artefact rule](findings/compatibility-policy.md#internal-language-artefacts) (#1303) decides behaviour outside external I/O, as decision-order limb 3.
+A language artefact is not reproduced; record the difference and continue the work.
 
-Outside external I/O, the programming language is an implementation detail.
-The behaviour is what a user or developer observes when calling the shared object.
-Implement that behaviour in idiomatic Rust.
-Do not reproduce another programming language's behaviour or that of a library written for it.
-This includes C/C++ semantics, GLib, glibc, other libc implementations, libstdc++, compilers and processors.
-Examples include integer-returning comparators, float-to-integer truncation and an integer width chosen for storage.
-
-A language artefact is behaviour that a language-neutral requirement would not mention.
-Widths or wrapping required by the C ABI, file formats or domain algorithms are contract or product behaviour.
-Checksums and hashes are examples of domain algorithms.
-An operation's origin in C does not make every use a language artefact.
-No further work is needed when idiomatic Rust produces the pin's result.
-
-If valid or malformed input differs only through an internal language artefact:
-
-1. Keep the Rust result.
-2. Create a [discrepancy record](findings/language-runtime-discrepancy-template.md).
-3. Register it by name in the [divergence register](findings/upstream-divergences.md).
-4. Mark distinguishing cases `POLICY-ACCEPTED`.
-5. Continue the work.
-
-No approval is needed for this recorded difference.
-Do not write Rust to imitate the artefact.
-When classification is uncertain, prefer idiomatic Rust and record the difference.
-This rule never permits a different external I/O call or result on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
+The ruling [No ported external-library internals](findings/compatibility-policy.md#no-ported-external-library-internals) (maintainer ruling 2026-10-29 UTC) is in the compatibility policy.
+It holds the candidate-frequency comparator, the Zhuyin selection order and the Pinyin two-slot node.
+Supply evidence for each observable difference that comes from the replacement of implementation-specific behaviour, and record it as `POLICY-ACCEPTED`.
 
 **Contract, not implementation.** (Maintainer decision 2026-10-29 UTC.)
 
-Reproduce language and library contract guarantees, not incidental implementation behaviour.
+Reproduce the contract guarantees of a language or a library, not incidental implementation behaviour.
 C guarantees unsigned wrapping arithmetic.
 Reproduce observable unsigned wrap with Rust's `wrapping_*` methods.
 Signed overflow has no C contract and falls under class (b).
 Documented `g_array_sort` stability is contract.
 Equal heap-element order, search results on unsorted input and a float's last bit are not contract guarantees.
 
-**No ported external-library internals (maintainer ruling
-2026-10-29 UTC).**
-
-Implement libpinyin's own algorithms.
-Do not transcribe internal algorithms from GLib, libstdc++, libc++, glibc or another external library.
-Do not preserve their implementation-specific comparison schedules, probe sequences or other internal details.
-
-- Use the Rust standard-library API with the corresponding documented semantics.
-  Keep necessary representation adapters and libpinyin-specific product logic as ordinary Rust code.
-  Obtain maintainer approval for a new dependency.
-  This ruling authorizes none.
-  Reproduce the exact result when the pin uses a library routine within its documented preconditions.
-  Choose the predicate, comparator, key and tie-break accordingly.
-  Only results that depend on violated preconditions may differ.
-  Record each such difference as `POLICY-ACCEPTED`.
-- Preserve product rules, ranking keys, limits, C ABI, ownership and persistent formats.
-  Only specifically recorded departures under this ruling or another existing ruling are exceptions.
-  Supply evidence for observable differences caused by replacing implementation-specific behaviour.
-  Record them as `POLICY-ACCEPTED`.
-- Give sorting and selection comparisons a consistent ordering.
-  Specify special-value and tie treatment where necessary.
-  Keep `partition_point` predicates partitioned on valid data.
-  Do not silently sort or clean malformed stored data to force that condition.
-  Record resulting differences.
-  Preserve memory safety and existing refusal rules.
-- **Candidate-frequency sorting (maintainer decision 2026-10-29 UTC).**
-  Reproduce libpinyin's frequency comparator with Rust's wrapping arithmetic.
-  Only lists on which the comparator is cyclic may differ.
-- Keep Zhuyin selection length-first.
-  At equal length, use descending raw score, with NaN last and signed zeros equal.
-  Use earlier batch position as the next tie-break.
-  Keep its single-slot admission rule unchanged.
-- Preserve front eviction and physical-slot semantics in Pinyin's two-slot node.
-- Treat ABI-prescribed encodings as boundary code, not external-algorithm ports.
-  Preserve the existing C ABI and external-I/O policies.
-  This ruling does not authorize an exhaustive search for unrelated upstream defects.
-  See the [external-library inventory](findings/glib-libc-inventory.md).
-
 ### Maths
 
-**Math rule (maintainer direction 2026-10-19 UTC).**
-
-Use Rust's standard maths at full speed: `f64::ln`, `exp`, `powf` and every other `std` float method.
-This includes logarithms, trigonometric functions and hyperbolic functions.
-Do not slow code to imitate glibc, libm, GLib `gfloat` or other C behaviour.
-Record a last-bit difference caused by Rust's maths as class (a).
-Do not chase it.
+The compatibility policy's [maths rule](findings/compatibility-policy.md#a-maths-platform-dependent-floating-point-accumulation) decides floating-point work: use Rust's standard maths at full speed, and record a last-bit difference as class (a).
+The rule includes logarithms, trigonometric functions and hyperbolic functions.
 Investigate any remaining discrepancy.
 Do not automatically classify it as a host difference.
 
 Floating point alone is not a Rust language limitation.
 Rust's `f32` and `f64` use the same IEEE formats as `gfloat` and `gdouble`.
-Write the product's IEEE-exact operations in idiomatic Rust.
-These include basic arithmetic, `sqrt`, `abs`, rounding and comparisons.
-Record differences caused only by internal C/C++ semantics or compiler transformations as language artefacts.
-Examples include implicit promotions, conversions, storing a float in an integer, and multiply-add contraction.
-Do not imitate them.
-On Linux, use the pin's external I/O call, including for formatted output ([platform scope](#platform-scope-of-pinned-behaviour)).
+Write the product's IEEE-exact operations in idiomatic Rust: basic arithmetic, `sqrt`, `abs`, rounding and comparisons.
+Record a difference that comes only from internal C/C++ semantics or a compiler transformation as a language artefact, and do not imitate it.
+Examples are implicit promotions, conversions, storing a float in an integer, and multiply-add contraction.
+On Linux, formatted output also uses the pin's external I/O call ([platform scope](#platform-scope-of-pinned-behaviour)).
 
 ## Stages
 
 Maintainer ruling 2026-10-14 UTC.
 
-Compatibility separates Stage 2 from Stage 3.
-Performance does not define that boundary.
+Compatibility, not performance, separates Stage 2 from Stage 3.
 
 | Property | Stage 2 (current) | Stage 3 (after Stage 2) |
 |---|---|---|
@@ -341,31 +193,29 @@ Performance does not define that boundary.
 
 Stage 1, exact-output parity with the pin-built oracle on the corpus surfaces, is complete.
 
-Amended 2026-10-28 UTC: the language-artefact exception remains for
-internal behaviour but no longer applies to external I/O. Data formats
-and ABI remain unchanged.
+The language-artefact exception applies to internal behaviour, not to external I/O.
+Data formats and ABI do not change.
 
-Earlier records use "Stage 2" for compatible performance work.
-That work remains Stage 2 under this ruling.
-Keep those records' wording.
-References to output changes, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, now belong to Stage 3.
+Older records use "Stage 2" for compatible performance work.
+That work stays Stage 2 under this ruling; keep the wording of those records.
+Where such a record refers to an output change, such as `EdgeKind` Fuzzy/Typo/Abbrev variants or a model upgrade, that change belongs to Stage 3.
 Give new benchmarks names that do not include a stage.
 
 ### Stage 2
 
 Reproduce libpinyin's observable behaviour, including its logic defects.
 Record an observable pin defect as an upstream defect instead of fixing it.
-Apply the existing classes and internal language-artefact exception to departures.
+Apply the existing classes and the internal language-artefact exception to departures.
 Use the pin's calls for external I/O on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
-Improve performance, memory use, safety and internal architecture when compatibility remains intact.
+Improve performance, memory use, safety and internal architecture when compatibility stays intact.
 Verify observable behaviour and persistent-data compatibility.
-The target is what the pin does, not what it should do.
 
+The target is what the pin does, not what it should do.
 Derive behaviour by reading the pin, never by running experiments:
 
 1. Read source at the commit in [`tools/oracle/oracle-pin.txt`](../tools/oracle/oracle-pin.txt).
    Read the called GLib, libc and DBM functions when they determine the behaviour.
-2. Read the relevant pin-built object's disassembly when source does not settle the question.
+2. Read the disassembly of the relevant pin-built object when source does not settle the question.
    This includes unresolved macros, templates, inline helpers, implementation-defined behaviour, undefined behaviour and compiler-selected evaluation order.
    Use objects from [`tools/oracle/build.py`](../tools/oracle/build.py).
    Use the [default reference-cell build](runbooks/backends.md).
@@ -379,6 +229,8 @@ Derive behaviour by reading the pin, never by running experiments:
 Do not use exploratory probes, throwaway drivers or tests to discover a pin return value.
 Do not tune code against the oracle until outputs match.
 A differential verifies behaviour already derived from source.
+When a differential contradicts the derivation, read the source again.
+
 Use the pin's I/O call if reading cannot prove a Rust operation equivalent.
 Stop if surrounding pin behaviour remains unsettled.
 Report what you read and where reading stopped resolving the question.
@@ -387,16 +239,28 @@ Keep the confirmation questions open in the boundary finding.
 Give a short complexity argument derived from the source for a change that alters an algorithm, a data structure, allocation behaviour or an input bound ([complexity evidence](#complexity-evidence)).
 Measurement is the exception ([controlling rule](#controlling-rule)).
 Fix an implementation that is worse on both time and space.
-There is no performance ceiling when output, files and ABI remain compatible.
+There is no performance ceiling when output, files and ABI stay compatible.
 Examples include `memchr` substring search (#858), dictionary cursor walks and per-session arenas.
-A mapping change must preserve the pin's external call under the 2026-10-28 ruling.
+A mapping change must preserve the pin's external call ([external I/O](findings/compatibility-policy.md#external-io)).
 
 ### Stage 3
 
+Stage 3 starts after the Stage 2 exit gate, the third bug-for-bug sweep in the [roadmap](../ROADMAP.md).
+
 Put each intentional departure behind an opt-in cargo feature, off by default.
 Examples include new language models, different candidate behaviour and incompatible data formats.
+State whether each departure changes observable output, files, the ABI or more than one of these.
+
 Keep the default build bug-for-bug compatible under the recorded exceptions.
-Do not claim libpinyin's binary identity for a build that breaks its ABI or data formats.
+Each default-build differential keeps its Stage 2 disposition: `MATCH`, `POLICY-ACCEPTED` or `HOST-DEPENDENT`.
+Default-build files do not change.
+
+Do not claim libpinyin's binary identity for a build that breaks its ABI or data formats, unless a maintainer ruling permits it.
+That identity is SONAME `libpinyin.so.15`, `libpinyin.pc` and the `libpinyin-<version>` header directory.
+A departure that changes only output states the departure in its build metadata.
+
+A departure uses only libpinyin's three backends, one for each build.
+It does not add a backend.
 
 ## Pinned behaviour and oxpinyin improvements
 
@@ -410,13 +274,9 @@ Classify every requirement, SPEC line and finding on exactly one side:
 An improvement with no observable change is internal and permitted in Stage 2, including performance work.
 An observable change requires class (a)–(b), a recorded internal language artefact, or a Stage 3 opt-in feature.
 An internal language artefact cannot change external I/O, the ABI or files on disk.
-The default build remains bug-for-bug compatible under the recorded exceptions.
+The default build stays bug-for-bug compatible under the recorded exceptions.
 
-The drop-in goal is `libpinyin.so.15` on the library path with unmodified consumers and existing system data, on Linux ([platform scope](#platform-scope-of-pinned-behaviour)).
-Build with exactly one of Berkeley DB, Kyoto Cabinet or tkrzw.
-Handle that backend's system and user files natively, as a same-backend libpinyin build does.
+The compatibility policy states the [drop-in goal](findings/compatibility-policy.md#goal-a-bug-for-bug-drop-in) and the [backend rules](findings/compatibility-policy.md#backends-and-user-data).
 The [default backend](runbooks/backends.md) is the reference cell.
-Berkeley DB and Kyoto Cabinet are separate build variants with the same drop-in compatibility.
-The maintainer decision of 2026-10-30 UTC chose tkrzw because it is maintained upstream and they are not.
-Switching backend starts fresh for both implementations (maintainer ruling 2026-09-09).
+Two decisions are settled: the choice of tkrzw as the default backend (maintainer decision 2026-10-30 UTC), and the fresh start for both implementations after a backend switch (maintainer ruling 2026-09-09).
 Do not reopen either decision as an unresolved trade-off.

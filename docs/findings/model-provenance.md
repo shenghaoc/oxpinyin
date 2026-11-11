@@ -46,7 +46,8 @@ The provenance and licence terms of that corpus remain unresolved.
 ## 2026-08-14 archive inspection and build-time fetch ruling
 
 The original ruling prohibited redistribution and permitted a build-time
-fetch of the archive pinned by `docs/testing/oracle-environment.md`.
+fetch of the archive pinned by `model_archive_sha256` in
+[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt).
 The inspection record follows.
 
 ## Examined artefacts
@@ -85,13 +86,13 @@ sport.table
 technology.table
 ```
 
-The pinned libpinyin source tag carries a
-[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/2.11.91/COPYING).
-That notice establishes terms for the source release, but the separately
-published model archive does not say that its trained model, tables, source
-corpora, or generated contents are covered by those terms. The SourceForge
-project-level licence label likewise does not identify the copyright holders
-or grant terms for each data input.
+The pinned libpinyin source carries a
+[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/074a2219c90feaf962d0d24f034514033ece5f99/COPYING).
+That notice sets terms for the source release. The model archive is
+published separately. It does not say that those terms cover its trained
+model, tables, source corpora or generated contents. The SourceForge
+project-level licence label also does not identify the copyright holders or
+grant terms for each data input.
 
 ## Redistribution status
 
@@ -122,23 +123,26 @@ The project routes considered here are:
   redistribution terms are recorded by this project.
 
 **Branch A remains rejected for the full model and tables.** The W3
-ruling permits only the listed test files. **Branch B is recorded as an
-optional future route, not a shipping prerequisite**: it is the path to a
-model this project could *vendor*, and it is only needed if the project ever
-wants one. Its mechanism is the
-[libpinyin trainer](https://github.com/libpinyin/trainer) (GPL-2.0, build-time
-tooling that produces the `interpolation2.text`-format model from a training
-corpus); taking it relocates the licensing question to the training corpus the
-project would supply, a question deferred until/unless Branch B is pursued.
-Branch A′ is not selected as the complete route: the AOSP PinyinIME tree
+ruling permits only the listed test files.
+
+**Branch B is recorded as an optional future route, not a shipping prerequisite.** It is
+the path to a model that this project could *vendor*. The project needs it only
+if it ever wants such a model. Its mechanism is the
+[libpinyin trainer](https://github.com/libpinyin/trainer): GPL-2.0
+build-time tooling that produces the `interpolation2.text`-format model from
+a training corpus. This route moves the licensing question to the training
+corpus that the project would supply. That question is deferred until the
+project pursues Branch B.
+
+**Branch A′ is not selected as the complete route.** The AOSP PinyinIME tree
 carries an Apache-2.0
 [NOTICE](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/NOTICE)
 next to
-[`rawdict_utf16_65105_freq.txt`](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/jni/data/rawdict_utf16_65105_freq.txt);
-whether and how that notice covers the raw dictionary was not verified for
-this finding, and the dictionary is not a provenance record or replacement
-for the pinned language model. It may be evaluated later as one documented
-Branch B input; this finding does not approve a derived model or bundled
+[`rawdict_utf16_65105_freq.txt`](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/jni/data/rawdict_utf16_65105_freq.txt).
+This finding did not verify whether or how that notice covers the raw
+dictionary. The dictionary is not a provenance record and does not replace
+the pinned language model. It may be evaluated later as one documented
+Branch B input. This finding does not approve a derived model or bundled
 table from it.
 
 ## Shipping consequence

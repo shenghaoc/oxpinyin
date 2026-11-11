@@ -1,11 +1,12 @@
 //! Stateful session fuzzer over the C ABI — the libchewing `fuzzer.rs`
-//! shape (`docs/testing/upstream-test-strategies.md`). Each input byte
-//! selects one command from the alphabet below; return values drive
-//! subsequent state, so the harness walks real session lifecycles.
+//! shape (`docs/testing/upstream-test-coverage.md`, "Fuzz harnesses").
+//! Each input byte selects one command from the alphabet below; return
+//! values drive subsequent state, so the harness walks real session
+//! lifecycles.
 //!
 //! Per the postconditions defined there: no per-call assertions on
 //! return values — valid-sequence contracts are pinned by
-//! contract_tests.rs; here a finding is any abort, panic, or sanitizer
+//! `crates/oxpinyin-capi/tests/abi/contract.rs`; here a finding is any abort, panic, or sanitizer
 //! report (cargo-fuzz's default `-s address` instrumentation includes
 //! LeakSanitizer on Linux). Mispaired iterator lifecycles are UB by
 //! contract, so every begin reaches its end within the same

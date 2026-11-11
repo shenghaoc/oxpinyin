@@ -103,9 +103,7 @@ pub struct Candidate {
     consumed_keys: u32,
     consumed_bytes: u32,
     /// Tail rank of the n-best sentence row this candidate is (W14);
-    /// `None` for every non-row candidate — including fallback sentence
-    /// candidates, which share the row `CandidateKind::Sentence` but are
-    /// not rows and carry no token path. The rank is the *original* tail
+    /// `None` for every non-row candidate. The rank is the *original* tail
     /// order, so a row that survives the NBEST-wins dedup still knows
     /// which `NbestRow` is its own even when its list position shifted.
     /// [`NO_ROW`] stands for `None`.

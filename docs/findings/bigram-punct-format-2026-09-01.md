@@ -1,23 +1,27 @@
-# libpinyin bigram and punctuation formats — P4 source-level findings
+# libpinyin bigram and punctuation formats
 
 Date: 2026-09-01 · Status: **verified against pinned source and real bytes**
+
+The formats of libpinyin's `bigram.db` and `punct.bin`, which oxpinyin
+reads directly. The directory overview is
+[`data-formats.md`](data-formats.md).
 
 ## 1. Bigram (`bigram.db`)
 
 ### Container
 
-**KC HashDB** / **Tkrzw HashDBM** — NOT TreeDB/TreeDBM. This is the
-critical distinction from the other DBM files:
+**KC HashDB** / **Tkrzw HashDBM** / **Berkeley DB `DB_HASH`** — not a
+tree container. This is the critical distinction from the other DBM files:
 
 | File | Container |
 |---|---|
-| `pinyin_index.bin` | KC TreeDB / Tkrzw TreeDBM |
-| `phrase_index.bin` | KC TreeDB / Tkrzw TreeDBM |
-| `punct.bin` | KC TreeDB / Tkrzw TreeDBM |
-| **`bigram.db`** | **KC HashDB / Tkrzw HashDBM** |
+| `pinyin_index.bin` | KC TreeDB / Tkrzw TreeDBM / BDB `DB_BTREE` |
+| `phrase_index.bin` | KC TreeDB / Tkrzw TreeDBM / BDB `DB_BTREE` |
+| `punct.bin` | KC TreeDB / Tkrzw TreeDBM / BDB `DB_BTREE` |
+| **`bigram.db`** | **KC HashDB / Tkrzw HashDBM / BDB `DB_HASH`** |
 
 Source: `ngram_kyotodb.cpp:115` (`new HashDB`), `ngram_tkrzwdb.cpp:96`
-(`new HashDBM`).
+(`new HashDBM`), `ngram_bdb.cpp` (`DB_HASH`).
 
 Opening is lazy: `attach` opens the container handle without scanning.
 
@@ -27,8 +31,7 @@ Opening is lazy: `attach` opens the container handle without scanning.
 `sizeof(phrase_token_t)`.
 
 Key = previous `phrase_token_t` as 4 bytes, native-endian (LE on all
-supported targets). Same encoding as the bigram's current oxpinyin
-format — byte-identical.
+supported targets).
 
 ### Value encoding
 
@@ -37,25 +40,20 @@ format — byte-identical.
 - Bytes 0..4: total (u32 LE) = sum of all counts
 - Bytes 4..4+8n: records, each `{next_token: u32 LE, count: u32 LE}`
 
-This schema is byte-identical to what `BigramLanguageModel::open`
-already parses — the value format is already frozen in oxpinyin.
+This is `SingleGram`'s layout (`crates/oxpinyin-data/src/single_gram.rs`).
 
-### P4 change: HashDB open path
+### Hash open path
 
-The store's `RawReadStore::open_read_only` opens TreeDB/TreeDBM. For
-`bigram.db`, the new `RawReadStore::open_hash_read_only` selects the
-hash container class:
+The store's `RawReadStore::open_read_only` opens the tree container.
+For `bigram.db`, `RawReadStore::open_hash_read_only` selects the hash
+container class on each backend: Kyoto Cabinet `HashDB`, tkrzw
+`HashDBM`, Berkeley DB `DB_HASH`.
 
-- KC: `#type=kch` (HashDB)
-- Tkrzw: `dbm=hash` (HashDBM)
-- redb/LMDB: delegates to default (no hash/tree distinction)
+### Lazy access
 
-### P4 change: lazy access
-
-`BigramLanguageModel::open` eagerly slurps every row into a sorted Vec
-at init time. `BigramTable` replaces this with lazy per-key `get_raw`
-lookups — each `load_successors(prev_token)` is a single DBM point
-read.
+`BigramTable` reads the bigram lazily. Each
+`load_successors(prev_token)` is a single DBM point read. The one
+exception is `sentence_start`, whose value is read once and kept.
 
 ### DYNAMIC_ADJUST compatibility
 
@@ -67,17 +65,16 @@ freq = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 ```
 
 When `DYNAMIC_ADJUST` is clear, `bigram_poss` is `0.0`, and the term
-drops out by IEEE-754 construction. The lazy access pattern does not
-change this: the bigram lookup happens at candidate-generation time
-(per-keystroke), not at init time. P4 preserves this conditional,
-per-keystroke access pattern.
+drops out by IEEE-754 construction. The bigram lookup happens at
+candidate-generation time (per keystroke), not at init time
+([`dynamic-adjust.md`](dynamic-adjust.md)).
 
 ## 2. Punctuation (`punct.bin`)
 
 ### Container
 
-KC TreeDB / Tkrzw TreeDBM — same container class as the pinyin and
-phrase indexes.
+KC TreeDB / Tkrzw TreeDBM / Berkeley DB `DB_BTREE` — the same
+container class as the pinyin and phrase indexes.
 
 ### Key encoding
 
@@ -92,22 +89,22 @@ terminator, successive punctuations concatenated. Example: `，` then
 by scanning u32s to each zero (`unescape` / `get_all_punctuations`,
 `punct_table.cpp:56-94`).
 
-This differs from the eager `PunctTable`'s NUL-separated UTF-8 redb
-schema — the redb-native format is oxpinyin's own, while this reader
-consumes libpinyin's physical layout directly.
+### Lazy access
 
-### P4 change: lazy access
-
-`PunctTable::open` eagerly walks every row into a `BTreeMap`.
-`LazyPunctTable` replaces this with per-key `get_raw` lookups.
+`PunctTable` reads `punct.bin` with one point read per lookup. Nothing
+is walked at open. `pinyin_init` ignores a failed
+`PunctTable::attach`, and oxpinyin keeps the failed object as the pin does.
 
 ## 3. Rust implementation
 
-- `bigram_table.rs`: `BigramTable` — lazy bigram reader, reuses
-  `ChewingDbm` trait from P2, same value schema as `BigramLanguageModel`
-- `lazy_punct.rs`: `LazyPunctTable` — lazy punct reader, same value
-  schema as `PunctTable`
-- Store extension: `RawReadStore::open_hash_read_only` for KC HashDB /
-  Tkrzw HashDBM
-- KC: `DbType::Hash` variant with `#type=kch` tuning
-- Tkrzw: `open_hash` with `dbm=hash` parameter
+All paths are under `crates/`.
+
+- `oxpinyin-data/src/row_format.rs` (`bigram`, `punct`,
+  `encode_token_key`): the key and value layouts, shared with the
+  `oxpinyin-utils` writers.
+- `oxpinyin-data/src/bigram_table.rs`: `BigramTable`, the lazy bigram
+  reader. `oxpinyin-data/src/lm/mod.rs` builds `BigramLanguageModel` on it.
+- `oxpinyin-data/src/punct.rs`: `PunctTable`, the lazy punctuation reader.
+- `oxpinyin-store`: `RawReadStore::open_hash_read_only` and
+  `WriteStore::create_hash` on each backend (Kyoto Cabinet
+  `DbType::Hash`, tkrzw `HashDBM`, Berkeley DB `DB_HASH`).

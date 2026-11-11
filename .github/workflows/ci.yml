@@ -2,7 +2,7 @@
 # job (`python3 -m tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
 # holds each job's paths), and a job runs only when its flag is true. A skipped
 # job still reports `skipped`, so the required `ci-aggregate` check sees it.
-# Paths that no job reads, such as docs/, reference/, .kiro/ and the root
+# Paths that no job reads, such as docs/, reference/ and the root
 # Markdown files, select no job. The `changes` job itself checks the one rule
 # that reads every tracked file: the Python version request is written once.
 #
@@ -155,15 +155,15 @@ jobs:
       # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools tools/dev/lint-crate-cfg-placement.test.py
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
       - name: Crate cfg-placement gate
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev lint-crate-cfg-placement
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record. The full
       # installed-tree diff (just packaging check-pc-metadata) needs the
       # pin-built libpinyin, which CI does not have.
-      - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging check-pc-version
+      - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw

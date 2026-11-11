@@ -12,7 +12,7 @@
 //! eagerly slurps every row at init, while this reader does lazy per-key
 //! `get_raw` lookups.
 //!
-//! See `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.1
+//! See `docs/findings/bigram-punct-format-2026-09-01.md` §1
 //! and `ngram_tkrzwdb.cpp`.
 
 use std::path::Path;

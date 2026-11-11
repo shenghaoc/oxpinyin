@@ -29,7 +29,7 @@ rename structurally under fat LTO when the hash changes; those are paired by
 identical normalized instruction bodies instead, and every tier of the
 accounting is printed so nothing is silently guessed.
 
-This is the former debuginfo-neutrality-lib.sh, whose report it reproduces. Its
+This module produces the neutrality report. Its
 text handling is the C locale's (byte order, no collation), as the images that
 ran it had. Two behaviours of the shell stay as they were, and are named where
 they matter: `#` ends an instruction on aarch64 as it ends a comment on x86-64,

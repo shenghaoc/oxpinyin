@@ -1082,7 +1082,7 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
 /// Register row 62: a `USER_FILE` reading the probe counts
 /// (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell (`:728` →
 /// `chewing_key.cpp:48`) is read, not skipped, and the pin's assert aborts
-/// the process. No `contract-diff.py` fixture can plant the reading in the
+/// the process. No recorded contract diff harness fixture can plant the reading in the
 /// pin's sub-index, so this death test holds the site.
 // Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
 #[cfg(unix)]
@@ -4159,4 +4159,76 @@ fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
     assert_eq!(unigram_item_count(instance, token), (true, 1));
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
+}
+
+/// At 074a2219, `pinyin.cpp:812-815` reads both live items each time a pair
+/// loads. `:904-910` copies the buffered row before loading the next pair.
+#[test]
+fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
+    for live_successor in [false, true] {
+        use crate::iterators::{
+            pinyin_begin_get_bigram_phrases, pinyin_bigram_iterator_get_next_phrase,
+            pinyin_bigram_iterator_has_next_phrase, pinyin_end_get_bigram_phrases,
+        };
+
+        let user_dir = TempUserDir::new("export-live-item");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
+        let (user_token, system_token) = {
+            // SAFETY: `instance` was just allocated and has not been freed.
+            let inst = unsafe { instance_ref(instance) };
+            let predecessor = inst
+                .core
+                .user
+                .unwrap()
+                .token_for_phrase("龘龘")
+                .unwrap()
+                .unwrap();
+            (predecessor, inst.core.dict.tokens_for_text("好")[0].value())
+        };
+        let (predecessor, successor) = if live_successor {
+            (system_token, user_token)
+        } else {
+            (user_token, system_token)
+        };
+        assert!(pinyin_save(context));
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+        lay_gram(
+            &user_dir.path,
+            predecessor,
+            &[(successor, 69), (successor, 70)],
+        );
+
+        let context = init_at(&user_dir.path);
+        assert!(!context.is_null());
+        let iter = pinyin_begin_get_bigram_phrases(context);
+        assert!(!pinyin_bigram_iterator_has_next_phrase(iter));
+        assert!(pinyin_bigram_iterator_has_next_phrase(iter));
+        assert_eq!(import_batch(context, 7, &[("龘龘", "da4'da4", 5)]), [true]);
+
+        let row = || {
+            let (mut phrase, mut pinyin, mut count) = (ptr::null_mut(), ptr::null_mut(), 0);
+            let more = pinyin_bigram_iterator_get_next_phrase(
+                iter,
+                &raw mut phrase,
+                &raw mut pinyin,
+                &raw mut count,
+            );
+            ExportStep::Row(more, take_exported(phrase), take_exported(pinyin), count)
+        };
+        let expected = |more, reading: &str, count| {
+            let (phrase, pinyin) = if live_successor {
+                ("好龘龘", format!("hao'{reading}"))
+            } else {
+                ("龘龘好", format!("{reading}'hao"))
+            };
+            ExportStep::Row(more, phrase.to_owned(), pinyin, count)
+        };
+        assert_eq!(row(), expected(true, "da2'da2", 138));
+        assert_eq!(row(), expected(true, "da2'da2", 140));
+        assert_eq!(row(), expected(false, "da4'da4", 140));
+        pinyin_end_get_bigram_phrases(iter);
+        crate::context::pinyin_fini(context);
+    }
 }

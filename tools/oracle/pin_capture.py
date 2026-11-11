@@ -12,7 +12,7 @@ refuses the run unless:
 - the data's digest is `content_sha256` in tools/oracle/libpinyin-data.json;
 - MODEL is a complete model20 extraction whose parent's `verified` marker records the pinned
   archive digest (tools/dev/w3_fixtures.py model_dir);
-- for each cell a utility run uses, `prefix_ok` accepts CACHE/oracle/CELL (a `tools.dev provision
+- for each cell a utility run uses, `prefix_ok` accepts CACHE/oracle/CELL (a `python -m tools.dev.provision
   oracle --cache-dir CACHE` prefix), its build tree CACHE/data-CELL/src/libpinyin-COMMIT holds the
   pin commit, the library that tree built has the prefix's recorded `shared_object_sha256`, and
   each utility it runs is a built executable there. The utilities link the pin's static archives,
@@ -157,7 +157,7 @@ def key_walk(facade, text):
 
 def zhuyin_key_abort(facade, text):
     """The zhuyin twin of key_abort: libzhuyin's key query reads the column at the offset itself
-    (contract_separator_before_cursor.py:256-259), so the pinyin values do not carry over."""
+    (the pin's zhuyin key-query derivation), so the pinyin values do not carry over."""
     facade.call('zhuyin_parse_more_full_pinyins', text)
     facade.call('zhuyin_get_parsed_input_length')
     facade.call('zhuyin_get_zhuyin_key', 0)
@@ -1182,7 +1182,7 @@ def checked_utilities(cache, root=ROOT):
     if not needed:
         return {}
     if cache is None:
-        raise CaptureError('the utility runs need --provision-cache, a `tools.dev provision oracle` cache')
+        raise CaptureError('the utility runs need --provision-cache, a `python -m tools.dev.provision oracle` cache')
     commit = image.fields(Path(root) / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
     cells = {}
     for cell, programs in sorted(needed.items()):
@@ -1304,7 +1304,7 @@ def main(argv):
     run.add_argument('run', help='the run name, such as 1 or 2')
     run.add_argument('--prefix', required=True, help="the pin's tkrzw install prefix")
     run.add_argument('--data', required=True, help='the pinned libpinyin-data directory')
-    run.add_argument('--provision-cache', help='the `tools.dev provision oracle --cache-dir` of the utility runs')
+    run.add_argument('--provision-cache', help='the `python -m tools.dev.provision oracle --cache-dir` of the utility runs')
     run.add_argument('--model-dir', help="the verified model20 extraction of the data sequence (its parent holds 'verified')")
     run.add_argument('--staging', default=str(DEFAULT_STAGING), help='the staging directory')
     args = parser.parse_args(argv)

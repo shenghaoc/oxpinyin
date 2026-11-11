@@ -23,7 +23,7 @@
 //! and stays reachable in the trellis. Verified on the pinned model:
 //! `Σ item == Σ \1-gram count + 138,096`.
 //!
-//! Scoring follows the interpolated form frozen in
+//! Scoring follows the interpolated form defined in
 //! `docs/findings/scoring-spec.md`:
 //!
 //! ```text

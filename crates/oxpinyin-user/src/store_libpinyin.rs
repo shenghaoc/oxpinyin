@@ -48,6 +48,7 @@ use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
 
+use crate::lock_result_or_abort;
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase;
 use crate::store::{StoreInner, UserStore, UserStoreError};
@@ -80,9 +81,7 @@ pub struct Target {
 
 impl Target {
     pub(crate) fn phrases(&self) -> std::sync::MutexGuard<'_, crate::user_library::SessionPhrases> {
-        self.phrases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.phrases.lock())
     }
 }
 
@@ -174,11 +173,11 @@ impl UserStore {
     /// per-file, exactly as upstream's loader degrades.
     pub fn open_libpinyin(
         user_dir: &Path,
-        originals: impl Into<SystemOriginals>,
+        mut originals: SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session::<PinSteps>(Some(user_dir), &mut originals.into(), versions, law, None)
+        Self::open_session::<PinSteps>(Some(user_dir), &mut originals, versions, law, None)
     }
 
     /// Open the pin's NULL-user-directory session entirely in memory.
@@ -191,11 +190,11 @@ impl UserStore {
     /// cannot be created or seeded with the system libraries' allocation
     /// bases, where the pin dies.
     pub fn open_transient(
-        originals: impl Into<SystemOriginals>,
+        mut originals: SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session::<PinSteps>(None, &mut originals.into(), versions, law, None)
+        Self::open_session::<PinSteps>(None, &mut originals, versions, law, None)
     }
 
     /// [`open_libpinyin`](Self::open_libpinyin) for a profile
@@ -4111,10 +4110,10 @@ mod tests {
         };
         std::fs::write(&path, build_chunk(&[(1, shipped)]).expect("chunk")).expect("write");
         let originals = || {
-            BTreeMap::from([(
+            SystemOriginals::from(BTreeMap::from([(
                 1_u8,
                 SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
-            )])
+            )]))
         };
         let first = packed_to_pinyin_keys(&[ChewingKey::from_pinyin("ni").unwrap().to_packed()])
             .expect("first reading");
@@ -4219,10 +4218,10 @@ mod tests {
         chunk[4..8].copy_from_slice(&checksum);
         std::fs::write(&path, &chunk).expect("write");
         let originals = || {
-            BTreeMap::from([(
+            SystemOriginals::from(BTreeMap::from([(
                 1_u8,
                 SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
-            )])
+            )]))
         };
         let (a, b, c) = (0x0100_0001, 0x0100_0002, 0x0100_0003);
         {

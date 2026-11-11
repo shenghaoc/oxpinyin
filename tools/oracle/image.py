@@ -37,7 +37,8 @@ import tempfile
 if __name__ == '__main__' and __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.dev import cell
+from tools import cachedir
+from tools.dev import cell, model
 from tools.dev.process import ROOT, capture, fail, run, text
 from tools.dev.runners import Finished, guarded
 from tools.oracle.build import fields, recipe_hash
@@ -678,7 +679,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
     actual = image_field(runtime, 'Architecture', capture_image, env=environment, platform=selected)
     if actual != architecture:
         fail(f'FAIL: {capture_image} is {actual}, expected native {architecture}')
-    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'fetch-contract-data'],
+    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.contract_data'],
                       cwd=root, env=environment)
     data = fetched.stdout.decode().splitlines()[-1].strip()
     image = image_field(runtime, 'Id', capture_image, env=environment)
@@ -701,10 +702,10 @@ def capture_pin(argv, *, root=ROOT, env=None):
 
     RUN names the run (1, 2, ...). The C API observations run on the image's tkrzw cell on the
     pinned libpinyin-data. The utility runs use the bdb, kc and tkrzw builds of `python -m tools.dev
-    provision oracle --cache-dir CACHE`, OXPINYIN_PROVISION_CACHE: CACHE/oracle/CELL and the build
+    provision oracle` in the provision_cache directory CACHE: CACHE/oracle/CELL and the build
     tree beside it, mounted read-only at /provision. The data sequence reads the verified model20
-    extraction MODEL/extracted, the cache `provision oracle` fetched (PINYIN_MODEL_CACHE, default
-    CACHE/model20), mounted read-only at /model20. tools/oracle/pin_capture.py checks the prefixes,
+    extraction MODEL/extracted, the model20 entry of the cache root that `provision oracle`
+    fetched into, mounted read-only at /model20. tools/oracle/pin_capture.py checks the prefixes,
     the loaded libraries, the utility builds and the data, then stages the proposed observations
     and capture.json in target/pin-observations/RUN/. Nothing else is written."""
     environment = os.environ if env is None else env
@@ -716,13 +717,13 @@ def capture_pin(argv, *, root=ROOT, env=None):
     name = argv[0]
     if not RUN_NAME.fullmatch(name):
         fail(f'FAIL: a run name uses letters, digits, _ and -: {name}', 2)
-    provision = environment.get('OXPINYIN_PROVISION_CACHE', '')
-    if not provision or not Path(provision).is_dir():
-        fail('FAIL: set OXPINYIN_PROVISION_CACHE to a `tools.dev provision oracle --cache-dir` directory', 2)
-    model = environment.get('PINYIN_MODEL_CACHE') or str(Path(provision) / 'model20')
+    provision = provision_cache(environment, root)
+    if not provision.is_dir():
+        fail(f'FAIL: {provision} is not a directory; run `just provision-oracle` with this OXPINYIN_CACHE', 2)
+    model = model_cache(environment)
     if not (Path(model) / 'extracted').is_dir():
         fail(f'FAIL: {Path(model) / "extracted"} is not a model20 extraction; '
-             'set PINYIN_MODEL_CACHE to the cache provision oracle used', 2)
+             'run `just provision-oracle` with this OXPINYIN_CACHE', 2)
     child = dict(environment, OXPINYIN_CAPTURE_PROVISION=str(Path(provision).resolve()),
                  OXPINYIN_CAPTURE_MODEL=str(Path(model).resolve()))
     return run_in_capture_image('target/pin-observations', [
@@ -776,26 +777,34 @@ def performance_build_command(engine, root, selected_platform, tag):
             '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root]
 
 
-def provision_cache(env):
-    """The provisioning cache `provision` and `provision-oracle` share: OXPINYIN_PROVISION_CACHE,
-    else the older OXPINYIN_CLOUD_CACHE, else $XDG_CACHE_HOME/oxpinyin (~/.cache/oxpinyin)."""
-    return Path(env.get('OXPINYIN_PROVISION_CACHE') or env.get('OXPINYIN_CLOUD_CACHE') or
-                Path(env.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'oxpinyin')
+def provision_cache(env, root=ROOT):
+    """The provisioning cache `provision` and `provision-oracle` share:
+    pin-<the first 12 digits of the libpinyin commit>/ under the cache root (tools/cachedir.py)."""
+    commit = fields(Path(root) / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
+    return cachedir.root(env) / f'pin-{commit[:12]}'
+
+
+def model_cache(env):
+    """The model20 entry of the cache root, which every provisioning run shares."""
+    return model.default_cache(env)
 
 
 PROVISION_ORACLE_USAGE = '''usage: just provision-oracle [--cells CELLS] [--jobs N]
 
 Run `provision oracle` in the performance image, through the selected runtime
-(OXPINYIN_CONTAINER overrides it), with the provisioning cache mounted at /provision.
-The cache is OXPINYIN_PROVISION_CACHE, else ~/.cache/oxpinyin; it receives
-oracle/<cell> (the pin's libraries and data) and model20. The image is built when absent;
+(OXPINYIN_CONTAINER overrides it). The cache root OXPINYIN_CACHE is mounted at
+/cache, and its provisioning cache pin-<commit> also at /provision, where it
+receives oracle/<cell> (the pin's libraries and data). The image is built when absent;
 OXPINYIN_CAPTURE_BUILD_FLAGS carries site flags for that build (no quoting inside).
 '''
 
 
-def provision_oracle_command(engine, root, cache, tag, selected_platform, argv):
+def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, shared):
     """The run of `provision oracle` in the performance image TAG (docker grammar).
 
+    The host's cache root SHARED is mounted at /cache, which the run receives as OXPINYIN_CACHE,
+    so the model20 entry is the host's. The provisioning cache CACHE is mounted at /provision
+    and named with --cache-dir, so a prefix keeps its path /provision/oracle/<cell>.
     On rootful docker the run is the invoking user (run_user), so the cache it writes stays theirs;
     podman maps the user already, as for the capture run, and Apple's container keeps the run its
     macOS lane verified. uv then needs a writable HOME and cache, in /tmp; the managed interpreter
@@ -804,9 +813,10 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv):
     home = ['-e', 'HOME=/tmp', '-e', 'UV_CACHE_DIR=/tmp/uv-cache'] if user else []
     return [engine, 'run', '--rm', '--platform', selected_platform, *performance_resources(engine), *user,
             '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{Path(cache).resolve()}:/provision',
+            '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
             '-e', 'PYTHONDONTWRITEBYTECODE=1', *home, '-w', '/repo', tag,
             'uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal',
-            '-m', 'tools.dev', 'provision', 'oracle', '--cache-dir', '/provision', *argv]
+            '-m', 'tools.dev.provision', 'oracle', '--cache-dir', '/provision', *argv]
 
 
 def provision_oracle(argv, *, root=ROOT, env=None):
@@ -819,7 +829,7 @@ def provision_oracle(argv, *, root=ROOT, env=None):
     while rest:
         option = rest.pop(0)
         if option not in ('--cells', '--jobs') or not rest:
-            fail(f'unknown option or missing value: {option} (the cache is OXPINYIN_PROVISION_CACHE)\n'
+            fail(f'unknown option or missing value: {option} (the cache root is OXPINYIN_CACHE)\n'
                  + PROVISION_ORACLE_USAGE, 2)
         rest.pop(0)
     if environment.get('GITHUB_ACTIONS') == 'true':
@@ -834,10 +844,11 @@ def provision_oracle(argv, *, root=ROOT, env=None):
         build = performance_build_command(engine, root, selected, tag)
         if run(runtime_command([*build[:2], *flags, *build[2:]]), cwd=root, env=environment, check=False):
             raise Finished(1)
-    cache = provision_cache(environment)
+    cache = provision_cache(environment, root)
     cache.mkdir(parents=True, exist_ok=True)
     print(f'provisioning cache: {cache.resolve()}', file=sys.stderr, flush=True)
-    return run(runtime_command(provision_oracle_command(engine, root, cache, tag, selected, argv)),
+    return run(runtime_command(provision_oracle_command(engine, root, cache, tag, selected, argv,
+                                                        cachedir.root(environment))),
                cwd=root, env=environment, check=False)
 
 
@@ -886,6 +897,7 @@ def performance(argv, *, root=ROOT):
     return run(runtime_command([engine, 'run', '--rm', '--platform', selected_platform, *flags,
                                 '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{cache}:/performance',
                                 '-e', 'CARGO_TARGET_DIR=/performance/target', '-e', 'TMPDIR=/performance/tmp',
+                                '-e', 'OXPINYIN_CACHE=/performance/cache',
                                 '-e', 'PYTHONDONTWRITEBYTECODE=1', '-w', '/repo', tag, *(command or ['bash'])]),
                check=False)
 

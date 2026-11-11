@@ -122,7 +122,7 @@ fn generate_binary_files(
         file.rewind();
         load_phrase_table(phrase_table.as_ref(), &mut file, false);
         file.rewind();
-        load_phrase_index(index as u8, &mut file, &mut libraries);
+        load_phrase_index(index as u8, &mut file, &mut libraries, phonetic);
     }
 
     compact(&mut libraries);
@@ -270,9 +270,13 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
 }
 
 /// `FacadePhraseIndex::load_text` (`src/storage/phrase_index.cpp:522-596`).
-fn load_phrase_index(index: u8, file: &mut TableFile, libraries: &mut [Option<ChunkMap>; 16]) {
-    libraries[usize::from(index)] =
-        Some(read_phrase_items(index, file, PhoneticType::Pinyin, false));
+fn load_phrase_index(
+    index: u8,
+    file: &mut TableFile,
+    libraries: &mut [Option<ChunkMap>; 16],
+    phonetic: PhoneticType,
+) {
+    libraries[usize::from(index)] = Some(read_phrase_items(index, file, phonetic, false));
 }
 
 /// The shared phrase-index text walk. Test programs select their source phonetic

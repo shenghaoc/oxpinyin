@@ -525,9 +525,7 @@ where
             // by its own tail rank, never by list position: the NBEST-wins
             // dedup can drop an earlier duplicate row, shifting a
             // surviving row off the position its rank would give it, and a
-            // positional lookup then trains the wrong path. A fallback
-            // sentence candidate carries no rank and no tokens; it records
-            // nothing, exactly as before.
+            // positional lookup then trains the wrong path.
             if let Some(row) = state.sentence.rows.get(usize::from(rank)) {
                 // The row replaces everything decoded since the lookup ran
                 // — the text side of that replace is the assign above. A

@@ -1,54 +1,43 @@
 # Contributing
 
-Read the [constitution](docs/constitution.md) and [source policy](docs/source-policy.md) before changing the project.
+For every task, read the [constitution](docs/constitution.md), [compatibility policy](docs/findings/compatibility-policy.md) and [approval rules](#approval-conditions).
+When a change touches compatibility, the pin or a stage, also read the [roadmap](ROADMAP.md) and [source policy](docs/source-policy.md).
 
 The usual workflow is:
 
-1. Set up native development with the [setup guide](docs/runbooks/setup.md)
-   and run its first passing test.
-2. Make the change on a branch and add or extend tests for it.
-3. Run the [checks for your contribution](docs/runbooks/setup.md#contribution-checks)
-   and the [verification procedure](docs/runbooks/verification.md).
-4. When the change affects compatibility with libpinyin, run its
-   differential on the oracle, as described below.
-5. Open a pull request whose description reports the results and how to
-   reproduce them.
+1. Choose the [scoped verification](docs/runbooks/verification.md#verification-scope-and-precedence) for the task. When it requires native development, follow the [setup guide](docs/runbooks/setup.md) and run its first passing test.
+2. Make the change on a branch and add or extend tests when the scoped verification requires them.
+3. Run the [checks for your contribution](docs/runbooks/setup.md#contribution-checks) and the [verification procedure](docs/runbooks/verification.md).
+4. When the change affects compatibility with libpinyin, run its differential on the oracle, as described below.
+5. Open a pull request whose description reports the results and how to reproduce them.
 
-Native development means editing, compiling, debugging and testing on your
-own operating system: Linux, macOS or native Windows. You need Git, the
-repository-selected Rust toolchain and a native compiler and linker; the
-setup guide gives complete commands for each platform, including a first
-passing test and resuming in a fresh terminal. No container, libpinyin
-oracle or model download is required for ordinary work.
+Use the [setup guide](docs/runbooks/setup.md) for native prerequisites and resumption.
+Ordinary work requires no container, libpinyin oracle or model download.
 
-A Rust **crate** is a package. A storage **backend** is the native DBM
-library that storage-dependent crates are built against; the
-[backend guide](docs/runbooks/backends.md) names the default; the
-[setup guide](docs/runbooks/setup.md#storage-backend) covers each platform.
+The [backend guide](docs/runbooks/backends.md) names the default storage backend; the [setup guide](docs/runbooks/setup.md#storage-backend) covers each platform.
 
-When a change needs **compatibility verification**, compare it with the
-**oracle** (the fixed upstream libpinyin implementation). A
-**differential** runs the same behaviour against both implementations.
-Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md),
-so you do not install libpinyin or reconstruct its environment.
+When a change needs **compatibility verification**, compare it with the **oracle**, the fixed upstream libpinyin implementation.
+A **differential** runs the same behaviour against both implementations.
+Run it on a [provisioned remote Linux host](docs/runbooks/cloud.md), so that you do not install libpinyin or rebuild its environment.
 Native tests and differentials provide different evidence.
 Package-manager examples and runtime adapters are not extra test targets.
 
-Before changing code, read the [architecture](docs/architecture.md) to see
-which crate owns the behaviour and what it may depend on. Read the
-[Rust conventions](docs/rust-conventions.md) before writing Rust; they cover
-the lints, panics, matches and arithmetic that review checks.
+Before you change code, read the [architecture](docs/architecture.md) to see which crate owns the behaviour and what it may depend on.
+Before you write Rust, read the [Rust conventions](docs/rust-conventions.md); they cover the lints, panics, matches and arithmetic that review checks.
 
-Advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md),
-[packaging](docs/packaging.md), [release](docs/runbooks/release.md) and
-[measurement](docs/runbooks/benches.md) procedures apply only when that task needs them. Keep model downloads and
-derived data local; they never belong in Git or published images.
+The advanced [backend](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md), [packaging](docs/packaging.md), [release](docs/runbooks/release.md) and [measurement](docs/runbooks/benches.md) procedures apply only when a task needs them.
+Keep model downloads and derived data local, except for the scoped [W3 redistribution ruling](docs/findings/model-provenance.md). Do not publish model downloads in images.
 
 ## Testing
 
-Test a behaviour where it is implemented. A higher layer tests only the decisions and connections that layer adds. A test must protect a distinct failure mechanism, invariant or external-interface decision that the retained suite does not already protect. Different inputs, issue numbers or execution layers alone do not justify another test.
+Test a behaviour where it is implemented.
+A higher layer tests only the decisions and connections that layer adds.
+A test must protect a distinct failure mechanism, invariant or external-interface decision that the retained suite does not already protect.
+Different inputs, issue numbers or execution layers alone do not justify another test.
 
-A new regression uses reduced input and explains any substantial fixture or runtime cost. Extend existing cases and helpers where that keeps the test clear. Don't commit bulk observations when a live comparison or a compact expectation suffices.
+A new regression uses reduced input and explains any substantial fixture or runtime cost.
+Extend existing cases and helpers where that keeps the test clear.
+Do not commit bulk observations when a live comparison or a compact expectation suffices.
 
 ## Contributor responsibility
 
@@ -58,6 +47,13 @@ Update both in the same PR when their content changes.
 A Chinese wording correction that does not change content needs no English change.
 The [roadmap](ROADMAP.md) records the current stage and remaining work.
 
+## Writing
+
+Use Simplified Technical English as a guide, without enforcing its dictionary or claiming compliance.
+Write short, direct sentences with consistent technical terms.
+Preserve identifiers, citations, requirement strength and frozen behaviour.
+Keep machine-read content unchanged.
+
 ## Results and reproduction
 
 Deliver the software, maintained tooling and a concise final result with reproducible commands.
@@ -65,9 +61,10 @@ Use repository `just` recipes and in-tree Python tools with managed CPython.
 Provision the interpreter with `just python`.
 Extend shared tooling when a required capability is missing.
 Do not publish or install a Python package, and add no console entry point without a new ruling.
+
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
-Existing documented shell entry points remain supported during migration.
+The documented shell entry points (`tools/cloud/setup.sh`, `tools/tkrzw/distro-probe.sh`) remain supported.
 
 Report the conclusion, relevant final results and reproduction commands.
 Identify only the revisions, inputs, build options and environment details needed to interpret and repeat the result.
@@ -87,6 +84,7 @@ Investigate a broken reproduction command as a bug.
 Investigate a result that contradicts the claim beyond the method's expected variability.
 Fix the software, tooling, environment assumptions or documentation that caused the problem.
 Correct or withdraw the claim.
+
 Do not replace the investigation with an evidence package.
 Reproduction must work without the author's old captures.
 Timing results need not be bit-identical.
@@ -94,10 +92,11 @@ Timing results need not be bit-identical.
 Run the checks required by the [verification procedure](docs/runbooks/verification.md).
 Stop when they pass and concrete failures are addressed.
 Do not add reruns or broader sweeps merely to collect more evidence.
+
 Report failed or unrun required checks as limitations.
 Include a brief relevant diagnostic when useful.
 Omit inventories of passed or inapplicable checks.
-This policy supersedes older reporting requirements in runbooks and findings.
+This policy takes precedence over older reporting requirements in runbooks and findings.
 
 ### Measurements
 
@@ -110,13 +109,39 @@ When a measurement compares arms, run them in one job on one machine and report 
 Do not use an absolute figure from another run, host or CPU as a baseline.
 Follow the [measurement procedure](docs/runbooks/benches.md).
 
-## Dates and shell placement
+## Dates
 
 Capture freeze-document, findings and patch-metadata dates with `date -u` on the machine executing the step.
 Capture them at run time.
 Do not write dates by hand.
 A local time zone ahead of UTC can date a record into the future (PR #363).
-Follow the [Python orchestration and shell-placement rule](docs/plans/tooling-python.md#shell-placement-rule-1260).
+
+## Tooling
+
+### Shell placement
+
+Write orchestration in Python, in `tools.dev` or an existing harness.
+Keep a shell script only for one of these reasons:
+
+1. **Bootstrap:** it runs before managed CPython exists, to provision it.
+2. **Environment:** it runs where managed CPython is not available, such as a reference-image build or a container before provisioning.
+3. **External interface:** an outside tool requires a shell entry point, and the script is only a thin wrapper.
+
+State the reason at the top of each retained script, with its caller and boundary.
+A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: update the caller.
+Keep each `just` recipe as one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
+Use the Bash floor in `tools/lib/bash-floor.sh`; do not copy its guards.
+
+### Independent work in parallel
+
+Run independent subprocesses and builds in the bounded pool, `tools/dev/pool.py`.
+Size the pool from the allowed CPUs.
+Give each worker private writable state.
+Make output independent of completion order.
+The first failure or cancellation starts no new unit, stops the running units and reaps their children.
+Serialize dependent steps and work that needs isolation, and state the reason in the tool or its runbook.
+The backend builds in `tools/oracle/Dockerfile.oracle` stay serial: no `tools/dev` module is copied into the reference image (#1234).
+Run timing, residency, cache-sensitive and sampling-profile observations in isolation.
 
 ## Toolchain and platforms
 
@@ -130,10 +155,29 @@ Do not use emulation for work that does not compare against the pin.
 A remote Linux host that meets the [remote Linux requirements](docs/runbooks/cloud.md#host-requirements) supports every gate.
 Provision it with `tools/cloud/setup.sh`.
 
+## Worktrees
+
+More than one contributor or agent can use one clone at the same time.
+Do each piece of work in its own worktree.
+Run `git branch --show-current` first: a branch that you did not create belongs to another workstream.
+Do not switch another workstream's checkout or change its working tree.
+
+1. Base work that has no parent on `origin/main`.
+2. Base a dependent stack member on its current parent.
+3. Create a new branch with `git worktree add -b <branch> /tmp/<name> <base>`.
+4. Use `git worktree add /tmp/<name> <branch>` for an existing branch.
+5. Use `git worktree add --detach /tmp/<name> <commit>` only to read a commit. Do not commit in a detached worktree.
+6. Commit in your worktree.
+7. Remove your worktree with `git worktree remove` when you finish.
+
+Leave the shared checkout as you found it.
+Do not touch or prune another workstream's worktree.
+Example: the `shim.cc` collision came from two agents that each assumed sole ownership of one checkout.
+
 ## Checkpoints and rebases
 
 Push a `wip/<issue>` branch at each checkpoint.
-Treat every machine as disposable: work held only in a local checkout or container can be lost.
+Treat every machine as disposable: work that exists only in a local checkout or container can be lost.
 
 Fetch and rebase onto the current landing tip immediately before every push and before any merge.
 Check `git log origin/main..HEAD`.
@@ -148,25 +192,25 @@ After rebasing:
 
 1. List committed artifacts whose generators changed on main since the branch point.
 2. Regenerate those artifacts.
-3. Re-run pins if the rebase changes engine, capi or data crates.
+3. Re-verify according to the [verification scope and precedence](docs/runbooks/verification.md#verification-scope-and-precedence).
 
 See PR #363 against #358 for the oracle-data manifest split example.
-The contributor who merges later re-runs the affected pin checks.
-Do not assume pre-rebase results remain valid.
+The contributor who merges later follows the same [verification scope and precedence](docs/runbooks/verification.md#verification-scope-and-precedence).
 Fmt failures block merging.
 A reviewed, formatting-only commit is safe when its diff contains only formatting.
 
 ## Stack placement
 
+Revise a stack member in place; each member keeps its own scope.
 Put a fix on the stack member whose change produces the symptom.
 Keep each stack member green when tested alone.
 This preserves bisection and bottom-up merging.
 A fix above the failing member leaves that lower member broken until the upper one lands.
+
 If member N exposes a pre-existing defect, put its fix on member N.
 Examples include a harness leak, missing teardown or latent undefined behaviour.
 Keep the tree correct at every stack level.
-The capi-commands fuzz leak fix belonged on #502, which made BDB the default and exposed the failure.
-Its initial placement on #512 was wrong.
+Example: the capi-commands fuzz leak fix belongs on #502, which changed the default backend and exposed the failure, not on #512.
 
 ## Approval conditions
 
@@ -178,18 +222,18 @@ Stop and ask the maintainer when any condition below applies:
 - A SPEC contradicts the pin's source.
 - The pin's source and disassembly cannot settle a behaviour.
 - The implementation requires an unapproved change to a frozen SPEC.
-- A product-behaviour change is not a language artefact under the source policy's decision order.
+- A product-behaviour change is not a language artefact under the compatibility policy's [decision order](docs/findings/compatibility-policy.md#decision-order).
 
-Use the pin's external call when a Rust equivalent is unsettled.
+Use the pin's external call when the equivalence of a Rust replacement is unsettled.
 Unsettled surrounding pin behaviour still requires a decision.
 Rust interfaces remain internal under the [interface ruling](docs/constitution.md#external-interfaces).
 
 Obtain approval before adding or upgrading dependencies, or changing frozen SPECs, goldens or CI policy.
 Implement from frozen behavioural SPECs and fixtures.
-A freeze of a Rust signature alone no longer binds.
+A freeze of a Rust signature alone does not bind.
 Keep unsafe code within the [constitution's allowlist](docs/constitution.md).
 Do not silence lints.
-Use only the narrow, justified expectations permitted by the [panic amendment](docs/findings/compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
+Use only the narrow, justified expectations that the [failure-behaviour rule](docs/findings/compatibility-policy.md#failure-behaviour) permits.
 
 ## Pull request descriptions
 
@@ -204,7 +248,7 @@ Do not paste chronological logs, status updates or transcripts.
 When results change, update the existing sections.
 Do not append another report at the end.
 Describe only a stacked PR's own diff.
-Name its direct parent PR.
+Name its direct parent PR by number.
 
 Keep ordinary PRs brief.
 The 150–300 word range is a guide, not a minimum.

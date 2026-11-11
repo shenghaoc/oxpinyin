@@ -1,7 +1,7 @@
 //! Pin-table tests for the cursor laws.
 //!
 //! Every table below was measured FIRST-HAND on the rebuilt pin
-//! (`tools/oracle/build-oracle.sh` prefix; libpinyin 2.11.91 @ `0c5e80e`,
+//! (recorded evidence: a pin-built oracle prefix; libpinyin 2.11.91 @ `0c5e80e`,
 //! parity word `0x18a`) with a fork-per-probe driver: each offset ran in
 //! its own child process so the pin's `assert`-abort is a datum, not a
 //! dead driver. Legend: values are the pin's answers; `ABORT` is the
