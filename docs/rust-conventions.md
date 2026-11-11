@@ -32,6 +32,15 @@ Assertions in tests remain unrestricted.
 
 A permitted panic's message can differ from the pin's C assertion message; that is a [language artefact](source-policy.md#internal-language-artefacts), so do not imitate glibc's assertion format.
 
+### Poisoned locks
+
+Lock poisoning signals that a Rust panic occurred while a lock was held.
+Production code must treat poison as an internal integrity failure and end
+the process with `std::process::abort()`. Never recover poisoned state, use
+`unwrap` or `expect`, or raise a new panic on poison. This rule applies to
+Rust's lock state. The pin has no lock poisoning. Test code keeps its
+existing lock handling.
+
 ## Enums and matches
 
 **Enums and matches (maintainer decision 2026-10-30 UTC):**

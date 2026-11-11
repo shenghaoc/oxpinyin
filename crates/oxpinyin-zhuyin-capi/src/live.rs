@@ -9,7 +9,7 @@
 //! instead (register row 60, class (b); the zhuyin twin, PR 14).
 
 use std::collections::BTreeSet;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use crate::types::ZhuyinContext;
 
@@ -18,8 +18,15 @@ use crate::types::ZhuyinContext;
 /// so the registry gives that node back when the last context goes.
 static LIVE: Mutex<Option<BTreeSet<usize>>> = Mutex::new(None);
 
+fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
+}
+
 fn set() -> std::sync::MutexGuard<'static, Option<BTreeSet<usize>>> {
-    LIVE.lock().unwrap_or_else(PoisonError::into_inner)
+    lock_result_or_abort(LIVE.lock())
 }
 
 fn insert(live: &mut Option<BTreeSet<usize>>, address: usize) {
@@ -60,6 +67,21 @@ pub(crate) fn is_live(context: *mut ZhuyinContext) -> bool {
 mod tests {
     use super::{insert, is_live, register, remove, unregister};
     use crate::test_support::{TempUserDir, open_with_user};
+
+    #[test]
+    fn poisoned_mutex_aborts() {
+        crate::test_support::assert_aborts("live::tests::poisoned_mutex_aborts", || {
+            let mutex = std::sync::Mutex::new(());
+            let panic = std::panic::catch_unwind(|| {
+                let _guard = mutex.lock().expect("unpoisoned mutex");
+                panic!("poison the mutex");
+            });
+            assert!(panic.is_err());
+            let result = mutex.lock();
+            assert!(result.is_err(), "the mutex must be poisoned");
+            drop(super::lock_result_or_abort(result));
+        });
+    }
 
     #[test]
     fn instance_outlives_context() {

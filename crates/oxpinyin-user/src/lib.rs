@@ -76,5 +76,12 @@ pub use store::{
     UserStoreError, add_system_reading,
 };
 
+fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
+}
+
 #[cfg(feature = "tools")]
 pub use replay::tool;

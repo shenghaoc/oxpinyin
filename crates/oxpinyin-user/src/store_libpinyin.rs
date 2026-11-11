@@ -48,6 +48,7 @@ use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
 
+use crate::lock_result_or_abort;
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase;
 use crate::store::{StoreInner, UserStore, UserStoreError};
@@ -80,9 +81,7 @@ pub struct Target {
 
 impl Target {
     pub(crate) fn phrases(&self) -> std::sync::MutexGuard<'_, crate::user_library::SessionPhrases> {
-        self.phrases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.phrases.lock())
     }
 }
 

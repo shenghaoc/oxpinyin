@@ -64,6 +64,13 @@ use oxpinyin_user::{
     SystemLibrary, UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 
+fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(_) => std::process::abort(),
+    }
+}
+
 /// Orders the system and user phrase-table suggestion tokens the way
 /// `_compute_predicted_prefix_candidates` receives them
 /// (`pinyin.cpp:2371-2405`): `FacadePhraseTable3::search_suggestion` runs
@@ -722,10 +729,7 @@ impl<'a> RuntimeDict<'a> {
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
     fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
-        let mut addons = self
-            .addons
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut addons = lock_result_or_abort(self.addons.write());
         addons.load_reporting(index, system_dir)
     }
 
@@ -753,10 +757,7 @@ impl<'a> RuntimeDict<'a> {
     /// availability-class concern, not a runtime one.
     #[must_use]
     fn unload_addon(&self, index: u8) -> bool {
-        let mut addons = self
-            .addons
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut addons = lock_result_or_abort(self.addons.write());
         addons.unload(index)
     }
 
@@ -1014,10 +1015,7 @@ impl<'a> RuntimeDict<'a> {
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         addons.phrase_item(token)
     }
 }
@@ -1302,10 +1300,7 @@ impl Dictionary for RuntimeDict<'_> {
         // Read only this text's row. A phrase write must not make this
         // query rebuild the full pronunciation and phrase indices.
         if let Some(store) = self.user {
-            let mut cache = self
-                .text_lookup_cache
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut cache = lock_result_or_abort(self.text_lookup_cache.lock());
             let generation = store.phrase_table_generation();
             if cache
                 .as_ref()
@@ -1380,10 +1375,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         addons.lookup_into(syllables, out)
     }
 
@@ -1392,10 +1384,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         addons.lookup_candidates_into(syllables, out)
     }
 
@@ -1403,10 +1392,7 @@ impl Dictionary for RuntimeDict<'_> {
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<bool, Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         addons.prefix_exists(syllables)
     }
 
@@ -1669,10 +1655,7 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         if addons.is_empty() {
             return Ok(None);
         }
@@ -1680,10 +1663,7 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let addons = lock_result_or_abort(self.addons.read());
         Ok(addons.unigram_total())
     }
 
@@ -1818,9 +1798,7 @@ impl Runtime {
         // finish finds them gone.
         self.system.finish_failed_attachments();
         self.model.finish_failed_attachment();
-        self.addons
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.addons.read())
             .dict
             .finish_failed_attachments();
         self.punct.finish_failed_attachment();
@@ -1832,10 +1810,7 @@ impl Runtime {
     pub fn failed_attachments_finished(&self) -> bool {
         self.system.failed_attachments_finished()
             && self.model.failed_attachment_finished()
-            && self
-                .addons
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            && lock_result_or_abort(self.addons.read())
                 .dict
                 .failed_attachments_finished()
             && (!self.punct.retains_failed_attachment() || self.punct.failed_attachment_finished())
@@ -2579,6 +2554,46 @@ mod tests {
     //! seam is covered by `tests/assembly.rs`.
 
     use super::*;
+
+    #[test]
+    fn poisoned_mutex_aborts() {
+        const DEATH_TEST: &str = "OXPINYIN_RUNTIME_DEATH_TEST";
+        const NAME: &str = "tests::poisoned_mutex_aborts";
+
+        if std::env::var_os(DEATH_TEST).is_some_and(|value| value == NAME) {
+            let mutex = std::sync::Mutex::new(());
+            let panic = std::panic::catch_unwind(|| {
+                let _guard = mutex.lock().expect("unpoisoned mutex");
+                panic!("poison the mutex");
+            });
+            assert!(panic.is_err());
+            let result = mutex.lock();
+            assert!(result.is_err(), "the mutex must be poisoned");
+            drop(lock_result_or_abort(result));
+            std::process::exit(0);
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env(DEATH_TEST, NAME)
+            .output()
+            .expect("re-run the test binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt as _;
+            assert_eq!(
+                output.status.signal(),
+                Some(6),
+                "expected SIGABRT: {output:?}"
+            );
+        }
+        #[cfg(windows)]
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
+            "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
+        );
+    }
 
     fn w3_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
