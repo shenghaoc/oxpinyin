@@ -117,9 +117,9 @@ impl RuntimeLm<'_> {
             return None;
         }
         let saved = facts.tokens.get(&token.value()).copied().flatten()?;
-        let total = *facts.total.get_or_insert_with(|| {
-            self.total_extra(user.unigram_total_over(|nibble| self.inner.is_visible(nibble)))
-        });
+        let total = *facts
+            .total
+            .get_or_insert_with(|| user.unigram_total_over(|nibble| self.inner.is_visible(nibble)));
         // The unchanged live-visible branch ignores both unigram_delta and
         // imported_item. No score is cached: each row occurrence supplies its
         // own freq/total, and expand_one applies path pronunciation and log.

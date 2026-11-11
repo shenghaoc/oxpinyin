@@ -5,6 +5,12 @@ Only explicitly recorded fallback markers are read from their checked blobs.
 The pinyins.txt input is derived with the pin's scripts2 distiller and is
 GPL-3.0-or-later, as the pin; its model20 source is documented in README.md.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import argparse
 import ast
 from contextlib import contextmanager
@@ -451,9 +457,9 @@ def main(argv=None):
 
 def verify_input_candidates(model_archive, tsi_table):
     """Run the pin's own distill and generateheader on real inputs; accept exact bytes only."""
-    from .model import MODEL20_SHA256, file_sha256
+    from .model import archive_sha256, file_sha256
     verify_sources()
-    if file_sha256(model_archive) != MODEL20_SHA256:
+    if file_sha256(model_archive) != archive_sha256():
         raise ValueError('model20 archive SHA-256 mismatch')
     with tempfile.TemporaryDirectory(prefix='oxpinyin-scripts2-inputs-') as temp:
         work = Path(temp)

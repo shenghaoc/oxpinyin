@@ -1,27 +1,32 @@
 """Fetch the checksum-pinned libpinyin model archive into a build cache.
 
-The archive, its extraction and any converted form stay in an ignored cache:
+The archive, its extraction and any converted form stay in the cache:
 they must not enter the repository, a release or an installer
 (docs/findings/model-provenance.md). Nothing here feeds frequencies into the
 language model.
 
-Pinned identity (do not alter; from model-provenance.md):
-  URL     https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
-  SHA-256 59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+The expected archive SHA-256 comes from tools/oracle/oracle-pin.txt.
 
 Network: downloads.sourceforge.net over HTTPS; SourceForge may redirect to a
 mirror. There is no vendored copy and no alternate URL: model-provenance.md
 classifies model20 as not redistributable, so no project-owned mirror exists.
 No CI job downloads it. A developer machine fetches it once into the cache,
-and build-oracle.sh reuses that cache through --model-dir.
+and tools/oracle/build.py reuses that cache through --model-dir.
 
-Default cache: <repo>/target/model20/
+Cache: model20-<the first 12 digits of the archive SHA-256>/ under the cache
+root (tools/cachedir.py)
   downloads/model20.text.tar.gz
   extracted/{interpolation2.text + seventeen .table files}
   verified (the marker that records the URL and digest)
 
 The last stdout line is the absolute path of the extracted directory.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import hashlib
 import os
 from pathlib import Path
@@ -33,38 +38,35 @@ import tempfile
 
 from .process import ROOT, fail, run
 from .runners import guarded
+from tools import cachedir
+from tools.oracle.build import MODEL_FILES, fields
 
 MODEL_URL = 'https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'
-MODEL20_SHA256 = '59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
+PIN_FILE = ROOT / 'tools/oracle/oracle-pin.txt'
 ARCHIVE_NAME = 'model20.text.tar.gz'
 MARKER_SCHEMA = 'pinyin-model-cache-v1'
-# Inventory from docs/findings/model-provenance.md (eighteen files).
-EXPECTED_MODEL_FILES = (
-    'art.table', 'culture.table', 'economy.table', 'gb_char.table', 'gbk_char.table',
-    'geology.table', 'history.table', 'interpolation2.text', 'life.table', 'merged.table',
-    'nature.table', 'opengram.table', 'people.table', 'punct.table', 'science.table',
-    'society.table', 'sport.table', 'technology.table')
+# The eighteen-file inventory; the guest builder owns it and cannot import tools.dev.
+EXPECTED_MODEL_FILES = MODEL_FILES
 FETCH_HINT = 'just fetch-model'
 
 USAGE = """\
 Usage: just fetch-model [OPTIONS]
-       python -m tools.dev fetch-model [OPTIONS]
+       python -m tools.dev.model [OPTIONS]
 
 Download the checksum-pinned model20.text.tar.gz, verify SHA-256, and
 extract interpolation2.text plus the seventeen .table files into a build
 cache. Idempotent: a verified extraction is left untouched.
 
 Options:
-  --cache-dir DIR  Build cache (default: <repo>/target/model20, or
-                   $PINYIN_MODEL_CACHE)
   --url URL        Archive URL (default: the pinned SourceForge URL, or
                    $PINYIN_MODEL_URL)
   --archive PATH   Use a local archive instead of downloading
   --force          Re-download (if needed) and re-extract even if verified
   -h, --help       Show this help
 
-The cache must be a gitignored path inside the work tree, or a path
-outside the repository. The last stdout line is the extracted directory.
+The cache is the model20 entry under $OXPINYIN_CACHE. It must be a gitignored
+path inside the work tree, or a path outside the repository. The last stdout
+line is the extracted directory.
 """
 
 
@@ -83,10 +85,22 @@ def extraction_complete(directory):
     return directory.is_dir() and all((directory / name).is_file() for name in EXPECTED_MODEL_FILES)
 
 
-def marker_matches(marker):
+def archive_sha256():
+    """The expected SHA-256 of the model archive in this checkout."""
+    return fields(PIN_FILE)['model_archive_sha256']
+
+
+def default_cache(env=None):
+    """The model20 entry of the cache root, named by the pinned archive digest."""
+    return cachedir.root(env) / f'model20-{archive_sha256()[:12]}'
+
+
+def marker_matches(marker, digest=None):
     """True when MARKER has the line `sha256=<pinned digest>`."""
+    if digest is None:
+        digest = archive_sha256()
     try:
-        return f'sha256={MODEL20_SHA256}'.encode() in Path(marker).read_bytes().splitlines()
+        return f'sha256={digest}'.encode() in Path(marker).read_bytes().splitlines()
     except OSError:
         return False
 
@@ -123,83 +137,101 @@ def refuse_tracked(cache, root, env):
         if run([git, 'check-ignore', '-q', '--', cache], cwd=root, env=env, stdout=subprocess.DEVNULL,
                stderr=subprocess.DEVNULL, check=False):
             fail(f'refusing to write model bytes to a path git would track: {cache}\n'
-                 'use a build cache under target/ (the default) or another ignored path')
+                 'set OXPINYIN_CACHE to an ignored path or a path outside the repository')
     elif not _inside(cache, root / 'target'):
         fail(f'refusing to write model bytes under the repository without git ignore checks: {cache}')
 
 
 def download(url, destination, env):
-    """Download URL to DESTINATION through a .part file."""
+    """Download URL to a private staging path."""
     curl = _tool('curl', env)
     if curl is None:
         fail('required command not found: curl')
     print(f'downloading {url}', file=sys.stderr, flush=True)
-    part = destination.with_name(destination.name + '.part')
     status = run([curl, '--fail', '--location', '--retry', '3', '--connect-timeout', '30',
-                  '--max-time', '600', '--show-error', '--output', part, url], env=env, check=False)
+                  '--max-time', '600', '--show-error', '--output', destination, url], env=env, check=False)
     if status:
-        part.unlink(missing_ok=True)
         fail(f'failed to download {ARCHIVE_NAME} from {url}')
-    part.replace(destination)
 
 
-def extract(source, cache, extracted):
-    """Extract SOURCE beside EXTRACTED, check the inventory, then move it into place."""
-    cache.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix='.extract.', dir=cache))
+def extract(source, destination):
+    """Extract SOURCE into the private DESTINATION and check its inventory."""
     try:
-        try:
-            with tarfile.open(source, 'r:gz') as archive:
-                archive.extractall(staging, filter='data')
-        except (tarfile.TarError, OSError, EOFError):
-            fail(f'failed to extract {source}')
-        missing = [name for name in EXPECTED_MODEL_FILES if not (staging / name).is_file()]
-        if missing:
-            fail(''.join(f'extracted archive is missing {name}\n' for name in missing).rstrip('\n'))
-        if extracted.is_dir() and not extracted.is_symlink():
-            shutil.rmtree(extracted)
-        elif extracted.exists() or extracted.is_symlink():
-            extracted.unlink()
-        staging.rename(extracted)
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+        with tarfile.open(source, 'r:gz') as archive:
+            archive.extractall(destination, filter='data')
+    except (tarfile.TarError, OSError, EOFError):
+        fail(f'failed to extract {source}')
+    missing = [name for name in EXPECTED_MODEL_FILES if not (destination / name).is_file()]
+    if missing:
+        fail(''.join(f'extracted archive is missing {name}\n' for name in missing).rstrip('\n'))
+
+
+def publish(staging, extracted, marker, backup):
+    """Install a complete tree and marker while holding the fetch lock."""
+    had_extraction = os.path.lexists(extracted)
+    if had_extraction:
+        extracted.rename(backup)
+    tree = staging / 'extracted'
+    try:
+        tree.rename(extracted)
+        (staging / 'verified').replace(marker)
+    except OSError:
+        if not tree.exists():
+            extracted.rename(tree)
+        if had_extraction:
+            backup.rename(extracted)
+        raise
+    if had_extraction:
+        backup.rename(staging / 'previous')
 
 
 def fetch(cache_dir=None, *, url=None, archive=None, force=False, root=ROOT, env=None):
     """Return the verified extraction under CACHE_DIR, fetching and extracting as needed.
 
-    CACHE_DIR and URL default to $PINYIN_MODEL_CACHE and $PINYIN_MODEL_URL in ENV
-    (an empty value counts as unset), then to <root>/target/model20 and the pin.
+    CACHE_DIR defaults to default_cache. URL defaults to $PINYIN_MODEL_URL in ENV
+    (an empty value counts as unset), then to the pin.
     Every failure prints its diagnostic and raises Finished.
     """
     env = dict(os.environ if env is None else env)
     root = Path(os.path.abspath(root))
-    cache = Path(os.path.abspath(cache_dir or env.get('PINYIN_MODEL_CACHE') or root / 'target/model20'))
+    cache = Path(os.path.abspath(cache_dir or default_cache(env)))
     url = url or env.get('PINYIN_MODEL_URL') or MODEL_URL
+    refuse_tracked(cache, root, env)
+    with cachedir.exclusive_fetch(cache):
+        return _fetch_locked(cache, url, archive, force, env)
+
+
+def _fetch_locked(cache, url, archive, force, env):
     extracted = cache / 'extracted'
     marker = cache / 'verified'
-    refuse_tracked(cache, root, env)
-    if not force and extraction_complete(extracted) and marker_matches(marker):
+    backup = cache / '.extracted-backup'
+    if os.path.lexists(backup):
+        fail(f'previous model publication needs recovery: {backup} (see docs/runbooks/setup.md#cache-directory)')
+    digest = archive_sha256()
+    if not force and extraction_complete(extracted) and marker_matches(marker, digest):
         print('verified model cache present; skipping fetch', file=sys.stderr)
         return extracted
-    if archive:
-        if not Path(archive).is_file():
-            fail(f'local archive is not a file: {archive}')
-        source = Path(os.path.abspath(archive))
-    else:
-        downloads = cache / 'downloads'
-        downloads.mkdir(parents=True, exist_ok=True)
-        source = downloads / ARCHIVE_NAME
-        if force:
-            source.unlink(missing_ok=True)
-        if not source.is_file():
+    if archive and not Path(archive).is_file():
+        fail(f'local archive is not a file: {archive}')
+    cache.mkdir(exist_ok=True)
+    downloads = cache / 'downloads'
+    cached_archive = downloads / ARCHIVE_NAME
+    with tempfile.TemporaryDirectory(prefix='.extract.', dir=cache) as directory:
+        staging = Path(directory)
+        source = Path(archive) if archive else cached_archive
+        downloaded = not archive and (force or not source.is_file())
+        if downloaded:
+            source = staging / ARCHIVE_NAME
             download(url, source, env)
-    actual = file_sha256(source)
-    if actual != MODEL20_SHA256:
-        fail(f'checksum mismatch: {ARCHIVE_NAME}\n  expected: {MODEL20_SHA256}\n  actual:   {actual}')
-    extract(source, cache, extracted)
-    marker.write_text(f'schema={MARKER_SCHEMA}\nurl={MODEL_URL}\nsha256={MODEL20_SHA256}\n')
+        actual = file_sha256(source)
+        if actual != digest:
+            fail(f'checksum mismatch: {ARCHIVE_NAME}\n  expected: {digest}\n  actual:   {actual}')
+        extract(source, staging / 'extracted')
+        (staging / 'verified').write_text(f'schema={MARKER_SCHEMA}\nurl={MODEL_URL}\nsha256={digest}\n')
+        if downloaded:
+            downloads.mkdir(exist_ok=True)
+            source.replace(cached_archive)
+        publish(staging, extracted, marker, backup)
     return extracted
 
 
@@ -207,8 +239,8 @@ def main(argv=None, env=None):
     """Parse the fetch options, run the fetch and print the extracted directory."""
     args = list(sys.argv[1:] if argv is None else argv)
     env = dict(os.environ if env is None else env)
-    options = {'cache_dir': None, 'url': None, 'archive': None, 'force': False}
-    valued = {'--cache-dir': 'cache_dir', '--url': 'url', '--archive': 'archive'}
+    options = {'url': None, 'archive': None, 'force': False}
+    valued = {'--url': 'url', '--archive': 'archive'}
     while args:
         option = args.pop(0)
         if option in ('-h', '--help'):
@@ -228,3 +260,7 @@ def main(argv=None, env=None):
         print(fetch(env=env, **options))
         return 0
     return guarded(call)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

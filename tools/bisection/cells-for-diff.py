@@ -23,7 +23,10 @@ depend on the directory the script is run from, and the script reads no file its
 --run-flag prints one line instead, run=true when a check fired or the diff touches a
 --also pathspec and run=false otherwise, in the key=value form a GitHub Actions step
 appends to $GITHUB_OUTPUT. --also names the paths a caller adds to the rule, such as a
-workflow's own infrastructure; it needs --run-flag.
+workflow's own infrastructure; it needs --run-flag. --run-without-base, which also needs
+--run-flag, is for a workflow whose event may name no usable base: when BASE is empty,
+is not a commit here or shares no history with HEAD, it prints run=true, says why on
+stderr and exits 0, so a missing base runs every job and never skips one.
 
 Exit status: 0 when the checks ran, whichever cells they selected; 1 when git failed,
 BASE is not a commit here, or the directory is not in a git work tree; 2 for a usage
@@ -34,6 +37,7 @@ Usage:
     cells-for-diff.py BASE             # BASE...HEAD
     cells-for-diff.py --limit 0 BASE   # list every match, not the first 10 per check
     cells-for-diff.py --run-flag --also tools/bdb BASE   # run=true or run=false
+    cells-for-diff.py --run-flag --run-without-base BASE # run=true when BASE gives no diff
 """
 import argparse
 import os
@@ -55,6 +59,21 @@ FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
 BACKEND_NAME = re.compile('|'.join(BACKENDS))
 # Changed files handed to one git grep, so a large diff stays under the argument limit.
 GREP_BATCH = 200
+
+
+class NotACommit(ValueError):
+    """A revision names no commit in this repository. A git command that fails is not this."""
+
+
+class NoDiffBase(ValueError):
+    """BASE gives no diff: it is not a commit here, or it shares no history with HEAD.
+
+    note is the short reason --run-without-base prints.
+    """
+
+    def __init__(self, message, note):
+        super().__init__(message)
+        self.note = note
 
 
 def run_git(*args, repo=None):
@@ -84,10 +103,10 @@ def work_tree_root(directory=None):
 def resolve(rev, repo=None):
     """The full hash of the commit rev names."""
     found = b''
-    if not rev.startswith('-'):
+    if rev and not rev.startswith('-'):
         found = git('rev-parse', '--verify', '--quiet', f'{rev}^{{commit}}', repo=repo, ok=(0, 1))
     if not found:
-        raise ValueError(f'{rev!r} is not a commit here; fetch it or name another base')
+        raise NotACommit(f'{rev!r} is not a commit here; fetch it or name another base')
     return found.decode().strip()
 
 
@@ -160,9 +179,13 @@ def run_checks(base, repo=None):
     """
     root = work_tree_root(repo)
     head = resolve('HEAD', root)
-    found = git('merge-base', resolve(base, root), head, repo=root, ok=(0, 1))
+    try:
+        commit = resolve(base, root)
+    except NotACommit as exc:
+        raise NoDiffBase(str(exc), f'base {base} unavailable') from None
+    found = git('merge-base', commit, head, repo=root, ok=(0, 1))
     if not found:
-        raise ValueError(f'{base!r} and HEAD have no common ancestor')
+        raise NoDiffBase(f'{base!r} and HEAD have no common ancestor', f'no merge base with {base}')
     merge_base = found.decode().strip()
     return merge_base, head, [(number, title, check(merge_base, head, root))
                               for number, title, check in CHECKS]
@@ -192,9 +215,19 @@ def report(base, merge_base, head, results, limit):
     return '\n'.join(lines) + '\n'
 
 
-def run_flag(base, also=(), repo=None):
-    """run=true when a check fires for base...HEAD or the diff touches an also pathspec."""
-    merge_base, head, results = run_checks(base, repo)
+def run_flag(base, also=(), repo=None, without_base=False):
+    """run=true when a check fires for base...HEAD or the diff touches an also pathspec.
+
+    With without_base, a base that gives no diff is run=true too, with the reason on stderr.
+    Any other git failure still raises.
+    """
+    try:
+        merge_base, head, results = run_checks(base, repo)
+    except NoDiffBase as exc:
+        if not without_base:
+            raise
+        print(f'{exc.note}; running every job', file=sys.stderr)
+        return 'run=true\n'
     selected = any(matches for _, _, matches in results)
     if not selected and also:
         selected = bool(changed_paths(merge_base, head, pathspec=also, repo=work_tree_root(repo)))
@@ -223,11 +256,16 @@ def main(argv=None):
                         help='print run=true or run=false instead of the report')
     parser.add_argument('--also', action='append', default=[], metavar='PATHSPEC',
                         help='a changed path matching PATHSPEC also sets run=true; needs --run-flag')
+    parser.add_argument('--run-without-base', action='store_true',
+                        help='a BASE that is empty, not a commit here or unrelated to HEAD prints '
+                             'run=true and exits 0; needs --run-flag')
     args = parser.parse_args(argv)
     if args.also and not args.run_flag:
         parser.error('--also needs --run-flag')
+    if args.run_without_base and not args.run_flag:
+        parser.error('--run-without-base needs --run-flag')
     if args.run_flag:
-        sys.stdout.write(run_flag(args.base, args.also))
+        sys.stdout.write(run_flag(args.base, args.also, without_base=args.run_without_base))
         return 0
     merge_base, head, results = run_checks(args.base)
     sys.stdout.write(report(args.base, merge_base, head, results, args.limit))

@@ -53,8 +53,7 @@ use crate::session::{
 /// larger of the two shapes, so neither allocates per node. The live cap
 /// is [`NbestShape::nstore`].
 const NSTORE: usize = 2;
-/// Sentence rows extracted from the tails (`nbest`) on the pinyin surface;
-/// also the fallback DP's row cap there.
+/// Sentence rows extracted from the tails (`nbest`) on the pinyin surface.
 pub const NBEST_ROWS: usize = 3;
 
 /// The two template constants of upstream's `PhoneticLookup<nstore,
@@ -1178,8 +1177,7 @@ impl<'a> ConstraintSpelling<'a> {
     /// stored pronunciation matches it with a nonzero frequency
     /// (`matched > 0` over a nonzero total). It decides what the `f32`
     /// `< FLT_EPSILON` test does on the pinned data, where no per-token
-    /// total reaches 2^23 (`docs/findings/upstream-divergences.md`, the
-    /// `validate_constraint` entry).
+    /// total reaches 2^23 (`docs/findings/compatibility-policy.md`, row 7).
     ///
     /// `length` is the forced phrase's stored length
     /// ([`PhraseText::phrase_length`]); it only bounds

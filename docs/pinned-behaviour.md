@@ -9,10 +9,9 @@ The [compatibility policy](findings/compatibility-policy.md) defines the excepti
 
 The pin is libpinyin 2.11.92 at `074a2219`, its default-branch tip on 2026-09-12.
 `tools/oracle/oracle-pin.txt` is authoritative.
-The reference build uses the pin's autoconf build and passes `--with-dbm=Tkrzw`, as `tools/oracle/build-oracle.sh` does by default; `--dbm` selects another backend.
+The reference build is the pin's autoconf build with `--with-dbm=Tkrzw`, the default of `tools/oracle/build.py`; `--dbm` selects another backend.
 A bare `./configure` selects Berkeley DB (`configure.ac:94`); that is libpinyin's autoconf default, not the reference build's.
-`build-oracle.sh` uses autoconf's default `-g -O2` without `-DNDEBUG`.
-Every assertion at the pin is active.
+`build.py` uses autoconf's default `-g -O2` without `-DNDEBUG`, so every assertion at the pin is active.
 
 ## Identity
 
@@ -24,6 +23,8 @@ Every assertion at the pin is active.
 - Preserve all 79 `pinyin_*` exports and all 52 Zhuyin exports.
   Consumer usage does not limit ABI scope.
 
+[Drop-in identity](packaging.md#drop-in-identity) states what `dlopen("libpinyin.so.15")` requires of the installed library.
+
 ## Behaviour
 
 For every exported symbol, reproduce the pin's result for the same inputs and state:
@@ -34,9 +35,9 @@ For every exported symbol, reproduce the pin's result for the same inputs and st
 - Process-wide side effects.
 
 State includes the on-disk user state of a same-backend user directory.
-Use the pin's external input and output calls in the library and tools.
+Use the pin's external input and output calls in the library and tools ([external I/O](findings/compatibility-policy.md#external-io)).
 A Rust equivalent requires source proof for every input.
-Preserve the pin utilities' binary names, options, help, messages, inputs and outputs.
+Preserve the binary names, options, help, messages, inputs and outputs of the pin's utilities.
 Use backend DBMs for K-mixture working files.
 The `scripts2/` Python build generators are outside this tool scope.
 
@@ -44,7 +45,7 @@ Do not compare `errno` left by a successful call unless the API gives it meaning
 
 ## Storage
 
-Libpinyin selects Berkeley DB, Kyoto Cabinet or tkrzw through `--with-dbm`.
+libpinyin selects Berkeley DB, Kyoto Cabinet or tkrzw through `--with-dbm`.
 Bare `./configure` selects Berkeley DB.
 Build oxpinyin with one of the same three backends, selected by cargo feature.
 The [default cell](runbooks/backends.md) follows Cargo.
@@ -71,17 +72,17 @@ Existing examples include:
 - Predicted-candidate ranking and training follow rules derived from the pin's source.
   Do not tune them until examples agree.
 
-Only the classes and recorded internal language artefacts permit departures.
+Only the grounds that the compatibility policy lists permit departures ([the default is the pin](findings/compatibility-policy.md#the-default-is-the-pin)).
 External I/O still uses the pin's call.
 An undefined read follows its class (b) record.
-An abort is reproduced with `std::process::abort()` (class (c) retired 2026-10-31 UTC).
+Where the pin aborts, oxpinyin aborts with `std::process::abort()` ([failure behaviour](findings/compatibility-policy.md#failure-behaviour)).
 Preserve the C ABI, ownership, on-disk formats and data ownership exactly.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 
 ## Deriving behaviour
 
 Read the pin's source first.
-Then read disassembly from the pin-built object that contains the code.
+Read the disassembly of the pin-built object that contains the code when source does not settle the question.
 Use the reference cell by default, the specific backend for backend-specific code, and `libzhuyin.so.15` for Zhuyin.
 Follow the [source-reading procedure](source-policy.md#stage-2).
 Never experiment against the oracle to discover behaviour.

@@ -58,7 +58,7 @@ use std::path::Path;
 use std::ptr;
 use std::sync::{Mutex, MutexGuard};
 
-use crate::StoreError;
+use crate::{StoreError, lock_result_or_abort};
 
 /// The generated Berkeley DB declarations.
 ///
@@ -229,10 +229,8 @@ impl SharedDb {
     }
 
     fn lock(&self) -> MutexGuard<'_, Db> {
-        // No user callback runs under this lock. A Rust unwind cannot
-        // leave a native call in flight, so poisoning does not prevent
-        // the next exclusive use or cursor cleanup.
-        self.inner.lock().unwrap_or_else(|error| error.into_inner())
+        // See docs/rust-conventions.md#poisoned-locks.
+        lock_result_or_abort(self.inner.lock())
     }
 
     /// Opens a whole-file database with the pin's flags and file mode.
@@ -259,10 +257,7 @@ impl SharedDb {
 
     /// [`Db::close_unsynced`] on the owned handle.
     pub(crate) fn close_unsynced(self) {
-        self.inner
-            .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .close_unsynced();
+        lock_result_or_abort(self.inner.into_inner()).close_unsynced();
     }
 
     /// [`Db::open_in_memory_hash_attach`] on a shared handle: the user

@@ -359,7 +359,7 @@ fn append_scan_entries(
 /// encounter order (`pinyin.cpp:1769-1791`), and the stable
 /// `g_array_sort_with_data` keeps exactly that order for candidates whose
 /// three keys tie — the amplified-frequency collapses of
-/// `docs/testing/corpus-tail.md` Class A. A chunk is ordered by the
+/// `docs/findings/candidate-construction.md` §8.4 Class A. A chunk is ordered by the
 /// stored key (`phrase_exact_less_than2`: initials, then middles and
 /// finals, then tones) and only then by token (`add_index`,
 /// `chewing_large_table2.h:208-230`), so a lookup that matches several

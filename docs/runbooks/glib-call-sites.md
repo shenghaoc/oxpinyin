@@ -1,50 +1,54 @@
 # GLib and libc call-site audit
 
-Regenerates [glib-libc-call-sites.tsv](../findings/glib-libc-call-sites.tsv), the
-call-site list behind the [inventory](../findings/glib-libc-inventory.md) and the
+This procedure regenerates [glib-libc-call-sites.tsv](../findings/glib-libc-call-sites.tsv).
+That call-site list supports the [inventory](../findings/glib-libc-inventory.md) and the
 [verification ledger](../findings/glib-libc-verification.md). The list describes the
 pin, so it changes only when the pin, the generator or the family table changes.
 
 ## Tools
 
-The audit runs natively on macOS. The script's shebang pins the clang bindings, and
-`--print-llvm-major` prints the matching LLVM major. Install these from Homebrew:
+The audit runs natively on macOS. The shebang of the script pins the clang bindings, and
+`--print-llvm-major` prints the matching LLVM major. Install these tools from Homebrew:
 
 ```bash
 llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
 brew install "llvm@${llvm_major}" bear glib gettext autoconf automake libtool tkrzw kyoto-cabinet berkeley-db@5
 ```
 
-The `llvm@<major>` keg's libclang matches the bindings the recipe pins (the version in
-the script's shebang, from PyPI; PyPI has no later release). `berkeley-db@5` is the major
-version libpinyin's configure asks for. The recipe checks for each tool and names any
-that is missing; it installs nothing itself.
+Use the `llvm@<major>` libclang that matches the script's pinned bindings. `berkeley-db@5` is the major
+version that the configure of libpinyin asks for. The recipe checks for each tool and names any
+tool that is missing. It installs nothing itself.
 
-On Linux the same recipe needs `autoconf automake libtool bear g++ make pkg-config`,
+On Linux, the same recipe needs `autoconf automake libtool bear g++ make pkg-config`,
 `libclang-<major>-dev`, and the development packages of GLib, Berkeley DB, Kyoto Cabinet
-and Tkrzw. Use Debian testing's package for the major that the command above prints.
+and Tkrzw. Use the Debian testing package for the major that the command above prints.
 
 ## Run
 
-Use a clean checkout of the pin, then:
+You need a clean checkout of the pin. Then run:
 
 ```bash
 just audit-glib-call-sites <pin-checkout>
 ```
 
-The recipe accepts `--work DIR` (default
-`target/glib-call-sites`), `--jobs N`, `--reuse` (read the trees already under `--work`),
-`--output FILE`, `--unplaced FILE` and `--check` (compare with the committed list).
+The recipe accepts these options:
+
+- `--work DIR` (default `target/glib-call-sites`);
+- `--jobs N`;
+- `--reuse`: read the trees that are already under `--work`;
+- `--output FILE`;
+- `--unplaced FILE`;
+- `--check`: compare with the committed list.
 
 ## What it does
 
-For each backend (`bdb`, `kc`, `tkrzw`) the generator builds the pin twice:
+For each backend (`bdb`, `kc`, `tkrzw`), the generator builds the pin twice:
 
 1. `autoreconf`, `configure --disable-static --enable-libzhuyin --with-dbm=…` and
    `bear -- make -C src`, with the pin's own flags. libclang parses each translation
    unit of the two shared libraries with the recorded flags. A parse error stops the run.
-   macOS adds `-std=gnu++17`, because Tkrzw's headers need it and it is GCC's default.
-2. The same configure at `-O0`, so a reached function stays out of line, then
+   macOS adds `-std=gnu++17`, because the Tkrzw headers need it and it is the GCC default.
+2. The same configure at `-O0`, so that a reached function stays out of line, then
    `make -C src` and `make -C utils`. The linker removes what no export or `main`
    reaches and writes a map: `-Wl,-dead_strip -Wl,-map,<file>` on macOS,
    `-ffunction-sections -Wl,--gc-sections -Wl,-Map=<file>` on Linux.
@@ -57,28 +61,31 @@ For each backend (`bdb`, `kc`, `tkrzw`) the generator builds the pin twice:
 | `backend` | The file name: `_bdb`, `_kyotodb` or `_tkrzwdb`, otherwise `all` |
 | `pin_site`, `pin_call`, `call` | Where the name is written, the name, and its text |
 
-A call to a GLib or libc function missing from the table stops the run, naming each
-call. So does a table function with no site. A macro produces a row only when the table
-names it, as `g_array_index`; `assert` and `G_N_ELEMENTS` produce none.
+These conditions stop the run:
+
+- a call to a GLib or libc function that is missing from the table (the message names each call);
+- a table function with no site.
+
+A macro produces a row only when the table names it, as `g_array_index`; `assert` and `G_N_ELEMENTS` produce none.
 A call inside a system macro belongs to the macro.
 
-A function is matched by clang's mangled name. A `static` function in a `.cpp` file must
-also come from that file's object, because `pinyin_lookup2.cpp` and `phrase_lookup.cpp`
-define functions with one mangled name. Libclang cannot mangle a template that has not been
-instantiated, so a member of a template matches on its qualified name and parameter count
+The generator matches a function by its clang mangled name. A `static` function in a `.cpp` file must
+also come from the object of that file, because `pinyin_lookup2.cpp` and `phrase_lookup.cpp`
+define functions with one mangled name. Libclang cannot mangle a template that is not
+instantiated. A member of a template therefore matches on its qualified name and parameter count,
 without template arguments.
 
-On macOS the second build rewrites `src/libpinyin.exp` and `src/libzhuyin.exp` from the
-`.ver` version scripts. At the pin, `libpinyin.exp` omits five exports `libpinyin.ver` has:
+On macOS, the second build rewrites `src/libpinyin.exp` and `src/libzhuyin.exp` from the
+`.ver` version scripts. At the pin, `libpinyin.exp` omits five exports that `libpinyin.ver` has:
 `pinyin_begin_get_bigram_phrases`, `pinyin_bigram_iterator_get_next_phrase`,
 `pinyin_bigram_iterator_has_next_phrase`, `pinyin_end_get_bigram_phrases` and
-`pinyin_guess_predicted_candidates_with_punctuations`. The version script is the ABI, so both
-platforms' links start from the same exports.
+`pinyin_guess_predicted_candidates_with_punctuations`. The version script is the ABI, so the links of both
+platforms start from the same exports.
 
 ## Result to check
 
-The run prints the sites the linker cannot place: functions in no link's map, kept or
-removed, usually an inline function nothing calls. They render as `none`. Compare the
+The run prints the sites that the linker cannot place. These are functions in the map of no link, kept or
+removed, usually an inline function that nothing calls. They render as `none`. Compare the
 list with the [inventory](../findings/glib-libc-inventory.md#reachability-and-negative-coverage).
 
 After a generator or table change, also run the recipe once on Linux and compare the two
@@ -86,5 +93,5 @@ lists row by row. A difference is a finding to record, not a reason to require L
 
 `just test-tools` runs the merge and render tests. The end-to-end test is
 defined on Linux and macOS. The Linux harness job installs Clang, libclang and
-GNU ld; the macOS nightly job installs the Homebrew LLVM and GLib. The test is
-required in both jobs.
+GNU ld. The macOS nightly job installs the Homebrew LLVM and GLib. Both jobs require
+the test.

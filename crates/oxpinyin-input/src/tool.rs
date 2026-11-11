@@ -53,7 +53,7 @@ pub fn exit(status: c_int) -> ! {
 }
 
 /// Aborts where the pin aborts, using `std::process::abort()` as required by
-/// "The abort rule" in `docs/findings/compatibility-policy.md`.
+/// "Failure behaviour" in `docs/findings/compatibility-policy.md`.
 pub fn abort() -> ! {
     std::process::abort()
 }

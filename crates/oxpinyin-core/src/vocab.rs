@@ -2,7 +2,7 @@
 //!
 //! `docs/findings/core-trait-seam.md` leaves `Dictionary` and `LanguageModel`
 //! generic over associated types so `oxpinyin-core` depends on nothing. The
-//! session API frozen in `docs/findings/session-api.md` has to pin those
+//! session API in `docs/findings/session-api.md` has to pin those
 //! associated types to something concrete, or every later task would widen its
 //! own bounds. These are those types.
 

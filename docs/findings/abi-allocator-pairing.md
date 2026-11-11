@@ -1,349 +1,202 @@
-# ABI allocator pairing — the audit and the gate
+# ABI allocator pairing — the register and the gate
 
-Date: 2026-09-09, amended 2026-10-08 (#681) · Status: contract (the
-register) + audit (§2)
+Status: **contract** (the two `.alloc` registers).
 
 `oxpinyin-capi` and `oxpinyin-zhuyin-capi` ship as drop-in replacements for
-`libpinyin.so.15` / `libzhuyin.so.15`. Every pointer the ABI hands a consumer
-is owned by exactly one side and released by exactly one function. Until this
-change nothing held the library to that: `tools/abi/check-exports.sh` froze
-*which* symbols cross the boundary, and nothing froze *what crosses with
-them*. The safety profile said so at Layer 8, listing
-"the `g_free`/malloc pairing assumption" among the things that remain
-judgment rather than a gate.
-
-This document records what the audit of the two crates found, and what the
-gate that replaced the judgment item now enforces.
+`libpinyin.so.15` / `libzhuyin.so.15`. Exactly one side owns every pointer
+that the ABI hands a consumer, and exactly one function releases it.
+`just abi exports` freezes *which* symbols cross the boundary. The
+allocator-pairing register and its gate freeze *what crosses with them*.
 
 ## 1. What crosses the boundary
 
-Three allocation families, and one non-family that matters as much:
+The table lists three allocation families and one borrowed class that
+matters as much:
 
 | Family | Producer | Allocator | Released by |
 |---|---|---|---|
 | Opaque handle | `pinyin_init`, `pinyin_alloc_instance`, the three `*_begin_*` iterators, and the zhuyin equivalents | Rust `Box::into_raw` | its own destructor (`pinyin_fini`, `pinyin_free_instance`, `pinyin_end_*`), which `Box::from_raw`s |
-| Caller-owned string | 12 `gchar **` / `char **` out-params in pinyin, 4 in zhuyin | GLib (`g_strdup`, `g_strdup_printf`, `g_strconcat`, `g_strjoinv`: the pin's call per site, since 2026-10-31 UTC, #1227), or libc `malloc` via `ffi::malloc_cstr_with` at the `g_ucs4_to_utf8` sites; until then libc `malloc` via `ffi::owned_cstr` | `g_free` |
-| Caller-owned string vector | `pinyin_in_chewing_keyboard`, `zhuyin_in_chewing_keyboard` (`gchar ***`) | GLib: `g_ptr_array_new`/`g_strdup`/`g_ptr_array_add`/`g_ptr_array_free(…, FALSE)` via `ffi::symbol_vector`, since 2026-10-31 UTC (#1227); until then libc `malloc` via `ffi::owned_cstr_list` | `g_strfreev` |
+| Caller-owned string | 12 `gchar **` / `char **` out-params in pinyin, 4 in zhuyin | GLib (`g_strdup`, `g_strdup_printf`, `g_strconcat`, `g_strjoinv`: the pin's call per site, #1227), or libc `malloc` via `ffi::malloc_cstr_with` at the `g_ucs4_to_utf8` sites | `g_free` |
+| Caller-owned string vector | `pinyin_in_chewing_keyboard`, `zhuyin_in_chewing_keyboard` (`gchar ***`) | GLib: `g_ptr_array_new`/`g_strdup`/`g_ptr_array_add`/`g_ptr_array_free(…, FALSE)` via `ffi::symbol_vector` (#1227) | `g_strfreev` |
 | **Borrowed** (not an allocation) | the candidate, its string, the key and key-rest out-params, and `pinyin_get_context` | — | never freed by the caller; released with the instance or context |
 
-The `malloc`/`g_free` crossing in the middle two rows is deliberate and is the
-pairing assumption the gate exercises: GLib 2.46 removed the memory vtable, so
-`g_free` has since been a thin wrapper over libc `free` and the two names
-denote one allocator. `ffi.rs` states this at the definition of `owned_cstr`;
-the gate is what proves it holds against the GLib the consumer actually links.
+The `malloc`/`g_free` crossing at the `malloc_cstr_with` sites is
+deliberate. It is the pairing assumption that the gate exercises. GLib 2.46
+removed the memory vtable, so `g_free` is a thin wrapper over libc `free`,
+and the two names denote one allocator. The gate proves that this holds
+against the GLib that the consumer actually links.
 
 The `GArray`-taking symbols (`pinyin_lookup_tokens`,
-`pinyin_token_get_nth_pronunciation`) are outside all four rows: the array is
-the caller's, created and freed by the caller with glib's own allocator, and
-the library only appends through `g_array_append_vals` (see `dict.rs`'s module
-header for why hand-`realloc`ing it was wrong).
+`pinyin_token_get_nth_pronunciation`) are outside all four rows. The array
+belongs to the caller, which creates and frees it with glib's own
+allocator. The library only appends through `g_array_append_vals`.
+`dict.rs`'s module header explains why a hand `realloc` of the array is
+wrong.
 
-## 2. What the audit found
+## 2. Out-parameter contracts a consumer must know
 
-**No mismatch.** Every caller-owned buffer in both crates is produced by
-`owned_cstr` / `owned_cstr_list` — libc `malloc` — and documented `g_free` /
-`g_strfreev`; every handle is `Box::into_raw` and reaches C only through a
-destructor that `Box::from_raw`s it, never through `g_free`. No allocation
-crosses families, and no allocation is released twice or on an error path.
-There is therefore no bug fix to land ahead of the gate.
+These are pin behaviour, held by the register's notes:
 
-Two things the audit did surface, both now pinned by the register rather than
-changed:
+- **Calls that allocate and return `false`.** The three auxiliary-text
+  getters answer `false` with an *allocated empty string* when the matrix is
+  empty (`pinyin.cpp:3382-3386`, `3442-3445`). A consumer that frees only on
+  `true` leaks one buffer per keystroke, on oxpinyin and on the pin.
+  The bigram iterator's terminal row also answers `false` with both strings
+  written (`pinyin.cpp:904-910`, compatibility-policy row 36). These slots
+  are `false-allocates`.
+- **`pinyin_get_pinyin_strings` writes nothing on refusal.** The four
+  single-string key getters (`pinyin.cpp:2707-2749`) open with an
+  unconditional `*utf8_str = NULL;` before the `0 == key->get_table_index()`
+  refusal. `pinyin_get_pinyin_strings` (`:2751-2763`) refuses first (`:2755`)
+  and only then writes, with each out-param guarded by its own `if`. The
+  caller must initialize both out-params. A separator column holds a zero
+  key, so a conforming consumer reaches these refusals.
+  `pinyin_get_pinyin_key` / `zhuyin_get_zhuyin_key` hand out that key with
+  `true` (`xi'` at offset 2 for pinyin, `xi1'` at offset 3 for zhuyin).
 
-**(a) Entry points that allocate and return `false`.** The three
-auxiliary-text getters answer `false` with an *allocated empty string* when
-the matrix is empty — upstream's shape (`pinyin.cpp:3382-3386`, `3442-3445`),
-reproduced deliberately. A consumer written to the obvious rule ("check the
-return, then free") leaks one buffer per keystroke against oxpinyin exactly as
-it does against the pin. Nothing recorded this before; the register's
-`false-allocates` note does, and the gate's driver exercises precisely that
-path.
-
-**(b) One out-param initialization asymmetry — parity, confirmed against the
-pin.** `pinyin_get_pinyin_strings` returns `false` for a key whose table index
-is 0 *without writing either out-param*, where the neighbouring single-string
-renderers (`render_key` in `cursor.rs`, `display_string_getter` in `keys.rs`)
-NULL theirs first. The caller must therefore initialize to NULL itself. This is
-not an allocator mismatch, and it is upstream's own asymmetry rather than a
-divergence.
-
-Read from a fresh clone of libpinyin at the pinned commit `074a2219`
-(`2.11.92`), the cited blob hashed against the pin's tree (`src/pinyin.cpp` =
-`f27f7cf7`): the five getters sit consecutively, and the four single-string
-ones — `pinyin_get_zhuyin_string` `pinyin.cpp:2707-2716`,
-`pinyin_get_pinyin_string` `:2718-2727`, `pinyin_get_luoma_pinyin_string`
-`:2729-2738`, `pinyin_get_secondary_zhuyin_string` `:2740-2749` — each open
-with an unconditional `*utf8_str = NULL;` (`:2710`, `:2721`, `:2732`, `:2743`)
-*before* the `0 == key->get_table_index()` refusal. `pinyin_get_pinyin_strings`
-`:2751-2763`, immediately after them, refuses first (`:2755`) and only then
-writes, each out-param guarded by its own `if (shengmu)` / `if (yunmu)`
-(`:2758`, `:2760`). NULLing the out-params here would therefore be the
-divergence, not the fix; the audit's original caution was right, and oxpinyin
-needs no change.
-
-The one difference on this path is the NULL-argument guard: upstream
-dereferences `utf8_str` unconditionally in the four neighbours, while oxpinyin
-checks it first — the established memory-safety property of every entry point
-([compatibility policy, row 41](compatibility-policy.md)), not a behaviour change on any
-non-NULL call. Where the pin guards its out-params, as it does here, oxpinyin's
-guard matches it exactly.
-
-§2(c)'s sweep then reclassified both slots `false-unreachable`, and that is the
-sharper answer: reaching this `false` at all needs a `ChewingKey` whose table
-index is 0, and the opaque typedef denies a conforming consumer one. The gate
-therefore does not probe this contract and does not pretend to — which is
-exactly why the source read above is what settles it. Where the driver cannot
-reach a path, the pin is the only evidence there is. The drivers still
-initialize every out-param to NULL regardless, which is the consumer-side
-discipline that makes the asymmetry invisible either way.
-
-**(c) Three of the audit's own out-param notes were wrong.** Recorded here
-because it is the point of the mechanism, not an aside: §3's fourth field
-began as prose derived from *reading* the code. When the gate was extended to
-*execute* those notes — drive each reachable failure path and assert the
-stated out-param state — three of them failed immediately.
-`pinyin_get_candidate`, `pinyin_get_pinyin_key` and
-`pinyin_get_pinyin_key_rest` (and their zhuyin twins) all NULL their
-out-param on the reachable refusal, where the register had said they left it
-untouched. A consumer trusting the prose would have initialized to NULL and
-been fine; one relying on "untouched" to keep a previous value would not.
-Six further slots were reclassified `false-unreachable`: their only
-non-NULL-argument `false` needs an unset `ChewingKey`, and `ChewingKey` is an
-opaque typedef, so a conforming consumer cannot fabricate one.
-
-The general lesson is the one this document exists to make mechanical: a
-register that is only read is a register that drifts. The notes are now
-executable, and the gate rejects any entry whose contract was never probed.
-
-**(d) The bigram iterator's note was wrong (2026-10-08, #681).** The
-register called both `pinyin_bigram_iterator_get_next_phrase` slots
-`false-untouched`, on the strength of the call after exhaustion. The
-iterator's reachable `false` is its terminal row: the pin answers
-`pinyin_bigram_iterator_has_next_phrase` after taking a row
-(`pinyin.cpp:904-910`, compatibility-policy row 36), so the row after which
-`has_next` is false comes back `false` with both strings written, and
-oxpinyin does the same. A consumer that frees only on `true` leaks that
-row. Both slots are now `false-allocates`, and the pinyin driver probes the
-terminal row and still releases it. A call with no row pending is not a
-path a consumer can rely on: the pin asserts there (`:902`) or reads NULL
-(`:905`), and oxpinyin answers `false` without writing.
-
-Measured on the bdb cell at `3b016f48`, against a pin built with the
-instrumentation patch that the bigram differential requires (it changes no
-returns):
-
-```
-tools/oracle/build-oracle.sh --dbm bdb \
-    --apply-patches tools/bisection/patches/bigram-export-strjoinv \
-    --prefix <patched-prefix> --model-dir <model20>/extracted
-PINYIN_ORACLE_DBM=bdb tools/bisection/run-bigram-export-diff.sh \
-    <patched-prefix>/lib/libpinyin.so <target>/debug/libpinyin_capi.so \
-    <patched-prefix>/lib/libpinyin/data
-```
-
-Every scenario is identical (`empty` 0 rows, `one` 1, `two` 1, `many` 14,
-`repeat` 2, `reopen` 14, `mask` 11; `bigram-export-diff (full): PASS`).
-The runner's driver, run alone on each library,
-
-```
-gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o bigram-export-diff \
-    tools/bisection/bigram-export-diff.c -ldl $(pkg-config --cflags --libs glib-2.0)
-(cd "$(mktemp -d)" && <dir>/bigram-export-diff <so> <patched-prefix>/lib/libpinyin/data one)
-```
-
-prints the row `你好`, `ni'hao`, `138`, `get=false` for both: the `false`
-row carries its phrase and pinyin. The raw capture is not retained.
-
-**(e) The key-string getters are reachable (2026-10-09, #681).** Items (b) and
-(c) above reclassified these eight lines `false-unreachable` because a
-conforming consumer could not make an unset `ChewingKey`. That is wrong: a
-separator column holds a zero key, and `pinyin_get_pinyin_key` /
-`zhuyin_get_zhuyin_key` hand it out with `true` (`xi'` at offset 2 for
-pinyin, `xi1'` at offset 3 for zhuyin). Every getter then takes its refusal,
-`0 == key->get_table_index()` (`pinyin.cpp:2711`, `:2722`, `:2733`, `:2744`,
-`:2755`; `zhuyin.cpp:1736`, `:1750`). Measured on bdb at 074a2219, pin and
-oxpinyin identical:
-
-| Slot | Return | Out-param |
+| Slot | Return on the zero key | Out-param |
 |---|---|---|
 | `pinyin_get_pinyin_string`, `_zhuyin_string`, `_luoma_pinyin_string`, `_secondary_zhuyin_string` | `false` | NULL |
 | `pinyin_get_pinyin_strings` (`shengmu`, `yunmu`) | `false` | both untouched |
 | `zhuyin_get_zhuyin_string`, `zhuyin_get_pinyin_string` | `false` | NULL |
 
-The figures come from the fourteen `alloc-register-*` cases (the seven
-`-zero-key` probes and their `-real-key` controls), run as
-
-```
-python3 tools/bisection/contract-diff.py bdb <oracle-prefix> \
-    <target>/debug/libpinyin_capi.so \
-    --zhuyin-so <target>/debug/libzhuyin_capi.so \
-    --cases alloc-register-pinyin_get_pinyin-zero-key,\
-alloc-register-pinyin_get_zhuyin-zero-key,\
-alloc-register-pinyin_get_luoma_pinyin-zero-key,\
-alloc-register-pinyin_get_secondary_zhuyin-zero-key,\
-alloc-register-pinyin_get_strings-zero-key,\
-alloc-register-zhuyin_get_zhuyin-zero-key,\
-alloc-register-zhuyin_get_pinyin-zero-key
-```
-
-where `<oracle-prefix>` is the pin-built bdb prefix. Add `--expect-parent`
-for the parent-build check; the cases are controls, so they match there too.
-
-The eight lines are now `false-nulls` (six) and `false-untouched` (two),
-verified by the `alloc-register-*-zero-key` cases of `contract-diff.py`, and
-both C++ drivers call the getters on the zero key. The statements in (b) and
-(c) that these slots are unreachable are superseded by this item.
+- **NULL out-param arguments.** The pin dereferences `utf8_str`
+  unconditionally in the four single-string getters. oxpinyin checks it
+  first ([compatibility policy, row 41](compatibility-policy.md)). Where the
+  pin guards its out-params, oxpinyin's guard matches it exactly.
 
 ## 3. The gate
 
-`tools/abi/check-alloc-pairing.sh`, run in CI's `test` job beside the two
-export gates. It stands on a checked-in register per ABI —
-`crates/oxpinyin-capi/libpinyin.alloc`,
-`crates/oxpinyin-zhuyin-capi/libzhuyin.alloc` — a sibling of the `.ver` files
-carrying one line per pointer-shaped slot: its class (`handle:<fn>`, `g_free`,
-`g_strfreev`, `borrowed`) and what the slot holds on a `false` return.
+The gate is `just abi alloc-pairing` (`tools/dev/abi.py`). CI's `test` job
+runs it beside the export gates. It reads one checked-in register per ABI:
+`crates/oxpinyin-capi/libpinyin.alloc` and
+`crates/oxpinyin-zhuyin-capi/libzhuyin.alloc`. Each register sits beside
+the `.ver` files and has one line per pointer-shaped slot. The line holds:
 
-A fifth field, added 2026-10-08 (#681), says how that note was established,
-because a green gate proves it against oxpinyin only:
+- the slot's class (`handle:<fn>`, `g_free`, `g_strfreev`, `borrowed`);
+- what the slot holds on a `false` return (`false-allocates`,
+  `false-nulls`, `false-untouched`, `false-unreachable`, `n/a`);
+- how that note was established, as one of these `<verified>` kinds:
 
 | `<verified>` | Meaning |
 |---|---|
-| `pin-probe:<case>` | measured identical at the pin and on oxpinyin, on the reference cell (bdb), by a `tools/bisection/contract-diff.py` case or a `tools/bisection/` runner |
-| `pin-aborts:row<N>` | the path the gate probes aborts the pin; the note is oxpinyin's answer there, registered as row N of `docs/findings/compatibility-policy.md` |
+| `pin-probe:<case>` | measured identical at the pin and on oxpinyin, on the reference cell, by the named case (recorded evidence) |
 | `source:<file>:<lines>` | argued from the pin's `src/<file>` at 074a2219 |
 | `unverified` | executed against oxpinyin only, never compared with the pin |
 | `unexecuted` | declared, never executed on either side: the driver does not probe the note and no pin probe has run it |
 | `n/a` | the note is `n/a` |
 
-The script checks that every line has exactly five fields and a fifth of
-one of these kinds, and a negative control requires that check to reject a
-four-field line and a misspelled kind; it cannot test the evidence a kind
-names. Every `pin-probe` and
-`pin-aborts` value was re-run on bdb at `3b016f48` (2026-10-08 UTC), all
-`MATCH`:
-
-```
-tools/bisection/run-contract-diff.sh bdb <oracle-prefix> <pinyin-so> <zhuyin-so> -- \
-    --cases sentence-before-guess,aux-text-no-parse,token-get-phrase-out,\
-zhuyin-sentence-before-guess,zhuyin-token-get-phrase-out,\
-abort-iterator-get-next-phrase,abort-get-pinyin-key-empty-matrix,\
-abort-get-pinyin-key-rest-empty-matrix,abort-zhuyin-get-zhuyin-key-empty-matrix,\
-abort-zhuyin-get-zhuyin-key-rest-empty-matrix
-```
-
-plus `run-bigram-export-diff.sh` for the bigram iterator's two slots, §2(d).
+The gate checks that every line has exactly five fields, with a fifth
+field of one of these kinds. A negative control requires that check to
+reject a four-field line and a misspelled kind. The check cannot test the
+evidence that a kind names.
 
 Three checks, then a control:
 
 1. **Coverage of the frozen header.** Every pointer return and every `T **`
-   out-parameter `pinyin.h` / `zhuyin.h` declares is classified exactly once,
-   and nothing is classified that the header does not declare — 26 slots for
-   pinyin, 12 for zhuyin. This is the check that fires when a new allocating
-   entry point is added and nobody says who frees it. The header parser is
-   trusted because it round-trips: the same extraction recovers exactly the
-   79 and 52 symbols the two version scripts freeze.
+   out-parameter that `pinyin.h` / `zhuyin.h` declares is classified exactly
+   once. Nothing is classified that the header does not declare. There are
+   26 slots for pinyin and 12 for zhuyin. This check fires when someone adds
+   a new allocating entry point without saying who frees it. The header
+   parser is trusted because it round-trips: the same extraction recovers
+   exactly the 79 and 52 symbols that the two version scripts freeze.
 2. **Class against C type, and destructor reachability.** A non-const
    `gchar **` / `char **` must be `g_free`; a `gchar ***` must be
    `g_strfreev`; a `const T **` must be `borrowed`; a pointer return must be a
-   handle or borrowed. Every `handle:<fn>` must name a symbol the version
-   script exports, so no handle is declared with a destructor a consumer
-   cannot call.
+   handle or borrowed. Every `handle:<fn>` must name a symbol that the
+   version script exports. So no handle has a declared destructor that a
+   consumer cannot call.
 3. **The declaration under LeakSanitizer.** One C++ consumer per ABI
    (`tools/abi/alloc-pairing-*.cc`) drives the real `.so` and releases each
-   slot with the register's deallocator, built with `-fsanitize=address`. A
-   slot the declared deallocator does not actually release is a leak; a
-   borrowed pointer wrongly declared owned is an invalid free. Two properties
-   make the run mean something:
-   - **Coverage.** The driver reports per-slot whether it reached the slot
-     with a non-NULL pointer, and the run is rejected unless every registered
-     slot was hit — a gate that never exercises the allocation it checks is
-     green for the wrong reason. Reaching all 38 is why the driver trains a
-     multi-phrase sentence (the bigram export iterator has no rows otherwise)
-     and drives zhuyin through chewing keystrokes rather than full pinyin.
-   - **Attribution.** The whole lifecycle runs twice; the first pass runs
-     inside `__lsan_disable()` so the one-time statics the backend and glib
-     allocate at first use are not the gate's subject. A leak reported in the
-     second pass is a *per-call* leak — the kind a consumer accumulates one
-     keystroke at a time. No suppression file, and so no risk of one growing
-     broad enough to hide a real leak. Coverage is **cleared between the two
-     passes**: a slot the warm-up reached had no leak check run against it,
-     so carrying its bit forward would report coverage the measured pass
-     never earned.
+   slot with the register's deallocator. It is built with
+   `-fsanitize=address`. A slot that the declared deallocator does not
+   actually release is a leak. A borrowed pointer wrongly declared owned is
+   an invalid free. These properties make the run meaningful:
+   - **Coverage.** The driver reports for each slot whether it reached the
+     slot with a non-NULL pointer. The run is rejected unless every
+     registered slot was hit. A gate that never exercises the allocation it
+     checks passes for the wrong reason. To reach all 38 slots, the driver
+     trains a multi-phrase sentence (otherwise the bigram export iterator
+     has no rows). It also drives zhuyin through chewing keystrokes, not
+     full pinyin.
+   - **Attribution.** The whole lifecycle runs twice. The first pass runs
+     inside `__lsan_disable()`, so the one-time statics that the backend and
+     glib allocate at first use are not the gate's subject. A leak reported
+     in the second pass is a *per-call* leak: the kind that a consumer
+     accumulates one keystroke at a time. There is no suppression file, so
+     no suppression can grow broad enough to hide a real leak. Coverage is
+     **cleared between the two passes**. No leak check ran against a slot
+     that the warm-up reached, so keeping its bit would report coverage that
+     the measured pass did not earn.
    - **No driver/register drift.** Each driver echoes the register's own
-     class and note back with every slot, and the script compares the first
-     four fields rather than the symbol and slot name alone. A class
-     flipped from `handle:pinyin_fini` to `borrowed`, a renamed destructor,
-     or an edited note fails here instead of passing because the key still
-     lines up.
+     class and note back with every slot. The script compares the first
+     four fields, not only the symbol and slot name. A class changed from
+     `handle:pinyin_fini` to `borrowed`, a renamed destructor, or an edited
+     note fails here. It does not pass merely because the key still matches.
    - **The notes are executable.** For every slot whose note is not `n/a` or
-     `false-unreachable`, the driver drives a failure path a *conforming*
-     consumer can reach — an empty parse, an out-of-range index, an
-     exhausted unigram iterator, the bigram iterator's terminal row, an
-     unmapped key, `null_token` — and asserts the
-     state the register declares. Which assertion runs is read from the slot
-     table, never chosen at the call site, so a note that does not match the
-     library fails rather than being echoed back unchallenged. NULL-argument
-     refusals are deliberately not probed: that is caller misuse, and where
-     the pin would simply crash. A slot the driver never probes fails the
-     gate as `unprobed false-return contract`; `false-unreachable` is the one
-     way out, and it is an explicit, reviewable claim rather than a silent
-     omission — the driver fails too if it *does* reach a path the register
-     calls unreachable.
+     `false-unreachable`, the driver drives a failure path that a
+     *conforming* consumer can reach. The paths are an empty parse, an
+     out-of-range index, an exhausted unigram iterator, the bigram
+     iterator's terminal row, an unmapped key and `null_token`. The driver
+     asserts the state that the register declares. The slot table selects
+     the assertion; the call site never chooses it. So a note that does not
+     match the library fails and is not echoed back unchallenged.
+     NULL-argument refusals are deliberately not probed: they are caller
+     misuse, where the pin would simply crash. A slot that the driver never
+     probes fails the gate as `unprobed false-return contract`.
+     `false-unreachable` is the one exception. It is an explicit, reviewable
+     claim, not a silent omission. The driver also fails if it *does* reach
+     a path that the register calls unreachable.
 4. **A negative control.** Each driver is built a second time with
    `-DOXPINYIN_ALLOC_PAIRING_LEAK`, which drops the frees, and that build is
-   *required* to fail with a LeakSanitizer report. A sanitizer that silently
-   stopped working would otherwise leave the gate passing forever.
+   *required* to fail with a LeakSanitizer report. Without this control, a
+   sanitizer that silently stopped working would leave the gate passing.
 
-No new dependency, and no Rust rebuild: the `g++` the `test` job already
-installs carries `libasan`/`liblsan` on debian:testing, the Rust side is not
-instrumented, and ASan's `malloc` interposition covers the whole process —
-the library's libc `malloc` in `owned_cstr` and Rust's `Box` behind the
-handles alike. Linux only; `--static-only` runs checks 1–2 anywhere.
+The gate needs no new dependency and no Rust rebuild:
 
-## 4. Evidence
+- The `g++` that the `test` job installs carries `libasan`/`liblsan`.
+- The Rust side is not instrumented.
+- ASan's `malloc` interposition covers the whole process: GLib's and libc's
+  `malloc`, and Rust's `Box` behind the handles.
 
-Run in a `debian:testing` container provisioned with the `test` job's apt set
-(`docs/runbooks/`-style replay; the workflow's own package list, nothing
-added). Commands, not captures:
+The full gate runs on Linux only. `just abi alloc-pairing --static-only`
+runs checks 1–2 on any host.
+
+Run:
 
 ```
-tools/abi/check-alloc-pairing.sh                 # 38/38 slots, both controls fire
-tools/abi/check-alloc-pairing.sh --static-only   # checks 1-2, host-portable
+just abi alloc-pairing                 # 38/38 slots, both controls fire
+just abi alloc-pairing --static-only   # checks 1-2, host-portable
 ```
 
-Four fault injections were used to establish that the gate can fail, each
-reverted afterwards; each is reproducible from the description alone:
+The gate's failure messages name what failed:
 
-| Injection | Expected | Observed |
-|---|---|---|
-| drop one register line | check 1 names the unclassified slot | `FAIL: unclassified ABI slot` |
-| flip a `g_free` class to `borrowed` | check 2 names the disagreement | `FAIL: … is 'char-pp' in the header but 'borrowed' in the register` |
-| point a handle at a destructor the `.ver` does not export | check 3's static half | `FAIL: … which libpinyin.ver does not export` |
-| a stray `owned_cstr` in `pinyin_get_full_pinyin_auxiliary_text` | a per-call leak, attributed to Rust source | `Direct leak of 27 byte(s) … in owned_cstr crates/oxpinyin-capi/src/ffi.rs:97` |
-| `g_free` on the borrowed candidate string | an invalid free | `AddressSanitizer: attempting double-free` |
-| flip a class in the register only | driver/register drift | `FAIL: driver/register drift`, naming the whole entry |
-| restore §2(c)'s original `false-untouched` note on `pinyin_get_candidate`, in the register *and* the driver | the probe rejects it | `is declared false-untouched but the out-param was NULLed` |
-| mark a probed slot `false-unreachable` | the reachability claim is contradicted | `the driver probed a failure path the register calls unreachable` |
-| delete one probe call | its note is prose again | `FAIL: unprobed false-return contract`, naming the slot |
-| run one exercise during the warm-up only | the measured pass earns no coverage for it | `slots the driver never reached with a live pointer: pinyin_in_chewing_keyboard symbols` |
-| drop the fifth field of one register line | the shape check names the line | `line 105: 4 fields, not 5` |
-| misspell one `<verified>` kind (`unverifed`) | the shape check names the kind | `line 39: <verified> unverifed is not a documented kind` |
-| make the shape check accept every line | its negative control fires | `shape control did not fire: a register with a four-fields line passes`, and the same for `misspelled-kind` |
+- an unclassified ABI slot;
+- a class that disagrees with the header's C type;
+- a handle destructor that the `.ver` does not export;
+- a per-call leak, with its Rust source line;
+- an invalid free;
+- driver/register drift;
+- an out-param state that differs from the note;
+- a probed path that the register calls unreachable;
+- an unprobed false-return contract;
+- a slot that the measured pass never reached;
+- a malformed or misspelled register line.
 
-## 5. What this does not cover
+## 4. What this does not cover
 
-- **Consumer-side discipline.** The gate proves the library's half. A consumer
-  that frees a handle with `g_free`, or frees a borrowed candidate pointer, is
-  still a consumer bug; the register is what such a consumer should be read
-  against.
-- **The GArray surface.** Caller-owned, and glib's own allocator on both
-  sides; the gate creates and frees those arrays but has nothing to prove
-  about their pairing.
-- **Allocation the C side makes on the library's behalf.** Everything the
-  backend library allocates internally is outside the Rust `GlobalAlloc`
-  traffic `alloc_count.rs` measures and outside this gate's per-call window by
-  construction (it is absorbed by the warm pass). RSS attribution is
-  `rss-attribution-2026-09-09`'s subject, not this one's.
+- **Consumer-side discipline.** The gate proves the library's half. A
+  consumer that frees a handle with `g_free`, or frees a borrowed candidate
+  pointer, has a consumer bug. Review such a consumer against the register.
+- **The GArray surface.** The caller owns these arrays, and glib's own
+  allocator is on both sides. The gate creates and frees those arrays but
+  has nothing to prove about their pairing.
+- **Allocation the C side makes on the library's behalf.** Everything that
+  the backend library allocates internally is outside the Rust
+  `GlobalAlloc` traffic that `alloc_count.rs` measures. By construction it
+  is also outside this gate's per-call window, because the warm pass
+  absorbs it. RSS attribution is the subject of
+  `rss-attribution-2026-09-09`, not of this gate.
 - **Non-Linux hosts.** LeakSanitizer's stop-the-world does not run under
-  macOS's sandbox. `--static-only` is the portable half; the C ABIs are
-  Linux-first regardless (../../CONTRIBUTING.md).
+  macOS's sandbox. `--static-only` is the portable half. The C ABIs are
+  Linux-first in any case ([CONTRIBUTING.md](../../CONTRIBUTING.md)).

@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::{DefaultStore, StoreError};
+use crate::{DefaultStore, StoreError, lock_result_or_abort};
 
 #[cfg(feature = "bdb")]
 type FailedHandle = crate::BdbUnopenedHandle;
@@ -82,10 +82,7 @@ impl UnopenedSystemDbm {
     /// closed (`BdbUnopenedHandle`), so the pin's `DB->get` has
     /// no counterpart.
     pub fn read(&self, key: &[u8]) {
-        let db = self
-            .db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = lock_result_or_abort(self.db.lock());
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
             let _ = (db, key);
@@ -101,10 +98,7 @@ impl UnopenedSystemDbm {
     /// cursor (chewing_large_table2_bdb.cpp:567) has no counterpart, as in
     /// [`Self::read`].
     pub fn suggest(&self, key: &[u8]) {
-        let db = self
-            .db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = lock_result_or_abort(self.db.lock());
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
             let _ = (db, key);
@@ -128,10 +122,7 @@ impl UnopenedSystemDbm {
     ///
     /// Always: the native refusal, or the Berkeley DB and finished answers.
     pub fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let db = self
-            .db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = lock_result_or_abort(self.db.lock());
         let Some(db) = db.as_ref() else {
             return Err(StoreError::Backend(
                 "the failed attachment is finished".into(),
@@ -154,10 +145,7 @@ impl UnopenedSystemDbm {
     /// The pin's false answer: the tkrzw refusal, Berkeley DB, or a finished
     /// attachment.
     pub fn walk(&self) -> Result<(), StoreError> {
-        let db = self
-            .db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = lock_result_or_abort(self.db.lock());
         let Some(db) = db.as_ref() else {
             return Err(StoreError::Backend(
                 "the failed attachment is finished".into(),
@@ -170,10 +158,7 @@ impl UnopenedSystemDbm {
     /// every later call is inert. For the facades' finalization tests.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_none()
+        lock_result_or_abort(self.db.lock()).is_none()
     }
 
     /// Synchronizes, closes and destroys the failed object once (on
@@ -181,9 +166,6 @@ impl UnopenedSystemDbm {
     /// finalization is inert; surviving safe facade instances cannot call
     /// a freed native object.
     pub fn finish(&self) {
-        self.db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        lock_result_or_abort(self.db.lock()).take();
     }
 }

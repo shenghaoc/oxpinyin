@@ -207,7 +207,7 @@ class BuildSideTests(unittest.TestCase):
         installs = [call for call in calls if 'install' in call[0]]
         self.assertEqual(len(installs), 2)
         for argv, cwd, env in installs:
-            self.assertEqual(argv[argv.index('-m') + 1:argv.index('-m') + 4], ['tools.dev', 'packaging', 'install'])
+            self.assertEqual(argv[argv.index('-m') + 1:argv.index('-m') + 3], ['tools.dev.packaging', 'install'])
             self.assertEqual(cwd.name, 'src')
             self.assertIn('--release', argv)
             self.assertIn('--locked', argv)

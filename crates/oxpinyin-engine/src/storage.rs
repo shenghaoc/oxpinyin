@@ -15,24 +15,14 @@ pub struct StoragePaths {
 }
 
 impl StoragePaths {
-    /// Builds paths with a user data directory and no system directories.
+    /// Builds paths with a user data directory and the system data
+    /// directories, searched in the given order.
     #[must_use]
-    pub fn new(user_data_dir: impl Into<PathBuf>) -> Self {
+    pub fn new(user_data_dir: PathBuf, system_data_dirs: Vec<PathBuf>) -> Self {
         Self {
-            user_data_dir: user_data_dir.into(),
-            system_data_dirs: Vec::new(),
+            user_data_dir,
+            system_data_dirs,
         }
-    }
-
-    /// Adds system data directories, searched in the given order.
-    #[must_use]
-    pub fn with_system_dirs<I, P>(mut self, dirs: I) -> Self
-    where
-        I: IntoIterator<Item = P>,
-        P: Into<PathBuf>,
-    {
-        self.system_data_dirs = dirs.into_iter().map(Into::into).collect();
-        self
     }
 
     /// Directory holding this user's data.

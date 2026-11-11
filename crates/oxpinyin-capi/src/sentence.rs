@@ -566,8 +566,8 @@ pub extern "C" fn pinyin_guess_candidates(
     );
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
-        // session-API affordance (`session-api.md`: it keeps `Space`
-        // and `select` meaningful before a decoder result exists) —
+        // session-API affordance (`session-api.md`: it keeps `select`
+        // meaningful when no phrase is found) —
         // the pin has no raw-input fallback: an empty matrix answers
         // false (`pinyin.cpp:2193`), an empty result answers true
         // with no rows. The C ABI translates the engine shape, it
@@ -675,7 +675,7 @@ mod character_offset_tests {
     /// `'`), with the out-param untouched. At 3 and 4 they abort
     /// (`_check_offset` on the separator's zero key, then the range
     /// assert), and so does the facade: `abort-get-character-offset-*` of
-    /// `contract-diff.py` hold those shapes.
+    /// the recorded contract diff harness hold those shapes.
     #[test]
     fn a_non_hanzi_phrase_answers_false_before_the_separator() {
         let (context, instance, _user_dir) = parity_instance("char-offset-non-hanzi");
