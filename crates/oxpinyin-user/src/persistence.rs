@@ -1463,8 +1463,12 @@ fn load_user_pinyin_index(
             return;
         }
     };
+    let mut exceptional = Vec::new();
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
         index.push_record(key, value);
+        if key.len() < 2 || key.len() / 2 > crate::phrase::MAX_PHRASE_LENGTH {
+            exceptional.push(key.to_vec());
+        }
         Ok(())
     };
     if let Err(error) = store.range_raw(
@@ -1501,7 +1505,18 @@ fn load_user_pinyin_index(
             match infallible {}
         }
     }
-    *overlong = index.overlong_keys();
+    // Match the arena’s raw-key order, even for an unordered DBM walk.
+    exceptional.sort_unstable();
+    *overlong = exceptional
+        .into_iter()
+        .map(|key| {
+            key.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|word| u16::from_le_bytes(*word))
+                .collect()
+        })
+        .collect();
 }
 
 /// Copy `user_phrase_index.bin` records without interpreting either key or value,

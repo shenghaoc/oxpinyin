@@ -186,6 +186,7 @@ impl RecordArena {
     }
 
     /// Every arena key in offset order, overlay excluded.
+    #[cfg(test)]
     pub(crate) fn arena_keys(&self) -> impl Iterator<Item = &[u8]> {
         self.offsets
             .iter()
