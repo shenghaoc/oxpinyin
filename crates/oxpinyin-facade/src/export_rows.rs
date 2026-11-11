@@ -241,7 +241,7 @@ impl ExportRow<'_> {
     /// row's keys (`pinyin.cpp:728`), if any: a `USER_FILE` key with a tone
     /// past `MAX_KEY_TONE`. A session key always names a syllable, so the
     /// content-table assert has no site. A system item's packed keys are not
-    /// sites either: the chewing crate renders an invalid pattern through its
+    /// sites either: `oxpinyin-core` renders an invalid pattern through its
     /// registered zero-row fallback.
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {

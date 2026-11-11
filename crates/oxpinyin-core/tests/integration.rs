@@ -11,6 +11,7 @@ mod common;
 mod fixture_doubles;
 mod fixture_provenance;
 mod graph_paths;
+mod keyboard_tables;
 mod merged_rows;
 mod parser_acceptance;
 mod scheme_parsers;

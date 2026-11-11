@@ -26,7 +26,7 @@ multiple-versions = "warn"
 highlight = "simplest-path"
 # Constitution §7 (no pinyin/IME crates as dependencies) stays a review
 # rule; a concrete ban lands here only when it needs mechanical teeth.
-# Layering: chewing, core and engine stay storage-free. wrappers checks direct
+# Layering: core and engine stay storage-free. wrappers checks direct
 # dependents only, so every crate that reaches storage is listed, and any new
 # edge into this set must be added here.
 deny = [

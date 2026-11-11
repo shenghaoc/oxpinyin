@@ -174,7 +174,7 @@ pub extern "C" fn zhuyin_get_pinyin_string(
 fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_chewing::KeyText,
+    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
 ) -> bool {
     if key.is_null() || utf8_str.is_null() {
         return false;

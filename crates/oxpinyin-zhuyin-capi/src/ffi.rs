@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
-use oxpinyin_chewing::KeyText;
+use oxpinyin_core::KeyText;
 
 // `void *malloc(size_t)` and `void free(void *)` from the host's libc.
 unsafe extern "C" {

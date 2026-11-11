@@ -1,7 +1,7 @@
-//! Pure pinyin algorithms: parsing, `SegmentGraph`, key expansion, model
-//! traits. No I/O, no platform deps, no `unsafe`. Internal crate — the
-//! supported external interfaces are the libpinyin-compatible and
-//! libzhuyin-compatible C APIs and ABIs.
+//! Pure pinyin and zhuyin algorithms: parsing, `SegmentGraph`, key expansion,
+//! chewing-key rendering and model traits. No I/O, platform dependencies or
+//! unsafe code. Both C ABIs use these same keys and tables, as upstream does
+//! in `src/Makefile.am:108-125` at 074a2219.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
@@ -15,6 +15,8 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+mod chewing_key;
+mod chewing_key_data;
 pub mod cost;
 pub mod direct;
 mod full_pinyin_index;
@@ -25,6 +27,7 @@ mod scheme;
 pub mod scoring;
 pub mod sentence_facts;
 pub mod single_gram;
+mod static_strings;
 #[cfg(feature = "tools")]
 pub mod tool;
 pub mod ucs4;
@@ -39,6 +42,7 @@ mod vocab;
 mod zhuyin_map;
 pub use zhuyin_map::{zhuyin_display_for_pinyin, zhuyin_for_pinyin};
 
+pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey, KeyText};
 pub use full_pinyin_index::{
     FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT,
     MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index,
@@ -53,7 +57,6 @@ pub use options::{
     USE_DIVIDED_TABLE, USE_RESPLIT_TABLE, USE_TONE, ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26,
     ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
 };
-pub use oxpinyin_chewing::{CHEWING_ZERO_TONE, ChewingKey};
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };

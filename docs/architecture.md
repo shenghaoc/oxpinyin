@@ -4,8 +4,7 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Parser, SegmentGraph, key expansion and model traits | forbid | yes | via engine |
-| oxpinyin-chewing | Dependency-free chewing/zhuyin leaf below core. Packed keys, renderers and frozen content tables. Core depends on chewing. | forbid | yes | via capi, engine |
+| oxpinyin-core | Pinyin and Zhuyin parsers, SegmentGraph, key expansion and model traits. Packed chewing keys, renderers and frozen content tables. | forbid | yes | via engine |
 | oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | forbid | yes | via engine |
 | oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
 | oxpinyin-user | The libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
@@ -20,7 +19,7 @@
 | oxpinyin-training | The `eval` module: the decode behind `eval_correction_rate`. `oxpinyin-utils` carries the pin-named utilities. | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model operations on the pin's `FlexibleBigram` container: generate, estimate, merge, validate, prune, export and import; `oxpinyin-utils` carries the seven pin-named binaries. | forbid | yes | never |
 
-`oxpinyin-core`, `oxpinyin-chewing` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
+`oxpinyin-core` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
 
 See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
@@ -35,15 +34,14 @@ The fixture `Dictionary`/`LanguageModel` doubles are one source file, `crates/ox
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through core.
 The production build graph carries no test doubles.
 
-### The chewing crate
+### Chewing keys
 
-`oxpinyin-chewing` holds the shared chewing-key machinery: the packed `ChewingKey` (the pin's two-byte bitfield word, `#[repr(C)]`, with size and alignment asserted), its six display renderers and the frozen `content_table` and `chewing_key_table`.
-`oxpinyin-core` depends on it and re-exports the key type.
+`oxpinyin-core` holds the shared chewing-key machinery: the packed `ChewingKey` (the pin's two-byte bitfield word, `#[repr(C)]`, with size and alignment asserted), its six display renderers and the frozen `content_table` and `chewing_key_table`.
 The capi facade's `keys.rs` holds only `#[no_mangle]` wrappers and failure-shape handling.
 The three `parse_one_key` seams stay methods on `oxpinyin-core`'s scheme parsers, because they consume parser tables that core owns (`zhuyin_map`, the double-pinyin scheme tables and the alias-gated syllable inventory).
-The cut follows the pin's boundary: a facade file, a version script and a configure flag, never a split inside the engine.
+The zhuyin cut follows the pin's boundary: a facade file, a version script and a configure flag, never a split inside the engine.
 `ENABLE_LIBZHUYIN` does not remove chewing from `libpinyin.so`, and `libpinyin.ver` always exports `pinyin_parse_chewing` and `pinyin_get_zhuyin_string`.
-No symbol is feature-gated, so a bopomofo-only facade would be additive: a new facade crate that depends on this one, with no existing export moved.
+No symbol is feature-gated, so a bopomofo-only facade would be additive: a new facade crate that depends on `oxpinyin-core`, with no existing export moved.
 
 ### Facades
 

@@ -30,7 +30,7 @@ pub struct LookupCandidate;
 /// Byte-identical to the pinyin facade's `ChewingKey` (upstream declares one
 /// `_ChewingKey` shared by both facades, `zhuyin.h:21`). The representation is
 /// upstream's packed 16-bit word; the renderers decode it through
-/// [`oxpinyin_chewing::ChewingKey`].
+/// [`oxpinyin_core::ChewingKey`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKey {
@@ -50,7 +50,7 @@ impl ChewingKey {
 
     /// Packs the core elements into the ABI word.
     #[must_use]
-    pub(crate) const fn from_core(key: oxpinyin_chewing::ChewingKey) -> Self {
+    pub(crate) const fn from_core(key: oxpinyin_core::ChewingKey) -> Self {
         Self {
             packed: key.to_packed(),
         }
@@ -58,8 +58,8 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) const fn to_core(self) -> oxpinyin_chewing::ChewingKey {
-        oxpinyin_chewing::ChewingKey::from_packed(self.packed)
+    pub(crate) const fn to_core(self) -> oxpinyin_core::ChewingKey {
+        oxpinyin_core::ChewingKey::from_packed(self.packed)
     }
 }
 

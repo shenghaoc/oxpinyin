@@ -22,7 +22,7 @@
 //! the crate; what only a test *outside* the crate can pin is the
 //! no-panic contract on inputs the tables were never meant to see.
 
-use oxpinyin_chewing::ChewingKey;
+use oxpinyin_core::ChewingKey;
 use proptest::prelude::*;
 
 /// Every renderer must terminate and return for any key — the module's

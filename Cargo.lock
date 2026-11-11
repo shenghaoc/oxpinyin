@@ -577,7 +577,6 @@ dependencies = [
  "glib-sys",
  "libc",
  "oxpinyin-capi-marshal",
- "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
@@ -600,18 +599,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-chewing"
-version = "0.1.0"
-dependencies = [
- "proptest",
-]
-
-[[package]]
 name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
- "oxpinyin-chewing",
  "phf",
  "phf_codegen",
  "proptest",
@@ -751,7 +742,6 @@ dependencies = [
  "glib-sys",
  "libc",
  "oxpinyin-capi-marshal",
- "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",

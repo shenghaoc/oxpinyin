@@ -31,8 +31,8 @@
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
-//! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry the
-//! same lints. Permitted sites require narrowly scoped, justified
+//! the macro-only `oxpinyin-capi-marshal` carries the same lints. Permitted
+//! sites require narrowly scoped, justified
 //! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
 //! saw a construct, not that its failure condition matches the pin.
 //! Other panic sources also need to respect §4. A panic that reaches an

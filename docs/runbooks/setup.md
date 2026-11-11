@@ -277,7 +277,7 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
+cargo test --locked -p oxpinyin-core -p oxpinyin-engine
 just check
 ```
 
@@ -343,7 +343,7 @@ and run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
+cargo test --locked -p oxpinyin-core -p oxpinyin-engine
 export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export CARGO_TARGET_DIR=target/tkrzw
 just check
@@ -439,9 +439,9 @@ Set-Location "$HOME/src"
 git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
 Set-Location oxpinyin
 rustup show
-cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
+cargo test --locked -p oxpinyin-core -p oxpinyin-engine
 cargo fmt --all --check
-cargo clippy --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
+cargo clippy --locked -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
 ```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
@@ -493,7 +493,7 @@ this CI coverage.
 
 A full local build or `just test` needs the same two vcpkg ports as the
 CI job. Without GLib, `glib-sys` fails, and every crate except
-`oxpinyin-chewing`, `oxpinyin-core`, `oxpinyin-store` and
+`oxpinyin-core`, `oxpinyin-store` and
 `oxpinyin-engine` fails to build. From Developer PowerShell, with
 `$vcpkg` as your vcpkg checkout and `DIR` as the `just tkrzw-build` prefix, run:
 

@@ -79,7 +79,6 @@ must_use_candidate = "warn"
 # compiled code): the opaque-handle pointer casts and the char**-out
 # sentence writer expand into this crate, where the unsafe is allowed.
 oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
-oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 oxpinyin-core.workspace = true
 # default-features = false on the store-reaching edges (the workspace table
 # carries it for the `workspace = true` ones) so `--no-default-features`

@@ -119,9 +119,9 @@ SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
 # compares, so a change to one selects the harness. The same test holds this list to the generator's.
 GENERATED_TABLES = (
-    "crates/oxpinyin-chewing/src/chewing_key_tables.rs",
-    "crates/oxpinyin-chewing/src/content_table_source.rs",
-    "crates/oxpinyin-chewing/src/tone_symbols.rs",
+    "crates/oxpinyin-core/src/chewing_key_tables.rs",
+    "crates/oxpinyin-core/src/content_table_source.rs",
+    "crates/oxpinyin-core/src/tone_symbols.rs",
     "crates/oxpinyin-core/src/table_data/double_pinyin.rs",
     "crates/oxpinyin-core/src/table_data/full_pinyin_counts.rs",
     "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",

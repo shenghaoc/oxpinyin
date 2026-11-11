@@ -17,7 +17,7 @@ include!("table_data/zhuyin_tones.rs");
 /// A decoded view of one pinned zhuyin spelling index.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ZhuyinIndex {
-    strings: oxpinyin_chewing::StringTable<3>,
+    strings: crate::static_strings::StringTable<3>,
     flags: &'static [u32],
 }
 

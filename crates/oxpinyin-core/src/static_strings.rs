@@ -38,18 +38,6 @@ impl<const N: usize> StringTable<N> {
         Self { blob, rows }
     }
 
-    /// Number of rows in this table.
-    #[must_use]
-    pub const fn len(self) -> usize {
-        self.rows.len()
-    }
-
-    /// Whether the table has no rows.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.rows.is_empty()
-    }
-
     fn resolve(self, span: StringSpan) -> &'static str {
         self.blob.get(span.range()).unwrap_or_default()
     }
