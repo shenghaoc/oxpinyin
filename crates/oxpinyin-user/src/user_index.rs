@@ -604,28 +604,6 @@ impl UserIndex {
             self.records.insert(key, value);
         }
     }
-
-    /// The keys `user_pinyin_index.bin` carried with no whole syllable or
-    /// past the table's 16-syllable instantiation — the pin's two mask
-    /// `switch` refusal sites.
-    #[must_use]
-    pub(crate) fn overlong_keys(&self) -> Vec<Vec<u16>> {
-        let mut overlong = Vec::new();
-        for key in self.records.arena_keys() {
-            if key.len() < 2 {
-                overlong.push(Vec::new());
-            } else if key.len() / 2 > MAX_PHRASE_LENGTH {
-                overlong.push(
-                    key.as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|word| u16::from_le_bytes([word[0], word[1]]))
-                        .collect(),
-                );
-            }
-        }
-        overlong
-    }
 }
 
 /// Whether `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
