@@ -172,7 +172,7 @@ where
 
     /// Lookup byte offset → character count within `phrase` over the
     /// session's own scan matrix — the `pinyin_get_character_offset` law
-    /// ([`crate::character_offset_over_keys`]): `Ok(Some(n))` when a key
+    /// ([`crate::character_offset_with_walk_over_keys`]): `Ok(Some(n))` when a key
     /// path pronouncing `phrase`'s first `n` characters reaches `offset`,
     /// `Ok(None)` for the pin's graceful `false` (empty matrix, empty
     /// phrase, a character with no dictionary token, no satisfying path).

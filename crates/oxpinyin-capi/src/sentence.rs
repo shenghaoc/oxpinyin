@@ -698,6 +698,13 @@ mod character_offset_tests {
     /// sentence as the phrase, the lookup offset from the cursor. `nihao`
     /// against 你好 counts one character per key whose raw end is at or
     /// before the offset: 0 at the start, 1 past `ni`, 2 past `hao`.
+    ///
+    /// `你`@5 walks past the phrase's one token: pin behaviour reproduced.
+    /// `cached_tokens` is zero-terminated (`g_array_new(TRUE, TRUE, …)`,
+    /// `pinyin.cpp:3219`), so the pin's unchecked read at index == length
+    /// (`:3167-3168`) lands on the zero terminator. Token 0 finds no item,
+    /// and the pin answers `false` with the length the walk reached
+    /// (`*plength = length`, `:3238`).
     #[test]
     fn counts_the_sentence_characters_up_to_the_offset() {
         let (context, instance, _user_dir) = parity_instance("char-offset-nihao");
@@ -715,6 +722,8 @@ mod character_offset_tests {
         // The walk's own `false` stores the length it reached, 0
         // (`*plength = length`, `pinyin.cpp:3238`).
         assert_eq!(character_offset(instance, "好你", 2), (false, 0));
+        // A walk beyond the phrase's tokens: the pin's miss at the terminator.
+        assert_eq!(character_offset(instance, "你", 5), (false, 0));
         // An empty phrase and a NULL phrase are the pin's `false`.
         assert_eq!(character_offset(instance, "", 0), (false, usize::MAX));
         let mut length = usize::MAX;
@@ -726,6 +735,14 @@ mod character_offset_tests {
         ));
         assert_eq!(length, usize::MAX);
 
+        let separated = cstr("ni'hao");
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, separated.as_ptr()),
+            6
+        );
+        // `pinyin.cpp:3158-3163` steps over the separator and tail zero keys.
+        assert_eq!(character_offset(instance, "你好", 6), (true, 2));
+
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }
@@ -735,6 +752,14 @@ mod character_offset_tests {
     fn an_empty_matrix_answers_false() {
         let (context, instance, _user_dir) = parity_instance("char-offset-empty");
         assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+        for (input, consumed) in [("!", 0), ("'", 1)] {
+            let input = cstr(input);
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+                consumed
+            );
+            assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+        }
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }
