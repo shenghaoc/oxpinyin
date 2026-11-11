@@ -458,20 +458,23 @@ impl Trellis {
 
     /// The phrase text of `token`, read once per call through `cache`;
     /// `None` where the dictionary has no text for it.
-    fn token_text<D>(
+    fn token_text<'cache, D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<PhraseText>>,
+        cache: &'cache mut TokenMap<Option<PhraseText>>,
         token: u32,
         facts: &RefCell<SentenceFacts>,
-    ) -> Result<Option<PhraseText>, EngineError>
+    ) -> Result<Option<&'cache PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
     {
-        if let Some(text) = cache.get(&token) {
-            return Ok(text.clone());
-        }
+        let slot = match cache.entry(token) {
+            std::collections::hash_map::Entry::Occupied(slot) => {
+                return Ok(slot.into_mut().as_ref());
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => slot,
+        };
         let text = match self.texts.get(&token) {
             Some(&(offset, len)) => {
                 let range = offset as usize..offset as usize + len as usize;
@@ -489,8 +492,7 @@ impl Trellis {
             }
             None => None,
         };
-        cache.insert(token, text.clone());
-        Ok(text)
+        Ok(slot.insert(text).as_ref())
     }
 
     fn text<D>(
@@ -509,7 +511,7 @@ impl Trellis {
             let Some(part) = self.token_text(dictionary, cache, *token, facts)? else {
                 return Ok(None);
             };
-            text.push(&part);
+            text.push(part);
         }
         Ok(Some(text.finish()))
     }
