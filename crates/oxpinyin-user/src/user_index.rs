@@ -519,22 +519,28 @@ impl UserIndex {
     /// by the pin's `pinyin_compare_with_tones`. Tokens keep the record
     /// order (exact key, then token), duplicates kept.
     pub(crate) fn search(&self, keys: &[ChewingKey]) -> Vec<u32> {
+        let mut tokens = Vec::new();
+        self.visit_matches(keys, |token| tokens.push(token));
+        tokens
+    }
+
+    pub(crate) fn visit_matches(&self, keys: &[ChewingKey], visit: impl FnMut(u32)) {
         let len = keys.len();
         if len == 0 || len > MAX_PHRASE_LENGTH {
-            return Vec::new();
+            return;
         }
         let Some(value) = self.record(&query_key(keys)) else {
-            return Vec::new();
+            return;
         };
         if value.is_empty() || !value.len().is_multiple_of(item2_stride(len)) {
-            return Vec::new();
+            return;
         }
         let stride = item2_stride(len);
         value
             .chunks_exact(stride)
             .filter(|record| record_matches_with_tones(keys, record))
             .map(record_token)
-            .collect()
+            .for_each(visit);
     }
 
     /// Whether the exact query record exists: `search`'s `m_db->Get` gate.
