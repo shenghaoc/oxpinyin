@@ -701,7 +701,7 @@ static int perf_env_count(const char *name, int fallback) {
 }
 
 /* Hardware instruction counter for the malloc-interception distortion
- * measurement (run-callgrind-differential.sh stage 5). Callgrind links
+ * measurement (just measure-callgrind-differential stage 5). Callgrind links
  * vg_replace_malloc into every tool, so its Ir counts valgrind's
  * simplified allocator where a native run pays glibc's; a hardware
  * instructions counter over the same bracketed steady region measures

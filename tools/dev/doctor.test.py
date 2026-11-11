@@ -147,7 +147,6 @@ class DoctorTests(unittest.TestCase):
 SAMPLES = {
     'pwsh': ('PowerShell {}', '7.4.99', doctor.PWSH_MINIMUM, '7.6.1'),
     'bash': ('GNU bash, version {} (1)-release (x86_64-pc-linux-gnu)', '4.4.23', '5.0.0', '5.2.37'),
-    'just': ('just {}', '1.58.9', '1.59.0', '1.61.2'),
     'cargo-nextest': ('cargo-nextest {} (60fa45f63 2026-08-04)', '0.9.114', '0.9.115', '0.10.0'),
     'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.23', '0.10.24', '0.10.26'),
     'cargo-fuzz': ('cargo-fuzz {}', '0.13.1', '0.13.2', '0.14.0'),
@@ -259,7 +258,7 @@ class ToolMinimumTests(ToolCase):
                     if not candidate.optional and not candidate.platform]
         with mock.patch.object(doctor.sys, 'platform', 'darwin'), \
                 mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
-                mock.patch.object(doctor, '_run', return_value=completed('just 1.0.0')):
+                mock.patch.object(doctor, '_run', return_value=completed('unrecognised version output')):
             lines, failures = doctor.tool_lines({'PATH': '/tools'})
         self.assertEqual(len(failures), len(required))
         self.assertTrue(all(line == f'FAIL: {failure}' for line, failure in zip(lines, failures)))
@@ -277,7 +276,7 @@ class BashFloorTests(ToolCase):
             executed.append(command[0])
             if command[0] == '/tools/bash':
                 return completed('GNU bash, version 3.2.57(1)-release (x86_64-pc-msys)')
-            return completed('just 1.0.0')
+            return completed('unrecognised version output')
 
         with mock.patch.object(doctor.sys, 'platform', 'win32'), \
                 mock.patch.object(doctor.shutil, 'which', side_effect=lambda name, path: f'/tools/{name}'), \
@@ -308,7 +307,7 @@ class AdvisoryToolTests(unittest.TestCase):
         self.assertIn(f'advisory: {failure}', lines)
 
 
-SEMVER_TOOLS = ('pwsh', 'just', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
+SEMVER_TOOLS = ('pwsh', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
 
 
 def semver_line(subject, version):
@@ -338,7 +337,7 @@ def previous(minimum):
 
 
 class SemverToolTests(ToolCase):
-    """just, cargo-nextest, cargo-c, cargo-fuzz and cargo-llvm-cov print semantic versions
+    """PowerShell, cargo-nextest, cargo-c, cargo-fuzz and cargo-llvm-cov print semantic versions
     (semver.org 2.0.0): a pre-release is older than the release it precedes, a pre-release of a
     newer release is newer than the minimum, and build metadata does not count."""
 

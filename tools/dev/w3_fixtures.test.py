@@ -44,7 +44,7 @@ def write_model(directory):
     (directory / 'art.table').write_text(ART, encoding='utf-8')
     (directory / 'interpolation2.text').write_text(INTERPOLATION, encoding='utf-8')
     (directory / 'punct.table').write_text('16777217 吖 ， 10\n', encoding='utf-8')
-    (directory.parent / 'verified').write_text(f'sha256={model.MODEL20_SHA256}\n')
+    (directory.parent / 'verified').write_text(f'sha256={model.archive_sha256()}\n')
     return directory
 
 

@@ -3,10 +3,11 @@
 //! Session queries borrow the canonical tables for the duration of each
 //! operation.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use oxpinyin_core::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
+use crate::lock_result_or_abort;
 use crate::user_index::UserIndex;
 use crate::user_library::SessionPhrases;
 
@@ -49,12 +50,7 @@ impl<'a> UserLookup<'a> {
     fn with_index<R>(&self, read: impl FnOnce(&UserIndex) -> R) -> R {
         match &self.source {
             Source::Empty => read(&UserIndex::new()),
-            Source::Session(phrases, _) => read(
-                &phrases
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .index,
-            ),
+            Source::Session(phrases, _) => read(&lock_result_or_abort(phrases.lock()).index),
         }
     }
 
@@ -89,9 +85,7 @@ impl<'a> UserLookup<'a> {
         match &self.source {
             Source::Empty => Vec::new(),
             Source::Session(phrases, items) => {
-                let phrases = phrases
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let phrases = lock_result_or_abort(phrases.lock());
                 phrases
                     .index
                     .search(keys)
@@ -125,9 +119,7 @@ impl<'a> UserLookup<'a> {
         match &self.source {
             Source::Empty => None,
             Source::Session(phrases, items) => session_text(
-                &phrases
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                &lock_result_or_abort::<MutexGuard<'_, SessionPhrases>>(phrases.lock()),
                 items,
                 token,
             ),
@@ -141,9 +133,7 @@ impl<'a> UserLookup<'a> {
         let Source::Session(phrases, _) = &self.source else {
             return Vec::new();
         };
-        phrases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(phrases.lock())
             .phrase_table
             .tokens(&crate::phrase_table::key_ucs4(words))
             .unwrap_or_default()
@@ -188,9 +178,7 @@ impl<'a> UserLookup<'a> {
             return Vec::new();
         };
         let prefix = crate::phrase_table::key_ucs4(prefix);
-        let Ok(rows) = phrases
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        let Ok(rows) = lock_result_or_abort(phrases.lock())
             .phrase_table
             .suggest_after(&prefix)
         else {
@@ -224,9 +212,7 @@ fn session_text(
         return item.phrase_text();
     }
     // An item a system library's live buffer holds and its chunk lacks.
-    items
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    lock_result_or_abort(items.lock())
         .with_live(token, |bytes| {
             oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })

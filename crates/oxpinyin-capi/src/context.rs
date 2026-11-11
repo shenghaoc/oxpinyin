@@ -260,9 +260,9 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// The §4 semantics: `false` when there is no user directory (upstream
 /// `pinyin.cpp:1133`) or nothing changed since the last save (`:1136` — the
 /// unmodified deliberate no-op); `true` after a dirty save. The save
-/// compacts the store and clears `m_modified`; durability itself is
-/// the backend's per-commit guarantee, so training writes are crash-safe before
-/// any save is issued (`docs/findings/user-store.md` §4).
+/// compacts the store and clears `m_modified`. Durability is save-gated, as
+/// at the pin: training reaches the user files only here, and a crash before
+/// the save loses it (`docs/findings/user-store.md` §6).
 pub fn save_context(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;

@@ -34,7 +34,7 @@ class LoaderFailure(RuntimeError):
 def resolve(obj, *, env=None, cwd=None, probe=False):
     """Read loader dependencies once for certification or pre-certification host probes.
 
-    PROBE preserves env.sh's historical libtkrzw.so.1/first-install-name view;
+    PROBE preserves the earlier loader helper's historical libtkrzw.so.1/first-install-name view;
     certification always checks the full resolved dependency set.
     """
     environment = dict(os.environ if env is None else env)
@@ -163,7 +163,7 @@ def qualify(cell, runner, side, obj, command=(), *, env=None, cwd=None):
 
 
 def main(argv=None):
-    """Preserve the runtime.sh CLI, including child execution and signal statuses."""
+    """Preserve the python -m tools.tkrzw.runtime CLI, including child execution and signal statuses."""
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ['--resolve']:
         if len(args) != 2:
@@ -178,13 +178,13 @@ def main(argv=None):
             print('REFUSED: otool -L reports the recorded libtkrzw install name, which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass; unset both to probe the host library.', file=sys.stderr)
             return 1
         except LoaderFailure as error:
-            return error.status  # env.sh suppressed the loader command's stderr
+            return error.status  # the earlier loader helper suppressed the loader command's stderr
     quiet = print_path = False
     while args and args[0] in ('--quiet-stderr', '--print-path'):
         quiet |= args[0] == '--quiet-stderr'
         print_path |= args.pop(0) == '--print-path'
     if len(args) < 4:
-        print('usage: runtime.sh [--quiet-stderr] [--print-path] CELL RUNNER SIDE OBJECT [-- COMMAND...]', file=sys.stderr)
+        print('usage: python -m tools.tkrzw.runtime [--quiet-stderr] [--print-path] CELL RUNNER SIDE OBJECT [-- COMMAND...]', file=sys.stderr)
         return 2
     cell, runner, side, obj, *command = args
     if command[:1] == ['--']:

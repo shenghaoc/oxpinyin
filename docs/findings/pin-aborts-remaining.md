@@ -1,9 +1,9 @@
 # Pin aborts reproduced: the short user-bigram total and the directory library
 
 Status: implemented, 2026-10-31 UTC (member 5c of the stack that retires
-class (c); `date -u` at writing: 2026-10-31 13:31 UTC). Rule: [compatibility
+class (c)). Rule: [compatibility
 policy, class (c)
-retired](compatibility-policy.md#amendment--class-c-retired-pin-aborts-reproduced-2026-10-31-utc).
+retired](compatibility-policy.md#failure-behaviour).
 Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, read from a
 `git archive` of the pin; `check_result` is `assert` in the reference build
 (`src/include/pinyin_utils.h:27-31`). The earlier members' records are
@@ -12,23 +12,23 @@ Pin: libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`, read from a
 [pin-aborts-journal-replay.md](pin-aborts-journal-replay.md) and
 [library-transitions-in-memory.md](library-transitions-in-memory.md).
 
-Rows 85 and 96 were the last two registered class (c) rows; row 110, the
-Kyoto Cabinet read after a size check, was a class (c) refusal the register
-did not list, and this member registers and reproduces it too. Each refusal (`false`,
-NULL or a refused export, with one warning) is deleted. The shared Rust
+This record covers rows 85 and 96, the last two registered class (c) rows. It
+also registers and reproduces row 110, the Kyoto Cabinet read after a size
+check, a class (c) refusal that the register did not list. These rows have no
+refusal (`false`, NULL or a refused export, with one warning). The shared Rust
 facade returns a typed fault at the pin's point, after the pin's preceding
-work; both C adapters call `std::process::abort()` on it. Every site is an
-`assert` (or `check_result`): the missing glibc assertion line is
-POLICY-ACCEPTED, the SIGABRT is MATCH.
+work. Both C adapters call `std::process::abort()` on it. Every site is an
+`assert` (or `check_result`). The missing glibc assertion line is
+POLICY-ACCEPTED, and the SIGABRT is MATCH.
 
 ## Row 85: a user-bigram value shorter than its `guint32` total
 
 `SingleGram::get_total_freq` (`src/storage/ngram.cpp:48-51`) reads the
 four-byte total through `MemoryChunk::get_content<guint32>`, whose
 `assert(get_content(offset, &value, sizeof(T)))` (`include/memory_chunk.h:390`)
-fails on a value of 0 to 3 bytes. No public call writes such a value; a
+fails on a value of 0 to 3 bytes. No public call writes such a value, but a
 foreign `user_bigram.db` can hold one. The pin's user bigram is an in-memory
-DBM written only at save, so no path below has observable work before its
+DBM written only at save. Thus no path below has observable work before its
 abort: training and predicted training change memory only.
 
 | Path | Pin site | oxpinyin item that returns the fault | Adapter |
@@ -38,143 +38,164 @@ abort: training and predicted training change memory only.
 | `pinyin_guess_predicted_candidates` (and the punctuation variant) | `_compute_predicted_bigram_candidates`, `pinyin.cpp:2321-2341`: the prefixes from last to first, `merge_single_gram` then `get_length`, which reads the total of an item-less merged gram (`ngram.cpp:62-70`) | `predict.rs` `predicted_bigram_items`, at the same step of the walk | aborts in the walk |
 | `pinyin_choose_predicted_candidate` | `pinyin.cpp:2630`, after the unigram add (`:2609-2612`, whose overflow returns `false` first) | `GenericUserStore::update` (`SeedPolicy::Predicted`): the unigram add, then `ShortUserBigramValue` | `candidates.rs` aborts |
 | `pinyin_train`, `zhuyin_train` | `train_result3`: `get_total_freq` (`phonetic_lookup.h:884`), and `check_result(user->set_freq(token, freq + seed))` (`:903`) on an unsorted gram | `check_training_step` → `TrainingFault::{ShortValue, SetFreqMiss}` → `EngineError::{ShortTrainingPredecessor, TrainingSetFreqMiss}`, per step in the pin's order | both `candidates.rs` abort |
-| `*_guess_sentence`, `*_guess_sentence_with_prefix`, `*_guess_candidates`, `*_phrase_segment` | `merge_single_gram` reading both totals (`ngram.cpp:303-304`), `SingleGram::search` (`:165`), the `DYNAMIC_ADJUST` term (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) | `EngineError::ShortLookupPredecessor` from the merged-gram reads (unchanged) | `refuse_lookup_gram` (both `sentence.rs`, used by `phrase.rs`) aborts on it |
+| `*_guess_sentence`, `*_guess_sentence_with_prefix`, `*_guess_candidates`, `*_phrase_segment` | `merge_single_gram` reading both totals (`ngram.cpp:303-304`), `SingleGram::search` (`:165`), the `DYNAMIC_ADJUST` term (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) | `EngineError::ShortLookupPredecessor` from the merged-gram reads | `refuse_lookup_gram` (both `sentence.rs`, used by `phrase.rs`) aborts on it |
 | the bigram export iterator | `pinyin_bigram_iterator_has_next_phrase` → `load(…, true)` and `retrieve_all`'s `check_result(get_total_freq)` (`pinyin.cpp:889`, `ngram.cpp:133-141`) | `BigramExportWalk::has_next` → `ShortGramTotal`; `get_next` → `BigramStep::ShortTotal` | `iterators.rs` aborts in `has_next` and `get_next` |
 
 ### The row 98 / row 100 split
 
-The old `UserStoreError::ShortUserBigramValue` and `MaskOutOutcome::ShortUserBigramValue`
-carried two conditions: a value shorter than four bytes (row 85) and a
-value of `4 + 8k + r` bytes, `1 <= r <= 7`, whose partial item the pin's
-`cur != end` walks read past (rows 98 and 100, class (b)). They are split:
-`ShortUserBigramValue` is now the row 85 value only, and the new
-`UserStoreError::PartialUserBigramTail` / `MaskOutOutcome::PartialUserBigramTail`
-is the partial tail. The class (b) outcomes are unchanged: `*_mask_out`,
-`pinyin_remove_user_candidate` and `pinyin_choose_predicted_candidate` answer
-`false` with the same single warning as before, `*_train` keeps
-`UnsafeTrainingPredecessor`'s warning, the lookups keep
-`UnsafeLookupPredecessor`'s, the predicted walk keeps its partial-tail
-warning, and `pinyin_begin_get_bigram_phrases` keeps its NULL for a partial
-tail under any predecessor. The engine already split the two
+Two conditions have separate errors:
+
+- A value shorter than four bytes (row 85): `UserStoreError::ShortUserBigramValue`
+  and `MaskOutOutcome::ShortUserBigramValue`.
+- A value of `4 + 8k + r` bytes, `1 <= r <= 7`, whose partial item the pin's
+  `cur != end` walks read past (rows 98 and 100, class (b)):
+  `UserStoreError::PartialUserBigramTail` and `MaskOutOutcome::PartialUserBigramTail`.
+
+The class (b) outcomes are unchanged:
+
+- `*_mask_out`, `pinyin_remove_user_candidate` and
+  `pinyin_choose_predicted_candidate` return `false` with a single warning.
+- `*_train` keeps the warning of `UnsafeTrainingPredecessor`.
+- The lookups keep the warning of `UnsafeLookupPredecessor`.
+- The predicted walk keeps its partial-tail warning.
+- `pinyin_begin_get_bigram_phrases` keeps its NULL for a partial tail under
+  any predecessor.
+
+The engine also keeps the two apart
 (`TrainingFault::{ShortValue, PartialTail}`, `oxpinyin_core::GramFault::{Short, OverRead}`).
-A three-byte sentence-start gram read by a one-step constraint's `get_freq`
-is still row 98 (`get_freq` starts four bytes in and never reads the total,
-`ngram.cpp:239-248`), as before.
+A three-byte sentence-start gram read by the `get_freq` of a one-step
+constraint is row 98. `get_freq` starts four bytes in and never reads the
+total (`ngram.cpp:239-248`).
 
 ### The export walk position
 
 The pin's begin (`pinyin.cpp:775-787`) only calls `get_all_items`, whose
-key-size assert is row 86 (still a begin-time abort). It reads no value.
-`has_next` takes the predecessors from the front of that array, loads each
-gram and calls `retrieve_all`, which reads the total before its item walk,
-so the abort comes at the first short predecessor in walk order, after the
-rows of every predecessor before it were returned to the caller (and
-`get_next` returns `has_next`, so it can abort inside `get_next` too,
-after it copied out its own row). The old begin preflight refused the whole
-export with NULL. `BigramExportWalk` now returns `ShortGramTotal` where its
-state machine loads the predecessor, and begin answers the iterator.
+key-size assert is row 86 (a begin-time abort). It reads no value.
+`has_next` takes the predecessors from the front of that array. It loads each
+gram and calls `retrieve_all`, which reads the total before its item walk.
+Thus the abort comes at the first short predecessor in walk order. By then,
+the rows of every predecessor before it are returned to the caller.
+`get_next` returns `has_next`, so it can also abort inside `get_next`,
+after it copies out its own row. The begin does not refuse the export.
+`BigramExportWalk` returns `ShortGramTotal` where its state machine loads the
+predecessor, and begin returns the iterator.
 
 The walk order is the backend's in-memory container order: BDB's
 in-memory hash, Kyoto Cabinet's `StashDB` and tkrzw's `TinyDBM`
 (`ngram_bdb.cpp`, `ngram_kyotodb.cpp`, `ngram_tkrzwdb.cpp` `load_db` and
 `get_all_items`). oxpinyin's session keeps its grams in the same backend's
-container and `bigram_predecessors` walks it (unchanged by this member; the
-export cases of rows 36 and 86 and #1114 hold the order). The new case is built so its verdict needs no order.
+container, and `bigram_predecessors` walks it (the export cases of rows 36
+and 86 and #1114 hold the order). The case is built so that its verdict needs
+no order.
 
-Every row the pin hands out goes through row 1's `g_strjoinv` over an
-unterminated `GPtrArray` (`pinyin.cpp:844-863`, class (b)): it reads
+Every row that the pin gives out goes through row 1's `g_strjoinv` over an
+unterminated `GPtrArray` (`pinyin.cpp:844-863`, class (b)). It reads
 uninitialised heap past the array, so the pin may join a garbage word,
-fault, or abort in `g_strfreev`'s `free`. A first version of the case
-exported whole rows before the short value and wrote each to stderr; on
-tkrzw one pin run handed out 15 rows and the next 8, both ending in SIGABRT,
-while the subject always handed out 15. That is the row 1 undefined read,
-not shown to be a varying walk: the pin's tkrzw user bigram is a `TinyDBM`
-filled by `copy_tkrzwdb` from the `HashDBM` file in that file's iterator
-order (`ngram_tkrzwdb.cpp:48-63`, `tkrzwdb_utils.h:48-74`) and walked by
-`ProcessEach` (`:161-172`), a hash table of a fixed default bucket count
-(`DEFAULT_NUM_BUCKETS = 1048583`, `tkrzw_dbm_tiny.h:42` of the provisioned
-libtkrzw at `9ee84164`), and the subject's container is the same library.
-The tkrzw `.cc` sources are not on this host, so the walk's determinism is
-argued from that structure, not read line by line; the row 1 read alone
-accounts for the pin's varying count. The case therefore renders no row: its twelve whole predecessors
-each hold one item of count 1, under the export threshold (68,
-`pinyin.cpp:792-793`), so `has_next` loads and skips them in whatever order
-the backend walks them and loads the three-byte value under `0x02001234` in
-the same call (the load precedes the loop's `m_items->len` test, so its
-position does not matter), and both sides abort with no row handed out, on
-bdb, kc and tkrzw alike. The probe asserts that begin answers an iterator,
-so the old begin-time refusal differs. The rows handed out before the abort
-are held by `a_short_predecessor_faults_where_the_walk_loads_it`
-(`export_rows.rs`), where no C-side join is involved.
+fault, or abort in the `free` of `g_strfreev`.
+
+Recorded evidence: a first version of the case exported whole rows before the
+short value and wrote each to stderr. On tkrzw, one pin run gave out 15 rows
+and the next gave out 8, both ending in SIGABRT. The subject always gave out 15.
+That is the row 1 undefined read; it is not shown to be a varying walk:
+
+- The pin's tkrzw user bigram is a `TinyDBM`. `copy_tkrzwdb` fills it from
+  the `HashDBM` file in the iterator order of that file
+  (`ngram_tkrzwdb.cpp:48-63`, `tkrzwdb_utils.h:48-74`).
+- `ProcessEach` (`:161-172`) walks it. It is a hash table of a fixed default
+  bucket count (`DEFAULT_NUM_BUCKETS = 1048583`, `tkrzw_dbm_tiny.h:42` of the
+  provisioned libtkrzw at `9ee84164`).
+- The subject's container is the same library.
+
+The tkrzw `.cc` sources are not on this host. Thus the determinism of the walk
+is argued from that structure, not read line by line. The row 1 read alone
+explains the pin's varying count.
+
+Thus the case renders no row. Its twelve whole predecessors each hold one
+item of count 1, under the export threshold (68, `pinyin.cpp:792-793`). So
+`has_next` loads and skips them in whatever order the backend walks them. In
+the same call, it loads the three-byte value under `0x02001234`. The load
+comes before the `m_items->len` test of the loop, so its position does not
+matter. Both sides abort with no row given out, on bdb, kc and tkrzw alike.
+The probe asserts that begin returns an iterator, so a begin-time refusal
+would differ. `a_short_predecessor_faults_where_the_walk_loads_it`
+(`export_rows.rs`) holds the rows given out before the abort. No C-side join
+is involved there.
 
 ## Row 96: a system library that is a directory
 
 `MemoryChunk::mmap` (`include/memory_chunk.h:470-520`) takes
-`file_size = lseek(fd, 0, SEEK_END)`; below the 8-byte header it answers
-`false` (row 76, class (b), unchanged). From 8 up it reads the length word,
+`file_size = lseek(fd, 0, SEEK_END)`. Below the 8-byte header, it returns
+`false` (row 76, class (b), unchanged). From 8 up, it reads the length word,
 `read` fails with `EISDIR`, and `assert(ret_len == sizeof(length))`
-(`:493`) kills the pin. Which branch a directory reaches is the file
-system's: ext4 reports the htree end of file for any directory, btrfs twice
-the summed entry-name length, tmpfs refuses `SEEK_END`. The size probe is
-Unix only, as before.
+(`:493`) kills the pin. The file system decides which branch a directory
+reaches:
+
+- ext4 reports the htree end of file for any directory.
+- btrfs reports twice the summed entry-name length.
+- tmpfs refuses `SEEK_END`.
+
+The size probe is Unix only.
 
 | Path | Pin site and preceding work | oxpinyin item that returns the fault | Adapter |
 |---|---|---|---|
-| `pinyin_init`, `zhuyin_init` | The default-library loop (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) maps each library (`_load_phrase_library`, `pinyin.cpp:255`, `zhuyin.cpp:199`) and merges its `.dbin` before the next. Preceding work: `check_format`'s writes; the earlier libraries are mapped and merged in memory, and one of their merges can assert first (rows 91, 108). | `library_loop::run` walks the default rows in order, so it maps the library only after the earlier logs merged, and stops there with `LibraryLoopStop::Library`; the session open returns `UserStoreError::LibraryLoop` before its fini guard is armed (so `check_format`'s raised open counter stays on disk, as the pin leaves it), and `Runtime::open_with_law` returns `OpenError::Dict(…ChunkHeaderRead)` (or the earlier `OpenError::Journal`) before the language model is opened | both `context.rs` abort (the warning is deleted) |
-| `*_load_phrase_library` | `pinyin.cpp:255`, `zhuyin.cpp:199` at the reload, before the merge; nothing precedes it | `ContextCore::load_phrase_library` → `LibraryLoadFault::Row(ChunkHeaderRead)` (unchanged point) | both `config.rs` abort |
-| `pinyin_load_addon_phrase_library` | `pinyin.cpp:289` | `load_system_addon_reporting` → `LibraryRowAssert::ChunkHeaderRead` (unchanged point) | `state.rs` aborts |
+| `pinyin_init`, `zhuyin_init` | The default-library loop (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) maps each library (`_load_phrase_library`, `pinyin.cpp:255`, `zhuyin.cpp:199`) and merges its `.dbin` before the next. Preceding work: `check_format`'s writes; the earlier libraries are mapped and merged in memory, and one of their merges can assert first (rows 91, 108). | `library_loop::run` walks the default rows in order, so it maps the library only after the earlier logs merged, and stops there with `LibraryLoopStop::Library`; the session open returns `UserStoreError::LibraryLoop` before its fini guard is armed (so `check_format`'s raised open counter stays on disk, as the pin leaves it), and `Runtime::open_with_law` returns `OpenError::Dict(…ChunkHeaderRead)` (or the earlier `OpenError::Journal`) before the language model is opened | both `context.rs` abort, with no warning |
+| `*_load_phrase_library` | `pinyin.cpp:255`, `zhuyin.cpp:199` at the reload, before the merge; nothing precedes it | `ContextCore::load_phrase_library` → `LibraryLoadFault::Row(ChunkHeaderRead)` | both `config.rs` abort |
+| `pinyin_load_addon_phrase_library` | `pinyin.cpp:289` | `load_system_addon_reporting` → `LibraryRowAssert::ChunkHeaderRead` | `state.rs` aborts |
 | `*_save` | `_write_files` maps each loaded system library in the library loop (`pinyin.cpp:955`, `zhuyin.cpp:588`). libpinyin has written the earlier libraries' `.tmp` files and renamed none (`_rename_files` runs after, `pinyin.cpp:1141`); libzhuyin has renamed each earlier library's file as it wrote it (`zhuyin.cpp:609`, `:635`). | the save's baseline hook (`Runtime::save_disk_baseline` → `SaveRemapFault::ChunkHeaderRead` → `SaveBaseline::ChunkHeaderRead`) at `persistence::stage_rest`'s library loop, which returns `PersistenceError::LibraryChunkHeaderRead` there → `UserStoreError::LibraryChunkHeaderRead` → `SaveOutcome::ChunkHeaderRead` | both `context.rs` abort |
 | `*_mask_out` | The user tables first (`pinyin.cpp:1228-1230`, `zhuyin.cpp:763-765`; rows 84 to 87 abort there), then each loaded library is mapped (`pinyin.cpp:1264`, `zhuyin.cpp:799`) before its `merge_with_mask` | `Runtime::reload_system_libraries` stops at the library and answers it; the facade merges the libraries mapped before it (a journal fault of theirs first), then returns `MaskOutOutcome::ChunkHeaderRead` | both `config.rs` abort |
 
-The `mmap %s failed!` line of a library the pin cannot map (row 76) is now
-written where the save's and the mask's loops reach that library, through
-the same hooks, instead of in an up-front pass. A row 76 library before a
-directory library is written and the loop continues (class (b): the pin
-dies of SIGSEGV there), so the later directory aborts. Directory size decisions are covered by filesystem-independent Rust tests.
+The `mmap %s failed!` line of a library that the pin cannot map (row 76) is
+written where the loops of the save and the mask reach that library, through
+the same hooks. There is no up-front pass. For a row 76 library before a
+directory library, the line is written and the loop continues (class (b): the
+pin dies of SIGSEGV there). Thus the later directory aborts.
+Filesystem-independent Rust tests cover the directory size decisions.
 
 ### The save's staged files
 
 The save goes through `UserStore::save_reporting_with_baseline` →
-`persistence::save_reporting`, the lenient save the pin's `_write_files`
-and `_rename_files` model. On `LibraryChunkHeaderRead` it returns from
-`stage_all` at once: no rename pass, no `user.conf`, and no clean-up, so the
-user directory keeps exactly the pin's files (libpinyin: the earlier
-libraries' `.tmp`; libzhuyin: the earlier libraries renamed, by
-`Staged::push` as each was written). A failed write or rename leaves every
-staged `.tmp` in place as the pin does, and the save carries on and reports
-each failure. The strict Rust save that stopped at its first failure was
-retired (2026-11-09 UTC). Row 96 therefore needs no change.
+`persistence::save_reporting`, the lenient save that models the pin's
+`_write_files` and `_rename_files`. On `LibraryChunkHeaderRead`, it returns
+from `stage_all` at once, with no rename pass, no `user.conf` and no clean-up.
+Thus the user directory keeps exactly the pin's files:
+
+- libpinyin: the `.tmp` of the earlier libraries;
+- libzhuyin: the earlier libraries renamed, by `Staged::push` as each was written.
+
+A failed write or rename leaves every staged `.tmp` in place, as the pin does.
+The save continues and reports each failure. No strict Rust save stops at its
+first failure (retired 2026-11-09 UTC). Thus row 96 needs no change to the save.
 
 ## A Kyoto Cabinet bigram read after its size check
 
 Row 110. The KC build's `Bigram::load` (`src/storage/ngram_kyotodb.cpp:124-143`
-at 074a2219) sizes the record with `m_db->check` and returns `false` for a
-miss, then reads the body with `check_result(vsiz == m_db->get(kbuf,
+at 074a2219) sizes the record with `m_db->check`, and returns `false` for a
+miss. It then reads the body with `check_result(vsiz == m_db->get(kbuf,
 sizeof(phrase_token_t), vbuf, vsiz))` (`:136-137`). `check_result` is
-`assert` in the reference build, so a body read that fails or returns
+`assert` in the reference build. Thus a body read that fails or returns
 another size after a successful check aborts. Only the KC build has this
-two-step read; BDB and tkrzw read once.
+two-step read. BDB and tkrzw read once.
 
 oxpinyin's KC store reports it as `StoreError::ReadAfterCheck`
 (`KcDb::get_bigram`, `crates/oxpinyin-store/src/kyotocabinet/ffi.rs`). It
 reaches the engine only through the system bigram
-(`BigramTable::load_raw_successors`): the user bigram is read from memory
+(`BigramTable::load_raw_successors`). The user bigram is read from memory
 after the open, so the pin's user-bigram loads cannot meet it.
 
 | Path | Pin site | oxpinyin item that returns the fault | Adapter |
 |---|---|---|---|
-| `*_phrase_segment` | `PhraseLookup` loads both grams (`phrase_lookup.cpp:192`, `:269`) | `step_costs` → `EngineError::row_read` → `ReadAfterCheck` (since #1166) | `refuse_lookup_gram` aborts (was: `false` and one warning) |
-| `*_guess_sentence`, `*_guess_sentence_with_prefix` | `search_bigram2` (`phonetic_lookup.h:595`) | the n-best predecessor rows (`nbest.rs`) → `EngineError::row_read` (was: a scoring error) | `refuse_lookup_gram` aborts (was: `false`, no warning) |
-| `pinyin_guess_candidates`, `zhuyin_guess_candidates_{after,before}_cursor` | the `DYNAMIC_ADJUST` row (`pinyin.cpp:2212`, `zhuyin.cpp:1485`, `:1579`) | `Session::dynamic_adjust_gram` → `EngineError::row_read` (was: a scoring error) | `refuse_lookup_gram` aborts (was: `false`, no warning) |
+| `*_phrase_segment` | `PhraseLookup` loads both grams (`phrase_lookup.cpp:192`, `:269`) | `step_costs` → `EngineError::row_read` → `ReadAfterCheck` (#1166) | `refuse_lookup_gram` aborts |
+| `*_guess_sentence`, `*_guess_sentence_with_prefix` | `search_bigram2` (`phonetic_lookup.h:595`) | the n-best predecessor rows (`nbest.rs`) → `EngineError::row_read` | `refuse_lookup_gram` aborts |
+| `pinyin_guess_candidates`, `zhuyin_guess_candidates_{after,before}_cursor` | the `DYNAMIC_ADJUST` row (`pinyin.cpp:2212`, `zhuyin.cpp:1485`, `:1579`) | `Session::dynamic_adjust_gram` → `EngineError::row_read` | `refuse_lookup_gram` aborts |
 
 The pin's other `Bigram::load` callers load only the user bigram: the export
 (`pinyin.cpp:888`), predicted guessing (`:2326`) and choosing (`:2623`),
 training (`phonetic_lookup.h:878`), and KC `Bigram::mask_out`'s
 `check_result(load(...))` (`ngram_kyotodb.cpp:216`) under `*_mask_out` and
-`pinyin_remove_user_candidate`. oxpinyin answers those from memory, so no
+`pinyin_remove_user_candidate`. oxpinyin serves those from memory, so no
 C entry point there can meet the fault.
 
-No differential can make a KC read fail after its check succeeded, so no
+No differential can make a KC read fail after its check succeeds, so no
 contract case holds it. The death tests
 `phrase::tests::a_read_failure_after_the_size_check_aborts` (both adapters)
 hold the abort, and the engine tests
@@ -184,55 +205,61 @@ fault the engine returns.
 
 ### Audit of the C adapters
 
-Every site in `oxpinyin-capi` and `oxpinyin-zhuyin-capi` that logs a warning
-or answers `false`/NULL on an error was read against the pin. Apart from row
-110, each is class (b) (rows 76, 80, 98, 100, 106) or an oxpinyin failure the
-pin has no counterpart for (a graph, dictionary or store failure, an
-allocation failure in the returned-string encoders, which member 6
-replaces). Every site where the pin asserts or aborts already calls
-`std::process::abort()`. Stale doc comments that still described a class (c)
-refusal (`predict.rs`, `aux_matrix.rs`, both `state.rs`, both `lib.rs`) are
-corrected. `UserStoreError::EmptyUserBigramGram` (`ngram.cpp:70`) is never
-constructed.
+Recorded evidence: every site in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`
+that logs a warning or returns `false`/NULL on an error was read against the
+pin. Apart from row 110, each is one of these:
 
-## Corrections after the external review (2026-10-31 UTC)
+- class (b) (rows 76, 80, 98, 100, 106);
+- an oxpinyin failure that has no pin counterpart: a graph, dictionary or
+  store failure, or an allocation failure in the returned-string encoders,
+  which member 6 replaces.
+
+Every site where the pin asserts or aborts calls `std::process::abort()`. Doc
+comments that described a class (c) refusal (`predict.rs`, `aux_matrix.rs`,
+both `state.rs`, both `lib.rs`) are corrected.
+`UserStoreError::EmptyUserBigramGram` (`ngram.cpp:70`) is never constructed.
+
+## Order details
 
 - Row 85, the bigram export's `get_next`: the pin writes `*phrase`,
-  `*pinyin` and `*count` (`pinyin.cpp:904-906`), advances, and only then runs
-  the `has_next` that loads the next predecessor and asserts on a short total
-  (`:910`, `:889`). `BigramStep::Row` now carries that `has_next`'s answer or
-  fault, and the C adapter writes the row before it aborts. Held by
+  `*pinyin` and `*count` (`pinyin.cpp:904-906`) and advances. Only then does
+  it run the `has_next` that loads the next predecessor and asserts on a short
+  total (`:910`, `:889`). `BigramStep::Row` carries the result or fault of that
+  `has_next`, and the C adapter writes the row before it aborts. Held by
   `bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, which
   reads the out-params back from a page the child shares.
-- Rows 85 and 98, the export begin: the begin no longer refuses when any
-  predecessor has a partial item tail; the pin's begin reads no gram
-  (`:775-787`). `BigramExportWalk` reports `GramLoadFault::ShortTotal`
-  (abort) or `GramLoadFault::PartialTail` (class (b): one warning and
-  `false`, the walk ends) where it loads that predecessor, so a short value
+- Rows 85 and 98, the export begin: the begin does not refuse when a
+  predecessor has a partial item tail. The pin's begin reads no gram
+  (`:775-787`). Where `BigramExportWalk` loads that predecessor, it reports
+  `GramLoadFault::ShortTotal` (abort) or `GramLoadFault::PartialTail`
+  (class (b): one warning and `false`, the walk ends). Thus a short value
   earlier in the walk aborts first. Held by
   `bigram_export_aborts_at_a_short_predecessor_before_a_partial_one` and
-  `bigram_export_ends_at_a_partial_predecessor`; policy row 98 is amended.
+  `bigram_export_ends_at_a_partial_predecessor`. Policy row 98 states this.
 - Rows 91, 92, 96, 97 and 108 at `mask_out`: the pin maps, loads and merges
   one library at a time in index order (`pinyin.cpp:1234-1285`,
-  `zhuyin.cpp:769-820`), so a merge that asserts in an earlier library comes
-  before a later library's `mmap %s failed!` line. `Runtime::reload_system_libraries`
-  now lists each unmappable file with its sub-index (`SystemRemap`), and the
-  facade writes the lines the loop reached: through a journal fault's
-  library, before a directory library, all of them otherwise. Init reports
-  the same way (`Runtime::open_with_law_reporting`, through the journal
-  fault's library or before the directory library); a reload maps one
-  library, writes its line and then merges it.
+  `zhuyin.cpp:769-820`). Thus a merge that asserts in an earlier library comes
+  before the `mmap %s failed!` line of a later library.
+  `Runtime::reload_system_libraries` lists each unmappable file with its
+  sub-index (`SystemRemap`). The facade writes the lines that the loop reached:
+  up to the library of a journal fault, before a directory library, or all of
+  them otherwise. Init reports the same way (`Runtime::open_with_law_reporting`,
+  up to the library of the journal fault or before the directory library). A
+  reload maps one library, writes its line and then merges it.
 - Row 110: `pinyin_guess_candidates` sends `EngineError::ReadAfterCheck` from
-  the `DYNAMIC_ADJUST` row to `refuse_lookup_gram`, which aborts; it had
-  fallen to the generic arm and answered `false`.
+  the `DYNAMIC_ADJUST` row to `refuse_lookup_gram`, which aborts.
 
 ## Audit of the reproduced rows (2026-10-31 UTC)
 
-Read against the pin at 074a2219, for each row: does oxpinyin abort under
-exactly the inputs, options and offsets for which the pin reaches its assert
-or `abort()` (predicate scope), and is the pin's earlier observable work done
-first (order)? "Fixed" names the change in this stack's members that made it
-so; every other row read as exact.
+Recorded evidence. The audit read each row against the pin at 074a2219 and
+asked two questions:
+
+- Predicate scope: does oxpinyin abort under exactly the inputs, options and
+  offsets for which the pin reaches its assert or `abort()`?
+- Order: is the pin's earlier observable work done first?
+
+"Fixed" names the member of this stack that made the row correct. Every other
+row read as exact.
 
 | Row | Predicate scope | Order | Verdict |
 |---|---|---|---|
@@ -262,10 +289,11 @@ so; every other row read as exact.
 
 Every call in both facades, at 074a2219. A validating call (the default
 `validate = true`) asserts `0 <= num && num <= 4` (`phrase_large_table3.h:95`)
-after it has cleared and filled its array. "More than four" means more than
-four loaded libraries hold the searched string. Before this pass, the 40-row
-audit checked for sites that warn or refuse where the pin aborts; the sites
-marked "silent" instead completed normally where the pin aborts.
+after it has cleared and filled its array. "More than four" means that more
+than four loaded libraries hold the searched string. Recorded evidence: the
+40-row audit checked for sites that warn or refuse where the pin aborts. The
+sites marked "silent" in the "oxpinyin before" column completed normally where
+the pin aborts.
 
 | Pin call site | Validates | Reached from | oxpinyin before | Now |
 |---|---|---|---|---|
@@ -286,25 +314,27 @@ Cases: `combined-library-sixth-add-key-past-parse-bound-pinyin`,
 `character-offset-five-libraries-*`, `remember-user-input-five-libraries-pinyin`
 and `-unparsed-pinyin` (all `sigabrt=True`); controls
 `prefix-guess-four-libraries-*` and `character-offset-four-libraries-*`. A NULL
-`tokenarray`'s GLib criticals go to the driver's log handler, which an
-abort loses, so no case compares the lookups' order against them.
+`tokenarray`'s GLib criticals go to the log handler of the driver, which an
+abort loses. Thus no case compares the order of the lookups against them.
 `storage/tag_utility.cpp:350` (`taglib_string_to_token`) is outside the
-facades: the pin's tools reach it, and it was not audited here.
+facades. The pin's tools reach it, and this audit did not cover it.
 
-Not settled by reading, outside these rows: a user phrase-table token with
-high bits set (the pin files it under `PHRASE_INDEX_LIBRARY_INDEX`'s four
-bits), `pinyin_choose_candidate` with a candidate pointer outside the current
-list (oxpinyin answers `-1` before row 45's check), and a system library's
-user `.dbin` that is a directory.
+These cases are outside these rows, and reading did not settle them:
+
+- a user phrase-table token with high bits set (the pin files it under the
+  four bits of `PHRASE_INDEX_LIBRARY_INDEX`);
+- `pinyin_choose_candidate` with a candidate pointer outside the current
+  list (oxpinyin returns `-1` before row 45's check);
+- a system library's user `.dbin` that is a directory.
 
 ## Cases and dispositions
 
 `*` is `pinyin` and `zhuyin`. All are `sigabrt=True` cases of the existing
-`contract-diff.py` driver.
+[archived contract diff source](https://github.com/shenghaoc/oxpinyin/blob/1b91c898795b6edd8b92dd1fecf65ec6f4d1a434/tools/bisection/contract-diff.py) driver.
 
 | Row | Cases | Disposition |
 |---|---|---|
-| 85 | `abort-mask-out-short-bigram-value`, `abort-zhuyin-mask-out-short-bigram-value`, `abort-remove-user-candidate-short-bigram-value`, `abort-guess-predicted-short-bigram-value`, `abort-guess-sentence-short-user-gram-{system-row-*,no-system-row}`, `abort-guess-candidates-dynamic-adjust-short-user-gram-*`, `abort-phrase-segment-short-user-gram`, `abort-phrase-segment-prefix-short-user-gram-*`, new `abort-bigram-export-short-predecessor` | POLICY-ACCEPTED (assertion line) |
+| 85 | `abort-mask-out-short-bigram-value`, `abort-zhuyin-mask-out-short-bigram-value`, `abort-remove-user-candidate-short-bigram-value`, `abort-guess-predicted-short-bigram-value`, `abort-guess-sentence-short-user-gram-{system-row-*,no-system-row}`, `abort-guess-candidates-dynamic-adjust-short-user-gram-*`, `abort-phrase-segment-short-user-gram`, `abort-phrase-segment-prefix-short-user-gram-*`, `abort-bigram-export-short-predecessor` | POLICY-ACCEPTED (assertion line) |
 | 85 controls | `mask-out-short-bigram-value-masked-key`, `guess-predicted-unrelated-short-bigram-value`, `guess-unrelated-short-user-gram`, `guess-candidates-short-user-gram-dynamic-adjust-off`, `parse-dynamic-adjust-short-user-gram-*`, `phrase-segment-prefix-unrelated-short-user-gram-*` | MATCH |
 | 96 | Directory-as-chunk size and header-read decisions | Rust unit tests exercise the size gate and failed read on every filesystem |
 | 96 controls | `library-directory-guard-{reserved,unloaded}-{save,mask-out}[-zhuyin]` | MATCH |
@@ -320,19 +350,21 @@ internals" ruling's, recorded there; the subject never reaches its
 A miss that oxpinyin's own search does reach is the abort
 (`check_training_step`, held by the store test).
 
-The save cases of both facades hold the user directory at the abort: the
+The save cases of both facades hold the user directory at the abort. The
 directory library is `merged.bin`, library 4, after libraries 1 to 3.
 
 ## The init library loop (2026-11-06 UTC)
 
 The pin's init handles each default row completely before it looks at the
-next: it judges the row (`pinyin.cpp:388`), maps the chunk (`:254-256`),
+next. It judges the row (`pinyin.cpp:388`), maps the chunk (`:254-256`), and
 merges the log (`:268-276`) or reads the `USER_FILE` chunk (`:303-318`).
 `zhuyin.cpp:318-334` and `:198-220` do the same. Read at `074a2219`.
-Before this change oxpinyin judged every row first, mapped every library and
-attached the bigram, and replayed the logs afterwards. Where library N's log
-asserts, that differed from the pin as follows. No differential recorded
-these inputs; they follow from the source and are held by the tests below.
+
+Recorded evidence: the earlier oxpinyin init judged every row first, mapped
+every library, attached the bigram, and replayed the logs after that. Where
+the log of library N asserts, that init differed from the pin as the table
+shows. No differential recorded these inputs. They follow from the source,
+and the tests below hold them.
 
 | Input | Pin | oxpinyin before |
 |---|---|---|
@@ -341,19 +373,19 @@ these inputs; they follow from the source and are held by the tests below.
 | Later row the pin dies on | SIGABRT at N, no line | Lines for absent libraries up to that row, then its abort, or NULL and a warning for a null system file whose directory does not read as a chunk |
 | Later files sound | Untouched | Mapped, checksummed, read and attached, with no change in answer or stderr |
 
-Without any bad log, an absent library followed by an unmappable one lost the
-absent library's line, because the `Err` dropped the list.
+Without a bad log, the earlier init lost the line of an absent library
+followed by an unmappable one, because the `Err` dropped the list.
 
-`library_loop::run` is now the one loop. `TableConf::default_row_steps` gives
+`library_loop::run` is the one loop. `TableConf::default_row_steps` gives
 each row's step, `SessionSteps` and `MapSteps` run it, and
 `LibraryLoopStop` is the one record of where it stopped. The runtime reports
 the lines of the absent libraries the loop reached, then returns the stop.
 It attaches the bigram after the loop (`pinyin.cpp:394-397`).
 
-The remaining differences on these paths are the existing class (b) answers:
-the pin dies of SIGSEGV on an absent or unmappable library, and oxpinyin goes
-on from an absent one and answers NULL for an unmappable one. An absent
-library's own log is still merged, so its assertion can be reached there,
+The remaining differences on these paths are the existing class (b) results.
+The pin dies of SIGSEGV on an absent or unmappable library. oxpinyin continues
+from an absent one, and returns NULL for an unmappable one. The log of an
+absent library is still merged, so oxpinyin can reach its assertion there,
 where the pin has already died.
 
 ## Tests
@@ -384,18 +416,22 @@ where the pin has already died.
   bad log; the save's file set for both laws; mask-out),
   `a_short_predecessor_faults_where_the_walk_loads_it` (`export_rows.rs`),
   `a_short_predecessor_value_is_the_fault_of_both_training_paths` and the
-  partial-tail store tests, now on `PartialUserBigramTail`
+  partial-tail store tests, on `PartialUserBigramTail`
   (`store_libpinyin.rs`). The facade's `instance_laws.rs` short-gram tests and
   the core and testsupport detector tests are unchanged.
 
 ## Fuzzing
 
-No harness reaches either row: `capi_commands.rs` opens a fresh user
-directory, trains only through `pinyin_train` (which writes sorted grams of
-at least four bytes) and has no mask, save, export or library call;
-`user_store_ops.rs` drives a standalone store through its writers, which
-never write a value under four bytes; the system-file targets map regular
-files only. No filter is needed.
+No harness reaches either row:
+
+- `capi_commands.rs` opens a new user directory, and trains only through
+  `pinyin_train`, which writes sorted grams of at least four bytes. It has no
+  mask, save, export or library call.
+- `user_store_ops.rs` drives a standalone store through its writers, which
+  never write a value under four bytes.
+- The system-file targets map regular files only.
+
+No filter is necessary.
 
 ## Verification
 

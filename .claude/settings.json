@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(gh pr ready *)",
+      "Bash(gh pr close *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh pr edit * --add-reviewer *)",
+      "Bash(gh pr edit * --add-reviewer=*)",
+      "Bash(gh api *ready_for_review*)",
+      "Bash(gh api *convert_to_draft*)",
+      "Bash(git push origin main *)",
+      "Bash(git push * origin main)",
+      "Bash(git push * origin main *)",
+      "Bash(git push origin HEAD:main *)",
+      "Bash(git push * origin HEAD:main)",
+      "Bash(git push * origin HEAD:main *)"
+    ]
+  }
+}

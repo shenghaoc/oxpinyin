@@ -19,8 +19,8 @@ from tools.dev import model  # noqa: E402
 from tools.oracle import image, pin_capture  # noqa: E402
 
 PINS = ('tools/oracle/oracle-pin.txt', 'tools/oracle/libpinyin-data.json')
-RECIPE = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build-oracle.sh', 'tools/oracle/version-manifest.json',
-          'tools/oracle/versions.py', 'tools/lib/bash-floor.sh')
+RECIPE = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/build.py', 'tools/oracle/version-manifest.json',
+          'tools/oracle/versions.py')
 UTILITIES = sorted({(spec.cell, subdir, program) for spec in pin_capture.OBSERVATIONS.values()
                     if isinstance(spec, (pin_capture.Utility, pin_capture.DataSequence))
                     for subdir, program in spec.programs()})
@@ -70,7 +70,7 @@ class CaptureTests(unittest.TestCase):
         self.model.mkdir(parents=True)
         for name in model.EXPECTED_MODEL_FILES:
             (self.model / name).write_text('')
-        (self.model.parent / 'verified').write_text(f'sha256={model.MODEL20_SHA256}\n')
+        (self.model.parent / 'verified').write_text(f'sha256={model.archive_sha256()}\n')
         self.staging = self.root / 'target/pin-observations'
 
     def make_prefix(self, prefix, cell):

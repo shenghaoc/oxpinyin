@@ -8,7 +8,7 @@
 | oxpinyin-chewing | Dependency-free chewing/zhuyin leaf below core. Packed keys, renderers and frozen content tables. Core depends on chewing. | forbid | yes | via capi, engine |
 | oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | forbid | yes | via engine |
 | oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
-| oxpinyin-user | The libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4). | forbid | yes | via engine |
+| oxpinyin-user | The libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
 | oxpinyin-engine | Internal session API for in-tree C facades, tools and tests. No supported external Rust interface. | forbid | yes | yes |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
@@ -22,23 +22,35 @@
 
 `oxpinyin-core`, `oxpinyin-chewing` and `oxpinyin-engine` never depend on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
 
-Both C-ABI facades consume `oxpinyin-facade`.
-It depends on core, engine, runtime and user.
-It holds runtime's concrete dictionary, language-model and user handles by value.
-It therefore forwards the complete backend feature matrix instead of staying generic over engine traits.
-
 See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
 CI's Linux, macOS and Windows lanes build tkrzw with `.github/actions/tkrzw`.
 The peer matrix remains on Linux.
 
-Datagen uses `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chunk_format`.
-It uses the four DBM row schemas and library-name tables from `row_format` and `system_files`.
+The data generators in `oxpinyin-utils` use `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chunk_format`.
+They use the four DBM row schemas and library-name tables from `row_format` and `system_files`.
 Readers and writers therefore share one layout definition.
 
 The fixture `Dictionary`/`LanguageModel` doubles are one source file, `crates/oxpinyin-core/tests/common/fixture_doubles.rs`.
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through core.
 The production build graph carries no test doubles.
+
+### The chewing crate
+
+`oxpinyin-chewing` holds the shared chewing-key machinery: the packed `ChewingKey` (the pin's two-byte bitfield word, `#[repr(C)]`, with size and alignment asserted), its six display renderers and the frozen `content_table` and `chewing_key_table`.
+`oxpinyin-core` depends on it and re-exports the key type.
+The capi facade's `keys.rs` holds only `#[no_mangle]` wrappers and failure-shape handling.
+The three `parse_one_key` seams stay methods on `oxpinyin-core`'s scheme parsers, because they consume parser tables that core owns (`zhuyin_map`, the double-pinyin scheme tables and the alias-gated syllable inventory).
+The cut follows the pin's boundary: a facade file, a version script and a configure flag, never a split inside the engine.
+`ENABLE_LIBZHUYIN` does not remove chewing from `libpinyin.so`, and `libpinyin.ver` always exports `pinyin_parse_chewing` and `pinyin_get_zhuyin_string`.
+No symbol is feature-gated, so a bopomofo-only facade would be additive: a new facade crate that depends on this one, with no existing export moved.
+
+### Facades
+
+Both C-ABI facades consume `oxpinyin-facade`.
+`oxpinyin-facade` depends on core, engine, runtime and user.
+It holds the concrete dictionary, language-model and user handles of runtime by value.
+For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
 
 ## Backend selection
 
@@ -49,47 +61,34 @@ This follows libpinyin's `--with-dbm` model.
 Do not add runtime dispatch or fallback.
 `oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.
 
-Saving makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`), so durability is the backend's for that call, and oxpinyin promises nothing beyond it.
+A save makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`).
+Durability is therefore the backend's durability for that call; oxpinyin promises nothing beyond it.
 
 ## Dependencies
 
-**Dependencies (amended by the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability), 2026-11-02 UTC):**
+The [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) governs native bindings.
 
 Use a Rust library as Rust.
-Redb was the example; it was removed 2026-09-22.
-The tree has no pure-Rust database replacement.
+The tree has no pure-Rust database backend.
 `glib-sys` binds a C library.
 Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
 Use Berkeley DB through its official C API, `db.h`, with bindgen over system headers.
-tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`); the `tkrzw_langc.h` C API is no longer used.
-Find tkrzw, Kyoto Cabinet, Berkeley DB where it ships a `.pc` file, and GLib with the `pkg-config` crate, a build-dependency of `oxpinyin-store`, `oxpinyin-input` and `oxpinyin-training` (maintainer approval 2026-10-30 UTC).
-Berkeley DB falls back to fixed header directories and the `OXPINYIN_BDB_*` overrides, because the distributions and Homebrew install no `.pc` file for it.
-The [interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) supersedes the prohibition on tkrzw's C++ interface and sets the migration order and source-proof obligations.
+tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
+`oxpinyin-store` finds the backends with `system-deps`: tkrzw and Kyoto Cabinet through their `.pc` files, and Berkeley DB without pkg-config, because the distributions and Homebrew install no `.pc` file for it.
+The `SYSTEM_DEPS_BDB_*` overrides reach a Berkeley DB outside the defaults ([discovery and overrides](runbooks/backends.md#discovery-and-overrides)).
 
 Use Kyoto Cabinet as libpinyin does.
 Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
 Like libpinyin, it depends on the system library's C++ ABI.
-The KC native-call inventory holds the source behind the migration from the C++ shim.
+Constructing the concrete classes directly, as the pin does, keeps the pin's libkyotocabinet residency; `kclangc.h` reaches every class through `PolyDB`, which keeps more of the library resident.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
-This describes the current tree.
-The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; its [C-library calls and macro checks](source-policy.md#external-io) retain the 2026-10-31 UTC rule.
+The cdylibs hide the cxx runtime symbols of both bridges ([export gate](packaging.md#export-gate)).
+
+The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
-
-Kyoto Cabinet left `kclangc.h` after measurement in #1118, through a C++ shim that the CXX bridge replaced.
-See the shim results.
-`kclangc.h` reaches every class through `PolyDB`.
-That dispatch and linked but unopened classes kept about 580 KiB more libkyotocabinet text resident than the pin.
-Constructing the concrete classes directly, as the shim and the bridge both do, retains the pin's libkyotocabinet residency.
-An earlier cxx bridge was measured and rejected in #1043; this is historical evidence about that implementation, not a restriction on CXX bindings under the [current ruling](findings/compatibility-policy.md#rust-cpp-interoperability).
-See its results and PR #1043 for code.
-Its glue added 0.6–5.5% instructions to point reads, writes and framed scans.
-Cargo-built libraries also exported cxx runtime and bridge symbols beyond the version scripts.
-The shim that #1118 adopted had no glue layer.
-It used 0.980–1.004× the C binding's instructions per store operation against exact same-bytes controls, and added about 310 KB to each stripped library.
-The current bridge's cdylibs hide the cxx runtime symbols as the tkrzw bridge's do ([export gate](packaging.md#export-gate)).
 
 ## External I/O
 
@@ -107,7 +106,7 @@ Facades through `oxpinyin-facade`, capi and future adapters consume that assembl
 Do not assemble equivalents independently.
 This prevents native and C-ABI paths from silently diverging.
 
-Runtime wires the public Rust APIs of data, user and engine.
+Runtime connects the public Rust APIs of data, user and engine.
 Its deliberate pinned algorithms are:
 
 - The user-count overlay feed.
@@ -120,8 +119,6 @@ Each algorithm's source cites the pin.
 
 ## Data path
 
-**Data path (P6, 2026-09-02):**
-
 Use one native reader set per backend.
 Data lazily reads the pinyin and phrase DBMs, per-library `MemoryChunk` files, `bigram.db`, `punct.bin` and the addon DBM pair.
 Each reader opens a handle and performs a point read.
@@ -132,7 +129,7 @@ Read `table.conf` once through data's `table_info`, the input scanner and `Syste
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
-libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; `just w3-fixtures` (`tools/dev/w3_fixtures.py`) runs that sequence over the mini subset of the model to regenerate and check `fixtures/w3`.
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets came from that sequence over the mini subset of the model (recorded evidence).
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
 Do not auto-detect a distribution layout.
 
@@ -161,9 +158,9 @@ Engine weights and language-model order are never user configuration.
 
 ## Decoder
 
-Use a weighted SegmentGraph with index-based arenas from the start, not references.
+Use a weighted SegmentGraph with index-based arenas, not references.
 Current EdgeKind variants are Exact and Segmentation.
 Fuzzy, Typo and Abbrev change output and are Stage 3 candidates behind an opt-in compile flag.
-Its Rust API is internal and can change under the 2026-10-18 UTC interface ruling.
+Its Rust API is internal and can change under the [interface ruling](constitution.md#external-interfaces).
 In parity mode, mirror the path-set SPEC's upstream path-enumeration policy.
 Produce neither more paths nor fewer.

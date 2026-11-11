@@ -264,6 +264,57 @@ mod frozen {
         const W3_PINYIN_INDEX_ROWS: File =
             Rows("0bd2c7caf8a9dbed1d9040f6c7f1e2aa9399c392d4093dc768f3a5e172d298e1");
 
+        // 074a2219 gen_binary_files.cpp:68-72 passes the configured type to
+        // both loaders; phrase_index.cpp:562-581 parses Zhuyin with tones.
+        #[rstest]
+        #[case::pinyin("pinyin", "ni3")]
+        #[case::zhuyin("zhuyin", "ㄋㄧˇ")]
+        fn configured_phonetic_type_reaches_both_phrase_libraries(
+            #[case] format: &str,
+            #[case] spelling: &str,
+        ) {
+            let directory = TempDir::new().expect("temporary model");
+            directory
+                .child("table.conf")
+                .write_str(&format!(
+                    "binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+                 source table format:{format}\ndatabase format:{}\n\
+                 default RESERVED NULL NULL NULL NOT_USED\n\
+                 default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
+                 addon RESERVED NULL NULL NULL NOT_USED\n\
+                 addon 1 source.table addon.bin NULL DICTIONARY\n",
+                    oxpinyin_store::DEFAULT_STORE_DB_FORMAT,
+                ))
+                .expect("configuration");
+            directory
+                .child("source.table")
+                .write_str(&format!("{spelling}\t你\t16777217\t7\n"))
+                .expect("one source row");
+            cargo_bin_cmd!("gen_binary_files")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .assert()
+                .success()
+                .stdout("")
+                .stderr("");
+            let expected = oxpinyin_core::ChewingKey::from_pinyin("ni")
+                .expect("ni")
+                .with_tone(3)
+                .to_packed()
+                .to_le_bytes();
+            for name in ["gb_char.bin", "addon.bin"] {
+                let library = oxpinyin_data::phrase_library::PhraseLibrary::open(
+                    &directory.path().join(name),
+                )
+                .expect("generated phrase library");
+                let item = library.item(16777217).expect("source token");
+                assert_eq!(item.n_pronunciations(), 1, "{name}");
+                let reading = item.pronunciation(0).expect("source pronunciation");
+                assert_eq!(reading.keys, expected, "{name}");
+                assert_eq!(reading.freq, 7, "{name}");
+            }
+        }
+
         #[rstest]
         // gbf-bad-option: utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109,
         // 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121.

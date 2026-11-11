@@ -4,7 +4,7 @@
 //! library must be installable on its own and its public header must still
 //! resolve. Two copies in one destination are only coherent while they are
 //! byte-identical; this test is the tree-level gate on that invariant.
-//! `tools/packaging/install.sh` repeats the check as a pre-install guard.
+//! `just packaging install` repeats the check as a pre-install guard.
 
 use std::fs;
 use std::path::Path;

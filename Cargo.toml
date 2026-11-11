@@ -1,22 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-  "crates/oxpinyin-chewing",
-  "crates/oxpinyin-core",
-  "crates/oxpinyin-data",
-  "crates/oxpinyin-input",
-  "crates/oxpinyin-utils",
-  "crates/oxpinyin-store",
-  "crates/oxpinyin-user",
-  "crates/oxpinyin-engine",
-  "crates/oxpinyin-facade",
-  "crates/oxpinyin-capi-marshal",
-  "crates/oxpinyin-capi",
-  "crates/oxpinyin-runtime",
-  "crates/oxpinyin-training",
-  "crates/oxpinyin-kmm",
-  "crates/oxpinyin-zhuyin-capi",
-]
+members = ["crates/*"]
 
 [workspace.package]
 # Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.

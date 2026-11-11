@@ -1,13 +1,14 @@
 # Findings — option bits
 
-Date: 2026-08-17 · Status: W10 Phase 0 characterisation.
+Date: 2026-08-17 · Status: record (W10 characterisation)
 
-This finding pins where each `pinyin_option_t` bit class acts in the
-libpinyin 2.11.91 source, how the ibus-libpinyin fork maps GSettings keys to
-those bits, and what the current oxpinyin inventory omits. Upstream line
-numbers are from the pinned trees:
+This finding records where each `pinyin_option_t` bit class acts in the
+libpinyin source, how the ibus-libpinyin fork maps GSettings keys to
+those bits, and how oxpinyin's syllable inventory handles them. Upstream
+line numbers were read in these trees:
 
-- libpinyin `2.11.91` / `0c5e80e1200f84fab185d1c5bde458b770a0636c`;
+- libpinyin `2.11.91` / `0c5e80e1200f84fab185d1c5bde458b770a0636c` (the
+  current pin is `074a2219`; `tools/oracle/oracle-pin.txt`);
 - ibus-libpinyin `1.16.5` / `2d2cdac0187101aa0cd7ac06694a8340721ddfbb`.
 
 ## Bit values
@@ -131,53 +132,35 @@ The unigram term of `m_freq` (`:1856-1865`) always reads
 `FacadePhraseIndex` (system + user unigrams) with **no** `DYNAMIC_ADJUST`
 check. Sentence decode has no check in `pinyin.cpp` either.
 
-oxpinyin's equivalent: `RankKey.frequency` is the raw unigram count
-(system + W6-T4 overlay). The bigram increment is omitted when the bit is
-clear. When the bit is set, W6-T4's unigram merge stays; a non-zero
-bigram increment on `RankKey` would be a ranking-model change outside
-W10 (Amended 2026-09-14: the bit-SET fold landed 2026-08-30 as the
-three-gate implementation `217d0c4` — the `λ · bigram_poss · DISCOUNT`
-term folds into the amplified-frequency key, not `RankKey`, at the pin's
-three call sites; issue #99 closed with it, and the C2 isolating
-differential (`uncovered-surface-differentials`,
-`PARITY_DYNAMIC_ADJUST` in `tools/bisection/uncovered-surface-diff.c`)
-is its probe. This paragraph describes the pre-`217d0c4`
-tree.) `SharedLm::unigram_freq` stays ungated (the
-phrase-index term). `SharedLm::score` stays ungated (decode, not the
-cited sites).
+oxpinyin's equivalent: with the bit set, the `λ · bigram_poss · DISCOUNT`
+term folds into the amplified-frequency key at the pin's three call sites
+(`217d0c4`, issue #99; [`dynamic-adjust.md`](dynamic-adjust.md)). With the
+bit clear the term is zero. The unigram term (system + user overlay) is
+ungated, and so is decode, as in the pin.
 
 The fork masks `DYNAMIC_ADJUST` out entirely (`PYPConfig.cc:145`), so
 bit-clear is the fork's permanent state and this gate is
-default-settings-critical. Verification is the populated-store
-differential (`run-train-diff-dynamic-off.sh`): identical training, bit
-CLEAR, compare candidate TEXT/ORDER at offset 0 and after choosing 你.
+default-settings-critical.
 
-Measured 2026-08-17 against the pin-built oracle (`0x188`, one training
-round, full tables): exports identical (3 rows); `nihao@0` and
-`after-ni` top-10 identical (`你好` / `好` first). Trained user unigrams
-still rank (the ungated phrase-index term); trained user bigrams do not
-need to, because the bit is clear.
+Recorded evidence (2026-08-17, pin-built oracle, `0x188`, one training
+round, full tables): with the bit clear, the training differential's
+exports were identical (3 rows), and the `nihao@0` and `after-ni` top-10
+were identical (`你好` / `好` first). Trained user unigrams still rank
+(the ungated phrase-index term); trained user bigrams do not need to,
+because the bit is clear.
 
-The populated phase grew a persistence leg (2026-08-27, `train-diff.c`
-phase 4 / `TRAINDIFF_REOPEN=1`, always on in the runner's populated
-leg): save → full context teardown → reopen of the SAME user dir under
-the same word → the reopened window must equal the in-memory one on
-each side → one more training round with the bit still clear → export
-from the reopened context. Measured against the pin on datagen tables:
-both sides export `你好|ni'hao|414` (the subsequent-session round adds
-a 276 seed — `2 × 138`, the `user-store.md` §2.1 expansion of the
-persisted count — to that persisted 138; a lost state would re-seed at
-138) plus the remembered `你好|5` / `世界|12` rows; `train-reopened:1`
-both. An `initial@0` probe prints the un-populated baseline inside the
-same run, and the runner fails unless the reopened probe/train/export
-lines exist on both sides (the populated phase cannot silently degrade
-to the empty case).
+Recorded evidence (2026-08-27), a persistence leg: save → full context
+teardown → reopen of the same user dir under the same word → one more
+training round with the bit still clear → export from the reopened
+context. Both sides exported `你好|ni'hao|414` plus the remembered
+`你好|5` / `世界|12` rows. The round in the later session adds a 276 seed
+(`2 × 138`, the `user-store.md` §2.1 expansion of the persisted count) to
+the persisted 138. A lost state would re-seed at 138.
 
 ## Sweep TEXT/ORDER (ABI, top-10)
 
-`run-option-sweep.sh` now diffs parse/aux **and** top-10 candidate
-TEXT/ORDER through `pinyin_get_candidate_string`. Asserting through the
-ABI is verification, not W11 ground.
+Recorded evidence: the option sweep compared parse/aux **and** top-10
+candidate TEXT/ORDER through `pinyin_get_candidate_string`.
 
 Fork-default (`0x1fe00198`), 28 inputs:
 
@@ -188,8 +171,8 @@ Fork-default (`0x1fe00198`), 28 inputs:
   position has equal `phrase_length` (RankKey 1). Span / frequency /
   collection-order are not on the ABI; this is the documented three-key
   tie class (`candidate-construction.md` §8.2).
-- **6 TEXT-set tails**, all-off-controlled as W12 (see triage below).
-  Excluded from W10's STOP gate.
+- **6 TEXT-set tails**, all-off-controlled as W12 (see triage below), and
+  closed since.
 
 `USE_DIVIDED_TABLE` / `USE_RESPLIT_TABLE` were never in W10's scope.
 On the fork-default word (both bits set) the xian/fanan/fangan/tian
@@ -216,8 +199,8 @@ Bare `gn`/`mg`/`on` are not in `pinyin_index` (80/80/17 stemmed rows).
 ## TEXT-set STOP triage (all-off control)
 
 Control: same top-10 ABI assertion under ALL-BITS-OFF (`0x0`).
-Each row is enumerated, reproduced on the fixture-based scoring path
-(no live oracle), and classed in `all-off-tails`.
+Each row was enumerated, reproduced on the fixture-based scoring path
+(no live oracle), and classed.
 
 | Input | All-off verdict | Owner | Action |
 |---|---|---|---|
@@ -230,17 +213,10 @@ Each row is enumerated, reproduced on the fixture-based scoring path
 
 Upstream draws a corrected key's inventory from the **same** `content_table` slot as the canonical spelling: `search_pinyin_index` (`pinyin_parser2.cpp:93-116`) sets `key = content_table[index->m_table_index].m_chewing_key`. `pinyin_parser_table.h` gives `agn`/`amg`/`ang` table index 4 and `lue`/`lve` table index 203. The corrected parse does **not** restrict the inventory; it is the native key. Capi is not admitting extra correction-only entries — `n=` matches, and the tail is the ~4k prefix-overlap residual the pins count rather than assert as text (W12). No W10 work.
 
-**Closed 2026-08-24** (`all-off-tails` §"Closure"): all
-six rows are class (iii), not divergences. The DIFF verdicts in the table
-are pre-`e941090` measurements of the Class A comparator species;
-post-port the lists are bit-identical to the pin at `0x0` (live-oracle
-control, 2026-08-24), and the `run-option-sweep.sh` exclusion list never
-fires.
-
-`DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into the
-amplified frequency) — implemented at the pin's three gates 2026-08-30
-(`217d0c4`, closing issue #99); the C2 isolating differential
-(`uncovered-surface-differentials`) is its probe.
+**Closed 2026-08-24:** all six rows are class (iii), not divergences.
+The DIFF verdicts in the table are measurements of the Class A comparator
+species before its port (`e941090`); after the port the lists are
+bit-identical to the pin at `0x0` (live-oracle control, 2026-08-24).
 
 ## GSettings → bit mapping in the fork
 

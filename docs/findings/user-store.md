@@ -1,37 +1,29 @@
-# libpinyin user store — behaviour characterization (W6-T0)
+# libpinyin user store — behaviour characterization
 
-Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin 2.11.91 and
-ibus-libpinyin 1.16.5 source** · Decision: **W6 reproduces libpinyin's
-user-data *values and semantics*; the on-disk binary format
-(MemoryChunk/DBM) is a NON-GOAL (redb is the store).** See §10.
+Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin and
+ibus-libpinyin 1.16.5 source** · Store: **oxpinyin reads and writes each
+backend's native libpinyin user files** (§11). The user-data values and
+semantics are libpinyin's, and so is the on-disk format.
 
-This finding records, with source file + line citations, the exact behaviour a
-later Rust implementation must reproduce to make oxpinyin's user store
-*value-identical* to libpinyin's on identical C-ABI call sequences. It is a
-characterization, not an implementation. No code is added by this task.
+This finding records, with source file and line citations, the behaviour
+oxpinyin's user store reproduces. A user directory written by oxpinyin or
+libpinyin on the same backend opens in the other, in both directions
+([compatibility policy, "Backends and user data"](compatibility-policy.md#backends-and-user-data)).
 
 Every claim below is tagged **SHOWN** (read directly from the cited source) or
-**INFERRED** (cross-file behaviour, a design proposal, or a fact not directly
-visible at the cited line). Proposed W6 sub-tasks in §8 are INFERRED by
-construction (they are design, not upstream fact).
+**INFERRED** (cross-file behaviour, or a fact not directly visible at the
+cited line).
 
 ## Source set
 
-> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The user-store semantics were developed against redb as the store (the §10 note names it); the value-level semantics are backend-independent and survive.
-
-
-- libpinyin: pinned tag `2.11.91` (sha `0c5e80e1…`), on disk at
-  `/tmp/libpinyin-2.11.91`. Paths below beginning `src/` are relative to that
-  root. (A byte-identical second copy sits under
-  `/tmp/oxpinyin-oracle/src/libpinyin-2.11.91`; verified identical for every
-  file cited here.)
-- Frontend: ibus-libpinyin pinned tag `1.16.5` (sha `2d2cdac0…`), on disk at
-  `/tmp/oxpinyin-oracle/src/ibus-libpinyin-1.16.5`. Paths beginning `src/PY…`
-  are relative to that root.
-- oxpinyin: this repo. Paths beginning `crates/` are repo-relative, valid
-  against `main` (`4a9a6f0`, post-W9). Reading these used rust-analyzer via the
-  LSP (available — see §7).
-- Provenance of the pinned tags: `docs/testing/oracle-environment.md:15-16`.
+- libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt` is
+  authoritative). Paths below beginning `src/` are relative to its root.
+  The line citations in §1–§10 were first read at 2.11.91 (`0c5e80e1`);
+  §2.3 and §11 cite `074a2219` directly.
+- Frontend: ibus-libpinyin pinned tag `1.16.5` (commit `2d2cdac0…`). Paths
+  beginning `src/PY…` are relative to its root.
+- oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
+- Provenance of the pinned commits: `tools/oracle/oracle-pin.txt`.
 
 Constants used throughout (all **SHOWN**):
 
@@ -71,10 +63,10 @@ periodically.
 
 Scope of this document: the update path, the user phrase index and token
 allocation, persistence/save, the merge with system data at decode time, what
-the pinned frontend calls and when, oxpinyin's current state, a proposed W6
-task breakdown, a value-level differential-parity plan, and the explicit
-non-goals. `import_interpolation` (a *training-time* system-model tool) is out
-of scope for the user store — see §8's note.
+the pinned frontend calls and when, oxpinyin's implementation map, the
+value-level comparison surface, the non-goals, and the user-file
+implementation (§11). `import_interpolation` (a *training-time* system-model
+tool) is out of scope for the user store — see §8.
 
 ---
 
@@ -133,7 +125,7 @@ What gets incremented, by how much, against which tokens (**SHOWN**):
   2, 22080)`. The seed grows **geometrically** — and because it is added to the
   prior count (`new = prev + 2 * prev`), the stored count **triples** per
   reselection, not doubles: the seed sequence is `69, 138, 414, 1242, 3726,
-  11178, 22080` (clamped), confirmed by W6-T1's implementation. `last_token`
+  11178, 22080` (clamped), as `oxpinyin_user::seed` reproduces. `last_token`
   starts at `sentence_start` (1), so the first phrase of a sentence trains the
   `sentence_start → token` bigram.
 - **Phrase-index unigram** of `token`: raised by `seed * 7`
@@ -274,17 +266,21 @@ bumped past the reserved zero id). User tokens are distinguished from system
 tokens purely by the library nibble: `PHRASE_INDEX_LIBRARY_INDEX(token) == 7`
 (see `pinyin_is_user_candidate`, `src/pinyin.cpp:3710-3722`).
 
-**Unigram-factor reconciliation (W6-T3).** The `unigram_factor = 3` above and
+**Unigram-factor reconciliation.** The `unigram_factor = 3` above and
 the training path's `unigram_factor = 7` (`src/lookup/phonetic_lookup.h:849`,
 §2) are **two distinct constants in two distinct functions for two distinct
-operations**, both **SHOWN**: `7` scales the *training* seed into the
-phrase-index unigram (§2.1–2.3 — `train_result3`,
-`pinyin_choose_candidate`'s special types, `pinyin_choose_predicted_candidate`),
-while `3` scales the *new-phrase* seeding count at allocation (§3.2 —
-`_add_phrase`, `pinyin.cpp:522`). There is no discrepancy: a phrase added by
-`pinyin_remember_user_input` seeds its unigram with `count * 3`, and later
-*selections* of it train with `seed * 7`. oxpinyin reproduces both as
-separate constants (`oxpinyin_user::seed::UNIGRAM_FACTOR` = 7,
+operations**. Both are **SHOWN**:
+
+- `7` scales the *training* seed into the phrase-index unigram (§2.1–2.3:
+  `train_result3`, the special types of `pinyin_choose_candidate`,
+  `pinyin_choose_predicted_candidate`).
+- `3` scales the *new-phrase* seeding count at allocation (§3.2:
+  `_add_phrase`, `pinyin.cpp:522`).
+
+There is no discrepancy. A phrase added by `pinyin_remember_user_input`
+seeds its unigram with `count * 3`, and later *selections* of it train
+with `seed * 7`. oxpinyin reproduces both as separate constants
+(`oxpinyin_user::seed::UNIGRAM_FACTOR` = 7,
 `oxpinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
@@ -339,28 +335,33 @@ PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)` (`:3763-3764`).
 `user_phrase_index.bin`, and one file per non-user library carrying its diff
 log.
 
-**Value-level reproduction target** (the semantics W6 must match, *not* the
-byte layout): (a) user-bigram counts per `(prev_token → token)` and each
-`prev_token` total; (b) user-token unigram frequencies in the user sub-index;
-(c) user phrase-index entries (phrase string, pronunciations, count) and the
-pinyin/phrase table indices that reach them; (d) the system-token unigram
-*deltas* (libpinyin's diff log; in oxpinyin a redb delta table — INFERRED
-mapping).
+**Reproduction target.** oxpinyin matches these values and writes them in
+the same files:
 
-**No format version (ruling, 2026-09-08).** A `user_meta`/`format_version`
-row with a typed `IncompatibleFormat` refusal was added (aa40f4aa) and
-reverted the same day. libpinyin's user files carry no version, and the
-drop-in contract is to match them, not to add guarantees they lack; the
-backend's own file header stays the only stamp. A hostile or truncated
-file degrades per file at the load, as upstream's does, never a panic
-(`crates/oxpinyin-user/src/persistence.rs`), with one exception: a
-`database format:` in `user.conf` that upstream's
-`to_table_database_format_type` does not know is the pin's abort
-(`table_info.cpp:122-133`, reached from `:353-354`). The load returns
-`UnknownDatabaseFormat` there, before anything is judged, wiped or
-written, and `pinyin_init` and `zhuyin_init` abort on it (register row
-44). Every other file error degrades that file alone. Do not reintroduce
-a version row without a fresh ask.
+- (a) user-bigram counts per `(prev_token → token)` and each `prev_token`
+  total (`user_bigram.db`);
+- (b) user-token unigram frequencies in the user sub-index (`user.bin` and
+  the other `USER_FILE` chunks);
+- (c) user phrase-index entries (phrase string, pronunciations, count) and
+  the pinyin/phrase table indices that reach them (`user_pinyin_index.bin`,
+  `user_phrase_index.bin`);
+- (d) the system-token unigram deltas, as the `.dbin` diff log of each
+  `SYSTEM_FILE` library.
+
+**No format version (ruling, 2026-09-08).** libpinyin's user files carry
+no version. The drop-in contract is to match them, not to add guarantees
+that they lack. The backend's own file header stays the only stamp.
+
+- A hostile or truncated file degrades per file at the load, as
+  upstream's does, and never panics (`crates/oxpinyin-user/src/persistence.rs`).
+- One exception: a `database format:` in `user.conf` that upstream's
+  `to_table_database_format_type` does not know is the pin's abort
+  (`table_info.cpp:122-133`, reached from `:353-354`). The load returns
+  `UnknownDatabaseFormat` there, before anything is judged, wiped or
+  written. `pinyin_init` and `zhuyin_init` abort on it (register row 44).
+- Every other file error degrades that file alone.
+
+Do not reintroduce a version row without a fresh ask.
 
 ---
 
@@ -371,9 +372,8 @@ a version row without a fresh ask.
 > Characterizing the user store's *merge and precedence* required reading it;
 > The source policy permits reading upstream C++ as the reproduction
 > target. The facts below are limited to *where and how user data combines
-> with system data*; the Viterbi/k-best decode and the λ scoring formula are
-> already frozen in `docs/findings/scoring-spec.md`,
-> `docs/findings/kbest-search.md`, and `docs/findings/decode-differential.md`.
+> with system data*; the λ scoring formula is defined in
+> [`scoring-spec.md`](scoring-spec.md).
 
 **SHOWN** (`src/lookup/pinyin_lookup2.cpp`, `src/storage/ngram.cpp`):
 
@@ -401,24 +401,22 @@ bigram against the unigram. A user selection therefore raises the merged
 that continuation's decode score. The magnitude of the nudge is exactly the
 `seed` arithmetic of §2 flowing through this additive merge.
 
-**Storage (amended 2026-10-14 UTC, #757 PR 2).** The user half of the
-merge is the pin's own `SingleGram` value, held once, in the pin's own
-in-memory container (§11). Every read takes the bytes apart the pin's way
-(`oxpinyin_core::single_gram`, a port of `ngram.cpp`): a count is
-`get_freq`'s first match walking from libstdc++'s `__lower_bound`, which
-answers deterministically on an unsorted array, and duplicated items are
-kept. An item-less user gram is still a gram: `merge_single_gram` adds
-its total whatever its length (`ngram.cpp:298-306`), so the overlay is
-non-zero whenever the container holds any key. The earlier normalized
-copy — `BIGRAM[(prev, cur)]` and `BIGRAM_TOTAL[prev]` rows decoded at
-load and rewritten on train and mask — is gone.
+**Storage.** The user half of the merge is the pin's own `SingleGram`
+value, held once, in the pin's own in-memory container (§11). Every read
+takes the bytes apart the pin's way (`oxpinyin_core::single_gram`, a port of
+`ngram.cpp`): a count is `get_freq`'s first match walking from libstdc++'s
+`__lower_bound`, which answers deterministically on an unsorted array, and
+duplicated items are kept. An item-less user gram is still a gram:
+`merge_single_gram` adds its total whatever its length
+(`ngram.cpp:298-306`), so the overlay is non-zero whenever the container
+holds any key.
 
-**Seam note (W6-T4).** The merge sits in oxpinyin's language model
+**Seam note.** The merge is in oxpinyin's language model
 (`BigramLanguageModel::score`, count addition before the λ blend), **not** in
-`UserModel::score`, which stays `Ok(0)`: a `Cost` added after the λ blend
-would be a new weighting scheme — exactly what this section forbids — so the
-count-level merge must live in the language model. The `UserModel` seam is
-therefore observe-only.
+`UserModel::score`, which stays `Ok(0)`. A `Cost` added after the λ blend
+would be a new weighting scheme, which this section forbids. The
+count-level merge must therefore live in the language model, and the
+`UserModel` seam is observe-only.
 
 ---
 
@@ -445,13 +443,9 @@ the frontend drives the lifecycle.
 (`src/PYPLibPinyinCandidates.cc:180-196`): `pinyin_remove_user_candidate`
 (`:193`), only for `CANDIDATE_USER` / `CANDIDATE_LONGER_USER`.
 
-**Durability is save-gated (task 9)** — training lives in the session
-scratch and reaches the pin's files only at `pinyin_save`; a crash
-before the save loses the sub-timer window, exactly as upstream's does.
-(The W6-T5 per-commit-durability deviation is thereby reverted; see
-§11.) Before task 9, this section recorded redb's per-commit guarantee
-as removing that window — the store now reproduces the pin's call
-pattern *and* the pin's loss window.
+**Durability is save-gated** — training lives in the session state and
+reaches the pin's files only at `pinyin_save`; a crash before the save
+loses the sub-timer window, exactly as upstream's does (§11).
 
 **Persistence is a debounced timer, not focus-out** — `modified()`
 (`src/PYLibPinyin.cc:216-225`) restarts a `GTimer` and (re)arms
@@ -462,22 +456,18 @@ since the last modification; `saveUserDB()` (`:423-431`) calls
 also called immediately after a phrase-list import (`src/PYLibPinyin.cc:275`).
 `focusOut` (`src/PYPPinyinEngine.cc:496`) does **not** save (**SHOWN**: no save
 call in the override), and the backend destructor removes the timer without a
-final flush (**SHOWN**, settled by W6-T5: `LibPinyinBackEnd::~LibPinyinBackEnd`
+final flush (**SHOWN**: `LibPinyinBackEnd::~LibPinyinBackEnd`
 (`src/PYLibPinyin.cc:43-50`) destroys the timer, removes the timeout source,
 and calls only `pinyin_fini`; `saveUserDB`'s only callers are the timer
 callback and `importPinyinDictionary`). Upstream therefore **has no
 flush-on-shutdown**: modifications younger than the last timer tick are lost
 on abrupt exit.
 
-**W6-T5 decision: reproduce the call pattern, not the loss window.**
-oxpinyin's `pinyin_fini` does not save, matching upstream — and the
-data-loss window does not exist here: every training update is a redb
-transaction committed with Immediate durability (fsync before `commit`
-returns), so sub-timer changes are already on disk. `pinyin_save` reproduces
-the §4 gate (`false` when unmodified or without a user dir) and its write
-side is a redb compaction; the flag clears only on a successful save, where
-upstream clears it unconditionally (`pinyin.cpp:1145`) — a deliberate,
-documented deviation that keeps a failed save retryable.
+**oxpinyin reproduces the call pattern and the loss window.**
+oxpinyin's `pinyin_fini` does not save, matching upstream, so changes
+younger than the last `pinyin_save` are lost on exit. `pinyin_save`
+reproduces the §4 gate (`false` when unmodified or without a user dir) and
+writes the pin's file set (§11).
 
 **Import** — `LibPinyinBackEnd::importPinyinDictionary`
 (`src/PYLibPinyin.cc:230`) uses `pinyin_begin_add_phrases(context, …)` /
@@ -489,110 +479,49 @@ non-goal.)
 **Clear** — `clearPinyinUserData` (`src/PYLibPinyin.cc:356-381`) uses
 `pinyin_mask_out` for `all` / `user` / addon targets (`:363-370`).
 
-**Consequence for W6:** to make the C-ABI non-stub for the real consumer, the
-user store must back, at minimum: `pinyin_choose_candidate` (constraint +
-special-type unigram), `pinyin_train`, `pinyin_remember_user_input`,
+**Consequence:** for the real consumer, the user store backs, at minimum:
+`pinyin_choose_candidate` (constraint + special-type unigram), `pinyin_train`, `pinyin_remember_user_input`,
 `pinyin_save`, `pinyin_mask_out`, `pinyin_remove_user_candidate`, the
 `pinyin_*_add_phrase*` import trio, and the `pinyin_*_get_(bigram_)phrases`
 export iterators (§9).
 
 ---
 
-## 7. oxpinyin current state and the gap
+## 7. oxpinyin implementation map
 
-The LSP (rust-analyzer) **was available** and used for this section
-(`goToImplementation` / `findReferences` / `documentSymbol`).
+`oxpinyin-core` defines the `UserModel` seam (`crates/oxpinyin-core/src/lib.rs`).
+`oxpinyin_user::UserStore` implements it (`crates/oxpinyin-user/src/model.rs`)
+and exposes the stored counts as `UserCountDelta` for the §5 merge.
 
-**The seam exists but is unwired.** `oxpinyin-core` defines
-`pub trait UserModel` (`crates/oxpinyin-core/src/lib.rs:87-101`) with
-`score(history, token) -> Cost` (`:95`) and `observe(history, token)`
-(`:100`) — exactly the read/observe shape the user store needs. LSP
-`goToImplementation` on the trait returns **no implementors**, and
-`findReferences` returns a **single** hit (its own declaration): nothing
-implements it and no engine code consults it.
+| Behaviour | oxpinyin |
+|---|---|
+| §2.1 training seed arithmetic | `crates/oxpinyin-user/src/seed.rs` |
+| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-engine/src/session/selection.rs`, `crates/oxpinyin-facade` |
+| §3 user phrase index and token allocation | `crates/oxpinyin-user/src/phrase.rs`, `store.rs` |
+| §4 save cycle and `m_modified` gate | `crates/oxpinyin-user/src/persistence.rs`, `UserStore::save_reporting` |
+| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin-data/src/lm/mod.rs`) |
+| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-facade/src/export_rows.rs` |
+| §11 user files | `crates/oxpinyin-data/src/user_files.rs`, `crates/oxpinyin-user/src/store_libpinyin.rs` |
 
-**`oxpinyin-user` is an empty shell.** `crates/oxpinyin-user/src/lib.rs:1-4` is a
-doc comment only ("redb ACID store for user data … The redb major version is
-pinned"); `crates/oxpinyin-user/Cargo.toml` has an **empty `[dependencies]`** —
-redb is not yet a dependency.
-
-**The C-ABI user-data entry points are stubs** (all in `crates/oxpinyin-capi`):
-
-| Symbol | File:line | Current behaviour |
-|---|---|---|
-| `pinyin_save` | `context.rs:64-73` | Validated **no-op**; returns `true`, writes nothing (comment: "oxpinyin-user has no persistence implementation yet"). |
-| `pinyin_remember_user_input` | `user_data.rs:18-28` | **STUB**, returns `false` ("T4 will implement"). |
-| `pinyin_train` | `candidates.rs:299-304` | Validated **no-op**; returns `true` ("no training with StubLm"). |
-| `pinyin_choose_candidate` | `candidates.rs:240-268` | Resolves the candidate by pointer identity and calls `Session::select(index)`; **no** user-store write. |
-| `pinyin_choose_predicted_candidate` | `candidates.rs:280-288` | Returns `false`. |
-| `pinyin_mask_out` | `config.rs:114-119` | Returns `false` (no masking). |
-| `pinyin_is_user_candidate` / `pinyin_remove_user_candidate` | `candidates.rs:195,215` | Provisional; "no user dictionary yet". |
-
-**The gap.** There is no user bigram, no user unigram delta store, no user
-phrase index, no persistence, and no decode-time merge. `Session::select`
-records the selection for decoding but never `observe()`s it into any user
-model (**SHOWN** by the empty `findReferences` on `UserModel`). W6 must (a)
-implement the `UserModel` seam in `oxpinyin-user` over redb, (b) wire it into
-`Session` and the capi entry points above, and (c) implement the additive
-decode-time merge of §5.
+The C entry points `pinyin_save`, `pinyin_train`, `pinyin_choose_candidate`,
+`pinyin_choose_predicted_candidate`, `pinyin_remember_user_input`,
+`pinyin_mask_out`, `pinyin_remove_user_candidate`, the import trio and the
+export iterators all reach the store.
 
 ---
 
-## 8. Proposed W6 task breakdown (INFERRED — design, not upstream fact)
+## 8. Training-time tools
 
-Each sub-task names what it implements and how it is verified. Ordering lets
-storage + arithmetic land and be unit-tested before touching decode/parity.
-
-- **W6-T1 — user store schema + update arithmetic.** redb tables in
-  `oxpinyin-user`: user bigram (`(prev_token, token) → count`, `prev_token →
-  total`) and user-unigram delta (`token → freq`). Implement `UserModel` for
-  it. Encapsulate the §2.1 seed rule (first-seen 69; repeats
-  `min(max(prev,69)*2, 22080)`) and the §2.3 flat rule.
-  *Verify:* unit tests with hand-computed golden increments from §2; a
-  determinism property test (same input+state → same counts).
-- **W6-T2 — user phrase index + token allocation.** New-phrase insertion into a
-  `USER_DICTIONARY` (=7) sub-index with "max token + 1" allocation (§3.2), and
-  the user pinyin/phrase index tables.
-  *Verify:* an added phrase yields a token with library nibble 7; round-trip
-  lookup; the "merge new reading into existing phrase" branch (§3.2).
-- **W6-T3 — wire training through the engine + capi.** `Session` records the
-  chosen sentence and calls `observe`; make `pinyin_train`,
-  `pinyin_choose_candidate` side effects, and `pinyin_remember_user_input`
-  non-stub (§2, §3.1, §7).
-  *Verify:* after a scripted selection sequence, the store's exported counts
-  equal the §2 arithmetic.
-- **W6-T4 — decode-time additive merge.** Consult the user bigram additively
-  with the system bigram at scoring, per §5 (sum counts, then existing λ
-  blend). This is the decode-touching step; treat §5's tension flag as a gate —
-  reuse the already-frozen scoring formula, do not re-derive it.
-  *Verify:* the release + export-gated parity harness
-  (`real_tables_session_reports_parity`, per the parity finding) shows a
-  trained phrase's rank rise, matching libpinyin.
-- **W6-T5 — persistence.** `pinyin_save` writes the redb store atomically;
-  load on init; dirty/`m_modified` tracking so an unmodified save is a no-op
-  (§4).
-  *Verify:* save → reopen → counts and phrases survive; unmodified save writes
-  nothing.
-- **W6-T6 — masking / removal.** `pinyin_mask_out` and
-  `pinyin_remove_user_candidate` (§3.4, §6).
-  *Verify:* masked tokens vanish from bigram and phrase index; the mask-value
-  semantics (`LIBRARY_MASK | PHRASE_MASK`) match §3.4.
-- **W6-T7 — import / export iterators.** `pinyin_*_add_phrase*` (import) and
-  `pinyin_*_get_(bigram_)phrases` (export). The export iterators double as the
-  §9 differential surface.
-  *Verify:* import a list → export returns the same `(phrase, pinyin, count)`
-  set.
-
-*Note on `import_interpolation`.* `import_interpolation` /
+`import_interpolation` /
 `export_interpolation` live in `utils/storage/` (build/training tools) and
 touch the **system** interpolation model, not the user store — confirmed by
 grep: no reference in `src/pinyin.cpp` or the runtime library. They are
-characterized under `docs/findings/training-algorithm.md` and are **not** a
-W6 task.
+characterized under [`training-algorithm.md`](training-algorithm.md) and
+are not part of the user store.
 
 ---
 
-## 9. Differential-parity plan (value-level, not byte layout)
+## 9. Value comparison surface
 
 libpinyin exposes a **format-independent** value dump that is the natural
 comparison surface (**SHOWN**, `src/pinyin.h`):
@@ -610,19 +539,14 @@ Each yields `(phrase, pinyin, count)` triples. The frontend's
 `exportUserPhrase` / `exportBigramPhrase` (`src/PYLibPinyin.cc:280-321`)
 demonstrate the intended use.
 
-**Plan.** Drive the pinned oracle (the existing `pinyin-oracle` harness) and
-oxpinyin through an *identical* scripted C-ABI sequence — `pinyin_init` →
-parse → `pinyin_choose_candidate` / `pinyin_train` /
-`pinyin_remember_user_input` → `pinyin_save` — then compare the two exported
-`(phrase, pinyin, count)` **sets**. Because the §2 arithmetic is exact integer
-counting, this is an **exact-equality** comparison, not a tolerance. This
-compares *values*, so redb ≠ MemoryChunk/DBM is irrelevant (§10).
-
-Two complementary layers back it up: (a) unit golden vectors derived by hand
-from §2 for the update arithmetic; (b) the release + export-gated decode parity
-harness (`real_tables_session_reports_parity`) for the §5 rank effects — noting
-that harness is release-only and export-gated (`docs/findings/` parity notes;
-project memory).
+**Comparison.** Drive the pin and oxpinyin through an identical C-ABI
+sequence — `pinyin_init` → parse → `pinyin_choose_candidate` /
+`pinyin_train` / `pinyin_remember_user_input` → `pinyin_save` — then compare
+the two exported `(phrase, pinyin, count)` **sets**. Because the §2
+arithmetic is exact integer counting, this is an **exact-equality**
+comparison, not a tolerance. Unit golden vectors derived by hand from §2
+cover the update arithmetic. Because oxpinyin writes the pin's own files,
+the files themselves are a second comparison surface (§11).
 
 ---
 
@@ -630,56 +554,19 @@ project memory).
 
 **Dependencies.**
 
-- `redb` as the `oxpinyin-user` backend — *intended* (per the crate doc) but
-  **not yet a dependency** (`crates/oxpinyin-user/Cargo.toml`). Adding it is a
-  `Cargo.toml` change and therefore a maintainer-ask per contributor guidance "Hard
-  forbids"; W6-T1 must raise it, not slip it in.
-- The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs:87`) and the engine
-  `Session` (`crates/oxpinyin-engine/src/session.rs`).
-- The oracle export symbols (§9) and the parity harness.
-- W9 (training pipeline) is **independent** — it builds the *system* model
-  offline; the user store shares the bigram/λ math but does not depend on W9
-  code.
+- The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs`) and the engine
+  `Session` (`crates/oxpinyin-engine/src/session/`).
+- The backend store (`oxpinyin-store`), which reads and writes the user
+  files in the backend's own containers.
+- The export symbols (§9).
+- The training pipeline is **independent** — it builds the *system* model
+  offline; the user store shares the bigram/λ math but not its code.
 
 **Non-goals (explicit).**
 
-1. **Not** reproducing libpinyin's binary user-data format — `user_bigram.db`
-   (a DBM/BerkeleyDB store), the `.bin` MemoryChunk dumps, or the phrase-index
-   diff-logger byte layout. redb is the store; only the **values and
-   semantics** are the target. This is the headline decision of this finding.
-
-   (Amended 2026-09-14: this non-goal was superseded by §11 — drop-in
-   task 9, landed 2026-09-09, reads and writes libpinyin's own user-file
-   formats on every backend, and the W6-T5 durability deviation it
-   records was reverted with it. The paragraph stays as the record of
-   the W6-era scope this finding was written under.)
-
-   **Measured cost of this decision, on Kyoto Cabinet
-   (`rss-attribution-2026-09-09`, Phase 2
-   Step 1):** upstream's user bigram is an in-memory `StashDB` opened on
-   `"-"` and snapshotted to disk only at `pinyin_save`
-   (`ngram_kyotodb.cpp:53-62`, reached from `pinyin.cpp:399-401`); oxpinyin's
-   user store is a live on-disk database held open for the process lifetime.
-   Under the KC backend that is one more open `TreeDB`, whose page-cache
-   bucket arrays cost 1,082,240 B fixed by Kyoto Cabinet's default `#bnum`
-   alone — **1,057 KiB as DHAT measures it** (requested bytes live at the
-   global maximum, under valgrind), or **961 KiB rescaled onto the
-   natively measured `[heap]` gap**, the two instruments agreeing to about
-   10% on the total. Neither is an unqualified resident-heap figure and
-   the findings doc labels both wherever they appear. Alongside it,
-   **+196 KiB of resident file pages** — that one measured natively — and
-   **64 MiB of address space** (`HashDB::DEFMSIZ`), which is the whole of
-   oxpinyin's `VmSize` difference against libpinyin.
-
-   This is a **price tag on a settled decision, not a defect and not a fix
-   target**: the format choice is the headline of this finding and stands.
-   Recorded so the decision carries its cost, and so the RSS work does not
-   re-derive it as an addressable gap. The separable question it does raise —
-   whether the store needs to be *open* while idle, which is independent of
-   what format it uses — is untouched and unmeasured. tkrzw (the default
-   when this was written; Berkeley DB since 2026-09-20) is unmeasured;
-   these are Kyoto Cabinet figures.
-2. **Not** the K-mixture-model path (out of scope, as in W9).
+1. **Not** a private user-data format. oxpinyin writes libpinyin's own user
+   files on every backend (§11); there is no conversion, import or version row.
+2. **Not** the K-mixture-model path (out of scope for the user store).
 3. **Not** reproducing the frontend's 5-minute debounce timer inside the
    library — that is frontend policy (§6); the library persists when
    `pinyin_save` is called.
@@ -688,21 +575,14 @@ project memory).
 
 ---
 
-## Appendix — open items marked INFERRED
+## Appendix — settled INFERRED items
 
-- The mapping of libpinyin's system-token unigram **diff-logger** (§4) onto a
-  redb representation is a design choice, not an upstream fact; **settled by
-  W6-T1/T5**: oxpinyin keeps system-token unigram increments in the same
-  `user_unigram` delta table as user tokens — the T4 merge adds them onto the
-  system counts at decode time, and T5's save persists that single table
-  inside `user_store.redb`, so there is no separate diff-log file.
-- ~~Whether any shutdown/disconnect path flushes the store before the 5-minute
-  timer (§6) is not visible in the files read; a `pinyin_save` on engine
-  teardown elsewhere in the frontend would settle it.~~ **Settled by W6-T5**
-  (§6): upstream has no flush-on-shutdown; oxpinyin reproduces the call
-  pattern, and its durable per-commit redb writes remove the loss window.
+- System-token unigram increments persist as each `SYSTEM_FILE` library's
+  `.dbin` diff log, as upstream's do (§4, §11).
+- Upstream has no flush-on-shutdown (§6); oxpinyin reproduces the call
+  pattern and the loss window.
 - The exact numeric value of `lambda` is intentionally not restated here; it is
-  frozen in `docs/findings/scoring-spec.md`.
+  defined in [`scoring-spec.md`](scoring-spec.md).
   §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system
   is an additive pre-merge), which is SHOWN.
 
@@ -710,205 +590,158 @@ project memory).
 
 ## 11. Implementation record — the store persists in libpinyin's own files (2026-09-09)
 
-Drop-in task 9 landed: the user dir's I/O is now the pin's own file set
-on every backend, so a same-backend pair (oxpinyin↔libpinyin on Kyoto
-Cabinet, likewise tkrzw) interoperate seamlessly in both directions —
-the maintainer's 2026-09-09 ruling as clarified (per KV backend family;
-data loss only when the backend actually changes, which `user.conf`'s
-`database format` conformance line enforces exactly as upstream's
-`check_format` does).
+The user directory holds the pin's own file set on every backend. A
+same-backend pair (oxpinyin and libpinyin on Berkeley DB, Kyoto Cabinet or
+tkrzw) reads and writes the same profile in both directions. A profile
+from another backend family is non-conforming: `user.conf`'s
+`database format` line fails the conformance check, and the profile is
+wiped, exactly as upstream's `check_format` does.
 
-Architecture — a session scratch behind the value engine:
+Architecture — the session state behind the value engine:
 
 * `oxpinyin_data::user_files` — the inventory (`UserDbm`: libpinyin's
-  names on KC/tkrzw, `<stem>.<ext>` on redb/LMDB — "libpinyin with
-  redb"), the `user.conf` codec (`UserTableInfo`, `OPEN_COUNTER_LIMIT`
-  = 6, `get_open_counter`, conformance), and the `PhraseIndexLogger`
-  record codec (add/remove/modify/header; MODIFY_HEADER carries the
-  payload length once, then two runs).
-* `oxpinyin_user::persistence` — load (`check_format` first: wipe on
-  non-conform; then — for `persistence::load`'s callers only — the user
-  bigram's raw rows verbatim (amendment 2026-10-14 below), the USER_FILE chunk
-  stores, and the `.dbin` logs replayed onto the original system
-  chunks with merge's stop-at-first-mismatch), save (the pin's
-  `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
-  then all renames) and fini, each writing `user.conf` under the
-  facade's law (`UserConfLaw`, amendment below). `user_phrase_index.bin`
-  is saved as the session's stored records, as they are, never rebuilt
-  from the USER_FILE items; at load it is read back
-  only as a set of exact `(token, text)` membership pairs
+  file names on every backend), the `user.conf` codec (`UserTableInfo`,
+  `OPEN_COUNTER_LIMIT` = 6, `get_open_counter`, conformance), and the
+  `PhraseIndexLogger` record codec (add/remove/modify/header;
+  MODIFY_HEADER carries the payload length once, then two runs).
+* `oxpinyin_user::persistence` — load, save and fini.
+  - Load runs `check_format` first and wipes a non-conforming profile.
+    It then reads the user bigram's raw rows verbatim, the `USER_FILE`
+    chunk stores, and the `.dbin` logs replayed onto the original system
+    chunks with merge's stop-at-first-mismatch.
+  - Save is the pin's `_write_files` + `_rename_files`: every file whole
+    to a `.tmp` sibling, then all renames.
+  - Load, save and fini write `user.conf` under the facade's law (`UserConfLaw`, below).
+* `user_phrase_index.bin` is saved as the session's stored records, as
+  they are, never rebuilt from the `USER_FILE` items. At load it is read
+  back only as a set of exact `(token, text)` membership pairs
   (`PHRASE_TABLE`) for `remove_user_phrase`'s phrase-table check
-  (`pinyin.cpp:3750`; policy row 81) — a token may sit under several
-  texts, and the pin matches the exact pair — never as a text source.
+  (`pinyin.cpp:3750`; policy row 81). A token may sit under several texts,
+  and the pin matches the exact pair; the file is never a text source.
   A derived `PHRASE_TABLE_BY_TEXT` index (`text ++ 0x00 ++ token_be`)
   gives one text's pairs a contiguous range for the membership read the
-  zhuyin import makes (`phrase_table_tokens_for_text`); every
-  `PHRASE_TABLE` writer maintains it and an empty one is rebuilt from
-  `PHRASE_TABLE`.
-  A profile written before the table existed is not backfilled: a missing
-  row is the pin's `:3750` state. The value
-  engine's text lookups still derive from `user.bin`.
-  `user_pinyin_index.bin` is not (amendment
-  2026-09-27, #534): a reading merged into an existing phrase is never
-  indexed (`pinyin.cpp:569-582`), so its records are loaded and saved
-  back as the per-reading `indexed` flag.
-* **Amendment (2026-09-27, #541): the session keeps the pin's own user
-  bigram container.** Besides the scratch tables, a libpinyin session
-  holds `Bigram::m_db` as the pin builds it — tkrzw `TinyDBM`, Kyoto
-  Cabinet `StashDB` via `load_snapshot`, Berkeley DB an in-memory
-  `DB_HASH` by cursor copy (`oxpinyin_store::UserBigramDb`) — and replays
-  the pin's operations on it: one `store` per trained or predicted pair,
-  `Bigram::mask_out`'s walk for a mask or a user-phrase removal. Its walk
-  order is therefore the pin's; the bigram export iterates it, and
-  `pinyin_save` writes `user_bigram.db` from it by the pin's `save_db`.
-  The scratch tables stay the source of every count. **Amendment
-  (2026-10-14 UTC, #757 PR 2): the container is the only copy.** The
-  `BIGRAM`/`BIGRAM_TOTAL` scratch tables, their decode at load (with its
-  load-time fault snapshots) and their normalized rewrites are removed.
-  The session reads `user_bigram.db` once, by `load_db`, after the
-  profile check, and every bigram operation runs the pin's own sequence
-  on the raw grams: training (`phonetic_lookup.h:876-909`), predicted
-  training (`pinyin.cpp:2622-2638`), prediction (`pinyin.cpp:2321-2341`),
-  the export's lazy per-key load (`pinyin.cpp:775-787`, `:885-890`), and
-  `Bigram::mask_out` for a mask or a removal (`ngram_bdb.cpp:217-254`
-  and its twins), which leaves a gram it removed nothing from untouched.
-  The fault checks read the live container: non-token keys from its
-  keys, short and partial values from the bytes, and a mask's residual
-  total by running the ported mask on a copy. A writer takes the
+  zhuyin import makes (`phrase_table_tokens_for_text`). Every
+  `PHRASE_TABLE` writer maintains it, and an empty one is rebuilt from
+  `PHRASE_TABLE`. A profile without the table is not backfilled: a
+  missing row is the pin's `:3750` state. The value engine's text lookups
+  derive from `user.bin`.
+* `user_pinyin_index.bin` keeps the per-reading `indexed` flag: a reading
+  merged into an existing phrase is never indexed (`pinyin.cpp:569-582`),
+  so its records are loaded and saved back as they are.
+* **The session keeps the pin's own user bigram container, and it is the
+  only copy.** A libpinyin session holds `Bigram::m_db` as the pin builds
+  it — tkrzw `TinyDBM`, Kyoto Cabinet `StashDB` via `load_snapshot`,
+  Berkeley DB an in-memory `DB_HASH` by cursor copy
+  (`oxpinyin_store::UserBigramDb`). The session reads `user_bigram.db`
+  once, by `load_db`, after the profile check. Every bigram operation
+  then runs the pin's own sequence on the raw grams:
+  - training (`phonetic_lookup.h:876-909`);
+  - predicted training (`pinyin.cpp:2622-2638`);
+  - prediction (`pinyin.cpp:2321-2341`);
+  - the export's lazy per-key load (`pinyin.cpp:775-787`, `:885-890`);
+  - `Bigram::mask_out` for a mask or a removal (`ngram_bdb.cpp:217-254`
+    and its twins), which leaves a gram it removed nothing from untouched.
+
+  Its walk order is therefore the pin's. The bigram export iterates it,
+  and `pinyin_save` writes `user_bigram.db` from it by the pin's
+  `save_db`. The fault checks read the live container: non-token keys
+  from its keys, short and partial values from the bytes, and a mask's
+  residual total by running the ported mask on a copy. A writer takes the
   database guard, then the container, and moves the write generation
-  before releasing the database guard. `UserState.bigram` is now the
-  raw `(key, value)` rows in file order, filled by `persistence::load`
-  and written by `persistence::save_state_reporting`, which has no container.
+  before it releases the database guard. `UserState.bigram` holds the raw
+  `(key, value)` rows in file order. `persistence::load` fills it and
+  `persistence::save_state_reporting`, which has no container, writes it.
 * **The user bigram's container is backend-specific, and is not the
-  system bigram's container** — the fact that produced this section's
-  one real defect. On Kyoto Cabinet the *system* `bigram.db` is a
-  `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`) but the *user*
+  system bigram's container.** On Kyoto Cabinet the *system* `bigram.db`
+  is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`), but the *user*
   `user_bigram.db` is an in-memory `StashDB` dumped as a snapshot stream,
   magic `KCSS` (`load_db`/`save_db`'s `load_snapshot`/`dump_snapshot`,
   `ngram_kyotodb.cpp:54-101`). tkrzw uses a `HashDBM` file for both
-  (`ngram_tkrzwdb.cpp:48-84`). So the store carries its own seam —
-  `RawReadStore::open_user_bigram` / `WriteStore::write_user_bigram` —
-  whose default is the hash container (correct for tkrzw, and for redb
-  and LMDB, which have no such distinction) and which Kyoto Cabinet
-  overrides with the stash-plus-snapshot form. Opening the user bigram
-  through the *system* bigram's hash path answers
+  (`ngram_tkrzwdb.cpp:48-84`), and Berkeley DB a `DB_HASH` file for both.
+  The store therefore has its own seam —
+  `RawReadStore::open_user_bigram` / `WriteStore::write_user_bigram`.
+  Its default is the hash container (correct for tkrzw and Berkeley DB),
+  and Kyoto Cabinet overrides it with the stash-plus-snapshot form.
+  Opening the user bigram through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
-* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin`: the
-  profile is read into the **session's state in process memory** (the
-  user library arenas, the pinyin index and phrase table, the pin's user
+* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin` reads the
+  profile into the **session's state in process memory**: the user
+  library arenas, the pinyin index and phrase table, the pin's user
   bigram container, the live system items and the libraries'
-  stored-total offsets), every W6 value operation runs against that
-  state, and `save()` exports the session back into the file set.
-  **Amendment (2026-10-01, #546, #531):** this
-  replaced a temp-file scratch under `std::env::temp_dir()`. The pin
-  reads no temp variable and opens no temp file anywhere under `src` at
-  074a2219 (its context holds the loaded profile in memory,
-  `pinyin.cpp:326-444`); the scratch read `TMPDIR` at `pinyin_init`, and
-  a process that died before `pinyin_fini` left the ~0.5 MB scratch
-  behind (#546). It was also a file shared across `fork`: a child's
-  `pinyin_save` truncated it under the parent, whose Kyoto Cabinet handle
-  then failed its next write (current main) or spun (the audited
-  `18d78208`, #531). Memory is private to the process, so neither can
-  happen. The value mapping is one-for-one: the bigram is the pin's
-  own container (amendment above); a user item is the `PHRASE` text + the
-  `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
-  `UNIGRAM` accumulation (`count·3` base, `seed·7` training). System
-  imports retain full packed item payloads in a sparse session-memory map;
-  original items are read lazily from shared immutable mappings. Appended
-  system items also have user lookup rows for their creation reading.
-  Save emits full-item `.dbin` ADD/MODIFY records using local slots
-  (`074a2219`, `phrase_index.cpp:394–442`), including pronunciation changes.
+  stored-total offsets. Every value operation runs against that state,
+  and `save()` exports the session back into the file set. The pin reads
+  no temp variable and opens no temp file anywhere under `src` at
+  074a2219; its context holds the loaded profile in memory
+  (`pinyin.cpp:326-444`). Process memory is private, so a `fork`ed
+  child's save cannot disturb the parent. The value mapping is
+  one-for-one:
+  - the bigram is the pin's own container (above);
+  - a user item is the `PHRASE` text, the `PRONUNCIATION` rows (packed
+    keys — one wire form) and the token's full `UNIGRAM` accumulation
+    (`count·3` base, `seed·7` training);
+  - system imports retain full packed item payloads in a sparse
+    session-memory map, and original items are read lazily from shared
+    immutable mappings;
+  - appended system items also have user lookup rows for their creation reading;
+  - save emits full-item `.dbin` ADD/MODIFY records using local slots
+    (`074a2219`, `phrase_index.cpp:394–442`), including pronunciation changes.
 
-Semantics this reverts or preserves, on purpose:
+Semantics this preserves:
 
-* **The §4 gate is the pin's** — `m_modified` is armed only by training
-  and the import trio's `mark_modified` (the pin sets it in
-  `pinyin_train` and `pinyin_end_add_phrases` alone), so `pinyin_save`
-  before either is a no-op. The frozen dirty-gate test stands unedited.
-* **The W6-T5 durability deviation is reverted** — nothing durable
-  between saves; a crash loses the sub-timer window exactly as
-  upstream's does. `user_store.<ext>` leaves the user dir.
-* System import pronunciation changes are preserved by #599, including
+* **The §4 gate is the pin's** — only training and the import trio's
+  `mark_modified` arm `m_modified` (the pin sets it in `pinyin_train`
+  and `pinyin_end_add_phrases` alone), so `pinyin_save` before either is
+  a no-op.
+* **Nothing is durable between saves** — a crash loses the sub-timer
+  window exactly as upstream's does. The user directory holds only the
+  pin's files.
+* System import pronunciation changes are preserved, including
   pin-created payloads read and saved back through oxpinyin. The separate
-  training path still lacks per-pronunciation updates, and replayed REMOVE
-  records remain outside the runtime value model.
-* **Amendment (2026-09-25, #523): the open counter's lifecycle is the
-  facade's, and fini lowers it.** Task 9 raised the counter at every
-  open and never lowered it, so the eighth clean launch of a profile
-  wiped it. The two pins differ here, and `UserConfLaw` names which one
-  a profile follows. libpinyin raises at init and writes the marker
-  (`pinyin.cpp:185-187`), writes the same value back at save
-  (`mark_version`, `:1143`), and lowers it at fini — `get_open_counter`
-  then `counter > 1 ? counter - 1 : 0` — writing again whether or not a
-  save came first (`:1194-1200`). libzhuyin never moves it: init only
-  reads the marker (`zhuyin.cpp:126-162`), save writes a fresh
-  `UserTableInfo` with counter 0 (`:164-176`, `:695`), and fini writes
-  nothing (`:741-757`). Neither wipe removes `user.conf`. The fini write
-  belongs to the store handle whose open raised the counter: dropping
-  it is the context's `*_fini`. A process that dies before its fini
-  leaves the counter raised, so seven killed launches in a row wipe the
-  profile at the eighth, where the pin wipes it too. The differential
-  is `tools/bisection/run-open-counter-diff.sh`.
-* **Amendment (2026-09-25, #538): every open is a session of its own.**
-  Task 9 shared one session per user dir through the process registry.
-  A second `pinyin_init` on a dir another live context had open reused
-  the first context's scratch, dirty flag and counter, so it saw the
-  first context's unsaved learning, its save answered for the other
-  context's changes, and the second init raised nothing. Upstream
-  holds nothing per directory: every init reads the profile into its
-  own context (`pinyin.cpp:326-444`) and every save writes that
-  context's whole state (`:1132-1147`). `open_libpinyin` now reserves a
-  fresh scratch per open and runs `check_format` every time, so two
-  contexts on one dir are independent, and when both save, the later
-  save's files are the profile. The differential is
-  `tools/bisection/run-two-context-diff.sh`.
-* **Amendment (2026-09-25, #583): the counter reads as `%d` reads it.**
-  Task 9 parsed `open counter:` as a bare unsigned decimal and read
-  anything else as 0. Upstream reads the line with
-  `fscanf(input, "open counter:%d\n", &counter)` into an `int`
-  (`table_info.cpp:356-359`, `table_info.h:102`), so it takes a sign, a
-  negative value, the digits before trailing garbage, a value on the
-  next line, and the low 32 bits of a value past `int`. The old parse
-  kept profiles the pin wipes (`+7`, `7x`) and wrote 1 at init where
-  the pin writes −2 (`-3`). `UserTableInfo::open_counter` is an `i32`
-  now, and the line is scanned as glibc's `%d` scans it:
-  - from the first line that holds the literal, where white space
-    before the literal and the literal's own space match as the
-    format's do;
-  - across newlines to a sign and the digits;
-  - with `strtol`'s saturation at `long`;
-  - keeping the low 32 bits, as the store through `int *` does.
+  training path still lacks per-pronunciation updates, and replayed
+  REMOVE records remain outside the runtime value model.
+* **The open counter's lifecycle is the facade's, and fini lowers it.**
+  The two pins differ here, and `UserConfLaw` names which one a profile
+  follows.
+  - libpinyin raises the counter at init and writes the marker
+    (`pinyin.cpp:185-187`), writes the same value back at save
+    (`mark_version`, `:1143`), and lowers it at fini —
+    `get_open_counter` then `counter > 1 ? counter - 1 : 0` — writing
+    again whether or not a save came first (`:1194-1200`).
+  - libzhuyin never moves it: init only reads the marker
+    (`zhuyin.cpp:126-162`), save writes a fresh `UserTableInfo` with
+    counter 0 (`:164-176`, `:695`), and fini writes nothing (`:741-757`).
 
-  The marker is read as bytes. UTF-8 validation is retained before the
-  counter value. After its literal, the first invalid byte ends the
-  input considered by `%d`, just as a non-digit ends its
-  conversion without rejecting the marker, while a stray byte before
-  the identity fields still rejects it. Counter discovery advances
-  monotonically rather than rescanning whitespace suffixes. The
-  differential is the seeded protocol of
-  `tools/bisection/run-open-counter-diff.sh`.
-
-* **Amendment (2026-09-27, #589/#590): the whole marker is the pin's
-  `fscanf` sequence, and its abort point is a refusal.** The #583
-  amendment above read the counter as `%d` reads it, but kept a line
-  model around it and validated UTF-8 before the literal.
-  `UserTableInfo::load` is *four* `fscanf` calls over one stream
-  (`table_info.cpp:338-359`), so `UserTableInfo::parse` is that sequence
-  now, byte for byte:
-  - both version directives are `%d` (`:338`, `:344`) — a sign, every
-    digit, `strtol`'s saturation at `long`, the low 32 bits kept by the
-    store through `int *`. `+7` and `4294967303` read 7 and conform; the
-    old bare-unsigned reader rejected them and wiped a profile the pin
-    keeps (#589);
+  Neither wipe removes `user.conf`. The fini write belongs to the store
+  handle whose open raised the counter: dropping it is the context's
+  `*_fini`. A process that dies before its fini leaves the counter
+  raised, so seven killed launches in a row wipe the profile at the
+  eighth, where the pin wipes it too.
+* **Every open is a session of its own.** Upstream holds nothing per
+  directory: every init reads the profile into its own context
+  (`pinyin.cpp:326-444`) and every save writes that context's whole state
+  (`:1132-1147`). `open_libpinyin` reserves a fresh session per open and
+  runs `check_format` every time. Two contexts on one directory are
+  therefore independent, and when both save, the later save's files are
+  the profile.
+* **The whole marker is the pin's `fscanf` sequence, and its abort point
+  is a refusal.** `UserTableInfo::load` is four `fscanf` calls over one
+  stream (`table_info.cpp:338-359`), and `UserTableInfo::parse` is that
+  sequence, byte for byte:
+  - both version directives are `%d` (`:338`, `:344`): a sign, every
+    digit, `strtol`'s saturation at `long`, and the low 32 bits kept by
+    the store through `int *`. `+7` and `4294967303` read 7 and conform;
   - `database format:` is `%255s` (`:352`): white-space prefixed, at
     most 255 bytes, stopped by white space, so a token can cross a
     newline and a trailing word is left for the next directive;
   - the counter directive reads from where the third stopped — one
-    attempt at its literal, then `%d` — so a junk line between the two
-    reads 0, as the pin does, and a failed conversion still reads 0
-    (`:358-359`, #583's law, unchanged);
-  - `parse` takes bytes: the UTF-8 special case this document recorded
-    is gone, and bytes upstream never reads decide nothing.
+    attempt at its literal, then `%d` into an `int`
+    (`table_info.cpp:356-359`, `table_info.h:102`). It takes a sign, a
+    negative value, the digits before trailing garbage, a value on the
+    next line, and the low 32 bits of a value past `int`. A junk line
+    between the two reads 0, and a failed conversion reads 0;
+  - `parse` takes bytes, and bytes upstream never reads decide nothing.
+    `UserTableInfo::open_counter` is an `i32`.
+
   The one outcome that is not a value is
   `to_table_database_format_type`'s `abort()` (`:122-133`, reached at
   `:353-354` whenever the third call does not return `EOF` — including
@@ -916,111 +749,46 @@ Semantics this reverts or preserves, on purpose:
   class-(c) site: the parse answers
   `Err(UserConfError::UnknownDatabaseFormat)`, the store does not open
   (`OpenError::UnknownDatabaseFormat`), `pinyin_init`/`zhuyin_init`
-  answer NULL, and nothing is cleaned or written — where the previous
-  code read the token as unknown and wiped the profile. One GLib warning
-  per attempt: `check_format: unknown database format in user.conf`.
-  The differential is the seeded protocol of
-  `tools/bisection/run-open-counter-diff.sh`: the counter seeds keep
-  their byte-for-byte comparison, the `conf-*` cases cover the whole
-  sequence, and the `abort-*` expectation channel asserts the pin's
-  SIGABRT against the refusal.
-
-* **Amendment (2026-10-04, #619): an empty user dir is the working
-  directory, and only NULL is no user dir.** Task 9 opened the store on
-  a non-empty path only, and the two inits turned a NULL user dir into
-  `""` first, so both arguments meant "no user dir". Upstream keeps
-  `g_strdup(userdir)` (`pinyin.cpp:332`, `zhuyin.cpp:276`), tests only
-  the pointer (`pinyin.cpp:1133`, `:2671`; `zhuyin.cpp:548`, `:1697`)
-  and builds each path with `g_build_filename`, which drops an empty
-  element: a `""` user dir is a profile of bare file names, resolved
-  against the directory current at each file operation, so a consumer
-  that changes directory after init saves into the new one. A NULL user
-  dir still trains nothing and writes nothing. The two now stay apart
-  from `pinyin_init`/`zhuyin_init` down (`ContextCore::try_open` takes
-  `Option<&str>`), `Runtime::open` opens the store on an empty path and
-  keeps it relative, and the DBM sidecar cleanup unlinks its two names
-  by path instead of walking the directory, which an empty path cannot
-  open. The differential is `tools/bisection/run-locale-diff.sh`,
-  which now runs every form of the user-dir argument.
+  answer NULL, and nothing is cleaned or written. One GLib warning per
+  attempt: `check_format: unknown database format in user.conf`.
+* **An empty user directory is the working directory, and only NULL is
+  no user directory.** Upstream keeps `g_strdup(userdir)`
+  (`pinyin.cpp:332`, `zhuyin.cpp:276`), tests only the pointer
+  (`pinyin.cpp:1133`, `:2671`; `zhuyin.cpp:548`, `:1697`) and builds each
+  path with `g_build_filename`, which drops an empty element. A `""` user
+  directory is a profile of bare file names, resolved against the
+  directory current at each file operation, so a consumer that changes
+  directory after init saves into the new one. The two stay apart from
+  `pinyin_init`/`zhuyin_init` down (`ContextCore::try_open` takes
+  `Option<&str>`). `Runtime::open` opens the store on an empty path and
+  keeps it relative, and the DBM sidecar cleanup unlinks its two names by
+  path instead of walking the directory, which an empty path cannot open.
 
 Verification: unit goldens and round-trips at every layer (codecs,
-persistence, bridge, e2e); the backend matrix through the
-`oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and
-287 tests) plus redb, LMDB and tkrzw on the host; and
-`tools/oracle/user-dir-round-trip.sh` — the seamless claim itself,
-measured against three real pin-built oracles on 2026-09-13, on the
-script's default inputs (`nihao nisha`):
+persistence, bridge, end-to-end), and the handoff tests over the
+pin-written profiles in each C crate's `testdata/pin-profiles.txt`
+([contract references](../runbooks/contract-references.md)). Recorded
+evidence (2026-09-13) for the round-trip claim: the pin trained a profile
+on the inputs `nihao nisha`, oxpinyin opened it through the production
+`Runtime` and saved it back in place, and the pin then rendered the
+original and the rewritten profile.
 
-| pair | oracle DBM | Phase C — the pin re-renders | Phase D — the pin reads |
-|---|---|---|---|
-| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
-| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
-| oxpinyin ↔ libpinyin, **Berkeley DB** | `--dbm bdb` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+| pair | Phase C — the pin re-renders | Phase D — the pin reads |
+|---|---|---|
+| oxpinyin ↔ libpinyin, **tkrzw** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+| oxpinyin ↔ libpinyin, **Berkeley DB** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
 
 The three rows the pin renders are `P 你好 ni'hao 5`, `P 你沙 ni'sha 5`
-and `B 你好 ni'hao 138` — byte-identical on all three DBMs. The
-three-input set `tools/oracle/docker-user-rt.sh` drives (`nihao nisha
-nihaoa`) was measured on tkrzw the same day: `IDENTICAL` at 6 rows,
-`READABLE` at 3 phrase rows. The driver runs ibus's
-`remember-every-input` path (`pinyin_get_sentence` →
-`pinyin_remember_user_input`) after each train, so the profile is not
-phrase-free and `user.bin` and the two index trees carry real content
-across the round trip. An earlier driver trained without remembering,
-which left those three files at their empty-library sizes and proved
-only the bigram and `.dbin` halves — the user phrases, the most visible
-part of a learned dictionary, were untested against a real libpinyin.
+and `B 你好 ni'hao 138`. The driver ran ibus's `remember-every-input`
+path (`pinyin_get_sentence` → `pinyin_remember_user_input`) after each
+train, so `user.bin` and the two index trees carried real content.
 
-**Correction (2026-09-13).** Until this date the table above read
-"**PASSED**, 10/10 export rows byte-identical" for Kyoto Cabinet and
-tkrzw, dated 2026-09-09. That figure is not reproducible from any
-committed harness. It was introduced by `939400c6` alongside a
-`user_driver.c` whose selections installed no usable constraint — a
-matter of candidate and instance state, not the candidate index alone:
-on the first input index 0 held a `LONGER_CANDIDATE` or a
-`NORMAL_CANDIDATE` (no sentence candidate existed yet — the driver
-listed candidates before guessing the sentence), and from the second
-input onward it held an `NBEST_MATCH_CANDIDATE` reading the previous
-input's n-best results, because the instance was never reset — and
-choosing that candidate runs `diff_result(best, best)`, which installs
-no `CONSTRAINT_ONESTEP`. With those inputs `train_result3` stored no
-user-bigram grams at all; with no grams Phase B's `!bigram.is_empty()`
-assertion fails and Phase C never runs, on every backend. The driver
-was fixed on 2026-09-13: it follows ibus's
-call order and sort option and selects `NORMAL_CANDIDATE`s at the
-advancing lookup cursor, and Phase A now asserts that the pin trained
-bigram rows rather than leaving that to surface two phases later. The
-table is that harness re-measured; `docs/findings/berkeleydb-backend.md`
-recorded the regression and carries the mechanism and two corrections to
-the first account of it.
-
-The script takes oxpinyin's backend from `OX_CARGO_FEATURES`, which must
-match the oracle prefix's `--with-dbm` — the claim is per KV family, so
-each pair is driven against a same-backend oracle. Its design is a pure
-load→save round trip: the pin trains a profile, oxpinyin opens it through
-the production `Runtime` and saves it back **in place**, and the pin then
-renders the kept original dump and the rewritten profile and diffs the
-two. Both renders go through the pin's own exporter over the same
-underlying data, so the only variable is oxpinyin's read and write.
-
-The Kyoto Cabinet leg is the reason this round trip exists in this shape.
-An earlier harness compared renders of two *independently trained*
-profiles and so asserted two registered divergences instead of file I/O —
-the pin's bigram-export iterator drops pinyin rows through its stale
-`get_pinyin_string` buffer (class (b), row 1 of the compatibility
-policy's table), and the pin and oxpinyin segment and train the same
-input differently (the n-best trellis, class (a), row 11). Worse, it only
-ever ran the tkrzw oracle, where the user bigram happens to be a hash
-file, so the Kyoto Cabinet container difference went untested: the first
-KC run loaded **zero** grams
-(`kcdbopen: missing magic data of the file`) and exposed the
-user-bigram-container defect above. A raw DBM probe of the pin's tkrzw
-`user_bigram.db` had settled the value question directly (oxpinyin read
-the container back with every key and value identical: `疒→{的:69,
-好:69}` total 138 and `sentence_start→疒:207`). The lesson for future
-harnesses on this surface: never put a render-vs-render assertion across
-two trainers or two renderers that carry registered divergences — diff
-one renderer over one dataset, or diff the raw containers — and never
-verify a per-backend claim on one backend.
+Rule for harnesses on this surface: diff one renderer over one dataset,
+or diff the raw containers. Never assert render-against-render across two
+trainers or two renderers that carry registered divergences (the bigram
+export's stale pinyin buffer, policy row 1; n-best training, row 11).
+Never verify a per-backend claim on one backend.
 
 ### NULL directory sessions (2026-10-08 UTC, #642)
 
@@ -1029,4 +797,4 @@ It has no directory, unlike the non-NULL empty path (cwd at each operation).
 Import, lookup, mask, remember and frequency changes use session state;
 train and save refuse before mutation or persistence. Pinyin emits the
 pin's failed empty-filename marker diagnostics at init/fini without writing
-files. See [the additive internal APIs](../api/transient-user-store.md).
+files (`UserStore::open_transient`).
