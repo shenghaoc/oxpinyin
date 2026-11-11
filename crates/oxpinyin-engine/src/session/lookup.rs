@@ -1015,20 +1015,46 @@ where
             return Ok(0);
         }
 
-        // Lift the scratch out before borrowing `raw`, so graph/scan can
-        // use `&self.input.as_str()[anchor..]` without cloning into a
-        // CompactString. Destructured into owned locals so the scan body
-        // below reads exactly as before; reassembled and handed back at the
-        // end. The candidates themselves are collected straight into
-        // `out`, the buffer the caller keeps.
+        self.with_scan_scratch(|session, scratch| {
+            session.scan_window_with_scratch(anchor, out, gate, scratch)
+        })
+    }
+
+    // Keep scratch separate from the session so the scan can borrow the
+    // retained input and topology while filling the caller's output.
+    fn with_scan_scratch(
+        &mut self,
+        scan: impl FnOnce(&mut Self, &mut Scratch) -> Result<usize, EngineError>,
+    ) -> Result<usize, EngineError> {
+        let mut scratch = core::mem::take(&mut self.scratch);
+        let result = scan(self, &mut scratch);
+        if result.is_err() {
+            // Discard partial scan state while retaining its allocations.
+            scratch.entries.clear();
+            scratch.path.clear();
+            scratch.window_addon.clear();
+            scratch.frequencies.clear();
+            scratch.rank_keys.clear();
+        }
+        self.scratch = scratch;
+        result
+    }
+
+    fn scan_window_with_scratch(
+        &mut self,
+        anchor: usize,
+        out: &mut Vec<Candidate>,
+        gate: bool,
+        scratch: &mut Scratch,
+    ) -> Result<usize, EngineError> {
         let Scratch {
-            mut entries,
-            mut path,
-            mut window_addon,
-            mut frequencies,
-            mut rank_keys,
-            window_items,
-        } = core::mem::take(&mut self.scratch);
+            entries,
+            path,
+            window_addon,
+            frequencies,
+            rank_keys,
+            ..
+        } = scratch;
         let collected = out;
 
         let remaining = &self.input.as_str()[anchor..];
@@ -1058,9 +1084,9 @@ where
             let mut unreadable = false;
             let mut scratch = ScanScratch {
                 unreadable: &mut unreadable,
-                path: &mut path,
-                entries: &mut entries,
-                window_addon: &mut window_addon,
+                path,
+                entries,
+                window_addon,
                 explicit: gate,
             };
             self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
@@ -1083,7 +1109,7 @@ where
             collected,
             gram.as_ref().map(|(prev, row)| (*prev, row)),
             gate,
-            &mut frequencies,
+            frequencies,
         )?;
         // `Session::rank_word`: the sort word, or libzhuyin's fixed
         // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
@@ -1116,7 +1142,7 @@ where
         // Stable sort, all three keys descending: an all-equal tie keeps
         // the collection order, which the scan now lays down in the
         // pin's array order (per window, token-ascending).
-        rank_candidates(collected, &mut rank_keys);
+        rank_candidates(collected, rank_keys);
 
         // The pin prepends LONGER before the frequency dedup
         // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
@@ -1129,7 +1155,7 @@ where
             // The index half is spent once the rows are in order.
             rank_keys.insert(0, (key, 0));
         }
-        dedup_ranked_by_text(collected, &rank_keys);
+        dedup_ranked_by_text(collected, rank_keys);
 
         if collected.is_empty() || empty_phrase_scan {
             let remaining = &self.input.as_str()[anchor..];
@@ -1151,14 +1177,6 @@ where
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
         self.prepend_nbest_rows(collected);
 
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-            frequencies,
-            rank_keys,
-            window_items,
-        };
         Ok(parsed_prefix)
     }
 
@@ -1207,29 +1225,40 @@ where
                 len: self.input.len(),
             });
         }
+        self.build_window(|session, items| {
+            if offset < session.input.len() && !session.spans_a_matrix_key(offset)? {
+                items.push(Candidate::new(
+                    compact_str::CompactString::from(&session.input.as_str()[offset..]),
+                    CandidateKind::Fallback,
+                    0,
+                    session.input.len() - offset,
+                    0,
+                    None,
+                    None,
+                ));
+                // Row 65: an empty column still has the LONGER and sentence
+                // prepends (pinyin.cpp:2292–2296).
+                session.prepend_longer_row(items, true)?;
+                session.prepend_nbest_rows(items);
+                return Ok(());
+            }
+            session.scan_window(offset, items, true)?;
+            Ok(())
+        })
+    }
+
+    fn build_window(
+        &mut self,
+        build: impl FnOnce(&mut Self, &mut Vec<Candidate>) -> Result<(), EngineError>,
+    ) -> Result<CandidateList, EngineError> {
         self.scan_unreadable = false;
         self.scan_ranked_phrase = false;
         let mut items = core::mem::take(&mut self.scratch.window_items);
-        if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
-            items.push(Candidate::new(
-                compact_str::CompactString::from(&self.input.as_str()[offset..]),
-                CandidateKind::Fallback,
-                0,
-                self.input.len() - offset,
-                0,
-                None,
-                None,
-            ));
-            // Row 65: an offset no span starts at is an EMPTY matrix column,
-            // but the pin's two prepends run after the span loop regardless
-            // of it — the LONGER row (`pinyin.cpp:2292-2293`) first, then the
-            // sentence rows (`:2295-2296`). The n-best rows rotate above the
-            // LONGER one, matching the pin's two prepends.
-            self.prepend_longer_row(&mut items, true)?;
-            self.prepend_nbest_rows(&mut items);
-            return Ok(CandidateList::from_vec(items));
+        if let Err(error) = build(self, &mut items) {
+            items.clear();
+            self.scratch.window_items = items;
+            return Err(error);
         }
-        self.scan_window(offset, &mut items, true)?;
         Ok(CandidateList::from_vec(items)
             .with_unreadable_item(self.scan_unreadable)
             .with_ranked_phrase_row(self.scan_ranked_phrase))
@@ -1280,20 +1309,15 @@ where
                 len: self.input.len(),
             });
         }
-        self.scan_unreadable = false;
-        self.scan_ranked_phrase = false;
-        let mut items = core::mem::take(&mut self.scratch.window_items);
-        // A span cannot end at the composition start, and an end on an
-        // apostrophe separator byte is upstream's empty end column: the
-        // window is the prepended sentence rows alone.
-        if offset == 0 || self.input.as_bytes().get(offset - 1) == Some(&b'\'') {
-            self.prepend_nbest_rows(&mut items);
-            return Ok(CandidateList::from_vec(items));
-        }
-        self.scan_window_ending(offset, &mut items)?;
-        Ok(CandidateList::from_vec(items)
-            .with_unreadable_item(self.scan_unreadable)
-            .with_ranked_phrase_row(self.scan_ranked_phrase))
+        self.build_window(|session, items| {
+            // The start and apostrophe separators have no ending span.
+            if offset == 0 || session.input.as_bytes().get(offset - 1) == Some(&b'\'') {
+                session.prepend_nbest_rows(items);
+                return Ok(());
+            }
+            session.scan_window_ending(offset, items)?;
+            Ok(())
+        })
     }
 
     /// The backward-anchored scan proper: the complete retained parse, every
@@ -1313,27 +1337,28 @@ where
     ) -> Result<usize, EngineError> {
         out.clear();
         self.ensure_matrix()?;
+        self.with_scan_scratch(|session, scratch| {
+            session.scan_window_ending_with_scratch(offset, out, scratch)
+        })
+    }
+
+    fn scan_window_ending_with_scratch(
+        &mut self,
+        offset: usize,
+        out: &mut Vec<Candidate>,
+        scratch: &mut Scratch,
+    ) -> Result<usize, EngineError> {
         let rank_word = self.rank_word();
         let Scratch {
-            mut entries,
-            mut path,
-            mut window_addon,
-            mut frequencies,
-            mut rank_keys,
-            window_items,
-        } = core::mem::take(&mut self.scratch);
-        // The zhuyin ending topology takes the same inputs as the retained
-        // matrix (`scan_divided` is false in the collapse mode), so the one
-        // retained matrix serves the before-cursor window too.
+            entries,
+            path,
+            window_addon,
+            frequencies,
+            rank_keys,
+            ..
+        } = scratch;
+        // The retained topology also serves the before-cursor window.
         let Some(matrix) = self.input.parse.get().map(|parse| &parse.matrix) else {
-            self.scratch = Scratch {
-                entries,
-                path,
-                window_addon,
-                frequencies,
-                rank_keys,
-                window_items,
-            };
             return Ok(0);
         };
         let bound = matrix.bound.min(offset);
@@ -1367,13 +1392,13 @@ where
             {
                 let mut buf = ScanBuf {
                     span_base: 0,
-                    path: &mut path,
+                    path,
                     tones: SmallVec::new(),
                     system: &mut group,
-                    addon: &mut window_addon,
+                    addon: window_addon,
                     continued: &mut continued,
                     unreadable: &mut unreadable,
-                    entries: &mut entries,
+                    entries,
                     // `scan_window_ending` serves only the explicit
                     // before-cursor guess (`zhuyin.cpp:1542-1607`).
                     explicit: true,
@@ -1381,7 +1406,7 @@ where
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
             order_window_tail(&mut group, 0);
-            flush_window_batch(&mut window_addon, &mut group);
+            flush_window_batch(window_addon, &mut group);
             if group.is_empty() {
                 continue;
             }
@@ -1402,7 +1427,7 @@ where
                 &group,
                 gram.as_ref().map(|(prev, row)| (*prev, row)),
                 true,
-                &mut frequencies,
+                frequencies,
             )?;
             let slice_start = rank_keys.len();
             rank_keys.extend(
@@ -1428,16 +1453,7 @@ where
 
         // Each slice keeps its own sort order. The final dedup compares
         // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
-        dedup_ranked_by_text(out, &rank_keys);
-
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-            frequencies,
-            rank_keys,
-            window_items,
-        };
+        dedup_ranked_by_text(out, rank_keys);
 
         self.scan_unreadable = unreadable;
         self.scan_ranked_phrase = ranked_phrase;

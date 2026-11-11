@@ -2955,6 +2955,48 @@ fn partial_candidate_gram_logs_once(
     crate::context::pinyin_fini(context);
 }
 
+#[test]
+fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
+    crate::test_support::run_in_child(
+        "e2e_tests::repeated_candidate_guess_refuses_the_same_partial_predecessor",
+        |user| {
+            let (_, _, successor) = export_order_fixture();
+            crate::test_support::plant_bigram(
+                user,
+                vec![(
+                    SENTENCE_START.to_le_bytes().to_vec(),
+                    partial_gram(successor),
+                )],
+            );
+            let context = init_at(user);
+            assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+            let instance = pinyin_alloc_instance(context);
+            assert_eq!(pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()), 2);
+
+            // SAFETY: This child is dedicated to this test, and the
+            // handler needs no user data and lives for the process.
+            unsafe {
+                glib_sys::g_log_set_default_handler(Some(collect_glib_log), ptr::null_mut());
+            }
+            for _ in 0..2 {
+                assert!(!pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+                assert!(capture_rows(instance).is_empty());
+                let logs = std::mem::take(&mut *GLIB_LOG.lock().expect("log lock"));
+                assert_eq!(
+                    logs,
+                    [(
+                        "libpinyin".to_owned(),
+                        glib_sys::G_LOG_LEVEL_WARNING,
+                        "pinyin_guess_candidates: a user bigram value would be read past its end (upstream reads past it)".to_owned(),
+                    )]
+                );
+            }
+            crate::instance::pinyin_free_instance(instance);
+            crate::context::pinyin_fini(context);
+        },
+    );
+}
+
 /// Register rows 85 and 98 in walk order: the pin's begin reads no gram
 /// (`pinyin.cpp:775-787`), so a short predecessor the walk loads before a
 /// partial one aborts at `has_next` (`:889`) and the partial one is never

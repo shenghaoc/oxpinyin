@@ -1979,6 +1979,83 @@ impl Dictionary for TwoFacadeDict {
 }
 
 #[test]
+fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
+    use oxpinyin_core::{DYNAMIC_ADJUST, MergedGram, OptionBits};
+
+    let whole = MergedGram::new(4, vec![(DYNAMIC_ADJUST_FIRST, 4)]).to_bytes();
+    let mut partial = whole.clone();
+    partial.push(1);
+    let row = MergedGram::merge(Some(whole), Some(partial));
+
+    for before_cursor in [false, true] {
+        let mut session = Session::new(
+            SessionSettings::default(),
+            TwoFacadeDict {
+                system: PhraseEntry::new(PhraseToken::new(DYNAMIC_ADJUST_FIRST), "系"),
+                addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附"),
+            },
+            CountingBigrams {
+                unigrams: FixedUnigrams {
+                    system: 14,
+                    addon: 7,
+                    total: 51_051_831,
+                    addon_total: 25_525_916,
+                },
+                row: None,
+                merges: Default::default(),
+                asked_about: Default::default(),
+            },
+        );
+        session.set_defer_list_builds(true);
+        session
+            .set_options(OptionBits::default().with(DYNAMIC_ADJUST, true))
+            .expect("set options");
+        session.replace_raw("a").expect("parse");
+
+        let guess = if before_cursor {
+            |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_ending_at(1)
+        } else {
+            |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_at(0)
+        };
+        let window = guess(&mut session).expect("warm scan");
+        assert!(!window.is_empty(), "before cursor: {before_cursor}");
+        session.recycle_candidates(window);
+
+        // The path is inline (SmallVec); inspect the five heap-backed Vecs.
+        let capacities = |scratch: &super::Scratch| {
+            [
+                scratch.entries.capacity(),
+                scratch.window_addon.capacity(),
+                scratch.frequencies.capacity(),
+                scratch.rank_keys.capacity(),
+                scratch.window_items.capacity(),
+            ]
+        };
+        let warm = capacities(&session.scratch);
+        assert!(warm.iter().all(|&capacity| capacity > 0), "{warm:?}");
+        session.model.row.clone_from(&row);
+
+        for _ in 0..2 {
+            assert_eq!(
+                guess(&mut session).expect_err("partial predecessor must refuse"),
+                EngineError::UnsafeLookupPredecessor { token: 1 },
+            );
+            let retained = capacities(&session.scratch);
+            assert!(
+                retained
+                    .iter()
+                    .zip(warm)
+                    .all(|(&after, before)| after >= before),
+                "before cursor: {before_cursor}, warmed: {warm:?}, retained: {retained:?}",
+            );
+            assert!(session.scratch.window_items.is_empty());
+            assert!(!session.scan_unreadable);
+            assert!(!session.scan_ranked_phrase);
+        }
+    }
+}
+
+#[test]
 fn window_scan_emits_system_candidates_before_addon_candidates() {
     // Two one-character candidates whose three RankKeys tie (length 1,
     // span 1, amplified 3: system item 14 over 51,051,831; addon 7 over
