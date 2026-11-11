@@ -1,54 +1,35 @@
-# The `interpolation2.text` grammar — one reader, and one recorded policy split
+# The `interpolation2.text` grammar — one taglib port
 
-Date: 2026-09-10 · Status: **recorded / implemented**
-(`crates/oxpinyin-data/src/interp_grammar.rs`) · Upstream tree read:
+Date: 2026-09-10 · Status: **record (implemented)** · Upstream tree read:
 libpinyin at **`074a2219c90feaf962d0d24f034514033ece5f99`** (2.11.92, the
-oracle pin from `tools/oracle/build-oracle.sh`), fetched by commit SHA
-into a scratch checkout and verified with `git rev-parse`.
-
-Amendment 2026-10-29 UTC: the constitution §4 quotation below is historical;
-current guidance is [the pin-matched panic amendment](compatibility-policy.md#amendment--pin-matched-panics-and-error-handling).
-The recorded typed refusals, class (b) dispositions and results below
-remain unchanged. The new policy reverses none of these decisions.
+pin; `tools/oracle/oracle-pin.txt` is authoritative).
 
 ## What this is about
 
-Two readers of the same `interpolation2.text` had drifted in four
-observable ways, found during the shared-row-schema refactor
-(`f3805133`), which left them alone because it was byte-identity
-constrained:
+`interpolation2.text` is the model's tagged text form. Upstream reads it
+with `taglib_read` (`src/storage/tag_utility.cpp`). oxpinyin has one port
+of that tagger, `oxpinyin_kmm::taglib` (`crates/oxpinyin-kmm/src/taglib.rs`),
+re-exported as `oxpinyin_utils::taglib`. These readers use it:
 
-- `crates/oxpinyin-data/src/interp.rs` — `parse_interpolation2`, feeding
-  the decoder's `UnigramTable`. Reads only `\1-gram`.
-- `crates/oxpinyin-datagen/src/system.rs` — `read_interpolation`, feeding
-  the model20 compile. Reads both sections and validates token↔word.
+- `oxpinyin-utils` `import_interpolation`
+  (`crates/oxpinyin-utils/src/storage/import_interpolation.rs`);
+- `oxpinyin-utils` `k_mixture_model_to_interpolation`;
+- the k-mixture-model tools in `oxpinyin-kmm`.
 
-A third reader turned up while measuring: `oxpinyin-counter`'s
-`parse_interpolation_dump` (§6). This is an input-text grammar, not an
-on-disk row layout, so `oxpinyin_data::row_format` does not cover it.
+The tagger's character steps and warnings are GLib's, through the tool
+boundary (`oxpinyin_input::tool`), including `g_unichar_isgraph`
+([external I/O boundary](external-io-boundary.md)). This is an input-text
+grammar, not an on-disk row layout, so `oxpinyin_data::row_format` does
+not cover it.
 
-## Scope: this is not an ABI-compatibility question
+## Scope: build-time tools, not the runtime
 
-`docs/findings/compatibility-policy.md` and its three exception classes
-govern *"every exported symbol"* of the drop-in
-`libpinyin.so.15`. `interpolation2.text` is on neither side of that
-surface:
+The shipping runtime reads compiled tables, never `interpolation2.text`.
+The tagged text belongs to the pin's build-time import, export and KMM utilities.
 
-- Its upstream readers and writers — `utils/storage/import_interpolation`,
-  `utils/storage/export_interpolation`,
-  `utils/training/k_mixture_model_to_interpolation` — are **build-time
-  utility binaries**, not exported library symbols.
-- The shipping runtime never opens the file. It reads the *compiled*
-  tables (`pinyin_index`, `phrase_index`, `bigram.db`, `punct`); only
-  datagen, the emitter, the trainer, the eval harness and test/bench
-  staging touch the text export.
-
-So nothing here is a class (a)/(b) entry, nothing here belongs in
-`upstream-divergences.md`, and the register is deliberately not amended.
-What does govern it is the source policy — *external interface
-behaviour must be unchanged* — applied to the **format**: the grammar the
-file is written in is upstream's, and reading it differently in two
-places is a defect regardless of which surface it sits on.
+oxpinyin's utilities reproduce the pin's tools under their own names, so
+they follow the pin's grammar and its failure behaviour
+([failure behaviour](compatibility-policy.md#failure-behaviour)).
 
 ## The authority: one function, not a field split
 
@@ -75,7 +56,7 @@ second token, and acceptance turns on **parity**, not on field count.
 `taglib_read` reports refusal by returning `false`, and every caller
 wraps it in `check_result` (`src/include/pinyin_utils.h:26-31`), which is
 `assert(expr)` unless `NDEBUG` or `G_DISABLE_ASSERT` is defined. The
-pin's `configure.ac` defines neither and `build-oracle.sh` passes no
+pin's `configure.ac` defines neither and `tools/oracle/build.py` passes no
 `CFLAGS` override, so **the pin-built tools abort on a refused line**.
 
 ## The measurement
@@ -144,161 +125,35 @@ producer can emit two of them: `export_interpolation`'s `gen_unigram`
 walks tokens ascending once each and skips zero frequencies
 (`export_interpolation.cpp:85-95`), and
 `k_mixture_model_to_interpolation` skips them too (`:132`).
-`oxpinyin-emitter` reproduces both filters (`emit.rs`).
+`oxpinyin-utils`' ports of both tools reproduce these filters.
 
-## The four divergences, decided
+## How oxpinyin's readers answer
 
-| # | condition | pin | `data` (was) | `datagen` (was) | correct | disposition |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | duplicate `\1-gram` token | sums | `Err` | sums | `datagen` | **policy split, recorded** (§5) |
-| 2 | zero count | accepts | `Err` | accepts | `datagen` | **policy split, recorded** (§5) |
-| 3 | whitespace in phrase text | refuses both parities¹ | accepts | rejects | `datagen` | **converged** on the pin's parity rule |
-| 4 | unrecognised line | refuses (assert → abort) | ignores² | `Err` | `datagen` | **converged** on refusal |
+- **Accepted lines** — the port accepts exactly what `taglib_read`
+  accepts, by the same parity walk. A duplicate `\1-gram` token sums
+  and a zero count is a no-op in `import_interpolation`, as
+  `add_unigram_frequency` does.
+- **Refused lines** — `check_result` is the pin's `assert`, and the
+  utilities abort as the pin-built tools do. A phrase-text mismatch that
+  `taglib_validate_token_with_string` refuses aborts the same way.
+- **The two null-pointer dereferences** — a blank line, and a quoted
+  token with a trailing backslash — and a truncated UTF-8 sequence at the
+  line's end are undefined in the pin. The tagger answers them as
+  `taglib::Undefined` (`NoToken`, `UnterminatedEscape`, `PastLineEnd`),
+  and the utilities refuse them (class (b)).
+- **A missing or wrong `\data` header** — `import_interpolation` exits
+  `ENODATA`, as the pin's `parse_headline` failure does.
 
-¹ Two different routes, same outcome from the tool: the odd shape is
-refused by `taglib_read` itself; the even shape is *accepted* by the
-grammar with the phrase text truncated to its first token, and then
-refused by `taglib_validate_token_with_string`
-(`import_interpolation.cpp:137-138`), whose `check_result` is the same
-assert. `datagen` reproduces this exactly now: the grammar accepts, and
-`validate_pair` rejects.
+The `split_line` tests in `taglib.rs` cover quotes, escapes, empty tokens,
+a character that is neither space nor graph (U+200B), and the undefined
+reads.
 
-² `data` inspected only lines inside `\1-gram`, so a junk preamble was
-silently skipped.
+## The evaluation dump reader
 
-**`datagen` was right on all four and `data` was wrong on all four** —
-but note that `datagen` was right on the four while still not being a
-faithful port: its fixed 4-field (unigram) / 6-field (bigram) slice
-pattern refuses `\item 10 甲 count 5 foo bar`, which the pin accepts. Both
-readers now go through the shared module, so both are faithful.
-
-## §4b Two more, found in review
-
-Review of the first cut of this change caught two places where the
-shared grammar was reached for but not actually reached *through*. Both
-are now closed, and both were measured against the pin the same way.
-
-**A `\2-gram`-first file skipped its own section without reading it.**
-`data`'s reader short-circuited any line in that state not starting with
-a literal `\`, on the argument that it consumes no bigram records. Two
-consequences, both real:
-
-- `  \1-gram` — a section tag written with leading whitespace, which
-  `split_line` accepts because it skips whitespace before `tokens[0]` —
-  never matched the `starts_with('\\')` test, so the section was never
-  entered and the file came back `MissingOneGram`. The pin reads that
-  file without complaint.
-- A line the pin refuses (`parse_bigram` reads every line through the
-  same `taglib_read` and aborts on a refusal,
-  `import_interpolation.cpp:166-218`) was silently swallowed.
-
-The reader now selects the section's positional-value count —
-`UNIGRAM_VALUES` (2) or `BIGRAM_VALUES` (4),
-`import_interpolation.cpp:128` and `:163` — and reads **every** line of
-**every** section through the grammar, dropping only the bigram
-*records*. That is what `datagen` already did; the two now agree by
-construction rather than by comment.
-
-**A second `\data` header was accepted.** Both readers tested
-`section != Section::Header`, which refuses a `\data` after a section
-header but accepts two consecutive ones at the top of the file.
-Upstream takes exactly one, in `parse_headline`, *before* the body
-loop starts (`:287-295`); every later line goes through `parse_body`,
-where `\data` is still a registered tag and `BEGIN_LINE` falls to
-`default: abort()` (`:114-115`). Both readers now track `saw_data`
-separately from the section state and refuse a repeat wherever it sits.
-
-Not closed, and deliberately so: upstream also requires the `\data` line
-to be **present and first** (`main` exits `ENODATA` when
-`parse_headline` fails on line 1), while both readers accept a file that
-has none. That is a third rule on the same line, it is not what review
-raised, and changing it would refuse `\1-gram`-only inputs that existing
-callers and fixtures rely on. Owed work, with its own decision.
-
-## §5 The one recorded divergence: duplicate tokens and zero counts
-
-Grammar is shared; **policy on a well-formed-but-contradictory record is
-not**, and the split is deliberate:
-
-- `oxpinyin-datagen` **is** the port of `import_interpolation`. It sums a
-  repeated token and accepts a zero count, because that is what the tool
-  it reproduces does.
-- `oxpinyin_data::interp` is **not** that tool. It is the decoder's
-  loader, and it **refuses both**.
-
-Rationale: no conforming producer of this format can emit either record
-(measured above — both upstream writers and oxpinyin's emitter filter
-zeros and emit each token once). A file carrying one is corrupt, and
-silently summing a corrupt model into the decoder destroys the evidence
-that it was corrupt while producing a model no producer intended. The
-guard costs nothing on every input that exists.
-
-This is a divergence from a *build tool's* tolerance, not from the
-drop-in surface, so it is recorded here rather than in
-`upstream-divergences.md` (see the scope section).
-
-## Where oxpinyin deliberately does not follow the pin
-
-Both are constitution item 4 (nothing panics on any input; public APIs
-return `Result`), which forbids reproducing an abort:
-
-1. **Refused lines.** The pin-built tools `assert` and abort. Both
-   readers return a typed error naming the line.
-2. **The two null-pointer dereferences** — blank line, and a quoted token
-   with a trailing backslash. `GrammarError::EmptyLine` and
-   `GrammarError::UnterminatedEscape`. Rust structurally prevents the
-   dereference; this is the shape class (b) describes, recorded here
-   only because the surface is out of the register's scope.
-
-One bounded fidelity residue, deliberate:
-
-3. **`g_unichar_isgraph`.** GLib decides "printable and not a space" from
-   its own Unicode tables, which also exclude format characters and
-   unassigned code points; the port asks only whether the character is
-   neither whitespace nor a control character. The two agree on every
-   ASCII character and every assigned printable character — the whole of
-   the pinned export. They differ only on format/unassigned code points,
-   which no producer emits. Reproducing GLib's tables would mean carrying
-   a Unicode property table for input that cannot occur.
-
-The `for`-increment that makes a control byte *not* a token boundary
-(`tag_utility.cpp:122`) **is** reproduced, and is tested: `a\x01b` is two
-tokens `["a", "b"]`, while `a \x01b` is three `["a", "", "b"]`.
-
-## §6 The third reader, reported not changed
-
-`oxpinyin-counter::parse_interpolation_dump`
-(`crates/oxpinyin-counter/src/parse.rs:72`) is a fourth divergence on the
-same file, on an axis the original four did not name:
-
-- It is **lenient by design** — any line it cannot parse is skipped
-  silently (`continue`), including unknown lines and unparseable counts.
-- On a duplicate `\1-gram` token it is **last-wins** (`unigrams.insert`),
-  which is neither the pin's sum nor `data`'s refusal — a third answer.
-- It takes the count from the *last* field and the tokens from fixed
-  indices 1 and 3, so it inherits exactly the field-position assumption
-  that made `data` wrong on divergence 3.
-
-It is **not changed here**. It feeds the eval/λ path
-(`oxpinyin-eval`, `oxpinyin-lambda`), whose inputs are emitter output,
-and converging it would move a measured quantity (λ estimates) on a
-surface this change has no measurement for. The task that surfaced the
-drift named two parsers; this is the third, and closing it is owed work
-with its own measurement, not a side effect of this one.
-
-## Verification
-
-Linux, `debian:testing` with the `ci.yml` test-job apt set, tkrzw
-backend, toolchain `1.97.1` from `rust-toolchain.toml`:
-
-```
-PINYIN_MODEL_DIR=<model20 cache> cargo test -p oxpinyin-datagen -- --include-ignored
-```
-
-`fixtures_identity` (`mini_compile_reproduces_the_committed_fixture_directory`)
-and `cross_backend` pass, before and after — the committed
-`fixtures/w3/<backend>/` are reproduced unchanged, as the input analysis
-predicts. `libpinyin_parity` fails identically before and after on the
-unset `OXPINYIN_LIBPINYIN_DATA_DIR`, which is the documented
-fail-don't-skip behaviour for a missing input
-(`docs/testing/README.md`), not a regression.
+`oxpinyin_training::eval::parse_interpolation_dump`
+(`crates/oxpinyin-training/src/eval/counts.rs`) is a separate, lenient
+reader for `export_interpolation` dumps that feed the correction-rate
+evaluator. It skips any line it cannot parse, keeps the last count on a
+duplicate token, and reads the tokens from fixed field positions. Its
+inputs are `export_interpolation` output, which never carries those
+shapes. It does not go through the tagger.

@@ -18,26 +18,6 @@ include!("table_data/full_pinyin_counts.rs");
 pub struct FullPinyinIndex(StringTable<2>);
 
 impl FullPinyinIndex {
-    /// Number of spelling rows.
-    #[must_use]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
-
-    /// Whether the table has no rows.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// The input spelling and canonical pinyin at a row.
-    #[must_use]
-    pub fn get(self, index: usize) -> Option<(&'static str, &'static str)> {
-        self.0
-            .get(index)
-            .map(|[input, canonical]| (input, canonical))
-    }
-
     /// Canonical pinyin for an exact input spelling.
     #[must_use]
     pub fn canonical(self, spelling: &str) -> Option<&'static str> {
@@ -45,7 +25,8 @@ impl FullPinyinIndex {
     }
 
     /// All spelling rows in pinned order.
-    pub fn entries(
+    #[cfg(test)]
+    fn entries(
         self,
     ) -> impl ExactSizeIterator<Item = (&'static str, &'static str)> + DoubleEndedIterator + Clone
     {
@@ -349,7 +330,7 @@ mod tests {
             (luoma_pinyin_index(), LUOMA_PINYIN_COUNT),
             (secondary_zhuyin_index(), SECONDARY_ZHUYIN_COUNT),
         ] {
-            assert_eq!(index.len(), count);
+            assert_eq!(index.entries().len(), count);
             assert_eq!(count, 406);
             for pair in index.entries().collect::<Vec<_>>().windows(2) {
                 assert!(pair[0].0 < pair[1].0, "index not strictly sorted");

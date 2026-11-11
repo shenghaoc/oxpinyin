@@ -342,8 +342,7 @@ pub struct FlexibleBigram<B: WriteStore, S> {
 
 impl<B: WriteStore, S> Drop for FlexibleBigram<B, S> {
     /// `~FlexibleBigram` is `reset()` (`flexible_ngram_tkrzwdb.h:84-90,
-    /// 111-113`): the same synchronize [`FlexibleBigram::close`] makes, for
-    /// a container dropped while still open.
+    /// 111-113`): synchronize the deferred writes before dropping the handle.
     fn drop(&mut self) {
         if let Some(db) = self.db.as_ref() {
             let _ = db.flush();
@@ -413,21 +412,6 @@ where
     #[must_use]
     pub const fn attached(&self) -> bool {
         self.attached
-    }
-
-    /// Close the backend handle — the pin's `reset()`, which synchronises
-    /// and closes. Dropping the handle performs the backend's own close
-    /// (`DB->sync` then close on Berkeley DB, `close` on Kyoto Cabinet and
-    /// tkrzw); `flush` is the one sync, as each write this layer made is
-    /// deferred.
-    pub fn close(&mut self) {
-        if let Some(db) = self.db.as_ref() {
-            // The pin's `reset()` synchronises once on close; each layer
-            // write above is deferred, so the training file is flushed
-            // here exactly as the pin flushes it.
-            let _ = db.flush();
-        }
-        self.db = None;
     }
 
     /// Whether a handle is open (the pin's `m_db != NULL`).
@@ -503,19 +487,6 @@ where
         // 257-263`).
         let ((), found) = db.write_deferred(|txn| txn.remove_raw(&token.to_ne_bytes()))?;
         Ok(found)
-    }
-
-    /// Retrieve every item of one single gram; `None` when the token has no
-    /// row (`flexible_single_gram.h:88-105` on the loaded gram).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the load fails.
-    pub fn retrieve_all(
-        &self,
-        token: u32,
-    ) -> Result<Option<Vec<ArrayItemWithToken<S::ArrayItem>>>, StoreError> {
-        Ok(self.load(token)?.map(|gram| gram.items().to_vec()))
     }
 
     /// Get the magic header; `None` when the record is absent or its value

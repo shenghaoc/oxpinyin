@@ -24,7 +24,7 @@
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see .kiro/steering/rust-conventions.md.
+// making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
 // Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.
@@ -65,7 +65,7 @@ pub use offsets::{
     zhuyin_lookup_session_offset, zhuyin_offset_is_mid_key, zhuyin_original_begin,
     zhuyin_original_offset, zhuyin_session_offset,
 };
-pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
+pub use parse::{PinyinCorrections, ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 

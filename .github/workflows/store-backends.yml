@@ -33,8 +33,8 @@ name: Store backends
 #     anything when the path gate says no relevant path changed, and
 #     all three sanitizer jobs succeeded.
 #   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
-#     backend's gate through `python -m tools.dev sanitize <backend>`, the command
-#     `just sanitize` runs locally, on the date-pinned nightly that
+#     backend through the sanitizer service in tools/dev/test_runner.py, which
+#     `just sanitize` also uses, on the date-pinned nightly that
 #     tools/dev/test_runner.py names: the tkrzw suite under ASan, the
 #     Berkeley DB suite under ASan plus the C call-pattern harnesses under
 #     ASan+UBSan, and the Kyoto Cabinet suite under ASan + LeakSanitizer.
@@ -63,7 +63,7 @@ name: Store backends
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model,
-# tools/oracle/build-oracle.sh) is a LOCAL workflow, and no CI job may
+# tools/oracle/build.py) is a LOCAL workflow, and no CI job may
 # download model20.text.tar.gz or anything like it. The oracle-gated
 # differentials and the model cache live on developer machines only.
 
@@ -126,25 +126,13 @@ jobs:
         run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flag
         id: gate
+        # The event's base: the PR base sha, or the previous pushed head. The
+        # script decides what a base it cannot diff from means:
+        # --run-without-base makes an empty base, one that is not a commit here
+        # or one with no merge base print run=true, the over-trigger direction.
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            base='${{ github.event.pull_request.base.sha }}'
-          else
-            base='${{ github.event.before }}'
-          fi
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            echo "base $base unavailable; running every job"
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # cells-for-diff.py diffs from the merge base; a base with none (an
-          # unrelated history) over-triggers like an unavailable one.
-          if ! git merge-base "$base" HEAD >/dev/null 2>&1; then
-            echo "no merge base with $base; running every job"
-            echo 'run=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
           # a path under crates/oxpinyin-store/, a feature = "<backend>" line
@@ -156,10 +144,12 @@ jobs:
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
-          python3 tools/bisection/cells-for-diff.py --run-flag \
+          python3 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
             --also crates/oxpinyin-utils/ \
+            --also fixtures/w3/kct/ \
+            --also fixtures/w3/db/ \
             --also tools/dev/ci_tree.py \
             --also tools/dev/ci_tree.test.py \
             --also tools/bisection/cells-for-diff.py \
@@ -170,7 +160,7 @@ jobs:
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
             --also fuzz/rust-toolchain.toml \
-            "$base" >> "$GITHUB_OUTPUT"
+            "$BASE" >> "$GITHUB_OUTPUT"
 
   store-features:
     needs: changes
@@ -404,10 +394,13 @@ jobs:
           uv: 'true'
 
       # The sanitizer nightly is declared once in fuzz/rust-toolchain.toml and
-      # read through `tools.dev sanitize-toolchain`. RUSTUP_TOOLCHAIN beats
+      # read through tools.dev.test_runner.sanitize_toolchain. RUSTUP_TOOLCHAIN beats
       # rust-toolchain.toml's channel pin for this job only.
       - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # On Debian, libasan ships with gcc and is not a separate package.
@@ -442,7 +435,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize tkrzw
+          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -463,7 +456,7 @@ jobs:
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Berkeley DB feature's own suite under ASan, plus the C
     # call-pattern harnesses under ASan+UBSan, via the same
-    # `python -m tools.dev sanitize bdb` developers run locally. The hazards
+    # sanitizer service used by `just sanitize bdb`. The hazards
     # are the DBT plumbing and cursor buffers (Rust, ASan) and the
     # SingleGram chunk arithmetic the C harness mirrors (ASan+UBSan —
     # rustc has no `undefined` sanitizer, so the C half is where UBSan
@@ -501,7 +494,10 @@ jobs:
 
       # Same nightly source as the tkrzw lane above.
       - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
@@ -523,7 +519,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize bdb
+          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -543,7 +539,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
-    # `python -m tools.dev sanitize kc`. The backend crosses into C++ through a
+    # sanitizer service used by `just sanitize kc`. The backend crosses into C++ through a
     # cxx bridge (crates/oxpinyin-store/src/kyotocabinet/adapter.cc): visitor
     # regions are borrowed for one callback, cursors borrow their database, and
     # an empty region must not reach Kyoto Cabinet as address 1. The store's
@@ -577,7 +573,10 @@ jobs:
 
       # Same nightly source as the tkrzw lane above.
       - name: Select the sanitizer nightly
-        run: echo "RUSTUP_TOOLCHAIN=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize-toolchain)" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library this backend links and the
@@ -599,7 +598,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev sanitize kc
+          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report

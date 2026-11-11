@@ -2,8 +2,9 @@
 # job (`python3 -m tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
 # holds each job's paths), and a job runs only when its flag is true. A skipped
 # job still reports `skipped`, so the required `ci-aggregate` check sees it.
-# Paths that no job reads, such as docs/, reference/, .kiro/ and the root
-# Markdown files, select no job.
+# Paths that no job reads, such as docs/, reference/ and the root
+# Markdown files, select no job. The `changes` job itself checks the one rule
+# that reads every tracked file: the Python version request is written once.
 #
 # The gate compares the event's base with HEAD (a two-dot diff). A branch behind
 # main also sees main's own changes, so it can select more jobs, never fewer. A
@@ -47,7 +48,8 @@ concurrency:
 #   test — the workspace tests on Linux; the macOS and Windows runs are in
 #          verify-nightly.yml
 #   deny — the supply-chain check: advisories, licenses, sources, duplicates
-#   harness — the Python harness tests of tools/
+#   harness — the Python harness tests of tools/, when tools/ or a file its
+#             tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
 # The fuzz targets build and run in verify-nightly.yml only.
 
@@ -74,17 +76,24 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Look up complete successful PR evidence for this tree
-        id: evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -m tools.dev.ci_tree evidence ci
       - name: Require the Bash floor
         shell: bash
         run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flags
         id: gate
         run: python3 -m tools.dev.ci_tree gate
+      # Every tracked file is an input of this rule, so it runs here on every
+      # change, under the runner's own Python. The file's other test class
+      # needs uv and runs with the harness.
+      - name: Python version request is written once
+        run: python3 tools/dev/python-request.test.py RequestLiteralTests
+      # After the gate: evidence must cover every lane the gate selects.
+      - name: Look up successful PR evidence for this tree
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
+        run: python3 -m tools.dev.ci_tree evidence ci
 
   lint:
     needs: changes
@@ -146,21 +155,22 @@ jobs:
       # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev test-tools tools/dev/lint-crate-cfg-placement.test.py
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
       - name: Crate cfg-placement gate
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev lint-crate-cfg-placement
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record. The full
       # installed-tree diff (just packaging check-pc-metadata) needs the
       # pin-built libpinyin, which CI does not have.
-      - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging check-pc-version
+      - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
       - name: Provision tkrzw (built at the setup.sh revision and cached)
         uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
-      # Complexity limit: no function may exceed CCN 40.
+      # Complexity limit: no function may exceed CCN 40. -w prints only the
+      # functions over the limit; the exit status is the same.
       # --break-system-packages: the container is temporary, so there is no
       # system Python to protect. 1.24.0 is the release the limit was
       # checked against.
@@ -171,7 +181,7 @@ jobs:
       - name: Bash floor source lines
         if: needs.changes.outputs.reuse != 'true'
         run: python3 tools/dev/bash_floor.py
-      - run: lizard crates/ -l rust -C 40
+      - run: lizard crates/ -l rust -C 40 -w
         if: needs.changes.outputs.reuse != 'true'
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
@@ -303,8 +313,9 @@ jobs:
       - run: cargo deny --locked --all-features --log-level error check
       - run: cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
 
-  # The Python harness tests of tools/. Some of them run cargo metadata, a C
-  # compiler or GLib, so the job takes the toolchain and the build packages.
+  # The Python harness tests of tools/, all of them whenever the gate selects
+  # the job. Some of them run cargo metadata, a C compiler or GLib, so the job
+  # takes the toolchain and the build packages.
   harness:
     needs: changes
     if: needs.changes.outputs.harness == 'true' && needs.changes.outputs.reuse != 'true'
@@ -451,13 +462,19 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: python3 -m tools.dev.ci_tree aggregate ci
 
+  # The marker says the aggregate passed: every lane the gate selected
+  # succeeded and every other lane was skipped. A later run reads the lanes'
+  # own results from this run, and reuses it only when each lane that run
+  # selects succeeded here (tools/dev/ci_tree.py). So a lane's success must
+  # mean the same checks in every run: no step of a lane may depend on a
+  # path flag, only on `reuse`.
   tree-evidence:
     name: tested tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, ci-aggregate, lint, test, deny, harness]
-    if: ${{ needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' && needs.lint.result == 'success' && needs.test.result == 'success' && needs.deny.result == 'success' && needs.harness.result == 'success' }}
+    needs: [changes, ci-aggregate]
+    if: ${{ !cancelled() && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' }}
     runs-on: *ubuntu
     steps:
-      - run: echo 'All concrete verification lanes passed for this checkout tree.'
+      - run: echo 'Every selected verification lane passed for this checkout tree.'
 
   reused-tree-evidence:
     name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
@@ -465,4 +482,4 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.ci-aggregate.result == 'success' }}
     runs-on: *ubuntu
     steps:
-      - run: echo 'The original full PR run was revalidated for this exact tree.'
+      - run: echo 'The original PR run was revalidated for this exact tree.'

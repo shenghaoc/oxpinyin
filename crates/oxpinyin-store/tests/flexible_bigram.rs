@@ -223,15 +223,12 @@ fn every_operation_round_trips() {
     let other = Header { wc: 9, freq: 4 };
 
     {
-        let mut bigram = open(&path);
+        let bigram = open(&path);
         assert!(bigram.is_open());
         assert_eq!(bigram.get_magic_header().expect("magic read"), None);
         assert_eq!(bigram.get_all_items(), Some(Vec::new()));
         assert_eq!(bigram.load(7).expect("missing load"), None);
         assert_eq!(bigram.get_array_header(7).expect("missing header"), None);
-        assert_eq!(bigram.retrieve_all(7).expect("missing items"), None);
-        bigram.close();
-        assert!(!bigram.is_open());
     }
 
     // A fresh container carries the four-byte magic number and no header,
@@ -244,7 +241,7 @@ fn every_operation_round_trips() {
     }
 
     {
-        let mut bigram = open(&path);
+        let bigram = open(&path);
         assert!(bigram.set_magic_header(&magic).expect("magic write"));
         assert_eq!(
             bigram.get_magic_header().expect("magic read"),
@@ -328,10 +325,6 @@ fn every_operation_round_trips() {
             Some(gram.clone()),
             "the stored value is the whole single gram"
         );
-        assert_eq!(
-            bigram.retrieve_all(7).expect("item read"),
-            Some(gram.items().to_vec())
-        );
 
         // A header write changes only the header: every item byte survives.
         assert!(bigram.set_array_header(7, &other).expect("header rewrite"));
@@ -349,12 +342,9 @@ fn every_operation_round_trips() {
         assert!(!bigram.remove(7).expect("second remove"));
         assert_eq!(bigram.load(7).expect("removed load"), None);
         assert_eq!(bigram.get_array_header(7).expect("removed header"), None);
-        assert_eq!(bigram.retrieve_all(7).expect("removed items"), None);
-
-        bigram.close();
     }
 
-    let mut read_only = open_read_only(&path);
+    let read_only = open_read_only(&path);
     assert_eq!(
         read_only.load(11).expect("read-only load"),
         Some(gram_with_header())
@@ -380,7 +370,6 @@ fn every_operation_round_trips() {
         Some(vec![11]),
         "the read-only walk sees the remaining token"
     );
-    read_only.close();
 }
 
 /// The single gram `every_operation_round_trips` stores under token 11.
@@ -441,10 +430,9 @@ fn a_retained_object_takes_the_later_writes() {
             .expect("foreign magic");
     }
     {
-        let mut model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+        let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
         assert!(!model.attached());
         assert!(model.store(11, &gram_with_header()).expect("store"));
-        model.close();
     }
     assert!(
         raw_has(&path, &11u32.to_ne_bytes()),
@@ -685,11 +673,6 @@ fn a_pin_written_file_is_read_in_the_pins_native_order() {
             model.get_array_header(token).expect("array header"),
             Some(header.clone()),
             "array header of token {token}"
-        );
-        assert_eq!(
-            model.retrieve_all(token).expect("items"),
-            Some(items.clone()),
-            "items of token {token}"
         );
         let gram = model.load(token).expect("load").expect("stored gram");
         assert_eq!(gram.header(), &header);

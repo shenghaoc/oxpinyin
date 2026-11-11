@@ -1,8 +1,7 @@
 //! Reader for the per-library phrase-index files (the `MemoryChunk` +
 //! `SubPhraseIndex` pair).
 //!
-//! P1 of the data-layer rework
-//! (`docs/findings/libpinyin-system-data-formats-2026-09-01.md`): these
+//! The layout record is `docs/findings/data-formats.md` §2. These
 //! are the native library files on every backend (`gb_char.bin`,
 //! `gbk_char.bin`, `opengram.bin`, `merged.bin`, and the addon `*.bin`
 //! libraries), the same ones a libpinyin build ships — no conversion.
@@ -481,25 +480,6 @@ impl PhraseLibrary {
                 .filter(|(slot, _)| *slot >= 1)
                 .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram()))
         })
-    }
-
-    /// A fixture's empty sub-index after a refused layout: no mapping,
-    /// `total_freq` as read before the check, and `get_range`'s `1..1`.
-    /// A production layout refusal retains its mapping via
-    /// [`Self::open_retaining_layout`].
-    #[must_use]
-    pub fn empty(total_freq: u32) -> Self {
-        Self {
-            file: None,
-            source_path: None,
-            payload: 0..0,
-            total_freq,
-            offsets: 0..0,
-            content: 0..0,
-            layout_failed: true,
-            item_total: std::sync::OnceLock::new(),
-            detached_range_end: None,
-        }
     }
 
     /// `FacadePhraseIndex::compact` rebuilds the sub-index from its items

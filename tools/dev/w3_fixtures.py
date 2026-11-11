@@ -23,8 +23,6 @@ import shutil
 
 from . import model
 
-ROOT = Path(__file__).resolve().parents[2]
-
 # The spellings whose phrases the mini set keeps: single syllables, two
 # multi-syllable phrases, and the `xian` / `xi'an` pair whose distinctness
 # is what the apostrophe-separated key format exists to preserve.
@@ -193,7 +191,7 @@ def sequence(work):
 def model_dir(value, environment=None):
     """The verified extracted model directory, or a refusal naming the fetch."""
     environment = os.environ if environment is None else environment
-    path = Path(value or environment.get('PINYIN_MODEL_DIR') or ROOT / 'target/model20/extracted').resolve()
+    path = Path(value or environment.get('PINYIN_MODEL_DIR') or model.default_cache(environment) / 'extracted').resolve()
     if not model.extraction_complete(path):
         raise Refused(f'fatal: {path} is not a complete model20 extraction '
                       f'({len(model.EXPECTED_MODEL_FILES)} files); run `just fetch-model` or pass --model-dir', 2)

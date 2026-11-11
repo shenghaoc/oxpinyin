@@ -16,7 +16,7 @@ If you add a new driver, state why no existing driver could take the case
 ## Results
 
 <!--
-Run the local checks in [verification rule 5](docs/runbooks/verification.md#5-local-test-gate); they scale with the change and its stage.
+Run the local checks in [verification rule 5](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/verification.md#5-local-test-gate); they scale with the change and its stage.
 
 State the results and the command that reproduces them.
 CI on the PR head is the full gate (verification rule 5); state the local checks you ran before the push.

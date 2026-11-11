@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
 use oxpinyin_store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 
+use crate::lock_result_or_abort;
 use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
@@ -889,14 +890,10 @@ impl UserStore {
         &mut self.originals
     }
 
-    /// Locks the session's offsets, the guard every write takes first,
-    /// recovering from a poisoned lock (constitution §4: nothing here
-    /// panics, so a poisoned mutex must not brick the store either).
+    /// Locks the session's offsets, the guard every write takes first.
+    /// See the [poisoned locks convention](https://github.com/shenghaoc/oxpinyin/blob/main/docs/rust-conventions.md#poisoned-locks).
     pub(crate) fn offsets(&self) -> MutexGuard<'_, Offsets> {
-        self.inner
-            .offsets
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.inner.offsets.lock())
     }
 
     /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables,
@@ -921,10 +918,7 @@ impl UserStore {
     /// The pin's in-memory user bigram container, locked. Taken after the
     /// offsets guard when both are held, never before it.
     fn container(&self) -> MutexGuard<'_, DefaultUserBigramDb> {
-        self.inner
-            .bigram_db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.inner.bigram_db.lock())
     }
 
     /// Whether the session's user bigram is the failed Berkeley DB container
@@ -1152,10 +1146,7 @@ impl UserStore {
     }
 
     fn count_cache(&self) -> MutexGuard<'_, Option<CountCache>> {
-        self.inner
-            .count_cache
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.inner.count_cache.lock())
     }
 
     fn write_generation(&self) -> u64 {
@@ -1361,7 +1352,7 @@ impl UserStore {
     /// present zero count stays `Some(0)`. The existence check and the count
     /// read happen under one arena guard, as the pin reads one item
     /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
-    /// applies library visibility and any facade overlay.
+    /// applies library visibility.
     ///
     /// # Errors
     /// None: the `Result` is the callers' signature.
@@ -1383,11 +1374,7 @@ impl UserStore {
         if let Some(count) = self.with_user_item(token, |item| item.unigram()) {
             return Some(count);
         }
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .unigram(token, Some(original))
+        lock_result_or_abort(self.inner.system_items.lock()).unigram(token, Some(original))
     }
 
     /// Whether the session layout names a library as a system chunk.
@@ -1407,11 +1394,7 @@ impl UserStore {
     #[must_use]
     pub fn system_library_total(&self, library: u8) -> Option<u32> {
         let original = self.originals.get(&library)?;
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .library_total(library, Some(original))
+        lock_result_or_abort(self.inner.system_items.lock()).library_total(library, Some(original))
     }
 
     /// Apply the exported unigram increment to a loaded system library, as
@@ -1429,23 +1412,27 @@ impl UserStore {
         token: Token,
         delta: u32,
     ) -> Result<bool, UserStoreError> {
-        Ok(self.add_system_unigram_outcome(token, delta)?.is_accepted())
+        Ok(self.add_unigram_outcome(token, delta)?.is_accepted())
     }
 
-    /// [`Self::add_system_unigram_frequency`] with the sub-index's answer in
-    /// the pin's terms: only [`UnigramAdd::Refused`] is
-    /// `ERROR_INTEGER_OVERFLOW`, the one error a caller can act on
-    /// (`pinyin.cpp:2528`).
+    /// Apply a unigram increment to the default phrase index. A loaded
+    /// sub-index receives the update in its live item, and an absent
+    /// sub-index leaves the facade total alone (074a2219
+    /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
+    /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
     ///
     /// # Errors
     /// None: the `Result` is the callers' signature.
-    pub fn add_system_unigram_outcome(
+    pub fn add_unigram_outcome(
         &mut self,
         token: Token,
         delta: u32,
     ) -> Result<UnigramAdd, UserStoreError> {
-        let offsets = self.offsets();
-        Ok(self.arena_add_unigram_outcome(&offsets, token, delta))
+        let library = phrase_index_library_index(token);
+        if self.originals.get(&library).is_none() && !self.has_user_library(library) {
+            return Ok(UnigramAdd::Missing);
+        }
+        Ok(self.arena_add_unigram_outcome(token, delta))
     }
 
     /// What the user side adds to the facade's unigram total: everything of
@@ -1457,12 +1444,7 @@ impl UserStore {
     ///
     /// None: the `Result` is the callers' signature.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
-        Ok(self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .facade_extra())
+        Ok(lock_result_or_abort(self.inner.system_items.lock()).facade_extra())
     }
 
     /// What a session's facade total holds beyond the stored totals of the
@@ -1471,11 +1453,7 @@ impl UserStore {
     /// wrapping `guint32` the model adds to those stored totals.
     #[must_use]
     pub fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        let items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let items = lock_result_or_abort(self.inner.system_items.lock());
         let mut extra = items.facade_extra();
         for (&library, original) in self.originals.iter() {
             if !visible(library) {
@@ -1537,11 +1515,7 @@ impl UserStore {
         // items; the facade total keeps what the libraries held, so the
         // difference moves to the facade's extra.
         {
-            let mut items = self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut items = lock_result_or_abort(self.inner.system_items.lock());
             for (&library, original) in self.originals.iter() {
                 // An unloaded library has no sub-index to compact: the pin's
                 // loop skips it (`phrase_index.cpp:651-652`) and its total
@@ -1657,7 +1631,7 @@ impl UserStore {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let offsets = self.offsets();
-        let accepted = self.arena_add_unigram(&offsets, cur, delta);
+        let accepted = self.arena_add_unigram(cur, delta);
         self.mark_committed_write(offsets, true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
@@ -1695,7 +1669,7 @@ impl UserStore {
             if matches!(policy, SeedPolicy::Predicted) {
                 let delta =
                     u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
-                let accepted = self.arena_add_unigram(&offsets, cur, delta);
+                let accepted = self.arena_add_unigram(cur, delta);
                 self.mark_committed_write(offsets, true);
                 if !accepted {
                     return Err(UserStoreError::UnigramTotalOverflow);
@@ -1713,12 +1687,12 @@ impl UserStore {
             // The unigram add comes first and its overflow ends the call
             // before any bigram is trained (`pinyin.cpp:2609-2612`); the
             // facade total has already taken the delta.
-            SeedPolicy::Predicted => self.arena_add_unigram(&offsets, cur, delta),
+            SeedPolicy::Predicted => self.arena_add_unigram(cur, delta),
             // `train_result3` ignores the sub-index's refusal
             // (`phonetic_lookup.h:928-929`): the item stops growing once its
             // library's `guint32` total would overflow.
             SeedPolicy::Training => {
-                self.arena_add_unigram(&offsets, cur, delta);
+                self.arena_add_unigram(cur, delta);
                 true
             }
         };
@@ -2183,11 +2157,7 @@ impl UserStore {
         let state = crate::store_libpinyin::export_for_save(self)?;
         let bigram_db = self.container();
         let phrases = target.phrases();
-        let live = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let live = lock_result_or_abort(self.inner.system_items.lock());
         {
             let mut reporting = crate::persistence::SaveReporting {
                 versions: &target.versions,
@@ -2490,11 +2460,7 @@ impl UserStore {
                 .libraries
                 .iter()
                 .any(|(library, items)| (1..=4).contains(library) && !items.is_empty());
-            let mut items = self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut items = lock_result_or_abort(self.inner.system_items.lock());
             // `FacadePhraseIndex::load` and `merge_with_mask` swap the old
             // sub-index for the new one (`phrase_index.cpp:237-248`,
             // `:301-332`): the library's live buffer and total go, and the
@@ -2704,15 +2670,10 @@ impl UserStore {
     #[must_use]
     pub(crate) fn system_item_removed(&self, token: Token) -> bool {
         self.has_removed_system_items()
-            && self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_removed(
-                    token,
-                    self.originals.get(&phrase_index_library_index(token)),
-                )
+            && lock_result_or_abort(self.inner.system_items.lock()).is_removed(
+                token,
+                self.originals.get(&phrase_index_library_index(token)),
+            )
     }
 
     /// Whether system library `nibble`'s live buffer records any slot's
@@ -2833,10 +2794,7 @@ impl UserStore {
             .get(&library)
             .filter(|items| !items.is_empty())
             .map(|items| (u32::from(library) << 24) | items.token_end());
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_result_or_abort(self.inner.system_items.lock())
             .end(library)
             .into_iter()
             .chain(arena_end)
@@ -2872,11 +2830,7 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        let items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let items = lock_result_or_abort(self.inner.system_items.lock());
         items.get(&token).map(|item| read(&item))
     }
 
@@ -2895,36 +2849,20 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .with_live(token, read)
+        lock_result_or_abort(self.inner.system_items.lock()).with_live(token, read)
     }
 
     /// Count the pristine items held by one transferred library.
     pub fn pristine_system_item_count(&self, nibble: u8) -> Option<u64> {
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .pristine_item_count(nibble)
+        lock_result_or_abort(self.inner.system_items.lock()).pristine_item_count(nibble)
     }
 
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .live_pronunciation_count(token)
+        lock_result_or_abort(self.inner.system_items.lock()).live_pronunciation_count(token)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .live_item_past_buffer(token)
+        lock_result_or_abort(self.inner.system_items.lock()).live_item_past_buffer(token)
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's
@@ -3000,11 +2938,7 @@ impl UserStore {
             delta,
         };
         let offsets = self.offsets();
-        let mut items = self
-            .inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut items = lock_result_or_abort(self.inner.system_items.lock());
         let mut item = items
             .get(&token)
             .or_else(|| original.item(token & PHRASE_MASK))
@@ -3039,6 +2973,46 @@ impl UserStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poisoned_mutex_aborts() {
+        const DEATH_TEST: &str = "OXPINYIN_USER_DEATH_TEST";
+        const NAME: &str = "store::tests::poisoned_mutex_aborts";
+
+        if std::env::var_os(DEATH_TEST).is_some_and(|value| value == NAME) {
+            let mutex = std::sync::Mutex::new(());
+            let panic = std::panic::catch_unwind(|| {
+                let _guard = mutex.lock().expect("unpoisoned mutex");
+                panic!("poison the mutex");
+            });
+            assert!(panic.is_err());
+            let result = mutex.lock();
+            assert!(result.is_err(), "the mutex must be poisoned");
+            drop(lock_result_or_abort(result));
+            std::process::exit(0);
+        }
+
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", NAME, "--test-threads=1"])
+            .env(DEATH_TEST, NAME)
+            .output()
+            .expect("re-run the test binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt as _;
+            assert_eq!(
+                output.status.signal(),
+                Some(6),
+                "expected SIGABRT: {output:?}"
+            );
+        }
+        #[cfg(windows)]
+        assert_eq!(
+            output.status.code(),
+            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
+            "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
+        );
+    }
 
     fn next_user_token(store: &UserStore) -> Token {
         let end = store
@@ -3082,7 +3056,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            store.add_system_unigram_outcome(0x0100_0001, 7).unwrap(),
+            store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
             UnigramAdd::Refused
         );
         assert_eq!(store.unigram_total().unwrap(), 7);

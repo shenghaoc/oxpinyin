@@ -1,9 +1,11 @@
 """Conservative tree-based CI reuse and shared aggregate policy.
 
-Evidence is a full successful PR workflow, never an arbitrary commit status.
-The marker's tree is resolved by checkout, so a PR merge ref and its head
+Evidence is a successful PR workflow run, never an arbitrary commit status.
+It must hold a successful job for every lane the current run's path gate
+selects; a lane the current run does not select needs no evidence. The
+marker's tree is resolved by checkout, so a PR merge ref and its head
 cannot accidentally be treated as the same tree. Reused runs reference their
-original full source, whose verification age is never renewed by a duplicate.
+original source, whose verification age is never renewed by a duplicate.
 Only the latest run for a candidate head is considered; incomplete, failed,
 missing, ambiguous or unavailable evidence falls back to normal verification.
 """
@@ -105,7 +107,7 @@ PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
               "tools/bisection/startup_profile.py", 
-              "tools/oracle/image.py", "tools/oracle/versions.py",
+              "tools/oracle/build.py", "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
 # The shipping-size job's path gate. `crates` over-selects the three crates
 # outside the capi closure; the gate must not need a Cargo toolchain.
@@ -114,6 +116,23 @@ SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "justfile", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
+# The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
+# compares, so a change to one selects the harness. The same test holds this list to the generator's.
+GENERATED_TABLES = (
+    "crates/oxpinyin-chewing/src/chewing_key_tables.rs",
+    "crates/oxpinyin-chewing/src/content_table_source.rs",
+    "crates/oxpinyin-chewing/src/tone_symbols.rs",
+    "crates/oxpinyin-core/src/table_data/double_pinyin.rs",
+    "crates/oxpinyin-core/src/table_data/full_pinyin_counts.rs",
+    "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
+    "crates/oxpinyin-core/src/table_data/full_pinyin_syllables.rs",
+    "crates/oxpinyin-core/src/table_data/syllable_inventory.rs",
+    "crates/oxpinyin-core/src/table_data/tone_symbols.rs",
+    "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
+    "crates/oxpinyin-core/src/table_data/zhuyin_keyboards.rs",
+    "crates/oxpinyin-core/src/table_data/zhuyin_tones.rs",
+    "crates/oxpinyin-engine/src/session/split_tables.rs",
+)
 CI_INPUTS = {
     # ShellCheck reads every tracked script; cargo fmt reads the fuzz workspace.
     "lint": Inputs((*RUST, "fuzz", "clippy.toml", "*.sh"), PYTHON_ONLY,
@@ -123,11 +142,20 @@ CI_INPUTS = {
     "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "tools/lib", "rust-toolchain.toml",
                     ".cargo", "Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml", "deny.toml",
                     "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
-    # Every tracked text file is an input: tools/dev/python-request.test.py reads
-    # them all, and fails when one writes a Python version request. The dated
-    # findings records are its only exception; one test reads the call-site TSV
-    # in that directory.
-    "harness": Inputs(("*",), ("docs/findings",), ("docs/findings/glib-libc-call-sites.tsv",)),
+    # tools/ and what its tests read outside it: the store-backends gate script,
+    # the manifests and the lockfile, the files directly in each crate's
+    # directory (version scripts, headers, allocator registers, build scripts),
+    # the generated Rust tables, the fixtures, the sanitizer nightly and the
+    # call-site TSV. No harness test reads any other Rust source, so the files
+    # under a crate's src, tests, examples and benches do not select the job.
+    # The Python version request rule reads every tracked file, so it is a step
+    # of the `changes` job, not an input here.
+    "harness": Inputs((*SHARED, ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
+                       "crates", "fixtures", "fuzz/rust-toolchain.toml",
+                       "docs/findings/glib-libc-call-sites.tsv"),
+                      ("crates/*/src/*.rs", "crates/*/tests/*.rs", "crates/*/examples/*.rs",
+                       "crates/*/benches/*.rs"),
+                      GENERATED_TABLES),
     # Every crate is a safe superset of the C API dependency closure: this job
     # runs without Cargo, and ship_sizes keys the base result on the same crates.
     "ship": Inputs(SHIP),
@@ -237,15 +265,32 @@ def fresh_job(job: dict[str, Any], now: datetime) -> bool:
         return False
 
 
-def complete_jobs(jobs: list[dict[str, Any]], workflow: Workflow, tree: str,
-                  now: datetime | None = None) -> bool:
-    """All concrete lanes and the checkout-derived marker must have succeeded.
+def selected_lanes(workflow: Workflow, flags: dict[str, str]) -> tuple[str, ...]:
+    """The lanes of workflow whose path-gate flag is true in the current run.
 
-    A success aggregate with path-skipped lanes is insufficient. Duplicate
-    names are ambiguous, including attempts mixed by an incorrect API query.
+    A flag that is missing or is not `true` or `false` raises ValueError, so
+    the caller finds no evidence and normal verification runs.
+    """
+    if any(flags.get(flag) not in {"true", "false"} for flag in workflow.flags):
+        raise ValueError("invalid path-gate flags")
+    return tuple(lane for lane, flag in zip(workflow.lanes, workflow.flags) if flags[flag] == "true")
+
+
+def complete_jobs(jobs: list[dict[str, Any]], workflow: Workflow, tree: str,
+                  now: datetime | None = None, lanes: tuple[str, ...] | None = None) -> bool:
+    """Every lane in lanes, the aggregate and the checkout-derived marker must have succeeded.
+
+    lanes holds the lanes the current run selects; None means every lane. A
+    selected lane that the source run skipped is insufficient, whatever its
+    aggregate says. A lane outside lanes is not read. Duplicate names are
+    ambiguous, including attempts mixed by an incorrect API query.
     """
     now = now or datetime.now(timezone.utc)
-    names = (*workflow.lanes, workflow.aggregate, "tested tree " + tree)
+    if lanes is None:
+        lanes = workflow.lanes
+    if not set(lanes) <= set(workflow.lanes):
+        return False
+    names = (*lanes, workflow.aggregate, "tested tree " + tree)
     return all(
         len(matches := [job for job in jobs if job.get("name") == workflow.job_prefix + name]) == 1
         and matches[0].get("status") == "completed"
@@ -256,15 +301,17 @@ def complete_jobs(jobs: list[dict[str, Any]], workflow: Workflow, tree: str,
 
 def full_source(api: GitHub, run: dict[str, Any], jobs: list[dict[str, Any]],
                 workflow: Workflow, tree: str, repository_id: int,
-                pr_number: int, current_run: int, now: datetime | None = None) -> int | None:
-    """Resolve a reused PR run directly to its original full verification.
+                pr_number: int, current_run: int, now: datetime | None = None,
+                lanes: tuple[str, ...] | None = None) -> int | None:
+    """Resolve a reused PR run directly to its original verification.
 
-    A successful duplicate must not hide its full source from the subsequent
+    A successful duplicate must not hide its source from the subsequent
     main push. Skipped lanes alone never count as evidence: require the
-    workflow-issued source marker, then revalidate the original full run.
+    workflow-issued source marker, then revalidate the original run against
+    the lanes the current run selects.
     """
     now = now or datetime.now(timezone.utc)
-    if complete_jobs(jobs, workflow, tree, now):
+    if complete_jobs(jobs, workflow, tree, now, lanes):
         return int(run["id"])
     for name in (*workflow.skipped_lanes, workflow.aggregate):
         matches = [job for job in jobs if job.get("name") == workflow.job_prefix + name]
@@ -287,12 +334,13 @@ def full_source(api: GitHub, run: dict[str, Any], jobs: list[dict[str, Any]],
     if api.get("/git/commits/" + head).get("tree", {}).get("sha") != tree:
         return None
     source_jobs = api.pages(f"/actions/runs/{source_id}/attempts/{source['run_attempt']}/jobs", "jobs")
-    return source_id if complete_jobs(source_jobs, workflow, tree, now) else None
+    return source_id if complete_jobs(source_jobs, workflow, tree, now, lanes) else None
 
 
 def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
                   event_name: str, tree: str, repository_id: int,
-                  current_run: int, now: datetime | None = None) -> int | None:
+                  current_run: int, now: datetime | None = None,
+                  lanes: tuple[str, ...] | None = None) -> int | None:
     now = now or datetime.now(timezone.utc)
     if event_name == "push" and event.get("ref") == "refs/heads/main":
         sha = event["after"]
@@ -339,7 +387,7 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
                                           run["head_sha"], current_run):
             continue
         jobs = api.pages(f"/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
-        source = full_source(api, run, jobs, workflow, tree, repository_id, pr["number"], current_run, now)
+        source = full_source(api, run, jobs, workflow, tree, repository_id, pr["number"], current_run, now, lanes)
         if source is not None:
             return source
     return None
@@ -376,7 +424,6 @@ class CompileCommand:
 
 CACHE_LANES = ("lint", "test", "store-features")
 BACKENDS = cell.BACKENDS
-BACKEND_EXCLUDES = ()
 
 
 def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileCommand, ...]:
@@ -391,7 +438,7 @@ def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileComm
         if backend not in BACKENDS:
             raise ValueError("cache refresh requires a store backend")
         return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
-                                *cell.feature_flags(backend), *BACKEND_EXCLUDES)),)
+                                *cell.feature_flags(backend))),)
 
 
 def refresh_cache(lane: str, backend: str | None = None) -> None:
@@ -441,19 +488,22 @@ def main() -> int:
     tree = git_tree("HEAD")
     evidence = None
     try:
+        # GATE_FLAGS holds the current run's path-gate outputs. Without it every lane is required.
+        gate_flags = os.environ.get("GATE_FLAGS")
+        lanes = None if gate_flags is None else selected_lanes(workflow, json.loads(gate_flags))
         api = GitHub(os.environ["GITHUB_REPOSITORY"], os.environ["GH_TOKEN"])
         evidence = find_evidence(
             api, workflow, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()),
             os.environ["GITHUB_EVENT_NAME"], tree, int(os.environ["GITHUB_REPOSITORY_ID"]),
-            int(os.environ["GITHUB_RUN_ID"]))
-    except (URLError, OSError, ValueError, KeyError, TypeError) as error:
+            int(os.environ["GITHUB_RUN_ID"]), lanes=lanes)
+    except (URLError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         print(f"No applicable complete evidence: {error}; running normal CI")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
         output.write(f"source_run={evidence or ''}\ntree={tree}\nreuse={'true' if evidence else 'false'}\n")
-    reason = (f"Reusing full PR run {evidence} for exact tree `{tree}`. "
+    reason = (f"Reusing PR run {evidence} for exact tree `{tree}`: it passed every lane this run selects. "
               "Original verification is at most 24 hours old. "
               "Verification steps skip; main cache-saving lanes still compile."
-              if evidence else f"No trusted full PR run for tree `{tree}`; normal path gates apply.")
+              if evidence else f"No trusted PR run covers tree `{tree}`; normal path gates apply.")
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
         summary.write(reason + "\n")
     print(reason)

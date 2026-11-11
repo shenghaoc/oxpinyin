@@ -356,13 +356,19 @@ pub(crate) mod tests {
     }
 
     /// Require the child test `name` to take the tools' store-error exit for
-    /// a short single gram: status 1 and exactly that one stderr line.
+    /// a short single gram: status 1 and exactly that one stderr line. The
+    /// line ends with the host's text newline: C's text-mode stderr writes
+    /// CRLF on Windows.
     pub(crate) fn assert_short_single_gram_exit(name: &str) {
         let output = run_child(name);
         assert_eq!(output.status.code(), Some(1), "{name}: {output:?}");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
-            format!("{}\n", StoreError::ShortArrayHeader),
+            format!(
+                "{}{}",
+                StoreError::ShortArrayHeader,
+                oxpinyin_input::TEXT_NEWLINE
+            ),
             "{name}"
         );
     }

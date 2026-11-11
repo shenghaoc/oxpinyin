@@ -498,11 +498,6 @@ impl ContextCore {
          -> oxpinyin_user::SaveBaseline {
             match Runtime::read_save_baseline(originals, unloaded, nibble) {
                 Ok(baseline) => baseline,
-                Err(oxpinyin_runtime::SaveRemapFault::Layout(fault)) => {
-                    oxpinyin_user::SaveBaseline::Changed(oxpinyin_user::SystemLibrary::failed(
-                        fault.total_freq,
-                    ))
-                }
                 Err(oxpinyin_runtime::SaveRemapFault::Unmappable(path)) => {
                     c_stderr::mmap_failed(&path);
                     oxpinyin_user::SaveBaseline::Unmappable

@@ -583,7 +583,8 @@ impl ZhuyinKey {
     /// shuffled inputs render canonically, matching
     /// `_ChewingKey::get_zhuyin_string`.
     #[must_use]
-    pub fn zhuyin(&self) -> &str {
+    #[cfg(test)]
+    fn zhuyin(&self) -> &str {
         &self.zhuyin
     }
 
@@ -629,7 +630,8 @@ impl ZhuyinParse {
 
     /// The parsed keys as a `'`-joined tone-less full-pinyin string.
     #[must_use]
-    pub fn full_pinyin(&self) -> String {
+    #[cfg(test)]
+    fn full_pinyin(&self) -> String {
         self.keys
             .iter()
             .map(|item| item.key.text())
@@ -995,7 +997,8 @@ impl ZhuyinParser {
     /// keyboards (HSU, ETEN26, `HSU_DVORAK`) the way theirs does
     /// (`:474-490`) — both minus upstream's aborts; everything else
     /// reports `false` and keeps the current scheme.
-    pub fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
+    #[cfg(test)]
+    fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
         if scheme.keyboard().is_none() {
             return false;
         }

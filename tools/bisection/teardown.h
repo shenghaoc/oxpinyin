@@ -1,4 +1,4 @@
-/* Native side of contract-diff.py --teardown. Included only by bisect.c.
+/* Native teardown measurement support. Included only by bisect.c.
  * Python provisions private profiles and observes /proc while this child is
  * stopped on a pipe. No interpreter, filesystem inspection or memory reader
  * runs inside the measured ABI calls. Existing bisect modes do not enter here.

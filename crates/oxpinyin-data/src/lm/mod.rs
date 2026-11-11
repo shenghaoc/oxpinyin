@@ -23,7 +23,7 @@
 //! and stays reachable in the trellis. Verified on the pinned model:
 //! `Σ item == Σ \1-gram count + 138,096`.
 //!
-//! Scoring follows the interpolated form frozen in
+//! Scoring follows the interpolated form defined in
 //! `docs/findings/scoring-spec.md`:
 //!
 //! ```text
@@ -305,11 +305,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
             libraries,
             library_mask,
         })
-    }
-
-    /// Separate the model tables from phrase storage.
-    pub fn into_parts(self) -> (BigramTables, L, M) {
-        (self.tables, self.libraries, self.library_mask)
     }
 }
 

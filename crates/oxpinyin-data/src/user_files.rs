@@ -584,39 +584,6 @@ pub enum LogRecord<P = Vec<u8>> {
     },
 }
 
-impl<P: AsRef<[u8]>> LogRecord<P> {
-    /// Borrow a record's payloads without copying either item.
-    #[must_use]
-    pub fn as_ref(&self) -> LogRecord<&[u8]> {
-        match self {
-            Self::Add { token, new_item } => LogRecord::Add {
-                token: *token,
-                new_item: new_item.as_ref(),
-            },
-            Self::Remove { token, old_item } => LogRecord::Remove {
-                token: *token,
-                old_item: old_item.as_ref(),
-            },
-            Self::Modify {
-                token,
-                old_item,
-                new_item,
-            } => LogRecord::Modify {
-                token: *token,
-                old_item: old_item.as_ref(),
-                new_item: new_item.as_ref(),
-            },
-            Self::ModifyHeader {
-                old_total,
-                new_total,
-            } => LogRecord::ModifyHeader {
-                old_total: *old_total,
-                new_total: *new_total,
-            },
-        }
-    }
-}
-
 impl LogRecord<&[u8]> {
     /// Copy a borrowed record's payloads into an owned record.
     #[must_use]

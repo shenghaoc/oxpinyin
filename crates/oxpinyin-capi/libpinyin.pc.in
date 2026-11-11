@@ -18,7 +18,7 @@
 # build.rs bakes the build-time fields (@VERSION@ from the pin record,
 # @LIBPINYIN_BINARY_VERSION@, @DATABASE_FORMAT@) and strips this header,
 # leaving the install-time @prefix@/@exec_prefix@/@libdir@/@includedir@ for
-# tools/packaging/install.sh to fill after cargo cinstall the way the pin's
+# `just packaging install` to fill after cargo cinstall the way the pin's
 # configure does; see docs/findings/installed-naming.md for why a wrapper is
 # required.
 #

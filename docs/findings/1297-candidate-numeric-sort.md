@@ -1,78 +1,78 @@
 # #1297 item A — stable sorting with guarded wrapping frequency
 
-- **Status:** corrected under the maintainer decision dated 2026-10-30 UTC,
-  recorded 2026-10-29T17:31:36Z (`date -u` on the executing host). The
-  scoped case, native, policy and shipping measurement gates are complete.
+- **Status:** accepted under the maintainer decision dated 2026-10-30 UTC.
 - **Disposition:** the four row58 cases must MATCH and are unregistered.
   Only cyclic frequency groups can differ through this sorting change.
-  Existing λ observations remain under #1378; their selection
+  Existing λ observations stay under #1378. Their selection
   differences are independent of candidate sorting.
 - **Policy limb:** the frequency comparator is libpinyin's product rule,
-  reproduced with Rust's defined wrapping arithmetic. Only std sorting's
-  violated order precondition admits a fallback difference. GLib's internal
-  sorting algorithm is removed, never transcribed.
-- **Pin:** libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`,
-  read from `/tmp/oxpinyin-a-pin`. Verified git blobs: `src/pinyin.cpp`
+  reproduced with Rust's defined wrapping arithmetic. Only a violated order
+  precondition of std sorting admits a fallback difference. oxpinyin does
+  not transcribe GLib's internal sorting algorithm.
+- **Pin:** libpinyin 2.11.92 at `074a2219c90feaf962d0d24f034514033ece5f99`.
+  Verified git blobs: `src/pinyin.cpp`
   `f27f7cf776724ead8d55e14b4af390e790054a91`, `src/zhuyin.cpp`
-  `d1520c189afdb9c22878715c841e00e97483fb11`. GLib 2.84.4 in the
-  canonical Debian trixie reference. Both facades; the rule applies to
-  every backend. The selected sort/row58 cases are verified on all three registered cells.
+  `d1520c189afdb9c22878715c841e00e97483fb11`. GLib 2.84.4 at the
+  time of the record (recorded evidence). Both facades; the rule applies to
+  every backend.
 - **Pin derivation:** `src/pinyin.cpp:1678-1709` compares enabled phrase
-  length, pinyin span and frequency, descending, and returns zero after
+  length, pinyin span and frequency, descending. It returns zero after
   enabled keys tie. `:1692-1694` prescribes the unsigned eight-bit span;
   this width and wrap stay. `:1701-1705` subtracts two `guint32` frequencies
-  before conversion to `gint`, reversing the numeric sign for gaps above
-  2³¹ (and failing antisymmetry at exactly 2³¹). `:2286,2440-2445` use
+  before conversion to `gint`. This reverses the numeric sign for gaps above
+  2³¹, and fails antisymmetry at exactly 2³¹. `:2286,2440-2445` use
   stable GLib array sorting. `src/zhuyin.cpp:1129-1144,1529,1610` always
-  uses phrase length then frequency. Stability is the documented contract;
-  the old GLib internals are recorded in the dated source reading.
-- **Rust counterpart:** `candidate::rank_by_frequency` stably groups rows
-  by descending enabled `(phrase_length, pinyin_span)`, checks each group's
-  frequency relation, then uses stable std sorting with
-  `rhs.wrapping_sub(lhs) as i32` on consistent groups and stable numeric
-  descending frequency on cyclic groups. Both `session::rank_candidates`
-  and `predict::sort_predicted` call it. `m_freq` stays available to dedup
-  but never breaks a sort tie. `RankKey::Ord` remains absent.
+  uses phrase length then frequency. Stability is the documented contract.
+- **Rust counterpart:** `candidate::rank_by_frequency` does these steps:
+  1. It stably groups rows by descending enabled `(phrase_length, pinyin_span)`.
+  2. It checks the frequency relation of each group.
+  3. It uses stable std sorting with `rhs.wrapping_sub(lhs) as i32` on
+     consistent groups, and stable numeric descending frequency on cyclic groups.
+
+  One comparator closure serves both modes. Its captured consistency flag
+  selects the comparison. Both
+  `session::rank_candidates` and the C API's `predict::sort_predicted` call
+  it. `m_freq` stays available to dedup but never breaks a sort tie.
+  `RankKey::Ord` is absent.
 - **Forward trace:** C guess-candidates entry → parsed window and candidate
   collection → stored unigram/bigram frequency calculation → enabled key
   construction → stable sort → LONGER/NBEST insertion and existing text
   dedup → candidate getters. Prediction enters through
-  `pinyin_guess_predicted_candidates`, collects bigram/prefix rows, computes
-  their phrase lengths and frequencies, sorts, then deduplicates.
+  `pinyin_guess_predicted_candidates`. It collects bigram/prefix rows,
+  computes their phrase lengths and frequencies, sorts, then deduplicates.
 - **Backward trace:** after-cursor and before-cursor lists share the same
-  candidate sorter. Zhuyin fixes length/frequency dimensions regardless of
-  the pinyin sort word; prediction enables length/frequency only. All DBM
-  backends feed these same routines. Tails use their existing S3 comparator;
-  beam, node and final-tail selection are outside item A. Scoring and the
+  candidate sorter. Zhuyin fixes the length/frequency dimensions, whatever
+  the pinyin sort word is. Prediction enables length/frequency only. All DBM
+  backends feed these same routines. Tails use their existing S3 comparator.
+  Beam, node and final-tail selection are outside item A. Scoring and the
   conversion that produces `m_freq` are unchanged.
-- **Input partition and difference:** wrapping comparison is preserved
+- **Input partition and difference:** the wrapping comparison stays
   whenever each enabled length/span tie group fits in an open circular
-  semicircle, including groups crossing zero with large numeric gaps.
-  Only groups failing that condition use the numeric fallback. With consistent
-  unigram/total ratios and λ in `[0, 1]`, scaled frequencies remain below
-  2²⁴ (`src/pinyin.cpp:1820-1824`). λ alone is insufficient: the pin's
+  semicircle. This includes groups that cross zero with large numeric gaps.
+  Only groups that fail that condition use the numeric fallback. With consistent
+  unigram/total ratios and λ in `[0, 1]`, scaled frequencies stay below
+  2²⁴ (`src/pinyin.cpp:1820-1824`). λ alone is not sufficient. The pin's
   defined total-counter wrap and failed-token update can leave a unigram
-  larger than its total; the row58 diagnosis below demonstrates that at
-  default λ. Those row58 groups are consistent and must retain pin order.
+  larger than its total. The row58 diagnosis below shows this at
+  default λ. Those row58 groups are consistent and must keep the pin order.
   The guard proof below includes antipodal pairs and longer cycles.
   Empty/singleton lists and disabled dimensions keep their existing results.
   NaN/∞ scores convert to zero candidate frequencies and introduce no
   candidate-sort change. No λ validation or storage normalization is added.
 - **Contract preserved:** C ABI/layout, exported symbols, real GLib ownership,
   lifetime, persistent formats/bytes, data ownership, process side effects,
-  diagnostics, scoring, dedup winners and physical trellis slots remain as
-  before. Only cyclic groups may use a different candidate order.
-- **Prior rulings:** the maintainer decision dated 2026-10-30 supersedes
-  the prior numeric-frequency instruction. The no-ported-internals rule
-  still requires stable std sorting; the contract-not-implementation rule
-  still retains the eight-bit span.
+  diagnostics, scoring, dedup winners and physical trellis slots are
+  unchanged. Only cyclic groups may use a different candidate order.
+- **Rulings:** the maintainer decision dated 2026-10-30 governs candidate
+  frequency. The no-ported-internals rule requires stable std sorting. The
+  contract-not-implementation rule keeps the eight-bit span.
 
 ## Consistency proof and guard
 
 Let `H = 2^31`, and let `compare(a,b)` be the sign of
 `b.wrapping_sub(a) as i32`. Equal frequencies compare equal. Frequencies
-separated by exactly H compare Less in both directions, violating
-antisymmetry; the guard rejects such pairs as a two-way cycle.
+separated by exactly H compare Less in both directions, which violates
+antisymmetry. The guard rejects such pairs as a two-way cycle.
 
 For non-antipodal distinct frequencies, the relation is a circular
 tournament. It is consistent on a finite list exactly when there is a
@@ -108,66 +108,64 @@ auxiliary storage, with no extra guard allocation. No cyclic comparator
 is ever passed to std sorting. This is a domain guard around the standard
 API, not a port of GLib internals.
 
-Tests compare the guard with independent antisymmetry/transitivity checks
-over boundary triples; include empty lists, ties, wraparound, antipodal
-pairs and three-way cycles; and prove that leading length/span dimensions
-isolate groups, that cyclic fallback is deterministic, and that stable
-ties and aligned dedup frequencies survive. Prediction's test now expects
-wrapping order across zero rather than the superseded numeric order.
+The tests do these things:
+
+- They compare the guard with independent antisymmetry/transitivity checks
+  over boundary triples.
+- They include empty lists, ties, wraparound, antipodal pairs and three-way cycles.
+- They prove that leading length/span dimensions isolate groups.
+- They prove that cyclic fallback is deterministic.
+- They prove that stable ties and aligned dedup frequencies survive.
+
+The prediction test expects wrapping order across zero.
 
 ## Scoped correction gate
+
+This section is recorded evidence. The tool that ran it no longer exists.
 
 The explicit 126-case selection is the union of tags `921`, `927`, `1275`,
 all 43 `row58-*` cases, all `table-conf-(919-)?lambda-*` cases and both
 `table-conf-919-header-indented-lambda` facade cases. On BDB, KC and
-sound-tkrzw it gives **118 MATCH and eight existing POLICY-ACCEPTED per
-cell** after the three existing λ records are refreshed and revalidated.
-Every row58 case MATCHes, including `row58-signed-{score,duplicate}-{off,on}`.
-None is registered as a difference; no full/default suite runs.
+sound-tkrzw it gave **118 MATCH and eight existing POLICY-ACCEPTED per
+cell**. Every row58 case MATCHes, including
+`row58-signed-{score,duplicate}-{off,on}`. None is registered as a
+difference.
 
-Compared with the superseded numeric implementation, only the already
-registered `table-conf-lambda-{one-and-a-half,two,million}-zhuyin` views move.
-The first two now reproduce exactly main's prior oxpinyin results
-on every cell: their frequency groups fit across zero inside an interval
-narrower than 2³¹. Their accepted differences remain the independent #1378
-sentence/selection differences. At λ=million, cyclic frequency groups use
-the defined fallback, while consistent length groups restore the wrapping
-order. This is the only case retaining a new candidate-view difference
-against main. The pin's results stay unchanged; only oxpinyin's candidate
-view moves. The three cases stay POLICY-ACCEPTED; no row58 case is
+Of the registered λ views, only
+`table-conf-lambda-{one-and-a-half,two,million}-zhuyin` depend on this
+sorter. The first two have frequency groups that fit across zero inside an
+interval narrower than 2³¹, so they keep wrapping order. Their accepted
+differences are the independent #1378 sentence/selection differences. At
+λ=million, cyclic frequency groups use the defined fallback.
+Consistent length groups keep the wrapping order. The pin's results are
+unchanged. The three cases stay POLICY-ACCEPTED; no row58 case is
 registered as a difference.
-Only those three cases are rerun after the initial selection.
 
-The new-frequency mechanism is reached at ordinary λ too: the row58 fixtures
-retain λ `0.312699`, import count 1,431,655,631 (unigram 4,294,966,893), then
-use the pin's defined wrapping/failed-token update to make total 20,000,000
+Ordinary λ also reaches the wrapping mechanism. The row58 fixtures
+keep λ `0.312699` and import count 1,431,655,631 (unigram 4,294,966,893).
+They then use the pin's defined wrapping/failed-token update to make total 20,000,000
 (`src/storage/phrase_index.h:628-634` at the pin). The f32 score is
 2,476,262,656, exceeding `gint::MAX` while the denominator does not.
-These consistent groups must use wrapping order; the corrected cases keep
+These consistent groups must use wrapping order; the cases keep
 `甲甲` at one-based position 65 and `的心` at 64, exactly as the pin.
 
 Named mutation **M1297-frequency-ascending** changes only the guarded,
 consistent-group sort to ascending numeric frequency. On BDB all three
 `glib-sort-candidates-{pinyin,zhuyin}` / `glib-sort-predicted` controls
-DIFFER. Restoring the source byte-for-byte and rebuilding returns all
-three to MATCH. The guard is never disabled and std never receives a
-cyclic comparison during the mutation.
+DIFFER. When the source is restored, all three return to MATCH. During the
+mutation, the guard stays enabled and std never receives a cyclic comparison.
 
-The touched engine/capi completion gate passes 366 tests, with the two
-isolated timing diagnostics ignored; clippy `--all-targets -- -D warnings`,
-fmt and diff checks pass. The original dependent-crate gate and case-module
-harnesses passed before this correction; no unrelated workspace sweep is
-repeated. Reproduction uses the maintained recipes:
+## Representation choice
 
-```sh
-just heavy -- cargo test --locked -p oxpinyin-engine -p oxpinyin-capi
-just heavy -- cargo clippy --locked -p oxpinyin-engine -p oxpinyin-capi --all-targets -- -D warnings
-just fmt -- --check
-git diff --check
-# For each registered cell, build debug facades with just cell-artifacts,
-# derive the exact ID union above from contract-diff.py --list-tags, then:
-just heavy -- just runner contract-diff "$CELL" "$PIN" "$DEBUG_PINYIN" "$DEBUG_ZHUYIN" -- --cases "$CASES"
-```
+Cached `(RankKey, original_index)` rows keep one compact per-call buffer
+and the frequency keys that text dedup needs. After sorting, cycle swaps
+permute the candidate rows. A sort of bare indices needs a separate key buffer.
+A sort of decorated rows moves a larger element. Prediction needs no post-sort
+key array, so its owned rows sort directly on their cheap stored fields.
+The two row types stay separate. A shared representation brings back the
+index-to-row work, which measured slower. The guard adds no allocation. Both
+paths remain O(n log n) worst-case time and O(n) auxiliary storage, with
+O(n) guarding.
 
 ## Representation choice and measurements
 
@@ -262,9 +260,9 @@ wall-time or heap measurement claim. Every count above is from the same
 correction campaign, never a baseline taken from the prior comparator run.
 
 Reproduce policy generation and shipping installation using
-[packaging regeneration](../packaging.md#regeneration). Reproduce the two
+[packaging regeneration](../packaging.md#function-layout). Reproduce the two
 measurements with the runbook's
-[`just measure callgrind-differential` sentence/typing commands](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign),
+[`just measure-callgrind-differential` sentence/typing commands](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign),
 passing base's policy explicitly for `main/pinyin` and `mctl/pinyin`,
 and the regenerated policy for `pr__/pinyin` and `pctl/pinyin`. Install
 plain and profiled libraries through `just packaging install` using the

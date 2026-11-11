@@ -2,7 +2,7 @@
 //!
 //! `docs/findings/core-trait-seam.md` leaves `Dictionary` and `LanguageModel`
 //! generic over associated types so `oxpinyin-core` depends on nothing. The
-//! session API frozen in `docs/findings/session-api.md` has to pin those
+//! session API in `docs/findings/session-api.md` has to pin those
 //! associated types to something concrete, or every later task would widen its
 //! own bounds. These are those types.
 
@@ -213,21 +213,6 @@ impl SyllableKey {
         } else {
             Completeness::Partial
         }
-    }
-
-    /// Length in bytes of [`SyllableKey::text`].
-    #[must_use]
-    pub fn len(self) -> usize {
-        self.text().len()
-    }
-
-    /// Always `false`; every key has a non-empty spelling.
-    ///
-    /// Present because clippy asks any type with `len` for an `is_empty`, and a
-    /// constant answer is more honest than omitting it.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        false
     }
 }
 
@@ -459,8 +444,7 @@ mod tests {
             let key = SyllableKey::from_index(index).expect("index is in range");
             assert_eq!(key.index(), index);
             assert_eq!(SyllableKey::from_canonical_text(key.text()), Some(key));
-            assert_eq!(key.len(), key.text().len());
-            assert!(!key.is_empty());
+            assert!(!key.text().is_empty());
         }
         assert_eq!(SyllableKey::from_index(SYLLABLE_KEY_COUNT), None);
     }

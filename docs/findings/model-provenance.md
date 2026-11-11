@@ -1,11 +1,54 @@
 # Model and table provenance
 
-Date: 2026-08-14 · Decision: **no redistribution — build-time fetch permitted** (Branch B: optional vendoring route, not a shipping gate)
+## 2026-11-10 UTC ruling for issue #1764
 
-This finding records the project shipping decision for the data pinned by
-`docs/testing/oracle-environment.md`. It is a conservative redistribution
-classification for this project, not a legal opinion, and it draws the line
-between redistribution and build-time fetch.
+The project may commit and redistribute the minimal W3 test subset derived
+from model20 under GPL-3.0-or-later. Distributors must comply with the
+licence, including its notice and corresponding source requirements. This
+ruling replaces the 2026-08-14 redistribution prohibition only for the
+files in this scope.
+
+### Scope
+
+- Model-derived records in `fixtures/w3/{db,kct,tkt}/`: the chunk files,
+  the index files, `bigram.db` and `punct.bin`.
+- Expected-output files that reproduce those records:
+  `crates/oxpinyin-utils/tests/fixtures/export_interpolation/w3-model-*.txt`.
+
+All other files are outside this ruling. The full model20 archive remains
+subject to the build-time fetch policy.
+
+### Evidence
+
+- At libpinyin commit `074a2219`, `EXTRA_DIST` includes
+  `interpolation2.text` and the 17 `.table` files through
+  `textual_model_data`.
+  [Pinned data/Makefile.am](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/data/Makefile.am)
+- Upstream author Peng Wu published `libpinyin-2.11.92.tar.gz`
+  (20,636,687 bytes). The release asset contains all 18 files in `data/`.
+  [Upstream release](https://github.com/libpinyin/libpinyin/releases/tag/v2.11.92)
+- Debian's libpinyin 2.11.92-1 source package in `main` contains
+  `data/interpolation2.text` and the same 17 tables. Its
+  `debian/copyright` has two `Files` stanzas: `*` and `debian/*`.
+  The `*` stanza lists Peng Wu (2006–2024) and James Su (2002, 2003,
+  2006) under `GPL-3+`. The file has no separate `data/` stanza or
+  `Files-Excluded` field.
+  [Debian source descriptor](https://deb.debian.org/debian/pool/main/libp/libpinyin/libpinyin_2.11.92-1.dsc),
+  [Debian packaging source](https://deb.debian.org/debian/pool/main/libp/libpinyin/libpinyin_2.11.92-1.debian.tar.xz)
+- Fedora lists `libpinyin-data` under GPL-3.0-or-later.
+  [Fedora package metadata](https://packages.fedoraproject.org/pkgs/libpinyin/libpinyin-data/)
+
+### Remaining uncertainty
+
+No rightsholder statement covers the training corpus behind the counts.
+The provenance and licence terms of that corpus remain unresolved.
+
+## 2026-08-14 archive inspection and build-time fetch ruling
+
+The original ruling prohibited redistribution and permitted a build-time
+fetch of the archive pinned by `model_archive_sha256` in
+[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt).
+The inspection record follows.
 
 ## Examined artefacts
 
@@ -17,7 +60,7 @@ and pinned as:
 - SHA-256: `59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`
 - Source listing date: 2024-09-27
 
-A checksum-verified inspection found `interpolation2.text` and eighteen
+A checksum-verified inspection found `interpolation2.text` and seventeen
 `.table` files. The archive contains no `COPYING`, `LICENSE`, `NOTICE`,
 README, copyright statement, provenance manifest, or source-corpus record.
 The archive inventory is:
@@ -43,54 +86,31 @@ sport.table
 technology.table
 ```
 
-The pinned libpinyin source tag carries a
-[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/2.11.91/COPYING).
-That notice establishes terms for the source release, but the separately
-published model archive does not say that its trained model, tables, source
-corpora, or generated contents are covered by those terms. The SourceForge
-project-level licence label likewise does not identify the copyright holders
-or grant terms for each data input.
+The pinned libpinyin source carries a
+[GPL licence text](https://raw.githubusercontent.com/libpinyin/libpinyin/074a2219c90feaf962d0d24f034514033ece5f99/COPYING).
+That notice sets terms for the source release. The model archive is
+published separately. It does not say that those terms cover its trained
+model, tables, source corpora or generated contents. The SourceForge
+project-level licence label also does not identify the copyright holders or
+grant terms for each data input.
 
 ## Redistribution status
 
-| Artefact class | Evidence | Project status |
-|---|---|---|
-| `interpolation2.text` model | No embedded licence, copyright, training-corpus provenance, or model-generation manifest | **Not redistributable** |
-| Eighteen `.table` files | No embedded licence, copyright, source-data provenance, or generation manifest | **Not redistributable** |
-| Converted or compiled forms of either class | A mechanical conversion does not cure missing permission or provenance in its input | **Not redistributable** |
-
-The required two-week fallback is therefore resolved conservatively now:
-there is no need to wait for the deadline to treat inconclusive artefacts as
-non-redistributable. New primary evidence from the relevant rightsholders can
-reopen the finding in a dedicated provenance change, but absence of contrary
-evidence does not change this decision.
+| Artefact | Project status |
+|---|---|
+| Full model20 archive, `interpolation2.text` and its 17 `.table` files | Redistribution prohibited |
+| Model-derived W3 records and expected outputs in the scope above | Redistribution permitted under GPL-3.0-or-later |
+| Other converted, compiled or derived model20 data | Redistribution prohibited |
 
 ## Redistribution vs build-time fetch
 
-Two distinct acts must not be conflated:
+Redistribution includes putting data in the repository, a release archive,
+a package or an installer. Apply the status table to each of those routes.
 
-- **Redistributing** the model — placing `interpolation2.text`, any listed
-  `.table` file, or a converted/compiled/derived form of either inside this
-  repository, a release archive, a package, or an installer — requires a
-  grant this project does not have, and remains prohibited.
-- **Fetching** the checksum-pinned archive from its upstream origin at build
-  time, on the user's machine, does not place this project in the
-  redistribution chain. The user obtains the data from the same SourceForge
-  models directory that upstream libpinyin directs them to; the project ships
-  code plus a URL and a checksum, not data, and is not the distributor in
-  that path.
-
-Upstream practice is consistency evidence, not proof. libpinyin (pinned tag
-2.11.91) [downloads `model20.text.tar.gz` from its SourceForge models
-directory](https://sourceforge.net/projects/libpinyin/files/models/) during
-its own build rather than vendoring the archive, and a build-time fetch in
-the Rust reimplementation mirrors that mechanism exactly. This project
-classifies the act the same conservative way: the project ships code plus a
-URL and a checksum, not data. Upstream's own build carrying the identical
-mechanism supports that classification by consistency — were the mechanism
-itself redistribution, upstream would sit under the same exposure — but
-upstream's practice is not by itself dispositive; this file is a conservative
-policy, not a legal opinion.
+For a build-time fetch, the user obtains the archive directly from the
+upstream SourceForge models directory. The project supplies the URL and
+the checksum. The upstream build uses the same fetch method. The build
+must report a download or checksum error and stop if the fetch fails.
 
 ## Branch declaration
 
@@ -102,43 +122,36 @@ The project routes considered here are:
 - **Branch B:** build tables and models only from inputs whose provenance and
   redistribution terms are recorded by this project.
 
-**Branch A is rejected** because neither the model nor the tables have an
-artefact-specific licence and provenance chain. **Branch B is recorded as an
-optional future route, not a shipping prerequisite**: it is the path to a
-model this project could *vendor*, and it is only needed if the project ever
-wants one. Its mechanism is the
-[libpinyin trainer](https://github.com/libpinyin/trainer) (GPL-2.0, build-time
-tooling that produces the `interpolation2.text`-format model from a training
-corpus); taking it relocates the licensing question to the training corpus the
-project would supply, a question deferred until/unless Branch B is pursued.
-Branch A′ is not selected as the complete route: the AOSP PinyinIME tree
+**Branch A remains rejected for the full model and tables.** The W3
+ruling permits only the listed test files.
+
+**Branch B is recorded as an optional future route, not a shipping prerequisite.** It is
+the path to a model that this project could *vendor*. The project needs it only
+if it ever wants such a model. Its mechanism is the
+[libpinyin trainer](https://github.com/libpinyin/trainer): GPL-2.0
+build-time tooling that produces the `interpolation2.text`-format model from
+a training corpus. This route moves the licensing question to the training
+corpus that the project would supply. That question is deferred until the
+project pursues Branch B.
+
+**Branch A′ is not selected as the complete route.** The AOSP PinyinIME tree
 carries an Apache-2.0
 [NOTICE](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/NOTICE)
 next to
-[`rawdict_utf16_65105_freq.txt`](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/jni/data/rawdict_utf16_65105_freq.txt);
-whether and how that notice covers the raw dictionary was not verified for
-this finding, and the dictionary is not a provenance record or replacement
-for the pinned language model. It may be evaluated later as one documented
-Branch B input; this finding does not approve a derived model or bundled
+[`rawdict_utf16_65105_freq.txt`](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/jni/data/rawdict_utf16_65105_freq.txt).
+This finding did not verify whether or how that notice covers the raw
+dictionary. The dictionary is not a provenance record and does not replace
+the pinned language model. It may be evaluated later as one documented
+Branch B input. This finding does not approve a derived model or bundled
 table from it.
 
 ## Shipping consequence
 
-- Stage 1 may read the checksum-pinned external archive for local use and may
-  use it as the non-shipping oracle subject.
-- The repository, release archives, packages, installers, and generated
-  shipping artefacts must not contain `interpolation2.text`, any listed
-  `.table` file, or converted/compiled derivatives of them.
-- Shipping the reimplementation — including Stage 2 — is gated on exactly
-  that: not vendoring the model or its derivatives, which a build-time fetch
-  of the checksum-pinned archive satisfies. It is **not** gated on Branch B
-  producing a replacement model. The code ships under GPL-3.0-or-later (this
-  project's declared license; libpinyin's licence is GPL-compatible); the
-  model is fetched from upstream at build time; no model bytes are
-  redistributed by this project.
-- A build-time download makes the model a build-time-fetched dependency: the
-  build must fail cleanly on an unreachable URL, a moved artifact, or a
-  checksum mismatch. This is the same operational fragility upstream's own
-  build carries; it is an engineering consequence, not a licensing one.
-- A future provenance change must identify model and tables separately; a
-  licence conclusion for one class must not be inferred for the other.
+- Stage 1 may use the checksum-pinned external archive locally and as
+  input to the oracle.
+- The W3 ruling permits redistribution only for the listed test files.
+  Builds that need the full model fetch the archive from upstream.
+- Shipping the reimplementation, including Stage 2, can use the build-time
+  fetch route. Branch B remains an optional route to a replacement model.
+- A future provenance change must assess the model and the tables
+  separately.

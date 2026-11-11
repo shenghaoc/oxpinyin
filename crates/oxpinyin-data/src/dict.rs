@@ -592,11 +592,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.libraries().item_count()
     }
 
-    /// The item count over the libraries `visible` accepts by nibble.
-    pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.libraries().item_count_where(visible)
-    }
-
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order.
     #[must_use]
@@ -1160,46 +1155,6 @@ impl AddonDictionary {
             })
     }
 
-    /// Opens the addon DBM pair from `system_dir` when present; no
-    /// library is loaded yet.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when a present DBM cannot be opened.
-    pub fn open(system_dir: &Path) -> Result<Self, DictError> {
-        Self::open_with(system_dir, &TableConf::stock())
-    }
-
-    /// [`Self::open`] with the `addon` rows of `conf`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::open`].
-    pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        let pinyin_path = oxpinyin_input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::AddonPinyinIndex.file_name()),
-        );
-        let phrase_path = oxpinyin_input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::AddonPhraseIndex.file_name()),
-        );
-        let pinyin = pinyin_path
-            .is_file()
-            .then(|| open_tree(&pinyin_path))
-            .transpose()?;
-        let phrase = phrase_path
-            .is_file()
-            .then(|| open_phrase_table(&phrase_path))
-            .transpose()?;
-        Ok(Self {
-            pinyin,
-            phrase,
-            libraries: PhraseLibraries::empty(),
-            rows: addon_rows(conf),
-        })
-    }
-
     /// An addon facade with neither DBM nor libraries.
     #[must_use]
     pub fn empty() -> Self {
@@ -1302,12 +1257,6 @@ impl AddonDictionary {
         true
     }
 
-    /// Whether library `index` is loaded.
-    #[must_use]
-    pub fn is_loaded(&self, index: u8) -> bool {
-        self.libraries.is_loaded(index)
-    }
-
     /// Whether no library is loaded (the facade owns no items).
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -1329,12 +1278,6 @@ impl AddonDictionary {
             return None;
         }
         Some(u64::from(self.libraries.unigram_total()))
-    }
-
-    /// Phrase text for `token`, if its addon library is loaded.
-    #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
-        self.libraries.phrase_text(token)
     }
 
     /// The addon item behind `token`.
@@ -1432,17 +1375,6 @@ impl AddonDictionary {
             return Ok(false);
         };
         pinyin.key_exists(&keys)
-    }
-
-    /// Tokens whose addon phrase text is exactly `text`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read or the value decode fails.
-    pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
-        self.phrase
-            .as_ref()
-            .map_or_else(|| Ok(Vec::new()), |table| table.search(text))
     }
 }
 

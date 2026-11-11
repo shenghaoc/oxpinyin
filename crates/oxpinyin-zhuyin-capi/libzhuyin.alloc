@@ -2,7 +2,7 @@
 #
 # Sibling of `libzhuyin.ver` and of `crates/oxpinyin-capi/libpinyin.alloc`,
 # which carries the full format description and the rationale for each
-# class. `tools/abi/check-alloc-pairing.sh` reads both registers the same
+# class. `just abi alloc-pairing` reads both registers the same
 # way: it proves the register covers exactly the pointer-shaped slots
 # `zhuyin.h` declares, that each class agrees with the C type, and — by
 # running a C++ consumer under LeakSanitizer — that the declared

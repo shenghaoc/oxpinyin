@@ -1,5 +1,5 @@
 //! Key-data-table totality over the packed key space — G1 of the
-//! testing-strategy assessment (`testing-strategy.md` §2).
+//! testing-strategy assessment (`docs/testing/upstream-test-coverage.md` §2).
 //!
 //! The hostile input surface for this crate is the packed `guint16` the
 //! C ABI hands across the boundary (`pinyin_parse_chewing` fills a

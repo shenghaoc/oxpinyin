@@ -53,7 +53,7 @@ pub fn exit(status: c_int) -> ! {
 }
 
 /// Aborts where the pin aborts, using `std::process::abort()` as required by
-/// "The abort rule" in `docs/findings/compatibility-policy.md`.
+/// "Failure behaviour" in `docs/findings/compatibility-policy.md`.
 pub fn abort() -> ! {
     std::process::abort()
 }
@@ -641,10 +641,10 @@ impl LineReader<BufReader<std::fs::File>> {
     }
 }
 
+#[cfg(test)]
 impl<'a> LineReader<&'a [u8]> {
     /// An `std::istringstream` over `text`: no tie, no file.
-    #[must_use]
-    pub fn from_bytes(text: &'a [u8]) -> Self {
+    fn from_bytes(text: &'a [u8]) -> Self {
         Self::over(Some(text), false)
     }
 }

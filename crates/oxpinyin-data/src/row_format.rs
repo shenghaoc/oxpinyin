@@ -63,7 +63,7 @@ fn push_ucs4(buf: &mut Vec<u8>, codes: impl Iterator<Item = u32>) {
 /// every phrase with that syllable sequence, and every proper prefix of
 /// a stored key exists as an empty-value `SEARCH_CONTINUED` marker.
 ///
-/// `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.3,
+/// `docs/findings/pinyin-dbm-format-2026-09-01.md` §3–§6,
 /// `chewing_large_table2_tkrzwdb.cpp:133-296`.
 pub mod pinyin_index {
     use oxpinyin_core::ChewingKey;
@@ -272,7 +272,7 @@ pub mod pinyin_index {
 /// values. Every proper UCS-4 prefix of every phrase exists as an
 /// empty-value continuation marker.
 ///
-/// `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.1,
+/// `docs/findings/phrase-dbm-format-2026-09-01.md` §2–§5,
 /// `phrase_large_table3_tkrzwdb.cpp`.
 pub mod phrase_index {
     use crate::dict::DictError;

@@ -1,4 +1,10 @@
 """Shared C ABI symbol and allocator gates; standard library only."""
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -453,3 +459,7 @@ def main(argv: Sequence[str]) -> int:
         except (OSError, ValueError) as error:
             print(error, file=sys.stderr)
             return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

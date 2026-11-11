@@ -191,7 +191,7 @@ jobs:
         env:
           BACKEND: ${{ matrix.backend }}
         run: |
-          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-stage "$BACKEND" \
+          uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging release-stage "$BACKEND" \
             --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
 
       - name: Package for this distro
@@ -202,8 +202,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           case "$DISTRO" in
-            debian) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-deb "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
-            fedora) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-rpm "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+            debian) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging release-deb "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
+            fedora) uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging release-rpm "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
             arch)
               # Arch has no separate data package: the model lives inside
               # the libpinyin package our takeover removes. Download (not
@@ -219,7 +219,7 @@ jobs:
               mkdir -p arch-data
               tar -xf "$DATA_PKG" -C arch-data --strip-components=4 usr/lib/libpinyin/data
               [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in $DATA_PKG" >&2; exit 1; }
-              uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging release-arch "$BACKEND" "$VERSION" "$PWD/stage" dist \
+              uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging release-arch "$BACKEND" "$VERSION" "$PWD/stage" dist \
                 --data="$PWD/arch-data" --data-version="$DATA_VER"
               ;;
           esac
@@ -246,7 +246,7 @@ jobs:
           esac
           ldconfig
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
-          PCVER="$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev packaging pc-version)"
+          PCVER="$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging pc-version)"
           [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
           [ "$(pkg-config --variable=database_format libzhuyin)" = "$DBFMT" ] || fail "libzhuyin database_format"

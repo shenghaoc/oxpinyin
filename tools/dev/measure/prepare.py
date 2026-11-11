@@ -84,7 +84,7 @@ def prepare(argv, env):
     if args.cells is not None and args.mode != 'oracle':
         parser.error('--cells is accepted only in oracle mode')
     cells = (args.cells or ['tkrzw', 'kc']) if args.mode == 'oracle' else ['tkrzw']
-    extracted = model.fetch('/performance/model20', env=env)
+    extracted = model.fetch(env=env)
     for backend in cells:
         seed = Path('/opt/pinyin-oracle') / backend
         prefix = Path('/performance/pinyin-oracle') / backend
@@ -92,7 +92,7 @@ def prepare(argv, env):
             shutil.rmtree(prefix, ignore_errors=True)
             prefix.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(seed, prefix, symlinks=True)
-            bench.heavy(['bash', bench.ROOT / 'tools/oracle/build-oracle.sh', '--regen-data',
+            bench.heavy([sys.executable, bench.ROOT / 'tools/oracle/build.py', '--regen-data',
                          '--dbm', backend, '--enable-libzhuyin', '--prefix', prefix, '--model-dir', extracted,
                          '--work-dir', f'/performance/oracle-{backend}'], env=env)
             refusal = prepared_pin_refusal(prefix, backend)
