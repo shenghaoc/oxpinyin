@@ -9,10 +9,10 @@ import argparse
 from collections.abc import Mapping
 from dataclasses import dataclass
 import fnmatch
+import json
 import os
 from pathlib import Path
 import platform
-import re
 import shutil
 import stat
 import subprocess
@@ -559,9 +559,14 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
         return native.shell_status(result.returncode)
     executables = []
     for line in (result.stdout or '').splitlines():
-        match = re.search(r'"executable":"([^"]*)"', line)
-        if match:
-            executables.append(match.group(1))
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get('reason') == 'compiler-artifact':
+            executable = record.get('executable')
+            if executable is not None:
+                executables.append(executable)
     package = ROOT / 'crates/oxpinyin-store'
     if check_object is None:
         def check_object(obj):
