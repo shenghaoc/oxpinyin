@@ -649,6 +649,7 @@ class GateTests(unittest.TestCase):
             'crates/oxpinyin-capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},
             'fixtures/w3/tkt/bigram.db': {'lint', 'test', 'harness'},
+            'data/table.conf.in': {'harness'},
             'fuzz/Cargo.lock': {'lint', 'deny'},
             'fuzz/fuzz_targets/x.rs': {'lint'},
             'fuzz/rust-toolchain.toml': {'lint', 'harness'},

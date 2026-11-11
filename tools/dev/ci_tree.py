@@ -145,13 +145,13 @@ CI_INPUTS = {
     # tools/ and what its tests read outside it: the store-backends gate script,
     # the manifests and the lockfile, the files directly in each crate's
     # directory (version scripts, headers, allocator registers, build scripts),
-    # the generated Rust tables, the fixtures, the sanitizer nightly and the
-    # call-site TSV. No harness test reads any other Rust source, so the files
+    # the generated Rust tables, the fixtures, the table-conf template, the
+    # sanitizer nightly and the call-site TSV. No harness test reads any other Rust source, so the files
     # under a crate's src, tests, examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
     "harness": Inputs((*SHARED, ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
-                       "crates", "fixtures", "fuzz/rust-toolchain.toml",
+                       "crates", "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "docs/findings/glib-libc-call-sites.tsv"),
                       ("crates/*/src/*.rs", "crates/*/tests/*.rs", "crates/*/examples/*.rs",
                        "crates/*/benches/*.rs"),

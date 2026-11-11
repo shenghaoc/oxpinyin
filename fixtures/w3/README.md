@@ -14,11 +14,14 @@ files at this level:
     files that the subset reaches (`gb_char.bin`, `gbk_char.bin`,
     `opengram.bin`, `merged.bin`, `art.bin`), byte-identical across all
     three;
-  - `table.conf`: the `data/table.conf.in` of the pin, rendered for
+  - `table.conf`: [`data/table.conf.in`](../../data/table.conf.in), the template of the pin, rendered for
     the backend.
 
   The runtime and C-ABI test suites open
   `fixtures/w3/<DEFAULT_STORE_EXT>`.
+  The three `opengram.bin` chunks derive from the mini subset of the
+  `opengram.table` of model20. See the
+  [open-gram attribution notice](../../data/opengram.license) of the pin.
 
   The three directories were written in two steps (recorded evidence).
   The generation and check commands are retired (#1764);

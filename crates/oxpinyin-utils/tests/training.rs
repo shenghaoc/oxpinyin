@@ -939,6 +939,12 @@ mod frozen {
             directory
         }
 
+        fn art_only_table_conf() -> &'static [u8] {
+            let config = include_str!("../../../fixtures/w3/tkt/table.conf");
+            let (with_art, _) = config.split_once("addon 5 ").expect("first unused addon");
+            with_art.as_bytes()
+        }
+
         #[rstest]
         // gen_unigram-bogus-option: utils/training/gen_unigram.cpp at 074a2219: 89-92.
         #[case::gen_unigram_bogus_option(
@@ -978,7 +984,7 @@ mod frozen {
             db_chunks(),
             &[],
             b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\n".as_slice())],
+            &[("table.conf", art_only_table_conf())],
             Run {
                 status: Exit(0),
                 stdout: Exact(b""),
@@ -1036,7 +1042,7 @@ mod frozen {
             db_chunks(),
             &["first", "second"],
             b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin SYSTEM_FILE\ndefault OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE\ndefault MERGED_DICTIONARY merged.table merged.bin merged.dbin SYSTEM_FILE\ndefault ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\ndefault NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\ndefault USER_DICTIONARY NULL NULL user.bin USER_FILE\n\naddon 4 art.table art.bin NULL DICTIONARY\n".as_slice())],
+            &[("table.conf", art_only_table_conf())],
             Run {
                 status: Exit(0),
                 stdout: Exact(b""),
