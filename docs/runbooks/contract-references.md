@@ -21,7 +21,7 @@ needs the pin, so it is a local command:
 ```sh
 uv run --no-project --managed-python python -X lazy_imports=normal \
   tools/bisection/reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX \
-  --data target/contract-data/VERSION/libpinyin/data \
+  --data "$(just fetch-contract-data)" \
   target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
 ```
 

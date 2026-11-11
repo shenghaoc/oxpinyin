@@ -21,6 +21,7 @@ import time
 from . import doctor, model, slot
 from .process import ROOT, capture, fail, run, text
 from .runners import Finished
+from tools import cachedir
 from tools.oracle import image as images
 from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime
@@ -235,7 +236,9 @@ class Provision:
         self.root = Path(root)
         self.env = dict(os.environ if env is None else env)
         self.pin = self.root / 'tools/oracle/oracle-pin.txt'
-        self.cache = images.provision_cache(self.env)
+        # The provisioning cache; the property resolves it on first use, so a run that
+        # needs no cache does not need OXPINYIN_CACHE.
+        self._cache = None
         self.cells = list(CELLS)
         self.host = platform.system()
         if self.host == 'Linux':
@@ -254,7 +257,6 @@ class Provision:
         self.ready = False
         self.inside_image = False
         self.custom_ca = False
-        self.empty_cache = False
         self.net_flags, self.env_flags = ['--network', 'host'], []
         self.uv_dir = str(Path(shutil.which('uv', path=self.env.get('PATH')) or 'uv').parent)
 
@@ -269,12 +271,22 @@ class Provision:
         return self.host == 'Windows' and not self.inside_image
 
     @property
+    def cache(self):
+        if self._cache is None:
+            self._cache = images.provision_cache(self.env, self.root)
+        return self._cache
+
+    @cache.setter
+    def cache(self, value):
+        self._cache = Path(value)
+
+    @property
     def oracle_root(self):
         return self.cache / 'oracle'
 
     @property
     def tkrzw_prefix(self):
-        return self.cache / 'tkrzw'
+        return (cachedir.root(self.env) / f'tkrzw-{TKRZW_REV[:12]}').resolve()
 
     @property
     def env_file(self):
@@ -289,8 +301,11 @@ class Provision:
     def field(self, key):
         return images.platform_field(self.pin, self.platform, key)
 
-    def options(self, argv):
-        """Preserve setup's options, exclusions, platform and cell checks."""
+    def options(self, argv, in_image=False):
+        """Preserve setup's options, exclusions, platform and cell checks.
+
+        --cache-dir names the provisioning cache at its mount point IN_IMAGE; a host run takes
+        OXPINYIN_CACHE."""
         args, oracle_options = list(argv), False
         while args:
             option = args.pop(0)
@@ -298,14 +313,13 @@ class Provision:
                 raise Finished(0)  # Historical setup.sh's header extraction prints nothing.
             if option == '--python-only':
                 self.python_only = True
-            elif option in ('--cache-dir', '--cells', '--jobs'):
+            elif option in ('--cells', '--jobs') or option == '--cache-dir' and in_image:
                 oracle_options = True
                 if not args:
                     fail(f'{option}: requires an argument', 1)
                 value = args.pop(0)
                 if option == '--cache-dir':
-                    self.cache = Path(value)
-                    self.empty_cache = not value
+                    self.cache = value
                 elif option == '--cells':
                     self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
                 else:
@@ -316,7 +330,7 @@ class Provision:
             else:
                 fail(f'unknown option: {option}', 2)
         if self.python_only and oracle_options:
-            fail('--python-only cannot be combined with --cells, --cache-dir, --jobs or --no-pull', 2)
+            fail('--python-only cannot be combined with --cells, --jobs or --no-pull', 2)
         arch = platform.machine()
         self.platform = {'x86_64': 'linux/amd64', 'AMD64': 'linux/amd64', 'aarch64': 'linux/arm64',
                          'arm64': 'linux/arm64', 'ARM64': 'linux/arm64'}.get(arch, '')
@@ -396,7 +410,8 @@ class Provision:
             return
         done = capture(['findmnt', '--raw', '--noheadings', '--output', 'TARGET,FSTYPE'], env=self.env, check=False, stderr=False)
         unknown, found = bool(done.status), False
-        candidates = [str(self.root), self.env.get('HOME', str(Path.home())), self.env.get('TMPDIR') or '/tmp', str(self.cache)]
+        candidates = [str(self.root), self.env.get('HOME', str(Path.home())), self.env.get('TMPDIR') or '/tmp',
+                      *([str(self.cache)] if self._cache or self.env.get('OXPINYIN_CACHE') else [])]
         for line in done.stdout.decode().splitlines():
             parts = line.split()
             if len(parts) == 2 and parts[1] == 'ext4':
@@ -419,7 +434,7 @@ class Provision:
 
     def oracle(self, argv):
         """Provision only oracle cells inside the native oracle performance image."""
-        self.options(argv)
+        self.options(argv, in_image=True)
         if self.python_only or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
             fail('provision oracle needs positive --jobs and does not accept --python-only', 2)
         marker = Path('/usr/local/share/oxpinyin/performance-os-release')
@@ -428,7 +443,7 @@ class Provision:
             self.die('provision oracle runs locally inside just provision-oracle (or just performance)')
         self.cache = self.cache.resolve()
         self.cache.mkdir(parents=True, exist_ok=True)
-        self.model_cache = Path(self.env.get('PINYIN_MODEL_CACHE') or self.cache / 'model20')
+        self.model_cache = images.model_cache(self.env)
         self.inside_image, self.pull = True, False
         self.oracle_root.mkdir(parents=True, exist_ok=True)
         self.libraries()
@@ -933,11 +948,9 @@ class Provision:
             return 0
         with ExitStack() as stack:
             self.proxy_ca(stack)
-            if self.empty_cache:
-                run(['mkdir', '-p', ''], env=self.env)
             self.cache.mkdir(parents=True, exist_ok=True)
             self.cache = self.cache.resolve()
-            self.model_cache = Path(self.env.get('PINYIN_MODEL_CACHE') or str(self.cache / 'model20'))
+            self.model_cache = images.model_cache(self.env)
             self.model_cache.mkdir(parents=True, exist_ok=True)
             self.model_cache = self.model_cache.resolve()
             self.oracle_root.mkdir(parents=True, exist_ok=True)

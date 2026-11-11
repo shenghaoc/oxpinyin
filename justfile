@@ -10,7 +10,20 @@ set shell := ["pwsh", "-NoLogo", "-NoProfile", "-CommandWithArgs"]
 # Discard just's recipe name once, before native argument forwarding.
 windows_args := '$null, [object[]]$forwarded = $args;'
 
+# The cache root of everything the tooling fetches or builds from pinned sources,
+# shared by all worktrees (docs/runbooks/setup.md#cache-directory).
+export OXPINYIN_CACHE := if env("OXPINYIN_CACHE", "") == "" { join(cache_directory(), "oxpinyin") } else { env("OXPINYIN_CACHE") }
+
 default: doctor
+
+# Print the cache root used by the fetch and provisioning recipes.
+[unix]
+cache-root:
+    @printf '%s\n' "$OXPINYIN_CACHE"
+
+[windows]
+cache-root:
+    @[Console]::WriteLine($env:OXPINYIN_CACHE)
 
 # Compare scripts2-derived Rust tables offline; pass --write to regenerate.
 [unix]
@@ -52,7 +65,7 @@ provision *args: python
 provision *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision @forwarded; exit $LASTEXITCODE
 
-# Fetch, verify and extract the pinned model20 archive into target/model20.
+# Fetch, verify and extract the pinned model20 archive into the cache root.
 [unix]
 fetch-model *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model "$@"
@@ -61,7 +74,7 @@ fetch-model *args: python
 fetch-model *args: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-model @forwarded; exit $LASTEXITCODE
 
-# Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into target/contract-data.
+# Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into the cache root.
 [unix]
 fetch-contract-data *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev fetch-contract-data "$@"
@@ -251,7 +264,7 @@ capture-pin run: python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image capture-pin @forwarded; exit $LASTEXITCODE
 
 # Provision the oracle cells into the provisioning cache `just provision` also uses
-# (OXPINYIN_PROVISION_CACHE, else ~/.cache/oxpinyin), running `provision oracle` in the
+# (the pin's entry of the cache root), running `provision oracle` in the
 # performance image through the selected runtime (docs/runbooks/pin-captures.md).
 [unix]
 provision-oracle *args: python

@@ -65,19 +65,19 @@ The capture runs on the pin only. It is a STOP under the
 [approval conditions](../../CONTRIBUTING.md#approval-conditions): do it only when the maintainer
 asks for it.
 
-1. Provision the three cells with their build trees into a fresh `CACHE` with
+1. Provision the three cells with their build trees under a fresh cache root `ROOT` with
    `just provision-oracle` (`provision oracle` builds a tree only when it regenerates the data). It
    runs `provision oracle` in the performance image through the selected runtime
    ([container runtimes](setup.md#container-runtimes)), into the provisioning cache that
-   `just provision` also uses: `OXPINYIN_PROVISION_CACHE`, else `~/.cache/oxpinyin`. The cells are
-   `oracle/<cell>` there, and model20 is `model20`:
+   `just provision` also uses: `CACHE`, the `pin-<commit>` entry of the
+   [cache directory](setup.md#cache-directory). The cells are `oracle/<cell>` there:
 
    ```bash
-   OXPINYIN_PROVISION_CACHE=CACHE just provision-oracle
+   OXPINYIN_CACHE=ROOT just provision-oracle
    ```
 
    The data sequence needs a model20 extraction: `provision oracle` fetches it into
-   `$PINYIN_MODEL_CACHE` (default `CACHE/model20`), as `extracted/` beside the `verified` marker
+   the `model20-<digest>` entry of `ROOT`, as `extracted/` beside the `verified` marker
    that records the pinned archive digest. The capture refuses an extraction without that marker
    (`w3_fixtures.model_dir`). The extraction and the subset text are not redistributable: they are
    mounted read-only for the run, and nothing commits them.
@@ -92,17 +92,17 @@ asks for it.
 2. On a native host, capture two runs in the capture image:
 
    ```bash
-   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL just capture-pin 1
+   OXPINYIN_CACHE=ROOT just capture-pin 1
    ```
 
    ```bash
-   OXPINYIN_PROVISION_CACHE=CACHE PINYIN_MODEL_CACHE=MODEL just capture-pin 2
+   OXPINYIN_CACHE=ROOT just capture-pin 2
    ```
 
    The runtime is the platform's first installed one ([container runtimes](setup.md#container-runtimes)),
    and the run prints it on its `Runtime:` line. `OXPINYIN_CAPTURE_RUNTIME`, else
    `OXPINYIN_CONTAINER`, names another. On Windows, run them from Developer PowerShell, setting
-   the variables first (`$env:OXPINYIN_PROVISION_CACHE = 'CACHE'`, then `just capture-pin 1`);
+   the variable first (`$env:OXPINYIN_CACHE = 'ROOT'`, then `just capture-pin 1`);
    `wslc` is the default there (the [WSL container limits](setup.md#native-windows-and-wsl-containers)
    apply).
 

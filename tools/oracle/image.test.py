@@ -609,7 +609,8 @@ class ProvisionOracleTests(unittest.TestCase):
         as_macos(self)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.cache = Path(directory.name) / 'cache'
+        self.root = Path(directory.name) / 'root'
+        self.cache = images.provision_cache({'OXPINYIN_CACHE': str(self.root)})
 
     def calls(self, engine, argv=(), env=None, present=False):
         calls = []
@@ -617,7 +618,7 @@ class ProvisionOracleTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             calls.append([str(part) for part in command])
             return 0
-        environment = dict(env or {}, OXPINYIN_PROVISION_CACHE=str(self.cache))
+        environment = dict(env or {}, OXPINYIN_CACHE=str(self.root))
         with (mock.patch.object(images.platform, 'machine', return_value='x86_64'),
               mock.patch.object(images, 'select_runtime', return_value=engine),
               mock.patch.object(images, 'image_tag', return_value='TAG'),
@@ -640,13 +641,19 @@ class ProvisionOracleTests(unittest.TestCase):
                 else:
                     self.assertIn(f'{ROOT.resolve()}:/repo:ro', launch)
                 self.assertIn(f'{self.cache.resolve()}:/provision', launch)
+                # The guest receives the host's cache root at a path of its own, never the host path.
+                self.assertIn(f'{self.root.resolve()}:/cache', launch)
+                self.assertIn('OXPINYIN_CACHE=/cache', launch)
+                self.assertNotIn(f'OXPINYIN_CACHE={self.root}', launch)
+                self.assertEqual(self.cache.parent, self.root)
                 self.assertEqual(launch[launch.index('provision'):],
                                  ['provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
                 self.assertTrue(launch[launch.index('-w') + 2].startswith('oxpinyin-performance:TAG-'))
 
     def test_rootful_docker_runs_as_the_host_user_with_a_writable_uv(self):
         with mock.patch.object(images, 'run_user', return_value=['--user', '1000:1001']):
-            commands = {engine: images.provision_oracle_command(engine, ROOT, self.cache, 'tag', 'linux/amd64', [])
+            commands = {engine: images.provision_oracle_command(engine, ROOT, self.cache, 'tag', 'linux/amd64', [],
+                                                                self.root)
                         for engine in ('docker', 'podman', 'container', 'wslc')}
         docker = commands['docker']
         self.assertEqual(docker[docker.index('--user') + 1], '1000:1001')
@@ -657,7 +664,24 @@ class ProvisionOracleTests(unittest.TestCase):
             self.assertNotIn('--user', commands[engine], engine)
             self.assertNotIn('UV_CACHE_DIR=/tmp/uv-cache', commands[engine], engine)
         with mock.patch.object(images, 'run_user', return_value=[]):
-            self.assertNotIn('--user', images.provision_oracle_command('wslc', ROOT, self.cache, 'tag', 'linux/amd64', []))
+            self.assertNotIn('--user', images.provision_oracle_command('wslc', ROOT, self.cache, 'tag', 'linux/amd64', [],
+                                                                       self.root))
+
+    def test_the_caches_are_the_keyed_entries_of_the_cache_root(self):
+        from tools.dev import model
+        commit = images.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
+        env = {'OXPINYIN_CACHE': str(self.root)}
+        self.assertEqual(images.provision_cache(env), self.root / f'pin-{commit[:12]}')
+        self.assertEqual(images.model_cache(env), self.root / f'model20-{model.archive_sha256()[:12]}')
+
+    def test_the_performance_container_receives_a_cache_root_on_its_volume(self):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(images.platform, 'machine', return_value='x86_64'), \
+             mock.patch.object(images, 'run', return_value=0) as run, mock.patch.object(images, 'select_runtime', return_value='docker'), \
+             mock.patch.object(images, 'text', return_value='/checkout/.git'):
+            self.assertEqual(images.performance(['--skip-build', '--', 'true']), 0)
+        launch = [str(part) for part in run.call_args_list[-1].args[0]]
+        self.assertIn('oxpinyin-performance-amd64:/performance', launch)
+        self.assertIn('OXPINYIN_CACHE=/performance/cache', launch)
 
     def test_other_options_ci_and_foreign_architectures_are_refused_before_any_runtime_call(self):
         for argv, env, machine in ((['--cache-dir', '/x'], {}, 'x86_64'), (['--cells'], {}, 'x86_64'),
@@ -801,8 +825,11 @@ class CaptureLauncherTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.provision = Path(directory.name).resolve() / 'provision'
-        (self.provision / 'model20/extracted').mkdir(parents=True)
-        self.env = {'PATH': '', 'OXPINYIN_PROVISION_CACHE': str(self.provision)}
+        self.cache_root = self.provision.parent / 'root'
+        self.env = {'PATH': '', 'OXPINYIN_CACHE': str(self.cache_root)}
+        self.provision, self.model = images.provision_cache(self.env), images.model_cache(self.env)
+        self.provision.mkdir(parents=True)
+        (self.model / 'extracted').mkdir(parents=True)
 
     def launch(self, runtime, *, present=True, machine='x86_64', uid=(1000, 1001), argv=('1',)):
         calls = []
@@ -814,7 +841,7 @@ class CaptureLauncherTests(unittest.TestCase):
         def field(engine, name, image, env=None, platform=None):
             return {'Architecture': images.ARCHITECTURES[machine], 'Id': 'sha256:capture-id'}[name]
         env = {'OXPINYIN_CAPTURE_RUNTIME': runtime, 'OXPINYIN_CAPTURE_BUILD_FLAGS': '--network host', 'PATH': '',
-               'OXPINYIN_PROVISION_CACHE': str(self.provision)}
+               'OXPINYIN_CACHE': str(self.cache_root)}
         user = ['--user', f'{uid[0]}:{uid[1]}'] if uid else []
         with (mock.patch.object(images.platform, 'machine', return_value=machine),
               mock.patch.object(images, 'select_runtime', return_value=runtime) as select,
@@ -839,7 +866,7 @@ class CaptureLauncherTests(unittest.TestCase):
                 '-e', 'OXPINYIN_TKRZW_LIBRARY=/usr/lib/x86_64-linux-gnu/libtkrzw.so.1',
                 '-v', f'{ROOT}:/work:ro', '-v', f'{ROOT / "target/pin-observations"}:/work/target/pin-observations:rw',
                 '-v', '/cache/data:/data:ro', '-v', f'{self.provision}:/provision:ro',
-                '-v', f'{self.provision / "model20"}:/model20:ro', '-w', '/work', 'sha256:capture-id', python,
+                '-v', f'{self.model}:/model20:ro', '-w', '/work', 'sha256:capture-id', python,
                 '-X', 'lazy_imports=normal', 'tools/oracle/pin_capture.py', 'capture', '1', '--prefix',
                 '/opt/reference/tkrzw', '--data', '/data', '--provision-cache', '/provision',
                 '--model-dir', '/model20/extracted', '--staging', '/work/target/pin-observations']
@@ -906,11 +933,17 @@ class CaptureLauncherTests(unittest.TestCase):
                       '-m tools.oracle.image build-image', error.getvalue())
 
     def test_a_missing_provision_or_model_cache_is_refused_before_any_runtime_call(self):
-        model = Path(self.provision.parent) / 'model-elsewhere'
-        for env, message in (({}, 'set OXPINYIN_PROVISION_CACHE to a `tools.dev provision oracle --cache-dir` directory'),
-                             ({'OXPINYIN_PROVISION_CACHE': str(self.provision.parent / 'absent')}, 'set OXPINYIN_PROVISION_CACHE'),
-                             ({'OXPINYIN_PROVISION_CACHE': str(self.provision), 'PINYIN_MODEL_CACHE': str(model)},
-                              f'{model / "extracted"} is not a model20 extraction; set PINYIN_MODEL_CACHE')):
+        absent = self.cache_root.parent / 'absent'
+        only_cells = self.cache_root.parent / 'only-cells'
+        images.provision_cache({'OXPINYIN_CACHE': str(only_cells)}).mkdir(parents=True)
+        with self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute directory'):
+            images.capture_pin(['1'], root=ROOT, env={'PATH': ''})
+        for env, message in (({'OXPINYIN_CACHE': str(absent)},
+                              f'{images.provision_cache({"OXPINYIN_CACHE": str(absent)})} is not a directory; '
+                              'run `just provision-oracle`'),
+                             ({'OXPINYIN_CACHE': str(only_cells)},
+                              f'{images.model_cache({"OXPINYIN_CACHE": str(only_cells)}) / "extracted"} '
+                              'is not a model20 extraction')):
             with (self.subTest(env=env), mock.patch.object(images, 'run') as run, mock.patch.object(images, 'quiet') as quiet,
                   mock.patch.object(images, 'select_runtime') as select,
                   contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished) as raised):
@@ -928,7 +961,7 @@ class CaptureLauncherTests(unittest.TestCase):
                     mock.patch.object(images, 'select_runtime', return_value='docker') as select, \
                     mock.patch.object(images, 'run') as run, mock.patch.object(images, 'quiet') as quiet, \
                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(images.Finished) as raised:
-                images.capture_pin(argv, root=ROOT, env={'PATH': ''})
+                images.capture_pin(argv, root=ROOT, env=self.env)
             self.assertEqual(raised.exception.status, 2)
             run.assert_not_called()
             quiet.assert_not_called()

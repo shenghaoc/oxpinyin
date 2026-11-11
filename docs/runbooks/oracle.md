@@ -119,14 +119,14 @@ change.
 ## 1. Fetch the model (once per machine)
 
 ```sh
-just fetch-model
-export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
+export PINYIN_MODEL_DIR="$(just fetch-model | tail -n 1)"
 ```
 
-The command reads the expected SHA-256 from the pin, verifies the archive
-and extracts it into `target/model20/`. The last stdout line is the extracted
+The command reads the expected SHA-256 from the pin and verifies the archive.
+It extracts the archive into the `model20-<digest>` entry of the
+[cache directory](setup.md#cache-directory). The last stdout line is the extracted
 directory. Both `just fetch-model` and the builder's `--model-dir` check the
-digest in `target/model20/verified` before reusing the extraction.
+digest in the `verified` file beside `extracted/` before reusing the extraction.
 
 ## 2. Build the oracle
 
@@ -142,7 +142,7 @@ just provision-oracle --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 The cells land in the provisioning cache under `oracle/<cell>`:
-`OXPINYIN_PROVISION_CACHE`, else `~/.cache/oxpinyin`.
+the `pin-<commit>` entry of the [cache directory](setup.md#cache-directory).
 `OXPINYIN_CONTAINER` names a runtime other than the host's first choice.
 On Windows, run it from PowerShell 7; the runtime is `wslc`
 ([native Windows](setup.md#native-windows-and-wsl-containers)).
@@ -297,12 +297,12 @@ this pin's data build. Run the builder where the build dependencies of
 section 2 are, for example in the `deps` stage of the image:
 
 ```sh
-just fetch-model
+model="$(dirname "$(just fetch-model | tail -n 1)")"
 docker build --target deps -f tools/oracle/Dockerfile.oracle -t oxpinyin-oracle-deps .
 docker run --rm \
     -v "$PWD":/opt/oracle-recipe:ro \
     -v "$dest":/opt/pinyin-oracle \
-    -v "$PWD/target/model20":/model-cache:ro \
+    -v "$model":/model-cache:ro \
     oxpinyin-oracle-deps \
     python3 /opt/oracle-recipe/tools/oracle/build.py --regen-data --dbm tkrzw \
         --prefix /opt/pinyin-oracle/tkrzw --model-dir /model-cache/extracted \
@@ -388,11 +388,12 @@ library bytes and absence of model-derived data.
 For oracle-only provisioning in the same native container:
 
 ```sh
-PINYIN_MODEL_CACHE=/performance/model20 uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 The provisioner rebuilds missing or stale pin/recipe prefixes, regenerates
 missing or damaged data, and validates all recorded outputs before returning.
+`just performance` sets `OXPINYIN_CACHE=/performance/cache` in the container, so model20 is on the volume.
 
 ## 3. Produce the export
 
@@ -439,7 +440,7 @@ produces its own backend files; it does not read the oracle's data directory or
 link libpinyin. From the repository root:
 
 ```sh
-export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
+export PINYIN_MODEL_DIR="$(just fetch-model | tail -n 1)"
 just w3-fixtures check --cells bdb,kc,tkrzw
 ```
 
