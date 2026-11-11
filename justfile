@@ -132,15 +132,11 @@ check backend="": python
 
 # A distro tkrzw is found through pkg-config with nothing more. To use this
 # build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
-# runtime library path (DIR/bin on Windows), as CI's tkrzw action does.
+# runtime library path, as CI's tkrzw action does.
 # Build upstream tkrzw at the provisioning revision into an empty DIR.
 [unix]
 tkrzw-build prefix: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
-
-[windows]
-tkrzw-build prefix: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix @forwarded; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest.
 [unix]

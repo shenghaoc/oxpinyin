@@ -348,7 +348,7 @@ jobs:
         # call-site fixture's major, and taskset for the CPU-pinned child.
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux
+          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux
       - run: just test-tools
 
   # Stripped shipping-library sizes (constitution section 2). Builds both

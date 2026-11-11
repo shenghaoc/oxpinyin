@@ -1,0 +1,2363 @@
+--- a/tkrzw_cmd_util.h
++++ b/tkrzw_cmd_util.h
+@@ -106,13 +106,13 @@
+  * @param format The format string.
+  * @param ... The other arguments.
+  */
+-void PrintF(const char* format, ...);
++TKRZW_EXPORT void PrintF(const char* format, ...);
+ 
+ /**
+  * Prints a character to the stdout and flush the buffer.
+  * @param c The character to print.
+  */
+-void PutChar(char c);
++TKRZW_EXPORT void PutChar(char c);
+ 
+ /**
+  * Prints an empty string to the stderr and flush the buffer.
+@@ -156,13 +156,13 @@
+  * @param format The format string.
+  * @param ... The other arguments.
+  */
+-void EPrintF(const char* format, ...);
++TKRZW_EXPORT void EPrintF(const char* format, ...);
+ 
+ /**
+  * Prints a character to the stderr and flush the buffer.
+  * @param c The character to print.
+  */
+-void EPutChar(char c);
++TKRZW_EXPORT void EPutChar(char c);
+ 
+ /**
+  * Parses command line arguments.
+@@ -174,7 +174,7 @@
+  * @param error_message The pointer to a string object to contain the error message.
+  * @return True on success or false on failure.
+  */
+-bool ParseCommandArguments(
++TKRZW_EXPORT bool ParseCommandArguments(
+     int32_t argc, const char** argv,
+     const std::map<std::string, int32_t>& configs,
+     std::map<std::string, std::vector<std::string>>* result,
+@@ -188,7 +188,7 @@
+  * @param default_value The value to be returned on failure.
+  * @return The value of the matching argument on success, or the default value on failure.
+  */
+-std::string GetStringArgument(
++TKRZW_EXPORT std::string GetStringArgument(
+     const std::map<std::string, std::vector<std::string>>& args,
+     const std::string& name, int32_t index, const std::string& default_value);
+ 
+@@ -200,7 +200,7 @@
+  * @param default_value The value to be returned on failure.
+  * @return The value of the matching argument on success, or the default value on failure.
+  */
+-int64_t GetIntegerArgument(
++TKRZW_EXPORT int64_t GetIntegerArgument(
+     const std::map<std::string, std::vector<std::string>>& args,
+     const std::string& name, int32_t index, int64_t default_value);
+ 
+@@ -212,7 +212,7 @@
+  * @param default_value The value to be returned on failure.
+  * @return The value of the matching argument on success, or the default value on failure.
+  */
+-double GetDoubleArgument(
++TKRZW_EXPORT double GetDoubleArgument(
+     const std::map<std::string, std::vector<std::string>>& args,
+     const std::string& name, int32_t index, double default_value);
+ 
+@@ -243,7 +243,7 @@
+  * @param alloc_inc_factor A factor to increase the size of allocation.
+  * @return The created object.
+  */
+-std::unique_ptr<File> MakeFileOrDie(
++TKRZW_EXPORT std::unique_ptr<File> MakeFileOrDie(
+     const std::string& impl_name, int64_t alloc_init_size, double alloc_inc_factor);
+ 
+ /**
+@@ -255,7 +255,7 @@
+  * @param is_padding If true, the padding access option is set.
+  * @param is_pagecache If true, the mini page cache option is set.
+  */
+-void SetAccessStrategyOrDie(File* file, int64_t block_size,
++TKRZW_EXPORT void SetAccessStrategyOrDie(File* file, int64_t block_size,
+                             bool is_direct_io, bool is_sync_io, bool is_padding,
+                             bool is_pagecache);
+ 
+@@ -264,13 +264,13 @@
+  * @param file The file object.
+  * @param size The size of the head buffer.
+  */
+-void SetHeadBufferOfFileOrDie(File* file, int64_t size);
++TKRZW_EXPORT void SetHeadBufferOfFileOrDie(File* file, int64_t size);
+ 
+ /**
+  * Prints all records of a DBM in TSV format.
+  * @param dbm The DBM object.
+  */
+-void PrintDBMRecordsInTSV(DBM* dbm);
++TKRZW_EXPORT void PrintDBMRecordsInTSV(DBM* dbm);
+ 
+ /**
+  * Makes a text whose characters appear in a cyclic pattern.
+@@ -278,7 +278,7 @@
+  * @param seed The random seed.
+  * @return The result text.
+  */
+-std::string MakeCyclishText(size_t size, int32_t seed);
++TKRZW_EXPORT std::string MakeCyclishText(size_t size, int32_t seed);
+ 
+ /**
+  * Makes a text whose character distribution is sililar to natural Englsh.
+@@ -286,7 +286,7 @@
+  * @param seed The random seed.
+  * @return The result text.
+  */
+-std::string MakeNaturalishText(size_t size, int32_t seed);
++TKRZW_EXPORT std::string MakeNaturalishText(size_t size, int32_t seed);
+ 
+ }  // namespace tkrzw
+ 
+--- a/tkrzw_compress.h
++++ b/tkrzw_compress.h
+@@ -28,7 +28,7 @@
+ /**
+  * Interfrace of data compression and decompression.
+  */
+-class Compressor {
++class TKRZW_EXPORT Compressor {
+  public:
+   /**
+    * Destructor.
+@@ -84,7 +84,7 @@
+ /**
+  * Dummy compressor implemetation.
+  */
+-class DummyCompressor : public Compressor {
++class TKRZW_EXPORT DummyCompressor : public Compressor {
+  public:
+   /**
+    * Constructor.
+@@ -141,7 +141,7 @@
+ /**
+  * Compressor implemeted with ZLib.
+  */
+-class ZLibCompressor final : public Compressor {
++class TKRZW_EXPORT ZLibCompressor final : public Compressor {
+  public:
+   /**
+    * Enumeration for metadata modes.
+@@ -214,7 +214,7 @@
+ /**
+  * Compressor implemeted with ZStd.
+  */
+-class ZStdCompressor final : public Compressor {
++class TKRZW_EXPORT ZStdCompressor final : public Compressor {
+  public:
+   /**
+    * Constructor.
+@@ -273,7 +273,7 @@
+ /**
+  * Compressor implemeted with LZ4.
+  */
+-class LZ4Compressor final : public Compressor {
++class TKRZW_EXPORT LZ4Compressor final : public Compressor {
+  public:
+   /**
+    * Constructor.
+@@ -331,7 +331,7 @@
+ /**
+  * Compressor implemeted with LZMA.
+  */
+-class LZMACompressor final : public Compressor {
++class TKRZW_EXPORT LZMACompressor final : public Compressor {
+  public:
+   /**
+    * Enumeration for metadata modes.
+@@ -404,7 +404,7 @@
+ /**
+  * Compressor implemeted with RC4 encryption.
+  */
+-class RC4Compressor final : public Compressor {
++class TKRZW_EXPORT RC4Compressor final : public Compressor {
+  public:
+   /**
+    * Constructor.
+@@ -471,7 +471,7 @@
+ /**
+  * Compressor implemeted with AES encryption.
+  */
+-class AESCompressor final : public Compressor {
++class TKRZW_EXPORT AESCompressor final : public Compressor {
+  public:
+   /**
+    * Constructor.
+--- a/tkrzw_dbm.h
++++ b/tkrzw_dbm.h
+@@ -36,7 +36,7 @@
+ /**
+  * Interface of database manager.
+  */
+-class DBM {
++class TKRZW_EXPORT DBM {
+  public:
+   /** The special string_view value to represent any data. */
+   static const std::string_view ANY_DATA;
+@@ -44,7 +44,7 @@
+   /**
+    * Interface of processor for a record.
+    */
+-  class RecordProcessor {
++  class TKRZW_EXPORT RecordProcessor {
+    public:
+     /**
+      * The special string indicating no operation.
+@@ -718,7 +718,7 @@
+   /**
+    * Interface of iterator for each record.
+    */
+-  class Iterator {
++  class TKRZW_EXPORT Iterator {
+    public:
+     /**
+      * Destructor.
+@@ -897,7 +897,7 @@
+   /**
+    * Interface of processor for a record.
+    */
+-  class FileProcessor {
++  class TKRZW_EXPORT FileProcessor {
+    public:
+     /**
+      * Destructor.
+@@ -914,7 +914,7 @@
+   /**
+    * File processor to implement DBM::CopyFileData.
+    */
+-  class FileProcessorCopyFileData : public FileProcessor {
++  class TKRZW_EXPORT FileProcessorCopyFileData : public FileProcessor {
+    public:
+     /**
+      * Constructor.
+@@ -937,7 +937,7 @@
+   /**
+    * Interface of update logger.
+    */
+-  class UpdateLogger {
++  class TKRZW_EXPORT UpdateLogger {
+    public:
+     /**
+      * Destructor.
+--- a/tkrzw_dbm_async.h
++++ b/tkrzw_dbm_async.h
+@@ -41,12 +41,12 @@
+  * this asynchronous database manager waits for all tasks to be done.  Therefore, the destructor
+  * should be called before the database is closed.
+  */
+-class AsyncDBM final {
++class TKRZW_EXPORT AsyncDBM final {
+  public:
+   /**
+    * Interface of a common post processor for a record.
+    */
+-  class CommonPostprocessor {
++  class TKRZW_EXPORT CommonPostprocessor {
+    public:
+     /**
+      * Destructor.
+@@ -71,7 +71,7 @@
+   /**
+    * Interface of asynchronous processor for a record.
+    */
+-  class RecordProcessor : public DBM::RecordProcessor {
++  class TKRZW_EXPORT RecordProcessor : public DBM::RecordProcessor {
+    public:
+     /**
+      * Destructor.
+@@ -535,7 +535,7 @@
+ /**
+  * Wrapper of std::future containing a status object and extra data.
+  */
+-class StatusFuture final {
++class TKRZW_EXPORT StatusFuture final {
+  public:
+   /**
+    * Constructor for a status object.
+--- a/tkrzw_dbm_baby.h
++++ b/tkrzw_dbm_baby.h
+@@ -37,7 +37,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.
+  */
+-class BabyDBM final : public DBM {
++class TKRZW_EXPORT BabyDBM final : public DBM {
+  public:
+   /**
+    * Iterator for each record.
+@@ -45,7 +45,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class BabyDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_cache.h
++++ b/tkrzw_dbm_cache.h
+@@ -36,7 +36,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.
+  */
+-class CacheDBM final : public DBM {
++class TKRZW_EXPORT CacheDBM final : public DBM {
+  public:
+   /** The default value of the maximum number of records. */
+   static constexpr int64_t DEFAULT_CAP_REC_NUM = 1048576;
+@@ -47,7 +47,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class CacheDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_common_impl.h
++++ b/tkrzw_dbm_common_impl.h
+@@ -63,14 +63,14 @@
+  * @param num The integer.
+  * @return True if the integer is a prime number.
+  */
+-uint64_t IsPrimeNumber(uint64_t num);
++TKRZW_EXPORT uint64_t IsPrimeNumber(uint64_t num);
+ 
+ /**
+  * Gets a proper bucket size for hashing.
+  * @param min_size The minimum size.
+  * @return The calculated bucket size.
+  */
+-int64_t GetHashBucketSize(int64_t min_size);
++TKRZW_EXPORT int64_t GetHashBucketSize(int64_t min_size);
+ 
+ /**
+  * Searches a database and get keys which match a pattern.
+@@ -82,7 +82,7 @@
+  * @return The result status.
+  * @details This scans the whole database so it can take long time.
+  */
+-Status SearchDBM(
++TKRZW_EXPORT Status SearchDBM(
+     DBM* dbm, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0,
+     bool (*matcher)(std::string_view, std::string_view) = StrContains);
+ 
+@@ -95,7 +95,7 @@
+  * @return The result status.
+  * @details This scans the whole database so it can take long time.
+  */
+-Status SearchDBMLambda(
++TKRZW_EXPORT Status SearchDBMLambda(
+     DBM* dbm, std::function<bool(std::string_view)> matcher,
+     std::vector<std::string>* matched, size_t capacity = 0);
+ 
+@@ -112,7 +112,7 @@
+  * @details Even if there's no matching record, the operation doesn't fail.  This method is
+  * suppoerted only for ordered databases.
+  */
+-Status SearchDBMOrder(DBM* dbm, std::string_view pattern, bool upper, bool inclusive,
++TKRZW_EXPORT Status SearchDBMOrder(DBM* dbm, std::string_view pattern, bool upper, bool inclusive,
+                       std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -126,7 +126,7 @@
+  * is not LexicalKeyComparator, all matching keys are not extracted.  If the database is unordered,
+  * this scans the whole database so it can take long time.
+  */
+-Status SearchDBMForwardMatch(
++TKRZW_EXPORT Status SearchDBMForwardMatch(
+     DBM* dbm, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -141,7 +141,7 @@
+  * @return The result status.
+  * @details This scans the whole database so it can take long time.
+  */
+-Status SearchDBMRegex(
++TKRZW_EXPORT Status SearchDBMRegex(
+     DBM* dbm, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -152,7 +152,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @details This scans the whole database so it can take long time.
+  */
+-Status SearchDBMEditDistance(
++TKRZW_EXPORT Status SearchDBMEditDistance(
+     DBM* dbm, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -163,7 +163,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @details This scans the whole database so it can take long time.
+  */
+-Status SearchDBMEditDistanceBinary(
++TKRZW_EXPORT Status SearchDBMEditDistanceBinary(
+     DBM* dbm, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -184,7 +184,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchDBMModal(
++TKRZW_EXPORT Status SearchDBMModal(
+     DBM* dbm, std::string_view mode, std::string_view pattern,
+     std::vector<std::string>* matched, size_t capacity = 0);
+ 
+@@ -196,7 +196,7 @@
+  * @details A flat record file contains a sequence of binary records without any high level
+  * structure so it is useful as a intermediate file for data migration.
+  */
+-Status ExportDBMToFlatRecords(DBM* dbm, File* dest_file);
++TKRZW_EXPORT Status ExportDBMToFlatRecords(DBM* dbm, File* dest_file);
+ 
+ /**
+  * Imports records to a database from a flat record file.
+@@ -204,7 +204,7 @@
+  * @param src_file The file object to read records from.
+  * @return The result status.
+  */
+-Status ImportDBMFromFlatRecords(DBM* dbm, File* src_file);
++TKRZW_EXPORT Status ImportDBMFromFlatRecords(DBM* dbm, File* src_file);
+ 
+ /**
+  * Exports the keys of all records of a database to a flat record file.
+@@ -212,7 +212,7 @@
+  * @param dest_file The file object to write keys in.
+  * @return The result status.
+  */
+-Status ExportDBMKeysToFlatRecords(DBM* dbm, File* dest_file);
++TKRZW_EXPORT Status ExportDBMKeysToFlatRecords(DBM* dbm, File* dest_file);
+ 
+ /**
+  * Exports all records of a database to a TSV file.
+@@ -221,7 +221,7 @@
+  * @param escape If true, C-style escaping is applied to the output.
+  * @return The result status.
+  */
+-Status ExportDBMToTSV(DBM* dbm, File* dest_file, bool escape = false);
++TKRZW_EXPORT Status ExportDBMToTSV(DBM* dbm, File* dest_file, bool escape = false);
+ 
+ /**
+  * Imports records to a database from a TSV file.
+@@ -230,7 +230,7 @@
+  * @param unescape If true, C-style unescaping is applied to the input.
+  * @return The result status.
+  */
+-Status ImportDBMFromTSV(DBM* dbm, File* dest_file, bool unescape = false);
++TKRZW_EXPORT Status ImportDBMFromTSV(DBM* dbm, File* dest_file, bool unescape = false);
+ 
+ /**
+  * Exports the keys of all records of a database as lines to a text file.
+@@ -238,7 +238,7 @@
+  * @param dest_file The file object to write keys in.
+  * @return The result status.
+  */
+-Status ExportDBMKeysAsLines(DBM* dbm, File* dest_file);
++TKRZW_EXPORT Status ExportDBMKeysAsLines(DBM* dbm, File* dest_file);
+ 
+ /**
+  * Searches a text file and get lines which match a pattern.
+@@ -249,7 +249,7 @@
+  * @param matcher A matching function which takes the pattern and a candidate.
+  * @return The result status.
+  */
+-Status SearchTextFile(
++TKRZW_EXPORT Status SearchTextFile(
+     File* file, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0,
+     bool (*matcher)(std::string_view, std::string_view) = StrContains);
+ 
+@@ -261,7 +261,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchTextFileLambda(
++TKRZW_EXPORT Status SearchTextFileLambda(
+     File* file, std::function<bool(std::string_view)> matcher,
+     std::vector<std::string>* matched, size_t capacity = 0);
+ 
+@@ -276,7 +276,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchTextFileRegex(
++TKRZW_EXPORT Status SearchTextFileRegex(
+     File* file, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -287,7 +287,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchTextFileEditDistance(
++TKRZW_EXPORT Status SearchTextFileEditDistance(
+     File* file, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -298,7 +298,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchTextFileEditDistanceBinary(
++TKRZW_EXPORT Status SearchTextFileEditDistanceBinary(
+     File* file, std::string_view pattern, std::vector<std::string>* matched, size_t capacity = 0);
+ 
+ /**
+@@ -317,7 +317,7 @@
+  * @param capacity The maximum records to obtain.  0 means unlimited.
+  * @return The result status.
+  */
+-Status SearchTextFileModal(
++TKRZW_EXPORT Status SearchTextFileModal(
+     File* file, std::string_view mode, std::string_view pattern,
+     std::vector<std::string>* matched, size_t capacity = 0);
+ 
+--- a/tkrzw_dbm_hash.h
++++ b/tkrzw_dbm_hash.h
+@@ -37,7 +37,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.  Every opened database must be closed explicitly to avoid data corruption.
+  */
+-class HashDBM final : public DBM {
++class TKRZW_EXPORT HashDBM final : public DBM {
+  public:
+   /** The default value of the offset width. */
+   static constexpr int32_t DEFAULT_OFFSET_WIDTH = 4;
+@@ -58,7 +58,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class HashDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_poly.h
++++ b/tkrzw_dbm_poly.h
+@@ -35,7 +35,7 @@
+  * Parametric database manager interface.
+  * @details This is commonly used by the PolyDBM and ShardDBM.
+  */
+-class ParamDBM : public DBM {
++class TKRZW_EXPORT ParamDBM : public DBM {
+  public:
+   /**
+    * Destructor.
+@@ -82,7 +82,7 @@
+  * @details This class is a wrapper of HashDBM, TreeDBM, SkipDBM, TinyDBM, BabyDBM, StdHashDBM,
+  * and StdTreeDBM.  The Open method specifies the actuall class used internally.
+  */
+-class PolyDBM final : public ParamDBM {
++class TKRZW_EXPORT PolyDBM final : public ParamDBM {
+  public:
+   /**
+    * Iterator for each record.
+@@ -90,7 +90,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class PolyDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_shard.h
++++ b/tkrzw_dbm_shard.h
+@@ -40,7 +40,7 @@
+  * avoid data corruption.
+  * @details This class is a wrapper of PolyDBM for sharding the database into multiple instances.
+  */
+-class ShardDBM final : public ParamDBM {
++class TKRZW_EXPORT ShardDBM final : public ParamDBM {
+  public:
+   /**
+    * Iterator for each record.
+@@ -48,7 +48,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class ShardDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_skip.h
++++ b/tkrzw_dbm_skip.h
+@@ -36,7 +36,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.  Every opened database must be closed explicitly to avoid data corruption.
+  */
+-class SkipDBM final : public DBM {
++class TKRZW_EXPORT SkipDBM final : public DBM {
+  public:
+   /** The default value of the offset width. */
+   static constexpr int32_t DEFAULT_OFFSET_WIDTH = 4;
+@@ -59,7 +59,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class SkipDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_std.h
++++ b/tkrzw_dbm_std.h
+@@ -36,7 +36,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.
+  */
+-class StdHashDBM final : public DBM {
++class TKRZW_EXPORT StdHashDBM final : public DBM {
+  public:
+   /** The default value of the number of buckets. */
+   static constexpr int64_t DEFAULT_NUM_BUCKETS = 1048583;
+@@ -47,7 +47,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class StdHashDBM;
+    public:
+     /**
+@@ -371,7 +371,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.
+  */
+-class StdTreeDBM final : public DBM {
++class TKRZW_EXPORT StdTreeDBM final : public DBM {
+  public:
+   /**
+    * Iterator for each record.
+@@ -379,7 +379,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class StdTreeDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_tiny.h
++++ b/tkrzw_dbm_tiny.h
+@@ -36,7 +36,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.
+  */
+-class TinyDBM final : public DBM {
++class TKRZW_EXPORT TinyDBM final : public DBM {
+  public:
+   /** The default value of the number of buckets. */
+   static constexpr int64_t DEFAULT_NUM_BUCKETS = 1048583;
+@@ -47,7 +47,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class TinyDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_tree.h
++++ b/tkrzw_dbm_tree.h
+@@ -38,7 +38,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same database
+  * concurrently.  Every opened database must be closed explicitly to avoid data corruption.
+  */
+-class TreeDBM final : public DBM {
++class TKRZW_EXPORT TreeDBM final : public DBM {
+  public:
+   /** The default value of the offset width. */
+   static constexpr int32_t DEFAULT_OFFSET_WIDTH = 4;
+@@ -63,7 +63,7 @@
+    * Operations with invalidated iterators fails gracefully with NOT_FOUND_ERROR.  One iterator
+    * cannot be shared by multiple threads.
+    */
+-  class Iterator final : public DBM::Iterator {
++  class TKRZW_EXPORT Iterator final : public DBM::Iterator {
+     friend class TreeDBM;
+    public:
+     /**
+--- a/tkrzw_dbm_ulog.h
++++ b/tkrzw_dbm_ulog.h
+@@ -30,7 +30,7 @@
+ /**
+  * DBM update logger to store logs into a string deque.
+  */
+-class DBMUpdateLoggerStrDeque final : public DBM::UpdateLogger {
++class TKRZW_EXPORT DBMUpdateLoggerStrDeque final : public DBM::UpdateLogger {
+  public:
+   /**
+    * Constructor.
+@@ -98,7 +98,7 @@
+ /**
+  * DBM update logger to replicate updates in another DBM.
+  */
+-class DBMUpdateLoggerDBM final : public DBM::UpdateLogger {
++class TKRZW_EXPORT DBMUpdateLoggerDBM final : public DBM::UpdateLogger {
+  public:
+   /**
+    * Constructor.
+@@ -239,7 +239,7 @@
+    * @param dbm_index The index of the DBM on the server.
+    * @param fixed_timestamp If not negative, the timestamp is fixed to the value.
+    */
+-  explicit DBMUpdateLoggerMQ(MessageQueue* mq, int32_t server_id = 0, int32_t dbm_index = 0,
++  TKRZW_EXPORT explicit DBMUpdateLoggerMQ(MessageQueue* mq, int32_t server_id = 0, int32_t dbm_index = 0,
+                              int64_t fixed_timestamp = -1);
+ 
+   /**
+@@ -248,20 +248,20 @@
+    * @param value The new value of the record.
+    * @return The result status.
+    */
+-  Status WriteSet(std::string_view key, std::string_view value) override;
++  TKRZW_EXPORT Status WriteSet(std::string_view key, std::string_view value) override;
+ 
+   /**
+    * Writes a log for removing an existing record.
+    * @param key The key of the record.
+    * @return The result status.
+    */
+-  Status WriteRemove(std::string_view key) override;
++  TKRZW_EXPORT Status WriteRemove(std::string_view key) override;
+ 
+   /**
+    * Writes a log for removing all records.
+    * @return The result status.
+    */
+-  Status WriteClear() override;
++  TKRZW_EXPORT Status WriteClear() override;
+ 
+   /**
+    * Synchronizes the metadata and content to the file system.
+@@ -269,7 +269,7 @@
+    * logical synchronization with the file system.
+    * @return The result status.
+    */
+-  Status Synchronize(bool hard) override;
++  TKRZW_EXPORT Status Synchronize(bool hard) override;
+ 
+   /**
+    * Overwrites the server ID of the current thread.
+@@ -277,7 +277,7 @@
+    * is undone.  If it is INT32MIN, logging of the current thread is disable.
+    * @details This affects logging of only the current thread regardless of the logger instance.
+    */
+-  static void OverwriteThreadServerID(int32_t server_id);
++  TKRZW_EXPORT static void OverwriteThreadServerID(int32_t server_id);
+ 
+   /**
+    * Parses an update log message.
+@@ -286,7 +286,7 @@
+    * the key and the value fields is the same as the given message.
+    * @return The result status.
+    */
+-  static Status ParseUpdateLog(std::string_view message, UpdateLog* op);
++  TKRZW_EXPORT static Status ParseUpdateLog(std::string_view message, UpdateLog* op);
+ 
+   /**
+    * Applys the operation in an update log to a database.
+@@ -301,7 +301,7 @@
+    * @return The result status.  If the log is ignored due to the filter, INFEASIBLE_ERROR is
+    * returned.
+    */
+-  static Status ApplyUpdateLog(
++  TKRZW_EXPORT static Status ApplyUpdateLog(
+       DBM* dbm, std::string_view message,
+       int32_t server_id = INT32MIN + 1, int32_t dbm_index = INT32MIN + 1);
+ 
+@@ -318,7 +318,7 @@
+    * which adopts the message if the DBM index matches the value.
+    * @return The result status.
+    */
+-  static Status ApplyUpdateLogFromFiles(
++  TKRZW_EXPORT static Status ApplyUpdateLogFromFiles(
+       DBM* dbm, const std::string& prefix, double min_timestamp = 0,
+       int32_t server_id = INT32MIN + 1, int32_t dbm_index = INT32MIN + 1);
+ 
+--- a/tkrzw_file.h
++++ b/tkrzw_file.h
+@@ -27,7 +27,7 @@
+ /**
+  * Interface of file operations.
+  */
+-class File {
++class TKRZW_EXPORT File {
+  public:
+   /**
+    * Destructor.
+--- a/tkrzw_file_mmap.h
++++ b/tkrzw_file_mmap.h
+@@ -27,7 +27,7 @@
+ /**
+  * Interface for memory mapping file implementations.
+  */
+-class MemoryMapFile : public File {
++class TKRZW_EXPORT MemoryMapFile : public File {
+  public:
+   /**
+    * Destructor.
+@@ -43,14 +43,14 @@
+  * file concurrently.  Other operations including Open, Close, Truncate, and Synchronize are not
+  * thread-safe.  Moreover, locking doesn't assure atomicity of reading and writing operations.
+  */
+-class MemoryMapParallelFile final : public MemoryMapFile {
++class TKRZW_EXPORT MemoryMapParallelFile final : public MemoryMapFile {
+  public:
+   /**
+    * Structure to make a shared section where a region can be accessed.
+    * @details The zone object contains a mutex which is locked by the constructor and unlocked by
+    * the destructor.  The user can access the region freely while the zone object is alive.
+    */
+-  class Zone {
++  class TKRZW_EXPORT Zone {
+     friend class MemoryMapParallelFile;
+    public:
+     /**
+@@ -315,14 +315,14 @@
+  * @details All operations are thread-safe; Multiple threads can access the same file concurrently.
+  * Also, locking assures that every operation is observed in an atomic manner.
+  */
+-class MemoryMapAtomicFile final : public MemoryMapFile {
++class TKRZW_EXPORT MemoryMapAtomicFile final : public MemoryMapFile {
+  public:
+   /**
+    * Structure to make a critical section where a region can be accessed.
+    * @details The zone object contains a mutex which is locked by the constructor and unlocked by
+    * the destructor.  The user can access the region freely while the zone object is alive.
+    */
+-  class Zone {
++  class TKRZW_EXPORT Zone {
+     friend class MemoryMapAtomicFile;
+    public:
+     /**
+--- a/tkrzw_file_poly.h
++++ b/tkrzw_file_poly.h
+@@ -37,7 +37,7 @@
+  * @details This class is a wrapper of StdFile, MemoryMapParallelFile, MemoryMapAtomicFile, and
+  * PositionalParallelFile,.  The open method specifies the actuall class used internally.
+  */
+-class PolyFile final : public File {
++class TKRZW_EXPORT PolyFile final : public File {
+  public:
+   /**
+    * Default constructor.
+--- a/tkrzw_file_pos.h
++++ b/tkrzw_file_pos.h
+@@ -27,7 +27,7 @@
+ /**
+  * Interface for positional access file implementations.
+  */
+-class PositionalFile : public File {
++class TKRZW_EXPORT PositionalFile : public File {
+  public:
+   /**
+    * Destructor.
+@@ -88,7 +88,7 @@
+  * file concurrently.  Other operations including Open, Close, Truncate, and Synchronize are not
+  * thread-safe.  Moreover, locking doesn't assure atomicity of reading and writing operations.
+  */
+-class PositionalParallelFile final : public PositionalFile {
++class TKRZW_EXPORT PositionalParallelFile final : public PositionalFile {
+  public:
+   /**
+    * Default constructor
+@@ -308,7 +308,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same file concurrently.
+  * Also, locking assures that every operation is observed in an atomic manner.
+  */
+-class PositionalAtomicFile final : public PositionalFile {
++class TKRZW_EXPORT PositionalAtomicFile final : public PositionalFile {
+  public:
+   /**
+    * Default constructor
+--- a/tkrzw_file_std.h
++++ b/tkrzw_file_std.h
+@@ -33,7 +33,7 @@
+  * @details All operations are thread-safe; Multiple threads can access the same file
+  * concurrently.
+  */
+-class StdFile final : public File {
++class TKRZW_EXPORT StdFile final : public File {
+  public:
+   /**
+    * Default constructor
+--- a/tkrzw_file_util.h
++++ b/tkrzw_file_util.h
+@@ -29,28 +29,28 @@
+ namespace tkrzw {
+ 
+ /** Directory separator character. */
+-extern const char DIR_SEP_CHR;
++extern TKRZW_EXPORT const char DIR_SEP_CHR;
+ 
+ /** Directory separator string. */
+-extern const char* const DIR_SEP_STR;
++extern TKRZW_EXPORT const char* const DIR_SEP_STR;
+ 
+ /** Extension separator character. */
+-extern const char EXT_SEP_CHR;
++extern TKRZW_EXPORT const char EXT_SEP_CHR;
+ 
+ /** Extension separator string. */
+-extern const char* const EXT_SEP_STR;
++extern TKRZW_EXPORT const char* const EXT_SEP_STR;
+ 
+ /** Current directory name. */
+-extern const char* const CURRENT_DIR_NAME;
++extern TKRZW_EXPORT const char* const CURRENT_DIR_NAME;
+ 
+ /** Parent directory name. */
+-extern const char* const PARENT_DIR_NAME;
++extern TKRZW_EXPORT const char* const PARENT_DIR_NAME;
+ 
+ /**
+  * Makes a unique name for a temporary file.
+  * @return The unique name.
+  */
+-std::string MakeTemporaryName();
++TKRZW_EXPORT std::string MakeTemporaryName();
+ 
+ /**
+  * Joins a base path and a child name.
+@@ -58,35 +58,35 @@
+  * @param child_name The child name.
+  * @return The joined path.
+  */
+-std::string JoinPath(const std::string& base_path, const std::string& child_name);
++TKRZW_EXPORT std::string JoinPath(const std::string& base_path, const std::string& child_name);
+ 
+ /**
+  * Normalizes a file path.
+  * @param path The path to normalize.
+  * @return The normalized path.
+  */
+-std::string NormalizePath(const std::string& path);
++TKRZW_EXPORT std::string NormalizePath(const std::string& path);
+ 
+ /**
+  * Gets the base name part of a path.
+  * @param path The path.
+  * @return The base name part
+  */
+-std::string PathToBaseName(const std::string& path);
++TKRZW_EXPORT std::string PathToBaseName(const std::string& path);
+ 
+ /**
+  * Gets the directory name part of a path.
+  * @param path The path.
+  * @return The directory name part.
+  */
+-std::string PathToDirectoryName(const std::string& path);
++TKRZW_EXPORT std::string PathToDirectoryName(const std::string& path);
+ 
+ /**
+  * Gets the extention part of a path.
+  * @param path The path.
+  * @return The extension part or an empty string on failure.
+  */
+-std::string PathToExtension(const std::string& path);
++TKRZW_EXPORT std::string PathToExtension(const std::string& path);
+ 
+ /**
+  * Gets the normalized and canonical form of a path.
+@@ -94,7 +94,7 @@
+  * @param real_path The pointer to a string object to store the content.
+  * @return The result status.
+  */
+-Status GetRealPath(const std::string& path, std::string* real_path);
++TKRZW_EXPORT Status GetRealPath(const std::string& path, std::string* real_path);
+ 
+ /**
+  * Status information of a file.
+@@ -116,34 +116,34 @@
+  * @param fstats The pointer to a file status object.
+  * @return The result status.
+  */
+-Status ReadFileStatus(const std::string& path, FileStatus* fstats);
++TKRZW_EXPORT Status ReadFileStatus(const std::string& path, FileStatus* fstats);
+ 
+ /**
+  * Checks if a path indicates a regular file.
+  * @param path The path to check.
+  * @return True if the path indicates a regular file.
+  */
+-bool PathIsFile(const std::string& path);
++TKRZW_EXPORT bool PathIsFile(const std::string& path);
+ 
+ /**
+  * Gets the size of a file.
+  * @param path The path to the file.
+  * @return The file size on success or -1 on failure.
+  */
+-int64_t GetFileSize(const std::string& path);
++TKRZW_EXPORT int64_t GetFileSize(const std::string& path);
+ 
+ /**
+  * Checks if a path indicates a directory.
+  * @param path The path to check.
+  * @return True if the path indicates a directory.
+  */
+-bool PathIsDirectory(const std::string& path);
++TKRZW_EXPORT bool PathIsDirectory(const std::string& path);
+ 
+ /**
+  * Gets the path to a directory for temporary files.
+  * @return The path of the directory for temporary files.
+  */
+-std::string GetPathToTemporaryDirectory();
++TKRZW_EXPORT std::string GetPathToTemporaryDirectory();
+ 
+ /**
+  * Writes a file with a content.
+@@ -151,7 +151,7 @@
+  * @param content The content.
+  * @return The result status.
+  */
+-Status WriteFile(const std::string& path, std::string_view content);
++TKRZW_EXPORT Status WriteFile(const std::string& path, std::string_view content);
+ 
+ /**
+  * Writes a file with a content, in an atomic manner by file renaming.
+@@ -161,7 +161,7 @@
+  * empty, a string made of the original path and the extension ".tmp" is used.
+  * @return The result status.
+  */
+-Status WriteFileAtomic(const std::string& path, std::string_view content,
++TKRZW_EXPORT Status WriteFileAtomic(const std::string& path, std::string_view content,
+                        const std::string& tmp_path = "");
+ 
+ /**
+@@ -171,7 +171,7 @@
+  * @param max_size The maximum size in bytes to read.
+  * @return The result status.
+  */
+-Status ReadFile(const std::string& path, std::string* content, int64_t max_size = INT32MAX);
++TKRZW_EXPORT Status ReadFile(const std::string& path, std::string* content, int64_t max_size = INT32MAX);
+ 
+ /**
+  * Reads the content from a file, in a simple way.
+@@ -180,7 +180,7 @@
+  * @param max_size The maximum size in bytes to read.
+  * @return The content of the file on success, or the default value on failure.
+  */
+-std::string ReadFileSimple(const std::string& path, std::string_view default_value = "",
++TKRZW_EXPORT std::string ReadFileSimple(const std::string& path, std::string_view default_value = "",
+                            int64_t max_size = INT32MAX);
+ 
+ /**
+@@ -189,14 +189,14 @@
+  * @param size The new size of the file.
+  * @return The result status.
+  */
+-Status TruncateFile(const std::string& path, int64_t size);
++TKRZW_EXPORT Status TruncateFile(const std::string& path, int64_t size);
+ 
+ /**
+  * Removes a file.
+  * @param path The path of the file.
+  * @return The result status.
+  */
+-Status RemoveFile(const std::string& path);
++TKRZW_EXPORT Status RemoveFile(const std::string& path);
+ 
+ /**
+  * Renames a file.
+@@ -206,7 +206,7 @@
+  * @details If there is a file at the destination path, the file is overwritten.  This function
+  * can rename directories too.
+  */
+-Status RenameFile(const std::string& src_path, const std::string& dest_path);
++TKRZW_EXPORT Status RenameFile(const std::string& src_path, const std::string& dest_path);
+ 
+ /**
+  * Copies the data of a file.
+@@ -215,7 +215,7 @@
+  * @return The result status.
+  * @details Copying is done in the fastest way available on the platform.
+  */
+-Status CopyFileData(const std::string& src_path, const std::string& dest_path);
++TKRZW_EXPORT Status CopyFileData(const std::string& src_path, const std::string& dest_path);
+ 
+ /**
+  * Reads a directory.
+@@ -223,7 +223,7 @@
+  * @param children A vector object to contain the names of all children.
+  * @return The result status.
+  */
+-Status ReadDirectory(const std::string& path, std::vector<std::string>* children);
++TKRZW_EXPORT Status ReadDirectory(const std::string& path, std::vector<std::string>* children);
+ 
+ /**
+  * Makes a directory.
+@@ -231,7 +231,7 @@
+  * @param recursive If true, parent directories are made recursively.
+  * @return The result status.
+  */
+-Status MakeDirectory(const std::string& path, bool recursive = false);
++TKRZW_EXPORT Status MakeDirectory(const std::string& path, bool recursive = false);
+ 
+ /**
+  * Removes a directory.
+@@ -239,19 +239,19 @@
+  * @param recursive If true, contents of children are removed recursively.
+  * @return The result status.
+  */
+-Status RemoveDirectory(const std::string& path, bool recursive = false);
++TKRZW_EXPORT Status RemoveDirectory(const std::string& path, bool recursive = false);
+ 
+ /**
+  * Synchronizes a file or a directory.
+  * @param path The path of the file or the directory.
+  * @return The result status.
+  */
+-Status SynchronizeFile(const std::string& path);
++TKRZW_EXPORT Status SynchronizeFile(const std::string& path);
+ 
+ /**
+  * Temporary directory whose life duration is bound with the object.
+  */
+-class TemporaryDirectory {
++class TKRZW_EXPORT TemporaryDirectory {
+  public:
+   /**
+    * Constructor.
+@@ -304,7 +304,7 @@
+ /**
+  * Page cache for buffering I/O operations.
+  */
+-class PageCache final {
++class TKRZW_EXPORT PageCache final {
+  public:
+   /** The number of slots for cuncurrency. */
+   static constexpr int32_t NUM_SLOTS = 16;
+@@ -452,7 +452,7 @@
+ /**
+  * File reader.
+  */
+-class FileReader {
++class TKRZW_EXPORT FileReader {
+  public:
+   /**
+    * Constructor.
+@@ -486,7 +486,7 @@
+ /**
+  * Flat record structure in the file.
+  */
+-class FlatRecord final {
++class TKRZW_EXPORT FlatRecord final {
+  public:
+   /**
+    * Enumeration of record types.
+@@ -579,7 +579,7 @@
+ /**
+  * Reader of flat records.
+  */
+-class FlatRecordReader {
++class TKRZW_EXPORT FlatRecordReader {
+  public:
+   /** The initial size of the input buffer. */
+   static constexpr size_t DEFAULT_BUFFER_SIZE = 32768;
+--- a/tkrzw_hash_util.h
++++ b/tkrzw_hash_util.h
+@@ -31,7 +31,7 @@
+  * @param seed The seed value.
+  * @return The hash value.
+  */
+-uint64_t HashMurmur(const void* buf, size_t size, uint64_t seed);
++TKRZW_EXPORT uint64_t HashMurmur(const void* buf, size_t size, uint64_t seed);
+ 
+ /**
+  * Gets the hash value by Murmur hashing.
+@@ -47,7 +47,7 @@
+  * @param size The size of the source buffer.
+  * @return The hash value.
+  */
+-uint64_t HashFNV(const void* buf, size_t size);
++TKRZW_EXPORT uint64_t HashFNV(const void* buf, size_t size);
+ 
+ /**
+  * Gets the hash value by FNV hashing.
+@@ -65,7 +65,7 @@
+  * @param seed A seed value.  This should be 0 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashChecksum6Continuous(
++TKRZW_EXPORT uint32_t HashChecksum6Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0);
+ 
+ /**
+@@ -120,7 +120,7 @@
+  * @param seed A seed value.  This should be 0 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashChecksum8Continuous(
++TKRZW_EXPORT uint32_t HashChecksum8Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0);
+ 
+ /**
+@@ -175,7 +175,7 @@
+  * @param seed A seed value.  This should be 1 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashAdler6Continuous(
++TKRZW_EXPORT uint32_t HashAdler6Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 1);
+ 
+ /**
+@@ -204,7 +204,7 @@
+  * @param seed A seed value.  This should be 1 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashAdler8Continuous(
++TKRZW_EXPORT uint32_t HashAdler8Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 1);
+ 
+ /**
+@@ -233,7 +233,7 @@
+  * @param seed A seed value.  This should be 1 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashAdler16Continuous(
++TKRZW_EXPORT uint32_t HashAdler16Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 1);
+ 
+ /**
+@@ -262,7 +262,7 @@
+  * @param seed A seed value.  This should be 1 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashAdler32Continuous(
++TKRZW_EXPORT uint32_t HashAdler32Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 1);
+ 
+ /**
+@@ -291,7 +291,7 @@
+  * @param seed A seed value.  This should be 0 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashCRC4Continuous(
++TKRZW_EXPORT uint32_t HashCRC4Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0);
+ 
+ /**
+@@ -320,7 +320,7 @@
+  * @param seed A seed value.  This should be 0 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashCRC8Continuous(
++TKRZW_EXPORT uint32_t HashCRC8Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0);
+ 
+ /**
+@@ -349,7 +349,7 @@
+  * @param seed A seed value.  This should be 0 for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashCRC16Continuous(
++TKRZW_EXPORT uint32_t HashCRC16Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0);
+ 
+ /**
+@@ -378,7 +378,7 @@
+  * @param seed A seed value.  This should be 0xFFFFFFFF for the frist call of the cycle.
+  * @return The hash value.
+  */
+-uint32_t HashCRC32Continuous(
++TKRZW_EXPORT uint32_t HashCRC32Continuous(
+     const void* buf, size_t size, bool finish, uint32_t seed = 0xFFFFFFFF);
+ 
+ /**
+--- a/tkrzw_lib_common.h
++++ b/tkrzw_lib_common.h
+@@ -13,6 +13,17 @@
+ 
+ #ifndef _TKRZW_LIB_COMMON_H
+ #define _TKRZW_LIB_COMMON_H
++
++// DLL mode is opt-in for source builds; installed headers fix the linkage.
++#if defined(_WIN32) && defined(TKRZW_SHARED)
++#if defined(TKRZW_BUILD_DLL)
++#define TKRZW_EXPORT __declspec(dllexport)
++#else
++#define TKRZW_EXPORT __declspec(dllimport)
++#endif
++#else
++#define TKRZW_EXPORT
++#endif
+ 
+ #include <limits>
+ #include <iostream>
+@@ -125,22 +136,22 @@
+ constexpr int64_t MAX_MEMORY_SIZE = (1LL <<  40);
+ 
+ /** The size of a memory page on the OS. */
+-extern const int32_t PAGE_SIZE;
++extern TKRZW_EXPORT const int32_t PAGE_SIZE;
+ 
+ /** The string expression of the package version. */
+-extern const char* const PACKAGE_VERSION;
++extern TKRZW_EXPORT const char* const PACKAGE_VERSION;
+ 
+ /** The string expression of the library version. */
+-extern const char* const LIBRARY_VERSION;
++extern TKRZW_EXPORT const char* const LIBRARY_VERSION;
+ 
+ /** The recognized OS name. */
+-extern const char* const OS_NAME;
++extern TKRZW_EXPORT const char* const OS_NAME;
+ 
+ /** True if the OS is conforming to POSIX. */
+-extern const bool IS_POSIX;
++extern TKRZW_EXPORT const bool IS_POSIX;
+ 
+ /** True if the byte order is big endian. */
+-extern const bool IS_BIG_ENDIAN;
++extern TKRZW_EXPORT const bool IS_BIG_ENDIAN;
+ 
+ /**
+  * Allocates a region on memory.
+@@ -212,13 +223,13 @@
+  * @param size The size of the region.  It is ceiled implicitly to a multiple of the alignment.
+  * @return The pointer to the allocated region.
+  */
+-void* xmallocaligned(size_t alignment, size_t size);
++TKRZW_EXPORT void* xmallocaligned(size_t alignment, size_t size);
+ 
+ /**
+  * Frees an aligned region on memory.
+  * @param ptr The pointer to the region.
+  */
+-void xfreealigned(void* ptr);
++TKRZW_EXPORT void xfreealigned(void* ptr);
+ 
+ /**
+  * Copies memory area by normalizing the byte order into the big endian.
+@@ -227,7 +238,7 @@
+  * @param width The width of each memory area.
+  * @return the desination area.
+  */
+-void* xmemcpybigendian(void* dest, const void* src, size_t width);
++TKRZW_EXPORT void* xmemcpybigendian(void* dest, const void* src, size_t width);
+ 
+ /**
+  * Checks whether a set has an element.
+@@ -270,25 +281,25 @@
+  * Gets the current processs ID.
+  * @return The current processs ID.
+  */
+-int64_t GetProcessID();
++TKRZW_EXPORT int64_t GetProcessID();
+ 
+ /**
+  * Gets system information of the environment.
+  * @return A map of labels and their values.
+  */
+-std::map<std::string, std::string> GetSystemInfo();
++TKRZW_EXPORT std::map<std::string, std::string> GetSystemInfo();
+ 
+ /**
+  * Gets the memory capacity of the platform.
+  * @return The memory capacity of the platform in bytes, or -1 on failure.
+  */
+-int64_t GetMemoryCapacity();
++TKRZW_EXPORT int64_t GetMemoryCapacity();
+ 
+ /**
+  * Gets the current memory usage of the process.
+  * @return The current memory usage of the process in bytes, or -1 on failure.
+  */
+-int64_t GetMemoryUsage();
++TKRZW_EXPORT int64_t GetMemoryUsage();
+ 
+ /**
+  * Status of operations.
+@@ -695,7 +706,7 @@
+  * @param sys_err_num The value of "errno".
+  * @return The status object.
+  */
+-Status GetErrnoStatus(const char* call_name, int32_t sys_err_num);
++TKRZW_EXPORT Status GetErrnoStatus(const char* call_name, int32_t sys_err_num);
+ 
+ }  // namespace tkrzw
+ 
+--- a/tkrzw_message_queue.h
++++ b/tkrzw_message_queue.h
+@@ -33,12 +33,12 @@
+ /**
+  * Message queue on the file stream.
+  */
+-class MessageQueue final {
++class TKRZW_EXPORT MessageQueue final {
+  public:
+   /**
+    * Messsage reader.
+    */
+-  class Reader final {
++  class TKRZW_EXPORT Reader final {
+     friend class MessageQueue;
+    public:
+     /**
+--- a/tkrzw_str_util.h
++++ b/tkrzw_str_util.h
+@@ -30,7 +30,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted integer.
+  */
+-int64_t StrToInt(std::string_view str, int64_t defval = 0);
++TKRZW_EXPORT int64_t StrToInt(std::string_view str, int64_t defval = 0);
+ 
+ /**
+  * Converts a decimal string with a metric prefix to an integer.
+@@ -40,7 +40,7 @@
+  * @return The converted integer.  If the integer overflows the domain, INT64MAX or INT64MIN is
+  * returned according to the sign.
+  */
+-int64_t StrToIntMetric(std::string_view str, int64_t defval = 0);
++TKRZW_EXPORT int64_t StrToIntMetric(std::string_view str, int64_t defval = 0);
+ 
+ /**
+  * Converts a octal string to an integer.
+@@ -48,7 +48,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted integer.
+  */
+-uint64_t StrToIntOct(std::string_view str, uint64_t defval = 0);
++TKRZW_EXPORT uint64_t StrToIntOct(std::string_view str, uint64_t defval = 0);
+ 
+ /**
+  * Converts a hexadecimal string to an integer.
+@@ -56,7 +56,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted integer.
+  */
+-uint64_t StrToIntHex(std::string_view str, uint64_t defval = 0);
++TKRZW_EXPORT uint64_t StrToIntHex(std::string_view str, uint64_t defval = 0);
+ 
+ /**
+  * Converts a decimal string to a real number.
+@@ -64,7 +64,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted real number.
+  */
+-double StrToDouble(std::string_view str, double defval = 0.0);
++TKRZW_EXPORT double StrToDouble(std::string_view str, double defval = 0.0);
+ 
+ /**
+  * Converts a big-endian binary string to an integer.
+@@ -72,7 +72,7 @@
+  * @return The converted integer.  As the return type is unsigned, type cast is necessary to
+  * handle negative values.
+  */
+-uint64_t StrToIntBigEndian(std::string_view str);
++TKRZW_EXPORT uint64_t StrToIntBigEndian(std::string_view str);
+ 
+ /**
+  * Converts a big-endian binary string to a real number.
+@@ -80,7 +80,7 @@
+  * (long double).
+  * @return The converted real number.
+  */
+-long double StrToFloatBigEndian(std::string_view str);
++TKRZW_EXPORT long double StrToFloatBigEndian(std::string_view str);
+ 
+ /**
+  * Converts a byte-delta-encoded string into an integer.
+@@ -89,7 +89,7 @@
+  * @return The converted integer.  As the return type is unsigned, type cast is necessary to
+  * handle negative values.
+  */
+-uint64_t StrToIntDelta(std::string_view str, bool zigzag);
++TKRZW_EXPORT uint64_t StrToIntDelta(std::string_view str, bool zigzag);
+ 
+ /**
+  * Converts a boolean string to a boolean value.
+@@ -97,7 +97,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted boolean value.
+  */
+-bool StrToBool(std::string_view str, bool defval = false);
++TKRZW_EXPORT bool StrToBool(std::string_view str, bool defval = false);
+ 
+ /**
+  * Converts a decimal or boolean string to an integer or boolean value.
+@@ -105,7 +105,7 @@
+  * @param defval The default value to be returned on failure.
+  * @return The converted integer.
+  */
+-int64_t StrToIntOrBool(std::string_view str, int64_t defval = 0);
++TKRZW_EXPORT int64_t StrToIntOrBool(std::string_view str, int64_t defval = 0);
+ 
+ /**
+  * Appends a formatted string at the end of a string.
+@@ -114,7 +114,7 @@
+  * such flag characters as `s', `d', `o', `u', `x', `X', `c', `e', `E', `f', `g', `G', and `%'.
+  * @param ap Arguments used according to the format string.
+  */
+-void VSPrintF(std::string* dest, const char* format, va_list ap);
++TKRZW_EXPORT void VSPrintF(std::string* dest, const char* format, va_list ap);
+ 
+ /**
+  * Appends a formatted string at the end of a string.
+@@ -123,7 +123,7 @@
+  * such flag characters as `s', `d', `o', `u', `x', `X', `c', `e', `E', `f', `g', `G', and `%'.
+  * @param ... Arguments used according to the format string.
+  */
+-void SPrintF(std::string* dest, const char* format, ...);
++TKRZW_EXPORT void SPrintF(std::string* dest, const char* format, ...);
+ 
+ /**
+  * Generates a formatted string.
+@@ -132,7 +132,7 @@
+  * @param ... Arguments used according to the format string.
+  * @return The result string.
+  */
+-std::string SPrintF(const char* format, ...);
++TKRZW_EXPORT std::string SPrintF(const char* format, ...);
+ 
+ /**
+  * Converts an integer to a decimal string.
+@@ -149,7 +149,7 @@
+  * @param data The real number to convert.
+  * @return The converted string.
+  */
+-std::string ToString(double data);
++TKRZW_EXPORT std::string ToString(double data);
+ 
+ /**
+  * Converts a real number to a decimal string.
+@@ -220,7 +220,7 @@
+  * @param size The size of the converted string.
+  * @return The converted string.
+  */
+-std::string IntToStrBigEndian(uint64_t data, size_t size = sizeof(uint64_t));
++TKRZW_EXPORT std::string IntToStrBigEndian(uint64_t data, size_t size = sizeof(uint64_t));
+ 
+ /**
+  * Converts a floating-point number into a big-endian binary string.
+@@ -228,7 +228,7 @@
+  * @param size The size of the converted string.
+  * @return The converted string.
+  */
+-std::string FloatToStrBigEndian(long double data, size_t size = sizeof(double));
++TKRZW_EXPORT std::string FloatToStrBigEndian(long double data, size_t size = sizeof(double));
+ 
+ /**
+  * Converts an integer into a string in byte delta encoding.
+@@ -236,7 +236,7 @@
+  * @param zigzag If true, negative values are also supported by applying zigzag encoding.
+  * @return The result string representing the values.
+  */
+-std::string IntToStrDelta(uint64_t data, bool zigzag);
++TKRZW_EXPORT std::string IntToStrDelta(uint64_t data, bool zigzag);
+ 
+ /**
+  * Converts each record of a container into strings and join them.
+@@ -282,7 +282,7 @@
+  * @param skip_empty If true, fields with empty values are skipped.
+  * @return A vector object into which the result segments are pushed.
+  */
+-std::vector<std::string> StrSplit(std::string_view str, char delim,
++TKRZW_EXPORT std::vector<std::string> StrSplit(std::string_view str, char delim,
+                                   bool skip_empty = false);
+ 
+ /**
+@@ -292,7 +292,7 @@
+  * @param skip_empty If true, fields with empty values are skipped.
+  * @return A vector object into which the result segments are pushed.
+  */
+-std::vector<std::string> StrSplit(std::string_view str, std::string_view delim,
++TKRZW_EXPORT std::vector<std::string> StrSplit(std::string_view str, std::string_view delim,
+                                   bool skip_empty = false);
+ 
+ /**
+@@ -302,7 +302,7 @@
+  * @param skip_empty If true, fields with empty values are skipped.
+  * @return A vector object into which the result segments are pushed.
+  */
+-std::vector<std::string> StrSplitAny(std::string_view str, std::string_view delims,
++TKRZW_EXPORT std::vector<std::string> StrSplitAny(std::string_view str, std::string_view delims,
+                                      bool skip_empty = false);
+ 
+ /**
+@@ -312,7 +312,7 @@
+  * @param delim_kv The delimiter string between the key and the value.
+  * @return A map object containing key-value pairs.
+  */
+-std::map<std::string, std::string> StrSplitIntoMap(
++TKRZW_EXPORT std::map<std::string, std::string> StrSplitIntoMap(
+     std::string_view str, std::string_view delim_records, std::string_view delim_kv);
+ 
+ /**
+@@ -320,26 +320,26 @@
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrUpperCase(std::string_view str);
++TKRZW_EXPORT std::string StrUpperCase(std::string_view str);
+ 
+ /**
+  * Converts letters of a string into upper case in-place.
+  * @param str The pointer to the string to modify.
+  */
+-void StrUpperCase(std::string* str);
++TKRZW_EXPORT void StrUpperCase(std::string* str);
+ 
+ /**
+  * Converts letters of a string into lower case.
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrLowerCase(std::string_view str);
++TKRZW_EXPORT std::string StrLowerCase(std::string_view str);
+ 
+ /**
+  * Converts letters of a string into lower case in-place.
+  * @param str The pointer to the string to modify.
+  */
+-void StrLowerCase(std::string* str);
++TKRZW_EXPORT void StrLowerCase(std::string* str);
+ 
+ /**
+  * Converts a string by replacing substrings to diffent substrings.
+@@ -348,7 +348,7 @@
+  * @param after The substring after replacement.
+  * @return The converted string.
+  */
+-std::string StrReplace(std::string_view str, std::string_view before, std::string_view after);
++TKRZW_EXPORT std::string StrReplace(std::string_view str, std::string_view before, std::string_view after);
+ 
+ /**
+  * Modifies a string by replacing characters to diffent characters in-place.
+@@ -357,7 +357,7 @@
+  * @param after The characters to insert.  The character at the same index as the index of the
+  * before character is used.  If there's no counterpart, no character is inserted.
+  */
+-void StrReplaceCharacters(std::string* str, std::string_view before, std::string_view after);
++TKRZW_EXPORT void StrReplaceCharacters(std::string* str, std::string_view before, std::string_view after);
+ 
+ /**
+  * Checks whether a text contains a pattern.
+@@ -365,7 +365,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text contains the pattern.
+  */
+-bool StrContains(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrContains(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Checks whether a text contains a pattern in a case-insensitive manner.
+@@ -373,7 +373,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text contains the pattern.
+  */
+-bool StrCaseContains(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrCaseContains(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Checks whether a text contains a word surrounded by non-alphanumeric word boundaries.
+@@ -381,7 +381,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text contains the pattern.
+  */
+-bool StrWordContains(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrWordContains(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Checks whether a text contains a word in a case-sensitive manner.
+@@ -389,7 +389,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text contains the pattern.
+  */
+-bool StrCaseWordContains(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrCaseWordContains(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Checks a text contains at least one of patterns.
+@@ -397,7 +397,7 @@
+  * @param patterns The patterns to search for.
+  * @return True if the text contains at least one of patterns.
+  */
+-bool StrContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
++TKRZW_EXPORT bool StrContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
+ 
+ /**
+  * Checks a text contains at least one of patterns in a case-sensitive manner.
+@@ -405,7 +405,7 @@
+  * @param patterns The patterns to search for.
+  * @return True if the text contains at least one of patterns.
+  */
+-bool StrCaseContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
++TKRZW_EXPORT bool StrCaseContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
+ 
+ /**
+  * Checks a text contains at least one of words surrounded by non-alphanumeric word boundaries.
+@@ -413,7 +413,7 @@
+  * @param patterns The patterns to search for.
+  * @return True if the text contains at least one of patterns.
+  */
+-bool StrWordContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
++TKRZW_EXPORT bool StrWordContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
+ 
+ /**
+  * Checks a text contains at least one of words in a case-sensitive manner.
+@@ -421,7 +421,7 @@
+  * @param patterns The patterns to search for.
+  * @return True if the text contains at least one of patterns.
+  */
+-bool StrCaseWordContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
++TKRZW_EXPORT bool StrCaseWordContainsBatch(std::string_view text, const std::vector<std::string>& patterns);
+ 
+ /**
+  * Checks a text contains at least one of lowercase words in a case-sensitive manner.
+@@ -429,7 +429,7 @@
+  * @param patterns The patterns to search for.  Each must be lowercased.
+  * @return True if the text contains at least one of patterns.
+  */
+-bool StrCaseWordContainsBatchLower(
++TKRZW_EXPORT bool StrCaseWordContainsBatchLower(
+     std::string_view text, const std::vector<std::string>& patterns);
+ 
+ /**
+@@ -438,7 +438,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text begins with the pattern.
+  */
+-bool StrBeginsWith(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrBeginsWith(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Checks whether a text ends with a pattern.
+@@ -446,7 +446,7 @@
+  * @param pattern The pattern to search for.
+  * @return True if the text ends with the pattern.
+  */
+-bool StrEndsWith(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT bool StrEndsWith(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Compares two strings ignoring case.
+@@ -454,7 +454,7 @@
+  * @param b The other string.
+  * @return Negative if the former is less, 0 if both are equivalent, positive if latter is less.
+  */
+-int32_t StrCaseCompare(std::string_view a, std::string_view b);
++TKRZW_EXPORT int32_t StrCaseCompare(std::string_view a, std::string_view b);
+ 
+ /**
+  * Searches a text for a pattern, with string::find.
+@@ -462,7 +462,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearch(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearch(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, by naive double loop.
+@@ -470,7 +470,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchDoubleLoop(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchDoubleLoop(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, with memchr.
+@@ -478,7 +478,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchMemchr(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchMemchr(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, with memmem.
+@@ -486,7 +486,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchMemmem(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchMemmem(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, by Knuth-Morris-Pratt algorithm.
+@@ -494,7 +494,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchKMP(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchKMP(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, by Boyer-Moore algorithm.
+@@ -502,7 +502,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchBM(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchBM(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, by Rabin-Karp algorithm.
+@@ -510,7 +510,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchRK(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchRK(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern, by Z algorithm.'
+@@ -518,7 +518,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrSearchZ(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchZ(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a pattern and get indices of all occurrences, with string::find.
+@@ -527,7 +527,7 @@
+  * @param max_results The maximum number of results to store.  0 means unlimited.
+  * @return A vector of indeces of all ocurrences of the pattern.
+  */
+-std::vector<int32_t> StrSearchWhole(
++TKRZW_EXPORT std::vector<int32_t> StrSearchWhole(
+     std::string_view text, std::string_view pattern, size_t max_results = 0);
+ 
+ /**
+@@ -537,7 +537,7 @@
+  * @param max_results The maximum number of results to store.  0 means unlimited.
+  * @return A vector of indeces of all ocurrences of the pattern.
+  */
+-std::vector<int32_t> StrSearchWholeKMP(
++TKRZW_EXPORT std::vector<int32_t> StrSearchWholeKMP(
+     std::string_view text, std::string_view pattern, size_t max_results = 0);
+ 
+ /**
+@@ -547,7 +547,7 @@
+  * @param max_results The maximum number of results to store.  0 means unlimited.
+  * @return A vector of indeces of all ocurrences of the pattern.
+  */
+-std::vector<int32_t> StrSearchWholeBM(
++TKRZW_EXPORT std::vector<int32_t> StrSearchWholeBM(
+     std::string_view text, std::string_view pattern, size_t max_results = 0);
+ 
+ /**
+@@ -557,7 +557,7 @@
+  * @param max_results The maximum number of results to store.  0 means unlimited.
+  * @return A vector of indeces of all ocurrences of the pattern.
+  */
+-std::vector<int32_t> StrSearchWholeRK(
++TKRZW_EXPORT std::vector<int32_t> StrSearchWholeRK(
+     std::string_view text, std::string_view pattern, size_t max_results = 0);
+ 
+ /**
+@@ -568,7 +568,7 @@
+  * @return A vector of the result for each pattern.  Each element is a vector of indices of all
+  * occurrences of the pattern.
+  */
+-std::vector<std::vector<int32_t>> StrSearchBatch(
++TKRZW_EXPORT std::vector<std::vector<int32_t>> StrSearchBatch(
+     std::string_view text, const std::vector<std::string>& patterns, size_t max_results = 0);
+ 
+ /**
+@@ -579,7 +579,7 @@
+  * @return A vector of the result for each pattern.  Each element is a vector of indices of all
+  * occurrences of the pattern.
+  */
+-std::vector<std::vector<int32_t>> StrSearchBatchKMP(
++TKRZW_EXPORT std::vector<std::vector<int32_t>> StrSearchBatchKMP(
+     std::string_view text, const std::vector<std::string>& patterns, size_t max_results = 0);
+ 
+ /**
+@@ -590,7 +590,7 @@
+  * @return A vector of the result for each pattern.  Each element is a vector of indices of all
+  * occurrences of the pattern.
+  */
+-std::vector<std::vector<int32_t>> StrSearchBatchBM(
++TKRZW_EXPORT std::vector<std::vector<int32_t>> StrSearchBatchBM(
+     std::string_view text, const std::vector<std::string>& patterns, size_t max_results = 0);
+ 
+ /**
+@@ -601,7 +601,7 @@
+  * @return A vector of the result for each pattern.  Each element is a vector of indices of all
+  * occurrences of the pattern.
+  */
+-std::vector<std::vector<int32_t>> StrSearchBatchRK(
++TKRZW_EXPORT std::vector<std::vector<int32_t>> StrSearchBatchRK(
+     std::string_view text, const std::vector<std::string>& patterns, size_t max_results = 0);
+ 
+ /**
+@@ -610,7 +610,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrCaseSearch(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrCaseSearch(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a word surrounded by non-alphanumeric word boundaries.
+@@ -618,7 +618,7 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrWordSearch(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrWordSearch(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Searches a text for a word surrounded in a case-insensitive manner.
+@@ -626,34 +626,34 @@
+  * @param pattern The pattern to search for.
+  * @return The index of the first matched position, or -1 if there's no matches.
+  */
+-int32_t StrCaseWordSearch(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrCaseWordSearch(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Removes space characters at the head or the tail of a string.
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrStripSpace(std::string_view str);
++TKRZW_EXPORT std::string StrStripSpace(std::string_view str);
+ 
+ /**
+  * Removes linefeed characters from the end of a string.
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrStripLine(std::string_view str);
++TKRZW_EXPORT std::string StrStripLine(std::string_view str);
+ 
+ /**
+  * Remove linefeed characters from the end of a string in-place.
+  * @param str The pointer to the string to modify.
+  */
+-void StrStripLine(std::string* str);
++TKRZW_EXPORT void StrStripLine(std::string* str);
+ 
+ /**
+  * Squeezes space characters in a string and removes spaces at both ends.
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrSqueezeAndStripSpace(std::string_view str);
++TKRZW_EXPORT std::string StrSqueezeAndStripSpace(std::string_view str);
+ 
+ /**
+  * Trims a string for TSV by normalizing space and control characters.
+@@ -661,7 +661,7 @@
+  * @param keep_tab If true, tab is kept and not escaped.
+  * @return The converted string.
+  */
+-std::string StrTrimForTSV(std::string_view str, bool keep_tab = false);
++TKRZW_EXPORT std::string StrTrimForTSV(std::string_view str, bool keep_tab = false);
+ 
+ /**
+  * Escapes C-style meta characters in a string.
+@@ -669,42 +669,42 @@
+  * @param esc_nonasc If true, non-ASCII characters are excaped.
+  * @return The converted string.
+  */
+-std::string StrEscapeC(std::string_view str, bool esc_nonasc = false);
++TKRZW_EXPORT std::string StrEscapeC(std::string_view str, bool esc_nonasc = false);
+ 
+ /**
+  * Unescapes C-style escape sequences in a string.
+  * @param str The string to convert.
+  * @return The converted string.
+  */
+-std::string StrUnescapeC(std::string_view str);
++TKRZW_EXPORT std::string StrUnescapeC(std::string_view str);
+ 
+ /**
+  * Encodes a string into a Base64 string.
+  * @param str The string to encode.
+  * @return The encoded string.
+  */
+-std::string StrEncodeBase64(std::string_view str);
++TKRZW_EXPORT std::string StrEncodeBase64(std::string_view str);
+ 
+ /**
+  * Decodes a Base64 string into a string.
+  * @param str The Base64 string to decode.
+  * @return The decoded string.
+  */
+-std::string StrDecodeBase64(std::string_view str);
++TKRZW_EXPORT std::string StrDecodeBase64(std::string_view str);
+ 
+ /**
+  * Encodes a string into a URL part string.
+  * @param str The string to encode.
+  * @return The encoded string.
+  */
+-std::string StrEncodeURL(std::string_view str);
++TKRZW_EXPORT std::string StrEncodeURL(std::string_view str);
+ 
+ /**
+  * Decodes a URL part string into a string.
+  * @param str The URL part string to decode.
+  * @return The decoded string.
+  */
+-std::string StrDecodeURL(std::string_view str);
++TKRZW_EXPORT std::string StrDecodeURL(std::string_view str);
+ 
+ /**
+  * Searches a string for a pattern matching a regular expression.
+@@ -716,7 +716,7 @@
+  * @return The position of the first matching pattern.  If there's no matching pattern. -1 is
+  * returned.  If the regular expression is invalid, -2 is returned.
+  */
+-int32_t StrSearchRegex(std::string_view text, std::string_view pattern);
++TKRZW_EXPORT int32_t StrSearchRegex(std::string_view text, std::string_view pattern);
+ 
+ /**
+  * Replaces substrings matching a pattern of regular expression.
+@@ -729,7 +729,7 @@
+  * and etc represent n-th bracketed patterns.
+  * @return The result string.  If the regular expression is invalid, an empty string is returned.
+  */
+-std::string StrReplaceRegex(std::string_view text, std::string_view pattern,
++TKRZW_EXPORT std::string StrReplaceRegex(std::string_view text, std::string_view pattern,
+                             std::string_view replace);
+ 
+ /**
+@@ -737,28 +737,28 @@
+  * @param utf The UTF-8 string.
+  * @return The UCS-4 vector.
+  */
+-std::vector<uint32_t> ConvertUTF8ToUCS4(std::string_view utf);
++TKRZW_EXPORT std::vector<uint32_t> ConvertUTF8ToUCS4(std::string_view utf);
+ 
+ /**
+  * Converts a UCS-4 vector into a UTF-8 string.
+  * @param ucs The UCS-4 vector.
+  * @return The UTF-8 string.
+  */
+-std::string ConvertUCS4ToUTF8(const std::vector<uint32_t>& ucs);
++TKRZW_EXPORT std::string ConvertUCS4ToUTF8(const std::vector<uint32_t>& ucs);
+ 
+ /**
+  * Converts a UTF-8 string into a wide string.
+  * @param utf The UTF-8 string.
+  * @return The wide string.
+  */
+-std::wstring ConvertUTF8ToWide(std::string_view utf);
++TKRZW_EXPORT std::wstring ConvertUTF8ToWide(std::string_view utf);
+ 
+ /**
+  * Converts a wide string into a UTF-8 string.
+  * @param wstr The wide string.
+  * @return The UTF-8 string.
+  */
+-std::string ConvertWideToUTF8(const std::wstring& wstr);
++TKRZW_EXPORT std::string ConvertWideToUTF8(const std::wstring& wstr);
+ 
+ /**
+  * Gets the Levenshtein edit distance of two sequences.
+@@ -805,7 +805,7 @@
+  * @details The size of the first value and the size of the second value come in the byte delta
+  * encoding.  The first data and the second data follow them.
+  */
+-std::string SerializeStrPair(std::string_view first, std::string_view second);
++TKRZW_EXPORT std::string SerializeStrPair(std::string_view first, std::string_view second);
+ 
+ /**
+  * Deserializes a serialized string into a pair of strings.
+@@ -813,7 +813,7 @@
+  * @param first The pointer to a string view object to refer to the first string.
+  * @param second The pointer to a string view object to refer to the second string.
+  */
+-void DeserializeStrPair(
++TKRZW_EXPORT void DeserializeStrPair(
+     std::string_view serialized, std::string_view* first, std::string_view* second);
+ 
+ /**
+@@ -821,7 +821,7 @@
+  * @param serialized The serialized string.
+  * @return The first part string.
+  */
+-std::string_view GetFirstFromSerializedStrPair(std::string_view serialized);
++TKRZW_EXPORT std::string_view GetFirstFromSerializedStrPair(std::string_view serialized);
+ 
+ /**
+  * Serializes a vector of strings into a string.
+@@ -830,28 +830,28 @@
+  * @details The size of a value comes in the byte delta encoding and the data follows.  The pairs
+  * for all values come consequitively.
+  */
+-std::string SerializeStrVector(const std::vector<std::string>& values);
++TKRZW_EXPORT std::string SerializeStrVector(const std::vector<std::string>& values);
+ 
+ /**
+  * Deserializes a serialized string into a string vector.
+  * @param serialized The serialized string.
+  * @return The result string vector.
+  */
+-std::vector<std::string> DeserializeStrVector(std::string_view serialized);
++TKRZW_EXPORT std::vector<std::string> DeserializeStrVector(std::string_view serialized);
+ 
+ /**
+  * Makes a string vector from a string view vector.
+  * @param views The string view vector.
+  * @return The result string vector.
+  */
+-std::vector<std::string> MakeStrVectorFromViews(const std::vector<std::string_view>& views);
++TKRZW_EXPORT std::vector<std::string> MakeStrVectorFromViews(const std::vector<std::string_view>& views);
+ 
+ /**
+  * Makes a string view vector from a string vector.
+  * @param values The string vector.
+  * @return The result string view vector.  Elements refer to the elements of the input vector.
+  */
+-std::vector<std::string_view> MakeStrViewVectorFromValues(
++TKRZW_EXPORT std::vector<std::string_view> MakeStrViewVectorFromValues(
+     const std::vector<std::string>& values);
+ 
+ /**
+@@ -862,21 +862,21 @@
+  * its value comes in the byte delta encoding and the data follows.  The tuples for all records
+  * come consequitively.
+  */
+-std::string SerializeStrMap(const std::map<std::string, std::string>& records);
++TKRZW_EXPORT std::string SerializeStrMap(const std::map<std::string, std::string>& records);
+ 
+ /**
+  * Deserializes a serialized string into a string map.
+  * @param serialized The serialized string.
+  * @return The result string map.
+  */
+-std::map<std::string, std::string> DeserializeStrMap(std::string_view serialized);
++TKRZW_EXPORT std::map<std::string, std::string> DeserializeStrMap(std::string_view serialized);
+ 
+ /**
+  * Makes a string map from a string view map.
+  * @param views The string view map.
+  * @return The result string map.
+  */
+-std::map<std::string, std::string> MakeStrMapFromViews(
++TKRZW_EXPORT std::map<std::string, std::string> MakeStrMapFromViews(
+     const std::map<std::string_view, std::string_view>& views);
+ 
+ /**
+@@ -884,7 +884,7 @@
+  * @param records The string map.
+  * @return The result string view map.  Elements refer to the elements of the input map.
+  */
+-std::map<std::string_view, std::string_view> MakeStrViewMapFromRecords(
++TKRZW_EXPORT std::map<std::string_view, std::string_view> MakeStrViewMapFromRecords(
+     const std::map<std::string, std::string>& records);
+ 
+ /**
+--- a/tkrzw_time_util.h
++++ b/tkrzw_time_util.h
+@@ -29,28 +29,28 @@
+  * Gets the number of seconds since the UNIX epoch.
+  * @return The number of seconds since the UNIX epoch with microsecond precision.
+  */
+-double GetWallTime();
++TKRZW_EXPORT double GetWallTime();
+ 
+ /**
+  * Gets the local calendar of a time.
+  * @param wtime the time since the UNIX epoch.
+  * @param cal the pointer to a calendar object to store the result.
+  */
+-void GetLocalCalendar(int64_t wtime, struct std::tm* cal);
++TKRZW_EXPORT void GetLocalCalendar(int64_t wtime, struct std::tm* cal);
+ 
+ /**
+  * Gets the universal calendar of a time.
+  * @param wtime the time since the UNIX epoch.
+  * @param cal the pointer to a calendar object to store the result.
+  */
+-void GetUniversalCalendar(int64_t wtime, struct std::tm* cal);
++TKRZW_EXPORT void GetUniversalCalendar(int64_t wtime, struct std::tm* cal);
+ 
+ /**
+  * Makes the UNIX time from a universal calendar.
+  * @param cal the time struct of the universal calendar.
+  * @return The UNIX time of the universal calendar
+  */
+-int64_t MakeUniversalTime(struct std::tm& cal);
++TKRZW_EXPORT int64_t MakeUniversalTime(struct std::tm& cal);
+ 
+ /**
+  * Gets the time difference of the local time zone.
+@@ -58,7 +58,7 @@
+  * @return The time difference of the local time zone in seconds, which is positive in the east
+  * of the prime meridian and negative in the west.
+  */
+-int32_t GetLocalTimeDifference(bool use_cache = false);
++TKRZW_EXPORT int32_t GetLocalTimeDifference(bool use_cache = false);
+ 
+ /**
+  * Gets the day of week of a date.
+@@ -67,7 +67,7 @@
+  * @param day the day of the date.
+  * @return The day of week of the date.  0 means Sunday and 6 means Saturday.
+  */
+-int32_t GetDayOfWeek(int32_t year, int32_t mon, int32_t day);
++TKRZW_EXPORT int32_t GetDayOfWeek(int32_t year, int32_t mon, int32_t day);
+ 
+ /**
+  * Formats a date as a simple string in "YYYY/MM/DD hh:mm:ss" format.
+@@ -78,7 +78,7 @@
+  * specified.
+  * @return The size of the result string excluding the sentinel null code.
+  */
+-size_t FormatDateSimple(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
++TKRZW_EXPORT size_t FormatDateSimple(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
+ 
+ /**
+  * Formats a date as a simple string in "YYYY/MM/DD hh:mm:ss" format.
+@@ -90,7 +90,7 @@
+  * @param frac_cols The number of columns for the fraction part.
+  * @return The size of the result string excluding the sentinel null code.
+  */
+-size_t FormatDateSimpleWithFrac(char* result, double wtime = -1, int32_t td = INT32MIN,
++TKRZW_EXPORT size_t FormatDateSimpleWithFrac(char* result, double wtime = -1, int32_t td = INT32MIN,
+                                 int32_t frac_cols = 6);
+ 
+ /**
+@@ -102,7 +102,7 @@
+  * specified.
+  * @return The size of the result string excluding the sentinel null code.
+  */
+-size_t FormatDateW3CDTF(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
++TKRZW_EXPORT size_t FormatDateW3CDTF(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
+ 
+ /**
+  * Formats a date as a string in W3CDTF.
+@@ -114,7 +114,7 @@
+  * @param frac_cols The number of columns for the fraction part.
+  * @return The size of the result string excluding the sentinel null code.
+  */
+-size_t FormatDateW3CDTFWithFrac(char* result, double wtime = -1, int32_t td = INT32MIN,
++TKRZW_EXPORT size_t FormatDateW3CDTFWithFrac(char* result, double wtime = -1, int32_t td = INT32MIN,
+                                 int32_t frac_cols = 6);
+ 
+ /**
+@@ -126,7 +126,7 @@
+  * specified.
+  * @return The size of the result string excluding the sentinel null code.
+  */
+-size_t FormatDateRFC1123(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
++TKRZW_EXPORT size_t FormatDateRFC1123(char* result, int64_t wtime = INT64MIN, int32_t td = INT32MIN);
+ 
+ /**
+  * Parses a date string to get the time value since the UNIX epoch.
+@@ -134,7 +134,7 @@
+  * be trailed by "s" for in seconds, "m" for in minutes, "h" for in hours, and "d" for in days.
+  * @return The time value of the date or NaN if the format is invalid.
+  */
+-double ParseDateStr(std::string_view str);
++TKRZW_EXPORT double ParseDateStr(std::string_view str);
+ 
+ /**
+  * Parses a date string in "YYYYMMDD" to get the time value since the UNIX epoch.
+@@ -144,14 +144,14 @@
+  * specified.
+  * @return The time value of the date or NaN if the format is invalid.
+  */
+-double ParseDateStrYYYYMMDD(std::string_view str, int32_t td = INT32MIN);
++TKRZW_EXPORT double ParseDateStrYYYYMMDD(std::string_view str, int32_t td = INT32MIN);
+ 
+ /**
+  * Makes a human-readable relative time expression of a time difference.
+  * @param diff The time difference in seconds.
+  * @return The result relative time expression, like "1.5 days" and "2.8 hours".
+  */
+-std::string MakeRelativeTimeExpr(double diff);
++TKRZW_EXPORT std::string MakeRelativeTimeExpr(double diff);
+ 
+ }  // namespace tkrzw
+ 
+--- a/tkrzw_key_comparators.h
++++ b/tkrzw_key_comparators.h
+@@ -42,3 +42,3 @@
+  */
+-inline int32_t LexicalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t LexicalKeyComparator(std::string_view a, std::string_view b) {
+   return a.compare(b);
+@@ -52,3 +52,3 @@
+  */
+-inline int32_t LexicalCaseKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t LexicalCaseKeyComparator(std::string_view a, std::string_view b) {
+   return StrCaseCompare(a, b);
+@@ -62,3 +62,3 @@
+  */
+-inline int32_t DecimalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t DecimalKeyComparator(std::string_view a, std::string_view b) {
+   const int64_t a_num = StrToInt(a);
+@@ -74,3 +74,3 @@
+  */
+-inline int32_t HexadecimalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t HexadecimalKeyComparator(std::string_view a, std::string_view b) {
+   const int64_t a_num = StrToIntHex(a);
+@@ -86,3 +86,3 @@
+  */
+-inline int32_t RealNumberKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t RealNumberKeyComparator(std::string_view a, std::string_view b) {
+   const double a_num = StrToDouble(a);
+@@ -98,3 +98,3 @@
+  */
+-inline int32_t SignedBigEndianKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t SignedBigEndianKeyComparator(std::string_view a, std::string_view b) {
+   auto cast = [](std::string_view str) -> int64_t {
+@@ -125,3 +125,3 @@
+  */
+-inline int32_t FloatBigEndianKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t FloatBigEndianKeyComparator(std::string_view a, std::string_view b) {
+   const long double a_num = StrToFloatBigEndian(a);
+@@ -139,3 +139,3 @@
+  */
+-inline int32_t PairLexicalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairLexicalKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -156,3 +156,3 @@
+  */
+-inline int32_t PairLexicalCaseKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairLexicalCaseKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -173,3 +173,3 @@
+  */
+-inline int32_t PairDecimalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairDecimalKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -190,3 +190,3 @@
+  */
+-inline int32_t PairHexadecimalKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairHexadecimalKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -207,3 +207,3 @@
+  */
+-inline int32_t PairRealNumberKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairRealNumberKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -224,3 +224,3 @@
+  */
+-inline int32_t PairSignedBigEndianKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairSignedBigEndianKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;
+@@ -241,3 +241,3 @@
+  */
+-inline int32_t PairFloatBigEndianKeyComparator(std::string_view a, std::string_view b) {
++inline TKRZW_EXPORT int32_t PairFloatBigEndianKeyComparator(std::string_view a, std::string_view b) {
+   std::string_view a_key, a_value, b_key, b_value;

@@ -55,13 +55,6 @@ class FetchTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
-    def test_the_windows_makefile_switches_to_the_dll_runtime_once(self):
-        text = 'CLFLAGS = /nologo \\\n  /O2 /EHsc /W3 /MT\nLIBFLAGS = /nologo\n'
-        self.assertEqual(build.windows_makefile(text), text.replace('/MT', '/MD'))
-        for broken in ('CLFLAGS = /O2\n', 'A = /MT\nB = /MT\n'):
-            with self.subTest(text=broken), self.assertRaisesRegex(build.RecipeError, '/MT flags'):
-                build.windows_makefile(broken)
-
     def test_make_takes_the_admitted_cargo_budget(self):
         cases = [({}, 8), ({'CARGO_BUILD_JOBS': 'default'}, 8), ({'CARGO_BUILD_JOBS': '3'}, 3),
                  ({'CARGO_BUILD_JOBS': '-2'}, 6), ({'CARGO_BUILD_JOBS': '-20'}, 1)]
@@ -112,7 +105,8 @@ class InstallCheckTests(unittest.TestCase):
         self.assertTrue(build.built(self.prefix))
 
     def test_build_refuses_a_non_empty_prefix(self):
-        with self.assertRaisesRegex(build.RecipeError, 'is not empty'):
+        with mock.patch.object(build, 'host', return_value='Linux'), \
+                self.assertRaisesRegex(build.RecipeError, 'is not empty'):
             build.build(self.prefix, env=self.env)
 
 
