@@ -138,19 +138,26 @@ if __name__ == '__main__':
     raise SystemExit(guarded(lambda: prepare(sys.argv[1:], dict(os.environ))))
 
 
-def native_build(revision, destination, env, *, symbols=True):
-    """One packaged default-backend release build in a private invocation worktree."""
+def native_build(revision, destination, env, *, symbols=True, windows=False):
+    """One native default-backend release build in a private invocation worktree."""
     import json
     import time
     from . import identity
     from .. import packaging
     if not env.get('VCPKG_ROOT'):
-        raise ValueError('native measurement requires VCPKG_ROOT; see the macOS setup runbook')
-    pkgconfig = Path(env['VCPKG_ROOT']).resolve() / 'installed/arm64-osx-oxpinyin/lib/pkgconfig'
+        raise ValueError('native measurement requires VCPKG_ROOT; see the setup runbook')
+    triplet = 'x64-windows' if windows else 'arm64-osx-oxpinyin'
+    installed = Path(env['VCPKG_ROOT']).resolve() / 'installed' / triplet
+    pkgconfig = installed / 'lib/pkgconfig'
     if not (pkgconfig / 'tkrzw.pc').is_file():
-        raise ValueError('install tkrzw:arm64-osx-oxpinyin from the repository overlay before measuring')
+        raise ValueError(f'install tkrzw:{triplet} from the repository overlay before measuring')
     env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
            (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
+    if windows:
+        from tools.dev.check import msvc_environment
+        env = msvc_environment(env)
+        env.update(PKG_CONFIG=str(installed / 'tools/pkgconf/pkgconf.exe'),
+                   PKG_CONFIG_PATH=str(pkgconfig), PKG_CONFIG_LIBDIR=str(pkgconfig))
     source = destination / 'source'
     prefix = destination / 'prefix'
     target = destination / 'target'
@@ -160,29 +167,36 @@ def native_build(revision, destination, env, *, symbols=True):
                  if key not in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')
                  and not key.startswith('CARGO_PROFILE_')}
     build_env.update(CARGO_TARGET_DIR=str(target))
-    if symbols:
+    if symbols and not windows:
         build_env.update(RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none', OXPINYIN_DSYM='1')
     else:
         build_env.pop('OXPINYIN_DSYM', None)
     started = time.monotonic()
     try:
-        # Use this tooling revision with each product source revision. No backend override.
-        packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
-                                   '--locked', '--release', '--features', 'shipped'],
-                                  packaging.Tools(build_env, root=source))
-        dylib = prefix / 'lib/libpinyin.15.0.0.dylib'
-        uuid = identity.macho_uuid(dylib)
-        if symbols and identity.macho_uuid(str(dylib) + '.dSYM') != uuid:
-            fail('packaged dylib and dSYM UUID differ')
+        if windows:
+            bench.run(['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi'],
+                      cwd=source, env=build_env)
+            dylib = target / 'release/pinyin_capi.dll'
+            uuid = identity.sha256(dylib)
+        else:
+            # Use this tooling revision with each product source revision. No backend override.
+            packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
+                                       '--locked', '--release', '--features', 'shipped'],
+                                      packaging.Tools(build_env, root=source))
+            dylib = prefix / 'lib/libpinyin.15.0.0.dylib'
+            uuid = identity.macho_uuid(dylib)
+            if symbols and identity.macho_uuid(str(dylib) + '.dSYM') != uuid:
+                fail('packaged dylib and dSYM UUID differ')
         metadata = bench.capture(['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1'],
                                  cwd=source, env=build_env)
         if metadata.status:
             fail('cargo metadata failed')
         package = next(item for item in json.loads(metadata.stdout)['packages'] if item['name'] == 'oxpinyin-capi')
         return dict(revision=revision, prefix=prefix, dylib=dylib, uuid=uuid,
+                    windows=windows, import_library=target / 'release/pinyin_capi.dll.lib',
                     default_features=package['features']['default'],
                     cold_build_seconds=time.monotonic() - started,
-                    build_options={'profile': 'release', 'features': ['shipped'],
+                    build_options={'profile': 'release', 'features': [] if windows else ['shipped'],
                                    'RUSTFLAGS': build_env.get('RUSTFLAGS', ''),
                                    'OXPINYIN_DSYM': build_env.get('OXPINYIN_DSYM', ''),
                                    'toolchain': build_env.get('RUSTUP_TOOLCHAIN', ''),
@@ -192,9 +206,18 @@ def native_build(revision, destination, env, *, symbols=True):
 
 
 def native_driver(arm, output, env):
-    """Build once, rewrite its product load command, sign, and verify before copying."""
+    """Build one linked driver; Darwin also rewrites and signs its load command."""
     from . import identity
     output.parent.mkdir(parents=True, exist_ok=True)
+    if arm.get('windows'):
+        from tools.dev.check import msvc_environment, lookup
+        toolenv = msvc_environment(env)
+        compiler = shutil.which('cl', path=lookup(toolenv, 'PATH'))
+        bench.run([compiler, '/nologo', '/std:c11', '/O2', '/MD', '/W3', '/DMEASURE_LINKED',
+                   '/Fe:' + str(output), '/Fo:' + str(output.with_suffix('.obj')),
+                   bench.HARNESS_SOURCE, arm['import_library'], 'psapi.lib'], env=toolenv)
+        return identity.sha256(output)
+
     bench.run(bench.harness_build(output, compiler='cc',
         flags=(*bench.STRICT_FLAGS, '-g', '-DMEASURE_LINKED'),
         libraries=(str(arm['dylib']), '-Wl,-rpath,@executable_path/../lib')), env=env)

@@ -138,6 +138,10 @@ check backend="": python
 measure *args: python
     @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' "$@"
 
+[windows]
+measure *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
+
 # Run the native Rust tests through nextest.
 [unix]
 test *args:

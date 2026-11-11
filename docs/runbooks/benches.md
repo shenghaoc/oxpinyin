@@ -515,6 +515,8 @@ Lead a macOS report with the `loop_instructions` B/A ratio and wall time.
 Runnable time explains host contention: each arm reports it over its CPU time,
 and an excess is time spent waiting for a core. It has no B/A ratio.
 Instruments remains the tool for attribution.
+Lead a Windows report with the `loop_cpu_cycles` B/A ratio and wall time; its
+memory figure is the `peak_private_commit_bytes` B minus A difference.
 
 `lifetime_max_phys_footprint_bytes`, read with `proc_pid_rusage` after teardown,
 is the memory headline. It is a process-lifetime peak, not live memory at a
@@ -564,3 +566,54 @@ a failed required capture fails the command. Traces, exports and JSON reports
 are disposable local output. Do not attach them or commit them. Publish only
 reproduction commands and a concise result table in the PR. The initial
 main-against-main validation is not a performance claim.
+
+### Native Windows comparisons
+
+`just measure compare` also runs on Windows x64 with MSVC and `VCPKG_ROOT`
+set as in setup.md. Both arms use that checkout's `installed/x64-windows`
+pkg-config metadata and runtime DLLs. Each distinct SHA builds once with
+`cargo build --locked --release -p oxpinyin-capi`, default features and no
+added linker or debug flags. The artifact is `pinyin_capi.dll`, not a packaged
+libpinyin DLL. The import library links one MSVC C driver; identical copies
+sit beside each arm's DLL. A′ is staged as on macOS and passes the same DLL and
+dependency checks as any arm. The driver checks the imported ABI function's
+owning module before work. Preflight and completed module inventories must
+identify the same dependency files for both arms: every loaded module outside
+the Windows system directory, such as tkrzw and GLib, plus the C runtime.
+Other system modules follow the host, not the arm, and are not compared.
+The driver verifies the product's imported GLib allocator; it never substitutes
+its own `free` on Windows.
+
+QPC elapsed seconds, the QueryProcessCycleTime delta and GetProcessTimes
+user+kernel seconds bracket the same typing loop as macOS, excluding
+initialization and teardown. Each CPU figure covers all threads of the process.
+`loop_cpu_cycles` is a count of CPU cycles. It is never converted to seconds:
+Microsoft documents against that conversion. A zero cycle delta is a broken
+capture and fails. `cpu_seconds` is secondary; GetProcessTimes advances in
+1/64-second ticks. A sample whose `cpu_seconds` is zero is below that
+resolution: the session reports no `cpu_seconds` ratio and says why, and every
+other metric is reported as usual.
+`loop_cpu_cycles` is fine-grained CPU time: in the smoke its ratio matched the
+wall-time ratio, consistent with QueryProcessCycleTime counting at the fixed
+reference (TSC) rate. It moves with clock speed and contention. It is not a
+frequency-independent work count like the macOS instruction count, so a small
+difference needs more pairs and longer runs on Windows.
+`peak_private_commit_bytes` (PeakPagefileUsage) is a process-lifetime peak,
+compared as paired B minus A in bytes. `peak_working_set_bytes` is a
+diagnostic lifetime peak. The report
+states expected commit from copy-on-write views once, as the total page-rounded
+size of default SYSTEM_FILE chunks named by the inputs. It is not a measured
+allocation counter or subtracted from peak commit. Required unread metrics fail.
+
+Windows refuses profile and neutrality modes; attribution is done on macOS.
+
+A short same-head smoke, under normal host load:
+
+```powershell
+just measure compare --base HEAD --head HEAD --cycles 20 --pairs 2 --control-pairs 2 --budget 180
+```
+
+This schedules eight fresh processes, including a balanced diagnostic control
+of A against A′.
+The 180-second budget excludes preparation. Windows build trees, staged DLLs
+and driver copies are removed on success or failure; local JSON reports remain.

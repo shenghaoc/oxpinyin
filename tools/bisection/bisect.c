@@ -23,9 +23,13 @@
 #define _DEFAULT_SOURCE
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
+#if !defined(_WIN32)
 #include <dlfcn.h>
+#endif
 #include <errno.h>
+#if !defined(_WIN32)
 #include <ftw.h>
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 #if defined(__GLIBC__)
@@ -34,10 +38,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#else
+#include <windows.h>
+#include <psapi.h>
+#endif
 #if defined(__APPLE__)
 #include <libproc.h>
 #include <mach-o/loader.h>
@@ -248,6 +257,7 @@ struct symbols {
 
 /* ── Symbol resolution ────────────────────────────────────────────────── */
 
+#ifndef _WIN32
 #define RESOLVE(handle, table, field, name) \
     ((table).field = (typeof((table).field))dc_resolve(handle, name, &missing))
 
@@ -279,6 +289,8 @@ static void resolve_g_free(void) {
 /* ── Performance-baseline inputs (the 20-input keystroke-cycle corpus;
  * crates/oxpinyin-engine/src/session/tests.rs::CYCLE_INPUTS holds the same) ─── */
 
+#endif
+
 static const char *PERF_CYCLE_INPUTS[] = {
     "ni",
     "wo",
@@ -309,6 +321,7 @@ static const size_t N_PERF_CYCLE_INPUTS =
  * and makes the intent explicit. */
 static volatile uint64_t perf_sink;
 
+#ifndef _WIN32
 static uint64_t now_ns(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
@@ -557,10 +570,12 @@ static int dump_malloc_info(const char *dir, const char *tag) {
 #endif
 }
 
+#endif
+
 /* One 20-input cycle. For every input the instance is reset, then each
  * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
  * drives the keystroke path: parse, guess candidates, read the count. */
-#if defined(__APPLE__) && defined(MEASURE_LINKED)
+#if defined(MEASURE_LINKED)
 static bool measure_failed;
 static uint64_t measure_operations;
 #endif
@@ -576,7 +591,7 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
         if (length + 1 > sizeof prefix)
             return checksum;
         if (!s->reset(inst)) {
-#if defined(__APPLE__) && defined(MEASURE_LINKED)
+#if defined(MEASURE_LINKED)
             measure_failed = true;
 #endif
             return checksum;
@@ -590,7 +605,7 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
             bool guessed = s->guess_candidates(inst, 0, DEFAULT_SORT);
             guint candidate_count = 0;
             bool counted = s->get_n_candidate(inst, &candidate_count);
-#if defined(__APPLE__) && defined(MEASURE_LINKED)
+#if defined(MEASURE_LINKED)
             measure_operations++;
             if (!consumed || !guessed || !counted) measure_failed = true;
 #endif
@@ -604,6 +619,7 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
     return checksum;
 }
 
+#ifndef _WIN32
 /* One timed unit: `repeats` back-to-back corpus passes over the frozen
  * 20-input cycle above. PERF_REPEATS scales the amount of work inside the
  * timed region without touching the corpus, so input structure — every
@@ -1079,18 +1095,26 @@ static int run_perf_mode(int argc, char **argv) {
     return 0;
 }
 
-/* Native measurement uses normal linkage; the legacy pin drivers retain dlopen. */
-#if defined(__APPLE__) && defined(MEASURE_LINKED)
-extern pinyin_context_t *pinyin_init(const char *, const char *);
-extern void pinyin_fini(pinyin_context_t *);
-extern pinyin_instance_t *pinyin_alloc_instance(pinyin_context_t *);
-extern void pinyin_free_instance(pinyin_instance_t *);
-extern bool pinyin_set_options(pinyin_context_t *, pinyin_option_t);
-extern size_t pinyin_parse_more_full_pinyins(pinyin_instance_t *, const char *);
-extern bool pinyin_guess_candidates(pinyin_instance_t *, size_t, guint);
-extern bool pinyin_get_n_candidate(pinyin_instance_t *, guint *);
-extern bool pinyin_reset(pinyin_instance_t *);
+#endif
 
+/* Native measurement uses normal linkage; the legacy pin drivers retain dlopen. */
+#if defined(MEASURE_LINKED)
+#ifdef _WIN32
+#define MEASURE_IMPORT __declspec(dllimport)
+#else
+#define MEASURE_IMPORT extern
+#endif
+MEASURE_IMPORT pinyin_context_t *pinyin_init(const char *, const char *);
+MEASURE_IMPORT void pinyin_fini(pinyin_context_t *);
+MEASURE_IMPORT pinyin_instance_t *pinyin_alloc_instance(pinyin_context_t *);
+MEASURE_IMPORT void pinyin_free_instance(pinyin_instance_t *);
+MEASURE_IMPORT bool pinyin_set_options(pinyin_context_t *, pinyin_option_t);
+MEASURE_IMPORT size_t pinyin_parse_more_full_pinyins(pinyin_instance_t *, const char *);
+MEASURE_IMPORT bool pinyin_guess_candidates(pinyin_instance_t *, size_t, guint);
+MEASURE_IMPORT bool pinyin_get_n_candidate(pinyin_instance_t *, guint *);
+MEASURE_IMPORT bool pinyin_reset(pinyin_instance_t *);
+
+#ifndef _WIN32
 static bool measure_image(const char *path, const char *expected_uuid) {
     Dl_info info;
     char actual[4096], expected[4096], uuid[33];
@@ -1196,15 +1220,259 @@ static int run_measure(int argc, char **argv) {
 }
 #endif
 
+#ifdef _WIN32
+/* Windows uses the same linked API table and typing loop. */
+struct measure_modules { unsigned count; char path[128][2048]; };
+static struct measure_modules modules_before, modules_after;
+static bool measure_wide(const char *text, wchar_t *out, int capacity) {
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, out, capacity) != 0;
+}
+static bool measure_module_path(HMODULE module, char *out, size_t capacity) {
+    wchar_t path[32768];
+    DWORD n = GetModuleFileNameW(module, path, 32768);
+    return n && n < 32768 && WideCharToMultiByte(CP_UTF8, 0, path, -1, out,
+                                               (int)capacity, NULL, NULL) != 0;
+}
+static bool measure_image_windows(const char *expected, HMODULE *product) {
+    wchar_t wanted[32768], actual[32768];
+    DWORD n;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCWSTR)(uintptr_t)pinyin_init, product) ||
+        !measure_wide(expected, wanted, 32768)) return false;
+    n = GetModuleFileNameW(*product, actual, 32768);
+    if (!n || n == 32768) return false;
+    HANDLE a = CreateFileW(wanted, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                          NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE b = CreateFileW(actual, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                          NULL, OPEN_EXISTING, 0, NULL);
+    BY_HANDLE_FILE_INFORMATION ai, bi;
+    bool ok = a != INVALID_HANDLE_VALUE && b != INVALID_HANDLE_VALUE &&
+        GetFileInformationByHandle(a, &ai) && GetFileInformationByHandle(b, &bi) &&
+        ai.dwVolumeSerialNumber == bi.dwVolumeSerialNumber &&
+        ai.nFileIndexHigh == bi.nFileIndexHigh && ai.nFileIndexLow == bi.nFileIndexLow;
+    if (a != INVALID_HANDLE_VALUE) CloseHandle(a);
+    if (b != INVALID_HANDLE_VALUE) CloseHandle(b);
+    return ok;
+}
+/* The product's dependency set: every module outside the Windows system
+ * directory, plus the C runtime wherever it loads from. Other system modules
+ * follow the host, not the arm: the loader maps apphelp.dll only on the first
+ * launch of a new executable path. */
+static bool measure_dependency_module(HMODULE module) {
+    wchar_t path[32768], system[MAX_PATH];
+    DWORD n = GetModuleFileNameW(module, path, 32768);
+    UINT s = GetSystemDirectoryW(system, MAX_PATH);
+    if (!n || n >= 32768 || !s || s >= MAX_PATH) return true; /* Unread paths fail in the caller. */
+    const wchar_t *name = wcsrchr(path, L'\\');
+    name = name ? name + 1 : path;
+    if (!_wcsnicmp(name, L"ucrtbase", 8) || !_wcsnicmp(name, L"vcruntime", 9) ||
+        !_wcsnicmp(name, L"msvcp1", 6)) return true;
+    return !(n > s && !_wcsnicmp(path, system, s) && path[s] == L'\\');
+}
+static bool measure_modules_read(struct measure_modules *snapshot, HMODULE product) {
+    HMODULE modules[128]; DWORD bytes;
+    if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof modules, &bytes) ||
+        bytes > sizeof modules) return false;
+    snapshot->count = 0;
+    for (unsigned i = 0; i < bytes / sizeof(HMODULE); ++i) {
+        if (modules[i] == product || modules[i] == GetModuleHandleW(NULL)) continue;
+        if (!measure_dependency_module(modules[i])) continue;
+        if (!measure_module_path(modules[i], snapshot->path[snapshot->count], 2048)) return false;
+        snapshot->count++;
+    }
+    return snapshot->count != 0;
+}
+static bool measure_dependencies(const struct measure_modules *snapshot) {
+    /* Runner writes the verified preflight module files, one UTF-8 path per line. */
+    const char *manifest = getenv("MEASURE_MODULES");
+    if (!manifest) return false;
+    wchar_t path[32768];
+    if (!measure_wide(manifest, path, 32768)) return false;
+    FILE *file = _wfopen(path, L"rb");
+    if (!file) return false;
+    char line[2048]; unsigned count = 0; bool ok = true;
+    while (fgets(line, sizeof line, file)) {
+        line[strcspn(line, "\r\n")] = 0;
+        bool found = false;
+        for (unsigned i = 0; i < snapshot->count; ++i)
+            if (!_stricmp(line, snapshot->path[i])) found = true;
+        if (!found) ok = false;
+        count++;
+    }
+    ok = ok && !ferror(file) && count == snapshot->count;
+    fclose(file);
+    return ok;
+}
+static void measure_json_string(const char *text) {
+    putchar('"');
+    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) {
+        if (*p == '"' || *p == '\\') putchar('\\');
+        if (*p < 32) printf("\\u%04x", *p); else putchar(*p);
+    }
+    putchar('"');
+}
+static void measure_modules_json(const struct measure_modules *snapshot) {
+    putchar('[');
+    for (unsigned i = 0; i < snapshot->count; ++i) {
+        if (i) putchar(',');
+        measure_json_string(snapshot->path[i]);
+    }
+    putchar(']');
+}
+static bool measure_glib(HMODULE product) {
+    /* The IAT binds the product's allocator. Never load a second GLib or use free. */
+    const unsigned char *base = (const unsigned char *)product;
+    const IMAGE_DOS_HEADER *dos = (const void *)base;
+    const IMAGE_NT_HEADERS *nt = (const void *)(base + dos->e_lfanew);
+    DWORD rva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    if (!rva) return false;
+    const IMAGE_IMPORT_DESCRIPTOR *imports = (const void *)(base + rva);
+    for (; imports->Name; ++imports) {
+        const char *name = (const char *)(base + imports->Name);
+        if (_strnicmp(name, "glib-2.0", 8)) continue;
+        HMODULE glib = GetModuleHandleA(name);
+        FARPROC release = glib ? GetProcAddress(glib, "g_free") : NULL;
+        if (!release || !imports->OriginalFirstThunk) return false;
+        const IMAGE_THUNK_DATA *names = (const void *)(base + imports->OriginalFirstThunk);
+        const IMAGE_THUNK_DATA *bound = (const void *)(base + imports->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++bound) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+            const IMAGE_IMPORT_BY_NAME *entry = (const void *)(base + names->u1.AddressOfData);
+            if (!strcmp((const char *)entry->Name, "g_free"))
+                return (uintptr_t)release == (uintptr_t)bound->u1.Function;
+        }
+    }
+    return false;
+}
+static bool measure_user_dir(wchar_t *wide, char *utf8) {
+    const wchar_t *root = _wgetenv(L"TEMP");
+    if (!root) return false;
+    for (unsigned i = 0; i < 100; ++i) {
+        if (_snwprintf_s(wide, 32768, _TRUNCATE, L"%s\\bisect-%lu-%llu-%u", root,
+                        GetCurrentProcessId(), GetTickCount64(), i) < 0) return false;
+        if (CreateDirectoryW(wide, NULL))
+            return WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, 32768, NULL, NULL) != 0;
+        if (GetLastError() != ERROR_ALREADY_EXISTS) return false;
+    }
+    return false;
+}
+static void measure_remove_user(const wchar_t *directory) {
+    wchar_t path[32768]; WIN32_FIND_DATAW entry;
+    _snwprintf_s(path, 32768, _TRUNCATE, L"%s\\*", directory);
+    HANDLE search = FindFirstFileW(path, &entry);
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                _snwprintf_s(path, 32768, _TRUNCATE, L"%s\\%s", directory, entry.cFileName);
+                DeleteFileW(path);
+            }
+        } while (FindNextFileW(search, &entry));
+        FindClose(search);
+    }
+    RemoveDirectoryW(directory);
+}
+static uint64_t measure_filetime(FILETIME value) {
+    return ((uint64_t)value.dwHighDateTime << 32) | value.dwLowDateTime;
+}
+static bool measure_cpu_windows(uint64_t *value) {
+    FILETIME creation, exit, kernel, user;
+    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return false;
+    *value = measure_filetime(kernel) + measure_filetime(user);
+    return true;
+}
+static int run_measure(int argc, char **argv) {
+    HMODULE product;
+    bool preflight = getenv("MEASURE_PREFLIGHT") != NULL;
+    if (argc != 5 || !measure_image_windows(argv[2], &product)) {
+        fputs("measurement: wrong loaded image\n", stderr); return 1;
+    }
+    if (!measure_glib(product) || !measure_modules_read(&modules_before, product)) {
+        fputs("measurement: product GLib ownership or module capture failed\n", stderr); return 1;
+    }
+    char image[2048];
+    if (!measure_module_path(product, image, sizeof image)) return 1;
+    if (preflight) {
+        fputs("{\"library\":", stdout); measure_json_string(image);
+        fputs(",\"modules\":", stdout); measure_modules_json(&modules_before);
+        puts("}"); return 0;
+    }
+    if (!measure_dependencies(&modules_before)) {
+        fputs("measurement: dependency identity mismatch before loop\n", stderr); return 1;
+    }
+    char *end = NULL; const char *setting = getenv("PERF_CYCLES");
+    long cycles = setting ? strtol(setting, &end, 10) : 0;
+    if (!setting || !*setting || *end || cycles < 1 || cycles > 100000) return 1;
+    struct symbols sym = {.init=pinyin_init, .fini=pinyin_fini,
+        .alloc_instance=pinyin_alloc_instance, .free_instance=pinyin_free_instance,
+        .set_options=pinyin_set_options, .parse_full=pinyin_parse_more_full_pinyins,
+        .guess_candidates=pinyin_guess_candidates, .get_n_candidate=pinyin_get_n_candidate,
+        .reset=pinyin_reset};
+    wchar_t user_wide[32768]; char user[32768];
+    if (!measure_user_dir(user_wide, user)) return 1;
+    pinyin_context_t *ctx = sym.init(argv[4], user);
+    pinyin_instance_t *instance = ctx ? sym.alloc_instance(ctx) : NULL;
+    bool ok = instance && sym.set_options(ctx, DEFAULT_FLAGS);
+    uint64_t expected = 0, fingerprint = 1469598103934665603ULL, cpu_start = 0, cpu_end = 0;
+    /* Cycles charged to every thread of the process; a count, never converted to seconds. */
+    ULONG64 cycles_start = 0, cycles_end = 0;
+    for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; ++i) expected += strlen(PERF_CYCLE_INPUTS[i]);
+    expected *= (uint64_t)cycles;
+    LARGE_INTEGER frequency, start, stop;
+    ok = ok && QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0 &&
+        QueryProcessCycleTime(GetCurrentProcess(), &cycles_start) &&
+        measure_cpu_windows(&cpu_start) && QueryPerformanceCounter(&start);
+    if (ok) {
+        for (long i = 0; i < cycles; ++i) {
+            fingerprint ^= run_perf_cycle(&sym, instance);
+            fingerprint *= 1099511628211ULL;
+        }
+        ok = QueryPerformanceCounter(&stop) && measure_cpu_windows(&cpu_end) &&
+            QueryProcessCycleTime(GetCurrentProcess(), &cycles_end);
+    }
+    if (instance) sym.free_instance(instance);
+    if (ctx) sym.fini(ctx);
+    PROCESS_MEMORY_COUNTERS memory;
+    ok = ok && GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof memory) &&
+        measure_modules_read(&modules_after, product) && measure_dependencies(&modules_after);
+    measure_remove_user(user_wide);
+    if (!ok || stop.QuadPart <= start.QuadPart || cpu_end < cpu_start || cycles_end <= cycles_start ||
+        !memory.PeakPagefileUsage || !memory.PeakWorkingSetSize || measure_failed || measure_operations != expected) {
+        fputs("measurement: incomplete workload or broken required capture/dependency identity\n", stderr); return 1;
+    }
+    printf("{\"pid\":%lu,\"operations\":%llu,\"cycles\":%ld,\"fingerprint\":\"%016llx\","
+           "\"wall_seconds\":%.9f,\"cpu_seconds\":%.9f,\"loop_cpu_cycles\":%llu,"
+           "\"peak_private_commit_bytes\":%llu,"
+           "\"peak_working_set_bytes\":%llu,\"library\":",
+           GetCurrentProcessId(), (unsigned long long)measure_operations, cycles,
+           (unsigned long long)fingerprint, (double)(stop.QuadPart-start.QuadPart)/(double)frequency.QuadPart,
+           (double)(cpu_end-cpu_start)/1e7, (unsigned long long)(cycles_end-cycles_start),
+           (unsigned long long)memory.PeakPagefileUsage,
+           (unsigned long long)memory.PeakWorkingSetSize);
+    measure_json_string(image); fputs(",\"modules\":", stdout);
+    measure_modules_json(&modules_after); puts("}");
+    return 0;
+}
+#endif
+
+#endif /* MEASURE_LINKED */
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
+#ifndef _WIN32
 #include "teardown.h"
 #include "sentence_perf.h"
+#endif
 
+#ifdef _WIN32
+static int driver_main(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
-#if defined(__APPLE__) && defined(MEASURE_LINKED)
+#endif
+#if defined(MEASURE_LINKED)
     if (argc > 1 && !strcmp(argv[1], "--measure")) return run_measure(argc, argv);
 #endif
+#ifndef _WIN32
     if (argc > 1 && (strcmp(argv[1], "--perf-sentence") == 0 ||
                      strcmp(argv[1], "--perf-typing-sequence") == 0))
         return run_sentence_perf_mode(argc, argv);
@@ -1219,4 +1487,26 @@ int main(int argc, char **argv) {
             "       %s --teardown pinyin|zhuyin SO DATA USER ...\n",
             argv[0], argv[0], argv[0]);
     return 1;
+#else
+    fputs("Windows supports --measure only\n", stderr);
+    return 2;
+#endif
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t **wide_argv) {
+    char **argv = calloc((size_t)argc + 1, sizeof *argv);
+    if (!argv) return 1;
+    int status = 1;
+    for (int i = 0; i < argc; ++i) {
+        int size = WideCharToMultiByte(CP_UTF8, 0, wide_argv[i], -1, NULL, 0, NULL, NULL);
+        if (!size || !(argv[i] = malloc((size_t)size)) ||
+            !WideCharToMultiByte(CP_UTF8, 0, wide_argv[i], -1, argv[i], size, NULL, NULL)) goto done;
+    }
+    status = driver_main(argc, argv);
+done:
+    for (int i = 0; i < argc; ++i) free(argv[i]);
+    free(argv);
+    return status;
+}
+#endif

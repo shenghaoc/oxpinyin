@@ -133,3 +133,85 @@ def macho_uuid(path, *, run=None):
     if done.status or len(ids) != 1:
         raise ValueError('expected one arm64 UUID: ' + str(path))
     return ids[0].replace('-', '').lower()
+
+
+def same_file(left, right):
+    return Path(left).samefile(right)
+
+
+def module_inventory(paths):
+    """Name actual loaded files, not import names or a guessed loader search."""
+    if not paths or not all(isinstance(path, str) for path in paths):
+        raise ValueError('missing runtime module inventory')
+    inventory = sorted((dict(path=str(Path(path).resolve(strict=True)), sha256=sha256(path))
+                        for path in paths), key=lambda item: item['path'].casefold())
+    if len({item['path'].casefold() for item in inventory}) != len(inventory):
+        raise ValueError('duplicate runtime module')
+    return inventory
+
+
+def verify_modules(paths, expected):
+    observed = module_inventory(paths)
+    if len(observed) != len(expected) or any(
+            not same_file(a['path'], b['path']) or a['sha256'] != b['sha256']
+            for a, b in zip(observed, expected)):
+        raise ValueError('runtime module files differ')
+    return observed
+
+
+def windows_preflight(arms, data, env, installed):
+    """Resolve each implicitly linked arm before the measured schedule."""
+    import json
+    expected = None
+    for arm in arms.values():
+        done = bench.capture([arm['driver'], '--measure', arm['dylib'], arm['uuid'], data],
+                             env={**env, 'MEASURE_PREFLIGHT': '1'})
+        if done.status:
+            raise ValueError('Windows dependency preflight failed: ' + done.stderr.decode(errors='replace'))
+        row = json.loads(done.stdout)
+        if not same_file(row['library'], arm['dylib']):
+            raise ValueError('wrong loaded library in preflight')
+        inventory = module_inventory(row['modules'])
+        names = {Path(item['path']).name.lower(): item for item in inventory}
+        for name in ('tkrzw.dll', 'glib-2.0-0.dll'):
+            if name not in names or not same_file(names[name]['path'], installed / 'bin' / name):
+                raise ValueError('wrong vcpkg runtime: ' + name)
+        if not any(name.startswith('vcruntime') for name in names) or 'ucrtbase.dll' not in names:
+            raise ValueError('missing CRT identity')
+        if expected is not None:
+            verify_modules(row['modules'], expected)
+        else:
+            expected = inventory
+        arm['modules'] = expected
+    return expected
+
+
+def expected_cow_commit(data, *, page_size=None):
+    """Input-derived MemoryChunk views: default SYSTEM_FILE rows, no addon loads.
+
+    Init maps these whole files; the typing corpus never calls load_phrase_library.
+    DBM files belong to tkrzw and are not memmap2 copy-on-write views.
+    """
+    if page_size is None:
+        import mmap
+        page_size = mmap.PAGESIZE
+    rows = {}
+    for line in (Path(data) / 'table.conf').read_text().splitlines():
+        fields = line.split()
+        if not fields or fields[0] != 'default':
+            continue
+        if len(fields) != 6:
+            raise ValueError('cannot identify mapped inputs from table.conf')
+        index = 'GB_DICTIONARY' if fields[1] == 'TSI_DICTIONARY' else fields[1]
+        rows[index] = fields
+    files = []
+    for fields in rows.values():
+        if fields[5] != 'SYSTEM_FILE':
+            continue
+        path = Path(data) / fields[3]
+        if path.is_file():
+            size = path.stat().st_size
+            files.append(dict(name=fields[3], file_bytes=size,
+                              page_rounded_bytes=((size + page_size - 1) // page_size) * page_size))
+    return dict(label='expected commit from copy-on-write views', page_size_bytes=page_size,
+                bytes=sum(item['page_rounded_bytes'] for item in files), files=files)
