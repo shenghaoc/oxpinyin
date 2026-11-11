@@ -23,6 +23,32 @@ from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
 
+def copy_entrypoint_tree(root):
+    """Copy the provisioning sources and their repository data dependencies."""
+    shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
+    pin = Path('vcpkg-overlays/tkrzw/pin.json')
+    (root / pin).parent.mkdir(parents=True)
+    shutil.copyfile(ROOT / pin, root / pin)
+    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin-store/Cargo.toml'):
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, destination)
+
+
+class EntrypointFixtureTests(unittest.TestCase):
+    def test_copied_tree_imports_provision_with_the_shared_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copy_entrypoint_tree(root)
+            result = subprocess.run(
+                [sys.executable, '-I', '-X', 'lazy_imports=normal', '-c',
+                 'import sys; sys.path.insert(0, sys.argv[1]); '
+                 'from tools.dev.provision import TKRZW_REV; print(TKRZW_REV)', str(root)],
+                cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), provision.TKRZW_REV)
+
+
 def record_prefix(prefix, backend, root=ROOT, pin=None, architecture=None):
     record = provision.images.fields(pin or root / 'tools/oracle/oracle-pin.txt')
     values = {key: record[key] for key in ('libpinyin_commit', 'ibus_libpinyin_commit')}
@@ -349,12 +375,7 @@ if sys.platform.startswith('linux'):
             self.root = self.work / 'tree'
             self.root.mkdir()
             # These are fixture source trees, never reference-image contents.
-            shutil.copytree(ROOT / 'tools', self.root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
-            for name in ('.python-version', 'rust-toolchain.toml'):
-                shutil.copyfile(ROOT / name, self.root / name)
-            # A multi-cell provision resolves the default backend from the store manifest.
-            (self.root / 'crates/oxpinyin-store').mkdir(parents=True)
-            shutil.copyfile(ROOT / 'crates/oxpinyin-store/Cargo.toml', self.root / 'crates/oxpinyin-store/Cargo.toml')
+            copy_entrypoint_tree(self.root)
             self.bin = self.work / 'bin'
             self.bin.mkdir()
             self.calls = self.work / 'calls'

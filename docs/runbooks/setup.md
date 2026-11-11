@@ -77,7 +77,7 @@ Ubuntu's packaged libtkrzw is defective
 ([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md)).
 `tools/tkrzw/distro-probe.sh` checks the library on `PATH`, and provisioning runs
 it on an Ubuntu host. A `just tkrzw-build` build, the Debian package and the
-MSVC `tkrzw.lib` need no probe.
+Windows vcpkg build need no probe.
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
@@ -462,24 +462,15 @@ MSVC environment and toolchain; no project-specific IDE is required.
 workspace on the [default backend](backends.md). It also runs the tools Python
 harness (`just test-tools`).
 
-- `.github/actions/tkrzw` builds the
-  upstream revision that `tools/cloud/setup.sh` provisions, with `nmake -f
-  VCMakefile` in the Visual Studio developer environment. The result is a static
-  `tkrzw.lib` with the DLL C runtime that the Rust MSVC targets link.
-- The action writes a `tkrzw.pc`, which the store build script finds through
-  `PKG_CONFIG_PATH`.
-- The Windows image has no pkg-config, so the action
-  installs the vcpkg `pkgconf` and sets `PKG_CONFIG` to its `pkgconf.exe`.
-
-To do the same locally:
-
-1. Run `just tkrzw-build DIR` from Developer PowerShell. The recipe loads the
-   developer environment through `vswhere` when it is not already loaded.
-2. Put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`.
-3. Set `PKG_CONFIG` to a `pkgconf.exe` (for example, from `vcpkg install
-   pkgconf:x64-windows`).
-
-The recipe runs no `distro-probe.sh` and needs no `sh`.
+- Windows installs the repository's tkrzw overlay port and GLib through vcpkg.
+  The overlay reads the same pinned revision as the Linux/macOS build recipe.
+  CMake exports functions and vtables; patched public data declarations export
+  from the DLL and import in consumers. The release library uses the dynamic CRT
+  (`/MD`), matching oxpinyin's C++ bridge and vcpkg's `x64-windows` triplet.
+- The DLL is in `installed/x64-windows/bin`, the import library and pkg-config
+  metadata in `lib` and `lib/pkgconfig`, and public headers in `include`.
+- Set `$env:VCPKG_ROOT` to your vcpkg checkout. Run the commands below from
+  the repository root; `--overlay-ports` selects the repository port.
 
 The job also installs the vcpkg `glib` port, which it finds through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`. It therefore builds and tests
@@ -491,18 +482,17 @@ not selected. Those tests do not establish native Windows oracle behavior.
 You do not need physical Windows hardware to use
 this CI coverage.
 
-A full local build or `just test` needs the same two vcpkg ports as the
+A full local build or `just test` needs the same vcpkg ports as the
 CI job. Without GLib, `glib-sys` fails, and every crate except
 `oxpinyin-core`, `oxpinyin-store` and
-`oxpinyin-engine` fails to build. From Developer PowerShell, with
-`$vcpkg` as your vcpkg checkout and `DIR` as the `just tkrzw-build` prefix, run:
+`oxpinyin-engine` fails to build. From Developer PowerShell, run:
 
 ```powershell
-& "$vcpkg\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
-$installed = "$vcpkg\installed\x64-windows"
+& "$env:VCPKG_ROOT\vcpkg.exe" install tkrzw:x64-windows pkgconf:x64-windows glib:x64-windows --overlay-ports=vcpkg-overlays
+$installed = "$env:VCPKG_ROOT\installed\x64-windows"
 $env:PKG_CONFIG = "$installed\tools\pkgconf\pkgconf.exe"
-$env:PKG_CONFIG_PATH = "DIR\lib\pkgconfig;$installed\lib\pkgconfig"
-$env:PATH = "DIR\bin;$installed\bin;$env:PATH"
+$env:PKG_CONFIG_PATH = "$installed\lib\pkgconfig"
+$env:PATH = "$installed\bin;$env:PATH"
 & $env:PKG_CONFIG --modversion glib-2.0 tkrzw
 ```
 

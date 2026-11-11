@@ -99,7 +99,13 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
 SHARED = (".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version")
-RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
+# Shared pin and repository files read or copied by the port contract tests.
+TKRZW_PORT_INPUTS = (
+    "vcpkg-overlays/tkrzw/pin.json", "vcpkg-overlays/tkrzw/vcpkg.json",
+    "vcpkg-overlays/tkrzw/portfile.cmake", "vcpkg-overlays/tkrzw/CMakeLists.txt",
+    "vcpkg-overlays/tkrzw/usage",
+)
+RUST = (*SHARED, *TKRZW_PORT_INPUTS, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
 PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
@@ -150,7 +156,7 @@ CI_INPUTS = {
     # under a crate's src, tests, examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
-    "harness": Inputs((*SHARED, ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
+    "harness": Inputs((*SHARED, *TKRZW_PORT_INPUTS, ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
                        "crates", "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "docs/findings/glib-libc-call-sites.tsv"),
                       ("crates/*/src/*.rs", "crates/*/tests/*.rs", "crates/*/examples/*.rs",

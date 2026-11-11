@@ -619,6 +619,11 @@ class GateTests(unittest.TestCase):
 
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
+            'vcpkg-overlays/tkrzw/pin.json': {'lint', 'test', 'harness'},
+            'vcpkg-overlays/tkrzw/vcpkg.json': {'lint', 'test', 'harness'},
+            'vcpkg-overlays/tkrzw/portfile.cmake': {'lint', 'test', 'harness'},
+            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'lint', 'test', 'harness'},
+            'vcpkg-overlays/tkrzw/usage': {'lint', 'test', 'harness'},
             'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
             'docs/findings/glib-libc-call-sites.tsv': {'harness'},

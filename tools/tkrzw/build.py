@@ -1,12 +1,11 @@
 """Build upstream tkrzw at the provisioning revision into a prefix.
 
 tools/cloud/setup.sh builds this revision when no certified host libtkrzw is
-available, and CI's tkrzw composite action builds it on every OS. The source
+available, and CI's tkrzw composite action builds it on Linux and macOS. The source
 is fetched by commit and the checkout is checked against that commit before
-anything is built. On
-Linux and macOS it is `./configure --prefix=DIR && make && make install`; on
-Windows `nmake -f VCMakefile` and its install target in the Visual Studio
-developer environment, into the same DIR/{include,lib,bin} layout. Every
+anything is built. Linux and macOS use
+`./configure --prefix=DIR && make && make install`. Windows uses the vcpkg
+overlay port, which reads the same pin. Every
 build leaves DIR/lib/pkgconfig/tkrzw.pc, so a consumer finds it through
 PKG_CONFIG_PATH, and must hold its headers, library, tkrzw.pc and utility (with
 the utility loading DIR's own shared libtkrzw) before DIR/REV is written.
@@ -22,6 +21,7 @@ this with the runner's own Python, which some jobs have instead of the managed
 interpreter.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import platform
@@ -39,11 +39,12 @@ if not __package__:
 from tools.tkrzw import runtime
 
 # 1.0.34: its sentinel fix makes defect 1 immune to LTO (tkrzw-distro-compat.md).
-TKRZW_REV = '9ee84164cf45e441aa8186418c03a02c9b89f08b'
+PIN = json.loads((Path(__file__).resolve().parents[2] / 'vcpkg-overlays/tkrzw/pin.json').read_text())
+TKRZW_REV = PIN['revision']
 TKRZW_URL = 'https://github.com/estraier/tkrzw'
 # Written last, so a prefix carrying it holds a complete, checked build.
 MARKER = 'REV'
-LIBRARY = {'Linux': 'lib/libtkrzw.so.1', 'Darwin': 'lib/libtkrzw.dylib', 'Windows': 'lib/tkrzw.lib'}
+LIBRARY = {'Linux': 'lib/libtkrzw.so.1', 'Darwin': 'lib/libtkrzw.dylib'}
 
 
 class RecipeError(RuntimeError):
@@ -64,8 +65,7 @@ def lookup(env, name):
 
 def run(command, *, cwd, env, capture=False):
     print('+ ' + ' '.join(map(str, command)), flush=True)
-    # Windows searches the parent's PATH, not ENV's, for the program, and
-    # nmake is on the developer environment's PATH only.
+    # Resolve against the requested environment rather than the parent's PATH.
     program = shutil.which(str(command[0]), path=lookup(env, 'PATH')) or str(command[0])
     done = subprocess.run([program, *map(str, command[1:])], cwd=cwd, env=env,
                           stdout=subprocess.PIPE if capture else None, text=True)
@@ -148,50 +148,6 @@ def msvc_environment(env, *, capture=subprocess.run):
     return loaded
 
 
-def windows_makefile(text):
-    """Upstream's VCMakefile with the DLL C runtime instead of the static one.
-
-    Rust's *-pc-windows-msvc targets link the DLL CRT (/MD). A /MT library
-    brings LIBCMT in beside it, which link.exe reports as LNK4098 and the
-    workspace's denied warnings turn into a failed build.
-    """
-    flags = re.findall(r'(?<=\s)/MT(?=\s|$)', text)
-    if len(flags) != 1:
-        raise RecipeError(f'VCMakefile carries {len(flags)} /MT flags, not 1; review the recipe against this revision')
-    return re.sub(r'(?<=\s)/MT(?=\s|$)', '/MD', text)
-
-
-def windows_pc(prefix, version):
-    """VCMakefile installs no tkrzw.pc; this one names its static tkrzw.lib."""
-    return (f'prefix={Path(prefix).as_posix()}\n'
-            'libdir=${prefix}/lib\nincludedir=${prefix}/include\nbindir=${prefix}/bin\n\n'
-            f'Name: Tkrzw\nDescription: an implementation of DBM\nVersion: {version}\n'
-            'Libs: -L${libdir} -ltkrzw\nCflags: -I${includedir}\n')
-
-
-def windows_build(source, prefix, env):
-    env = msvc_environment(env)
-    upstream = (source / 'VCMakefile').read_text()
-    version = re.search(r'^PKG_VERSION\s*=\s*(\S+)', upstream, re.M)
-    if not version:
-        raise RecipeError('VCMakefile names no PKG_VERSION')
-    makefile = source / 'VCMakefile.oxpinyin'
-    makefile.write_text(windows_makefile(upstream))
-    # Upstream hard-codes one Visual Studio 2019 and SDK layout; point both at
-    # the developer environment's own, and install into PREFIX itself.
-    sdk = Path(lookup(env, 'WindowsSdkDir')) / 'Lib' / lookup(env, 'WindowsSDKLibVersion').rstrip('\\')
-    tools = lookup(env, 'VCToolsInstallDir').rstrip('\\')
-    macros = [f'BASEDIR={prefix}', f'VCPATH={tools}', f'SDKPATH={sdk}']
-    run(['nmake', '/nologo', '-f', makefile.name, *macros], cwd=source, env=env)
-    run(['nmake', '/nologo', '-f', makefile.name, *macros, 'install'], cwd=source, env=env)
-    # This revision builds no DLL; install any one a later revision adds.
-    for library in sorted(source.glob('*.dll')):
-        shutil.copy2(library, Path(prefix) / 'bin' / library.name)
-    pkgconfig = Path(prefix) / 'lib' / 'pkgconfig'
-    pkgconfig.mkdir(parents=True, exist_ok=True)
-    (pkgconfig / 'tkrzw.pc').write_text(windows_pc(prefix, version[1]))
-
-
 def install_environment(prefix, env, system):
     child = dict(env)
     path = next((key for key in child if key.upper() == 'PATH'), 'PATH')
@@ -210,14 +166,12 @@ def check_install(prefix, env=None, *, system=None, resolve=runtime.resolve):
     system = system or host()
     env = dict(os.environ if env is None else env)
     prefix = Path(prefix)
-    util = prefix / 'bin' / ('tkrzw_dbm_util.exe' if system == 'Windows' else 'tkrzw_dbm_util')
+    util = prefix / 'bin' / 'tkrzw_dbm_util'
     missing = [str(path) for path in (prefix / 'include/tkrzw_dbm.h', prefix / LIBRARY[system],
                                       prefix / 'lib/pkgconfig/tkrzw.pc', util) if not path.is_file()]
     if missing:
         raise RecipeError(f'{prefix} lacks {", ".join(missing)}')
     child = install_environment(prefix, env, system)
-    if system == 'Windows':
-        return  # a static library: there is no loader resolution to check
     library = prefix / LIBRARY[system]
     _, done, matches = resolve(util, env=child)
     resolved = {str(Path(match).resolve()) for match in matches if Path(match).is_file()}
@@ -246,7 +200,6 @@ def build(prefix, *, source=None, jobs=None, env=None):
     system = host()
     env = dict(os.environ if env is None else env)
     prefix = Path(prefix).resolve()
-    # nmake builds serially; only make takes the job budget.
     jobs = jobs or make_jobs(env)
     if prefix.exists() and any(prefix.iterdir()):
         raise RecipeError(f'{prefix} is not empty; remove it or choose another prefix')
@@ -255,10 +208,7 @@ def build(prefix, *, source=None, jobs=None, env=None):
         tree.mkdir(parents=True, exist_ok=True)
         fetch(tree, env)
         prefix.mkdir(parents=True, exist_ok=True)
-        if system == 'Windows':
-            windows_build(tree, prefix, env)
-        else:
-            posix_build(tree, prefix, jobs, env)
+        posix_build(tree, prefix, jobs, env)
     if system == 'Darwin':
         pc = prefix / 'lib/pkgconfig/tkrzw.pc'
         pc.write_text(darwin_pc(pc.read_text()))
