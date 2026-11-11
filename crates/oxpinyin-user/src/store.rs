@@ -1199,7 +1199,14 @@ impl UserStore {
             return;
         }
         if let Some(keys) = keys() {
-            self.inner.libpinyin.phrases().index.note_search(&keys);
+            self.note_pinyin_search_keys(&keys);
+        }
+    }
+
+    /// Record an exact search using keys already built for lookup.
+    pub fn note_pinyin_search_keys(&self, keys: &[ChewingKey]) {
+        if crate::user_index::ENTRY_PER_LENGTH {
+            self.inner.libpinyin.phrases().index.note_search(keys);
         }
     }
 

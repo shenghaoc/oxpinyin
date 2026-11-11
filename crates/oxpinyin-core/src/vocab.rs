@@ -395,6 +395,11 @@ impl PhraseEntry {
         self
     }
 
+    /// Replace the pronunciation possibility of an existing entry.
+    pub const fn set_pronunciation_possibility(&mut self, matched: u64, total: u64) {
+        self.pronunciation = Some((matched, total));
+    }
+
     /// The live system item's stored unigram as the lookup read it, when it
     /// read one (see the field).
     #[must_use]

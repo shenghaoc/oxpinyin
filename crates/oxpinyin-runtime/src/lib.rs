@@ -473,21 +473,20 @@ impl<'a> RuntimeDict<'a> {
                     .flatten()
             },
         )?;
-        let user = self.user_lookup();
-        self.note_user_search(syllables);
-        // System-index hits were already priced by the callback above. A
-        // user-index hit may name a system token too; price that result once
-        // from the same live item before appending it to the system results.
-        let query = price.then(|| self.effective_query(syllables)).flatten();
-        out.extend(user.lookup(syllables).into_iter().map(|entry| {
-            let Some((matched, total)) = query
-                .as_ref()
-                .and_then(|keys| self.effective_possibility(keys, entry.token().value()))
-            else {
-                return entry;
-            };
-            entry.with_pronunciation_possibility(u64::from(matched), u64::from(total))
-        }));
+        let query: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
+        self.user.note_pinyin_search_keys(&query);
+        let user_start = out.len();
+        self.user_lookup().lookup_into(&query, out);
+        // Price after releasing the user phrase guard, as before.
+        if price && self.live_items().has_overlay() {
+            for entry in &mut out[user_start..] {
+                if let Some((matched, total)) =
+                    self.effective_possibility(&query, entry.token().value())
+                {
+                    entry.set_pronunciation_possibility(u64::from(matched), u64::from(total));
+                }
+            }
+        }
         if self.token_filter_active() {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
@@ -542,13 +541,6 @@ impl<'a> RuntimeDict<'a> {
                 .map(|token| (token, Some(()))),
         );
         Ok(())
-    }
-
-    /// The query keys the effective-item overlay prices against; `None`
-    /// when the store holds no system items.
-    fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-        self.live_items().has_overlay().then_some(())?;
-        Some(syllables.iter().map(|key| key.chewing_key()).collect())
     }
 
     /// `(matched, total)` of `token`'s effective system item over `query`,

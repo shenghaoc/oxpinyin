@@ -53,7 +53,9 @@ impl<'a> UserLookup<'a> {
         let Some(keys) = query_keys(syllables) else {
             return Vec::new();
         };
-        self.entries_for(&keys)
+        let mut entries = Vec::new();
+        self.lookup_into(&keys, &mut entries);
+        entries
     }
 
     /// The trellis's with-tones query over the same stored records.
@@ -62,17 +64,14 @@ impl<'a> UserLookup<'a> {
         self.with_index(|index| index.search(keys))
     }
 
-    fn entries_for(&self, keys: &[oxpinyin_core::ChewingKey]) -> Vec<PhraseEntry> {
+    /// Append the matching live entries in stored token order.
+    pub fn lookup_into(&self, keys: &[oxpinyin_core::ChewingKey], out: &mut Vec<PhraseEntry>) {
         let phrases = lock_result_or_abort(self.phrases.lock());
-        phrases
-            .index
-            .search(keys)
-            .into_iter()
-            .filter_map(|token| {
-                let text = session_text(&phrases, self.items, token)?;
-                Some(PhraseEntry::new(PhraseToken::new(token), text))
-            })
-            .collect()
+        phrases.index.visit_matches(keys, |token| {
+            if let Some(text) = session_text(&phrases, self.items, token) {
+                out.push(PhraseEntry::new(PhraseToken::new(token), text));
+            }
+        });
     }
 
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
