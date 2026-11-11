@@ -283,6 +283,45 @@ mod tests {
     }
 
     #[test]
+    fn direct_unigram_updates_retire_held_sentence_facts() {
+        let mut runtime = opened();
+        let token = token(&runtime);
+        let path = path(&runtime, "ni");
+        let mut facts = SentenceFacts::default();
+        price(&runtime, &path, token, &mut facts);
+        score(&runtime, token, &mut facts);
+        let before = facts.tokens[&token].unwrap().unigram;
+        let total = facts.total.unwrap();
+
+        assert!(runtime.add_unigram_outcome(token, 7).is_accepted());
+        score(&runtime, token, &mut facts);
+        assert!(facts.tokens.is_empty());
+        assert!(facts.total.is_none());
+
+        let mut facts = SentenceFacts::default();
+        price(&runtime, &path, token, &mut facts);
+        score(&runtime, token, &mut facts);
+        assert_eq!(facts.tokens[&token].unwrap().unigram, before + 7);
+        assert_eq!(facts.total, Some(total + 7));
+
+        // A missing slot in a loaded library still changes the facade total.
+        let missing = (token & 0x0f00_0000) | 0x00ff_ffff;
+        assert_eq!(
+            runtime.add_unigram_outcome(missing, 11),
+            oxpinyin_user::UnigramAdd::Missing
+        );
+        score(&runtime, token, &mut facts);
+        assert!(facts.tokens.is_empty());
+        assert!(facts.total.is_none());
+
+        let mut facts = SentenceFacts::default();
+        price(&runtime, &path, token, &mut facts);
+        score(&runtime, token, &mut facts);
+        assert_eq!(facts.tokens[&token].unwrap().unigram, before + 7);
+        assert_eq!(facts.total, Some(total + 18));
+    }
+
+    #[test]
     fn generation_change_during_fill_or_score_retires_only_the_facts() {
         for boundary in [Boundary::Fill, Boundary::Score] {
             let runtime = opened();
