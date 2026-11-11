@@ -42,7 +42,7 @@ files at this level:
   bytes are the writing library's own layout and change with its
   version. The model20 archive is not redistributable and CI does not
   have it: both commands take `--model-dir` (default `$PINYIN_MODEL_DIR`,
-  then `just fetch-model`'s `target/model20/extracted`) and refuse an
+  then the extraction of `just fetch-model`) and refuse an
   extraction whose cache lacks the fetch's verified marker.
 - **`*/deleted_bigram.db`** — a training input, not part of the compiled
   set: the pin's `gen_deleted_ngram` (built for the directory's own

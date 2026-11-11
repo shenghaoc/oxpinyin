@@ -17,7 +17,7 @@ may reach the network only through an HTTPS proxy. The provisioner handles
 each case, scopes custom trust to an existing proxy certificate or an
 explicit CA path, and verifies current pin/recipe provenance and recorded build/data bytes.
 No particular editor or IDE is required. Give each worktree its own
-`OXPINYIN_ORACLE_ENV` and `--cache-dir` paths when several share a host.
+`OXPINYIN_ORACLE_ENV` and `OXPINYIN_CACHE` paths when several share a host.
 
 ## Host requirements
 
@@ -79,12 +79,15 @@ requires a sound build. Before running workspace tests in a cloud session,
 build the upstream revision and select it for both linking and runtime:
 
 ```sh
-just tkrzw-build "$HOME/.cache/oxpinyin/tkrzw"
-export OXPINYIN_TKRZW_PREFIX="$HOME/.cache/oxpinyin/tkrzw"
-export PKG_CONFIG_PATH="$HOME/.cache/oxpinyin/tkrzw/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export LD_LIBRARY_PATH="$HOME/.cache/oxpinyin/tkrzw/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+revision="$(uv run --no-project --managed-python python -m tools.tkrzw.build rev)"
+prefix="$(just cache-root)/tkrzw-$(printf %s "$revision" | cut -c 1-12)"
+just tkrzw-build "$prefix"
+export OXPINYIN_TKRZW_PREFIX="$prefix"
+export PKG_CONFIG_PATH="$prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```
 
+The prefix is the `tkrzw-<revision>` entry of the [cache directory](setup.md#cache-directory).
 Use an empty prefix when building. `tools/tkrzw/runtime.py` needs
 `OXPINYIN_TKRZW_PREFIX` to trust the tkrzw loaded by Python tooling. Full
 oracle setup below can also provision and select a sound build.
@@ -99,10 +102,11 @@ tools/cloud/setup.sh
 
 It is idempotent: every step checks its result and skips when it holds,
 so a second run only re-verifies (under a second here). Options:
-`--cache-dir DIR` (oracle prefixes, the model cache and the tkrzw build;
-default `~/.cache/oxpinyin`), `--cells`, `--jobs`, `--no-pull` (build the
+`--cells`, `--jobs`, `--no-pull` (build the
 libraries even if the published image exists). `OXPINYIN_CONTAINER`
-names the container command (see step 1). Progress goes to stderr;
+names the container command (see step 1). The oracle prefixes, the model cache
+and the tkrzw build go under `OXPINYIN_CACHE`, the [cache directory](setup.md#cache-directory);
+without `just` on the host, set it before the run. Progress goes to stderr;
 stdout includes an informational ext4 path report and one line per cell:
 
 ```
@@ -131,7 +135,7 @@ utilities, provision oracle libraries or model data, or write the oracle
 environment file. See [native setup](setup.md) for the interpreter policy;
 on a host that has `just`, `just python` provisions the same interpreter.
 
-`--python-only` cannot be combined with `--cells`, `--cache-dir`, `--jobs`
+`--python-only` cannot be combined with `--cells`, `--jobs`
 or `--no-pull`; these combinations fail with exit 2 before
 provisioning. For concurrent worktrees, `UV_INSTALL_DIR`,
 `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned uv,
@@ -228,7 +232,7 @@ packaged `libtkrzw`. For example, after setup verifies a cache, mount that
 runtime read-only and name its exact library in the container:
 
 ```sh
-podman run --rm -v "$HOME/.cache/oxpinyin/tkrzw:/runtime:ro" \
+podman run --rm -v "$OXPINYIN_TKRZW_PREFIX:/runtime:ro" \
     -e OXPINYIN_TKRZW_LIBRARY=/runtime/lib/libtkrzw.so.1 \
     -e LD_LIBRARY_PATH=/runtime/lib \
     -v "$OUT:/out" oxpinyin-callgrind

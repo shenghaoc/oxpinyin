@@ -219,6 +219,7 @@ Their argument transport remains TODO (no Windows host).
 
 Run `just fetch-contract-data` once before a full test run: `oxpinyin-runtime`'s
 `candidate_surface` test reads the pinned system data it fetches, and fails without it.
+The data goes into the [cache directory](#cache-directory), so one fetch serves every worktree.
 
 The native Rust test entry point uses cargo-nextest at or above the
 `nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
@@ -571,6 +572,39 @@ its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.mic
 for Linux checkouts/builds (`~/src`, not `/mnt/c`). WSL may also host the
 compatibility runtime without replacing the native Windows workflow.
 
+## Cache directory
+
+The tooling keeps everything that it fetches or builds from pinned sources under one cache root, `OXPINYIN_CACHE`.
+All worktrees share it.
+The justfile exports your `OXPINYIN_CACHE` if non-empty, or `oxpinyin` in your cache directory.
+That directory is `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
+`just cache-root` prints the root.
+
+On a host with no home directory, set `OXPINYIN_CACHE` before running `just`.
+Set it to a non-empty absolute path.
+A command that does not start from a recipe, such as a direct `cargo` or `uv run`, needs the variable set.
+`tools/cloud/setup.sh` asks `just` for it when `just` is installed.
+
+The name of each entry carries its pin, so a new pin gets a new entry:
+
+- `contract-data/<version>`: the pinned libpinyin-data package.
+- `model20-<digest>`: the model20 archive and its extraction.
+- `tkrzw-<revision>`: the tkrzw build of `just provision`.
+- `pin-<commit>`: the provisioning cache, with the pin prefixes and their build trees.
+
+The model and contract-data fetchers allow one active fetch per pinned entry on a
+shared filesystem that supports file locking and atomic rename. An overlapping
+fetch of that entry fails as busy before touching the data. Run `fetch-model
+--force` while the entry is idle, including tools that read the extraction
+directly, because it replaces the extraction at the same path.
+
+The operating system releases the lock when a fetch crashes.
+
+After an interrupted publication, confirm that no fetch or reader is using the entry.
+If a model entry contains `.extracted-backup` and `extracted` is missing, rename
+the backup to `extracted`. If both exist, move the backup aside, then run
+`just fetch-model --force`.
+
 ## Container runtimes
 
 The pin runs only in a Linux container. `select_runtime` in
@@ -627,9 +661,9 @@ in the `deps` image. No run binds a single file, and no host needs Bash for them
 `provision oracle` in it with the provisioning cache mounted at
 `/provision`. On rootful Docker the run is the invoking user, so the cache
 stays theirs; uv's home and cache are then in `/tmp`. `just provision` and
-`just provision-oracle` use one cache: `OXPINYIN_PROVISION_CACHE`, else the
-older `OXPINYIN_CLOUD_CACHE` if something still sets it, else
-`~/.cache/oxpinyin`.
+`just provision-oracle` use one cache: the `pin-<commit>` entry of the
+[cache directory](#cache-directory). The run also mounts the cache root at `/cache`
+and receives it as `OXPINYIN_CACHE`.
 
 These host steps of `just provision` run only on Linux: Valgrind's check and
 apt install, the apt install of the dump utilities, the start of `dockerd`,

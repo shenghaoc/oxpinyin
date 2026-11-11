@@ -50,7 +50,8 @@ if sys.platform.startswith('linux'):
             self.bin.mkdir()
             # These tests never inspect a real environment/profile/CA or inherited secrets.
             self.env = dict(PATH=str(self.bin) + ':' + os.defpath, HOME=str(self.work), LC_ALL='C',
-                            TMPDIR=str(self.work), OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'))
+                            TMPDIR=str(self.work), OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'),
+                            OXPINYIN_CACHE=str(self.work / "root '$`"))
             self.service = provision.Provision(root=ROOT, env=self.env)
             self.service.cache = self.work / "cache '$`"
             self.service.cache.mkdir()
@@ -148,7 +149,7 @@ if sys.platform.startswith('linux'):
             results = self.write_and_source()
             self.assertIn(str(self.service.oracle_root / 'bdb').encode(), results[0].stdout)
             self.assertIn(str(old_root / 'kc').encode(), results[1].stdout)
-            self.assertIn(str(self.work / "cache '$`" / 'tkrzw').encode(), results[2].stdout)
+            self.assertIn(str(self.service.tkrzw_prefix).encode(), results[2].stdout)
             for cell, name in (('kc', 'lib/libpinyin.so'), ('kc', 'lib/libzhuyin.so'),
                                ('tkrzw', 'oracle-data.sha256'), ('kc', 'lib/libpinyin/data/table.conf'),
                                ('kc', 'lib/libpinyin/data/bigram.db')):
@@ -402,10 +403,10 @@ elif name in ('curl','apt-get','sudo'):
                 path.write_text(program)
                 path.chmod(0o755)
             self.env = dict(PATH=str(self.bin) + ':' + os.defpath, HOME=str(self.work), LC_ALL='C', TMPDIR=str(self.work),
-                            UV_CACHE_DIR=str(self.work / 'uv-cache'), OXPINYIN_CLOUD_CACHE=str(self.work / 'cache'),
+                            UV_CACHE_DIR=str(self.work / 'uv-cache'), OXPINYIN_CACHE=str(self.work / 'cache'),
                             OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'), OXPINYIN_CCR_DIR=str(self.work / 'ccr'),
                             OXPINYIN_SYSTEM_CA_BUNDLES=str(self.work / 'no-system-ca'), OXPINYIN_CONTAINER='podman',
-                            PINYIN_MODEL_CACHE=str(self.work / 'model20'), CALLS=str(self.calls))
+                            CALLS=str(self.calls))
             # Keep host executables isolated; cargo and dump utilities never execute.
             (self.bin / 'db5.3_dump').symlink_to('/bin/true')
             cargo = self.bin / 'cargo'
@@ -426,10 +427,12 @@ elif name in ('curl','apt-get','sudo'):
             for args in (['--unknown'], ['--cells', 'bad'], ['--cells', '']):
                 with self.subTest(args=args):
                     self.check_entry(args, 2)
-            for option in ('--cells', '--jobs', '--cache-dir', '--no-pull'):
-                args = ['--python-only', option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs', '--cache-dir') else [])
+            for option in ('--cells', '--jobs', '--no-pull'):
+                args = ['--python-only', option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs') else [])
                 self.check_entry(args, 2)
-            for option in ('--cells', '--jobs', '--cache-dir'):
+            # The host takes OXPINYIN_CACHE; --cache-dir exists only at the performance image's mount.
+            self.check_entry(['--cache-dir', str(self.work / 'named')], 2)
+            for option in ('--cells', '--jobs'):
                 # Bash-specific unbound-variable diagnostic is deliberately retired;
                 # status remains 1, and Python names the missing option.
                 done = self.run_entry([option])
@@ -504,7 +507,7 @@ elif name in ('curl','apt-get','sudo'):
                     self.assertIn(f'FAIL: {runtime} info failed; there is no daemon to start for it'.encode(), current.stderr)
 
         def test_cached_full_setup_preserves_result_order_files_and_selection(self):
-            cache = self.work / 'cache'
+            cache = provision.images.provision_cache(self.env, self.root)
             pin = self.root / 'tools/oracle/oracle-pin.txt'
             for cell in ('bdb', 'kc'):
                 prefix = cache / 'oracle' / cell
@@ -535,7 +538,7 @@ elif name in ('curl','apt-get','sudo'):
                                  'prefix=' + str(cache / 'oracle' / cell) + '\n')
 
         def verified_model(self):
-            model = self.work / 'model20'
+            model = provision.images.model_cache(self.env)
             extracted = model / 'extracted'
             extracted.mkdir(parents=True, exist_ok=True)
             for name in ('art culture economy gb_char gbk_char geology history life merged nature opengram people punct science society sport technology'.split()):
@@ -549,8 +552,9 @@ elif name in ('curl','apt-get','sudo'):
             done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'])
             self.assertEqual(done.returncode, 1, done.stderr.decode())
             self.assertIn(b'stale pin/recipe or damaged build provenance', done.stderr)
+            cache = provision.images.provision_cache(self.env, self.root)
             for library in ('libpinyin', 'libzhuyin'):
-                self.assertTrue((self.work / 'cache/oracle/bdb/lib' / (library + '.so')).is_file())
+                self.assertTrue((cache / 'oracle/bdb/lib' / (library + '.so')).is_file())
 
         def test_cancellation_reaps_fake_child_and_cleans_private_ca(self):
             # Supply a fake verified model extraction, so cancellation reaches info.
@@ -593,7 +597,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.calls = []
 
     def service(self, ctr, host='Linux'):
-        service = provision.Provision(root=ROOT, env={'PATH': ''})
+        service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')})
         service.host, service.ctr, service.platform = host, ctr, 'linux/amd64'
         service.cache = self.work / 'cache'
         service.cache.mkdir(exist_ok=True)
@@ -826,13 +830,32 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertIn('missing: db5.3_dump kchashmgr\nrun as root: apt-get install -y db5.3-util kyotocabinet-utils',
                       error.getvalue())
 
-    def test_provision_and_provision_oracle_share_one_cache(self):
-        # F: OXPINYIN_PROVISION_CACHE first, then the older OXPINYIN_CLOUD_CACHE, then ~/.cache/oxpinyin.
-        for env, expected in (({'OXPINYIN_PROVISION_CACHE': '/p', 'OXPINYIN_CLOUD_CACHE': '/c'}, '/p'),
-                              ({'OXPINYIN_CLOUD_CACHE': '/c'}, '/c'), ({'XDG_CACHE_HOME': '/x'}, '/x/oxpinyin')):
-            with self.subTest(env=env):
-                self.assertEqual(provision.Provision(root=ROOT, env=dict(env, PATH='')).cache, Path(expected))
-                self.assertEqual(provision.images.provision_cache(env), Path(expected))
+    def test_provision_and_provision_oracle_share_the_keyed_entries_of_one_root(self):
+        env = {'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')}
+        commit = provision.images.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
+        service = provision.Provision(root=ROOT, env=env)
+        self.assertEqual(service.cache, self.work / 'root' / f'pin-{commit[:12]}')
+        self.assertEqual(service.cache, provision.images.provision_cache(env))
+        self.assertEqual(service.tkrzw_prefix, (self.work / 'root' / f'tkrzw-{provision.TKRZW_REV[:12]}').resolve())
+        self.assertEqual(provision.images.model_cache(env), provision.model.default_cache(env))
+
+    def test_the_cache_root_is_needed_only_by_a_run_that_uses_it(self):
+        service = provision.Provision(root=ROOT, env={'PATH': ''})
+        with contextlib.suppress(Finished):
+            service.options(['--python-only'])
+        self.assertTrue(service.python_only)
+        with self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute'):
+            service.cache
+
+    def test_cache_dir_names_the_provisioning_cache_only_inside_the_image(self):
+        service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')})
+        with contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished) as raised:
+            service.options(['--cache-dir', '/provision'])
+        self.assertEqual((raised.exception.status, error.getvalue()), (2, 'unknown option: --cache-dir\n'))
+        with contextlib.suppress(Finished):
+            service.options(['--cache-dir', '/provision'], in_image=True)
+        self.assertEqual(service.cache, Path('/provision'))
+        self.assertEqual(service.tkrzw_prefix.parent, (self.work / 'root').resolve())
 
     def test_the_platform_comes_from_the_host_architecture_on_every_os(self):
         for machine, expected in (('x86_64', 'linux/amd64'), ('AMD64', 'linux/amd64'), ('aarch64', 'linux/arm64'),
