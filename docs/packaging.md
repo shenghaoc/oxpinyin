@@ -554,14 +554,3 @@ compile/link/run, and a real `pinyin_init`/`zhuyin_init` on
 `$(pkg-config --variable=pkgdatadir libpinyin)/data` that must return a
 context — so a release never attaches a package that does not install,
 does not answer as libpinyin/libzhuyin, or cannot open the system's model.
-
-### Packaging migration comparison
-
-For real output, run
-`just packaging compare-installs --base=/path/to/base --work=/path/to/private-work`.
-It installs each facade separately through both entry points on BDB, using
-the locked release recipe and equally remapped source/build paths. It compares
-the complete trees byte for byte, modes, symlinks, headers, pkg-config metadata,
-ELF identity and stripped sizes. Its work directory owns all targets and stages;
-it neither executes the oracle nor reads another lane's builds. Keep targets
-for reuse; raw output is disposable under CONTRIBUTING.
