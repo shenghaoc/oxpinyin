@@ -33,8 +33,8 @@ pub use session::tool;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::{
-    MatrixColumns, character_offset_over_keys, character_offset_with_walk_over_keys,
-    key_pronounced_by, matrix_columns, remember_walk,
+    MatrixColumns, character_offset_with_walk_over_keys, key_pronounced_by, matrix_columns,
+    remember_walk,
 };
 pub use cursor::{
     KeySpans, MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,

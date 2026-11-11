@@ -144,6 +144,43 @@ fn the_character_offset_past_the_last_column_aborts() {
 }
 
 #[test]
+fn the_character_offset_after_a_separator_aborts() {
+    // The pin's _check_offset rejects a cursor immediately after a lone
+    // zero key (074a2219 pinyin.cpp:3203-3204).
+    //
+    // The facade aborts without a message, and on the column, range and
+    // token-count asserts too. The child therefore writes the walk's answer
+    // for the same instance, phrase and offset to fd 2 before the call.
+    let stderr = assert_aborts(
+        "matrix_bound_tests::the_character_offset_after_a_separator_aborts",
+        || {
+            use std::io::Write as _;
+            let fixture = Fixture::parsed("char-after-separator", "ni'hao", 6);
+            // SAFETY: the fixture's instance is live and this thread alone
+            // uses it.
+            let walk = unsafe { crate::state::instance_ref(fixture.instance) }
+                .core
+                .character_offset(&"你好".into(), 3);
+            // Not `eprintln!`: libtest captures it and the abort drops it.
+            writeln!(std::io::stderr(), "walk: {walk:?}").expect("write to stderr");
+            let mut length = 0;
+            pinyin_get_character_offset(
+                fixture.instance,
+                cstr("你好").as_ptr(),
+                3,
+                &raw mut length,
+            );
+        },
+    );
+    // The init's `open …/user.conf failed.` precedes it without a newline.
+    let stderr = String::from_utf8_lossy(&stderr);
+    assert!(
+        stderr.ends_with("walk: Err(ZeroKeyOffsetCheck { offset: 3 })\n"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn a_null_phrase_past_the_last_column_aborts() {
     // Result: a NULL phrase past the last column aborts at
     // `assert(offset < matrix.size())` (`pinyin.cpp:3205`) rather than

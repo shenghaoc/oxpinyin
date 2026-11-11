@@ -456,7 +456,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// Lookup byte offset → character count within `phrase` in the
     /// instance's active parse mode — the `pinyin_get_character_offset` /
     /// `zhuyin_get_character_offset` law
-    /// ([`oxpinyin_engine::character_offset_over_keys`]) over
+    /// ([`oxpinyin_engine::character_offset_with_walk_over_keys`]) over
     /// [`Self::mode_keys`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character

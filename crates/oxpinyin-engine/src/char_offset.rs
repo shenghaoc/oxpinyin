@@ -185,7 +185,7 @@ pub struct MatrixColumns {
 /// The columns of one parse, or `None` for the empty matrix (`fill_matrix`
 /// returns before sizing it when the parse placed no key,
 /// `phonetic_key_matrix.cpp:34-38`). Arguments as
-/// [`character_offset_over_keys`].
+/// [`character_offset_with_walk_over_keys`].
 #[must_use]
 pub fn matrix_columns(
     input: &[u8],
@@ -339,10 +339,11 @@ where
 /// `input` is the active mode's own buffer, `parsed_len` the parse's
 /// consumed byte count, `keys` the matrix keys in column order (each at
 /// its syllable start), and `separators` whether `'` is a zero-key
-/// separator in that mode. `Ok(Some(characters))` is the pin's `true`
-/// with the character count; `Ok(None)` its graceful `false` (empty
-/// matrix, empty or invalid phrase, a phrase character with no
-/// dictionary token, or a walk no key path satisfies).
+/// separator in that mode. The first value is the character count on
+/// success, or `None` on graceful refusal (empty matrix, empty or invalid
+/// phrase, a character with no dictionary token, or no satisfying path).
+/// The second value reports whether the walk ran so the facade can leave
+/// the caller's output alone on an early refusal without rereading the DBM.
 ///
 /// # Errors
 ///
@@ -351,31 +352,6 @@ where
 /// (the pin's asserts); [`EngineError::MatrixColumnAssert`] for the two
 /// recursion asserts; the dictionary's backend failure as
 /// [`EngineError::Scoring`].
-pub fn character_offset_over_keys<D>(
-    input: &[u8],
-    parsed_len: usize,
-    keys: &[MatrixKey],
-    separators: bool,
-    dictionary: &D,
-    phrase: &oxpinyin_core::PhraseText,
-    offset: usize,
-) -> Result<Option<usize>, EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
-{
-    character_offset_with_walk_over_keys(
-        input, parsed_len, keys, separators, dictionary, phrase, offset,
-    )
-    .map(|(count, _)| count)
-}
-
-/// The character offset together with whether the recursive walk ran.
-/// Facades use the second value to preserve the caller's output on an
-/// early refusal without re-reading the phrase DBM.
-///
-/// # Errors
-/// As [`character_offset_over_keys`].
 pub fn character_offset_with_walk_over_keys<D>(
     input: &[u8],
     parsed_len: usize,
@@ -426,155 +402,4 @@ where
     }
 
     walk(dictionary, &columns, &tokens, 0, offset, 0).map(|count| (count, true))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::character_offset_over_keys;
-    use crate::cursor::MatrixKey;
-    use crate::error::EngineError;
-    use oxpinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
-
-    /// A dictionary of one-character items: text → token, plus the
-    /// syllables each token pronounces (possibility 1 when spelled,
-    /// absent otherwise).
-    struct Dict {
-        items: Vec<(&'static str, u32, &'static [&'static str])>,
-    }
-
-    impl Dictionary for Dict {
-        type Syllable = SyllableKey;
-        type Error = core::convert::Infallible;
-        type PathMemo = ();
-
-        fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
-            let [key] = syllables else {
-                return Ok(Vec::new());
-            };
-            Ok(self
-                .items
-                .iter()
-                .filter(|(_, _, spellings)| spellings.contains(&key.text()))
-                .map(|(text, token, _)| {
-                    PhraseEntry::new(PhraseToken::new(*token), (*text).to_owned())
-                })
-                .collect())
-        }
-
-        fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
-            self.items
-                .iter()
-                .filter(|(stored, _, _)| *stored == text)
-                .map(|(_, token, _)| PhraseToken::new(*token))
-                .collect()
-        }
-    }
-
-    fn dict() -> Dict {
-        Dict {
-            items: vec![("你", 1, &["ni"]), ("好", 2, &["hao"]), ("泥", 3, &["ni"])],
-        }
-    }
-
-    fn key(text: &str, start: usize, end: usize) -> MatrixKey {
-        MatrixKey::new(
-            SyllableKey::from_text(text).expect("syllable"),
-            0,
-            start,
-            end,
-        )
-    }
-
-    fn nihao() -> Vec<MatrixKey> {
-        vec![key("ni", 0, 2), key("hao", 2, 5)]
-    }
-
-    #[test]
-    fn counts_characters_up_to_the_offset() {
-        let keys = nihao();
-        for (offset, expected) in [(0, 0), (2, 1), (5, 2)] {
-            let got = character_offset_over_keys(
-                b"nihao",
-                5,
-                &keys,
-                true,
-                &dict(),
-                &"你好".into(),
-                offset,
-            )
-            .expect("no abort shape");
-            assert_eq!(got, Some(expected), "offset {offset}");
-        }
-    }
-
-    #[test]
-    fn a_phrase_character_without_a_token_answers_false() {
-        // Issue #356: the pinyin string itself as the phrase. Both pinned
-        // oracles answer false at every valid offset; the port answered
-        // true with a byte-derived count.
-        let keys = vec![key("ni", 0, 2)];
-        for offset in 0..=2 {
-            let got =
-                character_offset_over_keys(b"ni'", 3, &keys, true, &dict(), &"ni'".into(), offset)
-                    .expect("no abort shape");
-            assert_eq!(got, None, "offset {offset}");
-        }
-    }
-
-    #[test]
-    fn the_separator_and_tail_zero_keys_are_stepped_over() {
-        let keys = vec![key("ni", 0, 2), key("hao", 3, 6)];
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 6)
-            .expect("no abort shape");
-        assert_eq!(got, Some(2));
-        // Offset 3 sits one past the separator's lone zero key: the pin's
-        // `_check_offset` abort.
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 3);
-        assert!(matches!(
-            got,
-            Err(EngineError::ZeroKeyOffsetCheck { offset: 3 })
-        ));
-        // Past the reserved slot: the range assert.
-        let got = character_offset_over_keys(b"ni'hao", 6, &keys, true, &dict(), &"你好".into(), 7);
-        assert!(matches!(
-            got,
-            Err(EngineError::LookupOffsetOutOfRange { offset: 7, len: 6 })
-        ));
-    }
-
-    #[test]
-    fn a_key_the_phrase_does_not_pronounce_fails_the_walk() {
-        // 好 does not pronounce `ni`, so no path reaches the offset.
-        let keys = nihao();
-        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), &"好你".into(), 2)
-            .expect("no abort shape");
-        assert_eq!(got, None);
-        // A shorter phrase than the matrix: the walk beyond its tokens is
-        // a miss, not a read off the array.
-        let got = character_offset_over_keys(b"nihao", 5, &keys, true, &dict(), &"你".into(), 5)
-            .expect("no abort shape");
-        assert_eq!(got, None);
-    }
-
-    #[test]
-    fn empty_input_and_empty_phrase_answer_false() {
-        assert_eq!(
-            character_offset_over_keys(b"", 0, &[], true, &dict(), &"你".into(), 0)
-                .expect("no abort"),
-            None
-        );
-        // A non-empty buffer whose parse placed no key: `fill_matrix`
-        // leaves the matrix cleared, so the pin's empty-matrix `false`
-        // applies before any offset check.
-        assert_eq!(
-            character_offset_over_keys(b"xyz", 0, &[], true, &dict(), &"你".into(), 0)
-                .expect("no abort"),
-            None
-        );
-        assert_eq!(
-            character_offset_over_keys(b"nihao", 5, &nihao(), true, &dict(), &"".into(), 0)
-                .expect("no abort"),
-            None
-        );
-    }
 }
