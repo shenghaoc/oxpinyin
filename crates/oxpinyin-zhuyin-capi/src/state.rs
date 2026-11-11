@@ -80,34 +80,6 @@ impl CapiContext {
             },
         }
     }
-
-    pub(crate) fn load_phrase_library(
-        &mut self,
-        index: u32,
-    ) -> Result<bool, oxpinyin_facade::LibraryLoadFault> {
-        self.core.load_phrase_library(index)
-    }
-
-    pub(crate) fn unload_phrase_library(&mut self, index: u8) -> bool {
-        self.core.unload_phrase_library(index)
-    }
-
-    /// `zhuyin_save`'s body: `false` without a user dir, otherwise the
-    /// store's gated save. A chunk header write the pin dies on comes back
-    /// as [`SaveOutcome::ChunkWriteFailed`] so the caller can log it.
-    pub(crate) fn save_user(&mut self) -> oxpinyin_facade::SaveOutcome {
-        self.core.save_user()
-    }
-
-    /// `zhuyin_mask_out`'s body: the store-level deletion, or
-    /// [`MaskOutOutcome::Done(false)`](oxpinyin_facade::MaskOutOutcome::Done)
-    /// without a user store. An over-long user pinyin index key comes back
-    /// as [`MaskOutOutcome::OverlongIndexKey`](oxpinyin_facade::MaskOutOutcome::OverlongIndexKey)
-    /// so the C entry can abort where the pin does
-    /// (`chewing_large_table2_bdb.cpp:529`).
-    pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> oxpinyin_facade::MaskOutOutcome {
-        self.core.mask_out(mask, value)
-    }
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

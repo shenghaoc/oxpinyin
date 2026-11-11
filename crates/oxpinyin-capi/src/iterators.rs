@@ -116,9 +116,14 @@ pub(crate) struct ImportRead<'a> {
 /// ```
 ///
 /// Returns a handle for any context, matching the export iterator shape (a
-/// NULL context gets a handle that holds none, as at the pin); caller must call `pinyin_end_add_phrases` to free it. Adds target
-/// the loaded system libraries 1–4 and USER_FILE libraries 5–7.
-pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut ImportIterator {
+/// NULL context gets a handle that holds none, as at the pin). The caller
+/// frees it with `pinyin_end_add_phrases`. Adds target the loaded system
+/// libraries 1–4 and USER_FILE libraries 5–7.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_begin_add_phrases(
+    context: *mut PinyinContext,
+    index: u8,
+) -> *mut ImportIterator {
     if context.is_null() {
         // The pin allocates the iterator and stores the context unread
         // (`pinyin.cpp:506-512`, `zhuyin.cpp:392-398`). Every later use that
@@ -142,23 +147,6 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
         owner: Some(owner),
     };
     Box::into_raw(Box::new(handle)).cast()
-}
-
-/// Begin adding phrases to an index.
-///
-/// # C signature
-/// ```c
-/// import_iterator_t * pinyin_begin_add_phrases(pinyin_context_t * context,
-///                                              guint8 index);
-/// ```
-///
-/// Body and handle contract: `begin_add_phrases_impl`.
-#[unsafe(no_mangle)]
-pub extern "C" fn pinyin_begin_add_phrases(
-    context: *mut PinyinContext,
-    index: u8,
-) -> *mut ImportIterator {
-    begin_add_phrases_impl(context, index)
 }
 
 /// Add a phrase/pinyin pair to the import iterator.

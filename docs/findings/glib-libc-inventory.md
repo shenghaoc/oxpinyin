@@ -401,7 +401,7 @@ or return, so no legal return or error path leaves a different locale:
 | --- | --- | --- | --- |
 | `pinyin_init`, any outcome | `pinyin.cpp:337` (`table.conf` load), then `check_format` `:178,:187` | `"C"` | `init_context` (called by `pinyin_init`), first step |
 | `zhuyin_init`, any outcome | `zhuyin.cpp:281`, then `check_format` `:126-176` | `"C"` | `zhuyin_init`, first step |
-| `pinyin_save`, past the user-dir and modified guards | `pinyin.cpp:1133-1137,1143` (`mark_version`) | `"C"` | `save_context`, under the same guards |
+| `pinyin_save`, past the user-dir and modified guards | `pinyin.cpp:1133-1137,1143` (`mark_version`) | `"C"` | `pinyin_save`, under the same guards |
 | `zhuyin_save`, past its guards | `zhuyin.cpp:547-552,695-698` | `"C"` | `zhuyin_save`, under the same guards |
 | `pinyin_fini`, always | `pinyin.cpp:1200` | `"C"` | `pinyin_fini` |
 | `zhuyin_fini` | `zhuyin.cpp:741-757` releases state and writes no marker | unchanged | none |

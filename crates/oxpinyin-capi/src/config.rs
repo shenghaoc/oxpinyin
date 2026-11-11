@@ -319,7 +319,7 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     // `FacadePhraseIndex::unload` is in memory and the pin answers `true`
     // (policy row 103): the session drops the library and its visibility
     // mask sets, with nothing written and nothing that can fail.
-    ctx.unload_phrase_library(index)
+    ctx.core.unload_phrase_library(index)
 }
 
 ///
@@ -359,7 +359,7 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
     // SAFETY: `context` is non-null and was produced by `pinyin_init`;
     // the unique borrow lasts only for the mask call.
     let ctx = unsafe { context_mut(context) };
-    let outcome = ctx.mask_out(mask, value);
+    let outcome = ctx.core.mask_out(mask, value);
     match outcome {
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
         // Register rows 84 and 94, `chewing_large_table2_bdb.cpp:529` (kc
