@@ -227,6 +227,11 @@ Where an external call's result depends on the host or its libc, oxpinyin calls 
 Internal host-dependent results follow the language-artefact rule and are recorded as host-dependent.
 Platform-independent logic must not differ, and output stays deterministic on each host (constitution §6).
 
+**GLib versions** (maintainer ruling, 2026-11-10).
+The tests can meet a behaviour difference between GLib versions.
+When that difference is traced to GLib's own code, it is accepted.
+It is not an oxpinyin defect, and it needs no new ruling.
+
 ### Crate placement
 
 - External file, locale and tool I/O calls belong in `oxpinyin-input`.
@@ -301,6 +306,12 @@ This covers platform adaptation only; the pin's own logic, the C ABI and the per
 Example: on Windows, a file that is mapped, or open without delete sharing, cannot be deleted or replaced.
 A test that depends on such behaviour is compiled only for the operating systems that provide it (`#[cfg]`), with a comment that names the facility.
 It is not ignored or skipped, and no failure is injected in its place.
+
+**Operating systems and CPU architectures** (maintainer ruling, 2026-11-10).
+Behaviour differences between operating systems and CPU architectures are stable.
+A test selects the expected result for each operating system and architecture with `#[cfg(target_os = …)]` or `#[cfg(target_arch = …)]`.
+It does not skip or ignore the case.
+[Fundamental OS differences](#fundamental-os-differences) covers a test that depends on a facility that an operating system does not provide.
 
 <a id="rust-cpp-interoperability"></a>
 
