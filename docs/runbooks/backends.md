@@ -17,15 +17,15 @@ cargo test --locked --workspace --no-default-features --features bdb
 A peer requires `--no-default-features`: the default set already
 selects one backend, and the store refuses two backends at once.
 The store build script finds tkrzw only through `pkg-config tkrzw`.
-To select a self-built tkrzw (`just tkrzw-build DIR`, which CI uses), set
+To select a self-built tkrzw (`just tkrzw-build DIR` on Linux, which CI uses), set
 `PKG_CONFIG_PATH` and the runtime library path
 ([discovery and overrides](#discovery-and-overrides)).
 
 ## System libraries
 
-| backend | Debian/Ubuntu packages | macOS (Homebrew) |
+| backend | Debian/Ubuntu packages | macOS (Homebrew, except tkrzw) |
 | --- | --- | --- |
-| tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev pkg-config g++` (the cxx bridge is C++17; no libclang) | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there; `cargo check`/`clippy` never link and are not evidence) |
+| tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev pkg-config g++` (the cxx bridge is C++17; no libclang) | the repository's vcpkg overlay port in the `arm64-osx-oxpinyin` triplet (see [setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc` and pkg-config resolves it. The backend links at link time, so bare-name dylib lookup does not apply |
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5`: 5.3.28 under the Sleepycat license, the surveyed version. The default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it |
 

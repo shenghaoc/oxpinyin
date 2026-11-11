@@ -305,7 +305,7 @@ jobs:
         if: ${{ inputs.tools_harness }}
         run: just test-tools
 
-  # macOS links tkrzw from the tkrzw action. The full workspace runs here;
+  # macOS links tkrzw from the vcpkg overlay port. The full workspace runs here;
   # shipped macOS libraries are also built and checked separately. The tools
   # Python harness runs after the Rust steps on a dispatch that asks for it.
   #
@@ -322,6 +322,10 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
+      # The repository triplet (triplets/): vcpkg's arm64-osx-dynamic, release
+      # only, with each library's install name left as the absolute path in
+      # the installed tree, so the binaries load libtkrzw with no rpath.
+      VCPKG_TRIPLET: arm64-osx-oxpinyin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -335,13 +339,37 @@ jobs:
           cargo-c: 'true'
       - run: rustup show active-toolchain
       # GLib, pkg-config and the call-site LLVM from Homebrew; tkrzw from the
-      # tkrzw action, which puts its build first on PKG_CONFIG_PATH.
+      # vcpkg overlay port, first on PKG_CONFIG_PATH.
       - name: Install GLib, pkg-config and the call-site LLVM (Homebrew)
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           brew install glib pkgconf "llvm@${llvm_major}"
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
+      # vcpkg's binary cache, as in the Windows job above. The key also names
+      # the vcpkg root: the installed libtkrzw records its own path there as
+      # its install name, so an archive built under another root is not reused.
+      # tools/dev/vcpkg.py finds the runner's checkout and publishes
+      # VCPKG_ROOT, VCPKG_BINARY_SOURCES and the key.
+      - name: Compute the vcpkg binary cache key
+        id: vcpkg-cache-key
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg cache-key --triplet "$VCPKG_TRIPLET"
+      - name: Restore the vcpkg binary cache
+        id: vcpkg-cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          restore-keys: |
+            ${{ steps.vcpkg-cache-key.outputs.key }}-
+            ${{ steps.vcpkg-cache-key.outputs.prefix }}
+      # Installs the overlay port, then publishes PKG_CONFIG_PATH and the tools directory.
+      - name: Install tkrzw (vcpkg)
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg install --triplet "$VCPKG_TRIPLET"
+      - name: Save the vcpkg binary cache
+        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
       - name: Check shipped macOS library exports
         run: |
           stage="$RUNNER_TEMP/macos-shipped"

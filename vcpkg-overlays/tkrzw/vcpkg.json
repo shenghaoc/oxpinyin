@@ -4,34 +4,44 @@
   "description": "Thread-safe DBM library",
   "homepage": "https://dbmx.net/tkrzw/",
   "license": "Apache-2.0",
-  "supports": "windows & !uwp & !mingw",
+  "supports": "(windows & !uwp & !mingw) | osx",
   "dependencies": [
     {
       "name": "vcpkg-cmake",
-      "host": true
+      "host": true,
+      "platform": "windows"
+    },
+    {
+      "name": "vcpkg-make",
+      "host": true,
+      "platform": "osx"
     }
   ],
   "features": {
     "lz4": {
       "description": "LZ4 compression support",
+      "supports": "windows",
       "dependencies": [
         "lz4"
       ]
     },
     "lzma": {
       "description": "LZMA compression support",
+      "supports": "windows",
       "dependencies": [
         "liblzma"
       ]
     },
     "zlib": {
       "description": "zlib compression support",
+      "supports": "windows",
       "dependencies": [
         "zlib"
       ]
     },
     "zstd": {
       "description": "Zstandard compression support",
+      "supports": "windows",
       "dependencies": [
         "zstd"
       ]

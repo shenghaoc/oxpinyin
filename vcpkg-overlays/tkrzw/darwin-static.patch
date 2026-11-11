@@ -1,0 +1,26 @@
+--- a/configure
++++ b/configure
+@@ -5175,6 +5175,10 @@
+     MYLIBRARYFILES="$MYLIBRARYFILES libtkrzw.so.$MYLIBVER"
+     MYLIBRARYFILES="$MYLIBRARYFILES libtkrzw.so"
+   fi
++fi
++if test "$enable_shared" = "no" && uname | grep Darwin >config.tmp
++then
++  MYCPPFLAGS="$MYCPPFLAGS -D_DARWIN_C_SOURCE"
+ fi
+ 
+ #================================================================
+--- a/configure.in
++++ b/configure.in
+@@ -398,6 +398,10 @@
+     MYLIBRARYFILES="$MYLIBRARYFILES libtkrzw.so.$MYLIBVER"
+     MYLIBRARYFILES="$MYLIBRARYFILES libtkrzw.so"
+   fi
++fi
++if test "$enable_shared" = "no" && uname | grep Darwin >config.tmp
++then
++  MYCPPFLAGS="$MYCPPFLAGS -D_DARWIN_C_SOURCE"
+ fi
+ 
+ #================================================================
