@@ -124,3 +124,12 @@ def pc_version(path) -> str:
     except OSError:
         return 'unknown'
     return '\n'.join(lines) if lines else 'unknown'
+
+
+def macho_uuid(path, *, run=None):
+    """Read exactly one native slice UUID, for a dylib or its dSYM."""
+    done = (run or bench.capture)(['xcrun', 'dwarfdump', '--uuid', str(path)])
+    ids = re.findall(r'UUID: ([0-9A-Fa-f-]{36}) \(arm64\)', done.stdout.decode())
+    if done.status or len(ids) != 1:
+        raise ValueError('expected one arm64 UUID: ' + str(path))
+    return ids[0].replace('-', '').lower()

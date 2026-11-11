@@ -81,6 +81,7 @@ PACKAGING_PATHS = (
 CONTRACT_MODULES = ('fixtures', 'kit')
 
 HARNESS_DEPENDENCIES = {
+    'tools/dev/measure/native.test.py': ('tools/dev/measure/native.test.py',),
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
     **{f'tools/bisection/contract_{name}.py': (f'tools/bisection/contract_{name}.test.py',)
        for name in CONTRACT_MODULES},
@@ -112,6 +113,11 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/just.test.py'),
 }
+# Native measurement extends these existing services. Keep its contracts selected.
+for _measurement_source in ('bench', 'identity', 'neutrality', 'prepare', 'recipes', 'reports'):
+    _measurement_path = f'tools/dev/measure/{_measurement_source}.py'
+    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py',)
+
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.
 COMPAT_HARNESS = (

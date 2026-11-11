@@ -133,6 +133,11 @@ check backend="": python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.check @forwarded; exit $LASTEXITCODE
 
 
+# Native source-revision comparison and xctrace profiling.
+[unix]
+measure *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' "$@"
+
 # Run the native Rust tests through nextest.
 [unix]
 test *args:

@@ -57,3 +57,259 @@ def hardware_instructions(path) -> str:
                   'the difference between the two ratios is the measured',
                   'malloc-interception distortion.']
     return '\n'.join(lines) + '\n' if lines else ''
+
+
+# Report order: the instruction count and wall time lead. peak_rss_bytes stays last;
+# a profile launch has no direct-child reading of it.
+MEASURES = ('loop_instructions', 'wall_seconds', 'loop_cpu_cycles', 'cpu_seconds',
+            'loop_runnable_seconds', 'lifetime_max_phys_footprint_bytes', 'peak_rss_bytes')
+UNITS = {'loop_instructions': 'instructions retired in the measured loop (ri_instructions delta)',
+         'wall_seconds': 'seconds, measured loop',
+         'loop_cpu_cycles': 'CPU cycles in the measured loop (ri_cycles delta)',
+         'cpu_seconds': 'seconds, measured loop',
+         'loop_runnable_seconds': 'seconds on a core or waiting for one in the measured loop'
+                                  ' (ri_runnable_time delta, advanced at scheduling events)',
+         'lifetime_max_phys_footprint_bytes': 'bytes, process lifetime peak',
+         'peak_rss_bytes': 'bytes, process lifetime peak'}
+COUNTS = ('loop_instructions', 'loop_cpu_cycles')
+
+
+def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True):
+    """Validate one complete driver result; an unread required metric is an error."""
+    import math
+    import re
+    row = json.loads(raw)
+    if (row.get('cycles') != cycles or row.get('operations') != operations
+            or not isinstance(row.get('pid'), int) or row['pid'] <= 0):
+        raise ValueError('incomplete workload')
+    if not re.fullmatch('[0-9a-f]{16}', str(row.get('fingerprint', ''))):
+        raise ValueError('missing operation fingerprint')
+    if fingerprint is not None and row['fingerprint'] != fingerprint:
+        raise ValueError('operation fingerprint mismatch')
+    for name in MEASURES if child_rss else MEASURES[:-1]:
+        value = row.get(name)
+        # The kernel advances runnable time at scheduling events only; a short loop reads 0.
+        zero_allowed = name == 'loop_runnable_seconds'
+        if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                or value < 0 or (value == 0 and not zero_allowed)):
+            raise ValueError('broken required capture: ' + name)
+        if (name.endswith('_bytes') or name in COUNTS) and not isinstance(value, int):
+            raise ValueError('count must be an integer: ' + name)
+    return row
+
+
+def comparison(rows):
+    """Paired block estimates; controls are descriptive and never produce a verdict.
+
+    Runnable time is context for wall time and carries no B/A ratio: each arm
+    reports it over its CPU time, and an excess is time spent waiting for a core.
+    """
+    from . import stats
+    result = {'units': UNITS}
+    for kind in ('comparison', 'control'):
+        blocks = {}
+        for row in rows:
+            if row['kind'] == kind:
+                blocks.setdefault(row['block'], {})[row['arm']] = row
+        pairs = [block for block in blocks.values() if set(block) == {'A', 'B'}]
+        if not pairs:
+            continue
+        def values(arm, metric):
+            return [pair[arm][metric] for pair in pairs]
+        result[kind] = {}
+        for metric in MEASURES:
+            entry = {arm: {**stats.summary(values(arm, metric)), **stats.paired_bootstrap(values(arm, metric))}
+                     for arm in 'AB'}
+            if metric == 'loop_runnable_seconds':
+                for arm in 'AB':
+                    entry[arm]['over_cpu_seconds'] = stats.paired_ratio(values(arm, metric),
+                                                                        values(arm, 'cpu_seconds'))
+            else:
+                entry['B_over_A'] = stats.paired_ratio(values('B', metric), values('A', metric))
+            result[kind][metric] = entry
+    return result
+
+
+def capture_rows(xml, *, pid, uuid, allocations):
+    """Require target-process data and a product frame in its recorded backtrace.
+
+    xctrace XML interns processes, threads, frames and binaries using id/ref.
+    Resolve those references before attributing any row, never by searching the
+    whole export for an unrelated process or symbol.
+    """
+    import re
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml)
+    # A combined export references objects defined in earlier tables.
+    ids = {node.attrib['id']: node for node in root.iter() if 'id' in node.attrib}
+
+    def expand(node, seen=frozenset()):
+        ref = node.get('ref')
+        if ref:
+            if ref in seen or ref not in ids:
+                return []
+            return expand(ids[ref], seen | {ref})
+        return [node, *(child for item in node for child in expand(item, seen))]
+
+    count = product = 0
+    for row in root.iter('row'):
+        nodes = expand(row)
+        processes = [node for node in nodes if node.tag == 'process']
+        if not any(any(child.tag == 'pid' and child.text == str(pid) for child in expand(process))
+                   or re.search(r'\(' + str(pid) + r'\)$', process.get('fmt', '')) for process in processes):
+            continue
+        def numeric(tags, minimum):
+            return any(node.tag in tags and node.text is not None
+                       and re.fullmatch(r'[0-9]+', node.text.strip())
+                       and int(node.text) >= minimum for node in nodes)
+        if not numeric({'sample-time', 'start-time', 'timestamp', 'time'}, 0):
+            continue
+        if allocations and not numeric({'size', 'allocation-size', 'alloc-size'}, 1):
+            continue
+        stacks = [node for node in nodes if node.tag in ('backtrace', 'tagged-backtrace')]
+        if not stacks:
+            continue
+        count += 1
+        for stack in stacks:
+            for frame in (node for node in expand(stack) if node.tag == 'frame'):
+                name = frame.get('name', frame.get('fmt', ''))
+                binaries = [node for node in expand(frame) if node.tag == 'binary']
+                known = (name.lstrip('_') in {'pinyin_init', 'pinyin_guess_candidates',
+                                             'pinyin_parse_more_full_pinyins'}
+                         or (name.startswith('_R') and '16oxpinyin_runtime' in name
+                             and name.endswith('11RuntimeDict11fill_lookup')))
+                if (known and any(
+                        binary.get('UUID', binary.get('uuid', '')).replace('-', '').lower() == uuid for binary in binaries)):
+                    product += 1
+    if not count or not product:
+        raise ValueError('capture lacks target-process data or a resolved product backtrace')
+    return {'usable_rows': count, 'product_frames': product}
+
+
+def driver_result(text):
+    """xctrace can merge an unterminated product diagnostic before the final JSON."""
+    import re
+    matches = re.findall(r'(?m)\{[^\n]*\}\s*\Z', text)
+    if len(matches) != 1:
+        raise ValueError('missing final driver result')
+    return json.loads(matches[0])
+
+
+def allocation_path(toc, *, pid, driver, detail_name="Allocations List"):
+    """Select the listed detail only for the single, successfully exited driver."""
+    from pathlib import Path
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(toc)
+    run = root.find("run[@number='1']")
+    if run is None:
+        raise ValueError('missing Allocations run')
+    target = run.find('info/target/process')
+    processes = [node for node in run.findall('processes/process') if node.get('pid') != '0']
+    if (target is None or target.get('pid') != str(pid) or target.get('name') != 'bisect'
+            or target.get('type') != 'launched' or target.get('return-exit-status') != '0'
+            or len(processes) != 1 or processes[0].get('pid') != str(pid)
+            or Path(processes[0].get('path', '')).resolve() != Path(driver).resolve()):
+        raise ValueError('Allocations target is not the completed driver process')
+    if detail_name not in ("Allocations List", "Statistics"):
+        raise ValueError("unknown allocation detail")
+    detail = run.find(f"tracks/track[@name='Allocations']/details/detail[@name='{detail_name}']")
+    if detail is None or detail.get('kind') != 'table':
+        raise ValueError(f'TOC does not expose {detail_name}')
+    return f'/trace-toc/run[@number="1"]/tracks/track[@name="Allocations"]/details/detail[@name="{detail_name}"]'
+
+
+def allocation_rows(xml, *, uuid, dylib):
+    """Validate per-allocation detail attributes and symbolize its product backtraces.
+
+    This detail has no per-row PID. The caller must first validate its single
+    launched target with allocation_path. Its default view is allocations outstanding at process exit;
+    report that scope, never call it the complete allocation-event history.
+    """
+    from pathlib import Path
+    import re
+    import xml.etree.ElementTree as ET
+    from . import bench, identity
+    dsym = Path(str(dylib) + '.dSYM')
+    if identity.macho_uuid(dylib) != uuid or identity.macho_uuid(dsym) != uuid:
+        raise ValueError('allocation symbols do not match measured UUID')
+    dwarf = dsym / 'Contents/Resources/DWARF' / Path(dylib).name
+    if not dwarf.is_file():
+        raise ValueError('missing measured DWARF')
+    root = ET.fromstring(xml)
+    ids = {node.get('id'): node for node in root.iter() if 'id' in node.attrib}
+    def resolve(node):
+        if node is None:
+            raise ValueError('allocation frame has no binary')
+        if 'ref' in node.attrib:
+            if node.get('ref') not in ids:
+                raise ValueError('unresolved allocation backtrace reference')
+            return ids[node.get('ref')]
+        return node
+    rows = list(root.iter('row'))
+    product_rows, addresses = [], {}
+    live = 0
+    for row in rows:
+        if (not re.fullmatch(r'0x[0-9a-fA-F]+', row.get('address', ''))
+                or not re.fullmatch(r'[1-9][0-9]*', row.get('size', ''))
+                or not row.get('category') or row.get('live') not in ('true', 'false')
+                or not re.fullmatch(r'[0-9]+:[0-5][0-9]\.[0-9]{3}\.[0-9]{3}', row.get('timestamp', ''))):
+            raise ValueError('invalid allocation address/size/category/time/live fields')
+        live += row.get('live') == 'true'
+        stack = row.find('backtrace')
+        if stack is None or not list(stack):
+            raise ValueError('allocation row has no backtrace')
+        locations = []
+        for reference in stack:
+            frame = resolve(reference)
+            if frame.tag != 'frame':
+                raise ValueError('invalid allocation backtrace frame')
+            binary = frame.find('binary')
+            if binary is None:
+                continue  # e.g. the explicit "Call stack limit reached" sentinel.
+            binary = resolve(binary)
+            if binary.get('UUID', '').replace('-', '').lower() != uuid:
+                continue
+            base, address = binary.get('load-addr', ''), frame.get('addr', '')
+            if not all(re.fullmatch(r'0x[0-9a-fA-F]+', value) for value in (base, address)):
+                raise ValueError('invalid product backtrace address')
+            addresses.setdefault(base, set()).add(address)
+            locations.append((base, address))
+        product_rows.append(locations)
+    resolved = {}
+    for base, values in addresses.items():
+        ordered = sorted(values, key=lambda value: int(value, 16))
+        done = bench.capture(['xcrun', 'atos', '-arch', 'arm64', '-o', dwarf, '-l', base, *ordered])
+        names = done.stdout.decode().splitlines()
+        if done.status or len(names) != len(ordered):
+            raise ValueError('allocation backtrace symbolication failed')
+        resolved.update(((base, address), name.split(' (in ', 1)[0]) for address, name in zip(ordered, names))
+    known = {'pinyin_init', 'pinyin_guess_candidates', 'pinyin_parse_more_full_pinyins'}
+    functions = sorted(set(resolved.values()) & known)
+    attributed = sum(any(resolved.get(location) in known for location in locations) for locations in product_rows)
+    if not rows or not functions or not attributed:
+        raise ValueError('Allocations List lacks a resolved known product backtrace')
+    return dict(allocation_rows=len(rows), live_rows=live, product_rows=attributed,
+                resolved_product_functions=functions, scope='allocations outstanding at process exit')
+
+
+def allocation_statistics(xml):
+    """Validate overall and category statistics for the TOC-validated driver."""
+    import re
+    import xml.etree.ElementTree as ET
+    fields = ('count-total', 'count-transient', 'count-persistent',
+              'total-bytes', 'transient-bytes', 'persistent-bytes')
+    categories = {}
+    for row in ET.fromstring(xml).iter('row'):
+        category = row.get('category')
+        if not category or category in categories or any(
+                not re.fullmatch(r'[0-9]+', row.get(field, '')) for field in fields):
+            raise ValueError('invalid allocation statistics category/count/bytes')
+        values = {field: int(row.get(field)) for field in fields}
+        if (values['count-total'] != values['count-transient'] + values['count-persistent']
+                or values['total-bytes'] != values['transient-bytes'] + values['persistent-bytes']):
+            raise ValueError('inconsistent allocation statistics totals')
+        categories[category] = values
+    overall = categories.get('All Heap & Anonymous VM')
+    if overall is None or not any(not name.startswith('All ') for name in categories):
+        raise ValueError('missing overall or per-category allocation statistics')
+    return dict(overall=overall, categories=categories)

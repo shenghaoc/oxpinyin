@@ -7,9 +7,9 @@ check on every object a worker opens, building the harness, launching a measured
 worker pinned to a CPU with the object's directory first on the loader path.
 Recipes (recipes.py) compose these.
 
-Measured launches are serial. A timed or resident-set sample belongs to its arm
-only if nothing else runs beside it, so `round_robin` runs one process at a time
-and interleaves the arms, spreading host drift over all of them. Standard
+Measured launches are serial. `round_robin` runs one process at a time and
+interleaves the arms, spreading host drift over all of them. The measurement
+rules in CONTRIBUTING.md define the host conditions. Standard
 library only.
 """
 import contextlib
@@ -221,7 +221,7 @@ def capture(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None
 
 
 def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, stdout=None,
-        stdin=None, stderr=None, check_status: bool = True) -> int:
+        stdin=None, stderr=None, check_status: bool = True, timeout=None) -> int:
     """Run COMMAND on the console (STDOUT may redirect it) and return the shell status.
 
     A nonzero status ends the run with that status unless CHECK_STATUS is false.
@@ -237,7 +237,8 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
         streams['stderr'] = stderr
     with slot.supervised(command, env=None if env is None else dict(env), cwd=cwd, stdout=stdout,
                          **streams) as process:
-        code = shell_status(slot.wait_child(process))
+        code = shell_status(slot.wait_child(process, timeout=timeout) if timeout is not None
+                            else slot.wait_child(process))
     if check_status and code:
         raise Finished(code)
     return code
@@ -346,9 +347,8 @@ class Bench:
 def round_robin(rounds: int, order: Sequence[tuple[Arm, str]], step: Callable[[Arm, str], None]) -> None:
     """Take ROUNDS rounds; each runs STEP(arm, mode) for every entry of ORDER, in order.
 
-    Serial on purpose: every step is a timed or resident-set sample, and a process
-    running beside it, this campaign's or another's, would measure the host and
-    not the arm. Interleaving the arms puts a drift in host state on all of them.
+    Serial on purpose: every step is a timed or resident-set sample.
+    Interleaving the arms spreads host drift across them.
     """
     for _ in range(rounds):
         for arm, mode in order:
@@ -406,3 +406,16 @@ def report(relative: str, argv: Sequence[str]) -> tuple[int, str]:
             traceback.print_exc()
             code = 1
     return code, buffer.getvalue()
+
+
+def measured_process(command, *, env, timeout):
+    """Capture a serial native child and its own wait4 rusage without pipe deadlock."""
+    import tempfile
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        with slot.supervised(list(map(str, command)), env=dict(env), stdout=output, stderr=errors) as child:
+            code = slot.wait_child(child, timeout=timeout, usage=True)
+            output.seek(0)
+            errors.seek(0)
+            if code:
+                fail('measurement child failed: ' + errors.read().decode(errors='replace'))
+            return output.read(), child.rusage

@@ -136,3 +136,87 @@ def prepare(argv, env):
 if __name__ == '__main__':
     from ..runners import guarded
     raise SystemExit(guarded(lambda: prepare(sys.argv[1:], dict(os.environ))))
+
+
+def native_build(revision, destination, env, *, symbols=True):
+    """One packaged default-backend release build in a private invocation worktree."""
+    import json
+    import time
+    from . import identity
+    from .. import packaging
+    if not env.get('VCPKG_ROOT'):
+        raise ValueError('native measurement requires VCPKG_ROOT; see the macOS setup runbook')
+    pkgconfig = Path(env['VCPKG_ROOT']).resolve() / 'installed/arm64-osx-oxpinyin/lib/pkgconfig'
+    if not (pkgconfig / 'tkrzw.pc').is_file():
+        raise ValueError('install tkrzw:arm64-osx-oxpinyin from the repository overlay before measuring')
+    env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
+           (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
+    source = destination / 'source'
+    prefix = destination / 'prefix'
+    target = destination / 'target'
+    destination.mkdir(parents=True)
+    bench.run(['git', 'worktree', 'add', '--detach', source, revision])
+    build_env = {key: value for key, value in env.items()
+                 if key not in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')
+                 and not key.startswith('CARGO_PROFILE_')}
+    build_env.update(CARGO_TARGET_DIR=str(target))
+    if symbols:
+        build_env.update(RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none', OXPINYIN_DSYM='1')
+    else:
+        build_env.pop('OXPINYIN_DSYM', None)
+    started = time.monotonic()
+    try:
+        # Use this tooling revision with each product source revision. No backend override.
+        packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
+                                   '--locked', '--release', '--features', 'shipped'],
+                                  packaging.Tools(build_env, root=source))
+        dylib = prefix / 'lib/libpinyin.15.0.0.dylib'
+        uuid = identity.macho_uuid(dylib)
+        if symbols and identity.macho_uuid(str(dylib) + '.dSYM') != uuid:
+            fail('packaged dylib and dSYM UUID differ')
+        metadata = bench.capture(['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1'],
+                                 cwd=source, env=build_env)
+        if metadata.status:
+            fail('cargo metadata failed')
+        package = next(item for item in json.loads(metadata.stdout)['packages'] if item['name'] == 'oxpinyin-capi')
+        return dict(revision=revision, prefix=prefix, dylib=dylib, uuid=uuid,
+                    default_features=package['features']['default'],
+                    cold_build_seconds=time.monotonic() - started,
+                    build_options={'profile': 'release', 'features': ['shipped'],
+                                   'RUSTFLAGS': build_env.get('RUSTFLAGS', ''),
+                                   'OXPINYIN_DSYM': build_env.get('OXPINYIN_DSYM', ''),
+                                   'toolchain': build_env.get('RUSTUP_TOOLCHAIN', ''),
+                                   'PKG_CONFIG_PATH': build_env['PKG_CONFIG_PATH']})
+    finally:
+        bench.run(['git', 'worktree', 'remove', '--force', source])
+
+
+def native_driver(arm, output, env):
+    """Build once, rewrite its product load command, sign, and verify before copying."""
+    from . import identity
+    output.parent.mkdir(parents=True, exist_ok=True)
+    bench.run(bench.harness_build(output, compiler='cc',
+        flags=(*bench.STRICT_FLAGS, '-g', '-DMEASURE_LINKED'),
+        libraries=(str(arm['dylib']), '-Wl,-rpath,@executable_path/../lib')), env=env)
+    listing = bench.capture(['otool', '-D', arm['dylib']])
+    if listing.status or len(listing.stdout.decode().splitlines()) != 2:
+        fail('cannot read packaged install name')
+    name = listing.stdout.decode().splitlines()[1].strip()
+    bench.run(['install_name_tool', '-change', name, '@rpath/' + arm['dylib'].name, output])
+    import plistlib
+    import tempfile
+    import re
+    # Instruments needs task_control_t for Allocations. This entitlement belongs
+    # only to the local driver; never re-sign the measured product dylib.
+    with tempfile.TemporaryDirectory(prefix='driver-sign-') as directory:
+        entitlements = Path(directory) / 'entitlements.plist'
+        entitlements.write_bytes(plistlib.dumps({'com.apple.security.get-task-allow': True}))
+        bench.run(['codesign', '--force', '--sign', '-', '--options', '0',
+                   '--entitlements', entitlements, output])
+    bench.run(['codesign', '--verify', '--strict', output])
+    signature = bench.capture(['codesign', '-d', '--entitlements', '-', '--xml', '--verbose=4', output])
+    flags = re.search(r'\bflags=0x([0-9a-fA-F]+)\b', signature.stderr.decode())
+    if (signature.status or not flags or int(flags[1], 16) & 0x10000
+            or plistlib.loads(signature.stdout).get('com.apple.security.get-task-allow') is not True):
+        fail('driver must allow debugging without hardened runtime')
+    return identity.sha256(output)

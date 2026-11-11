@@ -109,6 +109,17 @@ When a measurement compares arms, run them in one job on one machine and report 
 Do not use an absolute figure from another run, host or CPU as a baseline.
 Follow the [measurement procedure](docs/runbooks/benches.md).
 
+Native macOS revision comparisons (ruling 2026-11-11): serialise the measured
+arms; normal background activity is permitted. Run a same-binary control in
+the same session and report its variability beside the paired estimates.
+The control is diagnostic: it invalidates no runs and sets no automatic
+verdict or acceptance threshold. Keep every completed valid run, including
+outliers, within the predefined work count, schedule and budget. Only
+incomplete work, an operation fingerprint mismatch, a wrong loaded image or
+a broken required capture invalidates a run. Do not rerun for significance.
+The §7.5 control gate remains unchanged for Linux and pin-relative work.
+
+
 ## Dates
 
 Capture freeze-document, findings and patch-metadata dates with `date -u` on the machine executing the step.
@@ -141,7 +152,8 @@ Make output independent of completion order.
 The first failure or cancellation starts no new unit, stops the running units and reaps their children.
 Serialize dependent steps and work that needs isolation, and state the reason in the tool or its runbook.
 The backend builds in `tools/oracle/Dockerfile.oracle` stay serial: no `tools/dev` module is copied into the reference image (#1234).
-Run timing, residency, cache-sensitive and sampling-profile observations in isolation.
+Serialise timing, residency, cache-sensitive and sampling-profile observations.
+Apply the host conditions in [Measurements](#measurements).
 
 ## Toolchain and platforms
 

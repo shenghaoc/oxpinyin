@@ -1,4 +1,4 @@
-# Benches — Callgrind and Massif recipes
+# Benches — comparison and profiling recipes
 
 This page gives the measurement recipes and how to report their results.
 The recipes are attribution tools, and none of them is a per-change gate:
@@ -8,7 +8,8 @@ The recipes are attribution tools, and none of them is a per-change gate:
 - `system-import-profile`.
 
 A plain timing is one ordinary command around the `bisect` driver. Numbers are comparable only within
-one container on one host.
+one session on one host. Native macOS source-revision commands are described
+in [Native macOS source revisions](#native-macos-source-revisions).
 
 The [controlling rule](../source-policy.md#controlling-rule) decides when to measure and which measurement to use.
 The recipes below are existing tools, not required counts. A number that a recipe states
@@ -438,3 +439,128 @@ Their performance differs, so identify the build command, not just the artifact 
 Follow the [reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
 Keep shared readers and calculations in repository Python tooling.
 Keep all measurement controls and rejection rules, including required exact checks.
+
+
+## Native macOS source revisions
+
+Use full Xcode on an Apple silicon Mac. The runner probes the installed tools;
+Command Line Tools alone do not provide xctrace. Native revision comparisons
+follow the [measurement rules](../../CONTRIBUTING.md#measurements).
+They do not compare against the pin.
+
+```sh
+just measure compare --base origin/main --head origin/main
+just measure profile --revision origin/main --template 'CPU Profiler'
+just measure profile --revision origin/main --template Allocations
+```
+
+These commands use the same typing corpus in `bisect.c`. Schedule defaults
+live in `tools/dev/measure/recipes.py`; `just measure --help` lists overrides.
+The budget bounds the measured schedule, excluding preparation. An exhausted
+budget fails the campaign and preserves completed runs. Keystrokes are work
+items, not independent statistical observations. Estimates use process pairs.
+
+Each distinct source SHA builds once through `tools.dev.packaging`'s install
+procedure: locked release, the `shipped` feature and Cargo's default backend.
+No backend flag is passed. Cargo metadata supplies the default feature names
+for the local report. The effective symbol overrides are
+`RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none'` and `OXPINYIN_DSYM=1`.
+The latter retains the final export-controlled Darwin link's LTO object with
+`-object_path_lto` until `dsymutil` finishes. The dylib and dSYM must have
+matching arm64 UUIDs. Product code uses no profiling profile or instrumentation.
+Set `VCPKG_ROOT` to the checkout installed by the [macOS setup](setup.md#macos).
+Measurement builds put its `installed/arm64-osx-oxpinyin/lib/pkgconfig` first
+in `PKG_CONFIG_PATH` for both arms and require that triplet's `tkrzw.pc`.
+Each invocation builds into a fresh directory; no build is reused across sessions.
+Within that invocation, each distinct source SHA builds once. The local session
+records cold build time.
+
+Before accepting this build recipe, run its one-time neutrality validation:
+
+```sh
+just measure neutrality --revision origin/main
+```
+
+This compares the symbol-bearing packaged build with a plain release build.
+Executable Mach-O section bytes, addresses and arm64 disassembly must be
+identical. A difference fails; stop without measuring it. Routine comparisons
+reuse the symbol-bearing build and do not build a plain artifact.
+
+Builds and disposable sessions live under `just cache-root`, with a separate
+prefix for each arm even for the same SHA. The same-binary control runs arm A
+against A′, a second byte-identical copy of A's built product and driver staged
+in its own prefix exactly as B is, so the control also covers effects tied to a
+newly staged directory; it reports A′ under the label `B`. A′ passes the same
+staging, loaded-image and UUID checks as any arm. One normally linked driver is
+built, its dependency is rewritten to `@rpath`, then it is ad-hoc signed with
+`com.apple.security.get-task-allow` and without hardened runtime, and verified
+before identical copies are staged. This permits the Instruments task-port
+request; the product dylib is never re-signed. Its executable-relative rpath
+selects the arm. Before measuring, `dladdr` and the loaded Mach-O UUID verify
+the resolved C function against the staged dylib. No `DYLD_*` selection is
+required. xctrace receives workload settings through `--env`.
+
+The driver brackets all typing cycles with monotonic wall-clock and
+`getrusage(RUSAGE_SELF)` readings. `wall_seconds` and `cpu_seconds` cover that
+loop, excluding initialization and teardown. `operations` counts completed
+prefix steps; the return/count fingerprint must agree across runs.
+The driver also reads `proc_pid_rusage` (`rusage_info_v4`) immediately before
+and after that loop. `loop_instructions` and `loop_cpu_cycles` are the
+`ri_instructions` and `ri_cycles` deltas, as counts. `loop_runnable_seconds`
+is the `ri_runnable_time` delta converted with `mach_timebase_info`: time on a
+core or waiting for one. The kernel advances it at scheduling events only, so
+it is coarse and a loop shorter than a scheduling quantum can read 0.
+
+Lead a macOS report with the `loop_instructions` B/A ratio and wall time.
+Runnable time explains host contention: each arm reports it over its CPU time,
+and an excess is time spent waiting for a core. It has no B/A ratio.
+Instruments remains the tool for attribution.
+
+`lifetime_max_phys_footprint_bytes`, read with `proc_pid_rusage` after teardown,
+is the memory headline. It is a process-lifetime peak, not live memory at a
+checkpoint. `peak_rss_bytes` is the direct child's own `wait4` diagnostic;
+Darwin reports bytes. Neither field is a Linux residency category.
+A profile launch has no direct-child RSS reading for the driver and reports
+none; xctrace's own RSS is not substituted.
+No loop-scoped peak footprint is reported. `ri_interval_max_phys_footprint`
+restarts only through `proc_reset_footprint_interval` or `proc_rlimit_control`,
+and the macOS SDK declares neither: its public headers carry the
+`RLIMIT_FOOTPRINT_INTERVAL` flag names but no prototype and no manual page.
+
+Profiles cover the launched process lifecycle. They are not scoped-loop timing
+estimates. The runner exports table data, resolves XML references, and requires
+the driver PID, usable time/stack rows and a known C entry point or `RuntimeDict::fill_lookup` frame from the
+measured UUID. Allocations exports the TOC-listed `Allocations` → `Allocations List` table
+under `tracks/track/details/detail`. It validates the single launched driver's
+PID and exit status, then each row's address, size, category, timestamp and
+backtrace. These rows are allocations still outstanding when the process exited, not live memory
+at a lifecycle checkpoint or allocation traffic. The TOC-listed `Statistics` detail
+provides total, transient and persistent allocation counts and bytes, overall and
+per category; the runner validates those fields and their totals.
+Product-frame addresses are resolved with `atos` and the UUID-matched dSYM;
+a known product function must resolve. `xctrace show` is not used for this
+legacy detail. Missing data,
+wrong-process captures and unresolved product frames fail visibly.
+
+Installed xctrace exposes neither CPU Profiler deferred recording nor an
+Allocations backtrace setting. Use their defaults; there is no options file or
+workaround. Allocation backtraces must still exist in the exported capture.
+`xctrace export` exposes no time-range switch. For an explicitly selected
+range, inspect the trace with `xctrace toc`, then use `xctrace show` with the
+reported track/detail and `--time-start` plus `--duration`. Do not describe a
+whole-trace export as a scoped-loop export.
+
+Other installed instruments use the same profile mode:
+
+```sh
+just measure profile --template 'System Trace'
+just measure profile --template 'Processor Trace'
+just measure profile --template Allocations --instrument 'VM Tracker'
+```
+
+VM Tracker is an instrument added to a named template, not a standalone
+template. Availability of a template does not prove host recording permission;
+a failed required capture fails the command. Traces, exports and JSON reports
+are disposable local output. Do not attach them or commit them. Publish only
+reproduction commands and a concise result table in the PR. The initial
+main-against-main validation is not a performance claim.

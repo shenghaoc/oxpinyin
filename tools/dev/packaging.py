@@ -454,6 +454,9 @@ def relink_darwin(layout, destination, tools, backend):
     with tempfile.TemporaryDirectory(prefix=destination.name + '.relink.', dir=destination.parent) as scratch:
         exports, temporary = Path(scratch) / 'exports', Path(scratch) / destination.name
         exports.write_text(''.join('_' + name + '\n' for name in sorted(expected)))
+        # Keep the final link's LTO DWARF until dsymutil has consumed it.
+        debug = tools.env.get('OXPINYIN_DSYM') == '1'
+        lto = ['-Wl,-object_path_lto,' + str(Path(scratch) / 'lto.o')] if debug else []
         tools.heavy([tools.env.get('CC') or 'cc', '-dynamiclib', '-o', temporary,
                      '-arch', identity.architecture, '-mmacosx-version-min=' + identity.deployment_target,
                      '-install_name', identity.install_name,
@@ -461,7 +464,7 @@ def relink_darwin(layout, destination, tools, backend):
                      '-Wl,-current_version,' + identity.current_version,
                      '-Xlinker', '-exported_symbols_list', '-Xlinker', exports,
                      '-Xlinker', '-force_load', '-Xlinker', archive, '-Wl,-dead_strip',
-                     *flags, '-lc++', '-liconv', '-lresolv'])
+                     *flags, *lto, '-lc++', '-liconv', '-lresolv'])
         actual = exported_symbols(tools.text(['nm', '-gU', temporary]), HostFacts('Darwin'))
         try:
             trie = darwin_export_trie(tools.text(['dyld_info', '-exports', temporary]))
@@ -473,6 +476,8 @@ def relink_darwin(layout, destination, tools, backend):
                  f'  extra: {sorted(actual - expected | trie - expected)}')
         if DarwinIdentity.read(temporary, tools) != identity:
             fail(f'error: relinked Mach-O identity differs from {destination}')
+        if debug:
+            tools.run(['xcrun', 'dsymutil', temporary, '-o', str(destination) + '.dSYM'])
         os.replace(temporary, destination)
     emit(f'relinked {destination}: exactly {len(expected)} exports (backend: {backend})')
 
