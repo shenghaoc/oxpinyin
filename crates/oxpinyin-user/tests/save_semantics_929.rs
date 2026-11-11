@@ -70,6 +70,12 @@ fn save_destinations(dir: &Path) -> Vec<std::path::PathBuf> {
     names
 }
 
+fn block_destination(path: &Path) {
+    std::fs::remove_file(path).unwrap();
+    std::fs::create_dir(path).unwrap();
+    std::fs::write(path.join("keep"), b"previous data").unwrap();
+}
+
 fn staged_path(path: &Path) -> std::path::PathBuf {
     let mut staged = path.as_os_str().to_owned();
     staged.push(".tmp");
@@ -94,9 +100,7 @@ fn failed_renames_report_exact_order_and_preserve_destinations() {
             std::fs::remove_dir_all(dir).unwrap();
         } else {
             for path in save_destinations(dir) {
-                std::fs::remove_file(&path).unwrap();
-                std::fs::create_dir(&path).unwrap();
-                std::fs::write(path.join("keep"), b"previous data").unwrap();
+                block_destination(&path);
             }
         }
         store.mark_modified();
@@ -206,6 +210,73 @@ fn save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them() {
         let reopened = open(dir.path(), law);
         assert_eq!(reopened.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 37);
         assert_eq!(data_bytes(dir.path()), resaved_bytes);
+    }
+}
+
+#[test]
+fn training_after_a_soft_rename_failure_saves_the_full_profile() {
+    const SYSTEM: u32 = 0x0100_0001;
+    const USER: u32 = 0x0700_0001;
+    for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+        let dir = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir().unwrap();
+        let mut store = seed(dir.path(), law);
+        let mut uninterrupted = seed(control.path(), law);
+        let blocked = dir.path().join("user_phrase_index.bin");
+        block_destination(&blocked);
+
+        let reading = [oxpinyin_core::SyllableKey::from_text("ni").unwrap().index() as u16];
+        for session in [&mut store, &mut uninterrupted] {
+            assert_eq!(
+                session
+                    .add_phrase(&"你".into(), &reading[..], Some(7))
+                    .unwrap(),
+                USER
+            );
+            session.mark_modified();
+        }
+        store.save_reporting().expect("soft failure still succeeds");
+        assert!(!store.is_modified());
+        assert_eq!(
+            std::fs::read(blocked.join("keep")).unwrap(),
+            b"previous data"
+        );
+        assert!(staged_path(&blocked).is_file());
+        std::fs::remove_dir_all(&blocked).unwrap();
+
+        for session in [&mut store, &mut uninterrupted] {
+            session.observe_selection(SYSTEM, USER).unwrap();
+            assert!(session.is_modified());
+            session.save_reporting().unwrap();
+            assert!(!session.is_modified());
+        }
+        let phrases = store.export_phrases_in(7).unwrap();
+        let unigram = store.user_unigram_frequency(USER).unwrap();
+        let gram = store.bigram_row(SYSTEM).unwrap();
+        drop(store);
+        drop(uninterrupted);
+
+        let load = |path| {
+            oxpinyin_user::persistence::load(
+                path,
+                &originals(),
+                &SystemVersions::for_this_build(7, 14),
+                law,
+            )
+            .unwrap()
+            .state
+        };
+        assert_eq!(load(dir.path()), load(control.path()), "{law:?}");
+        assert!(
+            save_destinations(dir.path())
+                .iter()
+                .all(|path| { path.is_file() && !staged_path(path).exists() })
+        );
+        let reopened = open(dir.path(), law);
+        assert_eq!(reopened.export_phrases_in(7).unwrap(), phrases);
+        assert_eq!(reopened.user_unigram_frequency(USER).unwrap(), unigram);
+        assert_eq!(reopened.bigram_row(SYSTEM).unwrap(), gram);
+        assert_eq!(reopened.token_for_phrase("你").unwrap(), Some(USER));
     }
 }
 
