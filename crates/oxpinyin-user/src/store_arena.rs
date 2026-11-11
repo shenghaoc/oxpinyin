@@ -514,7 +514,7 @@ impl UserStore {
     pub(super) fn arena_add_unigram(&self, token: Token, delta: u32) -> bool {
         // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
         // a missing item answers another error that callers do not act on.
-        self.arena_add_unigram_outcome(token, delta) != UnigramAdd::Refused
+        self.arena_add_unigram_outcome(token, delta).0 != UnigramAdd::Refused
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency` over the session's state
@@ -523,12 +523,13 @@ impl UserStore {
     /// it holds the item and its `guint32` total can: a system library's total
     /// is its live scalar, a user library's the sum of its items. A
     /// sub-index that does not take it leaves the delta in the facade's extra.
-    pub(super) fn arena_add_unigram_outcome(&self, token: Token, delta: u32) -> UnigramAdd {
+    /// The second result reports whether the facade total received the delta.
+    pub(super) fn arena_add_unigram_outcome(&self, token: Token, delta: u32) -> (UnigramAdd, bool) {
         let library = phrase_index_library_index(token);
         let mut phrases = self.inner.libpinyin.phrases();
         // phrase_index.h:631-632 returns before the facade total changes.
         if phrases.unloaded.contains(&library) {
-            return UnigramAdd::Missing;
+            return (UnigramAdd::Missing, false);
         }
         let original = self.originals.get(&library);
         let mut items = lock_result_or_abort(self.inner.system_items.lock());
@@ -537,7 +538,7 @@ impl UserStore {
             // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
             // (`phrase_index.h:631-633`), so nothing moves here either.
             if original.is_some_and(|original| items.lacks_sub_index(library, original)) {
-                return UnigramAdd::Missing;
+                return (UnigramAdd::Missing, false);
             }
             // A slot the buffer holds no item at (a removed or absent one)
             // answers `Missing`.
@@ -549,26 +550,26 @@ impl UserStore {
             } else {
                 items.add_facade_extra(u64::from(delta));
             }
-            return outcome;
+            return (outcome, true);
         }
         items.add_facade_extra(u64::from(delta));
         drop(items);
         let slot = token & PHRASE_MASK;
         let Some(library) = phrases.item_mut(token) else {
-            return UnigramAdd::Missing;
+            return (UnigramAdd::Missing, true);
         };
         // The pin checks the slot and reads the item before the sub-index's
         // total overflow guard (074a2219 phrase_index.cpp:153-171).
         if library.item(slot).is_none() {
-            return UnigramAdd::Missing;
+            return (UnigramAdd::Missing, true);
         }
         if library.total().checked_add(delta).is_none() {
-            return UnigramAdd::Refused;
+            return (UnigramAdd::Refused, true);
         }
         if library.increment_unigram(slot, delta) {
-            UnigramAdd::Accepted
+            (UnigramAdd::Accepted, true)
         } else {
-            UnigramAdd::Missing
+            (UnigramAdd::Missing, true)
         }
     }
 
