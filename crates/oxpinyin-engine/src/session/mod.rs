@@ -686,11 +686,13 @@ pub fn parse_time_keys(
     }
     if divided && options.has_resplit_table() {
         for index in 0..parsed_len {
-            for key in columns[index].clone() {
-                let Some(next_keys) = columns.get(key.end()).cloned() else {
+            for slot in 0..columns[index].len() {
+                let key = columns[index][slot];
+                let Some(next_len) = columns.get(key.end()).map(Vec::len) else {
                     continue;
                 };
-                for next in next_keys {
+                for next_slot in 0..next_len {
+                    let next = columns[key.end()][next_slot];
                     if key.tone() != 0 || next.tone() != 0 || next.syllable_start() != key.end() {
                         continue;
                     }
@@ -706,7 +708,8 @@ pub fn parse_time_keys(
     }
     if divided && options.has_divided_table() {
         for index in 0..columns.len() {
-            for key in columns[index].clone() {
+            for slot in 0..columns[index].len() {
+                let key = columns[index][slot];
                 if key.tone() != 0 {
                     continue;
                 }
@@ -720,8 +723,8 @@ pub fn parse_time_keys(
         }
     }
     for column in &mut columns {
-        let snapshot = column.clone();
-        for key in snapshot {
+        for slot in 0..column.len() {
+            let key = column[slot];
             for alternate in oxpinyin_core::fuzzy_chewing_alternatives(key.key(), options) {
                 column.push(crate::cursor::MatrixKey::from_chewing(
                     alternate,
@@ -775,14 +778,15 @@ fn append_matrix_split(
 /// columns are visited when those columns are reached in this same pass.
 fn resplit_step(columns: &mut [Vec<ScanKey>]) {
     for index in 0..columns.len().saturating_sub(1) {
-        let keys = columns[index].clone();
-        for key in keys {
-            let Some(next_keys) = columns.get(key.to).cloned() else {
+        for slot in 0..columns[index].len() {
+            let key = columns[index][slot];
+            let Some(next_len) = columns.get(key.to).map(Vec::len) else {
                 continue;
             };
             // Resolve each key's text once, not once per table row.
             let key_text = key.key.text();
-            for next_key in next_keys {
+            for next_slot in 0..next_len {
+                let next_key = columns[key.to][next_slot];
                 if next_key.crosses_separator || key.tone != 0 || next_key.tone != 0 {
                     continue;
                 }
@@ -803,8 +807,8 @@ fn resplit_step(columns: &mut [Vec<ScanKey>]) {
 /// column snapshot at a time (`phonetic_key_matrix.cpp:169-228`).
 fn inner_split_step(columns: &mut [Vec<ScanKey>]) {
     for index in 0..columns.len() {
-        let keys = columns[index].clone();
-        for key in keys {
+        for slot in 0..columns[index].len() {
+            let key = columns[index][slot];
             if key.tone != 0 {
                 continue;
             }
