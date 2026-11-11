@@ -713,7 +713,7 @@ pub struct CountCache {
 /// only for a non-zero difference.
 pub(crate) type Offsets = BTreeMap<u8, u32>;
 
-/// The state one session's handles share.
+/// One session's state, owned by its [`UserStore`].
 pub struct StoreInner {
     pub(crate) has_system_items: AtomicBool,
     // When nested, acquire the session phrase-arena mutex before
@@ -789,7 +789,7 @@ pub struct UserStore {
     /// The facade fini's `user.conf` write: armed only on the handle a
     /// libpinyin open returned ([`FiniGuard`]).
     _fini: FiniGuard,
-    inner: Arc<StoreInner>,
+    inner: StoreInner,
     pub(crate) originals: crate::persistence::SystemOriginals,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
@@ -837,7 +837,7 @@ impl UserStore {
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
     pub(crate) fn from_parts(
-        inner: Arc<StoreInner>,
+        inner: StoreInner,
         fini: FiniGuard,
         originals: crate::persistence::SystemOriginals,
     ) -> Self {
