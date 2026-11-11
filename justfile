@@ -215,22 +215,22 @@ mutants *args:
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 # cargo fuzz runs in fuzz/, where rustup selects the nightly that
 # fuzz/rust-toolchain.toml names. No recipe names the nightly.
-[linux]
+[linux, working-directory: 'fuzz']
 fuzz *args:
-    @sh -c 'cd fuzz && exec setarch "$(uname -m)" -R cargo fuzz run "$@"' fuzz "$@"
+    @setarch "$(uname -m)" -R cargo fuzz run "$@"
 
 # cargo-fuzz supports Darwin. Homebrew's tkrzw.pc names its compression
 # libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
-[macos]
+[macos, working-directory: 'fuzz']
 fuzz *args:
     @env \
         LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
-        sh -c 'cd fuzz && exec cargo fuzz run "$@"' fuzz "$@"
+        cargo fuzz run "$@"
 
 # Windows fuzz execution is unverified; setarch is Linux-only.
-[windows]
+[windows, working-directory: 'fuzz']
 fuzz *args:
-    @{{windows_args}} pwsh -NoLogo -NoProfile -CommandWithArgs 'Set-Location fuzz; cargo fuzz run @args; exit $LASTEXITCODE' @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} cargo fuzz run @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 # Cargo owns argument and report selection; the arguments pass through unchanged.
