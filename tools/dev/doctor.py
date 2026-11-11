@@ -1,9 +1,9 @@
-"""Native capability report, interpreter acceptance and the one check of tool minimums.
+"""Native capability report, interpreter acceptance and tool minimums.
 
 Standard library only. Doctor reads capabilities; it does not provision,
 install or enter a container. It rejects interpreter-selection overrides and a
-free-threaded build, and it checks every tool against its minimum version: a
-newer tool passes, an older one fails with the minimum and the version found,
+free-threaded build. For each reported tool, a newer version passes, an older
+one fails with the minimum and the version found,
 and an absent one is reported with its installation step. Each report line
 names the resolved executable. Bash is required at the floor declared in
 tools/lib/bash-floor.sh on Linux and macOS and reported as not applicable on
@@ -215,16 +215,14 @@ def _parse_shellcheck(text):
 
 
 # One row per tool. A minimum is the oldest version the repository has run
-# or documents. Some tools also hold a minimum in their own configuration (the
-# justfile, .config/nextest.toml, uv.toml, setup.sh) and enforce it themselves.
+# or documents. Some tools also enforce a minimum in .config/nextest.toml,
+# uv.toml or setup.sh.
 TOOLS = (
     Tool('pwsh', 'pwsh', ('--version',), _semver_format('PowerShell'), PWSH_MINIMUM,
          'install PowerShell from docs/runbooks/setup.md#native-windows', platform='win32', required=True),
     Tool('bash', 'bash', ('--version',), Format(_parse_bash, _dotted_key), bash_floor.read_floor(),
          'brew install bash (macOS) and make env bash select it, or your distribution package',
          applies_to=('linux', 'darwin')),
-    Tool('just', 'just', ('--version',), _semver_format('just'), '1.59.0',
-         'brew install just, your distribution package, or cargo install just --locked'),
     Tool('cargo-nextest', 'cargo-nextest', ('--version',), _semver_format('cargo-nextest'), '0.9.115',
          'cargo install cargo-nextest --locked'),
     Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), '0.10.24',
