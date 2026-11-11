@@ -29,7 +29,11 @@ fn removing_every_row_leaves_a_readable_container() {
         }
     }
     let read = Database::open_read_only(Some(&c_path(&path)));
-    assert!(read.is_open(), "the container reopens");
+    assert!(read.attached(), "the container reopens");
+    assert_eq!(
+        read.get_magic_header(),
+        Some(KMixtureModelMagicHeader::default())
+    );
     assert!(read.get_all_items().is_empty());
     assert!(read.load(1).is_none());
 }
