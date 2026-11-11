@@ -1,6 +1,6 @@
 """Bounded pool of independent units and tasks, with one stop rule.
 
-`python -m tools.dev pool run ... -- ARGV...` runs ARGV once per item, at most
+`python -m tools.dev.pool run ... -- ARGV...` runs ARGV once per item, at most
 WORKERS at once, each with its share of the make jobs: workers times jobs stays
 within the allowed CPUs.
 
@@ -20,6 +20,12 @@ removes each container that carries the run's token, which only this run's
 containers carry. A container this run did not create is never touched, whatever
 its name.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import argparse
 import collections
 import contextlib
@@ -586,7 +592,7 @@ def run_command(args, out=sys.stderr, launcher_factory=ProcessLauncher) -> int:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Define the `pool run` options on PARSER (shared by `python -m tools.dev pool` and this module)."""
+    """Define the pool operation and its options on PARSER."""
     sub = parser.add_subparsers(dest='action', required=True)
     run = sub.add_parser('run', help='run a command per item, within one CPU budget')
     run.add_argument('--label', default='pool')

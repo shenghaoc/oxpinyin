@@ -1,5 +1,11 @@
 """Native test harness and sanitizer entry points. Standard library only."""
-from . import cell
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
+import argparse
 from collections.abc import Mapping
 from dataclasses import dataclass
 import fnmatch
@@ -14,7 +20,7 @@ import sys
 import tempfile
 import tomllib
 
-from . import host, native, pool, slot
+from . import cell, host, native, pool, slot
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -60,7 +66,7 @@ def harness_environment(environ):
 # to the full suite rather than guessing from a matching filename.
 PACKAGING_HARNESSES = (
     'tools/dev/packaging.test.py',
-    'tools/dev/cli.test.py',
+    'tools/dev/just.test.py',
     'tools/dev/bash_floor.test.py',
 )
 # U4-owned services only. Shared callers, registry,
@@ -78,7 +84,7 @@ HARNESS_DEPENDENCIES = {
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
     **{f'tools/bisection/contract_{name}.py': (f'tools/bisection/contract_{name}.test.py',)
        for name in CONTRACT_MODULES},
-    'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/cli.test.py',
+    'tools/dev/test_runner.py': ('tools/dev/test_runner.test.py', 'tools/dev/just.test.py',
                                  'tools/dev/sanitize.test.py'),
     'tools/bisection/reverse_cross_open.py': ('tools/bisection/reverse_cross_open.test.py',),
     'tools/bisection/contract_case_helpers.py': (),
@@ -86,9 +92,8 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/native.py': ('tools/dev/check.test.py', 'tools/dev/sanitize.test.py'),
     'tools/dev/check.py': ('tools/dev/check.test.py',
                            'tools/dev/lint-crate-cfg-placement.test.py',
-                           'tools/dev/cli.test.py'),
-    'tools/dev/cli.py': ('tools/dev/cli.test.py', 'tools/dev/sanitize.test.py',
-                         'tools/dev/lint-crate-cfg-placement.test.py'),
+                           'tools/dev/just.test.py'),
+    'tools/dev/entry.py': ('tools/dev/entry.test.py', 'tools/dev/just.test.py'),
     # The measure recipes (#1290). bench.py is the Valgrind recipes' service layer.
     'tools/dev/measure/bench.py': tuple(f'tools/dev/measure/{name}.test.py' for name in (
         'bench', 'neutrality', 'recipes', 'sentence', 'valgrind')),
@@ -103,9 +108,9 @@ HARNESS_DEPENDENCIES = {
                              'tools/dev/model.test.py'),
     'tools/dev/measure/valgrind.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py',
                                       'tools/bisection/system_import_profile.test.py'),
-    'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/cli.test.py'),
+    'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/just.test.py'),
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py'),
-    'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/cli.test.py'),
+    'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/just.test.py'),
 }
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.
@@ -727,3 +732,12 @@ def sanitize_toolchain():
         print(_toolchain_file_missing('sanitize-toolchain'), file=sys.stderr, flush=True)
         return 1
     return 0
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Run the CI Python harness suite.')
+    parser.add_argument('files', nargs='*', metavar='FILE')
+    parser.add_argument('-k', dest='pattern', help='unittest name substring or wildcard pattern')
+    parser.add_argument('--changed', nargs='?', const='HEAD', metavar='BASE',
+                        help='select tests for changes since BASE (default HEAD), including untracked files')
+    args = parser.parse_args()
+    raise SystemExit(run_tools(args.files, args.pattern, args.changed))

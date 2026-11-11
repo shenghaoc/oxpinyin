@@ -4,6 +4,12 @@ The shell entry point owns only uv/interpreter bootstrap. Compatibility identity
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from . import cell as backend_cell
 from contextlib import ExitStack
 import hashlib
@@ -475,7 +481,7 @@ class Provision:
             '-e', 'PYTHONDONTWRITEBYTECODE=1', '-v', f'{self.root}:/repo:ro',
             '-v', f'{prefix.parent}:/opt/pinyin-oracle:ro', '-v', f'{self.pin}:/run/oracle-pin.txt:ro',
             '-w', '/repo', self.deps_image, 'uv', 'run', '--no-project', '--managed-python', 'python',
-            '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'provision', 'prefix-check', check, cell,
+            '-X', 'lazy_imports=normal', '-m', 'tools.dev.provision', 'prefix-check', check, cell,
             f'/opt/pinyin-oracle/{prefix.name}', '/run/oracle-pin.txt', *([str(prefix)] if check == 'summary' else [])]),
             env=self.env, check=False)
 
@@ -802,7 +808,7 @@ class Provision:
         owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
         # A subprocess preserves the invocation's environment without mutating
         # Python's process-global environ during pool scheduling.
-        return run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'pool', 'run',
+        return run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', 'run',
                     '--label', label, '--items', ','.join(cells), '--cpus', str(self.jobs),
                     '--log', str(log), *owner, '--', *self.in_image_command(args, flags)],
                    cwd=self.root, env=self.env, check=False)
@@ -892,7 +898,7 @@ class Provision:
             except Finished as error:
                 self.die(f'tkrzw: the loader check of {prefix} did not run (status {error.status}); the cache is kept')
         # Redirect both Python and child probe streams to this run's local file.
-        command = [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'provision', 'probe-host', str(prefix)]
+        command = [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.provision', 'probe-host', str(prefix)]
         with (self.cache / 'tkrzw-host-probe.log').open('wb') as output:
             done = capture(command, cwd=self.root, env=self.env, check=False, stderr=False)
             output.write(done.stdout + done.stderr)
@@ -1058,3 +1064,7 @@ def main(argv=None):
     except (ValueError, doctor.DoctorError) as error:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

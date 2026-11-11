@@ -148,9 +148,10 @@ checkout, `uv run --no-project --managed-python python` and `uv python find
 --managed-python` read it; a script that changes directory first, or a container
 build, copies the file in or passes its contents on, and does not restate the
 version. From outside the checkout, pass `--python` the contents of the checkout's
-`.python-version`, then pass `tools/dev/__main__.py` by absolute path to that
-interpreter (with `-X lazy_imports=normal`), followed by the subcommand and its
-arguments. This preserves the caller's working directory; its `.python-version`
+`.python-version`, then add the checkout to the interpreter's import path before running the
+implementation module. For provisioning, `tools/cloud/setup.sh` passes the checkout
+as the first argument to its Python launcher and forwards the remaining arguments
+to `tools.dev.provision`. This preserves the caller's working directory; its `.python-version`
 does not decide the interpreter. Direct-run Python
 harness files rely on their `uv` shebang and a working directory inside the
 checkout. The check `tools/dev/python-request.test.py` fails when a version request

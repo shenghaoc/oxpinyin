@@ -21,6 +21,12 @@ root (tools/cachedir.py)
 
 The last stdout line is the absolute path of the extracted directory.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 import hashlib
 import os
 from pathlib import Path
@@ -45,7 +51,7 @@ FETCH_HINT = 'just fetch-model'
 
 USAGE = """\
 Usage: just fetch-model [OPTIONS]
-       python -m tools.dev fetch-model [OPTIONS]
+       python -m tools.dev.model [OPTIONS]
 
 Download the checksum-pinned model20.text.tar.gz, verify SHA-256, and
 extract interpolation2.text plus the seventeen .table files into a build
@@ -254,3 +260,7 @@ def main(argv=None, env=None):
         print(fetch(env=env, **options))
         return 0
     return guarded(call)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

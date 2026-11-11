@@ -679,7 +679,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
     actual = image_field(runtime, 'Architecture', capture_image, env=environment, platform=selected)
     if actual != architecture:
         fail(f'FAIL: {capture_image} is {actual}, expected native {architecture}')
-    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev', 'fetch-contract-data'],
+    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.contract_data'],
                       cwd=root, env=environment)
     data = fetched.stdout.decode().splitlines()[-1].strip()
     image = image_field(runtime, 'Id', capture_image, env=environment)
@@ -816,7 +816,7 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, 
             '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
             '-e', 'PYTHONDONTWRITEBYTECODE=1', *home, '-w', '/repo', tag,
             'uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal',
-            '-m', 'tools.dev', 'provision', 'oracle', '--cache-dir', '/provision', *argv]
+            '-m', 'tools.dev.provision', 'oracle', '--cache-dir', '/provision', *argv]
 
 
 def provision_oracle(argv, *, root=ROOT, env=None):

@@ -264,7 +264,7 @@ correction campaign, never a baseline taken from the prior comparator run.
 Reproduce policy generation and shipping installation using
 [packaging regeneration](../packaging.md#regeneration). Reproduce the two
 measurements with the runbook's
-[`just measure callgrind-differential` sentence/typing commands](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign),
+[`just measure-callgrind-differential` sentence/typing commands](../runbooks/benches.md#sentence-and-typing-sequence-callgrind-campaign),
 passing base's policy explicitly for `main/pinyin` and `mctl/pinyin`,
 and the regenerated policy for `pr__/pinyin` and `pctl/pinyin`. Install
 plain and profiled libraries through `just packaging install` using the

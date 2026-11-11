@@ -388,7 +388,7 @@ library bytes and absence of model-derived data.
 For oracle-only provisioning in the same native container:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 The provisioner rebuilds missing or stale pin/recipe prefixes, regenerates

@@ -4,6 +4,12 @@ One layout and process adapter serve every entry point.
 Cargo and package builders run supervised (slot.run_command); captured tools use
 pool.UnitContext, which reaps their process groups on cancellation.
 """
+
+if __name__ == '__main__':
+    from .entry import require_normal_imports
+
+    require_normal_imports()
+
 from contextlib import contextmanager
 from dataclasses import dataclass
 import os
@@ -1097,7 +1103,7 @@ def main(argv=None, *, tools=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     tools = tools or Tools()
     if not argv or argv[0] not in NAMES:
-        emit('usage: python -m tools.dev packaging {' + ','.join(NAMES) + '} ...', error=True)
+        emit('usage: python -m tools.dev.packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2
     name, rest = argv[0], argv[1:]
     functions = {'compare-installs': compare_installs, 'install': install, 'relink-versioned': relink,
@@ -1119,3 +1125,7 @@ def main(argv=None, *, tools=None):
         except (pool.UnitStopped, pool.UnitsCancelled, slot.Cancelled):
             raise Finished(slot.cancellation_status()) from None
     return guarded(quiet_cancellation)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

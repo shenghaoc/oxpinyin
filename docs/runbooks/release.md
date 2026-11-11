@@ -29,7 +29,7 @@ and attaches them with a `SHA256SUMS` to the release.
    (`goldens-and-pins.md`).
 6. Version streams agree (`docs/packaging.md`, "The four version
    streams"): the drop-in identity is the pin's libpinyin version
-   (`just packaging pc-version`; CI's `python -m tools.dev packaging
+   (`just packaging pc-version`; CI's `python -m tools.dev.packaging
    check-pc-version` holds the manifests to it); the crate version is the workspace's `0.x` lockstep.
 
 ## What each lane gates
