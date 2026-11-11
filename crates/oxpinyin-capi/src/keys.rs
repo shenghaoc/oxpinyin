@@ -209,7 +209,7 @@ pub extern "C" fn pinyin_get_secondary_zhuyin_string(
 fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_chewing::KeyText,
+    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
     // `*utf8_str` before any check, so a NULL out stays guarded (row 41).

@@ -236,7 +236,7 @@ pub extern "C" fn pinyin_get_pinyin_string(
 ) -> bool {
     // `_ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
     // canonical spelling, tone digit appended for a non-zero tone.
-    render_key(key, utf8_str, oxpinyin_chewing::ChewingKey::pinyin_text)
+    render_key(key, utf8_str, oxpinyin_core::ChewingKey::pinyin_text)
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -257,7 +257,7 @@ pub extern "C" fn pinyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(key, utf8_str, oxpinyin_chewing::ChewingKey::zhuyin_text)
+    render_key(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text)
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -309,7 +309,7 @@ pub extern "C" fn pinyin_get_pinyin_strings(
 /// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
 /// caller memory with a field outside them aborts the process, as the pin
 /// does (register row 4).
-fn abort_on_elements_outside_dims(key: oxpinyin_chewing::ChewingKey) {
+fn abort_on_elements_outside_dims(key: oxpinyin_core::ChewingKey) {
     if !key.elements_in_dims() {
         std::process::abort();
     }
@@ -317,7 +317,7 @@ fn abort_on_elements_outside_dims(key: oxpinyin_chewing::ChewingKey) {
 
 /// The tone half of [`abort_on_elements_outside_dims`], asserted after the
 /// `get_table_index` guard by every renderer that prints a tone.
-fn abort_on_tone_outside_dims(key: oxpinyin_chewing::ChewingKey) {
+fn abort_on_tone_outside_dims(key: oxpinyin_core::ChewingKey) {
     if !key.tone_in_dims() {
         std::process::abort();
     }
@@ -328,7 +328,7 @@ fn abort_on_tone_outside_dims(key: oxpinyin_chewing::ChewingKey) {
 fn render_key(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(oxpinyin_chewing::ChewingKey) -> oxpinyin_chewing::KeyText,
+    render: impl Fn(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2707-2727`).
     if key.is_null() {

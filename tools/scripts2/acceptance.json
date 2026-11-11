@@ -2,23 +2,23 @@
   "base": "218f597a272dea4bc5c1bb56a3956c59ceb69b8d",
   "values": {
     "NUM_INITIALS": {
-      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "source": "crates/oxpinyin-core/src/chewing_key_data.rs",
       "sha256": "e3ad876b2aaefe28e508a9ae21dad2b546f19765c981a9c11d645e95ee742448"
     },
     "NUM_MIDDLES": {
-      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "source": "crates/oxpinyin-core/src/chewing_key_data.rs",
       "sha256": "f10ff3de52759047dad99c3374429d6cac3edd6b5c3652a0ce674073745d242f"
     },
     "NUM_FINALS": {
-      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "source": "crates/oxpinyin-core/src/chewing_key_data.rs",
       "sha256": "639297a344a884a7fd3a4db4cef52774a90a6a981b37beb436113b9e83163527"
     },
     "CHEWING_KEY_TABLE": {
-      "source": "crates/oxpinyin-chewing/src/chewing_key_data.rs",
+      "source": "crates/oxpinyin-core/src/chewing_key_data.rs",
       "sha256": "a5f9e9bd55150787db5d172ddee6c5ae50564e9d405747d745b9440a60020e59"
     },
     "CONTENT_TABLE": {
-      "source": "crates/oxpinyin-chewing/src/content_table_source.rs",
+      "source": "crates/oxpinyin-core/src/content_table_source.rs",
       "sha256": "4cd1627b16c3eee000d49cbd14866322343a1766db41bedbad68fe5aa9932afa"
     },
     "FULL_PINYIN_SYLLABLE_COUNT": {
@@ -266,7 +266,7 @@
       "sha256": "abd247cef2c143d3a4aff62e5bbf44e93d76046e1743d3ac71c9c40efebb570f"
     },
     "CHEWING_ZERO_TONE": {
-      "source": "crates/oxpinyin-chewing/src/chewing_key.rs",
+      "source": "crates/oxpinyin-core/src/chewing_key.rs",
       "sha256": "dd3ca569374f34487d1547056165edfe0395fefbf7c7ef04314feeb4c699bb3b"
     }
   }

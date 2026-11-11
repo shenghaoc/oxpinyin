@@ -36,7 +36,7 @@ class RustTablesTests(unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding='utf-8', newline='\n')
-            path = root / 'crates/oxpinyin-chewing/src/content_table_source.rs'
+            path = root / 'crates/oxpinyin-core/src/content_table_source.rs'
             original = path.read_text()
             # Named mutation: content-ni-initial changes the packed parser key.
             # The same mutation is witnessed by oxpinyin-capi's
@@ -72,7 +72,7 @@ class RustTablesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             self.assertEqual(rust_tables.regenerate(check=False, root=root), 0)
-            path = root / 'crates/oxpinyin-chewing/src/content_table_source.rs'
+            path = root / 'crates/oxpinyin-core/src/content_table_source.rs'
             path.write_text('drift')
             self.assertEqual(rust_tables.regenerate(check=False, root=root), 0)
             self.assertEqual(path.read_text(), self.outputs[path.relative_to(root).as_posix()])

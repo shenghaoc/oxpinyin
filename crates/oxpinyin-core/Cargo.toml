@@ -16,7 +16,6 @@ workspace = true
 smallvec.workspace = true
 compact_str.workspace = true
 phf.workspace = true
-oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 
 [build-dependencies]
 # Generates the phf maps over the frozen syllable inventories (see build.rs).

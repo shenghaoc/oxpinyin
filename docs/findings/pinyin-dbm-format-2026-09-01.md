@@ -49,7 +49,7 @@ Packing: `((initial & 0x1f) | ((middle & 0x3) << 5) | ((final & 0x1f) << 7) | ((
 Element counts: `NUM_INITIALS = 24`, `NUM_MIDDLES = 4`, `NUM_FINALS = 18`
 (`chewing_enum.h`).
 
-Rust implementation: `crates/oxpinyin-chewing/src/chewing_key.rs` —
+Rust implementation: `crates/oxpinyin-core/src/chewing_key.rs` —
 `ChewingKey::to_packed()` / `ChewingKey::from_packed()`.
 
 ## 3. Two key spaces in one DBM

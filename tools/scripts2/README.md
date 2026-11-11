@@ -51,9 +51,9 @@ and handwritten consumers. The generated destinations are:
 
 | Destination (under `crates/`) | Data and identity against #1522 |
 | --- | --- |
-| `oxpinyin-chewing/src/chewing_key_tables.rs` | Three enum counts; 1,728 inverse content indexes; exact values/order |
-| `oxpinyin-chewing/src/content_table_source.rs` | 441 complete content rows; row initializer bytes unchanged |
-| `oxpinyin-chewing/src/tone_symbols.rs` | Zero-tone enum and tone-symbol match; exact values |
+| `oxpinyin-core/src/chewing_key_tables.rs` | Three enum counts; 1,728 inverse content indexes; exact values/order |
+| `oxpinyin-core/src/content_table_source.rs` | 441 complete content rows; row initializer bytes unchanged |
+| `oxpinyin-core/src/tone_symbols.rs` | Zero-tone enum and tone-symbol match; exact values |
 | `oxpinyin-core/src/table_data/full_pinyin_syllables.rs` | 405 full syllables in `fullpinyin.PINYIN_DICT` numeric-ID order; exact values/order |
 | `oxpinyin-core/src/table_data/syllable_inventory.rs` | Counts, maximum length, 23 incomplete, 2 option-only, 10 Zhuyin-only keys; exact values/order |
 | `oxpinyin-core/src/table_data/full_pinyin_indexes.rs` | 406 Luoma and 406 secondary-Zhuyin rows and counts; exact values/order |

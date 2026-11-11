@@ -9,7 +9,7 @@
 //! `content_table` spelling columns exactly. Source-embedded tables,
 //! copyable under the project source policy; not model-archive data.
 
-use oxpinyin_chewing::StringTable;
+use crate::static_strings::StringTable;
 
 include!("table_data/full_pinyin_counts.rs");
 

@@ -303,7 +303,7 @@ mod chewing_key_data_tests {
 
     #[test]
     fn content_table_matches_original_rows() {
-        assert_eq!(content_strings().len(), CONTENT_TABLE.len());
+        assert_eq!(content_strings().entries().count(), CONTENT_TABLE.len());
         assert_eq!(CONTENT_KEYS.len(), CONTENT_TABLE.len());
         for (index, row) in CONTENT_TABLE.iter().enumerate() {
             assert_eq!(
