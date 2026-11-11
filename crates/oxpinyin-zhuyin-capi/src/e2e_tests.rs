@@ -63,6 +63,45 @@ use crate::test_support::{
     take_sentence, token_of, tokens_of, with_store,
 };
 
+/// A partial user gram refuses the candidate lookup with one warning.
+#[test]
+fn partial_candidate_gram_logs_once() {
+    let (context, instance) = open();
+    let token = tokens_of(instance, "你好")[0];
+    close(context, instance);
+    let user = TempUserDir::new("partial-candidate-gram");
+    let mut gram = 7_u32.to_le_bytes().to_vec();
+    gram.extend_from_slice(&token.to_le_bytes());
+    gram.extend_from_slice(&7_u32.to_le_bytes());
+    gram.push(1);
+    crate::test_support::plant_bigram(&user.path, vec![(token.to_le_bytes().to_vec(), gram)]);
+    let (context, instance) = open_with_user(&user.path);
+    assert!(crate::config::zhuyin_set_options(
+        context,
+        oxpinyin_core::DYNAMIC_ADJUST
+    ));
+    assert!(!crate::sentence::zhuyin_guess_sentence_with_prefix(
+        instance,
+        c"你好".as_ptr()
+    ));
+    assert_eq!(
+        crate::parse::zhuyin_parse_more_full_pinyins(instance, c"hao".as_ptr()),
+        3
+    );
+    let logs = LogCapture::new();
+    assert!(!crate::sentence::zhuyin_guess_candidates_after_cursor(
+        instance, 0
+    ));
+    assert_eq!(
+        logs.take(),
+        [(Some("libzhuyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
+    );
+    let mut count = u32::MAX;
+    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert_eq!(count, 0);
+    close(context, instance);
+}
+
 /// The choose-then-train seed sequence through the wired zhuyin path:
 /// the doubling counts (69, 138, 414, …) with `sentence_start` as the
 /// first predecessor, and the fresh-composition reset contract.
@@ -615,6 +654,92 @@ fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
         ptr::null_mut()
     ));
     close(context, instance);
+}
+
+/// The pin prepares one array per loaded library before the first critical
+/// (074a2219, zhuyin.cpp:1678-1693 and phrase_large_table3.h:77-95).
+#[test]
+fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
+    struct Unload {
+        context: *mut crate::types::ZhuyinContext,
+        result: Option<bool>,
+        appends: usize,
+    }
+
+    unsafe extern "C" fn unload_on_clear(
+        _domain: *const std::ffi::c_char,
+        _level: glib_sys::GLogLevelFlags,
+        message: *const std::ffi::c_char,
+        data: glib_sys::gpointer,
+    ) {
+        // SAFETY: GLib supplies the diagnostic string and the child keeps
+        // its handler data alive until it removes the handler.
+        let (message_text, unload) = unsafe {
+            (
+                std::ffi::CStr::from_ptr(message),
+                &mut *data.cast::<Unload>(),
+            )
+        };
+        if unload.result.is_none() && message_text.to_bytes().starts_with(b"g_array_set_size") {
+            unload.result = Some(false);
+            unload.result = Some(crate::config::zhuyin_unload_phrase_library(
+                unload.context,
+                2,
+            ));
+        } else if message_text.to_bytes().starts_with(b"g_array_append_vals") {
+            unload.appends += 1;
+        }
+    }
+
+    crate::test_support::run_in_child(
+        "e2e_tests::null_token_array_keeps_prepared_count_across_reentrant_unload",
+        |path| {
+            let (context, instance) = open_with_user(path);
+            hold_nihao_in_libraries(context, 4);
+            let before = tokens_of(instance, "你好");
+            assert_eq!(before.len(), 4);
+            assert!(before.iter().any(|token| token >> 24 == 2));
+            let prepared = {
+                // SAFETY: The live instance is serialized and the view ends here.
+                let inst = unsafe { crate::state::instance_ref(instance) };
+                (0..16_u32)
+                    .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+                    .count()
+            };
+
+            let mut unload = Unload {
+                context,
+                result: None,
+                appends: 0,
+            };
+            // SAFETY: The handler and its data stay live for the synchronous call.
+            let handler = unsafe {
+                glib_sys::g_log_set_handler(
+                    c"GLib".as_ptr(),
+                    glib_sys::G_LOG_LEVEL_CRITICAL,
+                    Some(unload_on_clear),
+                    (&raw mut unload).cast(),
+                )
+            };
+            let answer =
+                crate::dict::zhuyin_lookup_tokens(instance, c"你好".as_ptr(), ptr::null_mut());
+            // SAFETY: Remove the handler before reading or dropping its data.
+            unsafe { glib_sys::g_log_remove_handler(c"GLib".as_ptr(), handler) };
+            assert!(answer);
+            assert_eq!(unload.result, Some(true));
+            assert_eq!(unload.appends, prepared);
+            let after = tokens_of(instance, "你好");
+            assert_eq!(
+                after,
+                before
+                    .into_iter()
+                    .filter(|token| token >> 24 != 2)
+                    .collect::<Vec<_>>()
+            );
+
+            close(context, instance);
+        },
+    );
 }
 
 /// Opens `user_dir` over the fixture, answering the raw handle.

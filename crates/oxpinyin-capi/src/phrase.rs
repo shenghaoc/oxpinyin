@@ -37,9 +37,6 @@ pub extern "C" fn pinyin_phrase_segment(
         return false;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
     // The pin's first call, `g_utf8_strlen(sentence, -1)` (074a2219
     // pinyin.cpp:1450), made through GLib: on NULL, GLib's own precondition
     // logs its critical (GLib 2.84.4 gutf8.c:240). The pin then dereferences
@@ -51,6 +48,9 @@ pub extern "C" fn pinyin_phrase_segment(
         unsafe {
             glib_sys::g_utf8_strlen(sentence, -1);
         }
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let mut inst = unsafe { instance_mut(instance) };
         return match inst.core.segment_phrases("") {
             Ok(matched) => matched,
             Err(error) => {
@@ -68,6 +68,9 @@ pub extern "C" fn pinyin_phrase_segment(
         // docs/findings/1297-segment-critical.md).
         return false;
     };
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let mut inst = unsafe { instance_mut(instance) };
     let outcome = match text.as_str() {
         Some(text) => inst.core.segment_phrases(text),
         None => inst

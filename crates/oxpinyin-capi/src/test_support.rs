@@ -679,7 +679,7 @@ pub fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> Vec<u32>
 pub type LogRecord = (Option<String>, glib_sys::GLogLevelFlags);
 
 std::thread_local! {
-    static CAPTURED: std::cell::RefCell<Option<Vec<LogRecord>>> =
+    static CAPTURED: std::cell::RefCell<Option<Vec<(LogRecord, String)>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -700,7 +700,11 @@ unsafe extern "C" fn capture_log(
                 .to_string_lossy()
                 .into_owned()
         });
-        logs.push((domain, level));
+        // SAFETY: GLib supplies the live, NUL-terminated diagnostic message.
+        let message = unsafe { std::ffi::CStr::from_ptr(message) }
+            .to_string_lossy()
+            .into_owned();
+        logs.push(((domain, level), message));
         true
     });
     if !captured {
@@ -739,6 +743,14 @@ impl LogCapture {
 
     /// The records since the capture began or since the last call.
     pub fn take(&self) -> Vec<LogRecord> {
+        self.take_with_messages()
+            .into_iter()
+            .map(|(record, _)| record)
+            .collect()
+    }
+
+    /// Takes the records and their messages in emission order.
+    pub fn take_with_messages(&self) -> Vec<(LogRecord, String)> {
         CAPTURED.with(|logs| std::mem::take(logs.borrow_mut().as_mut().expect("active capture")))
     }
 }

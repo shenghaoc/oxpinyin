@@ -195,7 +195,35 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
-    ctx.load_addon(index)
+    let result = ctx.load_addon(index);
+    addon_load_answer(result)
+}
+
+fn addon_load_answer(result: Result<bool, &'static str>) -> bool {
+    match result {
+        Ok(loaded) => loaded,
+        Err(warning) => {
+            crate::ffi::log_warning(warning);
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod addon_load_tests {
+    #[test]
+    fn null_chunk_refusal_logs_once() {
+        let logs = crate::test_support::LogCapture::new();
+        let warning = oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning();
+        assert!(!super::addon_load_answer(Err(warning)));
+        assert_eq!(
+            logs.take_with_messages(),
+            [(
+                (Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING),
+                warning.to_owned(),
+            )]
+        );
+    }
 }
 
 /// Unload an addon phrase library.

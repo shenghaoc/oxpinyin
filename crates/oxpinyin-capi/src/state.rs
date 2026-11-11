@@ -97,12 +97,12 @@ impl CapiContext {
     /// and so does this. Without it an out-of-range index would silently load a
     /// stray `addon_{index}_*` table on disk (whichever backend's
     /// extension `default_store_file` names) rather than being refused.
-    pub(crate) fn load_addon(&mut self, index: u8) -> bool {
+    pub(crate) fn load_addon(&mut self, index: u8) -> Result<bool, &'static str> {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
-            return false;
+            return Ok(false);
         }
         match self.core.load_addon_phrase_library(index) {
-            Ok(loaded) => loaded,
+            Ok(loaded) => Ok(loaded),
             // Register row 79, `pinyin.cpp:491`: the pin asserts a loaded
             // addon row is a `DICTIONARY`, and the process aborts.
             Err(oxpinyin_facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
@@ -122,17 +122,14 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin_facade::LibraryRowAssert::NullChunkName) => {
-                crate::ffi::log_warning(
-                    oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning(),
-                );
-                false
+                Err(oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning())
             }
             // Register row 96: `pinyin.cpp:290` maps the addon through the same
             // `MemoryChunk::mmap`, and a directory of header size or more fails
             // the read at `memory_chunk.h:493`.
             Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
             // The addon load answers no `NotLoadable`.
-            Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => false,
+            Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => Ok(false),
         }
     }
 
