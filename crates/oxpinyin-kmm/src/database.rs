@@ -77,12 +77,6 @@ impl Database {
         self.inner.as_ref().is_some_and(KmmBigram::attached)
     }
 
-    /// Whether `attach` left an object (`m_db != NULL`).
-    #[must_use]
-    pub fn is_open(&self) -> bool {
-        self.inner.as_ref().is_some_and(KmmBigram::is_open)
-    }
-
     /// `get_magic_header`, preserving the backend's missing/size assertions.
     #[must_use]
     pub fn get_magic_header(&self) -> Option<KMixtureModelMagicHeader> {
