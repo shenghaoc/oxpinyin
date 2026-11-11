@@ -3940,6 +3940,48 @@ fn save_and_reopen(
     crate::context::pinyin_fini(context);
     open(user_dir.to_str().expect("UTF-8 path"))
 }
+/// Removal leaves m_modified alone (074a2219 pinyin.cpp:3726-3768),
+/// so the clean save gate (pinyin.cpp:1132-1146) keeps the saved phrase.
+#[test]
+fn removing_the_last_saved_phrase_from_a_clean_context_does_not_persist() {
+    let user_dir = TempUserDir::new("clean-last-removal");
+    let path = user_dir.path.to_str().expect("UTF-8 path");
+    let (context, instance) = open(path);
+    let phrase = "测侧";
+    assert_eq!(import_batch(context, 7, &[(phrase, "ce'ce", 7)]), [true]);
+    let saved = export_of(context, 7);
+    assert_eq!(saved.len(), 1);
+    let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
+
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("cece").as_ptr()),
+        4
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut count = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    let candidate = (0..count)
+        .find_map(|index| {
+            let mut candidate = ptr::null_mut();
+            assert!(pinyin_get_candidate(instance, index, &raw mut candidate));
+            pinyin_is_user_candidate(instance, candidate).then_some(candidate)
+        })
+        .expect("the only user phrase is a candidate");
+    assert!(pinyin_remove_user_candidate(instance, candidate));
+    assert!(export_of(context, 7).is_empty());
+    assert!(!pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+
+    let (context, instance) = open(path);
+    assert_eq!(export_of(context, 7), saved);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// S3: an import count other than -1 reaches the item as its `guint32` bit pattern
 /// (`pinyin.cpp:523-524`, `:578`, `:601`); the export starts at -1 and writes the count only when
 /// it is above 0 (`:703`, `:738-739`), so 0 exports as -1. A second add onto `INT_MAX` passes the
