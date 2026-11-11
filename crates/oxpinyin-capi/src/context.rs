@@ -4,8 +4,8 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::state::{CapiContext, box_context, context_mut};
-// Only the harness-gated fixture hooks below take a shared context ref; the
-// shipped build (--features shipped) does not compile them.
+// Only the harness-gated test hook below takes a shared context ref; the
+// shipped build (--features shipped) does not compile it.
 use crate::types::PinyinContext;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
@@ -138,24 +138,6 @@ fn table_conf_aborts(
 /// failures also return NULL; diagnostics follow the failing load path.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
-    systemdir: *const c_char,
-    userdir: *const c_char,
-) -> *mut PinyinContext {
-    init_context(systemdir, userdir)
-}
-
-/// Test-tool constructor kept for the Rust suites and C tools that
-/// `dlsym` this name to open the committed `fixtures/w3` mini data set.
-/// It is `pinyin_init` under another name: the mini set is a real
-/// (small) data directory with real counts, so there is no separate
-/// fixture mode any more.
-///
-/// Not in `pinyin.h`: compiled out of the shipped artifact
-/// (`--features shipped`) so it exports exactly the pin's own set.
-#[cfg(not(feature = "shipped"))]
-#[unsafe(no_mangle)]
-#[must_use]
-pub extern "C" fn oxpinyin_init_for_fixtures(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {

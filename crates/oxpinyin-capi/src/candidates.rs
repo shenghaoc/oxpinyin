@@ -1114,8 +1114,7 @@ mod unloaded_library_tests {
         std::fs::create_dir_all(&user).expect("user dir");
         let system_c = cstr(system.to_str().expect("UTF-8 path"));
         let user_c = cstr(user.to_str().expect("UTF-8 path"));
-        let context =
-            crate::context::oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr());
+        let context = crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr());
         assert!(!context.is_null());
         let instance = crate::instance::pinyin_alloc_instance(context);
         assert!(!instance.is_null());

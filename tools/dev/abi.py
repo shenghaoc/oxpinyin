@@ -88,7 +88,7 @@ def check_exports(settings: Settings, argv: Sequence[str], facts: HostFacts) -> 
     pinyin = replace(settings, extra_features=('shipped',)) if shipped else settings
     libraries = [('libpinyin', pinyin.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
                   settings.root / 'crates/oxpinyin-capi/libpinyin.ver', 'pinyin',
-                  set() if shipped else {'oxpinyin_init_for_fixtures', 'oxpinyin_test_set_user_bigram'}),
+                  set() if shipped else {'oxpinyin_test_set_user_bigram'}),
                  ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxpinyin-zhuyin-capi'),
                   settings.root / 'crates/oxpinyin-zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
     status = 0

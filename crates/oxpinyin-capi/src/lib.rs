@@ -74,7 +74,7 @@ pub mod fuzz_api {
         pinyin_train,
     };
     pub use crate::config::pinyin_set_double_pinyin_scheme;
-    pub use crate::context::{oxpinyin_init_for_fixtures, pinyin_fini};
+    pub use crate::context::{pinyin_fini, pinyin_init};
     pub use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
     #[cfg(not(feature = "shipped"))]
     pub use crate::iterators::oxpinyin_import_aborts;
@@ -189,17 +189,6 @@ pub fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -
 /// In-process wrapper for the `pinyin_set_zhuyin_scheme` ABI symbol (see the C header).
 pub fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     config::pinyin_set_zhuyin_scheme(context, scheme)
-}
-
-// ── context ─────────────────────────────────────────────
-/// In-process wrapper for the `oxpinyin_init_for_fixtures` ABI symbol (see the C header).
-#[cfg(not(feature = "shipped"))]
-#[must_use]
-pub fn oxpinyin_init_for_fixtures(
-    systemdir: *const c_char,
-    userdir: *const c_char,
-) -> *mut PinyinContext {
-    context::oxpinyin_init_for_fixtures(systemdir, userdir)
 }
 
 // ── instance ─────────────────────────────────────────────

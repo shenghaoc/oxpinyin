@@ -115,7 +115,7 @@ pub fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *m
 pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = crate::context::oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+    let context = crate::context::pinyin_init(system.as_ptr(), user.as_ptr());
     assert!(
         !context.is_null(),
         "fixture init must open the mini fixture"

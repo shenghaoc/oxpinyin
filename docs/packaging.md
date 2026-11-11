@@ -98,7 +98,7 @@ In short:
   `rlib` stays so that the fuzz targets and Rust tests can use the crate in-process.
 - `[features] capi = []`.
   cargo-c identifies the crate to package by the presence of a `capi` feature; without it, cargo-c skips the crate.
-  `[features] shipped = []` compiles out the fixture hooks that no real consumer calls; only the shipped drop-in artifact enables it.
+  `[features] shipped = []` compiles out the test hook that no real consumer calls; only the shipped drop-in artifact enables it.
 - `[package.metadata.capi.header] generation = false`, `subdirectory = "libpinyin-2.11.92"`.
   `pinyin.h` and its two companion headers ship **verbatim** under libpinyin's version-stamped include subdirectory and are never regenerated.
 - `[package.metadata.capi.pkg_config] name = "libpinyin"`, `version = "2.11.92"`.
@@ -288,10 +288,11 @@ On Linux, `just packaging install` relinks the installed object from the staticl
 `libzhuyin.so.15` uses `LIBZHUYIN` and its 52 symbols the same way.
 
 **Symbol scope.** The shipped library exports every symbol in its `.ver` script and nothing else.
-The `shipped` feature compiles out the fixture hooks (`oxpinyin_init_for_fixtures` and `oxpinyin_test_set_user_bigram`).
+The `shipped` feature compiles out the one export that is not in `pinyin.h`, the test-only `oxpinyin_test_set_user_bigram`.
+It also compiles out the `fuzz-api` helpers `oxpinyin_import_aborts` and `oxpinyin_train_aborts`, which are Rust functions and not exports.
 The feature is subtractive.
 An additive, default-on hook feature would depend on the default features, which also select the backend.
-Every build on a non-default backend would then drop the hooks.
+Every build on a non-default backend would then drop the hook.
 
 ## Export gate
 
@@ -302,7 +303,7 @@ It also proves that no other symbol leaks.
 
 CI runs it twice on every change:
 
-- on the development build, where the only permitted extras are the two `oxpinyin_*` fixture hooks that the ABI tests drive;
+- on the development build, where the only permitted extra is the one `oxpinyin_*` hook, `oxpinyin_test_set_user_bigram`, that the crate's own tests drive;
 - with `--shipped`, on the packaged artifact, where only the set of the version script may remain.
 
 No symbol in a version script is feature-gated.
@@ -324,7 +325,7 @@ Before the atomic replacement, both `nm -gU` and the export trie (`dyld_info -ex
 `nm -gU` covers all external defined types, including data, absolute and weak symbols.
 The installed native dylib must then load and resolve its entry point.
 The nightly `test-macos` job provisions cargo-c, stages both release libraries and runs `just abi exports --shipped`, with `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set to those installed files.
-Without overrides, that command checks Cargo development artifacts with fixture hooks disabled.
+Without overrides, that command checks Cargo development artifacts with the test hook disabled.
 The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 
 The cxx bridges of the tkrzw and Kyoto Cabinet backends link the `cxx` crate.

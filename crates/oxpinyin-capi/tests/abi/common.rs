@@ -8,9 +8,7 @@
 use std::ffi::CString;
 use std::path::PathBuf;
 
-use pinyin_capi::{
-    PinyinContext, PinyinInstance, oxpinyin_init_for_fixtures, pinyin_alloc_instance,
-};
+use pinyin_capi::{PinyinContext, PinyinInstance, pinyin_alloc_instance, pinyin_init};
 
 pub fn system_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -47,7 +45,7 @@ pub fn cstr(value: impl AsRef<str>) -> CString {
 pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+    let context = pinyin_init(system.as_ptr(), user.as_ptr());
     assert!(
         !context.is_null(),
         "fixture init must open the mini fixture"
