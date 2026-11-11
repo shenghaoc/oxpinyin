@@ -77,15 +77,15 @@ MSVC `tkrzw.lib` need no probe.
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets uv's floor, 0.13.1; CI installs the newest uv that satisfies it.
 
-`just doctor` is the one check of every tool's minimum: Bash 5.0, uv,
-CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
+`just doctor` checks minimum versions for Bash 5.0, uv,
+CPython, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
 ShellCheck 0.11.0. ShellCheck is advisory; run it when a shell script
 changes ([verification rule 5](verification.md#5-local-test-gate)).
 On Linux it also checks GNU ld, gcov and Valgrind. Each line names the resolved
 executable, the minimum and the version found. A newer tool passes, an older
 required tool fails, and a missing one comes with its install command.
 Semantic versions compare as semver does: a pre-release of the minimum
-(`1.59.0-beta.1`) is older than it and build metadata (`+build`) does not
+(`0.9.115-beta.1`) is older than it and build metadata (`+build`) does not
 count. GNU ld, gcov and Valgrind compare by number, and a development build of
 one counts as its number. Install or upgrade a tool only when `just doctor`
 says it is missing or too old.
@@ -108,7 +108,7 @@ hash -r
 ```
 
 The native command interface needs just at or above the `minimum-version` in the
-root `justfile`, which `just` enforces itself and `just doctor` reports.
+root `justfile`, which `just` enforces when it loads the file.
 Install it through the host route: `brew install just` on macOS, the
 distribution package on Linux, or `cargo install just --locked`.
 
