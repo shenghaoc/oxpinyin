@@ -73,8 +73,21 @@ UNITS = {'loop_instructions': 'instructions retired in the measured loop (ri_ins
          'peak_rss_bytes': 'bytes, process lifetime peak'}
 COUNTS = ('loop_instructions', 'loop_cpu_cycles')
 
+# Windows report order: the cycle count and wall time lead; commit is the memory figure.
+WINDOWS_MEASURES = ('loop_cpu_cycles', 'wall_seconds', 'cpu_seconds',
+                    'peak_private_commit_bytes', 'peak_working_set_bytes')
+WINDOWS_UNITS = {'loop_cpu_cycles': 'CPU cycles charged to the process, all threads, in the measured loop'
+                                    ' (QueryProcessCycleTime delta); a count, not convertible to seconds',
+                 'wall_seconds': 'seconds, measured loop (QueryPerformanceCounter)',
+                 'cpu_seconds': 'seconds, measured loop (GetProcessTimes user+kernel, all threads);'
+                                ' secondary, 1/64-second resolution',
+                 'peak_private_commit_bytes': 'bytes, process lifetime peak (PeakPagefileUsage)',
+                 'peak_working_set_bytes': 'bytes, process lifetime peak; diagnostic'}
+BELOW_RESOLUTION = ('a sample read 0: below the 1/64-second GetProcessTimes resolution;'
+                    ' no B/A ratio this session')
 
-def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True):
+
+def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True, windows=False):
     """Validate one complete driver result; an unread required metric is an error."""
     import math
     import re
@@ -86,10 +99,12 @@ def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True):
         raise ValueError('missing operation fingerprint')
     if fingerprint is not None and row['fingerprint'] != fingerprint:
         raise ValueError('operation fingerprint mismatch')
-    for name in MEASURES if child_rss else MEASURES[:-1]:
+    measures = WINDOWS_MEASURES if windows else (MEASURES if child_rss else MEASURES[:-1])
+    for name in measures:
         value = row.get(name)
         # The kernel advances runnable time at scheduling events only; a short loop reads 0.
-        zero_allowed = name == 'loop_runnable_seconds'
+        # GetProcessTimes advances in 1/64-second ticks; a zero only drops that metric's ratio.
+        zero_allowed = name == 'loop_runnable_seconds' or (windows and name == 'cpu_seconds')
         if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
                 or value < 0 or (value == 0 and not zero_allowed)):
             raise ValueError('broken required capture: ' + name)
@@ -98,14 +113,18 @@ def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True):
     return row
 
 
-def comparison(rows):
+def comparison(rows, *, windows=False):
     """Paired block estimates; controls are descriptive and never produce a verdict.
 
     Runnable time is context for wall time and carries no B/A ratio: each arm
     reports it over its CPU time, and an excess is time spent waiting for a core.
+    Windows byte metrics are paired B minus A differences, not ratios.
+    One zero GetProcessTimes reading drops the cpu_seconds ratio for the whole
+    session, comparison and control alike; every other metric is unaffected.
     """
     from . import stats
-    result = {'units': UNITS}
+    unresolved = windows and any(not row['cpu_seconds'] for row in rows)
+    result = {'units': WINDOWS_UNITS if windows else UNITS}
     for kind in ('comparison', 'control'):
         blocks = {}
         for row in rows:
@@ -117,13 +136,17 @@ def comparison(rows):
         def values(arm, metric):
             return [pair[arm][metric] for pair in pairs]
         result[kind] = {}
-        for metric in MEASURES:
+        for metric in (WINDOWS_MEASURES if windows else MEASURES):
             entry = {arm: {**stats.summary(values(arm, metric)), **stats.paired_bootstrap(values(arm, metric))}
                      for arm in 'AB'}
             if metric == 'loop_runnable_seconds':
                 for arm in 'AB':
                     entry[arm]['over_cpu_seconds'] = stats.paired_ratio(values(arm, metric),
                                                                         values(arm, 'cpu_seconds'))
+            elif unresolved and metric == 'cpu_seconds':
+                entry['no_ratio'] = BELOW_RESOLUTION
+            elif windows and metric.endswith('_bytes'):
+                entry['B_minus_A_bytes'] = stats.paired_difference(values('B', metric), values('A', metric))
             else:
                 entry['B_over_A'] = stats.paired_ratio(values('B', metric), values('A', metric))
             result[kind][metric] = entry

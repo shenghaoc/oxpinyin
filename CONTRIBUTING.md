@@ -109,7 +109,7 @@ When a measurement compares arms, run them in one job on one machine and report 
 Do not use an absolute figure from another run, host or CPU as a baseline.
 Follow the [measurement procedure](docs/runbooks/benches.md).
 
-Native macOS revision comparisons (ruling 2026-11-11): serialise the measured
+Native non-Linux revision comparisons (ruling 2026-11-11): serialise the measured
 arms; normal background activity is permitted. Run a same-binary control in
 the same session and report its variability beside the paired estimates.
 The control is diagnostic: it invalidates no runs and sets no automatic

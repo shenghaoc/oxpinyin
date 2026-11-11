@@ -62,7 +62,7 @@ def native_arguments(argv):
     args = parser.parse_args(argv)
     if args.mode == 'compare' and (not args.base or not args.head):
         parser.error('compare requires --base and --head')
-    if args.mode == 'profile' and not args.template:
+    if args.mode == 'profile' and not args.template and sys.platform != 'win32':
         parser.error('profile requires --template')
     if not 1 <= args.cycles <= 100000 or not 0 < args.budget < float('inf'):
         parser.error('cycles must be 1..100000 and budget finite and positive')
@@ -76,16 +76,20 @@ def native_arguments(argv):
 CONTROL = "A'"
 
 
-def stage_arm(prefix, built_arm, driver, digest):
-    """Copy one built product and the signed driver into a private prefix."""
+def stage_arm(prefix, built_arm, driver, digest, *, windows=False):
+    """Copy one built product and the driver into a private prefix.
+
+    Windows resolves the implicitly linked DLL beside the driver and has no dSYM.
+    """
     import shutil
     from . import identity
     (prefix / 'bin').mkdir(parents=True)
     (prefix / 'lib').mkdir()
-    dylib = prefix / 'lib' / built_arm['dylib'].name
+    dylib = prefix / ('bin' if windows else 'lib') / built_arm['dylib'].name
     shutil.copy2(built_arm['dylib'], dylib)
-    shutil.copytree(str(built_arm['dylib']) + '.dSYM', str(dylib) + '.dSYM')
-    executable = prefix / 'bin/bisect'
+    if not windows:
+        shutil.copytree(str(built_arm['dylib']) + '.dSYM', str(dylib) + '.dSYM')
+    executable = prefix / 'bin' / ('bisect.exe' if windows else 'bisect')
     shutil.copy2(driver, executable)
     if identity.sha256(executable) != digest:
         raise ValueError('staged driver bytes differ')
@@ -98,10 +102,20 @@ def native_sample(arm, data, cycles, env, timeout):
     import json
     from . import bench, reports
     command = [arm['driver'], '--measure', arm['dylib'], arm['uuid'], data]
-    raw, usage = bench.measured_process(command, env={**env, 'PERF_CYCLES': str(cycles)}, timeout=timeout)
+    if arm.get('windows'):
+        from . import identity
+        identity.verify_modules([item['path'] for item in arm['modules']], arm['modules'])
+    raw, usage = bench.measured_process(command, env={**env, 'PERF_CYCLES': str(cycles)}, timeout=timeout, usage=not arm.get('windows'))
     row = json.loads(raw)
-    row['peak_rss_bytes'] = usage.ru_maxrss  # Darwin wait4 reports bytes, not Linux KiB.
-    return reports.observation(json.dumps(row), cycles=cycles, operations=cycles * workload_operations())
+    if not arm.get('windows'):
+        row['peak_rss_bytes'] = usage.ru_maxrss  # Darwin wait4 reports bytes, not Linux KiB.
+    if arm.get('windows'):
+        from . import identity
+        identity.verify_modules(row['modules'], arm['modules'])
+        if not identity.same_file(row['library'], arm['dylib']):
+            raise ValueError('wrong loaded library')
+    return reports.observation(json.dumps(row), cycles=cycles, operations=cycles * workload_operations(),
+                               windows=arm.get('windows', False))
 
 
 def workload_operations():
@@ -118,6 +132,7 @@ def native_compare(args, arms, data, env, output):
     import time
     from . import reports
     rows, fingerprint = [], None
+    windows = getattr(args, 'windows', False)
     deadline = time.monotonic() + args.budget
     # Append each valid run before launching the next. No outlier filtering or retries.
     with (output / 'runs.jsonl').open('w') as stream:
@@ -132,13 +147,13 @@ def native_compare(args, arms, data, env, output):
             except subprocess.TimeoutExpired:
                 raise ValueError('measurement budget exhausted; campaign incomplete') from None
             row = reports.observation(json.dumps(row), cycles=args.cycles,
-                                      operations=args.cycles * workload_operations(), fingerprint=fingerprint)
+                                      operations=args.cycles * workload_operations(), fingerprint=fingerprint, windows=windows)
             fingerprint = row['fingerprint']
             row.update(kind=kind, block=block, arm=label)
             rows.append(row)
             stream.write(json.dumps(row) + '\n')
             stream.flush()
-    result = reports.comparison(rows)
+    result = reports.comparison(rows, windows=windows)
     (output / 'summary.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
 
@@ -206,10 +221,25 @@ def native(argv, env):
     import tempfile
     from tools import cachedir
     from .. import contract_data
-    from . import bench, neutrality, prepare
+    from . import bench, identity, neutrality, prepare
     args = native_arguments(argv)
-    if sys.platform != 'darwin' or platform.machine() != 'arm64':
+    windows = sys.platform == 'win32'
+    args.windows = windows
+    if windows and args.mode != 'compare':
+        bench.fail('Windows supports compare only; profile attribution and neutrality are done on macOS', 2)
+    if not windows and (sys.platform != 'darwin' or platform.machine() != 'arm64'):
         bench.fail('native revision measurement currently requires macOS arm64', 2)
+    if windows:
+        if platform.machine().lower() not in ('amd64', 'x86_64'):
+            bench.fail('Windows comparison requires the x64 MSVC host and x64-windows triplet', 2)
+        if not env.get('VCPKG_ROOT'):
+            bench.fail('Windows comparison requires VCPKG_ROOT', 2)
+        from tools.dev.check import msvc_environment
+        env = {key.upper(): value for key, value in msvc_environment(env).items()}
+        installed = Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows'
+        env['PATH'] = str(installed / 'bin') + os.pathsep + env['PATH']
+        env.pop('MEASURE_PREFLIGHT', None)
+        env.pop('MEASURE_MODULES', None)
     toolchain = bench.capture(['rustup', 'show', 'active-toolchain'], env=env)
     if toolchain.status or not toolchain.stdout.strip():
         raise ValueError('cannot identify the selected Rust toolchain')
@@ -225,23 +255,30 @@ def native(argv, env):
     runs.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix=args.mode + '-', dir=runs))
     with tempfile.TemporaryDirectory(prefix='builds-', dir=output) as build_directory:
-        built = {sha: prepare.native_build(sha, Path(build_directory) / sha, env)
+        built = {sha: prepare.native_build(sha, Path(build_directory) / sha, env, **({'windows': True} if windows else {}))
                  for sha in dict.fromkeys(revisions.values())}
         arms = {label: built[sha] for label, sha in revisions.items()}
         if args.mode == 'neutrality':
             plain = prepare.native_build(revisions['A'], Path(build_directory) / 'plain', env, symbols=False)
             print(neutrality.compare_macho(arms['A']['dylib'], plain['dylib']))
             return 0
-        driver = output / 'bisect'
+        artifacts = Path(build_directory) / 'arms' if windows else output
+        artifacts.mkdir(exist_ok=True)
+        driver = artifacts / ('bisect.exe' if windows else 'bisect')
         digest = prepare.native_driver(arms['A'], driver, env)
         # Private prefixes for A and B even when they share one built product.
-        staged = {label: stage_arm(output / label, built_arm, driver, digest)
+        staged = {label: stage_arm(artifacts / label, built_arm, driver, digest, windows=windows)
                   for label, built_arm in arms.items()}
         if args.mode == 'compare':
             # The control's second label: A's bytes again, staged as B is.
-            staged[CONTROL] = stage_arm(output / 'A-control', arms['A'], driver, digest)
+            staged[CONTROL] = stage_arm(artifacts / 'A-control', arms['A'], driver, digest, windows=windows)
         arms = staged
         data = args.data or contract_data.fetch(contract_data.default_cache(env))
+        if windows:
+            modules = identity.windows_preflight(arms, data, env, installed)
+            manifest = artifacts / 'modules.txt'
+            manifest.write_text(''.join(item['path'] + '\n' for item in modules), encoding='utf-8')
+            env['MEASURE_MODULES'] = str(manifest)
         metadata = dict(revisions=revisions, builds=[{key: value for key, value in arm.items()
                         if key in ('revision', 'default_features', 'cold_build_seconds', 'build_options')}
                         for arm in built.values()], cycles=args.cycles, pairs=args.pairs,
@@ -251,8 +288,19 @@ def native(argv, env):
                         footprint_boundary='process lifetime through teardown',
                         data_identity=contract_data.data_identity(data),
                         versions={name: bench.capture(command).stdout.decode().strip() for name, command in
-                                  [('macOS', ['sw_vers', '-productVersion']),
-                                   ('Xcode', ['xcodebuild', '-version']), ('Rust', ['rustc', '-vV'])]})
+                                  ([('Windows', ['cmd', '/c', 'ver']), ('Rust', ['rustc', '-vV'])] if windows else
+                                   [('macOS', ['sw_vers', '-productVersion']),
+                                   ('Xcode', ['xcodebuild', '-version']), ('Rust', ['rustc', '-vV'])])})
+        if windows:
+            metadata.update(runtime_modules=modules,
+                            expected_cow_commit=identity.expected_cow_commit(data),
+                            artifacts={label: dict(name=arm['dylib'].name, sha256=identity.sha256(arm['dylib']),
+                                                  driver_sha256=digest) for label, arm in arms.items()},
+                            cpu_boundary='all-thread process CPU during the typing loop',
+                            cpu_headline='loop_cpu_cycles (QueryProcessCycleTime delta); paired B over A, never seconds',
+                            cpu_secondary='cpu_seconds (GetProcessTimes); 1/64-second resolution',
+                            memory_headline='peak_private_commit_bytes; paired B minus A in bytes',
+                            memory_diagnostic='peak_working_set_bytes; process lifetime through teardown')
         (output / 'session.json').write_text(json.dumps(metadata, indent=2))
         print(json.dumps(metadata, indent=2), flush=True)
         print('Local output: ' + str(output), flush=True)

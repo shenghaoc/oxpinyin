@@ -408,14 +408,14 @@ def report(relative: str, argv: Sequence[str]) -> tuple[int, str]:
     return code, buffer.getvalue()
 
 
-def measured_process(command, *, env, timeout):
-    """Capture a serial native child and its own wait4 rusage without pipe deadlock."""
+def measured_process(command, *, env, timeout, usage=True):
+    """Capture a serial native child; optionally collect its POSIX wait4 rusage."""
     import tempfile
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         with slot.supervised(list(map(str, command)), env=dict(env), stdout=output, stderr=errors) as child:
-            code = slot.wait_child(child, timeout=timeout, usage=True)
+            code = slot.wait_child(child, timeout=timeout, usage=usage)
             output.seek(0)
             errors.seek(0)
             if code:
                 fail('measurement child failed: ' + errors.read().decode(errors='replace'))
-            return output.read(), child.rusage
+            return output.read(), getattr(child, 'rusage', None)
