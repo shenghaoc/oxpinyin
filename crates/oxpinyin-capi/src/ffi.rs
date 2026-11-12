@@ -196,12 +196,12 @@ pub fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
 /// phrase and so copies the result unchanged. The phrase and the previous
 /// result are then freed (`:66-67`). GLib aborts if its own allocation
 /// fails. NULL when every conversion failed.
-pub fn sentence_text<'a>(
-    phrases: impl IntoIterator<Item = &'a oxpinyin_core::PhraseText>,
+pub fn sentence_text(
+    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin_core::PhraseText>>,
 ) -> *mut c_char {
     let mut result: *mut c_char = ptr::null_mut();
     for phrase in phrases {
-        let bytes = oxpinyin_capi_marshal::phrase_text::phrase_text_bytes(phrase);
+        let bytes = oxpinyin_capi_marshal::phrase_text::phrase_text_bytes(phrase.borrow());
         let converted = malloc_cstr_with(bytes.len(), |out| {
             out.copy_from_slice(&bytes);
             bytes.len()

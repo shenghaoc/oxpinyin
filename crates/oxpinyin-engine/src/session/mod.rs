@@ -309,6 +309,7 @@ mod buffer;
 pub(crate) mod matrix;
 mod record;
 mod sentence;
+pub use sentence::SentencePart;
 
 use buffer::{InputBuffer, SelectedPath};
 use record::SelectionRecord;

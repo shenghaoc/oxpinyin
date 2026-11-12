@@ -126,15 +126,17 @@ where
         self.sentence.active()
     }
 
-    /// The decoded text of n-best row `index`, best-first, one text per
-    /// phrase as the pin's result vector holds them for `convert_to_utf8`
+    /// The phrases of n-best row `index`, best-first, one part per phrase
+    /// as the pin's result vector holds them for `convert_to_utf8`
     /// (`pinyin_get_sentence`'s payload, `pinyin.cpp:1464-1482`,
-    /// `lookup/lookup.cpp:27-69`). `None` when fewer rows exist or the
-    /// row's text is empty, as [`Self::sentence_text`].
+    /// `lookup/lookup.cpp:27-69`). The caller resolves each
+    /// [`SentencePart::Token`] through the live phrase index when it reads
+    /// the sentence. `None` when fewer rows exist or the row's text is
+    /// empty, as [`Self::sentence_text`].
     #[must_use]
-    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = &PhraseText>> {
+    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = SentencePart> + '_> {
         let row = self.sentence.rows.get(usize::from(index))?;
-        (!row.text.is_empty()).then(|| self.sentence.phrases(row))
+        (!row.text.is_empty()).then(|| self.sentence.parts(row))
     }
 
     /// The decoded text of n-best row `index`, best-first. `None` when

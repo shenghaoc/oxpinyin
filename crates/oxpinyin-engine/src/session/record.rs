@@ -12,6 +12,8 @@
 //!
 use oxpinyin_core::{PhraseText, PhraseTextConcat, PhraseToken};
 
+use super::sentence::SentencePart;
+
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SelectionRecord {
@@ -22,8 +24,10 @@ pub(super) struct SelectionRecord {
     selected: PhraseText,
     /// `selected` piece by piece — each chosen phrase, an n-best row's
     /// phrases, and each raw gap — so a sentence that prepends it can hand
-    /// out one text per phrase (`src/lookup/lookup.cpp:39-68`).
-    parts: Vec<PhraseText>,
+    /// out one phrase at a time (`src/lookup/lookup.cpp:37-48`). A chosen
+    /// phrase with a token is kept as that token, which the sentence read
+    /// resolves through the live phrase index, as the pin does.
+    parts: Vec<SentencePart>,
     /// Bytes of the raw input the selections consumed: the composition
     /// offset the candidate lookup is anchored at and the store's
     /// coordinate origin. Never past the raw input's length.
@@ -45,7 +49,7 @@ impl SelectionRecord {
     }
 
     /// The pieces `selected` concatenates, in order.
-    pub(super) fn parts(&self) -> &[PhraseText] {
+    pub(super) fn parts(&self) -> &[SentencePart] {
         &self.parts
     }
 
@@ -77,23 +81,30 @@ impl SelectionRecord {
 
     /// Extends the text chosen so far with a typed-but-unselected `gap`
     /// then the chosen `text` — the ordinary selection, whose gap is
-    /// empty on the composition-anchored path.
-    pub(super) fn append_selected(&mut self, gap: &str, text: &PhraseText) {
+    /// empty on the composition-anchored path. `token` is the chosen
+    /// phrase's token, if it has one.
+    pub(super) fn append_selected(
+        &mut self,
+        gap: &str,
+        text: &PhraseText,
+        token: Option<PhraseToken>,
+    ) {
         let mut selected = PhraseTextConcat::new();
         selected.push(&self.selected);
         selected.push(&PhraseText::from(gap));
         selected.push(text);
         self.selected = selected.finish();
         if !gap.is_empty() {
-            self.parts.push(PhraseText::from(gap));
+            self.parts.push(SentencePart::Raw(PhraseText::from(gap)));
         }
-        self.parts.push(text.clone());
+        self.parts
+            .push(token.map_or_else(|| SentencePart::Raw(text.clone()), SentencePart::Token));
     }
 
     /// Replaces the text chosen so far with `text` — an n-best row, whose
     /// text already covers the whole composition, so no gap is prepended.
     /// `parts` are the row's phrases.
-    pub(super) fn set_selected(&mut self, text: &PhraseText, parts: Vec<PhraseText>) {
+    pub(super) fn set_selected(&mut self, text: &PhraseText, parts: Vec<SentencePart>) {
         self.selected = text.clone();
         self.parts = parts;
     }
@@ -143,10 +154,10 @@ impl SelectionRecord {
             {
                 let gap = PhraseText::from(gap);
                 selected.push(&gap);
-                parts.push(gap);
+                parts.push(SentencePart::Raw(gap));
             }
             selected.push(text);
-            parts.push(text.clone());
+            parts.push(SentencePart::Token(*token));
             history.push(*token);
             cursor = *end;
         }
@@ -160,40 +171,31 @@ impl SelectionRecord {
 #[cfg(test)]
 mod tests {
     use super::SelectionRecord;
-    use oxpinyin_core::{PhraseText, PhraseTextConcat, PhraseToken};
+    use crate::session::SentencePart;
+    use oxpinyin_core::{PhraseText, PhraseToken};
 
-    /// The pieces always join to the selected text: chosen phrases, raw
-    /// gaps, an n-best row's phrases and a rebuild's runs.
+    /// A chosen phrase with a token is kept as that token, and a raw gap
+    /// or a phrase with no token keeps its text: chosen phrases, raw gaps,
+    /// an n-best row's phrases and a rebuild's runs.
     #[test]
-    fn the_parts_join_to_the_selected_text() {
-        let joined = |record: &SelectionRecord| {
-            let mut text = PhraseTextConcat::new();
-            for part in record.parts() {
-                text.push(part);
-            }
-            text.finish()
-        };
+    fn the_parts_keep_tokens_and_raw_gaps() {
+        let raw = |text: &str| SentencePart::Raw(PhraseText::from(text));
+        let token = |value| SentencePart::Token(PhraseToken::new(value));
         let mut record = SelectionRecord::default();
-        record.append_selected("", &PhraseText::from("你"));
-        record.append_selected("ha", &PhraseText::from("好"));
-        assert_eq!(record.parts().len(), 3);
-        assert_eq!(&joined(&record), record.selected());
+        record.append_selected("", &PhraseText::from("你"), Some(PhraseToken::new(5)));
+        record.append_selected("ha", &PhraseText::from("好"), None);
+        assert_eq!(record.parts(), [token(5), raw("ha"), raw("好")]);
+        assert_eq!(record.selected(), &PhraseText::from("你ha好"));
 
-        record.set_selected(
-            &PhraseText::from("你好"),
-            vec![PhraseText::from("你"), PhraseText::from("好")],
-        );
-        assert_eq!(&joined(&record), record.selected());
+        record.set_selected(&PhraseText::from("你好"), vec![token(5), token(6)]);
+        assert_eq!(record.parts(), [token(5), token(6)]);
 
         record.rebuild_from_constraints(
             "nihao",
             &[(2, 5, PhraseToken::new(7), PhraseText::from("好"))],
         );
-        assert_eq!(
-            record.parts(),
-            [PhraseText::from("ni"), PhraseText::from("好")]
-        );
-        assert_eq!(&joined(&record), record.selected());
+        assert_eq!(record.parts(), [raw("ni"), token(7)]);
+        assert_eq!(record.selected(), &PhraseText::from("ni好"));
 
         record.clear();
         assert!(record.parts().is_empty());

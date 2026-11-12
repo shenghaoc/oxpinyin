@@ -507,12 +507,12 @@ where
                 .nbest_row()
                 .and_then(|rank| state.sentence.rows.get(usize::from(rank)))
                 .map_or_else(
-                    || vec![text.clone()],
-                    |row| state.sentence.phrases(row).cloned().collect(),
+                    || vec![SentencePart::Raw(text.clone())],
+                    |row| state.sentence.parts(row).collect(),
                 );
             state.record.set_selected(&text, parts);
         } else {
-            state.record.append_selected(gap, &text);
+            state.record.append_selected(gap, &text, token);
         }
         if let Some(token) = token {
             state.record.push_token(token);

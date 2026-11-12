@@ -802,12 +802,7 @@ mod sentence_chain_tests {
         {
             // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
             let inst = unsafe { crate::state::instance_ref(instance) };
-            let phrases: Vec<&PhraseText> = inst
-                .core
-                .session
-                .sentence_phrases(0)
-                .expect("a row")
-                .collect();
+            let phrases: Vec<PhraseText> = inst.core.sentence_phrases(0).expect("a row").collect();
             let text = inst.core.session.sentence_text(0).expect("a row");
             assert!(phrases.len() > 1, "{phrases:?}");
             let joined: String = phrases
