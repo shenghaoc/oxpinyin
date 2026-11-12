@@ -298,7 +298,34 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
     guess_candidates(instance, offset, true)
 }
 
-/// The normalized lookup offset, or `None` where the lookup is refused.
+enum CandidateGuessRefusal {
+    InvalidOffset,
+    Lookup(oxpinyin_engine::EngineError),
+    UnreadableItem,
+}
+
+/// Emit a refused lookup's diagnostic after its instance view is gone.
+fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
+    match result {
+        Ok(answer) => answer,
+        Err(CandidateGuessRefusal::InvalidOffset) => {
+            crate::ffi::log_warning("zhuyin_guess_candidates: the lookup failed");
+            false
+        }
+        Err(CandidateGuessRefusal::Lookup(error)) => {
+            refuse_lookup_gram("zhuyin_guess_candidates", &error);
+            false
+        }
+        Err(CandidateGuessRefusal::UnreadableItem) => {
+            crate::ffi::log_warning(
+                "zhuyin_guess_candidates: a candidate's phrase item cannot be read",
+            );
+            false
+        }
+    }
+}
+
+/// The normalized lookup offset, or the refusal to diagnose at the boundary.
 ///
 /// The pin's matrix holds `parsed_len + 1` columns, the last a reserved slot
 /// holding a lone zero key, and `zhuyin.cpp`'s `_check_offset` asserts
@@ -310,7 +337,7 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 fn validated_lookup_offset(
     inst: &crate::state::CapiInstanceRead<'_>,
     offset: usize,
-) -> Option<usize> {
+) -> Result<usize, CandidateGuessRefusal> {
     // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
     // when the parse stopped early; `_check_offset` reads column
     // `offset - 1`, and past the last column `get_column_size` asserts.
@@ -320,17 +347,14 @@ fn validated_lookup_offset(
         std::process::abort();
     }
     match inst.core.validate_abi_lookup_offset(offset, true) {
-        Ok(normalized) => Some(normalized),
+        Ok(normalized) => Ok(normalized),
         Err(
             oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
             | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. },
         ) => std::process::abort(),
         // A parse the facade cannot read, which the pin has no counterpart
         // for.
-        Err(_) => {
-            crate::ffi::log_warning("zhuyin_guess_candidates: the lookup failed");
-            None
-        }
+        Err(_) => Err(CandidateGuessRefusal::InvalidOffset),
     }
 }
 
@@ -351,22 +375,35 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
+    let outcome = guess_candidates_result(&mut inst, offset, before_cursor);
+    candidate_guess_answer(outcome)
+}
+
+fn guess_candidates_result(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    offset: usize,
+    before_cursor: bool,
+) -> Result<bool, CandidateGuessRefusal> {
     // Both candidate exports free their rows before the empty-matrix
     // refusal, leaving sentence results intact (074a2219,
     // zhuyin.cpp:1468-1471,1548-1551).
     if !matrix_has_keys(&inst.read()) {
         inst.state.candidates.clear();
-        return false;
+        return Ok(false);
     }
     if inst.core.session.set_options(inst.core.options()).is_err() {
-        return false;
+        return Ok(false);
     }
     if !inst.core.session.is_composing() {
-        return false;
+        return Ok(false);
     }
-    let Some(normalized) = validated_lookup_offset(&inst.read(), offset) else {
-        inst.state.candidates.clear();
-        return false;
+    let offset = validated_lookup_offset(&inst.read(), offset);
+    let normalized = match offset {
+        Ok(normalized) => normalized,
+        Err(refusal) => {
+            inst.state.candidates.clear();
+            return Err(refusal);
+        }
     };
     inst.state.candidates.clear();
     // The before-cursor entry searches the spans ENDING at the offset
@@ -417,11 +454,15 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     };
     let window_owned: oxpinyin_engine::CandidateList = match looked_up {
         Ok(window) => window,
+        Err(
+            oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+        ) => std::process::abort(),
         Err(error) => {
-            refuse_lookup_gram("zhuyin_guess_candidates", &error);
             inst.core.anchored_window = None;
             inst.state.candidates.clear();
-            return false;
+            return Err(CandidateGuessRefusal::Lookup(error));
         }
     };
     // The window is retained on the instance after the snapshot below
@@ -461,10 +502,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if window_owned.had_unreadable_item() {
         inst.core.anchored_window = None;
         inst.state.candidates.clear();
-        crate::ffi::log_warning(
-            "zhuyin_guess_candidates: a candidate's phrase item cannot be read",
-        );
-        return false;
+        return Err(CandidateGuessRefusal::UnreadableItem);
     }
     let before_end = if before_cursor {
         Some(normalized)
@@ -472,7 +510,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         None
     };
     crate::candidates::snapshot_candidates(
-        &mut inst,
+        inst,
         &window_owned,
         before_cursor,
         before_end,
@@ -484,7 +522,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (074a2219,
     // zhuyin.cpp:1460-1551). The empty matrix was refused above.
-    true
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -498,6 +536,23 @@ mod tests {
     use crate::parse::zhuyin_parse_more_chewings;
     use crate::test_support::{close, cstr, open};
     use crate::types::{LookupCandidate, lookup_candidate_type_t};
+
+    /// The defensive matrix failure reaches the entry point as an owned
+    /// refusal. Exercise its diagnostic without manufacturing a bad matrix.
+    #[test]
+    fn candidate_offset_refusal_logs_once() {
+        let logs = crate::test_support::LogCapture::new();
+        assert!(!super::candidate_guess_answer(Err(
+            super::CandidateGuessRefusal::InvalidOffset,
+        )));
+        assert_eq!(
+            logs.take_with_messages(),
+            [(
+                (Some("libzhuyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING),
+                "zhuyin_guess_candidates: the lookup failed".to_owned(),
+            )]
+        );
+    }
 
     /// Every row's type in the current list.
     fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candidate_type_t> {

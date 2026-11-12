@@ -127,7 +127,7 @@ jobs:
           uv: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # The tkrzw action builds it with this g++ and make, and
+        # The tkrzw action installs the overlay port with vcpkg and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
@@ -165,7 +165,7 @@ jobs:
       # pin-built libpinyin, which CI does not have.
       - run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
+      - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
@@ -220,12 +220,12 @@ jobs:
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # The tkrzw action builds it with this g++ and make, and
+        # The tkrzw action installs the overlay port with vcpkg and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       # Before the cache refresh, which builds against it.
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
+      - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
       # Default-backend rustdoc, warnings denied; the peers' rustdoc runs in
       # store-backends.yml.
@@ -345,10 +345,11 @@ jobs:
       - name: Install build dependencies (apt)
         # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
         # objcopy, objdump, ld), Clang and the libclang package for the
-        # call-site fixture's major, and taskset for the CPU-pinned child.
+        # call-site fixture's major, taskset for the CPU-pinned child, and
+        # Valgrind for the end-to-end Linux comparison on the stub library.
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux
+          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind
       - run: just test-tools
 
   # Stripped shipping-library sizes (constitution section 2). Builds both

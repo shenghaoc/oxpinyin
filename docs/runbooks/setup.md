@@ -58,26 +58,42 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev tkrzw-utils libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev zip unzip cmake ninja-build libglib2.0-dev
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel tkrzw-devel glib2-devel
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel zip unzip cmake ninja-build glib2-devel
 ```
 
-The build finds tkrzw only through pkg-config (`pkg-config tkrzw`), as the
-configure of libpinyin does. Debian's `tkrzw.pc` names `-llzma -llz4 -lzstd
--lz`, but `libtkrzw-dev` does not depend on their development packages. The
-apt line therefore installs them. Without them, every link fails with `cannot find
--llzma`. To use a tkrzw that you built yourself, put its `lib/pkgconfig`
-first on `PKG_CONFIG_PATH` and its `lib` on `LD_LIBRARY_PATH`.
-`just tkrzw-build DIR` builds the upstream revision that CI uses into `DIR`.
-Ubuntu's packaged libtkrzw is defective
-([`tkrzw-distro-compat.md`](../findings/tkrzw-distro-compat.md)).
-`tools/tkrzw/distro-probe.sh` checks the library on `PATH`, and provisioning runs
-it on an Ubuntu host. A `just tkrzw-build` build, the Debian package and the
-MSVC `tkrzw.lib` need no probe.
+tkrzw comes from the repository's vcpkg overlay port on Linux, macOS and
+Windows. GLib stays on the system package manager (Homebrew on macOS).
+Windows also uses vcpkg for GLib because it has no system package route.
+Install [vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started),
+run `bootstrap-vcpkg.bat` on Windows or `bootstrap-vcpkg.sh` on Linux and
+macOS, and set `VCPKG_ROOT` to that checkout.
+On Linux x86_64, run from the repository root:
+
+```bash
+"$VCPKG_ROOT/vcpkg" install tkrzw:x64-linux-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
+export OXPINYIN_TKRZW_PREFIX="$VCPKG_ROOT/installed/x64-linux-oxpinyin"
+export PKG_CONFIG_PATH="$OXPINYIN_TKRZW_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$OXPINYIN_TKRZW_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export PATH="$OXPINYIN_TKRZW_PREFIX/tools/tkrzw/bin:$PATH"
+pkg-config --modversion tkrzw
+```
+
+The build discovers tkrzw through pkg-config. The Linux triplet selects shared
+libraries and release-only builds. The loader uses `LD_LIBRARY_PATH`; oxpinyin
+adds no rpath. Keep these exports when running product binaries and tests,
+including `just sanitize tkrzw address`. `tools/tkrzw/runtime.py` checks the
+resolved library against `OXPINYIN_TKRZW_PREFIX`.
+The port itself keeps vcpkg's linkage defaults. Stock `x64-linux` installs
+static debug and release libraries.
+Linux CI uses the same overlay and a vcpkg binary cache. Release packaging,
+shipping-size measurements and oracle/reference images keep Debian's tkrzw.
+Ubuntu's packaged tkrzw is defective; development uses the overlay instead
+([finding](../findings/tkrzw-distro-compat.md)).
 
 Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 `uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
@@ -234,6 +250,11 @@ with your arguments. Pass the same crate and
 feature selection as for cargo test (see [backend selection](backends.md)). For the CI limits, pass `--profile ci`. `just test-doc` runs
 `cargo test --doc`.
 
+`just packaging install` and `just measure compare` build the shipping library
+with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
+reports the version found. Install it with `cargo install cargo-c --locked`,
+your distribution package or the upstream release archive.
+
 If names or enabled repositories differ, use the official package documentation of your system.
 The native check below prints the tkrzw version that
 pkg-config reports.
@@ -327,12 +348,37 @@ put the Homebrew `bin` directory before `/bin` on `PATH` in your shell profile,
 and open a new terminal.
 
 ```bash
-brew install tkrzw glib pkgconf
+brew install glib pkgconf
 mkdir -p ~/src
 cd ~/src
 git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
+
+The vcpkg route for tkrzw supports Apple silicon only; there is no Intel
+triplet. tkrzw comes from the repository's vcpkg overlay port, which builds the pinned
+upstream revision with upstream's own configure script and Makefile. Clone
+[vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started) and run its
+`bootstrap-vcpkg.sh`. Export `VCPKG_ROOT` as that checkout, here and in your
+shell profile; the `just` recipes read it. Then, from the repository root:
+
+```bash
+export VCPKG_ROOT=<your vcpkg checkout>
+"$VCPKG_ROOT/vcpkg" install tkrzw:arm64-osx-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
+export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/tools/tkrzw/bin:$PATH"
+pkg-config --modversion tkrzw
+```
+
+`triplets/arm64-osx-oxpinyin.cmake` is vcpkg's `arm64-osx-dynamic` triplet with
+two settings. It builds the release variant only. It also leaves the install
+name of `libtkrzw` as upstream's build records it, the absolute path in
+`$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib`, so every binary linked against
+it loads it with no rpath and no `DYLD_LIBRARY_PATH`. Do not move the vcpkg
+checkout afterwards; reinstall the port instead. The triplet makes
+`VCPKG_ROOT` part of the package's identity, so an install from a new root
+builds from source and never restores the library of another root from
+vcpkg's binary cache.
 
 Run the uv, just and interpreter commands from the Linux section, in that
 order (`brew install just` supplies just). For the checksum step on macOS, replace
@@ -344,20 +390,16 @@ and run:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-core -p oxpinyin-engine
-export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
 
 `export` sets a value that the commands in this terminal inherit. pkg-config
-finds Homebrew's tkrzw, the selected backend. Its `tkrzw.pc` names
-the lz4, lzma and zstd libraries without their directory, and
-`LIBRARY_PATH` supplies that directory. To use a tkrzw that you built yourself (`just tkrzw-build
-DIR`), put `DIR/lib/pkgconfig` first on `PKG_CONFIG_PATH` and `DIR/lib` on
-`DYLD_LIBRARY_PATH` instead. This is a real storage link/run check; a
+finds the vcpkg install of tkrzw, the selected backend, through the
+`PKG_CONFIG_PATH` export above. This is a real storage link/run check; a
 `cargo check` alone does not run the tests.
 In a fresh Bash terminal, go back to the checkout, source the Cargo environment,
-and repeat both exports and the check. Linux C-ABI packaging and Linux reference
+and repeat the exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
 The nightly macOS CI job uses this broader portable scope:
@@ -366,8 +408,8 @@ The nightly macOS CI job uses this broader portable scope:
 cargo test --locked --workspace
 ```
 
-The macOS job of CI builds tkrzw with `.github/actions/tkrzw` instead of
-using Homebrew's. Berkeley DB is a non-default backend. To use it:
+The macOS job of CI installs tkrzw the same way. Berkeley DB is a non-default
+backend. To use it:
 
 1. Run `brew install berkeley-db@5`.
 2. Export the keg-only `SYSTEM_DEPS_BDB_*` overrides
@@ -378,7 +420,8 @@ using Homebrew's. Berkeley DB is a non-default backend. To use it:
 Keep the target and user-data directories of each backend separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
-select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. They use the one
+select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
+tkrzw under `VCPKG_ROOT`. They use the one
 nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 `setarch`. In `fuzz/`, rustup installs the toolchain that the file names:
 
@@ -395,7 +438,7 @@ just sanitize tkrzw thread
 ```
 
 `capi-commands` also runs natively. pkg-config finds the GLib and
-tkrzw of the facade, and the fuzz recipe adds Homebrew's lib to `LIBRARY_PATH`. AddressSanitizer runs with leak detection off on
+tkrzw of the facade. AddressSanitizer runs with leak detection off on
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target. Both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
@@ -462,24 +505,15 @@ MSVC environment and toolchain; no project-specific IDE is required.
 workspace on the [default backend](backends.md). It also runs the tools Python
 harness (`just test-tools`).
 
-- `.github/actions/tkrzw` builds the
-  upstream revision that `tools/cloud/setup.sh` provisions, with `nmake -f
-  VCMakefile` in the Visual Studio developer environment. The result is a static
-  `tkrzw.lib` with the DLL C runtime that the Rust MSVC targets link.
-- The action writes a `tkrzw.pc`, which the store build script finds through
-  `PKG_CONFIG_PATH`.
-- The Windows image has no pkg-config, so the action
-  installs the vcpkg `pkgconf` and sets `PKG_CONFIG` to its `pkgconf.exe`.
-
-To do the same locally:
-
-1. Run `just tkrzw-build DIR` from Developer PowerShell. The recipe loads the
-   developer environment through `vswhere` when it is not already loaded.
-2. Put `DIR\lib\pkgconfig` on `PKG_CONFIG_PATH` and `DIR\bin` on `PATH`.
-3. Set `PKG_CONFIG` to a `pkgconf.exe` (for example, from `vcpkg install
-   pkgconf:x64-windows`).
-
-The recipe runs no `distro-probe.sh` and needs no `sh`.
+- Windows installs the repository's tkrzw overlay port and GLib through vcpkg.
+  The overlay reads the same pinned revision as the Linux build recipe.
+  CMake exports functions and vtables; patched public data declarations export
+  from the DLL and import in consumers. The release library uses the dynamic CRT
+  (`/MD`), matching oxpinyin's C++ bridge and vcpkg's `x64-windows` triplet.
+- The DLL is in `installed/x64-windows/bin`, the import library and pkg-config
+  metadata in `lib` and `lib/pkgconfig`, and public headers in `include`.
+- Set `$env:VCPKG_ROOT` to your vcpkg checkout. Run the commands below from
+  the repository root; `--overlay-ports` selects the repository port.
 
 The job also installs the vcpkg `glib` port, which it finds through the same
 `PKG_CONFIG` and `PKG_CONFIG_PATH`. It therefore builds and tests
@@ -491,18 +525,17 @@ not selected. Those tests do not establish native Windows oracle behavior.
 You do not need physical Windows hardware to use
 this CI coverage.
 
-A full local build or `just test` needs the same two vcpkg ports as the
+A full local build or `just test` needs the same vcpkg ports as the
 CI job. Without GLib, `glib-sys` fails, and every crate except
 `oxpinyin-core`, `oxpinyin-store` and
-`oxpinyin-engine` fails to build. From Developer PowerShell, with
-`$vcpkg` as your vcpkg checkout and `DIR` as the `just tkrzw-build` prefix, run:
+`oxpinyin-engine` fails to build. From Developer PowerShell, run:
 
 ```powershell
-& "$vcpkg\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
-$installed = "$vcpkg\installed\x64-windows"
+& "$env:VCPKG_ROOT\vcpkg.exe" install tkrzw:x64-windows pkgconf:x64-windows glib:x64-windows --overlay-ports=vcpkg-overlays
+$installed = "$env:VCPKG_ROOT\installed\x64-windows"
 $env:PKG_CONFIG = "$installed\tools\pkgconf\pkgconf.exe"
-$env:PKG_CONFIG_PATH = "DIR\lib\pkgconfig;$installed\lib\pkgconfig"
-$env:PATH = "DIR\bin;$installed\bin;$env:PATH"
+$env:PKG_CONFIG_PATH = "$installed\lib\pkgconfig"
+$env:PATH = "$installed\bin;$env:PATH"
 & $env:PKG_CONFIG --modversion glib-2.0 tkrzw
 ```
 
@@ -596,7 +629,7 @@ The name of each entry carries its pin, so a new pin gets a new entry:
 
 - `contract-data/<version>`: the pinned libpinyin-data package.
 - `model20-<digest>`: the model20 archive and its extraction.
-- `tkrzw-<revision>`: the tkrzw build of `just provision`.
+- `vcpkg/` and `vcpkg-binary-cache/`: the overlay checkout and binary cache of `just provision`, unless `VCPKG_ROOT` selects an existing checkout.
 - `pin-<commit>`: the provisioning cache, with the pin prefixes and their build trees.
 
 The model and contract-data fetchers allow one active fetch per pinned entry on a
@@ -749,7 +782,7 @@ and stop after the required checks.
   `pkg-config --modversion glib-2.0` and `pkg-config --modversion tkrzw`
   check discovery. The setup check prints the backend version and the missing-libclang diagnostic of bindgen,
   so keep those lines too.
-- macOS cannot link the lz4/lzma/zstd libraries of tkrzw: repeat the `LIBRARY_PATH` export
+- macOS cannot find tkrzw: repeat the `PKG_CONFIG_PATH` export
   above. For Berkeley DB, repeat the `SYSTEM_DEPS_BDB_*` exports
   ([backends](backends.md#discovery-and-overrides)). Do not treat a
   successful Clippy/check as a link test.

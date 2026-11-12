@@ -442,9 +442,6 @@ def host_lines(environ=None):
         lines.append('rust toolchain: missing (install rustup: https://rustup.rs)')
     if sys.platform == 'win32':
         lines.append(f'compiler: {windows_compiler(environ)}')
-        shell = shutil.which('sh', path=environ.get('PATH'))
-        lines.append(f'tkrzw probe shell: sh at {shell}' if shell else
-                     "tkrzw probe shell: missing sh; put Git for Windows' usr\\bin on PATH")
     else:
         cc = shutil.which('cc')
         lines.append(f'compiler: {(_first_line(_run([cc, "--version"], environ)) if cc else "missing") or "unknown"}')

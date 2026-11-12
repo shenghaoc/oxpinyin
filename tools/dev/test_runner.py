@@ -81,6 +81,7 @@ PACKAGING_PATHS = (
 CONTRACT_MODULES = ('fixtures', 'kit')
 
 HARNESS_DEPENDENCIES = {
+    'tools/dev/measure/native.test.py': ('tools/dev/measure/native.test.py',),
     **dict.fromkeys(PACKAGING_PATHS, PACKAGING_HARNESSES),
     **{f'tools/bisection/contract_{name}.py': (f'tools/bisection/contract_{name}.test.py',)
        for name in CONTRACT_MODULES},
@@ -112,6 +113,11 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/just.test.py'),
 }
+# Native measurement extends these existing services. Keep its contracts selected.
+for _measurement_source in ('bench', 'identity', 'neutrality', 'prepare', 'recipes', 'reports'):
+    _measurement_path = f'tools/dev/measure/{_measurement_source}.py'
+    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py', 'tools/dev/measure/linux.test.py')
+
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.
 COMPAT_HARNESS = (
@@ -133,12 +139,12 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
 ), COMPAT_HARNESS))
 
 # U6-owned provisioner inputs; shared CLI, recipes, policies and docs stay broad.
-PROVISION_HARNESS = ('tools/dev/provision.test.py', 'tools/dev/doctor.test.py',
+PROVISION_HARNESS = ('tools/dev/provision.test.py', 'tools/dev/vcpkg.test.py', 'tools/dev/doctor.test.py',
                      'tools/dev/python-request.test.py',
                      'tools/tkrzw/runtime.test.py', 'tools/dev/bash_floor.test.py',
                      'tools/dev/ci_tree.test.py')
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
-    'tools/dev/provision.py', 'tools/cloud/setup.sh',
+    'tools/dev/provision.py', 'tools/dev/vcpkg.py', 'tools/cloud/setup.sh',
     'tools/cloud/env.sh', 'tools/cloud/env.test.sh',
 ), PROVISION_HARNESS))
 
@@ -541,11 +547,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             host_library = tools.tkrzw_host(environment=child)
         except native.NativeRefused:
             print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
-            print('  Source the environment file tools/cloud/setup.sh writes, or provide a host',
-                  file=err, flush=True)
-            print('  libtkrzw (tkrzw_dbm_util on PATH); on Ubuntu it must pass tools/tkrzw/distro-probe.sh.',
-                  file=err, flush=True)
-            print("  Ubuntu's packaged libtkrzw fails it: it cannot read files it writes.",
+            print('  Install the overlay port and set VCPKG_ROOT, or source the cloud environment.',
                   file=err, flush=True)
             return 1
         child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)

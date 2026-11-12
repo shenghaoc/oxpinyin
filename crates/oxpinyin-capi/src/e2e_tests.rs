@@ -17,6 +17,7 @@
 
 use oxpinyin_core::{Dictionary as _, PhraseToken};
 use oxpinyin_facade::TextSpan;
+use std::cell::Cell;
 use std::ffi::c_uint;
 use std::ptr;
 
@@ -101,7 +102,7 @@ fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
         .candidates
         .iter()
         .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
-        .and_then(|c| c.token)
+        .and_then(|c| c.token.get())
         .expect("a phrase candidate carries its token")
         .value()
 }
@@ -267,6 +268,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         let inst = unsafe { instance_ref(instance) };
         inst.state.candidates[longer_index]
             .token
+            .get()
             .expect("a LONGER row carries its token")
     };
 
@@ -319,7 +321,7 @@ fn predicted_row(
     let index = inst
         .candidates
         .iter()
-        .position(|c| c.candidate_type() == kind && c.token.is_some())
+        .position(|c| c.candidate_type() == kind && c.token.get().is_some())
         .expect("the prediction holds a row of this kind");
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(pinyin_get_candidate(
@@ -424,12 +426,12 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
     inst.state.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),
-        type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+        type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
         nbest_index: 0,
-        token: Some(PhraseToken::new(token)),
+        token: Cell::new(Some(PhraseToken::new(token))),
         source_index: 0,
     });
-    let candidate = &mut inst.state.candidates[0] as *mut CapiCandidate as *mut LookupCandidate;
+    let candidate = crate::state::candidate_ptr(&inst.state.candidates[0]);
     let before = inst.core.lm.amplified_total();
     assert!(pinyin_choose_predicted_candidate(instance, candidate));
     // SAFETY: the C operation completed; re-borrow its live instance.
@@ -497,7 +499,8 @@ fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
             .candidates
             .iter()
             .rposition(|c| {
-                c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
+                c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE
+                    && c.token.get().is_some()
             })
             .expect("a word candidate")
     };
@@ -1308,7 +1311,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| {
-            let baked = c.token.map_or(0, |token| {
+            let baked = c.token.get().map_or(0, |token| {
                 inst.core
                     .dict
                     .live_items()
@@ -1665,7 +1668,7 @@ fn collect_gbk_candidate_tokens(instance: *mut PinyinInstance, input: &str) -> V
     inst.state
         .candidates
         .iter()
-        .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
+        .filter_map(|c| c.token.get().map(oxpinyin_core::PhraseToken::value))
         .filter(|token| (token >> 24) == 2)
         .collect()
 }
@@ -2028,6 +2031,93 @@ fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
     ));
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
+}
+
+/// The pin prepares one array per loaded library before the first critical
+/// (074a2219, pinyin.cpp:2652-2667 and phrase_large_table3.h:77-95).
+#[test]
+fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
+    struct Unload {
+        context: *mut crate::types::PinyinContext,
+        result: Option<bool>,
+        appends: usize,
+    }
+
+    unsafe extern "C" fn unload_on_clear(
+        _domain: *const std::ffi::c_char,
+        _level: glib_sys::GLogLevelFlags,
+        message: *const std::ffi::c_char,
+        data: glib_sys::gpointer,
+    ) {
+        // SAFETY: GLib supplies the diagnostic string and the child keeps
+        // its handler data alive until it removes the handler.
+        let (message_text, unload) = unsafe {
+            (
+                std::ffi::CStr::from_ptr(message),
+                &mut *data.cast::<Unload>(),
+            )
+        };
+        if unload.result.is_none() && message_text.to_bytes().starts_with(b"g_array_set_size") {
+            unload.result = Some(false);
+            unload.result = Some(crate::config::pinyin_unload_phrase_library(
+                unload.context,
+                2,
+            ));
+        } else if message_text.to_bytes().starts_with(b"g_array_append_vals") {
+            unload.appends += 1;
+        }
+    }
+
+    crate::test_support::run_in_child(
+        "e2e_tests::null_token_array_keeps_prepared_count_across_reentrant_unload",
+        |path| {
+            let (context, instance) = open(path.to_str().expect("UTF-8 path"));
+            hold_nihao_in_libraries(context, 4);
+            let before = crate::test_support::lookup(instance, "你好");
+            assert_eq!(before.len(), 4);
+            assert!(before.iter().any(|token| token >> 24 == 2));
+            let prepared = {
+                // SAFETY: The live instance is serialized and the view ends here.
+                let inst = unsafe { crate::state::instance_ref(instance) };
+                (0..16_u32)
+                    .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+                    .count()
+            };
+
+            let mut unload = Unload {
+                context,
+                result: None,
+                appends: 0,
+            };
+            // SAFETY: The handler and its data stay live for the synchronous call.
+            let handler = unsafe {
+                glib_sys::g_log_set_handler(
+                    c"GLib".as_ptr(),
+                    glib_sys::G_LOG_LEVEL_CRITICAL,
+                    Some(unload_on_clear),
+                    (&raw mut unload).cast(),
+                )
+            };
+            let answer =
+                crate::dict::pinyin_lookup_tokens(instance, c"你好".as_ptr(), ptr::null_mut());
+            // SAFETY: Remove the handler before reading or dropping its data.
+            unsafe { glib_sys::g_log_remove_handler(c"GLib".as_ptr(), handler) };
+            assert!(answer);
+            assert_eq!(unload.result, Some(true));
+            assert_eq!(unload.appends, prepared);
+            let after = crate::test_support::lookup(instance, "你好");
+            assert_eq!(
+                after,
+                before
+                    .into_iter()
+                    .filter(|token| token >> 24 != 2)
+                    .collect::<Vec<_>>()
+            );
+
+            crate::instance::pinyin_free_instance(instance);
+            crate::context::pinyin_fini(context);
+        },
+    );
 }
 
 /// Opens `user_dir` over the fixture, answering the raw handle.
@@ -2653,6 +2743,33 @@ fn addon_load_aborts_on_a_directory_library() {
     }
 }
 
+/// A NULL addon filename on a filesystem that refuses to map the system
+/// directory reaches the warning branch after the failed mapping.
+#[cfg(unix)]
+#[test]
+fn null_addon_chunk_name_logs_once_after_load_refusal() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::private_system(scratch.path());
+    if oxpinyin_facade::null_chunk_asserts(&system) {
+        return;
+    }
+    let conf = system.join("table.conf");
+    let text = std::fs::read_to_string(&conf).expect("fixture table.conf");
+    std::fs::remove_file(&conf).expect("remove the fixture symlink");
+    std::fs::write(&conf, text.replace("art.table art.bin", "art.table NULL"))
+        .expect("table.conf with NULL addon chunk name");
+    let system = cstr(system.to_str().expect("UTF-8 path"));
+    let context = pinyin_init(system.as_ptr(), ptr::null());
+    assert!(!context.is_null());
+    let logs = crate::test_support::LogCapture::new();
+    assert!(!crate::config::pinyin_load_addon_phrase_library(context, 4));
+    assert_eq!(
+        logs.take(),
+        [(Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
+    );
+    crate::context::pinyin_fini(context);
+}
+
 /// The predecessor tokens of the bigram export fixture, in the order the
 /// walk loads them (the backend's key order), and the successor both name.
 fn export_order_fixture() -> (u32, u32, u32) {
@@ -2784,6 +2901,58 @@ fn partial_gram(successor: u32) -> Vec<u8> {
     let mut gram = whole_gram(successor);
     gram.push(1);
     gram
+}
+
+/// A retained prefix whose user gram has a partial item tail emits one
+/// warning after replacing the previous candidate snapshot.
+#[rstest::rstest]
+fn partial_candidate_gram_logs_once(
+    #[values("lookup", "prediction", "punctuation")] operation: &str,
+) {
+    let scratch = TempUserDir::new("partial-candidate-gram-token");
+    let (context, instance) = open(scratch.path.to_str().expect("UTF-8 path"));
+    let token = crate::test_support::lookup(instance, "你好")[0];
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+
+    let user = TempUserDir::new("partial-candidate-gram");
+    crate::test_support::plant_bigram(
+        &user.path,
+        vec![(token.to_le_bytes().to_vec(), partial_gram(token))],
+    );
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
+    if operation == "lookup" {
+        assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+        assert!(!crate::sentence::pinyin_guess_sentence_with_prefix(
+            instance,
+            c"你好".as_ptr()
+        ));
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, c"hao".as_ptr()), 3);
+    }
+    let logs = crate::test_support::LogCapture::new();
+    let result = match operation {
+        "lookup" => crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
+        "prediction" => {
+            crate::predict::pinyin_guess_predicted_candidates(instance, c"你好".as_ptr())
+        }
+        _ => crate::sentence::pinyin_guess_predicted_candidates_with_punctuations(
+            instance,
+            c"你好".as_ptr(),
+        ),
+    };
+    assert!(!result);
+    assert_eq!(
+        logs.take(),
+        [(Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
+    );
+    let mut count = u32::MAX;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    assert_eq!(count, 0);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 /// Register rows 85 and 98 in walk order: the pin's begin reads no gram
@@ -3771,6 +3940,48 @@ fn save_and_reopen(
     crate::context::pinyin_fini(context);
     open(user_dir.to_str().expect("UTF-8 path"))
 }
+/// Removal leaves m_modified alone (074a2219 pinyin.cpp:3726-3768),
+/// so the clean save gate (pinyin.cpp:1132-1146) keeps the saved phrase.
+#[test]
+fn removing_the_last_saved_phrase_from_a_clean_context_does_not_persist() {
+    let user_dir = TempUserDir::new("clean-last-removal");
+    let path = user_dir.path.to_str().expect("UTF-8 path");
+    let (context, instance) = open(path);
+    let phrase = "测侧";
+    assert_eq!(import_batch(context, 7, &[(phrase, "ce'ce", 7)]), [true]);
+    let saved = export_of(context, 7);
+    assert_eq!(saved.len(), 1);
+    let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
+
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("cece").as_ptr()),
+        4
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut count = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance,
+        &raw mut count
+    ));
+    let candidate = (0..count)
+        .find_map(|index| {
+            let mut candidate = ptr::null_mut();
+            assert!(pinyin_get_candidate(instance, index, &raw mut candidate));
+            pinyin_is_user_candidate(instance, candidate).then_some(candidate)
+        })
+        .expect("the only user phrase is a candidate");
+    assert!(pinyin_remove_user_candidate(instance, candidate));
+    assert!(export_of(context, 7).is_empty());
+    assert!(!pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+
+    let (context, instance) = open(path);
+    assert_eq!(export_of(context, 7), saved);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// S3: an import count other than -1 reaches the item as its `guint32` bit pattern
 /// (`pinyin.cpp:523-524`, `:578`, `:601`); the export starts at -1 and writes the count only when
 /// it is above 0 (`:703`, `:738-739`), so 0 exports as -1. A second add onto `INT_MAX` passes the

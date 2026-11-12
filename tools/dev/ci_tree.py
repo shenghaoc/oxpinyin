@@ -97,7 +97,7 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 
 
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
-SHARED = (".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-toolchain.toml", ".cargo",
+SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version")
 RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`

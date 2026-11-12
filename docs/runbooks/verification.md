@@ -175,10 +175,10 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 ## 9. Sound tkrzw library
 
 Run the tkrzw cell, the reference cell, only against a sound libtkrzw.
-Use the packaged libtkrzw of Ubuntu only when `tools/tkrzw/distro-probe.sh` reports it healthy.
-A build from `tools/tkrzw/build.py` and the Debian package need no probe.
-When the packaged library is defective, `tools/cloud/setup.sh` provides a sound library.
-CI's tkrzw action provides one on every OS.
+Linux development and CI use the repository's vcpkg overlay port.
+`tools/cloud/setup.sh` installs it and writes the library path and certification
+prefix. Debian release packaging, shipping-size measurements and oracle/reference
+images retain Debian's library. Ubuntu's packaged library is not a development route.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.

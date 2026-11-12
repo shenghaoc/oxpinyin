@@ -23,6 +23,29 @@ from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
 
+def copy_entrypoint_tree(root):
+    """Copy the provisioning sources and their repository data dependencies."""
+    shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
+    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin-store/Cargo.toml'):
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, destination)
+
+
+class EntrypointFixtureTests(unittest.TestCase):
+    def test_copied_tree_imports_provision_without_the_tkrzw_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copy_entrypoint_tree(root)
+            result = subprocess.run(
+                [sys.executable, '-I', '-X', 'lazy_imports=normal', '-c',
+                 'import sys; sys.path.insert(0, sys.argv[1]); '
+                 'from tools.dev.provision import vcpkg; print(vcpkg.triplet())', str(root)],
+                cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), provision.vcpkg.triplet())
+
+
 def record_prefix(prefix, backend, root=ROOT, pin=None, architecture=None):
     record = provision.images.fields(pin or root / 'tools/oracle/oracle-pin.txt')
     values = {key: record[key] for key in ('libpinyin_commit', 'ibus_libpinyin_commit')}
@@ -220,110 +243,29 @@ if sys.platform.startswith('linux'):
                 self.service.proxy_ca(stack)
                 self.assertFalse(self.service.custom_ca)
 
-        def test_host_cache_exclusion_loader_and_exact_identity(self):
-            caches = [self.service.tkrzw_prefix, self.work / 'cache-b/tkrzw']
-            host = self.work / 'host'
-            for prefix in [*caches, host]:
-                (prefix / 'bin').mkdir(parents=True)
-                (prefix / 'lib').mkdir()
-                (prefix / 'lib/libtkrzw.so.1').touch()
-                util = prefix / 'bin/tkrzw_dbm_util'
-                util.write_text('#!/bin/sh\nexit "${FAKE_HOST_STATUS:-0}"\n')
-                util.chmod(0o755)
-            probe = self.work / 'probe'
-            probe.write_text('#!/bin/sh\ntkrzw_dbm_util\n')
-            ldd = self.bin / 'ldd'
-            ldd.write_text('#!/bin/sh\nprintf "libtkrzw.so.1 => %s (0x1234)\\n" "$FAKE_RESOLVED"\n')
-            ldd.chmod(0o755)
-            self.write()
-            env = dict(self.env, PATH=':'.join(str(p / 'bin') for p in [*caches, host]) + ':' + self.env['PATH'],
-                       LD_LIBRARY_PATH=':'.join(str(p / 'lib') for p in [*caches, host]),
-                       OXPINYIN_TKRZW_PREFIXES=str(caches[0]), FAKE_RESOLVED=str(host / 'lib/libtkrzw.so.1'))
-            ubuntu, debian = self.work / 'os-release-ubuntu', self.work / 'os-release-debian'
-            ubuntu.write_text('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n')
-            debian.write_text('NAME="Debian GNU/Linux"\nID=debian\n')
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(provision.probe_host(caches[1], env=env, probe=probe, os_release=ubuntu),
-                                 str(host / 'lib/libtkrzw.so.1'))
-                self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_HOST_STATUS='1'), probe=probe,
-                                                      os_release=ubuntu))
-                self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_RESOLVED=str(caches[0] / 'lib/libtkrzw.so.1')),
-                                                      probe=probe, os_release=ubuntu))
-                # Off Ubuntu the distribution package needs no distro-probe.sh: a failing probe is never run,
-                # and the loader checks still refuse a cached library.
-                self.assertEqual(provision.probe_host(caches[1], env=dict(env, FAKE_HOST_STATUS='1'), probe=probe,
-                                                      os_release=debian), str(host / 'lib/libtkrzw.so.1'))
-                self.assertFalse(provision.probe_host(caches[1], env=dict(env, FAKE_RESOLVED=str(caches[0] / 'lib/libtkrzw.so.1')),
-                                                      probe=probe, os_release=debian))
-            legacy = self.service.env_file.read_text().replace('export OXPINYIN_TKRZW_PREFIXES=', '# old ')
-            self.service.env_file.write_text(legacy)
-            self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), str(caches[0]))
-            self.service.tkrzw_local = False
-            self.service.tkrzw_host_library = str(host / 'lib/libtkrzw.so.1')
-            self.write()
-            self.assertEqual(provision.tkrzw_env_prefix(self.service.env_file), '')
-            self.assertIn(str(host / 'lib/libtkrzw.so.1').encode(), self.source('tkrzw').stdout)
-
-        def test_os_release_falls_back_to_usr_lib(self):
-            fallback = self.work / 'usr-lib-os-release'
-            fallback.write_text('ID=ubuntu\n')
-            absent = self.work / 'absent-os-release'
-            self.assertTrue(provision.ubuntu_host(absent, fallback))
-            self.assertEqual(provision.os_release_record(absent, fallback), {'ID': 'ubuntu'})
-            first = self.work / 'etc-os-release'
-            first.write_text('ID=debian\n')
-            self.assertFalse(provision.ubuntu_host(first, fallback))
-            self.assertIsNone(provision.os_release_record(absent, absent))
-
-        def test_a_linux_host_without_os_release_is_not_certified(self):
-            absent = self.work / 'absent-os-release'
-            with (mock.patch.object(provision.platform, 'system', return_value='Linux'),
-                  mock.patch.object(provision, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as error):
-                self.assertEqual(provision.probe_host('', env={'PATH': ''}, os_release=absent, os_release_fallback=absent), '')
-            run.assert_not_called()
-            self.assertIn(f'host check: neither {absent} nor {absent} can be read, so the host cannot be named; '
-                          'no healthy host libtkrzw was certified', error.getvalue())
-
-        def test_every_empty_host_probe_result_reports_its_reason_on_stderr(self):
-            ubuntu = self.work / 'os-release-ubuntu'
-            ubuntu.write_text('ID=ubuntu\n')
-            library = self.work / 'host-libtkrzw.so.1'
+        def test_overlay_probe_certifies_the_configured_install_and_refuses_other_libraries(self):
+            installed = self.service.tkrzw_prefix
+            utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
+            utility.parent.mkdir(parents=True)
+            utility.touch()
+            (installed / 'lib').mkdir()
+            library = installed / 'lib/libtkrzw.so.1'
             library.touch()
-            cached = self.service.tkrzw_prefix / 'lib/libtkrzw.so.1'
-            cached.parent.mkdir(parents=True)
-            cached.touch()
-            alias = self.work / 'host-library-link'
-            alias.symlink_to(cached)
-            util = str(self.work / 'tkrzw_dbm_util')
-            cases = (
-                ('failed distro probe', 7, util, str(library), None,
-                 'host distro-probe.sh failed (status 7)'),
-                ('missing utility', 0, None, str(library), None,
-                 'tkrzw_dbm_util is not on the host PATH after excluding cached runtimes'),
-                ('failed loader', 0, util, str(library), Finished(126),
-                 'the host utility loader check failed (status 126)'),
-                ('unresolved library', 0, util, '', None,
-                 'the host utility did not resolve libtkrzw'),
-                ('missing library file', 0, util, str(self.work / 'absent-library'), None,
-                 'resolved host libtkrzw is not a file:'),
-                ('excluded cache', 0, util, str(cached), None,
-                 'resolved libtkrzw belongs to an excluded cache:'),
-                ('cache through symlink', 0, util, str(alias), None,
-                 'resolved host libtkrzw points into an excluded cache:'),
-            )
-            for name, status, executable, resolved, error, reason in cases:
-                output, diagnostic = io.StringIO(), io.StringIO()
-                with self.subTest(path=name), \
-                        mock.patch.object(provision, 'run', return_value=status), \
-                        mock.patch.object(provision.shutil, 'which', return_value=executable), \
-                        mock.patch.object(provision, 'resolve_tkrzw', return_value=resolved,
-                                          side_effect=error), \
-                        mock.patch.object(provision, 'text', return_value='Linux'), \
-                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostic):
-                    self.assertEqual(provision.probe_host(self.service.tkrzw_prefix, env=self.env, os_release=ubuntu), '')
-                self.assertIn(reason, diagnostic.getvalue())
-                self.assertIn('no healthy host libtkrzw was certified', diagnostic.getvalue())
-                self.assertNotIn(reason, output.getvalue())
+            env = dict(self.env, OXPINYIN_TKRZW_LIBRARY='/stale/libtkrzw.so.1')
+            resolved = ['libtkrzw.so.1 => ' + str(library) + ' (0x1234)',
+                        'libtkrzw.so.1 => /wrong/libtkrzw.so.1 (0x1234)',
+                        'libtkrzw.so.1 => not found']
+            for index, output in enumerate(resolved):
+                done = subprocess.CompletedProcess([], 0, output)
+                with mock.patch.object(provision.runtime, 'resolve', return_value=('Linux', done, [
+                        str(library) if index == 0 else '/wrong/libtkrzw.so.1' if index == 1 else 'not found'])), \
+                        contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                    answer = provision.probe_host(env=env)
+                self.assertEqual(answer, str(library) if index == 0 else '')
+            utility.unlink()
+            with contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                self.assertEqual(provision.probe_host(env=env), '')
+            self.assertIn('missing vcpkg utility', diagnostic.getvalue())
 
         def test_uncertified_host_names_the_outcome_and_keeps_status_one(self):
             with mock.patch.object(provision, 'probe_host', return_value=''):
@@ -349,12 +291,7 @@ if sys.platform.startswith('linux'):
             self.root = self.work / 'tree'
             self.root.mkdir()
             # These are fixture source trees, never reference-image contents.
-            shutil.copytree(ROOT / 'tools', self.root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
-            for name in ('.python-version', 'rust-toolchain.toml'):
-                shutil.copyfile(ROOT / name, self.root / name)
-            # A multi-cell provision resolves the default backend from the store manifest.
-            (self.root / 'crates/oxpinyin-store').mkdir(parents=True)
-            shutil.copyfile(ROOT / 'crates/oxpinyin-store/Cargo.toml', self.root / 'crates/oxpinyin-store/Cargo.toml')
+            copy_entrypoint_tree(self.root)
             self.bin = self.work / 'bin'
             self.bin.mkdir()
             self.calls = self.work / 'calls'
@@ -781,21 +718,29 @@ class RuntimeProvisionTests(unittest.TestCase):
                 with mock.patch.object(provision.Provision, check + '_ok', return_value=True):
                     self.assertEqual(provision.main(['prefix-check', check, 'tkrzw', '/p', '/pin']), 0)
 
-    def test_a_tkrzw_loader_check_that_does_not_run_keeps_the_cache(self):
+    def test_a_tkrzw_loader_failure_preserves_the_vcpkg_install(self):
         service = self.service('podman')
-        prefix = service.tkrzw_prefix
-        (prefix / 'bin').mkdir(parents=True)
-        (prefix / 'bin/tkrzw_dbm_util').write_text('built')
-        (prefix / 'REV').write_text(provision.TKRZW_REV + '\n')
-        uncertified = mock.Mock(status=1, stdout=b'', stderr=b'')
-        with (mock.patch.object(provision, 'capture', return_value=uncertified),
-              mock.patch.object(provision, 'resolve_tkrzw', side_effect=Finished(127)),
-              mock.patch.object(provision, 'run') as run,
+        utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
+        utility.parent.mkdir(parents=True)
+        utility.write_text('kept')
+        with (mock.patch.object(provision.vcpkg, 'install'),
+              mock.patch.object(provision.runtime, 'check', side_effect=provision.runtime.RuntimeRefused('loader failed')),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
             service.sound_tkrzw()
-        self.assertIn(f'tkrzw: the loader check of {prefix} did not run (status 127); the cache is kept', error.getvalue())
-        self.assertEqual((prefix / 'bin/tkrzw_dbm_util').read_text(), 'built')
-        run.assert_not_called()
+        self.assertIn('loader failed', error.getvalue())
+        self.assertEqual(utility.read_text(), 'kept')
+
+    def test_each_tkrzw_binary_must_load_the_library(self):
+        for missing, results in (('subject', [None]), ('pin', [Path('/verified/libtkrzw.so.1'), None])):
+            with self.subTest(missing=missing):
+                service = self.service('podman')
+                with (mock.patch.object(provision.vcpkg, 'install'),
+                      mock.patch.object(provision.runtime, 'check', side_effect=results) as check,
+                      contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+                    service.sound_tkrzw()
+                self.assertIn(f'{missing} binary does not load libtkrzw', error.getvalue())
+                self.assertEqual(check.call_count, len(results))
+                self.assertFalse(service.tkrzw_local)
 
     def test_valgrind_ext4_and_dump_utilities_off_linux(self):
         for host in ('Darwin', 'Windows'):
@@ -836,7 +781,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         service = provision.Provision(root=ROOT, env=env)
         self.assertEqual(service.cache, self.work / 'root' / f'pin-{commit[:12]}')
         self.assertEqual(service.cache, provision.images.provision_cache(env))
-        self.assertEqual(service.tkrzw_prefix, (self.work / 'root' / f'tkrzw-{provision.TKRZW_REV[:12]}').resolve())
+        self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
         self.assertEqual(provision.images.model_cache(env), provision.model.default_cache(env))
 
     def test_the_cache_root_is_needed_only_by_a_run_that_uses_it(self):
@@ -855,7 +800,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         with contextlib.suppress(Finished):
             service.options(['--cache-dir', '/provision'], in_image=True)
         self.assertEqual(service.cache, Path('/provision'))
-        self.assertEqual(service.tkrzw_prefix.parent, (self.work / 'root').resolve())
+        self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
 
     def test_the_platform_comes_from_the_host_architecture_on_every_os(self):
         for machine, expected in (('x86_64', 'linux/amd64'), ('AMD64', 'linux/amd64'), ('aarch64', 'linux/arm64'),

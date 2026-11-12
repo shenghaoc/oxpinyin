@@ -9,6 +9,8 @@ set shell := ["pwsh", "-NoLogo", "-NoProfile", "-CommandWithArgs"]
 
 # Discard just's recipe name once, before native argument forwarding.
 windows_args := '$null, [object[]]$forwarded = $args;'
+# The vcpkg overlay port's tkrzw in the repository's macOS triplet (triplets/).
+macos_tkrzw := '${VCPKG_ROOT:?set VCPKG_ROOT to your vcpkg checkout}/installed/arm64-osx-oxpinyin'
 
 # The cache root of everything the tooling fetches or builds from pinned sources,
 # shared by all worktrees (docs/runbooks/setup.md#cache-directory).
@@ -130,17 +132,15 @@ check backend="": python
 check backend="": python
     @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.check @forwarded; exit $LASTEXITCODE
 
-# A distro tkrzw is found through pkg-config with nothing more. To use this
-# build instead, put DIR/lib/pkgconfig on PKG_CONFIG_PATH and DIR/lib on the
-# runtime library path (DIR/bin on Windows), as CI's tkrzw action does.
-# Build upstream tkrzw at the provisioning revision into an empty DIR.
+
+# Native source-revision comparison and xctrace profiling.
 [unix]
-tkrzw-build prefix: python
-    @uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix "$1"
+measure *args: python
+    @uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' "$@"
 
 [windows]
-tkrzw-build prefix: python
-    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -m tools.tkrzw.build build --prefix @forwarded; exit $LASTEXITCODE
+measure *args: python
+    @{{windows_args}} uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest.
 [unix]
@@ -224,12 +224,12 @@ mutants *args:
 fuzz *args:
     @setarch "$(uname -m)" -R cargo fuzz run "$@"
 
-# cargo-fuzz supports Darwin. Homebrew's tkrzw.pc names its compression
-# libraries without their directory, so Homebrew's lib joins LIBRARY_PATH.
+# cargo-fuzz supports Darwin. tkrzw is the vcpkg overlay port's install in
+# the repository triplet (docs/runbooks/setup.md).
 [macos, working-directory: 'fuzz']
 fuzz *args:
     @env \
-        LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}" \
+        PKG_CONFIG_PATH="{{macos_tkrzw}}/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
         cargo fuzz run "$@"
 
 # Windows fuzz execution is unverified; setarch is Linux-only.
@@ -284,9 +284,10 @@ provision-oracle *args: python
 sanitize backend="" sanitizer="address": python
     @uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
-# Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
-# selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
-# host library by the library its tkrzw_dbm_util loads; put Homebrew's tkrzw_dbm_util on PATH.
+# Darwin uses Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and tkrzw from the
+# vcpkg overlay port's install. The recipe selects Darwin paths and omits Linux
+# setarch. The tkrzw gate certifies the host library by the library its
+# tkrzw_dbm_util loads, so that install's tkrzw_dbm_util goes first on PATH.
 [macos]
 sanitize backend="" sanitizer="address": python
     @env \
@@ -294,10 +295,10 @@ sanitize backend="" sanitizer="address": python
         SYSTEM_DEPS_BDB_LIB=db \
         SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
         SYSTEM_DEPS_BDB_INCLUDE="$(brew --prefix berkeley-db@5)/include" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:$(brew --prefix tkrzw)/lib/pkgconfig" \
-        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib:$(brew --prefix tkrzw)/lib:$(brew --prefix lz4)/lib:$(brew --prefix xz)/lib:$(brew --prefix zstd)/lib" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:{{macos_tkrzw}}/lib/pkgconfig" \
+        LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
-        PATH="$(brew --prefix tkrzw)/bin:$PATH" \
+        PATH="{{macos_tkrzw}}/tools/tkrzw/bin:$PATH" \
         uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # The gates are Linux/Darwin native builds; Windows sanitizers are unsupported.

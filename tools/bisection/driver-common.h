@@ -11,16 +11,21 @@
 #ifndef OXPINYIN_DRIVER_COMMON_H
 #define OXPINYIN_DRIVER_COMMON_H
 
+#ifndef _WIN32
 #include <dirent.h>
 #include <dlfcn.h>
+#endif
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
+#ifndef _WIN32
 /* ── Required symbols ─────────────────────────────────────────────────── */
 
 /* Resolves `name`, or prints "  MISSING: <name>" and exits 1. */
@@ -54,6 +59,8 @@ static inline void *dc_resolve(void *handle, const char *name, int *missing) {
     return symbol;
 }
 
+#endif
+
 /* ── Caller-owned strings ─────────────────────────────────────────────── */
 
 /* Releases a string the library may have left NULL. */
@@ -62,6 +69,7 @@ static inline void dc_release(void (*release)(void *), void *text) {
         release(text);
 }
 
+#ifndef _WIN32
 /* ── Temporary user directories ───────────────────────────────────────── */
 
 /* Unlinks the entries directly inside `dir`, then removes `dir`. Shallow
@@ -84,6 +92,8 @@ static inline void dc_remove_dir_shallow(const char *dir) {
     }
     rmdir(dir);
 }
+
+#endif
 
 /* ── Inputs ───────────────────────────────────────────────────────────── */
 

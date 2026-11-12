@@ -214,5 +214,19 @@ if sys.platform == 'win32':
             self.assertIn('bdb: reading db.h needs cc', err.getvalue())
 
 
+class MsvcTests(unittest.TestCase):
+    def test_vcvars_preserves_spaced_paths_and_skips_cmd_drive_entries(self):
+        calls = []
+        def capture(command, **kwargs):
+            calls.append(command)
+            return mock.Mock(returncode=0, stdout=('C:\\Visual Studio\\\n' if len(calls) == 1 else
+                        '=C:=C:\\ignored\nPath=C:\\VC Tools\nVCToolsInstallDir=C:\\VC Tools\n'))
+        with mock.patch.object(check.platform, 'machine', return_value='ARM64'):
+            env = check.msvc_environment({'programfiles(x86)': 'C:\\Program Files (x86)'}, capture=capture)
+        self.assertIn('vcvarsarm64.bat', calls[1])
+        self.assertEqual(check.lookup(env, 'PATH'), 'C:\\VC Tools')
+        self.assertNotIn('=C:', env)
+
+
 if __name__ == '__main__':
     unittest.main()

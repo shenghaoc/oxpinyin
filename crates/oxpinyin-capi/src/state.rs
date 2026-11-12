@@ -13,7 +13,10 @@
 //! user-data export machinery.
 
 use std::path::Path;
-use std::{cell::UnsafeCell, rc::Rc};
+use std::{
+    cell::{Cell, UnsafeCell},
+    rc::Rc,
+};
 
 use oxpinyin_core::{OptionBits, PhraseToken};
 
@@ -97,12 +100,12 @@ impl CapiContext {
     /// and so does this. Without it an out-of-range index would silently load a
     /// stray `addon_{index}_*` table on disk (whichever backend's
     /// extension `default_store_file` names) rather than being refused.
-    pub(crate) fn load_addon(&mut self, index: u8) -> bool {
+    pub(crate) fn load_addon(&mut self, index: u8) -> Result<bool, &'static str> {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
-            return false;
+            return Ok(false);
         }
         match self.core.load_addon_phrase_library(index) {
-            Ok(loaded) => loaded,
+            Ok(loaded) => Ok(loaded),
             // Register row 79, `pinyin.cpp:491`: the pin asserts a loaded
             // addon row is a `DICTIONARY`, and the process aborts.
             Err(oxpinyin_facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
@@ -122,17 +125,14 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin_facade::LibraryRowAssert::NullChunkName) => {
-                crate::ffi::log_warning(
-                    oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning(),
-                );
-                false
+                Err(oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning())
             }
             // Register row 96: `pinyin.cpp:290` maps the addon through the same
             // `MemoryChunk::mmap`, and a directory of header size or more fails
             // the read at `memory_chunk.h:493`.
             Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
             // The addon load answers no `NotLoadable`.
-            Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => false,
+            Err(oxpinyin_facade::LibraryRowAssert::NotLoadable) => Ok(false),
         }
     }
 
@@ -180,14 +180,14 @@ pub struct CapiCandidate {
     /// inside the snapshot's buffer, kept current by the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
     /// [`Self::candidate_type`]'s tag.
-    pub(crate) type_tag: u8,
+    pub(crate) type_tag: Cell<u8>,
     pub(crate) nbest_index: u8,
     /// The candidate's scoring token, snapshotted so the training entry
     /// points (`pinyin_train`'s observation, predicted-candidate training,
     /// `pinyin_is_user_candidate`) can resolve it without re-decoding.
     /// `None` for sentence-level and fallback candidates, which carry no
     /// token and are not trained (§2: only pinned phrases train).
-    pub(crate) token: Option<PhraseToken>,
+    pub(crate) token: Cell<Option<PhraseToken>>,
     /// The index this candidate held in the window it was snapshotted from.
     /// The snapshot (`Vec<CapiCandidate>`) may omit entries (the engine's
     /// `Fallback` row, a `CString` conversion failure), so a candidate's position in the snapshot is NOT its
@@ -198,20 +198,20 @@ pub struct CapiCandidate {
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
+const _: () = {
+    assert!(core::mem::size_of::<CapiCandidate>() == 32);
+    assert!(core::mem::align_of::<CapiCandidate>() == 8);
+};
 
 impl CapiCandidate {
     /// The row's `lookup_candidate_type_t`.
-    pub(crate) const fn candidate_type(&self) -> crate::types::lookup_candidate_type_t {
-        crate::types::lookup_candidate_type_t::from_tag(self.type_tag)
+    pub(crate) fn candidate_type(&self) -> crate::types::lookup_candidate_type_t {
+        crate::types::lookup_candidate_type_t::from_tag(self.type_tag.get())
     }
 
     /// Sets the row's `lookup_candidate_type_t`.
-    pub(crate) const fn set_candidate_type(
-        &mut self,
-        candidate_type: crate::types::lookup_candidate_type_t,
-    ) {
-        self.type_tag = candidate_type.tag();
+    pub(crate) fn set_candidate_type(&self, candidate_type: crate::types::lookup_candidate_type_t) {
+        self.type_tag.set(candidate_type.tag());
     }
 }
 

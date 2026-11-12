@@ -6,6 +6,7 @@
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::os::raw::c_char;
 
@@ -31,17 +32,6 @@ struct Predicted {
     token: u32,
     candidate_type: lookup_candidate_type_t,
     frequency: u32,
-}
-
-/// Fills `inst.state.candidates` with predicted phrases for `prefix`.
-///
-/// Returns `false` when the prefix matches no phrase-table suffix (upstream
-/// returns false when `m_prefixes` stays empty).
-pub fn guess_predicted(
-    inst: &mut crate::state::CapiInstanceMut<'_>,
-    prefix: Option<&PhraseText>,
-) -> bool {
-    guess_predicted_result(inst, prefix).unwrap_or(false)
 }
 
 /// `_compute_predicted_bigram_candidates`'s gram walk (`pinyin.cpp:2321-2341`
@@ -87,13 +77,14 @@ fn predicted_bigram_items(
     Ok(single_gram::retrieve_all(&merged).collect())
 }
 
-// Err marks a refused gram walk (row 98), distinct from a missing
-// prefix. The punctuation wrapper ignores a missing prefix but must refuse
-// the walk.
+/// Fill the candidate snapshot, returning false for a missing prefix.
+///
+/// A refused gram walk (row 98) returns a warning for the entry point to
+/// emit after releasing the instance view.
 fn guess_predicted_result(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     prefix: Option<&PhraseText>,
-) -> Result<bool, ()> {
+) -> Result<bool, &'static str> {
     // Prediction frees the previous list first (074a2219 pinyin.cpp:2420).
     // Its replacement has no phonetic lookup window.
     inst.core.anchored_window = None;
@@ -119,13 +110,7 @@ fn guess_predicted_result(
     // gram the pin reads past in its walk is refused here: one warning and
     // `false`, with the candidate list left empty in both APIs (the short
     // and the residual-total grams abort inside the walk).
-    let successors = match predicted_bigram_items(inst.core.user, prefixes) {
-        Ok(successors) => successors,
-        Err(message) => {
-            crate::ffi::log_warning(message);
-            return Err(());
-        }
-    };
+    let successors = predicted_bigram_items(inst.core.user, prefixes)?;
 
     let mut items = Vec::new();
     append_predicted_bigrams(
@@ -157,9 +142,9 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text: oxpinyin_facade::TextSpan::NULL,
             text_ptr: std::ptr::null(),
-            type_tag: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag(),
+            type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
-            token: Some(oxpinyin_core::PhraseToken::new(token)),
+            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
             source_index: 0,
         });
         return Ok(true);
@@ -188,9 +173,9 @@ fn guess_predicted_result(
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            type_tag: item.candidate_type.tag(),
+            type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
-            token: Some(oxpinyin_core::PhraseToken::new(item.token)),
+            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(item.token))),
             // Predicted candidates are chosen via
             // `pinyin_choose_predicted_candidate`, never the anchored-select
             // path, so the window index is unused here; record the snapshot
@@ -264,23 +249,33 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     }
     let prefix =
         oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
-    guess_predicted(&mut inst, prefix.as_ref())
+    let outcome = guess_predicted_result(&mut inst, prefix.as_ref());
+    prediction_answer(outcome)
 }
 
 ///
 /// Upstream returns `true` after the prepend, even when the prefix matched
 /// no phrase-table suffix. The scorer's zero-total assert aborts before
 /// prepending, as the pin's does (register row 61).
-pub fn guess_predicted_with_punctuations(
+pub(crate) fn guess_predicted_with_punctuations(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     prefix: Option<&PhraseText>,
-) -> bool {
-    if guess_predicted_result(inst, prefix).is_err() {
-        return false;
-    }
+) -> Result<bool, &'static str> {
+    guess_predicted_result(inst, prefix)?;
     // The pin walks `m_prefixes` as the prediction left it (`pinyin.cpp:2463`).
     prepend_punctuations(inst);
-    true
+    Ok(true)
+}
+
+/// Finish prediction after the instance view's last use.
+pub(crate) fn prediction_answer(outcome: Result<bool, &'static str>) -> bool {
+    match outcome {
+        Ok(answer) => answer,
+        Err(warning) => {
+            crate::ffi::log_warning(warning);
+            false
+        }
+    }
 }
 
 /// Prepends the punctuations of each prefix token, in prefix order then
@@ -311,9 +306,9 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            type_tag: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag(),
+            type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag()),
             nbest_index: 0,
-            token: None,
+            token: Cell::new(None),
             source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
         });
     }

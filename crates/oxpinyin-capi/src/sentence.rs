@@ -1,6 +1,7 @@
 //! Sentence guessing and retrieval.
 
 use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
+use std::cell::Cell;
 use std::os::raw::c_char;
 
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
@@ -185,7 +186,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     }
     let prefix =
         oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
-    crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref())
+    let outcome = crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref());
+    crate::predict::prediction_answer(outcome)
 }
 
 /// Get a sentence string from the instance (n-best variant).
@@ -471,12 +473,12 @@ pub extern "C" fn pinyin_guess_candidates(
         // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
         // the process aborts in `refuse_lookup_gram` too.
         Err(
-            error @ (oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }),
-        ) => {
-            refuse_lookup_gram("pinyin_guess_candidates", &error);
+            oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+        ) => std::process::abort(),
+        Err(error @ oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }) => {
             inst.state.candidates.clear();
+            refuse_lookup_gram("pinyin_guess_candidates", &error);
             return false;
         }
         Err(_) => {
@@ -598,25 +600,29 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            type_tag: match cand.kind() {
-                oxpinyin_engine::CandidateKind::Sentence => {
-                    lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+            type_tag: Cell::new(
+                match cand.kind() {
+                    oxpinyin_engine::CandidateKind::Sentence => {
+                        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Addon => {
+                        lookup_candidate_type_t::ADDON_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Phrase
+                    | oxpinyin_engine::CandidateKind::Fallback
+                        if is_longer =>
+                    {
+                        lookup_candidate_type_t::LONGER_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Phrase
+                    | oxpinyin_engine::CandidateKind::Fallback => {
+                        lookup_candidate_type_t::NORMAL_CANDIDATE
+                    }
                 }
-                oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
-                oxpinyin_engine::CandidateKind::Phrase
-                | oxpinyin_engine::CandidateKind::Fallback
-                    if is_longer =>
-                {
-                    lookup_candidate_type_t::LONGER_CANDIDATE
-                }
-                oxpinyin_engine::CandidateKind::Phrase
-                | oxpinyin_engine::CandidateKind::Fallback => {
-                    lookup_candidate_type_t::NORMAL_CANDIDATE
-                }
-            }
-            .tag(),
+                .tag(),
+            ),
             nbest_index: cand.nbest_index(),
-            token: cand.token(),
+            token: Cell::new(cand.token()),
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
         });
     }

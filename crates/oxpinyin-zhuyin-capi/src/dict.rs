@@ -40,20 +40,20 @@ pub extern "C" fn zhuyin_lookup_tokens(
     // answering. The abort below follows the clear and the appends, so a
     // NULL array's GLib criticals come first, as at the pin.
     let reduce_asserts = tokens.len() > 4;
+    let null_append_count = tokenarray.is_null().then(|| {
+        // Count the pin's prepared arrays before GLib can call a log handler.
+        (0..16)
+            .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+            .count()
+    });
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
     // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
     // before accessing the array or data (including a zero-length append).
     unsafe {
         g_array_set_size(tokenarray, 0);
-        if tokenarray.is_null() {
-            // prepare_tokens creates one array per loaded library, and
-            // reduce_tokens appends each, including empty arrays
-            // (074a2219 phrase_index.h:762-772,
-            // phrase_large_table3.h:77-97). GLib checks NULL before len.
-            for library in 0..16 {
-                if inst.core.dict.phrase_table_token_enabled(library << 24) {
-                    g_array_append_vals(tokenarray, std::ptr::null(), 0);
-                }
+        if let Some(count) = null_append_count {
+            for _ in 0..count {
+                g_array_append_vals(tokenarray, std::ptr::null(), 0);
             }
             if reduce_asserts {
                 std::process::abort();
@@ -221,9 +221,6 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
         return false;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
     // The pin clears the caller's array before appending
     // (`zhuyin.cpp:1793` `g_array_set_size(keys, 0)`), so a stale or
     // re-used GArray never shows concatenated results on either path.
@@ -233,6 +230,9 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
     unsafe {
         g_array_set_size(keys, 0);
     }
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
     // A `USER_FILE` reading lives in the session arena, so hand its stored
     // words straight to the caller's array instead of copying them through
     // an intermediate `Vec`.
@@ -240,13 +240,19 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
         .core
         .dict
         .with_user_nth_pronunciation_words(token, nth as usize, |length, words| {
-            // SAFETY: `keys` is the caller's non-NULL GArray with element
-            // size two bytes; `with_user_nth_pronunciation_words` keeps the
-            // borrowed words live for this call.
-            unsafe { append_stored_words(keys, length, words) }
+            if !keys.is_null() {
+                // SAFETY: The caller supplies a GArray with two-byte
+                // elements and the store lends the words for this copy.
+                unsafe { append_stored_words(keys, length, words) };
+            }
         })
         .is_some()
     {
+        if keys.is_null() {
+            // SAFETY: GLib diagnoses a NULL array before accessing any data.
+            // The item was found, and the store has released its reading.
+            unsafe { g_array_append_vals(keys, std::ptr::null(), 0) };
+        }
         return true;
     }
     let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {

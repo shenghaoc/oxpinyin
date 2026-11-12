@@ -19,9 +19,41 @@ import subprocess
 import sys
 
 from . import cell, native
-from tools.tkrzw import build as tkrzw_build
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def lookup(env, name):
+    """NAME's value in ENV, ignoring case: os.environ upper-cases Windows names."""
+    return next((value for key, value in env.items() if key.upper() == name.upper()), '')
+
+
+def msvc_environment(env, *, capture=subprocess.run):
+    """The Visual Studio developer environment: the caller's, or vcvars' via vswhere."""
+    if lookup(env, 'VCToolsInstallDir'):
+        return env
+    root = lookup(env, 'ProgramFiles(x86)') or r'C:\Program Files (x86)'
+    vswhere = Path(root) / 'Microsoft Visual Studio' / 'Installer' / 'vswhere.exe'
+    found = capture([str(vswhere), '-latest', '-products', '*', '-requires',
+                     'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
+                    env=env, capture_output=True, text=True)
+    installation = found.stdout.strip().splitlines()[0] if found.returncode == 0 and found.stdout.strip() else ''
+    if not installation:
+        raise ValueError('no Visual Studio with the C++ tools found; run from a Developer PowerShell for VS')
+    script = 'vcvarsarm64.bat' if platform.machine().upper() == 'ARM64' else 'vcvars64.bat'
+    vcvars = Path(installation) / 'VC' / 'Auxiliary' / 'Build' / script
+    # cmd /s keeps the outer quotes literal, so the batch path may hold spaces.
+    done = capture(f'cmd /d /s /c ""{vcvars}" >nul && set"', env=env, capture_output=True, text=True)
+    if done.returncode:
+        raise ValueError(f'{vcvars} failed with status {done.returncode}')
+    # `set` also lists cmd's hidden per-drive "=C:=C:\\..." entries; skip them.
+    loaded = dict(line.split('=', 1) for line in done.stdout.splitlines()
+                  if '=' in line and not line.startswith('='))
+    if not lookup(loaded, 'VCToolsInstallDir'):
+        raise ValueError(f'{vcvars} did not set VCToolsInstallDir')
+    return loaded
+
+
 USAGE = 'usage: just check [' + '|'.join(cell.BACKENDS) + ']'
 
 
@@ -29,14 +61,14 @@ def windows_compiler(env, *, capture=subprocess.run, which=shutil.which):
     """Whether the MSVC compiler the Windows build uses is available through ENV.
 
     A developer shell has cl on PATH or has loaded the developer environment;
-    otherwise the Visual Studio found through vswhere is used, as the tkrzw
-    build finds it. The Rust and C++ bridge builds use MSVC, never cc.
+    otherwise the Visual Studio found through vswhere is used.
+    The Rust and C++ bridge builds use MSVC, never cc.
     """
-    if which('cl', path=tkrzw_build.lookup(env, 'PATH')):
+    if which('cl', path=lookup(env, 'PATH')):
         return True
     try:
-        tkrzw_build.msvc_environment(env, capture=capture)
-    except (tkrzw_build.RecipeError, OSError):
+        msvc_environment(env, capture=capture)
+    except (ValueError, OSError):
         return False
     return True
 
@@ -47,7 +79,7 @@ def pkg_config_program(env):
     Windows has no pkg-config; the setup names a pkgconf.exe in PKG_CONFIG.
     """
     if sys.platform == 'win32':
-        return tkrzw_build.lookup(env, 'PKG_CONFIG') or 'pkg-config'
+        return lookup(env, 'PKG_CONFIG') or 'pkg-config'
     return 'pkg-config'
 
 

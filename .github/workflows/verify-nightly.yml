@@ -78,7 +78,7 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
+      - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).
@@ -203,7 +203,7 @@ jobs:
       - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
 
   # The full Windows workspace: clippy and the tests over the workspace,
-  # built with MSVC and the tkrzw action, and GLib from vcpkg. It runs every night and on
+  # built with MSVC and tkrzw and GLib from vcpkg. It runs every night and on
   # manual dispatch; section 10 makes it best-effort and never a PR merge
   # condition (docs/runbooks/verification.md). Not skipped by windows_only;
   # skipped by macos_only.
@@ -213,7 +213,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 45
     # windows-2025 defaults every `run:` to pwsh; every step here is bash
-    # (`>> "$GITHUB_ENV"`, `sha256sum`), which under pwsh would write nowhere.
+    # (`"$VCPKG_PACKAGES"`), which pwsh would not expand.
     defaults:
       run:
         shell: bash
@@ -221,14 +221,12 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
-      # bindgen reads tkrzw_langc.h through the runner's preinstalled LLVM.
+      # The peer backend bindings use the runner's preinstalled LLVM.
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
       # The package specs (port[features]:triplet) passed to `vcpkg install`,
       # space-separated. The binary cache key hashes this value, so adding a
-      # port or feature here gives the cache a new key. The tkrzw action
-      # installs pkgconf:x64-windows itself; it is listed so its build is
-      # cached under the same key.
-      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
+      # port or feature here gives the cache a new key.
+      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows tkrzw:x64-windows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -247,12 +245,13 @@ jobs:
       # restores only an archive whose hash matches, so a stale entry is
       # never used, only rebuilt. The installed tree is not cached.
       #
-      # The vcpkg revision is the runner image's own checkout, read once in
-      # the key step below. The cache key changes whenever an input to the
+      # tools/dev/vcpkg.py holds the key, install and report steps; only the
+      # cache actions stay here. The vcpkg revision is the runner image's own
+      # checkout, read once in the key step. The cache key changes whenever an input to the
       # ABI hashes can: that revision (ports and baseline), the triplet, the
       # runner image (compiler and SDK), the requested package specs
       # (VCPKG_PACKAGES), and any vcpkg manifest, configuration, overlay or
-      # triplet file in this repository (none today). The restore-keys fall
+      # triplet file in this repository. The restore-keys fall
       # back to the newest entry for the same revision and image, then for
       # the same image OS and triplet; vcpkg's own hash check decides what in
       # it is reusable.
@@ -262,30 +261,11 @@ jobs:
       # keeps the archives it built. It runs only on main and is skipped when
       # the restore matched the primary key exactly, because that entry
       # already exists. A branch dispatch restores main's entry through the
-      # restore keys and writes nothing. The restore comes before the tkrzw
+      # restore keys and writes nothing. The restore comes before the dependency
       # action, so its pkgconf install reads the cache too.
       - name: Compute the vcpkg binary cache key
         id: vcpkg-cache-key
-        run: |
-          set -euo pipefail
-          if vcpkg_rev=$(git -C "$VCPKG_INSTALLATION_ROOT" rev-parse HEAD 2>/dev/null); then
-            echo "vcpkg revision: $vcpkg_rev"
-          else
-            vcpkg_rev=baseline-$(sha256sum "$VCPKG_INSTALLATION_ROOT/versions/baseline.json" | cut -c1-40)
-            echo "vcpkg checkout has no git metadata; keyed on $vcpkg_rev"
-          fi
-          image="${ImageOS:?runner image OS unknown}-${ImageVersion:?runner image version unknown}"
-          cache_dir="${RUNNER_TEMP//\\//}/vcpkg-binary-cache"
-          mkdir -p "$cache_dir"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$cache_dir,readwrite" >> "$GITHUB_ENV"
-          packages=$(printf '%s' "$VCPKG_PACKAGES" | sha256sum | cut -c1-16)
-          echo "vcpkg packages: $VCPKG_PACKAGES (key component $packages)"
-          {
-            echo "dir=$cache_dir"
-            echo "prefix=vcpkg-bin-$ImageOS-x64-windows-"
-            echo "key=vcpkg-bin-$ImageOS-x64-windows-$vcpkg_rev-$image"
-            echo "packages=$packages"
-          } >> "$GITHUB_OUTPUT"
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"
       - name: Restore the vcpkg binary cache
         id: vcpkg-cache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -297,31 +277,11 @@ jobs:
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
       - name: Report the vcpkg binary cache restore
         env:
-          REQUESTED_KEY: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          REQUESTED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
           MATCHED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-matched-key }}
-        run: |
-          printf 'vcpkg cache: requested=%s restored=%s image=%s/%s\n' \
-            "$REQUESTED_KEY" "$MATCHED_KEY" "${ImageOS:?}" "${ImageVersion:?}"
-      # nmake in the Visual Studio developer environment, a static tkrzw.lib
-      # with the DLL C runtime, and a tkrzw.pc the store build script finds
-      # through PKG_CONFIG_PATH (tools/tkrzw/build.py). It also installs
-      # vcpkg's pkgconf and sets PKG_CONFIG to it.
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
-      # GLib for glib-sys (the C-ABI crates and the `tools` boundary).
-      # glib-sys finds it through PKG_CONFIG, set by the tkrzw action, and
-      # the installed tree's lib/pkgconfig, added here after the tkrzw build
-      # on PKG_CONFIG_PATH; the DLL directory joins PATH for the test
-      # binaries.
-      - name: Install GLib (vcpkg)
-        run: |
-          set -euo pipefail
-          read -ra specs <<< "$VCPKG_PACKAGES"
-          vcpkg install "${specs[@]}"
-          installed="${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows"
-          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH;$installed/lib/pkgconfig" | tee -a "$GITHUB_ENV"
-          echo "$installed/bin" >> "$GITHUB_PATH"
-          PKG_CONFIG_PATH="$PKG_CONFIG_PATH;$installed/lib/pkgconfig" "$PKG_CONFIG" --modversion --cflags --libs glib-2.0
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg cache-report
+      - name: Install tkrzw and GLib (vcpkg)
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg install --triplet x64-windows --packages "$VCPKG_PACKAGES"
       - name: Save the vcpkg binary cache
         if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -345,7 +305,7 @@ jobs:
         if: ${{ inputs.tools_harness }}
         run: just test-tools
 
-  # macOS links tkrzw from the tkrzw action. The full workspace runs here;
+  # macOS links tkrzw from the vcpkg overlay port. The full workspace runs here;
   # shipped macOS libraries are also built and checked separately. The tools
   # Python harness runs after the Rust steps on a dispatch that asks for it.
   #
@@ -362,6 +322,10 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
+      # The repository triplet (triplets/): vcpkg's arm64-osx-dynamic, release
+      # only, with each library's install name left as the absolute path in
+      # the installed tree, so the binaries load libtkrzw with no rpath.
+      VCPKG_TRIPLET: arm64-osx-oxpinyin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -375,13 +339,37 @@ jobs:
           cargo-c: 'true'
       - run: rustup show active-toolchain
       # GLib, pkg-config and the call-site LLVM from Homebrew; tkrzw from the
-      # tkrzw action, which puts its build first on PKG_CONFIG_PATH.
+      # vcpkg overlay port, first on PKG_CONFIG_PATH.
       - name: Install GLib, pkg-config and the call-site LLVM (Homebrew)
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           brew install glib pkgconf "llvm@${llvm_major}"
-      - name: Provision tkrzw (built at the setup.sh revision and cached)
-        uses: ./.github/actions/tkrzw
+      # vcpkg's binary cache, as in the Windows job above. The key also names
+      # the vcpkg root: the installed libtkrzw records its own path there as
+      # its install name, so an archive built under another root is not reused.
+      # tools/dev/vcpkg.py finds the runner's checkout and publishes
+      # VCPKG_ROOT, VCPKG_BINARY_SOURCES and the key.
+      - name: Compute the vcpkg binary cache key
+        id: vcpkg-cache-key
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg cache-key --triplet "$VCPKG_TRIPLET"
+      - name: Restore the vcpkg binary cache
+        id: vcpkg-cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          restore-keys: |
+            ${{ steps.vcpkg-cache-key.outputs.key }}-
+            ${{ steps.vcpkg-cache-key.outputs.prefix }}
+      # Installs the overlay port, then publishes PKG_CONFIG_PATH and the tools directory.
+      - name: Install tkrzw (vcpkg)
+        run: uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.vcpkg install --triplet "$VCPKG_TRIPLET"
+      - name: Save the vcpkg binary cache
+        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
+          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
       - name: Check shipped macOS library exports
         run: |
           stage="$RUNNER_TEMP/macos-shipped"

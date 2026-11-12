@@ -1160,6 +1160,10 @@ impl UserStore {
         self.inner
             .has_user_data
             .store(has_user_data, Ordering::Release);
+        self.invalidate_write_caches(offsets);
+    }
+
+    fn invalidate_write_caches(&self, offsets: MutexGuard<'_, Offsets>) {
         self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
         drop(offsets);
         *self.count_cache() = None;
@@ -1381,7 +1385,13 @@ impl UserStore {
         if self.originals.get(&library).is_none() && !self.has_user_library(library) {
             return Ok(UnigramAdd::Missing);
         }
-        Ok(self.arena_add_unigram_outcome(token, delta))
+        let offsets = self.offsets();
+        let (outcome, has_sub_index) = self.arena_add_unigram_outcome(token, delta);
+        // Even a missing item or refused increment can change the facade total.
+        if has_sub_index && delta != 0 {
+            self.invalidate_write_caches(offsets);
+        }
+        Ok(outcome)
     }
 
     /// What the user side adds to the facade's unigram total: everything of
