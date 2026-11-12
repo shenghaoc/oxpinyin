@@ -1804,7 +1804,34 @@ fn check_profile_early(
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
         }
-        Err(error) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
+        Err(
+            error @ (UserStoreError::Io(_)
+            | UserStoreError::Store(_)
+            | UserStoreError::Decode
+            | UserStoreError::InvalidPhrase
+            | UserStoreError::Persistence(_)
+            | UserStoreError::ChunkHeaderWrite(_)
+            | UserStoreError::LibraryChunkHeaderRead
+            | UserStoreError::SaveRemapFailed
+            | UserStoreError::SaveTooLarge
+            | UserStoreError::UnigramTotalOverflow
+            | UserStoreError::OverlongIndexKey
+            | UserStoreError::NonTokenUserBigramKey
+            | UserStoreError::ShortUserBigramValue
+            | UserStoreError::PartialUserBigramTail
+            | UserStoreError::ResidualUserBigramGram
+            | UserStoreError::Journal(_)
+            | UserStoreError::LibraryLoop(_)
+            | UserStoreError::TrainingSetFreqMiss
+            | UserStoreError::UserReadingRemoval
+            | UserStoreError::SessionSeed(_)
+            | UserStoreError::FailedUserBigramStore),
+        ) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
+        // A failed record copy is the pin's assert (`tkrzwdb_utils.h:65`,
+        // `:72`; `bdb_utils.h:61`, `:67`), which fails the open as
+        // `open_user_store` fails it; `check_format` does not copy, so it
+        // never reaches here.
+        Err(error @ UserStoreError::FatalCopy) => Err(OpenError::UserSession(error)),
     }
 }
 
@@ -1833,7 +1860,27 @@ fn open_user_store(
                 OpenError::UnknownDatabaseFormat(user_dir.to_path_buf())
             }
             UserStoreError::LibraryLoop(stop) => library_loop_error(stop),
-            error => OpenError::UserSession(error),
+            error @ (UserStoreError::Io(_)
+            | UserStoreError::Store(_)
+            | UserStoreError::Decode
+            | UserStoreError::InvalidPhrase
+            | UserStoreError::Persistence(_)
+            | UserStoreError::ChunkHeaderWrite(_)
+            | UserStoreError::LibraryChunkHeaderRead
+            | UserStoreError::SaveRemapFailed
+            | UserStoreError::SaveTooLarge
+            | UserStoreError::UnigramTotalOverflow
+            | UserStoreError::OverlongIndexKey
+            | UserStoreError::NonTokenUserBigramKey
+            | UserStoreError::ShortUserBigramValue
+            | UserStoreError::PartialUserBigramTail
+            | UserStoreError::ResidualUserBigramGram
+            | UserStoreError::Journal(_)
+            | UserStoreError::TrainingSetFreqMiss
+            | UserStoreError::UserReadingRemoval
+            | UserStoreError::SessionSeed(_)
+            | UserStoreError::FailedUserBigramStore
+            | UserStoreError::FatalCopy) => OpenError::UserSession(error),
         },
     )
 }
@@ -2148,7 +2195,29 @@ impl Runtime {
                 }
                 None => Err(EngineError::UserModel(error)),
             },
-            Err(error) => Err(error),
+            Err(
+                error @ (EngineError::CandidateIndexOutOfRange { .. }
+                | EngineError::LookupOffsetPastSeparator { .. }
+                | EngineError::LookupOffsetOutOfRange { .. }
+                | EngineError::LookupOffsetInsideCharacter { .. }
+                | EngineError::SelectionAnchorBeforeComposition { .. }
+                | EngineError::ZeroKeyOffsetCheck { .. }
+                | EngineError::MatrixColumnAssert { .. }
+                | EngineError::StaleTrainingConstraint { .. }
+                | EngineError::UnsafeTrainingPredecessor { .. }
+                | EngineError::ShortTrainingPredecessor { .. }
+                | EngineError::ShortLookupPredecessor { .. }
+                | EngineError::UnsafeLookupPredecessor { .. }
+                | EngineError::ReadAfterCheck { .. }
+                | EngineError::TrainingSetFreqMiss { .. }
+                | EngineError::FailedUserBigramStore { .. }
+                | EngineError::StaleTrainingSpan { .. }
+                | EngineError::OverlongUserIndexKey { .. }
+                | EngineError::TonedIncompleteKey
+                | EngineError::ReduceTokensCount { .. }
+                | EngineError::Graph(_)
+                | EngineError::Scoring(_)),
+            ) => Err(error),
         };
         if !matches!(
             &result,
@@ -2312,7 +2381,13 @@ impl Runtime {
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                 Err(SaveRemapFault::ChunkHeaderRead)
             }
-            Err(error) => match error.unmappable_path() {
+            Err(
+                error @ (LibraryError::Io(_)
+                | LibraryError::Format(_)
+                | LibraryError::Layout(_)
+                | LibraryError::Unmappable { .. }
+                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName)),
+            ) => match error.unmappable_path() {
                 Some(path) => Err(SaveRemapFault::Unmappable(path.to_path_buf())),
                 None => Ok(SaveBaseline::Keep),
             },
@@ -2415,7 +2490,13 @@ impl Runtime {
                     walk.indices = 0..0;
                     return Some(RemapStep::Directory(index));
                 }
-                Err(error) => {
+                Err(
+                    error @ (LibraryError::Io(_)
+                    | LibraryError::Format(_)
+                    | LibraryError::Layout(_)
+                    | LibraryError::Unmappable { .. }
+                    | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName)),
+                ) => {
                     if let Some(path) = error.unmappable_path() {
                         return Some(RemapStep::Unmappable(index, path.to_path_buf()));
                     }

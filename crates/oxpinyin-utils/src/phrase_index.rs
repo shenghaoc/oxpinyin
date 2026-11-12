@@ -63,7 +63,13 @@ pub fn load_phrase_index(conf: &TableConf) -> SystemPhraseIndex {
             tool::exit(tool::ENOENT);
         }
         Err(SystemLibraryError::Chunk(_, LibraryError::Row(_))) => tool::abort(),
-        Err(SystemLibraryError::Chunk(name, _)) => {
+        Err(SystemLibraryError::Chunk(
+            name,
+            LibraryError::Io(_)
+            | LibraryError::Format(_)
+            | LibraryError::Layout(_)
+            | LibraryError::Unmappable { .. },
+        )) => {
             edge::report_chunk_load_failed(&c_name(name));
             tool::exit(tool::ENOENT);
         }

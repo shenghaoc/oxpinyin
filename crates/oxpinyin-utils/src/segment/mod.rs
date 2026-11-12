@@ -142,22 +142,21 @@ pub(crate) fn parse_options(
 /// `stdout` (`ngseg.cpp:106-129`). A failed `fopen` is
 /// `perror("open file failed")` then `exit(EINVAL)`.
 pub(crate) fn open_output(value: &OptionValue) -> OutputStream {
-    match value {
-        OptionValue::Filename(Some(bytes)) => {
-            let name = c_string(bytes).unwrap_or_default();
-            match OutputStream::open_write(&name) {
-                Some(stream) => stream,
-                None => {
-                    tool::perror(c"open file failed");
-                    tool::exit(tool::EINVAL);
-                }
+    if let OptionValue::Filename(Some(bytes)) = value {
+        let name = c_string(bytes).unwrap_or_default();
+        match OutputStream::open_write(&name) {
+            Some(stream) => stream,
+            None => {
+                tool::perror(c"open file failed");
+                tool::exit(tool::EINVAL);
             }
         }
-        _ => match OutputStream::stdout() {
+    } else {
+        match OutputStream::stdout() {
             Some(stream) => stream,
             // The C runtime's `stdout` is never NULL in a started process.
             None => tool::abort(),
-        },
+        }
     }
 }
 

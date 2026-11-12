@@ -948,16 +948,15 @@ impl Cursor<'_> {
         // `DB_BUFFER_SMALL` attempt may have overwritten it with the
         // found key, and the retry must re-seek from the caller's bytes.
         loop {
-            let input_key_len = match seek {
-                Seek::AtOrAfter(key) => {
-                    let len = key.len();
-                    if len > self.key_buf.len() {
-                        self.key_buf.resize(len, 0);
-                    }
-                    self.key_buf[..len].copy_from_slice(key);
-                    len
+            let input_key_len = if let Seek::AtOrAfter(key) = seek {
+                let len = key.len();
+                if len > self.key_buf.len() {
+                    self.key_buf.resize(len, 0);
                 }
-                _ => 0,
+                self.key_buf[..len].copy_from_slice(key);
+                len
+            } else {
+                0
             };
             let mut key_dbt = usermem_dbt_with_size(&mut self.key_buf, input_key_len);
             let mut value_dbt = if value {

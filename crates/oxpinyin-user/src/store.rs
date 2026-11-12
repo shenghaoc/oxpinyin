@@ -1070,7 +1070,30 @@ impl UserStore {
                 check.fault = Some(TrainingFault::SetFreqMiss(prev));
                 Err(UserStoreError::TrainingSetFreqMiss)
             }
-            Err(error) => Err(error),
+            Err(
+                error @ (UserStoreError::Io(_)
+                | UserStoreError::Store(_)
+                | UserStoreError::Decode
+                | UserStoreError::InvalidPhrase
+                | UserStoreError::Persistence(_)
+                | UserStoreError::UnknownDatabaseFormat
+                | UserStoreError::ChunkHeaderWrite(_)
+                | UserStoreError::LibraryChunkHeaderRead
+                | UserStoreError::SaveRemapFailed
+                | UserStoreError::SaveTooLarge
+                | UserStoreError::UnigramTotalOverflow
+                | UserStoreError::OverlongIndexKey
+                | UserStoreError::NonTokenUserBigramKey
+                | UserStoreError::ShortUserBigramValue
+                | UserStoreError::PartialUserBigramTail
+                | UserStoreError::ResidualUserBigramGram
+                | UserStoreError::Journal(_)
+                | UserStoreError::LibraryLoop(_)
+                | UserStoreError::UserReadingRemoval
+                | UserStoreError::SessionSeed(_)
+                | UserStoreError::FailedUserBigramStore
+                | UserStoreError::FatalCopy),
+            ) => Err(error),
         }
     }
 

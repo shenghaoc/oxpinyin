@@ -1204,9 +1204,10 @@ impl ZhuyinParser {
 
         // max_chewing_dachen26_length = 12 for CP26,
         // max_chewing_length = 4 for every other keyboard.
-        let max_key_len = match keyboard {
-            Keyboard::Cp26(_) => 12,
-            _ => 4,
+        let max_key_len = if matches!(keyboard, Keyboard::Cp26(_)) {
+            12
+        } else {
+            4
         };
 
         let mut keys = Vec::new();

@@ -353,7 +353,28 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
         ) => std::process::abort(),
         // A parse the facade cannot read, which the pin has no counterpart
         // for.
-        Err(_) => {
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
             crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
             return false;
         }
@@ -404,7 +425,28 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
         ) => std::process::abort(),
         // A parse the facade cannot read, which the pin has no counterpart
         // for.
-        Err(_) => {
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
             crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
             return false;
         }

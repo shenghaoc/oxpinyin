@@ -165,6 +165,10 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
         // Register row 96, `memory_chunk.h:493`: after the user tables, the
         // mask maps each loaded system library again and one is a directory.
         oxpinyin_facade::MaskOutOutcome::ChunkHeaderRead => std::process::abort(),
+        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
+        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
+        // `:67`). The mask does not copy, so it never reaches here.
+        oxpinyin_facade::MaskOutOutcome::FatalCopy => std::process::abort(),
     }
 }
 
@@ -210,7 +214,11 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
         Err(oxpinyin_facade::LibraryLoadFault::Journal(_)) => std::process::abort(),
         // `NotLoadable` aborted above; the facade answers no other row
         // fault here.
-        Err(oxpinyin_facade::LibraryLoadFault::Row(_)) => false,
+        Err(oxpinyin_facade::LibraryLoadFault::Row(
+            oxpinyin_facade::LibraryRowAssert::NotLoadable
+            | oxpinyin_facade::LibraryRowAssert::NotDictionary
+            | oxpinyin_facade::LibraryRowAssert::NullChunkName,
+        )) => false,
     }
 }
 

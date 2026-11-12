@@ -32,7 +32,24 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
         UserStoreError::ShortUserBigramValue => MaskOutOutcome::ShortUserBigramValue,
         UserStoreError::PartialUserBigramTail => MaskOutOutcome::PartialUserBigramTail,
         UserStoreError::ResidualUserBigramGram => MaskOutOutcome::ResidualUserBigramGram,
-        _ => MaskOutOutcome::Done(false),
+        UserStoreError::Io(_)
+        | UserStoreError::Store(_)
+        | UserStoreError::Decode
+        | UserStoreError::InvalidPhrase
+        | UserStoreError::Persistence(_)
+        | UserStoreError::UnknownDatabaseFormat
+        | UserStoreError::ChunkHeaderWrite(_)
+        | UserStoreError::LibraryChunkHeaderRead
+        | UserStoreError::SaveRemapFailed
+        | UserStoreError::SaveTooLarge
+        | UserStoreError::UnigramTotalOverflow
+        | UserStoreError::Journal(_)
+        | UserStoreError::LibraryLoop(_)
+        | UserStoreError::TrainingSetFreqMiss
+        | UserStoreError::UserReadingRemoval
+        | UserStoreError::SessionSeed(_)
+        | UserStoreError::FailedUserBigramStore => MaskOutOutcome::Done(false),
+        UserStoreError::FatalCopy => MaskOutOutcome::FatalCopy,
     }
 }
 
@@ -126,6 +143,12 @@ pub enum MaskOutOutcome {
     /// assertion ([`JournalFault`], rows 91, 92, 97 and 108). The pin dies
     /// there; the C adapters abort.
     Journal(JournalFault),
+    /// A tkrzw or Berkeley DB record copy failed where the pin's
+    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
+    /// `bdb_utils.h:61`, `:67`). The C adapters abort. `mask_out` does not
+    /// copy, so it never answers this today; it keeps
+    /// [`UserStoreError::FatalCopy`] from reading as a soft `false`.
+    FatalCopy,
 }
 
 impl MaskOutOutcome {}
@@ -534,7 +557,26 @@ impl ContextCore {
             // Row 112: stop before the undefined copy, preserving earlier file
             // effects and keeping the session dirty for retry.
             Err(UserStoreError::SaveTooLarge) => return SaveOutcome::NotSaved,
-            Err(_) => return SaveOutcome::NotSaved,
+            Err(
+                UserStoreError::Io(_)
+                | UserStoreError::Store(_)
+                | UserStoreError::Decode
+                | UserStoreError::InvalidPhrase
+                | UserStoreError::Persistence(_)
+                | UserStoreError::UnknownDatabaseFormat
+                | UserStoreError::UnigramTotalOverflow
+                | UserStoreError::OverlongIndexKey
+                | UserStoreError::NonTokenUserBigramKey
+                | UserStoreError::ShortUserBigramValue
+                | UserStoreError::PartialUserBigramTail
+                | UserStoreError::ResidualUserBigramGram
+                | UserStoreError::Journal(_)
+                | UserStoreError::LibraryLoop(_)
+                | UserStoreError::TrainingSetFreqMiss
+                | UserStoreError::UserReadingRemoval
+                | UserStoreError::SessionSeed(_)
+                | UserStoreError::FailedUserBigramStore,
+            ) => return SaveOutcome::NotSaved,
         };
         // Each failed rename's `rename %s to %s failed.` line and a failed
         // marker's `write %s failed.` line were written as they happened,
@@ -792,7 +834,12 @@ impl ContextCore {
                 }
                 RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
             }),
-            Err(error) => {
+            Err(
+                error @ (oxpinyin_runtime::LibraryError::Io(_)
+                | oxpinyin_runtime::LibraryError::Format(_)
+                | oxpinyin_runtime::LibraryError::Layout(_)
+                | oxpinyin_runtime::LibraryError::Unmappable { .. }),
+            ) => {
                 if let Some(path) = error.unmappable_path() {
                     c_stderr::mmap_failed(path);
                 }

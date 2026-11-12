@@ -26,9 +26,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
     };
 
-    let result_filename = match &parsed.values[0] {
-        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
-        _ => None,
+    let result_filename = if let OptionValue::Filename(value) = &parsed.values[0] {
+        value.clone().and_then(|bytes| CString::new(bytes).ok())
+    } else {
+        None
     };
 
     let sources: Vec<CString> = parsed.args[1..]

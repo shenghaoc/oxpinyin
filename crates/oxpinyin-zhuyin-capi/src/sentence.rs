@@ -248,7 +248,26 @@ pub extern "C" fn zhuyin_get_character_offset(
             | oxpinyin_engine::EngineError::ReduceTokensCount { .. },
         ) => std::process::abort(),
         // A graph or dictionary failure the pin has no counterpart for.
-        Err(_) => {
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
             crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
             return false;
         }
@@ -354,7 +373,28 @@ fn validated_lookup_offset(
         ) => std::process::abort(),
         // A parse the facade cannot read, which the pin has no counterpart
         // for.
-        Err(_) => Err(CandidateGuessRefusal::InvalidOffset),
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => Err(CandidateGuessRefusal::InvalidOffset),
     }
 }
 
@@ -459,7 +499,27 @@ fn guess_candidates_result(
             | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
             | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
         ) => std::process::abort(),
-        Err(error) => {
+        Err(
+            error @ (oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_)),
+        ) => {
             inst.core.anchored_window = None;
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));

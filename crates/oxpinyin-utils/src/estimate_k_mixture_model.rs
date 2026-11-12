@@ -34,9 +34,12 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         Ok(parsed) => parsed,
         Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
     };
-    let filename = |value: &OptionValue| match value {
-        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
-        _ => None,
+    let filename = |value: &OptionValue| {
+        if let OptionValue::Filename(value) = value {
+            value.clone().and_then(|bytes| CString::new(bytes).ok())
+        } else {
+            None
+        }
     };
     let bigram_filename = filename(&parsed.values[0]);
     let deleted_filename = filename(&parsed.values[1]);

@@ -206,10 +206,20 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
     fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
             DbmState::Open(store) => match store.get_bigram_raw(key, value) {
-                Err(oxpinyin_store::StoreError::ReadAfterCheck) => Err(DictError::Table(
-                    oxpinyin_store::StoreError::ReadAfterCheck.into(),
-                )),
-                Err(_) => {
+                // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
+                // `:72`; `bdb_utils.h:61`, `:67`); a point read does not copy,
+                // so it never reaches here.
+                Err(
+                    error @ (oxpinyin_store::StoreError::ReadAfterCheck
+                    | oxpinyin_store::StoreError::FatalCopy),
+                ) => Err(DictError::Table(error.into())),
+                Err(
+                    oxpinyin_store::StoreError::Io(_)
+                    | oxpinyin_store::StoreError::Backend(_)
+                    | oxpinyin_store::StoreError::ReadOnly
+                    | oxpinyin_store::StoreError::InvalidInput(_)
+                    | oxpinyin_store::StoreError::ShortArrayHeader,
+                ) => {
                     value.clear();
                     Ok(false)
                 }
