@@ -49,7 +49,7 @@ if loaded != os.path.realpath(path):
 '''
 ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
+         'distro-tkrzw-library', 'check-library-mode', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
          'trainer-layout')
 
 # libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am.
@@ -539,6 +539,9 @@ def relink(argv, tools):
     temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
     try:
         link_and_verify(cc, temporary, ver, soname, archive, flags, tools)
+        # mktemp gives 0600 and the linker adds only execute bits. The pin installs
+        # its shared libraries with install(1) under libtool, whose default mode is 0755.
+        os.chmod(temporary, 0o755)
         # mv -f replaces a symlink at DEST, rather than writing through it.
         os.replace(temporary, dest)
     finally:
@@ -664,6 +667,65 @@ def package_done(kind, outdir, tools):
     return 0
 
 
+def resolve_deb_library(soname, tools):
+    cache = tools.text(['ldconfig', '-p'])
+    for line in cache.splitlines():
+        fields = line.split()
+        if fields and fields[0] == soname:
+            path = os.path.realpath(fields[-1])
+            break
+    else:
+        fail(f'error: soname {soname} not in ldconfig cache')
+    done = tools.capture(['dpkg', '-S', '--', path])
+    package = done.stdout.decode().split('\n')[0].split(':')[0]
+    if done.status or not package:
+        fail(f'error: no package owns {path} ({soname})')
+    return path, package
+
+
+def distro_tkrzw_library(argv, tools):
+    """Print the distro's dpkg-owned libtkrzw.so.1.
+
+    With --github-env, also append OXPINYIN_TKRZW_LIBRARY=<path> to the $GITHUB_ENV file, as
+    the release workflow's runtime selection needs."""
+    if argv not in ([], ['--github-env']):
+        fail('usage: distro-tkrzw-library [--github-env]', 2)
+    path, _ = resolve_deb_library('libtkrzw.so.1', tools)
+    if argv:
+        target = os.environ.get('GITHUB_ENV')
+        if not target:
+            fail('error: --github-env needs GITHUB_ENV', 2)
+        with open(target, 'a', encoding='utf-8') as stream:
+            stream.write(f'OXPINYIN_TKRZW_LIBRARY={path}\n')
+    emit(path)
+    return 0
+
+
+# The pin installs its shared libraries with mode 0755 (libtool's install -m 755).
+LIBRARY_MODE = 0o755
+
+
+def check_library_mode(argv, tools):
+    """Require LIBRARY_MODE on each installed <library>.so.15.0.0 under LIBDIR.
+
+    The mode is the file's own permission bits, as `stat -c %a` prints them, not a link target's."""
+    (libdir,) = positional(argv, ('libdir',))
+    wrong = []
+    for library in LIBRARIES:
+        path = Path(libdir) / f'{library}.so.15.0.0'
+        try:
+            mode = path.lstat().st_mode & 0o7777
+        except OSError as error:
+            fail(f'error: cannot read the mode of {path}: {error.strerror}')
+        if mode != LIBRARY_MODE:
+            wrong.append(f'error: {path} has mode {mode:o}, not {LIBRARY_MODE:o}')
+        else:
+            emit(f'{path}: mode {mode:o}')
+    if wrong:
+        fail('\n'.join(wrong))
+    return 0
+
+
 def release_deb(argv, tools):
     from . import packaging_templates as templates
     backend, release, stage, libdir, outdir = positional(argv,
@@ -681,15 +743,7 @@ def release_deb(argv, tools):
     for soname in sonames:
         if soname in ('libpinyin.so.15', 'libzhuyin.so.15'):
             continue
-        cache = tools.text(['ldconfig', '-p'])
-        paths = [line.split()[-1] for line in cache.splitlines() if line.split() and line.split()[0] == soname]
-        if not paths:
-            fail(f'error: soname {soname} not in ldconfig cache')
-        path = os.path.realpath(paths[0])
-        done = tools.capture(['dpkg', '-S', '--', path])
-        package = done.stdout.decode().split('\n')[0].split(':')[0]
-        if not package:
-            fail(f'error: no package owns {path} ({soname})')
+        _, package = resolve_deb_library(soname, tools)
         packages.add(package)
     floors = re.findall(r'GLIBC_([0-9.]*)', tools.text(['objdump', '-T', *libraries]))
     # GNU version ordering, including an absent GLIBC floor, is the old sort -V.
@@ -722,16 +776,10 @@ def release_deb(argv, tools):
             (tree / 'DEBIAN/control').write_text(expand(control, fields))
             copyright_text = expand(templates.COPYRIGHT, fields)
             (tree / 'usr/share/doc' / name / 'copyright').write_text(copyright_text)
-            sums = tree / 'DEBIAN/md5sums'
-            sums.touch()
-            files = sorted(str(path.relative_to(tree)) for path in tree.rglob('*') if path.is_file() and not path.is_symlink())
-            # GNU md5sum flushes each record. The legacy find includes
-            # md5sums itself, after control, so its self-entry hashes the
-            # records already written. Keep those exact package bytes.
-            with sums.open('w') as output:
-                for file in files:
-                    output.write(tools.text(['md5sum', file], cwd=tree) + '\n')
-                    output.flush()
+            # The manifest lists the installed payload only, never DEBIAN/.
+            files = sorted(str(path.relative_to(tree)) for path in tree.rglob('*')
+                           if path.is_file() and not path.is_symlink() and path.relative_to(tree).parts[0] != 'DEBIAN')
+            (tree / 'DEBIAN/md5sums').write_text(tools.text(['md5sum', '--', *files], cwd=tree) + '\n')
         for tree, name in ((runtime, base), (dev, base + '-dev')):
             tools.heavy(['dpkg-deb', '--root-owner-group', '--build', tree,
                          Path(outdir) / f'{name}_{debver}_{arch}.deb'])
@@ -836,7 +884,10 @@ def release_stage(argv, tools):
     if values['dest'] and not os.path.isabs(values['dest']):
         fail(f"error: --dest '{values['dest']}' must be an absolute path", 2)
     dest = values['dest'] or str(tools.root / 'target/release-stage' / backend)
-    if dest in ('/', prefix, libdir):
+    # Compare resolved paths: '/usr/', '/usr/../usr' or a symlink must not pass,
+    # and a dest that holds an install root would delete that root too.
+    resolved = Path(os.path.realpath(dest))
+    if any(Path(os.path.realpath(root)).is_relative_to(resolved) for root in ('/', prefix, libdir)):
         fail(f"error: --dest '{dest}' collides with a real install root", 2)
     if not tools.which('strip'):
         fail('error: strip is required; install binutils')
@@ -868,7 +919,6 @@ def release_stage(argv, tools):
             fail('error: unexpected staged files:\n' + unexpected)
         libraries = [lib / (library + '.so.15.0.0') for library in LIBRARIES]
         tools.run(['strip', '--strip-unneeded', '--', *libraries])
-        tools.run(['chmod', '0755', '--', *libraries])
         tools.run(['chmod', '0644', '--', *sorted(lib.glob('*.a')), *sorted(pc.glob('*.pc')), *sorted(inc.glob('*.h'))])
         env = {**tools.env, 'PKG_CONFIG_PATH': str(pc)}
 
@@ -1053,6 +1103,8 @@ def main(argv=None, *, tools=None):
                  'trainer-layout': trainer_layout,
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,
+                 'distro-tkrzw-library': distro_tkrzw_library,
+                 'check-library-mode': check_library_mode,
                  'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
                  'release-arch': release_arch, 'sizes': sizes}
     def call():
