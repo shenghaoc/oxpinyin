@@ -133,6 +133,22 @@ const DEATH_TEST: &str = "OXPINYIN_CAPI_DEATH_TEST";
 /// over the mini fixture; the limit only stops a hung child.
 const CHILD_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// The exit status of a death-test child whose operation panicked. A panic
+/// that reaches a non-unwinding `extern "C"` function aborts the process,
+/// so without this status an unrelated panic passes as the pin's abort.
+const OPERATION_PANICKED: i32 = 86;
+
+/// Arms the strict check in a death-test child: from here on, a panic
+/// writes its message to fd 2 (past libtest's capture, which an abort
+/// discards) and ends the child with [`OPERATION_PANICKED`].
+fn exit_on_panic() {
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
+        std::process::exit(OPERATION_PANICKED);
+    }));
+}
+
 /// How a death-test child ended.
 #[derive(Debug, PartialEq, Eq)]
 enum ChildEnd {
@@ -142,6 +158,10 @@ enum ChildEnd {
     Returned,
     /// The test harness reported a panic (libtest exits 101).
     Panicked,
+    /// The operation under test panicked: the child's hook exited with
+    /// [`OPERATION_PANICKED`] before the panic could unwind into an
+    /// `extern "C"` function, where it would abort like the pin.
+    OperationPanicked,
     /// The child ran past [`CHILD_LIMIT`] and was killed. Never an abort.
     TimedOut,
     /// Any other end, as the status prints it.
@@ -169,6 +189,7 @@ fn child_end(status: std::process::ExitStatus, elapsed: std::time::Duration) -> 
         match status.code() {
             Some(0) => ChildEnd::Returned,
             Some(101) => ChildEnd::Panicked,
+            Some(OPERATION_PANICKED) => ChildEnd::OperationPanicked,
             _ => ChildEnd::Other(format!("{status}")),
         }
     }
@@ -202,9 +223,23 @@ fn wait_for_abort(name: &str, command: std::process::Command) -> std::process::O
 /// A normal return, a panic, a timeout and a child that does not start
 /// each fail with their own message. Answers the child's stderr.
 pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
+    assert_aborts_after_setup(name, || (), |()| body())
+}
+
+/// [`assert_aborts`] for an operation that needs setup which panics on
+/// purpose (a poisoned mutex): `setup` runs before the strict check is
+/// armed, then `operation` runs on its value and must abort. A panic in
+/// `operation` fails as [`ChildEnd::OperationPanicked`].
+pub fn assert_aborts_after_setup<T>(
+    name: &str,
+    setup: impl FnOnce() -> T,
+    operation: impl FnOnce(T),
+) -> Vec<u8> {
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
-        body();
-        // Reached only when `body` did not abort.
+        let value = setup();
+        exit_on_panic();
+        operation(value);
+        // Reached only when `operation` did not abort.
         std::process::exit(0);
     }
     // The child's scratch directories outlive its abort; keep them under
@@ -278,6 +313,7 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun
 pub fn assert_aborts_in_dir(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun {
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
         let dir = std::env::var_os(CHILD_DIR).expect("the child's directory");
+        exit_on_panic();
         body(std::path::Path::new(&dir));
         // Reached only when `body` did not abort.
         std::process::exit(0);
@@ -338,6 +374,7 @@ pub fn assert_aborts_sharing(name: &str, init: &[u8], body: impl FnOnce(*mut u8)
             )
         };
         assert!(page != libc::MAP_FAILED, "map the shared page");
+        exit_on_panic();
         body(page.cast());
         // Reached only when `body` did not abort.
         std::process::exit(0);
@@ -902,4 +939,37 @@ pub fn items_system(
         craft_tree(&path, &rows.into_iter().collect::<Vec<_>>());
     }
     system
+}
+
+mod death_tests {
+    /// A panic that reaches this non-unwinding function aborts the process,
+    /// as a facade panic inside an entry point would.
+    extern "C" fn panic_in_an_entry_point() {
+        panic!("an unrelated panic");
+    }
+
+    /// The witness: a death test whose operation panics at a C boundary
+    /// fails with its own result, not as the pin's abort.
+    #[test]
+    fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
+        const NAME: &str =
+            "test_support::death_tests::a_panic_at_the_c_boundary_is_not_the_pins_abort";
+        let parent = std::panic::catch_unwind(|| {
+            super::assert_aborts(NAME, || panic_in_an_entry_point());
+        });
+        let message = parent.expect_err("a panic must not pass as an abort");
+        let message = message
+            .downcast_ref::<String>()
+            .expect("the helper's assertion message");
+        assert!(message.contains("OperationPanicked"), "{message}");
+        assert!(message.contains("an unrelated panic"), "{message}");
+    }
+
+    /// The control: an operation that aborts directly still passes.
+    #[test]
+    fn a_direct_abort_passes() {
+        super::assert_aborts("test_support::death_tests::a_direct_abort_passes", || {
+            std::process::abort()
+        });
+    }
 }

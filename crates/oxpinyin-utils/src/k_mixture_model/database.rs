@@ -300,10 +300,24 @@ pub(crate) mod tests {
     /// A whole single gram: a zero array header and no items.
     pub(crate) const WHOLE: &[u8] = &[0; 8];
 
+    /// The exit status of a child whose site under test panicked. A panic
+    /// that reaches a non-unwinding `extern "C"` function or cxx's unwind
+    /// guard aborts the process, and libtest's capture discards its message,
+    /// so without this status an unrelated panic passes as the pin's abort.
+    const OPERATION_PANICKED: i32 = 86;
+
     /// The scratch directory when this process is the child that
-    /// [`run_child`] started.
+    /// [`run_child`] started. In that child it also arms the strict check:
+    /// from here on, a panic writes its message to fd 2 and exits with
+    /// [`OPERATION_PANICKED`].
     pub(crate) fn child_dir() -> Option<std::path::PathBuf> {
-        std::env::var_os(CHILD_DIR).map(std::path::PathBuf::from)
+        let dir = std::env::var_os(CHILD_DIR).map(std::path::PathBuf::from)?;
+        std::panic::set_hook(Box::new(|info| {
+            use std::io::Write as _;
+            let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
+            std::process::exit(OPERATION_PANICKED);
+        }));
+        Some(dir)
     }
 
     /// Run the test `name` (its `--exact` path) again as a child with a
@@ -317,6 +331,12 @@ pub(crate) mod tests {
             .env(CHILD_DIR, dir.path())
             .output()
             .expect("child test");
+        assert_ne!(
+            output.status.code(),
+            Some(OPERATION_PANICKED),
+            "{name}: the operation panicked: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         for stream in [&output.stdout, &output.stderr] {
             let text = String::from_utf8_lossy(stream);
             assert!(!text.contains("panicked"), "{name}: {text}");
@@ -411,5 +431,31 @@ pub(crate) mod tests {
         assert_short_single_gram_exit(
             "k_mixture_model::database::tests::a_checked_load_of_a_short_row_takes_the_store_error_exit",
         );
+    }
+
+    /// A panic that reaches this non-unwinding function aborts the process.
+    extern "C" fn panic_in_a_c_boundary() {
+        panic!("an unrelated panic");
+    }
+
+    /// The witness: a death test whose site panics at a C boundary fails
+    /// with its own message, not as the pin's abort.
+    #[test]
+    fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
+        if child_dir().is_some() {
+            panic_in_a_c_boundary();
+            return;
+        }
+        let parent = std::panic::catch_unwind(|| {
+            assert_aborts(
+                "k_mixture_model::database::tests::a_panic_at_the_c_boundary_is_not_the_pins_abort",
+            );
+        });
+        let message = parent.expect_err("a panic must not pass as an abort");
+        let message = message
+            .downcast_ref::<String>()
+            .expect("the helper's assertion message");
+        assert!(message.contains("the operation panicked"), "{message}");
+        assert!(message.contains("an unrelated panic"), "{message}");
     }
 }

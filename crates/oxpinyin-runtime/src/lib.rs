@@ -2493,29 +2493,51 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn poisoned_mutex_aborts() {
-        const DEATH_TEST: &str = "OXPINYIN_RUNTIME_DEATH_TEST";
-        const NAME: &str = "tests::poisoned_mutex_aborts";
+    /// The exit status of a death-test child whose operation panicked. A
+    /// panic that reaches a non-unwinding `extern "C"` function aborts the
+    /// process, so without this status an unrelated panic passes as the
+    /// pin's abort.
+    const OPERATION_PANICKED: i32 = 86;
 
-        if std::env::var_os(DEATH_TEST).is_some_and(|value| value == NAME) {
-            let mutex = std::sync::Mutex::new(());
-            let panic = std::panic::catch_unwind(|| {
-                let _guard = mutex.lock().expect("unpoisoned mutex");
-                panic!("poison the mutex");
-            });
-            assert!(panic.is_err());
-            let result = mutex.lock();
-            assert!(result.is_err(), "the mutex must be poisoned");
-            drop(lock_result_or_abort(result));
+    /// The variable that names the one test a child runs for real.
+    const DEATH_TEST: &str = "OXPINYIN_RUNTIME_DEATH_TEST";
+
+    /// Runs `setup` and then `operation` in a child copy of this test binary
+    /// that runs only the test `name`, and requires the child to abort.
+    /// `setup` may panic on purpose (a poisoned mutex): the strict check is
+    /// armed only after it, and a panic in `operation` then fails with its
+    /// own message.
+    fn assert_aborts_after_setup<T>(
+        name: &str,
+        setup: impl FnOnce() -> T,
+        operation: impl FnOnce(T),
+    ) {
+        if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+            let value = setup();
+            // From here on, a panic writes its message to fd 2 (past
+            // libtest's capture, which an abort discards) and exits with
+            // `OPERATION_PANICKED`.
+            std::panic::set_hook(Box::new(|info| {
+                use std::io::Write as _;
+                let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
+                std::process::exit(OPERATION_PANICKED);
+            }));
+            operation(value);
+            // Reached only when `operation` did not abort.
             std::process::exit(0);
         }
 
         let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args(["--exact", NAME, "--test-threads=1"])
-            .env(DEATH_TEST, NAME)
+            .args(["--exact", name, "--test-threads=1"])
+            .env(DEATH_TEST, name)
             .output()
             .expect("re-run the test binary");
+        assert_ne!(
+            output.status.code(),
+            Some(OPERATION_PANICKED),
+            "{name}: the operation panicked: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt as _;
@@ -2530,6 +2552,29 @@ mod tests {
             output.status.code(),
             Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
             "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
+        );
+    }
+
+    #[test]
+    fn poisoned_mutex_aborts() {
+        assert_aborts_after_setup(
+            "tests::poisoned_mutex_aborts",
+            // The panic that poisons the mutex is setup, before the strict
+            // check is armed.
+            || {
+                let mutex = std::sync::Mutex::new(());
+                let panic = std::panic::catch_unwind(|| {
+                    let _guard = mutex.lock().expect("unpoisoned mutex");
+                    panic!("poison the mutex");
+                });
+                assert!(panic.is_err());
+                mutex
+            },
+            |mutex| {
+                let result = mutex.lock();
+                assert!(result.is_err(), "the mutex must be poisoned");
+                drop(lock_result_or_abort(result));
+            },
         );
     }
 

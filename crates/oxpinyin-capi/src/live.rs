@@ -70,17 +70,25 @@ mod tests {
 
     #[test]
     fn poisoned_mutex_aborts() {
-        crate::test_support::assert_aborts("live::tests::poisoned_mutex_aborts", || {
-            let mutex = std::sync::Mutex::new(());
-            let panic = std::panic::catch_unwind(|| {
-                let _guard = mutex.lock().expect("unpoisoned mutex");
-                panic!("poison the mutex");
-            });
-            assert!(panic.is_err());
-            let result = mutex.lock();
-            assert!(result.is_err(), "the mutex must be poisoned");
-            drop(super::lock_result_or_abort(result));
-        });
+        crate::test_support::assert_aborts_after_setup(
+            "live::tests::poisoned_mutex_aborts",
+            // The panic that poisons the mutex is setup, before the strict
+            // check is armed.
+            || {
+                let mutex = std::sync::Mutex::new(());
+                let panic = std::panic::catch_unwind(|| {
+                    let _guard = mutex.lock().expect("unpoisoned mutex");
+                    panic!("poison the mutex");
+                });
+                assert!(panic.is_err());
+                mutex
+            },
+            |mutex| {
+                let result = mutex.lock();
+                assert!(result.is_err(), "the mutex must be poisoned");
+                drop(super::lock_result_or_abort(result));
+            },
+        );
     }
 
     #[test]
