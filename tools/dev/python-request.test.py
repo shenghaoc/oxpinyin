@@ -7,19 +7,15 @@ dated records under docs/findings/ keep their wording. The fixtures below are
 assembled from pieces so this file states no request itself.
 """
 from pathlib import Path
-import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import test_support
 ALLOWED = ('.python-version', 'docs/findings/')
 # A request in uv's forms: the implementation prefix with a version, or an explicit version given
 # to `uv python install|find|pin` or `--python`. Managed-install directory names
@@ -89,45 +85,12 @@ class RequestLiteralTests(unittest.TestCase):
 
     def test_the_scan_sees_the_files_it_is_meant_to(self):
         names = {name for name, _ in tracked_text_files()}
-        for expected in ('justfile', 'tools/cloud/setup.sh', 'docs/runbooks/setup.md',
+        for expected in ('justfile', 'docs/runbooks/setup.md',
                          '.github/workflows/ci.yml', 'tools/oracle/Dockerfile.oracle', 'AGENTS.md'):
             self.assertIn(expected, names)
         for excluded in ('.python-version',):
             self.assertNotIn(excluded, names)
         self.assertFalse([name for name in names if name.startswith('docs/findings/')])
-
-
-# Stands in for uv: it records its working directory and arguments.
-RECORD_UV = ('import os, sys\n'
-             'with open(os.environ["RECORD"], "w") as stream:\n'
-             '    stream.write(os.getcwd() + "\\n" + "\\n".join(sys.argv[1:]) + "\\n")\n')
-
-
-class CheckoutInterpreterTests(unittest.TestCase):
-    """An entry point run from outside the checkout selects the checkout's interpreter request."""
-
-    def test_run_all_passes_the_checkouts_request_not_the_callers(self):
-        checkout_request = (ROOT / '.python-version').read_text().strip()
-        other = 'cpython@' + '9.99'
-        with tempfile.TemporaryDirectory() as scratch:
-            outer, stubs = Path(scratch, 'outer'), Path(scratch, 'bin')
-            outer.mkdir()
-            stubs.mkdir()
-            (outer / '.python-version').write_text(other + '\n')
-            record = Path(scratch, 'argv')
-            test_support.python_tool(stubs, 'uv', RECORD_UV)
-            env = {key: value for key, value in os.environ.items()
-                   if key not in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
-            env.update(PATH=f'{stubs}{os.pathsep}{os.environ["PATH"]}', RECORD=str(record))
-            result = subprocess.run([shutil.which('uv', path=env['PATH']), 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'utf8', '-c', 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)', str(ROOT), '--python-only'],
-                                    cwd=outer, env=env, capture_output=True, text=True, check=False)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            lines = record.read_text().splitlines()
-        self.assertEqual(Path(lines[0]).name, 'outer', 'the caller\'s working directory is kept')
-        argv = lines[1:]
-        self.assertEqual(argv[argv.index('--python') + 1], checkout_request)
-        self.assertNotIn(other, argv)
-        self.assertEqual(argv[-1:], ['--python-only'], 'the caller\'s arguments are unchanged')
 
 
 if __name__ == '__main__':

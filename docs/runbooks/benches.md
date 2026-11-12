@@ -405,7 +405,7 @@ A report that uses Callgrind or Massif states the Valgrind version that it used,
 `valgrind --version` prints it, next to the figures. Callgrind `Ir` and Massif heap
 peaks change with the Valgrind release as well as with the CPU. A report
 without the version therefore cannot be compared with another run. Normal cloud
-provisioning (`tools/cloud/setup.sh`) installs Valgrind idempotently and prints the
+provisioning (`tools.dev.provision`) installs Valgrind idempotently and prints the
 version. Ordinary native setup does not require it. On other measurement hosts, install it explicitly.
 On Debian/Ubuntu, install the distribution package with `sudo`:
 

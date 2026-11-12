@@ -58,7 +58,7 @@ python:
 python:
     @uv python install --quiet; exit $LASTEXITCODE
 
-# Post-bootstrap cloud provisioning; the shell entry also installs uv if needed.
+# Cloud provisioning after `uv python install`; uv itself must already be installed.
 [unix]
 provision *args: python
     @uv run --no-project --managed-python python -X utf8 -m tools.dev.provision "$@"

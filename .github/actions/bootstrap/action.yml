@@ -1,12 +1,12 @@
 name: 'bootstrap'
 description: |-
   Shared post-checkout bootstrap cluster for this repository's
-  workflows: the Bash floor check (installing Homebrew Bash on macOS
-  first), the checkout registered as a git safe.directory (container
+  workflows: the checkout registered as a git safe.directory (container
   jobs run as root over a root-owned checkout), an optional
-  pinned-rustup install (channel read from rust-toolchain.toml, minimal
-  profile), optional CI tools (uv through astral-sh/setup-uv, with the
-  managed Python and its build check; just,
+  pinned-rustup install (the toolchain and components that
+  rust-toolchain.toml names, minimal profile), optional CI tools (uv
+  through astral-sh/setup-uv, with the managed Python and its build
+  check; just,
   cargo-nextest and cargo-deny through
   taiki-e/install-action at exact versions, restored from the Actions cache
   when the requested tool list and versions match, and cargo-c from its
@@ -18,8 +18,8 @@ description: |-
   resolves it only after a checkout exists. Call this right after
   checkout.
 
-  The optional Rust and tool steps default to off, so a bare call only
-  installs and checks Bash.
+  The optional Rust and tool steps default to off, so a bare call does
+  nothing.
   Composite-action inputs are strings; the switches take 'true'/'false'.
 
 inputs:
@@ -32,15 +32,11 @@ inputs:
     default: 'false'
   rustup:
     description: >-
-      Install the pinned Rust toolchain via rustup: channel awk'd from
-      rust-toolchain.toml, minimal profile, curl'd from sh.rustup.rs.
-      String 'true'/'false' (composite-action inputs are strings).
+      Install rustup from sh.rustup.rs with the minimal profile, then the
+      toolchain and components that rust-toolchain.toml names. String
+      'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
-  rustup-components:
-    description: 'Extra rustup components, space-separated (e.g. "clippy rustfmt").'
-    required: false
-    default: ''
   uv:
     description: >-
       Install uv with astral-sh/setup-uv, then install and check the managed
@@ -96,19 +92,6 @@ inputs:
 runs:
   using: composite
   steps:
-    # macOS ships an older Bash. GITHUB_PATH applies to later steps, so the
-    # floor check below sees the Homebrew Bash this step selects.
-    - name: Install Homebrew Bash on macOS
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        brew install bash
-        printf '%s\n' "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
-
-    - name: Require the Bash floor
-      shell: bash
-      run: . tools/lib/bash-floor.sh
-
     # Container jobs run as root over a root-owned checkout, so any later
     # git invocation would die on dubious ownership (this affected
     # tracked-path probes in local tooling scripts during development).
@@ -117,26 +100,25 @@ runs:
       shell: bash
       run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+    # No toolchain yet: the next step installs the one rust-toolchain.toml names.
+    - name: Install rustup
+      if: inputs.rustup == 'true'
+      shell: bash
+      run: curl --fail --location --retry 3 --show-error https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+
+    # GITHUB_PATH applies to later steps.
+    - name: Put rustup on PATH
+      if: inputs.rustup == 'true'
+      shell: bash
+      run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+
+    # From the repository root, rustup reads the channel and the components
+    # (clippy, rustfmt) from rust-toolchain.toml. No default toolchain is set,
+    # so a command run outside the checkout has no toolchain.
     - name: Install the pinned Rust toolchain
       if: inputs.rustup == 'true'
       shell: bash
-      env:
-        # Space-separated component list; empty by default.
-        RUSTUP_COMPONENTS: ${{ inputs.rustup-components }}
-      run: |
-        set -euo pipefail
-        channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-        component_args=()
-        # Intentional word splitting: the input is a space-separated list.
-        # shellcheck disable=SC2086
-        for component in $RUSTUP_COMPONENTS; do
-          component_args+=(--component "$component")
-        done
-        curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-          | sh -s -- -y --profile minimal --default-toolchain "$channel" "${component_args[@]}"
-        printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-        # Visible to THIS step too: GITHUB_PATH only applies to later steps.
-        . "$HOME/.cargo/env"
+      run: rustup toolchain install
 
     # Pinned to the v10.3.3 tag commit. No version input: setup-uv reads
     # required-version from uv.toml (the repository root) and, with the

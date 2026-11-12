@@ -21,12 +21,8 @@ Storage-dependent crates build against one DBM backend per build. The
 and the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
 are non-default backends ([backends](backends.md)).
 
-Every repository shell script requires Bash 5.0 or newer on Linux and macOS.
-`just doctor` reports the `bash` that `env bash` selects, and fails below 5.0.
-Linux distributions provide it. The macOS section installs Homebrew's Bash and
-checks the selection. On Windows, doctor reports Bash as not applicable and
-never fails on its version. Native Windows recipes use pwsh with
-`-CommandWithArgs`; doctor checks its declared minimum.
+Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
+declared minimum.
 
 The Rust **toolchain** is the compiler and its tools. rustup installs
 and selects it. `rust-toolchain.toml` is the authority for the version and components.
@@ -34,7 +30,7 @@ The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
-Use Bash 5.0 or newer. Linux is one native platform target. You need:
+Linux is one native platform target. You need:
 
 - Git, curl and CA certificates;
 - a C/C++ compiler and linker, Make and pkg-config;
@@ -95,9 +91,6 @@ shipping-size measurements and oracle/reference images keep Debian's tkrzw.
 Ubuntu's packaged tkrzw is defective; development uses the overlay instead
 ([finding](../findings/tkrzw-distro-compat.md)).
 
-Repository Python uses uv and its managed CPython 3.14 series with the GIL.
-`uv.toml` sets the uv floor, 0.11.32. CI installs the newest uv that satisfies it.
-
 ### Comparing against another revision
 
 `just packaging sizes` builds each side with that revision's own tooling
@@ -115,39 +108,71 @@ floor of this checkout. CI's `astral-sh/setup-uv` step installs a uv that can.
 When the revision's recipe fails, the command names the revision and prints the
 message of just.
 
-`just doctor` is the one check of the minimum of every tool: Bash 5.0, uv,
-CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
-ShellCheck 0.11.0. ShellCheck is advisory; run it when a shell script
-changes ([verification rule 5](verification.md#5-local-test-gate)).
-On Linux, doctor also checks GNU ld, gcov and Valgrind. These rules apply:
+### Installing uv and cargo-c
 
-- Each line names the resolved executable, the minimum and the version found.
-- A newer tool passes, an older required tool fails, and a missing tool comes with its install command.
-- Semantic versions compare as semver does: a pre-release of the minimum
-  (`1.59.0-beta.1`) is older than it, and build metadata (`+build`) does not
-  count.
-- GNU ld, gcov and Valgrind compare by number, and a development build of
-  one of them counts as its number.
+If `uv --version` fails, or uv refuses to run because it is older than the
+`required-version` in `uv.toml`, run uv's official
+[standalone installer](https://docs.astral.sh/uv/getting-started/installation/#standalone-installer).
+On macOS and Linux:
 
-Install or upgrade a tool only when `just doctor`
-says that it is missing or too old.
-
-`just doctor` cannot run until uv exists. Install uv only
-when it is missing or older than 0.11.32 (`uv --version` shows the version):
-
-```bash
-# Exact on purpose (#1074): a checksum is only known for a known version.
-installer="$(mktemp)"
-curl --fail --location --retry 3 \
-  https://github.com/astral-sh/uv/releases/download/0.13.1/uv-installer.sh -o "$installer"
-printf '%s  %s\n' \
-  7c482d409673a53f4d9bd34ae95c9166be3b8d89ca82f27dd7bca3cab457afff "$installer" \
-  | sha256sum -c -
-sh "$installer"
-rm -f "$installer"
-export PATH="$HOME/.local/bin:$PATH"
-hash -r
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then put the install directory first on `PATH`, ahead of any older uv:
+`~/.local/bin` on macOS and Linux, `%USERPROFILE%\.local\bin` on Windows.
+When `HOME` is read-only, set `UV_INSTALL_DIR` to a writable directory before you
+run the installer, and put that directory first on `PATH` instead. If astral.sh
+is blocked, stop and report it; do not route around the block. Most environments
+already provide a uv that meets the floor.
+
+uv enforces its own floor: `uv.toml` sets `required-version`, and every uv
+command run in the checkout refuses an older uv with an error that names both
+versions. The repository parses no uv version. CI installs uv with
+`astral-sh/setup-uv`, which reads the same `required-version`.
+
+Unset `UV_PYTHON` and the other interpreter overrides before the first uv
+command. uv reads them before any repository Python runs, so a `UV_PYTHON` set
+before `uv python install` makes it install that interpreter instead of the
+one `.python-version` names. Provisioning and `just doctor` then refuse the
+override, but the other interpreter is already installed.
+
+Install cargo-c when you build the shipping libraries. `just doctor` enforces
+cargo-c 0.10.11.
+
+| Host | cargo-c |
+|---|---|
+| Debian and Ubuntu | `sudo apt install cargo-c` |
+| Fedora | `sudo dnf install cargo-c` |
+| Arch Linux | `sudo pacman -S cargo-c` |
+| macOS | `brew install cargo-c` |
+| Windows | `cargo install --locked cargo-c` |
+
+Provisioning can keep or install the development tools for you. From the
+repository root, after `uv python install`:
+
+```sh
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --dev-tools
+```
+
+`--dev-tools` keeps each of just, cargo-nextest, cargo-c and the rust-analyzer
+component that meets its requirement. It installs the others: the three Cargo
+tools with `cargo install` at their pinned versions, and rust-analyzer with
+`rustup component add`. It does not run the oracle setup. It needs Cargo or
+rustup only for a tool that it must install; without that program it exits 1 and
+names the tool. `--python-only` alone installs none of these tools and needs
+neither program. See [cloud.md](cloud.md#development-tools-without-the-oracle).
+
+Repository Python uses managed CPython 3.14 with the GIL.
+
+`just doctor` reports the tools it finds, including their paths and versions.
+On Linux, doctor also checks GNU ld, gcov and Valgrind.
 
 The native command interface needs just at or above the `minimum-version` in the
 root `justfile`. `just` enforces this itself, and `just doctor` reports it.
@@ -180,11 +205,6 @@ assert Path(sys.executable).resolve() == Path(managed).resolve()
 PYTHON
 ```
 
-The installer digest comes from its `digest` field in the official
-[uv 0.13.1 release API](https://api.github.com/repos/astral-sh/uv/releases/tags/0.13.1).
-Automated Linux setup on x86_64 and arm64 verifies the release archive against the pinned
-[published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
-
 `.python-version` is the one place where the interpreter version is written.
 
 - Inside the
@@ -202,8 +222,7 @@ appears anywhere else, outside the dated records in `docs/findings/`.
 **Rule (#1230).** Provision the managed Python interpreter of the repository
 through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling
 runs with explicit UTF-8 mode (`-X utf8`). Do not use a system Python, a virtual
-environment, `pyproject.toml` or `uv.lock`. The `.python-version`
-and `uv.toml` of the checkout name the same interpreter series and uv floor.
+environment, `pyproject.toml` or `uv.lock`.
 
 `just build`, `just clippy` and `just fmt` pass Cargo arguments to
 Cargo unchanged. To limit parallel builds, set `CARGO_BUILD_JOBS` or `[build] jobs` in
@@ -268,9 +287,7 @@ feature selection as for cargo test (see [backend selection](backends.md)). For 
 `cargo test --doc`.
 
 `just packaging install` and `just measure compare` build the shipping library
-with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
-reports the version found. Install it with `cargo install cargo-c --locked`,
-your distribution package or the upstream release archive.
+with [cargo-c](#installing-uv-and-cargo-c) on Linux and macOS.
 
 If names or enabled repositories differ, use the official package documentation of your system.
 The native check below prints the tkrzw version that
@@ -344,25 +361,10 @@ Keep outputs separate across worktrees (separate checkouts of branches).
 
 ## macOS
 
-Use Terminal with Bash 5.0 or newer (`bash`), Git, Apple's
+Use Terminal, Git, Apple's
 [Command Line Tools](https://developer.apple.com/xcode/resources/),
 [Homebrew](https://docs.brew.sh/Installation) and rustup. If the Command Line
 Tools are absent, run `xcode-select --install` and complete the system dialog.
-
-macOS ships Bash 3.2 at `/bin/bash`. Install Homebrew's Bash and make sure that
-`env bash` selects it:
-
-```bash
-brew install bash
-env bash --version
-command -v bash
-```
-
-`env bash --version` must print 5.0 or newer. `command -v bash` must print the
-Homebrew path (`/opt/homebrew/bin/bash` on Apple silicon or
-`/usr/local/bin/bash` on Intel), not `/bin/bash`. If it prints `/bin/bash`,
-put the Homebrew `bin` directory before `/bin` on `PATH` in your shell profile,
-and open a new terminal.
 
 ```bash
 brew install glib pkgconf
@@ -397,9 +399,8 @@ checkout afterwards; reinstall the port instead. The triplet makes
 builds from source and never restores the library of another root from
 vcpkg's binary cache.
 
-Run the uv, just and interpreter commands from the Linux section, in that
-order (`brew install just` supplies just). For the checksum step on macOS, replace
-`sha256sum -c -` with `shasum -a256 -c -`.
+Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, run
+`brew install just`, then run `just python`.
 Then, if rustup is absent, install it with the Linux rustup commands above,
 and run:
 
@@ -507,8 +508,8 @@ cargo clippy --locked -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D wa
 Repository Python tooling on Windows runs through the pwsh recipes.
 The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
 Job Object lifetime, fuzz, coverage and full tooling acceptance stay unverified.
-Install uv with its native Windows installer, then just (`cargo install just
---locked`), then run `just python`. The rule above applies unchanged.
+Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, run
+`cargo install just --locked`, then run `just python`.
 
 All three packages link and run natively without a DBM library or container.
 Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
@@ -557,8 +558,6 @@ $env:PATH = "$installed\bin;$env:PATH"
 ```
 
 The `bin` directories put the GLib and tkrzw DLLs on the path of the test binaries.
-Bash scripts run from the same session through the
-`bash.exe` of Git for Windows (`& 'C:\Program Files\Git\bin\bash.exe' SCRIPT`).
 
 **When the Windows job runs:** the full Windows workspace job is the
 `test-windows` job in `verify-nightly.yml`. Its schedule and merge status are in
@@ -639,8 +638,8 @@ The OS cache directory is `$XDG_CACHE_HOME` or `~/.cache` on Linux,
 `just cache-root` prints the root.
 
 Set a non-empty absolute `OXPINYIN_CACHE` on a host without a home directory
-and for direct `cargo` or `uv run` commands. `tools/cloud/setup.sh` asks
-`just` for the root when `just` is installed.
+and for direct `cargo` or `uv run` commands. `tools.dev.provision` asks
+`just cache-root` for the root after it installs or keeps `just`.
 
 The name of each entry carries its pin, so a new pin gets a new entry:
 

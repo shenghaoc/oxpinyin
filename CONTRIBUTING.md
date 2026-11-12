@@ -64,7 +64,6 @@ Do not publish or install a Python package, and add no console entry point witho
 
 A missing input that a caller requested explicitly is a failure, never a successful skip.
 Do not depend on scripts or environments that exist only on your machine.
-The documented bootstrap shell entry point `tools/cloud/setup.sh` remains supported.
 
 Report the conclusion, relevant final results and reproduction commands.
 Identify only the revisions, inputs, build options and environment details needed to interpret and repeat the result.
@@ -141,7 +140,6 @@ Keep a shell script only for one of these reasons:
 State the reason at the top of each retained script, with its caller and boundary.
 A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: update the caller.
 Keep each `just` recipe as one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
-Use the Bash floor in `tools/lib/bash-floor.sh`; do not copy its guards.
 
 ### Independent work in parallel
 
@@ -165,7 +163,19 @@ Linux/amd64 is the reference for pin comparisons.
 Do not use emulation for work that does not compare against the pin.
 
 A remote Linux host that meets the [remote Linux requirements](docs/runbooks/cloud.md#host-requirements) supports every gate.
-Provision it with `tools/cloud/setup.sh`.
+Provision it from the repository root with the two commands below, the same in sh, zsh and pwsh:
+
+```sh
+uv python install
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision
+```
+
+If `uv --version` fails, or uv refuses to run because it is older than the `required-version` in `uv.toml`, run uv's official [standalone installer](https://docs.astral.sh/uv/getting-started/installation/#standalone-installer):
+`curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS and Linux, or
+`powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` on Windows.
+Then put its install directory first on `PATH`, ahead of any older uv: `~/.local/bin`, or `%USERPROFILE%\.local\bin` on Windows.
+When `HOME` is read-only, set `UV_INSTALL_DIR` to a writable directory before you run the installer, and put that directory first on `PATH` instead.
+If astral.sh is blocked, stop and report it; most environments already provide a uv that meets the floor.
 
 ## Worktrees
 

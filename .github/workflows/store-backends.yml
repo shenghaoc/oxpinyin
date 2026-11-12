@@ -120,9 +120,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -m tools.dev.ci_tree evidence store
-      - name: Require the Bash floor
-        shell: bash
-        run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flag
         id: gate
         # The event's base: the PR base sha, or the previous pushed head. The
@@ -215,7 +212,6 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-          rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
 

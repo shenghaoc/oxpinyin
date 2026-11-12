@@ -5,15 +5,15 @@ install or enter a container. It rejects interpreter-selection overrides and a
 free-threaded build. For each reported tool, a newer version passes, an older
 one fails with the minimum and the version found,
 and an absent one is reported with its installation step. Each report line
-names the resolved executable. Bash is required at the floor declared in
-tools/lib/bash-floor.sh on Linux and macOS and reported as not applicable on
-Windows, whose native recipes use pwsh at the floor in pwsh-floor.txt;
-ShellCheck is advisory at 0.11.0 because only the lint
-job needs it. Each tool's version is
+names the resolved executable. Native Windows recipes use pwsh at the floor
+in pwsh-floor.txt. uv enforces the required-version in uv.toml itself, so
+doctor reports the uv it runs and compares no uv version. Each tool's version is
 read in the format that tool prints and compared by that format's rules:
 semantic versioning for most (a pre-release of the minimum is older than it),
-the projects' own numbering for GNU ld, gcov and Valgrind. Runbooks and
-setup.sh point here instead of repeating version lists.
+the projects' own numbering for GNU ld, gcov and Valgrind. cargo-nextest
+enforces the nextest-version in .config/nextest.toml itself, so doctor reports
+the answer of `cargo nextest show-config version` and compares no nextest
+version. Runbooks point here instead of repeating version lists.
 """
 
 if __name__ == '__main__':
@@ -33,8 +33,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from . import bash_floor
-
 OVERRIDES = (
     'UV_PYTHON',
     'UV_PYTHON_VERSION',
@@ -52,8 +50,8 @@ OVERRIDES = (
 MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read_text().strip()
 PYTHON_MINIMUM = '3.14.0'
 PYTHON_BELOW = '3.15'
-UV_MINIMUM = '0.11.32'
 PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class DoctorError(RuntimeError):
@@ -146,8 +144,8 @@ def _parse_gnu_ld(text):
 # string sits in parentheses, then come GCC's own version, a date and a development phase. The version
 # is the one after the package string; a hyphen release inside the parentheses is the package's. GCC
 # marks trunk snapshots "(experimental)" (N.0.0 and N.0.1, before N.1.0) and release-branch snapshots
-# "(prerelease)" (N.M.1, after N.M.0). A snapshot counts as its number: the minimum is a major version
-# (14), so a snapshot of 14 counts as 14 and one of 15 as 15. The coverage review checked the JSON
+# "(prerelease)" (N.M.1, after N.M.0). A snapshot counts as its number: the minimum is a major version,
+# so a snapshot of N counts as N. The coverage review checked the JSON
 # format_version when it runs, which decides for a snapshot that predates the format. The phase is
 # shown in the report.
 _GCOV = re.compile(r'gcov \(.*?\)\s+(\d+(?:\.\d+)+)(.*)')
@@ -186,75 +184,78 @@ class Tool(NamedTuple):
     executable: str
     arguments: tuple
     format: Format      # how this tool writes its version
-    minimum: str
+    minimum: str        # for a tool with a verdict, the requirement that the tool itself enforces
     install: str
     platform: str = ''  # sys.platform prefix this check is for; empty means every platform
     identity: str = ''  # when set, any other program under this name is reported as absent
-    optional: bool = False  # report the version but do not fail collect when it is old or missing
-    applies_to: tuple = ()  # sys.platform prefixes it is checked on; elsewhere it is not applicable
     required: bool = False  # absence fails the check, rather than only reporting installation advice
+    verdict: Callable | None = None  # for a tool that enforces its own requirement: ask it
 
 
-UV = _semver_format('uv')
-
-# Bash prints its version in a banner; ShellCheck puts it on the second line.
-_BASH = re.compile(r'GNU bash, version (\d+(?:\.\d+)+)')
-_SHELLCHECK = re.compile(r'^version:\s*(\d+(?:\.\d+)+)\s*$', re.MULTILINE)
+def requirement(tool):
+    """What TOOL must meet, as a report states it."""
+    return tool.minimum if tool.verdict else f'{tool.minimum} or later'
 
 
-def _parse_bash(text):
-    """Read the number from 'GNU bash, version X.Y.Z(...)', or return None for another format."""
-    match = _BASH.search(text)
-    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+_NEXTEST_CURRENT = re.compile(r'^current nextest version: (\S+)$', re.M)
 
 
-def _parse_shellcheck(text):
-    """Read ShellCheck's 'version: X.Y.Z' line, or return None for another format."""
-    match = _SHELLCHECK.search(text)
-    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+def _nextest_verdict(tool, executable, environ):
+    """Ask nextest whether it meets the nextest-version in .config/nextest.toml, which it enforces.
+
+    `cargo nextest show-config version` exits 0 when every requirement holds, 10 when it misses
+    only a recommended version (nextest still runs) and 92 when it misses the required version.
+    The repository compares no nextest version itself."""
+    result = _run([executable, *tool.arguments], environ, cwd=ROOT)
+    match = _NEXTEST_CURRENT.search(f'{result.stdout}{result.stderr}' if result else '')
+    found = match[1] if match else 'unreadable version'
+    if result is not None and result.returncode in (0, 10):
+        return f'{tool.name}: {found} at {executable} ({tool.minimum}: met)'
+    if result is not None and result.returncode == 92:
+        raise DoctorError(f'{tool.name} {found} at {executable} does not meet {tool.minimum}')
+    status = 'did not start' if result is None else f'exit {result.returncode}'
+    raise DoctorError(f'{tool.name} at {executable} could not check {tool.minimum} ({status})')
 
 
 # One row per tool. A minimum is the oldest version the repository has run
-# or documents. Some tools also enforce a minimum in .config/nextest.toml,
-# uv.toml or setup.sh.
+# or documents. cargo-nextest enforces the nextest-version in .config/nextest.toml itself,
+# so its row asks it. uv enforces the required-version in uv.toml itself and has no row.
 TOOLS = (
     Tool('pwsh', 'pwsh', ('--version',), _semver_format('PowerShell'), PWSH_MINIMUM,
          'install PowerShell from docs/runbooks/setup.md#native-windows', platform='win32', required=True),
-    Tool('bash', 'bash', ('--version',), Format(_parse_bash, _dotted_key), bash_floor.read_floor(),
-         'brew install bash (macOS) and make env bash select it, or your distribution package',
-         applies_to=('linux', 'darwin')),
-    Tool('cargo-nextest', 'cargo-nextest', ('--version',), _semver_format('cargo-nextest'), '0.9.115',
-         'cargo install cargo-nextest --locked'),
-    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), '0.10.24',
+    Tool('cargo-nextest', 'cargo-nextest', ('nextest', 'show-config', 'version'), _semver_format('cargo-nextest'),
+         'the nextest-version in .config/nextest.toml', 'cargo install cargo-nextest --locked',
+         verdict=_nextest_verdict),
+    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), '0.10.11',
          'cargo install cargo-c --locked, or your distribution package'),
     Tool('cargo-fuzz', 'cargo-fuzz', ('--version',), _semver_format('cargo-fuzz'), '0.13.2',
          'cargo install cargo-fuzz --locked'),
     Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'), _semver_format('cargo-llvm-cov'),
          '0.9.0', 'cargo install cargo-llvm-cov --locked'),
-    Tool('GNU ld', 'ld', ('--version',), Format(_parse_gnu_ld, _dotted_key), '2.43',
+    Tool('GNU ld', 'ld', ('--version',), Format(_parse_gnu_ld, _dotted_key), '2.42',
          'apt-get install binutils', platform='linux', identity=r'^GNU ld\b'),
-    Tool('gcov', 'gcov', ('--version',), Format(_parse_gcov, _dotted_key), '14',
+    Tool('gcov', 'gcov', ('--version',), Format(_parse_gcov, _dotted_key), '13',
          'apt-get install gcc', platform='linux'),
     Tool('valgrind', 'valgrind', ('--version',), Format(_parse_valgrind, _dotted_key), '3.22.0',
          'apt-get install valgrind', platform='linux'),
-    Tool('shellcheck', 'shellcheck', ('--version',), Format(_parse_shellcheck, _dotted_key), '0.11.0',
-         'apt-get install shellcheck, or brew install shellcheck', optional=True),
 )
 
 
-def reject_overrides(environ=None):
-    """Reject interpreter-selection settings; keep storage/cache settings."""
+def reject_overrides(environ=None, before='doctor'):
+    """Reject interpreter-selection settings; keep storage/cache settings.
+
+    BEFORE names what the caller is about to run, for the message."""
     environ = os.environ if environ is None else environ
     found = [name for name in OVERRIDES if environ.get(name)]
     if found:
         names = ', '.join(found)
-        raise DoctorError(f'unsupported interpreter override(s): {names}; unset them before doctor')
+        raise DoctorError(f'unsupported interpreter override(s): {names}; unset them before {before}')
 
 
-def _run(command, environ):
+def _run(command, environ, cwd=None):
     """Capture a command with the supplied environment; return None on spawn errors."""
     try:
-        return subprocess.run(command, capture_output=True, text=True, env=environ, check=False)
+        return subprocess.run(command, capture_output=True, text=True, env=environ, cwd=cwd, check=False)
     except OSError as exc:
         return None
 
@@ -272,22 +273,16 @@ def _at_least(found, minimum):
 
 
 def uv_version(environ=None):
-    """Check uv against the minimum and return its stripped version output.
+    """Return the stripped `uv --version` output of the uv that ENVIRON's PATH selects.
 
-    Raise DoctorError when uv cannot run, prints an unknown format, or is too old.
+    Raise DoctorError when uv cannot run. uv itself refuses a version below the
+    required-version in uv.toml, so doctor parses and compares no uv version.
     """
     environ = os.environ if environ is None else environ
-    result = _run(['uv', '--version'], environ)
+    result = _run(['uv', '--version'], environ, cwd=ROOT)
     if result is None or result.returncode != 0:
-        raise DoctorError(f'missing uv {UV_MINIMUM} or newer; install it from its documented host route')
-    text = result.stdout.strip()
-    version = UV.parse(text)
-    if version is None:
-        raise DoctorError(f'unparseable uv version output: {text or "empty"}; '
-                          f'uv {UV_MINIMUM} or newer required')
-    if version.key < UV.key(UV_MINIMUM):
-        raise DoctorError(f'uv {UV_MINIMUM} or newer required; found {text}')
-    return text
+        raise DoctorError('uv did not run; install it as docs/runbooks/setup.md#installing-uv-and-cargo-c describes')
+    return result.stdout.strip()
 
 
 def check_python(numbers=None, releaselevel=None):
@@ -361,9 +356,11 @@ def check_tool(tool, environ=None):
     executable = shutil.which(tool.executable, path=environ.get('PATH'))
     if executable is None:
         if tool.required:
-            raise DoctorError(f'{tool.name}: missing (requires {tool.minimum} or later; install: {tool.install})')
-        return (f'{tool.name}: missing (requires {tool.minimum} or later; '
+            raise DoctorError(f'{tool.name}: missing (requires {requirement(tool)}; install: {tool.install})')
+        return (f'{tool.name}: missing (requires {requirement(tool)}; '
                 f'install: {tool.install})')
+    if tool.verdict:
+        return tool.verdict(tool, executable, environ)
     result = _run([executable, *tool.arguments], environ)
     text = _first_line(result)
     output = ((result.stdout or result.stderr) if result else '').strip()
@@ -385,19 +382,13 @@ def tool_lines(environ=None):
     for tool in TOOLS:
         if tool.platform and not sys.platform.startswith(tool.platform):
             continue
-        if tool.applies_to and not sys.platform.startswith(tool.applies_to):
-            lines.append(f'{tool.name}: not applicable on {sys.platform}')
-            continue
         try:
             line = check_tool(tool, environ)
         except DoctorError as exc:
-            if tool.optional:
-                lines.append(f'advisory: {exc}')
-            else:
-                failures.append(str(exc))
-                lines.append(f'FAIL: {exc}')
+            failures.append(str(exc))
+            lines.append(f'FAIL: {exc}')
         else:
-            lines.append(line + (' (advisory)' if tool.optional else ''))
+            lines.append(line)
     return lines, failures
 
 
@@ -498,9 +489,8 @@ def collect(environ=None):
     status = 0
     try:
         info = identity(environ)
-        uv = UV.parse(info['uv'])
         lines.extend([
-            f'uv: {uv.text if uv else info["uv"]} (minimum {UV_MINIMUM})',
+            f'uv: {info["uv"].removeprefix("uv ")}',
             f'interpreter: {info["implementation"]} {info["version"]} '
             f'(minimum {PYTHON_MINIMUM}, below {PYTHON_BELOW})',
             f'managed: {"yes" if info["managed"] else "no"}',
@@ -515,6 +505,24 @@ def collect(environ=None):
     if failures:
         status = 1
     return lines, status
+
+
+# The fallback can be newer than the oldest supported installed tool.
+CARGO_TOOL_PINS = {'just': '1.59.0', 'cargo-nextest': '0.9.150', 'cargo-c': '0.10.25'}
+
+
+def cargo_tool(name, root=ROOT):
+    """Return the installed-tool check that provisioning uses to keep or replace NAME."""
+    if name == 'just':
+        def verdict(tool, executable, environ):
+            result = _run([executable, '--justfile', str(root / 'justfile'), '--summary'], environ)
+            if result is None or result.returncode:
+                raise DoctorError(f'{tool.name} at {executable} does not meet {tool.minimum}')
+            version = _first_line(_run([executable, '--version'], environ))
+            return f'{tool.name}: {version} at {executable} ({tool.minimum}: met)'
+        return Tool('just', 'just', (), None, "the justfile's minimum-version",
+                    'cargo install just --locked', required=True, verdict=verdict)
+    return next(tool for tool in TOOLS if tool.name == name)._replace(required=True)
 
 
 def main(argv=None):

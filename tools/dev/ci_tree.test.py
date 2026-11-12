@@ -668,7 +668,7 @@ class GateTests(unittest.TestCase):
             'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness'},
             '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
-            'scripts/new.sh': {'lint'},
+            'scripts/new.sh': set(),
             'tools/bisection/契约.py': {'harness'},
         }
         for path, jobs in cases.items():
@@ -695,7 +695,7 @@ class GateTests(unittest.TestCase):
 
     def test_no_step_of_a_lane_depends_on_a_path_flag(self):
         # Evidence is read per lane: a successful `lint` in the source run stands for every
-        # check of `lint`, ShellCheck included. A step that ran only for some path selection
+        # check of `lint`. A step that ran only for some path selection
         # would let a later run with another selection reuse a result that never ran it.
         workflow = (ROOT / PROFILE.path).read_text()
         outputs = set(re.findall(r'needs\.changes\.outputs\.(\w+)', workflow))
@@ -706,11 +706,6 @@ class GateTests(unittest.TestCase):
         for condition in steps:
             with self.subTest(condition=condition):
                 self.assertEqual(set(re.findall(r'needs\.changes\.outputs\.(\w+)', condition)) - {'reuse'}, set())
-        shellcheck = re.search(r'- name: ShellCheck tracked scripts[^\n]*\n +if: (.*)\n', workflow)
-        self.assertEqual(shellcheck[1], "needs.changes.outputs.reuse != 'true'")
-        # The lint job is selected by every tracked script.
-        self.assertTrue(ci_tree.CI_INPUTS['lint'].selects('tools/oracle/build-oracle.sh'))
-        self.assertTrue(ci_tree.CI_INPUTS['lint'].selects('new.sh'))
 
     def test_event_base(self):
         self.assertEqual(ci_tree.event_base('pull_request', {'pull_request': {'base': {'sha': HEAD}}}), HEAD)
