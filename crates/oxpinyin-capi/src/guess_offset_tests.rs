@@ -307,16 +307,12 @@ fn luoma_input_carries_the_full_offset_law() {
         "post-run and run-start offsets answer the same list"
     );
 
+    // The list came from the guess at 2, so the row's `m_begin` is 2 and its
+    // `m_end` 6 (`pinyin.cpp:2228`, `:2246`). A choose at 3 answers the
+    // caller's offset plus that span's length, `3 + 4` (`:2582-2588`),
+    // whatever offset the caller passes.
     let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
-    let cursor = pinyin_choose_candidate(instance, 3, hao);
-    assert_eq!(
-        cursor, 6,
-        "the post-separator choose answers the absolute end"
-    );
-    assert_eq!(
-        usize::try_from(cursor).expect("non-negative cursor"),
-        pinyin_get_parsed_input_length(instance)
-    );
+    assert_eq!(pinyin_choose_candidate(instance, 3, hao), 7);
 
     // One past the reserved slot finds nothing (offset 8 and beyond abort,
     // as at the pin); the leading gap does not erase its real key.

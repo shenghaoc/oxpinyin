@@ -527,3 +527,95 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// An addon row's choose is refused after a shortening reparse, once the
+/// promotion has run; the full input is parsed again and the same handle is
+/// chosen again. The pin's first choose rewrote the row to its promoted
+/// `m_token` in place (`pinyin.cpp:2559-2561`), so the second forces that
+/// token over the row's span and answers `0 + 7` (`:2577-2590`), and
+/// `pinyin_train` adds `69 * 7 = 483` to its unigram: the bigram from
+/// `sentence_start` is new, so the seed is the initial one
+/// (`phonetic_lookup.h:858-929`).
+#[test]
+fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
+    const ADDON: u32 = 0x0400_0001;
+    const PROMOTED: u32 = 0x0500_0001;
+    let system = TempSystemDir::new("promoted-repeat");
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("promoted-repeat-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+    let instance = pinyin_alloc_instance(context);
+    let input = cstr("erhuang");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let index = {
+        // SAFETY: live instance; snapshot valid until the next guess.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates
+            .iter()
+            .position(|c| {
+                c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
+                    && c.token.get().map(oxpinyin_core::PhraseToken::value) == Some(ADDON)
+            })
+            .expect("the 二簧 ADDON row")
+    };
+    let mut cand: *mut crate::types::LookupCandidate = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small"),
+        &raw mut cand
+    ));
+    let short = cstr("er");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, short.as_ptr()), 2);
+    assert_eq!(pinyin_choose_candidate(instance, 0, cand), 0);
+    // SAFETY: as above.
+    let promoted = unsafe { instance_ref(instance) }.state.candidates[index]
+        .token
+        .get()
+        .map(oxpinyin_core::PhraseToken::value);
+    assert_eq!(promoted, Some(PROMOTED));
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert_eq!(pinyin_choose_candidate(instance, 0, cand), 7);
+    // SAFETY: as above.
+    let tokens: Vec<u32> = unsafe { instance_ref(instance) }
+        .core
+        .session
+        .selected_tokens()
+        .iter()
+        .map(|token| token.value())
+        .collect();
+    assert_eq!(tokens, [PROMOTED]);
+    assert!(crate::sentence::pinyin_guess_sentence(instance));
+    let mut sentence: *mut std::ffi::c_char = std::ptr::null_mut();
+    assert!(crate::sentence::pinyin_get_sentence(
+        instance,
+        0,
+        &raw mut sentence
+    ));
+    // SAFETY: a NUL-terminated GLib string the caller owns.
+    let text = unsafe { std::ffi::CStr::from_ptr(sentence) }
+        .to_str()
+        .expect("UTF-8")
+        .to_owned();
+    // SAFETY: freed once.
+    unsafe { glib_sys::g_free(sentence.cast()) };
+    assert_eq!(text, "二簧");
+    let unigram = |token: u32| {
+        let mut freq = 0;
+        let found = crate::dict::pinyin_token_get_unigram_frequency(instance, token, &raw mut freq);
+        (found, freq)
+    };
+    assert_eq!(unigram(PROMOTED), (true, 1));
+    assert!(crate::candidates::pinyin_train(instance, 0));
+    assert_eq!(unigram(PROMOTED), (true, 1 + 483));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}

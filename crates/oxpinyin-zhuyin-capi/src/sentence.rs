@@ -520,7 +520,6 @@ fn guess_candidates_result(
             | oxpinyin_engine::EngineError::Graph(_)
             | oxpinyin_engine::EngineError::Scoring(_)),
         ) => {
-            inst.core.selection_live = false;
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));
         }
@@ -560,7 +559,6 @@ fn guess_candidates_result(
     // removal compares it (SIGSEGV). Only a `table.conf` that points a
     // library at another file (or at none) gets here. The call fails, once.
     if window_owned.had_unreadable_item() {
-        inst.core.selection_live = false;
         inst.state.candidates.clear();
         return Err(CandidateGuessRefusal::UnreadableItem);
     }

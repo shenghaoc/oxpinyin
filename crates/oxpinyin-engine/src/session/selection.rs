@@ -369,125 +369,12 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// Chooses the candidate at `index`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError::CandidateIndexOutOfRange`] for an index the
-    /// current list does not hold — including a stale index left over from an
-    /// earlier list — and leaves the session usable.
-    pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
-        self.refresh_candidates()?;
-        // Clone the candidate out of the cached list first: `select_target`
-        // borrows `self` mutably, so it cannot also borrow `self.candidates`.
-        let candidate = self.lookup.candidates.get(index).cloned().ok_or(
-            EngineError::CandidateIndexOutOfRange {
-                index,
-                len: self.lookup.candidates.len(),
-            },
-        )?;
-        self.select_target(&SelectionTarget::of_candidate(
-            &candidate,
-            self.record.consumed(),
-            None,
-        ))
-    }
-
-    /// Chooses the candidate at `index`, recording `promoted_token` in the
-    /// sentence history in place of the candidate's own token.
-    ///
-    /// The addon-promotion path (`pinyin.cpp:2532-2561`,
-    /// `docs/findings/addon-choose-promotion.md`): a chosen `ADDON_CANDIDATE`
-    /// becomes a `NORMAL_CANDIDATE` at a freshly allocated default-facade
-    /// nibble-5 token, and it is that promoted token the constraint — and a
-    /// later `pinyin_train` — records, not the addon-facade token.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Session::select`].
-    pub fn select_promoted(
-        &mut self,
-        index: usize,
-        promoted_token: PhraseToken,
-    ) -> Result<Selection, EngineError> {
-        self.refresh_candidates()?;
-        let candidate = self.lookup.candidates.get(index).cloned().ok_or(
-            EngineError::CandidateIndexOutOfRange {
-                index,
-                len: self.lookup.candidates.len(),
-            },
-        )?;
-        self.select_target(&SelectionTarget::of_candidate(
-            &candidate,
-            self.record.consumed(),
-            Some(promoted_token),
-        ))
-    }
-
-    /// Chooses the candidate at `index` from an explicit candidate window
-    /// (a re-anchored `candidates_at` list), not the session's cached list.
-    ///
-    /// `pinyin_guess_candidates` at an offset other than the composition's
-    /// own rebuilds the window the caller sees at that offset; a subsequent
-    /// `pinyin_choose_candidate` must resolve its index against that SAME
-    /// window, or it would select a different row from the composition-
-    /// anchored cached list whenever the two differ. The selection record,
-    /// constraint span, and consumed advance are otherwise identical to
-    /// [`Session::select`] — they come from the candidate and the session
-    /// state, not from which list holds the candidate.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Session::select`]: [`EngineError::CandidateIndexOutOfRange`]
-    /// for an index the given window does not hold. A retained normal span
-    /// beyond the current matrix returns [`Selection::Refused`].
-    pub fn select_anchored(
-        &mut self,
-        index: usize,
-        window: &CandidateList,
-        anchor: usize,
-    ) -> Result<Selection, EngineError> {
-        let candidate = window
-            .get(index)
-            .ok_or(EngineError::CandidateIndexOutOfRange {
-                index,
-                len: window.len(),
-            })?;
-        self.select_target(&SelectionTarget::of_candidate(candidate, anchor, None))
-    }
-
-    /// [`Session::select_anchored`] with an addon-promotion token override,
-    /// mirroring [`Session::select_promoted`].
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Session::select_anchored`].
-    pub fn select_anchored_promoted(
-        &mut self,
-        index: usize,
-        window: &CandidateList,
-        anchor: usize,
-        promoted_token: PhraseToken,
-    ) -> Result<Selection, EngineError> {
-        let candidate = window
-            .get(index)
-            .ok_or(EngineError::CandidateIndexOutOfRange {
-                index,
-                len: window.len(),
-            })?;
-        self.select_target(&SelectionTarget::of_candidate(
-            candidate,
-            anchor,
-            Some(promoted_token),
-        ))
-    }
-
     /// Chooses the row `target` describes: the span, token and n-best rank
     /// a published row carries, as the pin's choose reads them off the
     /// `lookup_candidate_t` alone (`m_begin`, `m_end`, `m_token`,
     /// `m_nbest_index`; 074a2219 `pinyin.cpp:2515-2520`, `:2577-2590`,
-    /// `zhuyin.cpp:1646-1666`). [`Session::select`] and its siblings are
-    /// this with the target read off a candidate.
+    /// `zhuyin.cpp:1646-1666`); [`SelectionTarget::of_candidate`] reads
+    /// one off a candidate list's row.
     ///
     /// # Errors
     ///
@@ -636,6 +523,30 @@ where
         Ok(self.selection_outcome())
     }
 
+    /// `pinyin_choose_candidate`'s normal branch for a row with no token and
+    /// `m_begin = m_end = 0`, which every predicted row carries
+    /// (`pinyin.cpp:114`): validate the store, `add_constraint(0, 0,
+    /// null_token)`, validate again (`:2577-2590`). The write is a
+    /// zero-length null-token cell at 0, which neither validation removes.
+    /// While it stays, no sentence decode passes position 0 (the n-best
+    /// walk's `ONESTEP` branch searches `[0, 0)`, which is no span, as the
+    /// pin's `search_matrix` answers `SEARCH_CONTINUED` there,
+    /// `phonetic_lookup.h:776-790`). A reset or a shrink of the store to
+    /// zero clears the cell, and a later non-empty forcing that starts at 0
+    /// overwrites it: `add_constraint` finds nothing to clear in the empty
+    /// run and writes its `ONESTEP` over the cell
+    /// (`phonetic_lookup.cpp:61-86`). The selection record, which the pin
+    /// does not keep, is left alone.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from either validation's spelling probe.
+    pub fn choose_null_step(&mut self) -> Result<(), EngineError> {
+        self.validate_selection_constraints()?;
+        self.constraints.add_null_step();
+        self.validate_selection_constraints()
+    }
+
     /// Revalidate existing forcings on a refused choose, preserving the pin's
     /// resize and spelling checks without attempting sentence decoding.
     fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
@@ -656,7 +567,10 @@ where
             })
         })();
         self.constraints = store;
-        if result? || (self.constraints.is_active() && self.record.history().is_empty()) {
+        // Only a run can restore a record that lost its tokens. A null step
+        // alone leaves the store active with none, and a rebuild from no
+        // runs would clear a token-free selection.
+        if result? || (self.constraints.has_runs() && self.record.history().is_empty()) {
             self.rebuild_selection_from_constraints();
         }
         Ok(())

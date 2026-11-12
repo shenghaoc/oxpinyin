@@ -1,9 +1,10 @@
 //! Candidates and checked iteration over them.
 //!
-//! Every index is checked. `docs/findings/robustness-evidence.md` row F-E-02
-//! is an upstream invalid access through a candidate index that outlived the
-//! list it came from; here a stale index is an `Option` or an `Err`, and the
-//! session stays usable.
+//! A list hands out its rows by iteration only; the session selects a row
+//! it is given, never an index, so
+//! `docs/findings/robustness-evidence.md` row F-E-02, a candidate that
+//! outlived its list, is a C ABI case: a stale `lookup_candidate_t` pointer,
+//! which the snapshot resolves by address.
 
 use core::slice;
 
@@ -370,12 +371,6 @@ impl CandidateList {
         self.items.is_empty()
     }
 
-    /// The candidate at `index`, or `None` when out of range.
-    #[must_use]
-    pub fn get(&self, index: usize) -> Option<&Candidate> {
-        self.items.get(index)
-    }
-
     /// Iterates the candidates in rank order.
     pub fn iter(&self) -> slice::Iter<'_, Candidate> {
         self.items.iter()
@@ -393,10 +388,6 @@ impl<'a> IntoIterator for &'a CandidateList {
 
 #[cfg(test)]
 mod tests {
-    use oxpinyin_core::PhraseToken;
-
-    use super::{Candidate, CandidateKind, CandidateList};
-
     #[test]
     fn frequency_guard_agrees_with_the_order_laws_at_wrap_boundaries() {
         use super::{frequency_compare, frequency_order_is_consistent};
@@ -473,38 +464,5 @@ mod tests {
         super::rank_by_frequency(&mut rows, |&(_, freq)| (0, 0, freq));
         assert_eq!(rows, [(0, 1 << 31), (3, 1 << 31), (1, 0), (2, 0)]);
         super::rank_by_frequency::<(usize, u32)>(&mut [], |&(_, freq)| (0, 0, freq));
-    }
-
-    fn list() -> CandidateList {
-        CandidateList::from_vec(vec![
-            Candidate::new(
-                "\u{4f60}\u{597d}".to_owned(),
-                CandidateKind::Sentence,
-                2,
-                5,
-                -12,
-                None,
-                None,
-            ),
-            Candidate::new(
-                "\u{4f60}".to_owned(),
-                CandidateKind::Phrase,
-                1,
-                2,
-                -7,
-                Some(PhraseToken::new(3)),
-                None,
-            ),
-        ])
-    }
-
-    #[test]
-    fn indexing_past_the_end_is_none_not_a_panic() {
-        let candidates = list();
-        assert_eq!(candidates.len(), 2);
-        assert!(!candidates.is_empty());
-        assert!(candidates.get(0).is_some());
-        assert!(candidates.get(2).is_none());
-        assert!(candidates.get(usize::MAX).is_none());
     }
 }

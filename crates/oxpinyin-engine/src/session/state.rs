@@ -174,14 +174,11 @@ where
     /// Bytes of the raw input consumed by selections so far — the
     /// composition offset the candidate lookup is anchored at.
     ///
-    /// After a successful [`Session::select`] this is the chosen
+    /// After a successful [`Session::select_target`] this is the chosen
     /// candidate's absolute end position: the previous anchor plus the
     /// candidate's span (separator run included), never past the raw
-    /// input. The C ABI answers it as the new lookup cursor — the caller
-    /// offset may sit past a separator run the span also covers, so
-    /// caller-offset-plus-span would count that run twice
-    /// (libpinyin@412f88e3 instead anchors `m_begin` at the caller offset,
-    /// reaching the same end).
+    /// input. The C ABIs do not answer it: a choose answers from the row's
+    /// own `m_begin` and `m_end` as the pin does.
     #[must_use]
     pub fn composition_offset(&self) -> usize {
         self.record.consumed()
@@ -541,9 +538,7 @@ where
     /// Off by default: each builds it, as the session API always has. On,
     /// the parse seams and the guesses still build the scan matrix, so its
     /// errors surface where they did, and all three leave the list stale.
-    /// [`Session::select`], [`Session::select_promoted`]
-    /// rebuild a stale list before indexing it; a reader of
-    /// [`Session::candidates`] or [`Session::full_parsed_len`] calls
+    /// A reader of [`Session::candidates`] or [`Session::full_parsed_len`] calls
     /// [`Session::refresh_candidates`] first. A failure of the deferred build then surfaces from that call
     /// rather than from the parse or the guess. This is the C facades'
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`

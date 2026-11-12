@@ -204,44 +204,20 @@ pub extern "C" fn zhuyin_choose_candidate(
         token: row.token,
         nbest_row: None,
         text: &text,
-        source_index: row.source_index as usize,
     };
-    let window_end = match inst.core.select_published(&published, None) {
-        Ok((oxpinyin_engine::Selection::Refused, _)) => {
-            let chosen = &inst.state.candidates[index];
-            let offset = if chosen.candidate_type
-                == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR
-            {
-                chosen.span_begin
-            } else {
-                chosen.span_end
-            };
-            return c_int::try_from(offset).unwrap_or(c_int::MAX);
-        }
-        Ok((
-            oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed,
-            window_end,
-        )) => window_end,
-        Err(_) => return -1,
-    };
-    // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663` at the
-    // pin): the BEST_MATCH row answers the parse end (`matrix.size() - 1`);
-    // an after-cursor row answers its span's end (`offset = m_end`); a
-    // before-cursor row answers its span's START (`offset = m_begin`) —
-    // the constraint is written on `[m_begin, m_end)` either way.
+    if inst.core.select_published(&published).is_err() {
+        return -1;
+    }
+    // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1649-1666` at the
+    // pin): an after-cursor row answers its own `m_end`, a before-cursor row
+    // its own `m_begin`, both fixed at the guess, whether `add_constraint`
+    // wrote the span or refused it; the caller's offset is overwritten and
+    // takes no part. The BEST_MATCH row answered the matrix end above.
     let chosen = &inst.state.candidates[index];
-    let end = match chosen.candidate_type {
-        lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
-        lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin as usize,
-        lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
-        | lookup_candidate_type_t::ZOMBIE_CANDIDATE => {
-            let end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
-            if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-                oxpinyin_facade::zhuyin_original_offset(parse, end)
-            } else {
-                end
-            }
-        }
+    let end = if chosen.candidate_type == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR {
+        chosen.span_begin
+    } else {
+        chosen.span_end
     };
     c_int::try_from(end).unwrap_or(c_int::MAX)
 }
@@ -353,7 +329,7 @@ pub fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    for (window_index, cand) in window.iter().enumerate() {
+    for cand in window.iter() {
         if cand.kind() == CandidateKind::Sentence && !before_cursor {
             // BEST_MATCH row stays at the head.
         }
@@ -401,7 +377,6 @@ pub fn snapshot_candidates(
                     normal_type
                 }
             },
-            source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
             span_end: u32::try_from(span_end).unwrap_or(u32::MAX),
             token: cand.token(),

@@ -980,7 +980,7 @@ where
     ///
     /// Returns [`EngineError`] when the deferred build hits a backend
     /// failure. The list then stays stale, so the next
-    /// `refresh_candidates`, [`Session::select`] or `Space` retries the
+    /// `refresh_candidates` or `Space` retries the
     /// scan.
     pub fn refresh_candidates(&mut self) -> Result<(), EngineError> {
         if self.lookup.stale

@@ -14,7 +14,7 @@
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
 
 use oxpinyin_core::OptionBits;
-use oxpinyin_engine::{Selection, Session, SessionSettings};
+use oxpinyin_engine::{EngineError, Selection, SelectionTarget, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -68,7 +68,7 @@ fn the_reset_session_converts_identically_to_a_fresh_one() {
     fresh.replace_raw("zhong,guo").expect("typing");
     let mut reset = session();
     reset.replace_raw("zhong,guo").expect("typing");
-    reset.select(0).expect("choose");
+    select_row(&mut reset, 0).expect("choose");
     reset.reset();
 
     reset.replace_raw("zhong,guo").expect("typing");
@@ -105,54 +105,14 @@ fn reset_composition_keeps_the_parse_more_split_state() {
 // ── libchewing test-keyboardless.c: programmatic selection ─────────
 
 #[test]
-fn choosing_without_a_composition_fails() {
-    // `cand_choose_not_in_select`: choosing with no candidate window must
-    // fail, not silently pick something.
-    let mut session = session();
-    assert!(
-        session.select(0).is_err(),
-        "nothing is composing, so index 0 does not exist"
-    );
-}
-
-#[test]
-fn an_out_of_range_choice_fails_and_leaves_the_composition() {
-    // `cand_choose_out_of_range`: index == count and index past the end
-    // both fail; the composition state is unchanged afterwards.
-    let mut session = session();
-    session.replace_raw("ni").expect("typing");
-    let before = (
-        session.raw_input().to_owned(),
-        session.selected_text().clone(),
-        session.composition_offset(),
-    );
-    let count = session.candidates().len();
-    assert!(count > 0, "the mini table offers ni candidates");
-    assert!(session.select(count).is_err(), "index == count must fail");
-    assert!(
-        session.select(u32::MAX as usize).is_err(),
-        "index past the end must fail"
-    );
-    assert_eq!(
-        (
-            session.raw_input().to_owned(),
-            session.selected_text().clone(),
-            session.composition_offset()
-        ),
-        before,
-        "failed choices change nothing"
-    );
-    assert!(session.is_composing());
-}
-
-#[test]
 fn a_programmatic_choice_retains_the_chosen_phrase() {
     // `cand_choose_word`: choosing by index retains the exact phrase.
     let mut session = session();
     session.replace_raw("ni,hao").expect("typing");
     let chosen = session
         .candidates()
-        .get(0)
+        .iter()
+        .next()
         .expect("candidates exist")
         .text()
         .as_str()
@@ -163,7 +123,10 @@ fn a_programmatic_choice_retains_the_chosen_phrase() {
     // The first choice selects the first segment's phrase and continues
     // the composition with the remaining syllables (chewing puts the
     // chosen phrase into the preedit too).
-    assert_eq!(session.select(0).expect("choose"), Selection::Continued);
+    assert_eq!(
+        select_row(&mut session, 0).expect("choose"),
+        Selection::Continued
+    );
     assert!(
         session
             .selected_text()
@@ -183,7 +146,7 @@ fn a_programmatic_choice_retains_the_chosen_phrase() {
 #[test]
 fn a_mid_composition_choice_targets_the_offset_window() {
     // `test_select_candidate_in_middle`: choosing can address a sub-span
-    // of the composition through `candidates_at` + `select_anchored`,
+    // of the composition through `candidates_at` + `select_target`,
     // retaining the raw input alongside the selected text.
     let mut session = session();
     session.replace_raw("ni,hao,zhong,guo").expect("typing");
@@ -203,7 +166,11 @@ fn a_mid_composition_choice_targets_the_offset_window() {
         "the mid-composition window offers candidates"
     );
     session
-        .select_anchored(0, &window, offset)
+        .select_target(&SelectionTarget::of_candidate(
+            window.iter().next().expect("the row is in the window"),
+            offset,
+            None,
+        ))
         .expect("the anchored selection succeeds over a live window");
     // The composition stays live and bounded after the anchored choice.
     assert_eq!(session.raw_input(), full);
@@ -238,4 +205,18 @@ fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
         session.is_composing(),
         "incomplete pinyin still composes past an initial"
     );
+}
+
+/// Chooses row `index` of the session's cached list at the composition
+/// offset, through [`Session::select_target`].
+fn select_row(session: &mut TestSession, index: usize) -> Result<Selection, EngineError> {
+    session.refresh_candidates()?;
+    let candidate = session
+        .candidates()
+        .iter()
+        .nth(index)
+        .cloned()
+        .expect("the row is listed");
+    let anchor = session.composition_offset();
+    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }

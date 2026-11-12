@@ -24,7 +24,7 @@
 use std::ffi::{CStr, c_char};
 use std::ops::{Deref, DerefMut};
 
-use oxpinyin_core::{PhraseText, PhraseToken};
+use oxpinyin_core::PhraseText;
 
 /// One interned string's place in the snapshot's text buffer: the byte
 /// offset of its first byte and its length without the terminator.
@@ -62,16 +62,14 @@ pub trait SnapshotRow {
 
 /// The rows and their packed, NUL-terminated texts.
 ///
-/// Two side tables, keyed by row position and usually empty, hold what the
-/// packed text and a row's own fields cannot: the exact text of a row whose
-/// phrase is stored words ([`Self::keep_stored_text`]), and the token a row
-/// carried before an in-place promotion ([`Self::note_promotion`]).
+/// A side table, keyed by row position and usually empty, holds what the
+/// packed text cannot: the exact text of a row whose phrase is stored words
+/// ([`Self::keep_stored_text`]).
 #[derive(Debug)]
 pub struct CandidateSnapshot<R> {
     rows: Vec<R>,
     text: Vec<u8>,
     stored_texts: Vec<(u32, PhraseText)>,
-    promoted_from: Vec<(u32, Option<PhraseToken>)>,
 }
 
 /// The pointer to `span`'s string inside `text`, or to an empty string
@@ -116,7 +114,6 @@ impl<R> CandidateSnapshot<R> {
             rows: Vec::new(),
             text: Vec::new(),
             stored_texts: Vec::new(),
-            promoted_from: Vec::new(),
         }
     }
 
@@ -126,7 +123,6 @@ impl<R> CandidateSnapshot<R> {
         self.rows.clear();
         self.text.clear();
         self.stored_texts.clear();
-        self.promoted_from.clear();
     }
 
     /// Keeps `text` as the exact text of the row about to be pushed.
@@ -160,26 +156,6 @@ impl<R> CandidateSnapshot<R> {
             return text.clone();
         }
         PhraseText::from(String::from_utf8_lossy(self.text_bytes(span)).as_ref())
-    }
-
-    /// Records that row `row` carried `token` before a choose promoted it
-    /// in place (`pinyin.cpp:2532-2562` at 074a2219). The first record
-    /// wins, so the token is the one the row was published with.
-    pub fn note_promotion(&mut self, row: usize, token: Option<PhraseToken>) {
-        let row = u32::try_from(row).unwrap_or(u32::MAX);
-        if !self.promoted_from.iter().any(|(noted, _)| *noted == row) {
-            self.promoted_from.push((row, token));
-        }
-    }
-
-    /// The token row `row` was published with, when a promotion has
-    /// replaced it since; `None` for a row never promoted.
-    #[must_use]
-    pub fn published_token(&self, row: usize) -> Option<Option<PhraseToken>> {
-        self.promoted_from
-            .iter()
-            .find(|(noted, _)| *noted as usize == row)
-            .map(|(_, token)| *token)
     }
 
     /// `span`'s bytes without the terminator. A span that is not of this
@@ -263,14 +239,13 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
     /// row's text into this buffer. A row whose text cannot be interned
     /// here is dropped, as a `CString::new` failure dropped it before.
     ///
-    /// The side tables follow their rows to the rows' new positions.
+    /// The side table follows its rows to the rows' new positions.
     pub fn append(&mut self, other: Self) {
         self.reserve(other.rows.len(), other.text.len());
         let Self {
             rows,
             text,
             mut stored_texts,
-            promoted_from,
         } = other;
         for (index, mut row) in rows.into_iter().enumerate() {
             let old = u32::try_from(index).unwrap_or(u32::MAX);
@@ -288,9 +263,6 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
                 let (_, kept) = stored_texts.swap_remove(slot);
                 self.stored_texts
                     .push((u32::try_from(new).unwrap_or(u32::MAX), kept));
-            }
-            if let Some(&(_, token)) = promoted_from.iter().find(|(noted, _)| *noted == old) {
-                self.note_promotion(new, token);
             }
         }
     }

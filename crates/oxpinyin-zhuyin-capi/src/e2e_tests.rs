@@ -1408,3 +1408,60 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
         close(context, instance);
     }
 }
+
+/// F-E-02 (`docs/findings/robustness-evidence.md`): a candidate pointer that
+/// outlived the list it came from. The after-cursor guess over `su3cl3`
+/// publishes more rows than the guess over `su3` that regenerates the list,
+/// and the snapshot keeps its buffer, so a pointer to the old last row now
+/// lies past the new list's end. `zhuyin_choose_candidate` resolves a
+/// pointer by address against the current snapshot, finds no row there and
+/// answers -1; the composition is unchanged and a second request chooses a
+/// live row.
+#[test]
+fn a_stale_candidate_pointer_after_regeneration_is_refused() {
+    use crate::candidates::zhuyin_get_candidate;
+    use crate::sentence::zhuyin_guess_candidates_after_cursor;
+
+    let (context, instance) = open();
+    let count = |instance| {
+        let mut count = 0;
+        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        count
+    };
+    let long = cstr("su3cl3");
+    assert_eq!(zhuyin_parse_more_chewings(instance, long.as_ptr()), 6);
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    let stale_count = count(instance);
+    let mut stale = ptr::null_mut();
+    assert!(zhuyin_get_candidate(
+        instance,
+        stale_count - 1,
+        &raw mut stale
+    ));
+
+    let short = cstr("su3");
+    assert_eq!(zhuyin_parse_more_chewings(instance, short.as_ptr()), 3);
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    let live_count = count(instance);
+    assert!(live_count < stale_count, "the regenerated list is shorter");
+    // SAFETY: the live instance is read between serialized ABI calls.
+    let listed = unsafe { crate::state::instance_ref(instance) }
+        .state
+        .candidates
+        .iter()
+        .any(|row| ptr::eq(row, stale.cast::<crate::state::CapiCandidate>()));
+    assert!(!listed, "the stale address holds no current row");
+
+    assert_eq!(zhuyin_choose_candidate(instance, 0, stale), -1);
+    {
+        // SAFETY: the live instance is read between serialized ABI calls.
+        let inst = unsafe { crate::state::instance_ref(instance) };
+        assert!(inst.core.session.selected_tokens().is_empty());
+        assert_eq!(inst.core.session.composition_offset(), 0);
+    }
+    let mut live = ptr::null_mut();
+    assert!(zhuyin_get_candidate(instance, 0, &raw mut live));
+    assert!(zhuyin_choose_candidate(instance, 0, live) > 0);
+
+    close(context, instance);
+}

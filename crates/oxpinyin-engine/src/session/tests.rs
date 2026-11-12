@@ -69,7 +69,7 @@ use oxpinyin_core::{
     UserModel,
 };
 
-use super::{Selection, Session};
+use super::{Selection, SelectionTarget, Session};
 use crate::SessionSettings;
 use crate::error::{EngineError, TrainingSpanFault};
 use crate::fixture_doubles::{
@@ -165,28 +165,11 @@ fn reset_discards_the_composition() {
 }
 
 #[test]
-fn a_stale_candidate_index_is_an_error_not_a_panic() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    let len = session.candidates().len();
-    assert_eq!(len, 1, "only the raw fallback exists before the decoder");
-
-    for index in [len, len + 1, usize::MAX] {
-        assert_eq!(
-            session.select(index),
-            Err(EngineError::CandidateIndexOutOfRange { index, len })
-        );
-    }
-    assert_eq!(session.raw_input(), "nihao");
-    assert!(session.candidates().get(usize::MAX).is_none());
-}
-
-#[test]
 fn choosing_the_fallback_completes_the_composition() {
     let mut session = session();
     type_text(&mut session, "nihao");
     assert_eq!(
-        session.select(0).expect("the fallback exists"),
+        select_row(&mut session, 0).expect("the fallback exists"),
         Selection::Completed
     );
 
@@ -195,6 +178,64 @@ fn choosing_the_fallback_completes_the_composition() {
     assert!(session.candidates().is_empty());
     session.reset();
     assert!(session.selected_text().is_empty());
+}
+
+/// A token-free selection survives [`Session::choose_null_step`]. The
+/// fallback row leaves text and a composition offset in the record with no
+/// token history; the null step makes the store active without giving it a
+/// run, so there is nothing to rebuild the record from and it is kept.
+#[test]
+fn a_null_step_after_a_fallback_selection_keeps_the_record() {
+    let mut session = session();
+    type_text(&mut session, "nihao");
+    assert_eq!(
+        select_row(&mut session, 0).expect("the fallback exists"),
+        Selection::Completed
+    );
+    assert!(session.selected_tokens().is_empty());
+
+    session
+        .choose_null_step()
+        .expect("the null step is written");
+    assert!(session.constraints.is_active());
+    assert_eq!(session.selected_text(), "nihao");
+    assert_eq!(session.composition_offset(), 5);
+    assert!(session.selected_tokens().is_empty());
+
+    // Both sentence guesses validate the store under the same rule.
+    session.guess_sentence().expect("the guess runs");
+    assert_eq!(session.selected_text(), "nihao");
+    assert_eq!(session.composition_offset(), 5);
+    session
+        .guess_sentence_with_prefix(&[])
+        .expect("the prefix guess runs");
+    assert_eq!(session.selected_text(), "nihao");
+    assert_eq!(session.composition_offset(), 5);
+}
+
+/// A null step keeps the rebuild where runs exist. A temporary parse clears
+/// the record and leaves the store its two forcings; the validation before
+/// the null step is written finds runs with no token history, and rebuilds
+/// the record from them.
+#[test]
+fn a_null_step_still_rebuilds_a_record_that_lost_its_runs() {
+    let mut session = trellis_session();
+    type_and_select_over(&mut session, "ni", 1);
+    type_and_select_over(&mut session, "hao", 2);
+    session.replace_raw("n").expect("temporary parse");
+    session.replace_raw("nihao").expect("restore input");
+    assert!(session.selected_tokens().is_empty());
+    assert!(session.constraints.has_runs());
+
+    session
+        .choose_null_step()
+        .expect("the null step is written");
+    assert_eq!(
+        session.selected_tokens(),
+        [PhraseToken::new(1), PhraseToken::new(2)]
+    );
+    assert_eq!(session.selected_text(), "你好");
+    assert_eq!(session.composition_offset(), 5);
 }
 
 #[test]
@@ -352,8 +393,8 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
     assert!(eager.guess_sentence().expect("guess"));
     assert!(deferred.guess_sentence().expect("guess"));
     assert_eq!(
-        deferred.select(0).expect("the row is live"),
-        eager.select(0).expect("the row is live")
+        select_row(&mut deferred, 0).expect("the row is live"),
+        select_row(&mut eager, 0).expect("the row is live")
     );
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
     assert_eq!(deferred.candidates(), eager.candidates());
@@ -364,8 +405,8 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
     eager.replace_raw("fang").expect("parse");
     deferred.replace_raw("fang").expect("parse");
     assert_eq!(
-        deferred.select(0).expect("select"),
-        eager.select(0).expect("select")
+        select_row(&mut deferred, 0).expect("select"),
+        select_row(&mut eager, 0).expect("select")
     );
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
 }
@@ -561,7 +602,7 @@ fn type_and_select(
         .iter()
         .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
         .expect("the fixture candidate is offered");
-    session.select(index).expect("selection cannot fail");
+    select_row(session, index).expect("selection cannot fail");
 }
 
 #[test]
@@ -628,7 +669,7 @@ fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
-    session.select(1).expect("choose 你");
+    select_row(&mut session, 1).expect("choose 你");
     // No fresh lookup: the constraint is stored unvalidated, as the pin
     // leaves it, so the stale result still trains (phonetic_lookup.h:921).
     session.replace_raw("ni").expect("shrink");
@@ -657,7 +698,7 @@ fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
-    session.select(1).expect("choose 你");
+    select_row(&mut session, 1).expect("choose 你");
     session
         .replace_raw("'ni")
         .expect("shrink behind an apostrophe");
@@ -689,7 +730,7 @@ fn train_after_a_reparse_onto_an_internal_zero_key_column_trains() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
-    session.select(1).expect("choose 你");
+    select_row(&mut session, 1).expect("choose 你");
     session
         .replace_raw("ni'ha")
         .expect("re-parse onto the apostrophe");
@@ -727,7 +768,11 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
             .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
             .expect("the fixture candidate is offered");
         session
-            .select_anchored(index, &window, offset)
+            .select_target(&SelectionTarget::of_candidate(
+                window.iter().nth(index).expect("the row is in the window"),
+                offset,
+                None,
+            ))
             .expect("selection cannot fail");
     };
     session.replace_raw("nihaoma").expect("initial parse");
@@ -762,7 +807,7 @@ fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
-    session.select(1).expect("choose 你");
+    select_row(&mut session, 1).expect("choose 你");
     session.replace_raw("ni'hao").expect("re-parse");
     let mut recorder = Recorder {
         observed: Vec::new(),
@@ -980,7 +1025,11 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
                 None,
             )]);
         session
-            .select_anchored(0, &window, 0)
+            .select_target(&SelectionTarget::of_candidate(
+                window.iter().next().expect("the row is in the window"),
+                0,
+                None,
+            ))
             .expect("the phrase is selectable");
 
         let runs = session.constraints.runs();
@@ -1065,7 +1114,7 @@ fn a_row_records_its_whole_token_path() {
 
     // The row itself records its whole token path.
     assert_eq!(
-        session.select(0).expect("the row is live"),
+        select_row(&mut session, 0).expect("the row is live"),
         Selection::Continued
     );
     assert_eq!(session.selected_tokens(), [PhraseToken::new(9)]);
@@ -1123,7 +1172,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
         "the deduped 好 row shifts the 浩 row off its own rank"
     );
 
-    session.select(hao).expect("the row is live");
+    select_row(&mut session, hao).expect("the row is live");
     assert_eq!(
         session.selected_tokens(),
         [PhraseToken::new(0x102)],
@@ -1162,7 +1211,11 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
         .expect("the sentence row is prepended at a re-anchored offset");
 
     session
-        .select_anchored(nbest, &window, 2)
+        .select_target(&SelectionTarget::of_candidate(
+            window.iter().nth(nbest).expect("the row is in the window"),
+            2,
+            None,
+        ))
         .expect("selection cannot fail");
     // The row's span is the whole composition, so the selection consumes
     // everything; the record holds the row text with no raw prefix.
@@ -2265,7 +2318,7 @@ where
         .iter()
         .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
         .expect("the fixture candidate is offered");
-    session.select(index).expect("selection cannot fail");
+    select_row(session, index).expect("selection cannot fail");
 }
 
 /// §3: a chosen candidate forces its span — the constrained walk pins
@@ -2387,7 +2440,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
             .iter()
             .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
             .expect("the fixture candidate is offered");
-        session.select(index).expect("selection cannot fail");
+        select_row(session, index).expect("selection cannot fail");
     };
     select_token(&mut session, 1); // 你 over [0,2)
     select_token(&mut session, 2); // 好 over [2,5)
@@ -2398,7 +2451,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         .iter()
         .position(|candidate| candidate.kind() == crate::CandidateKind::Fallback)
         .expect("the fallback covers the remainder");
-    session.select(index).expect("selection cannot fail");
+    select_row(&mut session, index).expect("selection cannot fail");
 
     // Un-force the tail run; the record rebuilds over the survivor
     // and the composition is open again.
@@ -2445,7 +2498,7 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         })
         .expect("the row-0 sentence is offered");
     assert_eq!(
-        session.select(row0).expect("selection cannot fail"),
+        select_row(&mut session, row0).expect("selection cannot fail"),
         Selection::Completed
     );
     assert!(
@@ -2494,7 +2547,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
             .iter()
             .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
             .expect("the fixture candidate is offered");
-        session.select(index).expect("selection cannot fail");
+        select_row(&mut session, index).expect("selection cannot fail");
     }
 
     // Same length, divergent inside the covered span: no clamp, so
@@ -2532,7 +2585,7 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
                 .iter()
                 .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
                 .expect("the fixture offers 你");
-            session.select(index).expect("choose 你");
+            select_row(&mut session, index).expect("choose 你");
             session.replace_raw(intermediate).expect("temporary parse");
             assert!(session.constraints.is_one_step_at(0));
             if validate {
@@ -2569,7 +2622,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
         .iter()
         .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
         .expect("the fixture candidate is offered");
-    session.select(index).expect("selection cannot fail");
+    select_row(&mut session, index).expect("selection cannot fail");
 
     // Shrink the buffer down to the forcing's floor.
     for end in (2..11).rev() {
@@ -2654,7 +2707,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
         .iter()
         .position(|candidate| candidate.nbest_row() == Some(1))
         .expect("the rank-1 row is offered");
-    session.select(index).expect("the row is choosable");
+    select_row(&mut session, index).expect("the row is choosable");
     assert!(
         session.clear_constraint(0),
         "the differing phrase's forcing landed on the fresh composition"
@@ -2704,7 +2757,7 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
         .iter()
         .position(|candidate| candidate.nbest_row() == Some(0))
         .expect("the rank-0 row is offered at the head");
-    session.select(row).expect("the row is choosable");
+    select_row(&mut session, row).expect("the row is choosable");
     assert!(
         !session.clear_constraint(0),
         "a row-0 choose recorded no forcing"
@@ -2759,7 +2812,7 @@ fn replace_raw_walks_consumed_back_to_a_char_boundary() {
     // to the boundary before it — nothing panics on any input.
     let mut session = session();
     session.replace_raw("a").expect("cannot fail");
-    session.select(0).expect("the fallback row selects");
+    select_row(&mut session, 0).expect("the fallback row selects");
     session.replace_raw("\u{ff0c}").expect("cannot fail");
     assert_eq!(session.composition_offset(), 0);
 }
@@ -2998,7 +3051,11 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     );
 
     session
-        .select_anchored(index, &window, BEFORE_CURSOR_ANCHOR)
+        .select_target(&SelectionTarget::of_candidate(
+            window.iter().nth(index).expect("the row is in the window"),
+            BEFORE_CURSOR_ANCHOR,
+            None,
+        ))
         .expect("the row is selectable");
     assert_eq!(session.composition_offset(), 5);
     let runs = session.constraints.runs();
@@ -3061,7 +3118,10 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
         .candidates_ending_at(2)
         .expect("offset 2 is in range");
     assert_eq!(
-        window.get(0).map(|cand| (cand.kind(), cand.text_str())),
+        window
+            .iter()
+            .next()
+            .map(|cand| (cand.kind(), cand.text_str())),
         Some((CandidateKind::Sentence, Some("你好"))),
         "the collapsed sentence row heads the before-cursor window"
     );
@@ -3316,7 +3376,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
         .iter()
         .position(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你好")
         .expect("你好 is offered at 0");
-    session.select(whole).expect("你好 is selectable");
+    select_row(&mut session, whole).expect("你好 is selectable");
     assert_eq!(session.composition_offset(), 5);
 
     let window = session.candidates_at(0).expect("offset 0 is in range");
@@ -3326,7 +3386,11 @@ fn choosing_behind_the_composition_moves_the_record_back() {
         .find(|(_, cand)| cand.kind() == CandidateKind::Phrase && cand.text() == "你")
         .expect("你 is offered at 0");
     session
-        .select_anchored(index, &window, 0)
+        .select_target(&SelectionTarget::of_candidate(
+            window.iter().nth(index).expect("the row is in the window"),
+            0,
+            None,
+        ))
         .expect("a choose behind the composition is a selection, not a refusal");
     assert_eq!(session.composition_offset(), 2, "the record moves back");
     let runs = session.constraints.runs();
@@ -4367,4 +4431,24 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
             .expect("in range")
             .ranked_phrase_row()
     );
+}
+
+/// Chooses row `index` of the session's cached list at the composition
+/// offset, through [`Session::select_target`].
+fn select_row<D, L>(session: &mut Session<D, L>, index: usize) -> Result<Selection, EngineError>
+where
+    D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::SyllableKey>,
+    D::Error: core::fmt::Display,
+    L: oxpinyin_core::LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    session.refresh_candidates()?;
+    let candidate = session
+        .candidates()
+        .iter()
+        .nth(index)
+        .cloned()
+        .expect("the row is listed");
+    let anchor = session.composition_offset();
+    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }

@@ -181,7 +181,7 @@ Current scoring and selection:
   `Candidate::nbest_row()` (`Option<u8>`), never by list position (§8).
   `None` marks every non-row candidate, so a fallback sentence candidate
   records nothing. Choosing a row records **all** of its token path, as
-  `pinyin_train` walks the chosen `MatchResult`: `Session::select` extends
+  `pinyin_train` walks the chosen `MatchResult`: `Session::select_target` extends
   `history` with the tokens of the row.
 - C ABI: `pinyin_guess_sentence` fills the rows and marks the lookup
   active (`Session::sentence_lookup_active`; only `reset` clears it).

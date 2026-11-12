@@ -68,6 +68,16 @@ impl ConstraintStore {
         self.cells.iter().any(|cell| !matches!(cell, Cell::None))
     }
 
+    /// Whether any forcing covers a span: a run of [`Self::runs`], which the
+    /// selection record can be rebuilt from. A null step alone
+    /// ([`Self::add_null_step`]) makes the store active without one.
+    pub(crate) fn has_runs(&self) -> bool {
+        self.cells
+            .iter()
+            .enumerate()
+            .any(|(start, cell)| matches!(cell, Cell::OneStep { end, .. } if *end > start))
+    }
+
     /// `clear()` — `pinyin_reset`'s rule.
     pub(crate) fn clear(&mut self) {
         self.cells.clear();
@@ -130,6 +140,33 @@ impl ConstraintStore {
             self.cells[index] = Cell::NoSearch { start };
         }
         end - start
+    }
+
+    /// `add_constraint(0, 0, null_token)` (`phonetic_lookup.cpp:61-86`),
+    /// the write `pinyin_choose_candidate`'s normal branch makes for a row
+    /// with `m_begin = m_end = 0` and no token (`pinyin.cpp:114`,
+    /// `:2577-2590`): the overrun refusal (`end > len`) cannot fire for
+    /// `end = 0`, the clearing loop over `[0, 0)` is empty, and cell 0
+    /// becomes a zero-length `ONESTEP` of the null token. Any `NoSearch`
+    /// cells of a run the write replaced stay, pointing back at it. The
+    /// call answers the span length, 0.
+    ///
+    /// On an empty array the pin's write lands in the zero-terminated
+    /// array's terminator slot, which GLib always allocates (2.84.4
+    /// `garray.c:349-354`, `:1051-1079`); nothing reads it before a resize
+    /// zeroes it again, so the store is left as it is.
+    ///
+    /// Clearing and validation leave the cell in place because the run is
+    /// empty. Reset or a shrink to zero clears it. A later non-empty
+    /// constraint starting at 0 overwrites it ([`Self::add`]).
+    pub(crate) fn add_null_step(&mut self) {
+        if let Some(cell) = self.cells.first_mut() {
+            *cell = Cell::OneStep {
+                token: PhraseToken::new(0),
+                end: 0,
+                text: PhraseText::from(""),
+            };
+        }
     }
 
     /// `clear_constraint` (`phonetic_lookup.cpp:88-105`): a free cell
@@ -211,11 +248,14 @@ impl ConstraintStore {
             let overruns = end >= self.cells.len();
             if overruns || !spells? {
                 // The run's interior cells go with it (`clear_constraint`).
+                // A zero-length run has none, and stays ([`Self::add_null_step`]).
                 let end = end.min(self.cells.len());
-                for cell in &mut self.cells[index..end] {
-                    *cell = Cell::None;
+                if index < end {
+                    for cell in &mut self.cells[index..end] {
+                        *cell = Cell::None;
+                    }
+                    dropped = true;
                 }
-                dropped = true;
             }
         }
         Ok(dropped)
@@ -254,14 +294,15 @@ impl ConstraintStore {
     /// to right — the record-rebuild input. Gaps between runs are free
     /// spans (`diff_result` forces only the differing phrases); the
     /// caller supplies their text from the current buffer, so the rebuilt
-    /// record never drops raw input the forcings skip over.
+    /// record never drops raw input the forcings skip over. A zero-length
+    /// run ([`Self::add_null_step`]) forces no phrase and is not a run.
     pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, PhraseText)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| {
                 if let Cell::OneStep { token, end, text } = cell {
-                    Some((start, *end, *token, text.clone()))
+                    (*end > start).then(|| (start, *end, *token, text.clone()))
                 } else {
                     None
                 }
@@ -307,6 +348,69 @@ mod tests {
         assert_eq!(store.cell(1), Some(&Cell::None));
         // Now free: false, exactly upstream's defined return.
         assert!(!store.clear_by_offset(1));
+    }
+
+    /// `add_constraint(0, 0, null_token)` (`phonetic_lookup.cpp:61-86`):
+    /// cell 0 becomes a zero-length null-token ONESTEP over the run it
+    /// replaces, whose interior cells stay; neither a clear nor a
+    /// validation can remove it (`:88-118`, `:142-168`), and it is no run of
+    /// the record. On an empty store it writes nothing. A non-empty forcing
+    /// that starts at 0 overwrites it: `add_constraint` finds nothing to
+    /// clear in the empty run and writes its ONESTEP over the cell
+    /// (`:61-86`).
+    #[test]
+    fn a_null_step_replaces_cell_zero_and_nothing_clears_it() {
+        let mut empty = ConstraintStore::default();
+        empty.add_null_step();
+        assert_eq!(empty.cell_count(), 0);
+
+        let mut store = ConstraintStore::default();
+        store.resize(6);
+        assert_eq!(store.add(0, 2, token(7), "你".into()), 2);
+        assert!(store.has_runs());
+        store.add_null_step();
+        let null = Cell::OneStep {
+            token: token(0),
+            end: 0,
+            text: "".into(),
+        };
+        assert_eq!(store.cell(0), Some(&null));
+        assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
+        assert!(store.clear_by_offset(0));
+        assert!(store.clear_by_offset(1));
+        assert!(
+            !store.validate(6, |_, _, _, _| Ok(false)).expect("validate"),
+            "nothing is cleared"
+        );
+        assert_eq!(store.cell(0), Some(&null));
+        assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
+        assert!(store.runs().is_empty());
+        assert!(store.is_active());
+        assert!(!store.has_runs(), "active, with no run to rebuild from");
+        assert_eq!(store.add(2, 5, token(8), "好".into()), 3);
+        assert!(store.has_runs(), "a run beside the null step counts");
+        assert_eq!(store.add(0, 2, token(9), "你".into()), 2);
+        assert_eq!(
+            store.cell(0),
+            Some(&Cell::OneStep {
+                token: token(9),
+                end: 2,
+                text: "你".into()
+            }),
+            "a forcing that starts at 0 overwrites the null step"
+        );
+        assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
+        assert_eq!(
+            store
+                .runs()
+                .iter()
+                .map(|run| (run.0, run.1))
+                .collect::<Vec<_>>(),
+            [(0, 2), (2, 5)]
+        );
+        store.resize(0);
+        store.resize(6);
+        assert!(!store.is_active(), "a shrink to nothing frees it");
     }
 
     #[test]

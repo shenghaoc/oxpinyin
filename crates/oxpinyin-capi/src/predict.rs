@@ -86,8 +86,8 @@ fn guess_predicted_result(
     prefix: Option<&PhraseText>,
 ) -> Result<bool, &'static str> {
     // Prediction frees the previous list first (074a2219 pinyin.cpp:2420).
-    // Its replacement has no phonetic lookup window.
-    inst.core.selection_live = false;
+    // Its rows carry the pin's default span, `m_begin = m_end = 0`
+    // (`pinyin.cpp:114`).
     inst.state.candidates.clear();
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
@@ -145,8 +145,8 @@ fn guess_predicted_result(
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
             token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
-            source_index: 0,
             selection: oxpinyin_facade::SelectionSpan::default(),
+            span_len: 0,
         });
         return Ok(true);
     }
@@ -177,12 +177,8 @@ fn guess_predicted_result(
             type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
             token: Cell::new(Some(oxpinyin_core::PhraseToken::new(item.token))),
-            // Predicted candidates are chosen via
-            // `pinyin_choose_predicted_candidate`, never the anchored-select
-            // path, so the window index is unused here; record the snapshot
-            // position for determinism.
-            source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
             selection: oxpinyin_facade::SelectionSpan::default(),
+            span_len: 0,
         });
     }
     Ok(true)
@@ -213,7 +209,6 @@ pub fn clear_borrowed_prefix(
             .iter()
             .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
     if borrowed {
-        inst.core.selection_live = false;
         inst.state.candidates.clear();
         inst.core
             .session
@@ -311,8 +306,8 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag()),
             nbest_index: 0,
             token: Cell::new(None),
-            source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
             selection: oxpinyin_facade::SelectionSpan::default(),
+            span_len: 0,
         });
     }
     inst.state.candidates.append(rest);
@@ -491,7 +486,7 @@ mod tests {
     #[case::punctuated("你", true, false, true)]
     #[case::borrowed("", false, true, false)]
     #[case::borrowed_punctuated("", true, true, true)]
-    fn prediction_releases_the_window_of_the_replaced_snapshot(
+    fn prediction_replaces_every_row_with_a_spanless_one(
         #[case] prefix: &str,
         #[case] punctuated: bool,
         #[case] borrowed: bool,
@@ -509,10 +504,12 @@ mod tests {
             DEFAULT_SORT
         ));
         // SAFETY: the live instance is read between serialized ABI calls.
-        let prior_window = unsafe { crate::state::instance_ref(instance) }
-            .core
-            .selection_live;
-        assert!(prior_window);
+        let prior_spans = unsafe { crate::state::instance_ref(instance) }
+            .state
+            .candidates
+            .iter()
+            .any(|row| row.selection != oxpinyin_facade::SelectionSpan::default());
+        assert!(prior_spans);
         let owned = cstr(prefix);
         let prefix = if borrowed {
             let mut candidate = std::ptr::null_mut();
@@ -539,13 +536,16 @@ mod tests {
         };
         assert_eq!(answer, accepted);
         // The pin frees its former candidate list before reading prefixes
-        // (pinyin.cpp:2420-2427, 2459). Prediction has no parse window to
-        // retain, even when it leaves an empty snapshot.
+        // (pinyin.cpp:2420-2427, 2459), and every row that replaces it has
+        // the default `m_begin = m_end = 0` (`:114`), even when the
+        // snapshot is left empty.
         // SAFETY: the live instance is read between serialized ABI calls.
-        let window_cleared = !unsafe { crate::state::instance_ref(instance) }
-            .core
-            .selection_live;
-        assert!(window_cleared);
+        let spanless = unsafe { crate::state::instance_ref(instance) }
+            .state
+            .candidates
+            .iter()
+            .all(|row| row.selection == oxpinyin_facade::SelectionSpan::default());
+        assert!(spanless);
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }

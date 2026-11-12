@@ -50,14 +50,9 @@ The test `recorded_candidate_scenarios_use_direct_operations` runs seven scenari
 
 ## Registered robustness evidence made executable
 
-[robustness-evidence.md](robustness-evidence.md) registers two rows against this lane.
-Each has the artifact that the register names:
+[robustness-evidence.md](robustness-evidence.md) registers F-E-12 against this lane, with the artifact that the register names.
+F-E-02 was registered here too, as the engine replay `f_e_02_candidate_replay`; it was retired with `Session::select`, and the register points F-E-02 at the C ABI choose.
 
-- **F-E-02**, `f_e_02_candidate_replay`.
-  The test takes a candidate snapshot, regenerates the list, then replays every stale index, including `len`, `len+1` and `usize::MAX`.
-  Upstream's defect is an unchecked candidate index.
-  Here every stale index gives `EngineError::CandidateIndexOutOfRange`, and the session then serves a second request.
-  That last part is the claim: the rejection leaves the session usable.
 - **F-E-12**, `f_e_12_zhuan_session_replay`.
   The register requires the full frontend-equivalent sequence, not a parse in isolation, before any session-level claim.
   The test parses `zhuan`, takes a candidate, reads the retained text, resets, and continues on the same session.
@@ -80,5 +75,5 @@ The contributor rules list a CI policy edit among the changes that need an expli
 ## Acceptance
 
 - Every scenario passes.
-- F-E-02 and F-E-12 pass.
+- F-E-12 passes.
 - All of it passes on Linux, macOS and Windows.

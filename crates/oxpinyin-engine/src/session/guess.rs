@@ -124,7 +124,7 @@ where
         });
         drop(spelling);
         self.constraints = store;
-        if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
+        if dropped? || (self.constraints.has_runs() && self.record.history().is_empty()) {
             // A temporary incompatible parse may have cleared the safe
             // selection record while retaining the actual constraints.
             self.rebuild_selection_from_constraints();
@@ -211,7 +211,7 @@ where
         });
         drop(spelling);
         self.constraints = store;
-        if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
+        if dropped? || (self.constraints.has_runs() && self.record.history().is_empty()) {
             // A temporary incompatible parse may have cleared the safe
             // selection record while retaining the actual constraints.
             self.rebuild_selection_from_constraints();
