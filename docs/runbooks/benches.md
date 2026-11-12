@@ -10,6 +10,9 @@ The recipes are attribution tools, and none of them is a per-change gate:
 A plain timing is one ordinary command around the `bisect` driver. Numbers are comparable only within
 one session on one host. Native macOS source-revision commands are described
 in [Native macOS source revisions](#native-macos-source-revisions).
+`just measure compare` reports different metrics on macOS, Windows and Linux.
+Numbers from different platforms are not comparable: the measured loop, the
+counters and the memory figures differ.
 
 The [controlling rule](../source-policy.md#controlling-rule) decides when to measure and which measurement to use.
 The recipes below are existing tools, not required counts. A number that a recipe states
@@ -490,7 +493,9 @@ Builds and disposable sessions live under `just cache-root`, with a separate
 prefix for each arm even for the same SHA. The same-binary control runs arm A
 against A′, a second byte-identical copy of A's built product and driver staged
 in its own prefix exactly as B is, so the control also covers effects tied to a
-newly staged directory; it reports A′ under the label `B`. A′ passes the same
+newly staged directory; it reports A′ under the label `B`. The three prefixes
+are named `A`, `B` and `C` on every platform, so the same bytes sit at paths of
+one length. A′ passes the same
 staging, loaded-image and UUID checks as any arm. One normally linked driver is
 built, its dependency is rewritten to `@rpath`, then it is ad-hoc signed with
 `com.apple.security.get-task-allow` and without hardened runtime, and verified
@@ -617,3 +622,67 @@ This schedules eight fresh processes, including a balanced diagnostic control
 of A against A′.
 The 180-second budget excludes preparation. Windows build trees, staged DLLs
 and driver copies are removed on success or failure; local JSON reports remain.
+
+### Native Linux comparisons
+
+`just measure compare` runs on Linux x86_64 and arm64 with the existing Linux
+tooling: the dlopen `bisect --perf` driver, its `PERF_HW` counter, the
+Callgrind anchor and the `smaps_rollup` reader. It adds no second measurement
+system. tkrzw is the vcpkg overlay install of [Linux setup](setup.md#linux)
+for every arm; `tools/tkrzw/runtime.py` certifies each launch against it.
+Each distinct SHA builds once through the packaging install procedure: locked
+release, the `shipped` feature, Cargo's default backend and no added flags.
+This is the plain shipping library, the arm that Linux times. A′ is staged as
+on macOS. Each sample is one fresh process, pinned to the first allowed CPU,
+with the staged library's directory first on the loader path.
+
+The measured loop is the steady cycles 1 to n−1, the region that both
+instruction sources bracket with `bisect_perf_steady_unit`. Cycle 0,
+initialization and teardown are outside it; `--cycles` must be at least 2.
+The driver does not count operations here. A run is complete when the process
+succeeds, reports every cycle and matches the `PERF_WORKLOAD_CHECKSUM`
+fingerprint of every other run.
+
+- Instructions come from one source for a whole comparison. One unmeasured
+  launch asks for the hardware counter. Where the host grants it, the metric is
+  `loop_hw_instructions` (`perf_event_open`, user space). Where the host
+  refuses it, as most cloud guests do, a second pass over the same schedule
+  collects `loop_callgrind_ir` with Callgrind. The report names the source in
+  `instruction_source` and in the metric name. A later refusal fails the
+  comparison; the sources are never mixed. A wslc container needs
+  `--cap-add PERFMON` for the hardware counter; without it the runner falls
+  back to Callgrind.
+- `wall_seconds` and `cpu_seconds` sum the per-cycle `CLOCK_MONOTONIC` and
+  `CLOCK_PROCESS_CPUTIME_ID` readings over the same cycles.
+- `anonymous_kib` and `private_dirty_kib` are the `Anonymous` and
+  `Private_Dirty` lines of `/proc/self/smaps_rollup` after the loop, compared
+  as paired B minus A in KiB.
+
+The same-bytes control of A against A′ follows the Linux rules, not the dated
+rule for native non-Linux comparisons in
+[Measurements](../../CONTRIBUTING.md#measurements). Wall time, CPU time and the
+hardware count use the 0.95 to 1.05 band. Residency uses ±max(64 KiB, 1% of the
+A median). A control outside its limits is `DIAGNOSTIC`: the estimate stays in
+the report beside the control limits. Callgrind `Ir` must be equal in every run
+of A and A′. A varying count follows the typing-sequence rule above: it is
+`DIAGNOSTIC`, with ranges and bounds and no ratio, when every varying function
+is in that list. Any other variation is `INVALID`: the `Ir` comparison is
+withheld and the command returns nonzero after it writes its report.
+
+One budget covers both passes. Callgrind is far slower than a native run, so a
+comparison that uses it needs an explicit `--budget`. State the Valgrind
+version beside its figures.
+
+`just measure profile --template Callgrind` and `--template Massif` run one
+process of a build that adds `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`. Callgrind
+uses the campaign's options and annotations for the steady cycles. Massif uses
+the heap options of `system-import-profile` for the process lifetime. Linux
+refuses the xctrace templates and the neutrality mode;
+`just measure-callgrind-control` is the Linux neutrality check. Build trees and
+staged copies are removed; local reports and profiles remain.
+
+A short same-head smoke on a host that refuses the hardware counter:
+
+```bash
+just measure compare --base HEAD --head HEAD --cycles 8 --pairs 2 --control-pairs 2 --budget 900
+```

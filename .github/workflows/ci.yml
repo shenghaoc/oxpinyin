@@ -345,10 +345,11 @@ jobs:
       - name: Install build dependencies (apt)
         # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
         # objcopy, objdump, ld), Clang and the libclang package for the
-        # call-site fixture's major, and taskset for the CPU-pinned child.
+        # call-site fixture's major, taskset for the CPU-pinned child, and
+        # Valgrind for the end-to-end Linux comparison on the stub library.
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux
+          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind
       - run: just test-tools
 
   # Stripped shipping-library sizes (constitution section 2). Builds both

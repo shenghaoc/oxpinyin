@@ -250,6 +250,11 @@ with your arguments. Pass the same crate and
 feature selection as for cargo test (see [backend selection](backends.md)). For the CI limits, pass `--profile ci`. `just test-doc` runs
 `cargo test --doc`.
 
+`just packaging install` and `just measure compare` build the shipping library
+with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
+reports the version found. Install it with `cargo install cargo-c --locked`,
+your distribution package or the upstream release archive.
+
 If names or enabled repositories differ, use the official package documentation of your system.
 The native check below prints the tkrzw version that
 pkg-config reports.
