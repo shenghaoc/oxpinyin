@@ -7,7 +7,9 @@
 
 use std::collections::BTreeSet;
 
-use oxpinyin_engine::{Candidate, CandidateKind, Selection, Session, SessionSettings};
+use oxpinyin_engine::{
+    Candidate, CandidateKind, EngineError, Selection, SelectionTarget, Session, SessionSettings,
+};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -156,7 +158,7 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
         .expect("你好 is offered");
 
     assert_eq!(
-        session.select(first).expect("the index is live"),
+        select_row(&mut session, first).expect("the index is live"),
         Selection::Continued
     );
     assert_eq!(session.selected_text(), "你好");
@@ -169,7 +171,7 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
     assert_eq!(texts[0], "中国", "the remaining input decodes on its own");
 
     assert_eq!(
-        session.select(0).expect("the index is live"),
+        select_row(&mut session, 0).expect("the index is live"),
         Selection::Completed
     );
     assert_eq!(session.selected_text().clone(), "你好中国");
@@ -189,7 +191,10 @@ fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
     let session = typed("zhzh");
     let candidates = session.candidates();
     assert!(!candidates.is_empty(), "one initial still expands");
-    assert_eq!(candidates.get(0).and_then(Candidate::text_str), Some("传"));
+    assert_eq!(
+        candidates.iter().next().and_then(Candidate::text_str),
+        Some("传")
+    );
 
     for candidate in candidates
         .iter()
@@ -217,7 +222,7 @@ fn an_input_no_expansion_can_reach_falls_back_to_itself() {
         let session = typed(input);
         let candidates = session.candidates();
         assert_eq!(candidates.len(), 1, "{input}: {:?}", texts(&session));
-        let only = candidates.get(0).expect("the fallback");
+        let only = candidates.iter().next().expect("the fallback");
         assert_eq!(only.kind(), CandidateKind::Fallback);
         assert_eq!(only.text(), input);
         assert_eq!(only.consumed_bytes(), input.len());
@@ -260,7 +265,8 @@ fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
 
     let top = session
         .candidates()
-        .get(0)
+        .iter()
+        .next()
         .map(Candidate::text)
         .expect("at least one candidate");
     assert_eq!(
@@ -277,7 +283,8 @@ fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
     collapsed.replace_raw("bing").expect("parse cannot fail");
     let collapsed_top = collapsed
         .candidates()
-        .get(0)
+        .iter()
+        .next()
         .map(Candidate::text)
         .expect("at least one candidate");
     assert_eq!(collapsed_top, "并", "clean bing must still rank 并 first");
@@ -494,4 +501,18 @@ fn candidate_differential_over_the_capture_families() {
         "top-5-set fell to {:.2}%",
         share(top5, covered)
     );
+}
+
+/// Chooses row `index` of the session's cached list at the composition
+/// offset, through [`Session::select_target`].
+fn select_row(session: &mut Fixtures, index: usize) -> Result<Selection, EngineError> {
+    session.refresh_candidates()?;
+    let candidate = session
+        .candidates()
+        .iter()
+        .nth(index)
+        .cloned()
+        .expect("the row is listed");
+    let anchor = session.composition_offset();
+    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }

@@ -43,9 +43,9 @@ pub struct Candidate { /* text, kind, consumed keys and bytes, cost */ }
 pub struct CandidateList { /* ordered, deterministic */ }
 ```
 
-`CandidateList` supports `len`, `is_empty`, `get` and `iter`.
-Indexing is always checked: `get` returns `Option`, and `Session::select` on an out-of-range index returns `Err`, never a panic.
-That is the requirement behind F-E-02 ([robustness-evidence.md](robustness-evidence.md)), where the upstream defect is an unchecked candidate index after the list is regenerated.
+`CandidateList` supports `len`, `is_empty` and `iter`.
+It has no index accessor, and the session selects a row it is given (`Session::select_target`), never an index.
+F-E-02 ([robustness-evidence.md](robustness-evidence.md)), a candidate that outlived its list, is therefore a C ABI case: a stale candidate pointer, which the snapshot resolves by address.
 
 `consumed_keys` and `consumed_bytes` state how much of the composition a candidate would absorb.
 A shell can then render partial acceptance without re-deriving it.
@@ -72,7 +72,7 @@ There is no keyed configuration source or layered configuration; see the correct
 | Open | `Session::new(settings, dictionary, model) -> Self`; it cannot fail |
 | Supply input | `replace_raw(&str)`, which replaces the whole raw input; `replace_raw_exact` and `replace_raw_full_pinyin` for the facade parse paths |
 | Read | `raw_input`, `candidates`, `candidates_at`, `is_composing`, `composition_offset`, `selected_text`, `selected_tokens` |
-| Select | `select(index) -> Result<Selection, EngineError>`, `select_promoted`, `select_anchored` |
+| Select | `select_target(&SelectionTarget) -> Result<Selection, EngineError>`, with `SelectionTarget::of_candidate` for a listed row |
 | Reset | `reset`, `reset_composition` |
 | Options | `set_options`, `set_sort_options`, `set_candidate_ranking`, `set_nbest_shape` |
 | Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
@@ -91,13 +91,12 @@ To replace the fixture adapters with the table-backed loaders, change the two ty
 ### Behavioural contract
 
 - `replace_raw` replaces the raw input and passes every byte to the decoder; it does not filter characters.
-- `select` returns `EngineError::CandidateIndexOutOfRange` for an index that the current list does not hold, and the session stays usable.
 - `reset` discards the input, the selection record, the sentence rows and the constraints.
 - The session has no input length limit (#1501; [1501-gint16-input-cap](1501-gint16-input-cap.md)).
-- `select` appends the chosen candidate to the selected prefix and advances over the bytes that it consumed.
+- `select_target` appends the chosen candidate to the selected prefix and advances over the bytes that it consumed.
   It returns `Completed` when nothing is left.
 - A composition with no dictionary result still offers one candidate: the remaining raw input, as `CandidateKind::Fallback`.
-  This keeps `select` meaningful in every state.
+  This keeps `select_target` meaningful in every state.
 - Every method is deterministic for the same (input, state, config).
 
 `SessionSettings::default()` serves callers that have no settings of their own: incomplete pinyin on, with the divided and resplit tables.

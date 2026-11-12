@@ -20,7 +20,7 @@ trigger. No entry supports a general claim that Rust code cannot crash.
 | ID | Trigger or invariant | Owner | State at Foundation |
 |---|---|---|---|
 | F-E-01 | `nih`, then select valid `ni` prefix | C API oracle test | captured seed; regression registered |
-| F-E-02 | stale/invalid candidate access | engine replay + fuzz | registered |
+| F-E-02 | stale/invalid candidate access | C ABI choose + fuzz | registered |
 | F-E-03 | interruption during save/config change | user store hard-kill + replay | registered |
 | F-E-04 | cancelled/superseded async request | provider ownership tests | registered |
 | F-E-05 | table I/O early return | none: test not written, `oxpinyin-migrate` is deleted | registered |
@@ -53,15 +53,25 @@ trigger. No entry supports a general claim that Rust code cannot crash.
 ### F-E-02 — candidate-processing invalid access
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §1.2.
-- **Trigger:** create a candidate snapshot. Regenerate candidates after a
-  mode or input change. Then replay every index from the stale snapshot,
-  including `len` and `usize::MAX`.
-- **Reproduction command:** `cargo test -p oxpinyin-engine
-  f_e_02_candidate_replay -- --exact` when the session lane exists. Seed the
-  same sequence into the session fuzz target.
-- **Passing artifact:** a bounds-checked error for every stale or
-  out-of-range access, an unchanged live session, and a retained fuzz corpus
-  seed.
+- **Trigger:** create a candidate snapshot. Regenerate candidates after an
+  input change. Then choose with a candidate pointer from the stale snapshot
+  that the regenerated list no longer holds.
+- **Production path:** the C ABI choose. A choose names a `lookup_candidate_t`
+  pointer, which `pinyin_choose_candidate` and `zhuyin_choose_candidate`
+  resolve by address against the instance's current snapshot. The session
+  has no index-based selection: the engine index replay
+  (`f_e_02_candidate_replay`) was retired with `Session::select`, and
+  `CandidateList::get`, which had only test callers, was deleted with it.
+- **Reproduction command:** `cargo nextest run -p oxpinyin-capi -p
+  oxpinyin-zhuyin-capi a_stale_candidate_pointer_after_regeneration_is_refused`
+  (`oxpinyin_capi::e2e_tests` and `oxpinyin_zhuyin_capi::e2e_tests`).
+  Seeding the same sequence into the `capi_commands` fuzz target is open.
+- **Passing artifact:** a stale pointer whose address holds no current row
+  answers `-1` on both facades, the composition is unchanged, and a second
+  request chooses a live row. The snapshot keeps its buffer across a
+  rebuild, so a stale pointer to a slot the new list still fills addresses
+  that new row, as the pin's reused `GArray` slot does. No fuzz corpus seed
+  is retained yet.
 
 ### F-E-03 — historical save-path race
 

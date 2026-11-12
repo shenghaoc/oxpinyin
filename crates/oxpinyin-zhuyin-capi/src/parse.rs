@@ -338,6 +338,57 @@ mod tests {
         close(context, instance);
     }
 
+    /// A choose answers the row's own `m_end` (after the cursor) or
+    /// `m_begin` (before it), fixed at the guess, and never the caller's
+    /// offset, which `zhuyin_choose_candidate` overwrites (074a2219
+    /// `zhuyin.cpp:1649-1666`); here the caller names 0 for a row over
+    /// `[3, 6)`. A reparse that shortens the first key moves the key spans
+    /// under the row, and the answer stays the row's own.
+    #[rstest]
+    fn a_choose_at_another_offset_answers_the_rows_own_end(#[values(false, true)] before: bool) {
+        use crate::candidates::{zhuyin_choose_candidate, zhuyin_get_candidate};
+        use crate::sentence::{
+            zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor,
+        };
+        use std::ptr;
+
+        let (context, instance) = open();
+        let input = cstr("su3cl3");
+        assert_eq!(
+            super::zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            6
+        );
+        assert!(if before {
+            zhuyin_guess_candidates_before_cursor(instance, 6)
+        } else {
+            zhuyin_guess_candidates_after_cursor(instance, 3)
+        });
+        let index = {
+            // SAFETY: live instance immediately after the guess.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            inst.state
+                .candidates
+                .iter()
+                .position(|row| row.text_str() == Ok("好"))
+                .expect("好 over the second key")
+        };
+        let mut row = ptr::null_mut();
+        assert!(zhuyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small index"),
+            &raw mut row
+        ));
+        let expected = if before { 3 } else { 6 };
+        assert_eq!(zhuyin_choose_candidate(instance, 0, row), expected);
+        let shorter = cstr("83cl3");
+        assert_eq!(
+            super::zhuyin_parse_more_chewings(instance, shorter.as_ptr()),
+            5
+        );
+        assert_eq!(zhuyin_choose_candidate(instance, 0, row), expected);
+        close(context, instance);
+    }
+
     /// An apostrophe-only parse under the default options. libzhuyin's
     /// full-pinyin parse runs the same separator branch, which moves the
     /// parse one byte per `'` and places no key

@@ -10,7 +10,7 @@
 //! `cfg(target_os)` appears anywhere beneath it.
 
 use oxpinyin_core::{Dictionary, SyllableKey};
-use oxpinyin_engine::{EngineError, Selection, Session, SessionSettings};
+use oxpinyin_engine::{EngineError, Selection, SelectionTarget, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -67,9 +67,9 @@ fn recorded_candidate_scenarios_use_direct_operations() {
         let mut session = session();
         session.replace_raw(input).expect("type");
         assert_eq!(session.raw_input(), input);
-        assert_eq!(session.candidates().get(0).unwrap().text(), first);
+        assert_eq!(session.candidates().iter().next().unwrap().text(), first);
         if input == "xian" {
-            assert_eq!(session.candidates().get(1).unwrap().text(), "西岸");
+            assert_eq!(session.candidates().iter().nth(1).unwrap().text(), "西岸");
         }
         if input == "qqq" {
             assert!(
@@ -79,7 +79,10 @@ fn recorded_candidate_scenarios_use_direct_operations() {
                     .all(|candidate| candidate.text() != "你好")
             );
         }
-        assert_eq!(session.select(0).expect("select"), Selection::Completed);
+        assert_eq!(
+            select_row(&mut session, 0).expect("select"),
+            Selection::Completed
+        );
         assert_eq!(session.selected_text(), first);
         assert_eq!(session.composition_offset(), input.len());
         session.reset();
@@ -90,7 +93,7 @@ fn recorded_candidate_scenarios_use_direct_operations() {
     let mut session = session();
     session.replace_raw("nihaozhongguo").expect("type");
     assert_eq!(
-        session.select(0).expect("select prefix"),
+        select_row(&mut session, 0).expect("select prefix"),
         Selection::Continued
     );
     assert_eq!(session.selected_text(), "你好");
@@ -98,49 +101,12 @@ fn recorded_candidate_scenarios_use_direct_operations() {
         &session.raw_input()[session.composition_offset()..],
         "zhongguo"
     );
-    assert_eq!(session.candidates().get(0).unwrap().text(), "中国");
+    assert_eq!(session.candidates().iter().next().unwrap().text(), "中国");
     assert_eq!(
-        session.select(0).expect("select tail"),
+        select_row(&mut session, 0).expect("select tail"),
         Selection::Completed
     );
     assert_eq!(session.selected_text(), "你好中国");
-    session.reset();
-    assert!(!session.is_composing());
-}
-
-/// F-E-02 — candidate-processing invalid access.
-///
-/// `docs/findings/robustness-evidence.md` registers this as
-/// `f_e_02_candidate_replay`: take a candidate snapshot, regenerate the list,
-/// then replay every index from the stale snapshot including `len` and
-/// `usize::MAX`. Upstream's defect is an unchecked index; here every one is a
-/// checked `Err` and the session stays usable.
-#[test]
-fn f_e_02_candidate_replay() {
-    let mut session = session();
-    session
-        .replace_raw("nihaozhongguo")
-        .expect("typing cannot fail");
-    let stale = session.candidates().len();
-    assert!(stale > 1, "the snapshot needs several candidates");
-
-    // Regenerate: a shorter composition offers fewer candidates.
-    session.reset();
-    session.replace_raw("ni").expect("typing cannot fail");
-    let live = session.candidates().len();
-
-    for index in [live, live + 1, stale, stale + 1, usize::MAX] {
-        assert_eq!(
-            session.select(index),
-            Err(EngineError::CandidateIndexOutOfRange { index, len: live }),
-            "index {index}"
-        );
-    }
-
-    // Still usable for a second request.
-    assert_eq!(session.candidates().len(), live);
-    assert!(session.select(0).is_ok());
-    assert!(!session.selected_text().is_empty());
     session.reset();
     assert!(!session.is_composing());
 }
@@ -157,13 +123,14 @@ fn f_e_12_zhuan_session_replay() {
     assert_eq!(
         session
             .candidates()
-            .get(0)
+            .iter()
+            .next()
             .and_then(oxpinyin_engine::Candidate::text_str),
         Some("传"),
         "the pin's first candidate for zhuan"
     );
 
-    session.select(0).expect("the index is live");
+    select_row(&mut session, 0).expect("the index is live");
     assert_eq!(session.selected_text(), "传");
     session.reset();
 
@@ -187,4 +154,18 @@ fn arbitrary_characters_never_panic() {
     session.reset();
     assert!(session.raw_input().is_empty());
     assert!(session.selected_text().is_empty());
+}
+
+/// Chooses row `index` of the session's cached list at the composition
+/// offset, through [`Session::select_target`].
+fn select_row(session: &mut Fixtures, index: usize) -> Result<Selection, EngineError> {
+    session.refresh_candidates()?;
+    let candidate = session
+        .candidates()
+        .iter()
+        .nth(index)
+        .cloned()
+        .expect("the row is listed");
+    let anchor = session.composition_offset();
+    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }

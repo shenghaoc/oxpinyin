@@ -365,7 +365,8 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// (`docs/findings/compatibility-policy.md`, row 9).
 ///
 /// Resolves the candidate by pointer identity over the instance's snapshot
-/// and calls `Session::select`, which records the constraint — the selected
+/// and calls `Session::select_target` with the row's own record, which
+/// records the constraint — the selected
 /// token joins the session's sentence record. Per §2.2 the *bigram* training
 /// of a normal selection is deferred to [`pinyin_train`]; a `NORMAL_CANDIDATE`
 /// writes nothing to the user store. A chosen `ADDON_CANDIDATE` is promoted
@@ -419,13 +420,6 @@ pub extern "C" fn pinyin_choose_candidate(
     ) {
         std::process::abort();
     }
-    // `index` is the candidate's position in the SNAPSHOT, which
-    // `try_promote_addon` reads (it indexes `inst.state.candidates`); the
-    // snapshot may omit entries (the engine's `Fallback` row, a
-    // `CString` conversion failure), so that position is NOT the row's position in the
-    // window the `select*` calls index. Select by the candidate's
-    // recorded source index.
-    //
     // §9's LONGER branch runs FIRST, exactly as the pin's dispatch
     // (`pinyin.cpp:2521-2530`): a LONGER row is never a selection — no
     // constraint, no window, no record change — it only trains the
@@ -441,19 +435,12 @@ pub extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
-    // The token the row carries before a promotion replaces it.
-    let published_token = inst.state.candidates[index].token.get();
     // SAFETY: the prior view is no longer used. Promotion borrows the retained
     // owner only for its own reads and write, before the new instance view.
     let addon_token = unsafe { try_promote_addon(instance, index) };
     // SAFETY: promotion has released its context borrow; the live instance
     // is re-borrowed for the remainder of this serialized operation.
     let mut inst = unsafe { instance_mut(instance) };
-    if addon_token.is_some() {
-        // A live repeat choose of this row forces the token the row was
-        // published with, not the promoted one (PR 3 decides that case).
-        inst.state.candidates.note_promotion(index, published_token);
-    }
     // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
     // reached after the addon promotion exactly as the pin's dispatch
     // falls through to it: only the unigram trains, by the LONGER
@@ -466,80 +453,78 @@ pub extern "C" fn pinyin_choose_candidate(
             // after the addon promotion above, which is in memory.
             std::process::abort();
         }
-        let Some(token) = addon_token.or(inst.state.candidates[index].token.get()) else {
-            return -1;
-        };
+        // The row's `m_token`, the null token for a predicted punctuation
+        // row: library 0 is reserved and never loaded, so the add meets no
+        // sub-index and the pin answers `true` (`phrase_index.h:628-635`).
+        let token = addon_token
+            .or(inst.state.candidates[index].token.get())
+            .map_or(0, PhraseToken::value);
         // SAFETY: the instance read is finished; this serialized C operation
         // exclusively borrows its retained owner for the unigram write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
     }
-    // Select the row the caller actually saw by its own span, and keep the
-    // span's end for the answer below.
+    // A row with no token reaching the normal branch is a predicted
+    // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
+    // writes `add_constraint(0, 0, null_token)` between its two validations
+    // and answers `offset + 0` (`:2577-2590`; `phonetic_lookup.cpp:61-86`):
+    // a zero-length null-token cell at 0 that blocks every later sentence
+    // decode until a reset clears it or a later non-empty forcing at 0
+    // overwrites it. After a reset the write lands in the empty array's
+    // terminator slot and changes nothing observable (GLib 2.84.4
+    // `garray.c:349-354`, `:1051-1079`).
     let row = &inst.state.candidates[index];
+    if row.token.get().is_none()
+        && row.candidate_type() != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+    {
+        return match inst.core.session.choose_null_step() {
+            Ok(()) => choose_answer(offset, 0),
+            Err(_) => -1,
+        };
+    }
+    // Select the row the caller actually saw by its own span and its token
+    // as it stands — the promoted one once a promotion has run, on this
+    // choose or an earlier one (`pinyin.cpp:2559-2561`) — and keep the
+    // span's end for the answer below.
     let text = inst.state.candidates.phrase_text(index, row.text);
     let published = oxpinyin_facade::PublishedRow {
         span: row.selection,
-        token: inst
-            .state
-            .candidates
-            .published_token(index)
-            .unwrap_or_else(|| row.token.get()),
+        token: row.token.get(),
         // The engine lists at most `NBEST_ROWS` sentence rows, each with
         // its rank, and every other row with none; the snapshot types a
         // sentence row `NBEST_MATCH_CANDIDATE` alone.
         nbest_row: (row.candidate_type() == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
             .then_some(row.nbest_index),
         text: &text,
-        source_index: row.source_index as usize,
     };
-    let window_end = match inst.core.select_published(&published, addon_token) {
-        Ok((oxpinyin_engine::Selection::Refused, _)) => {
-            return c_int::try_from(offset).unwrap_or(c_int::MAX);
-        }
-        Ok((
-            oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed,
-            window_end,
-        )) => {
-            inst.core.selection_live = false;
-            window_end
-        }
+    match inst.core.select_published(&published) {
+        // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
+        Ok(oxpinyin_engine::Selection::Refused) => return choose_answer(offset, 0),
+        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {}
         Err(_) => return -1,
-    };
-    // The candidate's absolute end. The snapshot span is anchored at
-    // the session's composition offset and includes any separator run
-    // it crossed, while the caller offset may already sit past that
-    // run (the begin of the next key rest) — adding them would count
-    // the run twice and answer parsed length + 1, derailing the ibus
-    // commit branch. Upstream never overshoots because its candidates
-    // are anchored at the caller offset (`m_begin = start`,
-    // libpinyin@412f88e3); the post-select composition offset is that
-    // same end, mapped back to the transformed seams' original
-    // coordinates through the parse's key spans. The sentence-row
-    // branch above answers the parse end before this mapping — a
-    // whole-composition hypothesis consumes the composition.
-    let end = if inst.state.candidates[index].candidate_type()
+    }
+    // The pin answers the caller's choose offset plus the length
+    // `add_constraint` wrote, `m_end - m_begin` of the row's own span
+    // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever offset
+    // the caller passes: the forced span is the row's, never the caller's.
+    // The sentence-row branch above answers the matrix end instead
+    // (`:2515-2520`).
+    if inst.state.candidates[index].candidate_type()
         == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
     {
-        inst.core.parsed_len
-    } else {
-        // The chosen span's end in session coordinates: the window's own
-        // end when the caller looked up in an anchored window (the pin's
-        // `offset + len`, which a choose behind the composition keeps even
-        // though the rebuilt composition offset can reach past it), else
-        // the composition offset the selection just produced.
-        let session_end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
-        if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_original_offset(parse, session_end)
-        } else if let Some(parse) = inst.core.double_parse.as_ref() {
-            oxpinyin_facade::double_original_offset(parse, session_end)
-        } else if let Some(parse) = inst.core.full_parse.as_ref() {
-            oxpinyin_facade::full_original_offset(parse, session_end)
-        } else {
-            session_end
-        }
-    };
-    c_int::try_from(end).unwrap_or(c_int::MAX)
+        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+    }
+    choose_answer(offset, inst.state.candidates[index].span_len)
+}
+
+/// `return offset + len;` (`pinyin.cpp:2588`): `len` is the `guint8` the
+/// span length is stored in (`:2582`), so it wraps at 256, and the
+/// `size_t` sum converts to `int`, which GCC reduces modulo 2^32 (its
+/// documented implementation-defined conversion to a narrower signed
+/// type).
+fn choose_answer(offset: usize, span_len: u32) -> c_int {
+    let len = usize::from(span_len as u8);
+    offset.wrapping_add(len) as u32 as c_int
 }
 
 /// The answer of a choose leg that only trains a unigram

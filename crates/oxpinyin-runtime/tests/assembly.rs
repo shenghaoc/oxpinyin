@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-use oxpinyin_engine::{Selection, SessionSettings};
+use oxpinyin_engine::{Selection, SelectionTarget, SessionSettings};
 use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
@@ -250,7 +250,8 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
     let first = runtime
         .session(&mut session)
         .candidates()
-        .get(0)
+        .iter()
+        .next()
         .expect("nihao has candidates in the fixture")
         .text()
         .to_owned();
@@ -328,10 +329,18 @@ fn selection_advances_and_reset_clears_the_chosen_text() {
         .session(&mut session)
         .replace_raw("nihao")
         .expect("typing");
-    let advanced = runtime
-        .session(&mut session)
-        .select(0)
-        .expect("first candidate selects");
+    let advanced = {
+        let mut view = runtime.session(&mut session);
+        let candidate = view
+            .candidates()
+            .iter()
+            .next()
+            .cloned()
+            .expect("a first candidate");
+        let anchor = view.composition_offset();
+        view.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
+            .expect("first candidate selects")
+    };
     assert_eq!(advanced, Selection::Completed);
     assert_eq!(runtime.session(&mut session).selected_text(), "你好");
     assert_eq!(

@@ -100,8 +100,6 @@ pub struct CapiCandidate {
     /// the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
-    /// The index this candidate held in the window it was snapshotted from.
-    pub(crate) source_index: u32,
     /// Where the candidate's span starts, in original input coordinates —
     /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
     /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).

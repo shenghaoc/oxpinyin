@@ -141,7 +141,8 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     session.replace_raw("nihao").expect("typing");
     let first = session
         .candidates()
-        .get(0)
+        .iter()
+        .next()
         .expect("candidates")
         .text()
         .to_owned();

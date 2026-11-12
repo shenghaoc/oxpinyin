@@ -78,9 +78,10 @@ Promotion therefore writes there too:
   spelling back to `SyllableKey` ids.
 - `pinyin_choose_candidate` (`crates/oxpinyin-capi/src/candidates.rs`) runs the
   promotion for an `ADDON` candidate before selecting, rewrites the snapshot
-  candidate to `NORMAL_CANDIDATE` at the promoted token, and records the promoted
-  token in the sentence via `Session::select_promoted`
-  (`crates/oxpinyin-engine/src/session/selection.rs`).
+  candidate to `NORMAL_CANDIDATE` at the promoted token, and selects the row
+  with that token through `Session::select_target`
+  (`crates/oxpinyin-engine/src/session/selection.rs`); a later choose of the
+  same handle forces it again.
 
 After promotion the phrase surfaces through `UserLookup` as a
 `NORMAL_CANDIDATE` row. `UserLookup` indexes every stored phrase regardless

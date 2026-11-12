@@ -429,8 +429,8 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
         type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
         nbest_index: 0,
         token: Cell::new(Some(PhraseToken::new(token))),
-        source_index: 0,
         selection: oxpinyin_facade::SelectionSpan::default(),
+        span_len: 0,
     });
     let candidate = crate::state::candidate_ptr(&inst.state.candidates[0]);
     let before = inst.core.lm.amplified_total();
@@ -4472,4 +4472,62 @@ fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
         pinyin_end_get_bigram_phrases(iter);
         crate::context::pinyin_fini(context);
     }
+}
+
+/// F-E-02 (`docs/findings/robustness-evidence.md`): a candidate pointer that
+/// outlived the list it came from. The guess over `nihaozhongguo` publishes
+/// more rows than the guess over `ni` that regenerates the list, and the
+/// snapshot keeps its buffer, so a pointer to the old last row now lies past
+/// the new list's end. `pinyin_choose_candidate` resolves a pointer by
+/// address against the current snapshot, finds no row there and answers -1;
+/// the composition is unchanged and a second request chooses a live row.
+#[test]
+fn a_stale_candidate_pointer_after_regeneration_is_refused() {
+    let user_dir = TempUserDir::new("stale-candidate-pointer");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let count = |instance| {
+        let mut count = 0;
+        assert!(crate::candidates::pinyin_get_n_candidate(
+            instance,
+            &raw mut count
+        ));
+        count
+    };
+    let long = cstr("nihaozhongguo");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, long.as_ptr()), 13);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let stale_count = count(instance);
+    let mut stale: *mut LookupCandidate = ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        stale_count - 1,
+        &raw mut stale
+    ));
+
+    let short = cstr("ni");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, short.as_ptr()), 2);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let live_count = count(instance);
+    assert!(live_count < stale_count, "the regenerated list is shorter");
+    // SAFETY: the live instance is read between serialized ABI calls.
+    let listed = unsafe { instance_ref(instance) }
+        .state
+        .candidates
+        .iter()
+        .any(|row| ptr::eq(row, stale.cast::<crate::state::CapiCandidate>()));
+    assert!(!listed, "the stale address holds no current row");
+
+    assert_eq!(pinyin_choose_candidate(instance, 0, stale), -1);
+    {
+        // SAFETY: the live instance is read between serialized ABI calls.
+        let inst = unsafe { instance_ref(instance) };
+        assert!(inst.core.session.selected_tokens().is_empty());
+        assert_eq!(inst.core.session.composition_offset(), 0);
+    }
+    let mut live: *mut LookupCandidate = ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, 0, &raw mut live));
+    assert_eq!(pinyin_choose_candidate(instance, 0, live), 2);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }

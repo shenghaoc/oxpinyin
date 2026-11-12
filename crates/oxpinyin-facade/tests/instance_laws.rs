@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use oxpinyin_engine::EngineError;
+use oxpinyin_engine::{EngineError, SelectionTarget};
 use oxpinyin_facade::{
     ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, PinyinCorrections, ToneForwarding,
     ZHUYIN_DEFAULT_OPTION_WORD,
@@ -45,7 +45,6 @@ fn zhuyin_instance() -> (ContextCore, InstanceCore) {
 fn a_fresh_instance_is_empty_and_answers_nothing() {
     let (mut context, mut inst) = pinyin_instance();
     assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
-    assert!(!inst.bind(&context.runtime).selection_live);
     assert!(!inst.bind(&context.runtime).session.is_composing());
     assert!(inst.bind(&context.runtime).key_at(0).is_none());
     assert!(
@@ -252,7 +251,6 @@ fn the_parse_reset_keeps_the_session_and_the_full_reset_clears_it() {
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     inst.bind(&context.runtime).reset_parse_state();
     assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
-    assert!(!inst.bind(&context.runtime).selection_live);
     // The parse path resets the composition's parse state only: the raw
     // buffer (which the frontend re-sends every keystroke), the selection
     // record and the constraint store survive.
@@ -376,7 +374,11 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
         .expect("你 is a candidate");
     inst.bind(&context.runtime)
         .session
-        .select(index)
+        .select_target(&SelectionTarget::of_candidate(
+            list.iter().nth(index).expect("你 is listed"),
+            0,
+            None,
+        ))
         .expect("choose 你");
     let generation = context.user_store().generation();
     assert_eq!(
@@ -495,7 +497,11 @@ fn unsorted_gram_reads_and_training_are_deterministic_without_reordering() {
             .expect("你 is a candidate");
         inst.bind(&context.runtime)
             .session
-            .select(index)
+            .select_target(&SelectionTarget::of_candidate(
+                list.iter().nth(index).expect("你 is listed"),
+                0,
+                None,
+            ))
             .expect("choose 你");
         assert!(
             inst.bind(&context.runtime)
@@ -634,7 +640,11 @@ fn train_two_steps(
         .expect("你 is a candidate");
     inst.bind(&context.runtime)
         .session
-        .select(index)
+        .select_target(&SelectionTarget::of_candidate(
+            list.iter().nth(index).expect("你 is listed"),
+            0,
+            None,
+        ))
         .expect("choose 你");
     let generation = context.user_store().generation();
     let result = match inst.bind(&context.runtime).session.guess_sentence() {
