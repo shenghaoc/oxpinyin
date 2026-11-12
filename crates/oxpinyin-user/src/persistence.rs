@@ -433,6 +433,14 @@ impl SystemOriginals {
         }
     }
 
+    /// Sets library `nibble`'s original total: the mapped total after
+    /// `FacadePhraseIndex::compact` rebuilt a layout-failed sub-index.
+    pub(crate) fn set_total(&mut self, nibble: u8, total: u32) {
+        if let Some(library) = self.libraries.get_mut(&nibble) {
+            library.total = total;
+        }
+    }
+
     /// Select existing baselines for a transition without transferring their bytes.
     pub fn selected(&self, mask: u16) -> SelectedOriginals<'_> {
         SelectedOriginals { owner: self, mask }

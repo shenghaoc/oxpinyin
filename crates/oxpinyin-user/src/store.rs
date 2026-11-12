@@ -1489,6 +1489,7 @@ impl UserStore {
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
         // difference moves to the facade's extra.
+        let mut rebased = Vec::new();
         {
             let mut items = lock_result_or_abort(self.inner.system_items.lock());
             for (&library, original) in self.originals.iter() {
@@ -1498,13 +1499,35 @@ impl UserStore {
                 if items.lacks_sub_index(library, original) {
                     continue;
                 }
+                // The library adds its live total less its original total
+                // to the facade. A library whose layout `SubPhraseIndex::load`
+                // refused has a local total the facade never took (074a2219
+                // `phrase_index.cpp:242-246`), and `compact_layout_failed`,
+                // which every caller runs first (`pinyin.cpp:657`, `:1139`,
+                // `:1294`), sets its mapped total to zero. Its original total
+                // follows that mapped total, so an unload takes out the
+                // compacted local total (`phrase_index.cpp:261-269`). The
+                // pin's compact leaves the facade total alone
+                // (`phrase_index.cpp:648-675`), so the extra takes the change
+                // of the library's share.
+                let current = original.mapped.map_or(
+                    original.total,
+                    oxpinyin_data::phrase_library::PhraseLibrary::total_freq,
+                );
                 let old = items
                     .library_total(library, Some(original))
                     .unwrap_or(original.total);
                 let new = items.compacted_total(library, original);
                 items.set_library_total(library, new);
-                items.add_facade_extra(u64::from(old.wrapping_sub(new)));
+                let share = old.wrapping_sub(original.total);
+                items.add_facade_extra(u64::from(share.wrapping_sub(new.wrapping_sub(current))));
+                if current != original.total {
+                    rebased.push((library, current));
+                }
             }
+        }
+        for (library, total) in rebased {
+            self.originals.set_total(library, total);
         }
         let mut offsets = self.offsets();
         offsets.clear();

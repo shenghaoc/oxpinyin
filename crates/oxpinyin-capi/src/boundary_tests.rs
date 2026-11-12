@@ -937,6 +937,66 @@ fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
     );
 }
 
+/// Control: `end_add_phrases` compacts first (`pinyin.cpp:657`), so the
+/// library's local total is zero at the unload and the facade total stays
+/// T.
+#[test]
+fn an_unload_after_the_import_ends_keeps_the_facade_total() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (context, total) = layout_failed_gbk_context(scratch.path());
+    let iter = pinyin_begin_add_phrases(context, 1);
+    assert!(!iter.is_null());
+    pinyin_end_add_phrases(iter);
+    assert!(pinyin_unload_phrase_library(context, 2));
+    assert_eq!(facade_total(context), total);
+    let instance = alloc(context);
+    assert_eq!(parse(instance, "nihao"), 5);
+    assert!(pinyin_guess_candidates(
+        instance,
+        0,
+        crate::test_support::DEFAULT_SORT
+    ));
+    assert!(n_candidate(instance) > 0);
+    close(context, instance);
+}
+
+/// `mask_out` maps library 2 again: the failed load takes the old local
+/// total T out of the facade total (`phrase_index.cpp:243-245`), and the
+/// closing compact makes the reread local total zero (`pinyin.cpp:1294`).
+/// The unload then takes out nothing, and the facade total stays T - T.
+#[test]
+fn an_unload_after_mask_out_takes_out_the_compacted_total() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (context, _) = layout_failed_gbk_context(scratch.path());
+    assert!(pinyin_mask_out(context, 0xFFFF_FFFF, 0));
+    assert!(pinyin_unload_phrase_library(context, 2));
+    assert_eq!(facade_total(context), 0);
+    pinyin_fini(context);
+}
+
+/// The end of an import into the layout-failed library 2 rebuilds its
+/// sub-index from its one item (`pinyin.cpp:657`, `phrase_index.cpp:648-675`):
+/// count 9 times the import's factor 3 (`pinyin.cpp:522`, `:603-605`), so
+/// the local total is 27. An increment that brings it to `u32::MAX` does not
+/// overflow it (`phrase_index.cpp:170-171`) and is accepted.
+#[test]
+fn an_increment_after_an_import_into_a_failed_layout_sees_the_item_sum() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (context, _) = layout_failed_gbk_context(scratch.path());
+    assert_eq!(import_batch(context, 2, &[("龘龘", "da2'da2", 9)]), [true]);
+    let instance = alloc(context);
+    let token = lookup(instance, "龘龘")
+        .into_iter()
+        .find(|token| token >> 24 == 2)
+        .expect("the imported token");
+    assert!(pinyin_token_add_unigram_frequency(
+        instance,
+        token,
+        u32::MAX - 27
+    ));
+    close(context, instance);
+}
+
 // ── Libraries and iterators ───────────────────────────────────────────────
 
 /// `load_phrase_library(0)` asserts on the reserved library.
