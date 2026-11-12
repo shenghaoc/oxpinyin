@@ -10,6 +10,60 @@ use super::*;
 use crate::constraint::PhraseSpan;
 use crate::error::TrainingSpanFault;
 
+/// What a choose reads off the row it selects: the pin's `m_begin`,
+/// `m_end` and `m_token`, and for an n-best row `m_nbest_index`
+/// (`lookup_candidate_t`, 074a2219 `pinyin.cpp:97-105`; read at
+/// `:2515-2520` and `:2577-2590`, `zhuyin.cpp:1646-1666`), plus the text
+/// the selection record keeps. Both spans are absolute, in the store's
+/// coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectionTarget<'a> {
+    /// Where the chosen span starts (`m_begin`).
+    pub span_start: usize,
+    /// Where the chosen span ends, before the separator walk
+    /// (`m_end`).
+    pub span_end: usize,
+    /// The token the choose forces (`m_token`); `None` for a row without
+    /// one.
+    pub token: Option<PhraseToken>,
+    /// The n-best tail rank, for a sentence row only.
+    pub nbest_row: Option<u8>,
+    /// The chosen phrase's text, stored words included.
+    pub text: &'a PhraseText,
+}
+
+impl<'a> SelectionTarget<'a> {
+    /// The target of `candidate` read in a window anchored at `anchor`,
+    /// forcing `token_override` in place of its own token when given (the
+    /// addon promotion, `pinyin.cpp:2532-2562`).
+    ///
+    /// For the composition-anchored cached list, `anchor` is the
+    /// composition offset and the candidate's `consumed_bytes` is measured
+    /// from it; for an after-cursor window, `anchor` is that window's
+    /// caller offset and `consumed_bytes` is measured from IT (the pin's
+    /// `m_begin = start`, `pinyin.cpp:2246`) — both carry `span_start` 0,
+    /// so the span starts at `anchor`. A before-cursor window is
+    /// END-anchored at 0 with each row's own absolute `m_begin` in
+    /// `span_start` and its absolute end in `consumed_bytes`: the span
+    /// starts at `anchor + span_start`, not at the anchor, so choosing the
+    /// second key's span constrains that key alone and leaves the leading
+    /// key to the decode.
+    #[must_use]
+    pub fn of_candidate(
+        candidate: &'a Candidate,
+        anchor: usize,
+        token_override: Option<PhraseToken>,
+    ) -> Self {
+        Self {
+            span_start: anchor.saturating_add(candidate.span_start()),
+            span_end: anchor.saturating_add(candidate.consumed_bytes()),
+            token: token_override.or_else(|| candidate.token()),
+            nbest_row: candidate.nbest_row(),
+            text: candidate.text(),
+        }
+    }
+}
+
 /// A checked training walk. It borrows composition state only, so all
 /// dictionary/model readers can end before the user store is mutated.
 pub struct TrainingPlan<'a> {
@@ -117,7 +171,7 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// The common tail of [`Session::select_inner`].
+    /// The common tail of [`Session::select_target`].
     pub(super) fn selection_outcome(&self) -> Selection {
         if self.record.consumed() >= self.input.len() {
             Selection::Completed
@@ -324,7 +378,7 @@ where
     /// earlier list — and leaves the session usable.
     pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
         self.refresh_candidates()?;
-        // Clone the candidate out of the cached list first: `select_inner`
+        // Clone the candidate out of the cached list first: `select_target`
         // borrows `self` mutably, so it cannot also borrow `self.candidates`.
         let candidate = self.lookup.candidates.get(index).cloned().ok_or(
             EngineError::CandidateIndexOutOfRange {
@@ -332,7 +386,11 @@ where
                 len: self.lookup.candidates.len(),
             },
         )?;
-        self.select_inner(self.record.consumed(), &candidate, None)
+        self.select_target(&SelectionTarget::of_candidate(
+            &candidate,
+            self.record.consumed(),
+            None,
+        ))
     }
 
     /// Chooses the candidate at `index`, recording `promoted_token` in the
@@ -359,7 +417,11 @@ where
                 len: self.lookup.candidates.len(),
             },
         )?;
-        self.select_inner(self.record.consumed(), &candidate, Some(promoted_token))
+        self.select_target(&SelectionTarget::of_candidate(
+            &candidate,
+            self.record.consumed(),
+            Some(promoted_token),
+        ))
     }
 
     /// Chooses the candidate at `index` from an explicit candidate window
@@ -391,7 +453,7 @@ where
                 index,
                 len: window.len(),
             })?;
-        self.select_inner(anchor, candidate, None)
+        self.select_target(&SelectionTarget::of_candidate(candidate, anchor, None))
     }
 
     /// [`Session::select_anchored`] with an addon-promotion token override,
@@ -413,21 +475,33 @@ where
                 index,
                 len: window.len(),
             })?;
-        self.select_inner(anchor, candidate, Some(promoted_token))
+        self.select_target(&SelectionTarget::of_candidate(
+            candidate,
+            anchor,
+            Some(promoted_token),
+        ))
     }
 
-    /// Selects the candidate at `index`, which must not alias `self` —
-    /// either an owned clone of a cached candidate (the composition case)
-    /// or a reference into an external window.
-    pub(super) fn select_inner(
+    /// Chooses the row `target` describes: the span, token and n-best rank
+    /// a published row carries, as the pin's choose reads them off the
+    /// `lookup_candidate_t` alone (`m_begin`, `m_end`, `m_token`,
+    /// `m_nbest_index`; 074a2219 `pinyin.cpp:2515-2520`, `:2577-2590`,
+    /// `zhuyin.cpp:1646-1666`). [`Session::select`] and its siblings are
+    /// this with the target read off a candidate.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from the constraint validation and the refresh that
+    /// follow the selection; a choose behind the composition with no token
+    /// is [`EngineError::SelectionAnchorBeforeComposition`]. A normal span
+    /// beyond the current matrix returns [`Selection::Refused`].
+    pub fn select_target(
         &mut self,
-        anchor: usize,
-        candidate: &Candidate,
-        token_override: Option<PhraseToken>,
+        target: &SelectionTarget<'_>,
     ) -> Result<Selection, EngineError> {
-        let span_end = anchor.saturating_add(candidate.consumed_bytes());
-        if candidate.nbest_row().is_none()
-            && token_override.or_else(|| candidate.token()).is_some()
+        let span_end = target.span_end;
+        if target.nbest_row.is_none()
+            && target.token.is_some()
             && span_end > self.selection_constraint_size()?
         {
             // Both choose functions validate before and after add_constraint,
@@ -443,25 +517,15 @@ where
         // `pinyin.cpp:2577-2587`, `zhuyin.cpp:1646-1666` at 074a2219), and
         // the C sentence read converts each phrase from its stored words
         // (`src/lookup/lookup.cpp:39-68`), so the record keeps them too.
-        let text = candidate.text().clone();
-        let advance = candidate.consumed_bytes();
-        let token = token_override.or_else(|| candidate.token());
+        let text = target.text.clone();
+        let token = target.token;
         // The chosen span in the store's coordinates — upstream's
         // `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2582`,
-        // `zhuyin.cpp:1652,1659`). For the composition-anchored cached list,
-        // `anchor` is the composition offset and the candidate's
-        // `consumed_bytes` is measured from it; for an after-cursor window,
-        // `anchor` is that window's caller offset and `consumed_bytes` is
-        // measured from IT (the pin's `m_begin = start`, `pinyin.cpp:2227`)
-        // — both carry `span_start` 0, so the span starts at `anchor`. A
-        // before-cursor window is END-anchored at 0 with each row's own
-        // absolute `m_begin` in `span_start` and its absolute end in
-        // `consumed_bytes`: the span starts at `anchor + span_start`, not at
-        // the anchor, so choosing the second key's span constrains that key
-        // alone and leaves the leading key to the decode.
-        let span_start = anchor.saturating_add(candidate.span_start());
+        // `zhuyin.cpp:1652,1659`); [`SelectionTarget::of_candidate`] says
+        // how a window row's span is placed there.
+        let span_start = target.span_start;
         let constraint_start = span_start;
-        let constraint_end = self.next_boundary(anchor.saturating_add(advance));
+        let constraint_end = self.next_boundary(span_end);
         // A span that starts before the composition offset — a choose from
         // a window the caller looked up behind an earlier selection (ibus's
         // `moveCursorLeft`, `PYPPhoneticEditor.cc:595-604`, sets the lookup
@@ -474,7 +538,7 @@ where
         // `phonetic_lookup.cpp:61-86`) — so the choose forces the span and
         // the record follows the store, moving back to it. An n-best row
         // is a whole-composition hypothesis and takes the row path below.
-        if span_start < self.record.consumed() && candidate.nbest_row().is_none() {
+        if span_start < self.record.consumed() && target.nbest_row.is_none() {
             return self.select_behind(constraint_start, constraint_end, token, text);
         }
         // The raw bytes between the composition offset and the span start
@@ -494,7 +558,7 @@ where
         } else {
             ""
         };
-        if candidate.nbest_row().is_some() {
+        if target.nbest_row.is_some() {
             // An n-best row is a whole-composition hypothesis: its text
             // already covers the full input and its span (consumed_bytes)
             // is the whole composition, so a re-anchored selection must not
@@ -503,8 +567,8 @@ where
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way.
-            let parts = candidate
-                .nbest_row()
+            let parts = target
+                .nbest_row
                 .and_then(|rank| state.sentence.rows.get(usize::from(rank)))
                 .map_or_else(
                     || vec![SentencePart::Raw(text.clone())],
@@ -516,7 +580,7 @@ where
         }
         if let Some(token) = token {
             state.record.push_token(token);
-        } else if let Some(rank) = candidate.nbest_row() {
+        } else if let Some(rank) = target.nbest_row {
             // A prepended n-best row records its whole token path —
             // upstream's `pinyin_choose_candidate` keeps the chosen
             // `MatchResult` on the instance and `pinyin_train` walks it;
@@ -542,7 +606,7 @@ where
         // span; an n-best row constrains only the phrases where it
         // differs from the 1-best (`diff_result`) — a row-0 choose
         // constrains nothing, exactly upstream.
-        if let Some(rank) = candidate.nbest_row() {
+        if let Some(rank) = target.nbest_row {
             let best = state.sentence.rows.first().map(|row| row.spans.as_slice());
             let Some(chosen) = state.sentence.rows.get(usize::from(rank)) else {
                 state.record.set_consumed(constraint_end);

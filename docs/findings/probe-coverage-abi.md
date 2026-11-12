@@ -976,7 +976,7 @@ answers a cursor (`:2501-2590`), nothing else, so a window behind an
 earlier choose is the ordinary window at that offset with the n-best
 rows of the constrained re-guess prepended.
 
-**Mechanism — oxpinyin.** Three sites. (1) `Session::select_inner`
+**Mechanism — oxpinyin.** Three sites. (1) `Session::select_target`
 advances the composition offset to the chosen span's end
 (`crates/oxpinyin-engine/src/session/selection.rs:229`, `:252`,
 `set_consumed(constraint_end)`). (2) The cached list is rebuilt at
@@ -1037,7 +1037,7 @@ composition_offset()` — both directions — through
 `Session::candidates_at(normalized)`, leaving the composition offset
 untouched. Choose leg, which the fix must carry with it: a choose from
 a behind-window starts before the composition offset, which
-`select_inner` refuses (`SelectionAnchorBeforeComposition`,
+`select_target` refuses (`SelectionAnchorBeforeComposition`,
 `selection.rs:157-167`); the pin's `add_constraint` clears the
 overlapped forcings and the answered cursor moves back
 (`phonetic_lookup.cpp:61-86`), so the record must re-anchor to the
