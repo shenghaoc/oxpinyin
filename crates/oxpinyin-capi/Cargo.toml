@@ -114,6 +114,10 @@ tempfile.workspace = true
 # Dev-only: the pinned-data tests compare a saved journal and a saved user
 # bigram with the pin's by SHA-256.
 sha2 = "0.11"
+# Dev-only: the copy fault points of the DBM-copy death tests
+# (`oxpinyin_store::copy_faults`), a test-only hook; a dev-dependency feature
+# never reaches the normal build.
+oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the

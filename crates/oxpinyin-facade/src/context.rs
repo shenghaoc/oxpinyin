@@ -62,6 +62,12 @@ pub enum SaveOutcome {
     /// files written and, for libzhuyin, renamed, as the pin leaves them.
     /// The C adapters abort.
     ChunkHeaderRead,
+    /// A tkrzw or Berkeley DB record copy failed where the pin's
+    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
+    /// `bdb_utils.h:61`, `:67`). The save stopped in that file's copy:
+    /// libpinyin's earlier `.tmp` files written and none renamed,
+    /// libzhuyin's earlier files renamed, no marker. The C adapters abort.
+    FatalCopy,
 }
 
 impl SaveOutcome {
@@ -521,6 +527,7 @@ impl ContextCore {
                 return SaveOutcome::ChunkWriteFailed(field);
             }
             Err(UserStoreError::LibraryChunkHeaderRead) => return SaveOutcome::ChunkHeaderRead,
+            Err(UserStoreError::FatalCopy) => return SaveOutcome::FatalCopy,
             // Row 76: the save stopped at a library whose file cannot be
             // mapped again, with the session still dirty.
             Err(UserStoreError::SaveRemapFailed) => return SaveOutcome::NotSaved,

@@ -114,6 +114,17 @@ impl OpenSteps for BigramFails {
     }
 }
 
+/// The user bigram's copy fails where the pin's `copy_tkrzwdb` or
+/// `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
+/// `:67`).
+struct BigramCopyFails;
+
+impl OpenSteps for BigramCopyFails {
+    fn bigram(_: Option<&Path>) -> Result<oxpinyin_store::DefaultUserBigramDb, PersistenceError> {
+        Err(PersistenceError::FatalCopy)
+    }
+}
+
 /// The planted item's encoding fails: an item no decoder yields, with no
 /// text and one reading of one key.
 struct EncodeFails;
@@ -237,16 +248,24 @@ fn listing(dir: &Path) -> Vec<String> {
 /// `user.conf`, nothing else is written or saved, and stderr is empty (no
 /// `write %s failed.` from a fini that writes `""`).
 fn leaves_without_finalizing<P: OpenSteps>(test: &str, name: &str) {
+    leaves_without_finalizing_as::<P>(test, name, |error| {
+        matches!(error, UserStoreError::SessionSeed(_))
+    });
+}
+
+/// [`leaves_without_finalizing`] with the open's answer that `expected`
+/// accepts.
+fn leaves_without_finalizing_as<P: OpenSteps>(
+    test: &str,
+    name: &str,
+    expected: fn(&UserStoreError) -> bool,
+) {
     let dir = parent_dir(name);
     let (status, stderr) = in_child(test, &dir, |dir| {
-        assert!(matches!(
-            open::<P>(Some(dir), originals()),
-            Err(UserStoreError::SessionSeed(_))
-        ));
-        assert!(matches!(
-            open::<P>(None, originals()),
-            Err(UserStoreError::SessionSeed(_))
-        ));
+        for user_dir in [Some(dir), None] {
+            let answer = open::<P>(user_dir, originals());
+            assert!(answer.as_ref().is_err_and(expected), "{:?}", answer.err());
+        }
     });
     assert!(status.success(), "{test}: {status:?} {stderr}");
     assert_eq!(stderr, "", "{test}: no finalization output");
@@ -278,6 +297,17 @@ fn a_failed_user_bigram_container_leaves_without_finalizing() {
     leaves_without_finalizing::<BigramFails>(
         "store_libpinyin::open_faults::a_failed_user_bigram_container_leaves_without_finalizing",
         "bigram",
+    );
+}
+
+/// A failed copy in the user bigram's `load_db` keeps its own typed error,
+/// on which the C adapters abort, and leaves without finalizing.
+#[test]
+fn a_failed_user_bigram_copy_leaves_without_finalizing() {
+    leaves_without_finalizing_as::<BigramCopyFails>(
+        "store_libpinyin::open_faults::a_failed_user_bigram_copy_leaves_without_finalizing",
+        "bigram-copy",
+        |error| matches!(error, UserStoreError::FatalCopy),
     );
 }
 

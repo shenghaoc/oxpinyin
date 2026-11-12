@@ -158,6 +158,11 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
         // save stopped there with the earlier libraries' `.tmp` files
         // written and renamed in place (`zhuyin.cpp:554-617`).
         oxpinyin_facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
+        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
+        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
+        // `:67`). The save stopped in that copy, before its rename and the
+        // marker.
+        oxpinyin_facade::SaveOutcome::FatalCopy => std::process::abort(),
         outcome => outcome.is_saved(),
     }
 }

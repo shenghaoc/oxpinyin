@@ -2944,3 +2944,145 @@ fn a_masked_user_gram_leaves_the_file_at_the_next_armed_save() {
     assert_eq!(stored(), None);
     pinyin_fini(context);
 }
+
+// ── Native DBM copies ──────────────────────────────────────────────────────
+
+/// Copies the regular files of `user` to `before`, next to it.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+fn keep_before(user: &Path) {
+    let before = user.parent().expect("the child's scratch").join("before");
+    std::fs::create_dir(&before).expect("the before directory");
+    for (name, bytes) in files_of(user) {
+        std::fs::write(before.join(name), bytes).expect("keep a file");
+    }
+}
+
+/// Two whole user-bigram rows: two predecessors, each with an empty gram.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+fn two_bigram_rows() -> Vec<(Vec<u8>, Vec<u8>)> {
+    vec![
+        (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+    ]
+}
+
+/// The pin's `copy_tkrzwdb` and `copy_bdb` assert on a source walk that
+/// fails (`tkrzwdb_utils.h:72`, `bdb_utils.h:67`): init stops in the copy
+/// after one record, with the raised open counter already written
+/// (`pinyin.cpp:172-218` runs before the loads) and the profile unchanged.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_aborts_where_a_copy_fails_a_source_read() {
+    let run = crate::test_support::assert_aborts_in_dir(
+        "boundary_tests::init_aborts_where_a_copy_fails_a_source_read",
+        |user| {
+            plant_bigram(user, two_bigram_rows());
+            keep_before(user);
+            oxpinyin_store::copy_faults::fail_source_read_after(1);
+            init_at(&system_dir(), user);
+        },
+    );
+    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
+    let after = files_of(&run.user_dir);
+    let conf = String::from_utf8_lossy(&after["user.conf"]).into_owned();
+    assert!(conf.ends_with("open counter:2\n"), "{conf}");
+    assert_eq!(after["user_bigram.db"], before["user_bigram.db"]);
+}
+
+/// The same stop in `PhraseLargeTable3::load_db`'s copy
+/// (`phrase_large_table3_tkrzwdb.cpp:95`, `phrase_large_table3_bdb.cpp:141`):
+/// a profile whose only rows are two user phrase-index rows stops after the
+/// first, with the profile unchanged.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_aborts_where_a_user_index_copy_fails_a_source_read() {
+    let run = crate::test_support::assert_aborts_in_dir(
+        "boundary_tests::init_aborts_where_a_user_index_copy_fails_a_source_read",
+        |user| {
+            set_phrase_table_row(user, "你好", &[0x0100_0001]);
+            set_phrase_table_row(user, "再见", &[0x0100_0002]);
+            keep_before(user);
+            oxpinyin_store::copy_faults::fail_source_read_after(1);
+            init_at(&system_dir(), user);
+        },
+    );
+    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
+    let after = files_of(&run.user_dir);
+    assert_eq!(
+        after["user_phrase_index.bin"],
+        before["user_phrase_index.bin"]
+    );
+}
+
+/// The control: a user bigram that does not open is the pin's soft
+/// `return false` (`ngram_tkrzwdb.cpp:55-56`, `ngram_bdb.cpp:67-70`), so no
+/// copy runs and init answers a context, though every source read fails.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_survives_a_user_bigram_that_does_not_open() {
+    crate::test_support::run_in_child(
+        "boundary_tests::init_survives_a_user_bigram_that_does_not_open",
+        |user| {
+            plant_bigram(user, two_bigram_rows());
+            let bigram = user.join("user_bigram.db");
+            std::fs::remove_file(&bigram).expect("unlink the user bigram");
+            std::fs::create_dir(&bigram).expect("a directory in its place");
+            oxpinyin_store::copy_faults::fail_source_read_after(0);
+            assert!(!init_at(&system_dir(), user).is_null());
+        },
+    );
+}
+
+/// `copy_tkrzwdb` and `copy_bdb` return `false` without an assert when no
+/// source iterator is made (`tkrzwdb_utils.h:52-54`, `bdb_utils.h:49-52`),
+/// and `load_db` ignores the answer (`ngram_tkrzwdb.cpp:58`,
+/// `chewing_large_table2_tkrzwdb.cpp:104`): init answers a context, though
+/// every source read of a copy would fail.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_survives_a_copy_whose_source_iterator_is_not_made() {
+    crate::test_support::run_in_child(
+        "boundary_tests::init_survives_a_copy_whose_source_iterator_is_not_made",
+        |user| {
+            plant_bigram(user, two_bigram_rows());
+            oxpinyin_store::copy_faults::fail_iterator_creation_after(0);
+            oxpinyin_store::copy_faults::fail_source_read_after(0);
+            assert!(!init_at(&system_dir(), user).is_null());
+        },
+    );
+}
+
+/// The pin's copies assert on a failed destination write
+/// (`tkrzwdb_utils.h:65`, `bdb_utils.h:61`): the save stops in
+/// `_write_files` after one record, before `_rename_files` and
+/// `mark_version` (`pinyin.cpp:1141-1143`), so no saved file is replaced.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn save_aborts_where_a_copy_fails_a_destination_write() {
+    let run = crate::test_support::assert_aborts_in_dir(
+        "boundary_tests::save_aborts_where_a_copy_fails_a_destination_write",
+        |user| {
+            plant_bigram(user, two_bigram_rows());
+            let context = init_at(&system_dir(), user);
+            assert!(!context.is_null());
+            // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
+            train_once(context);
+            assert!(pinyin_save(context));
+            keep_before(user);
+            train_once(context);
+            // The first copy writes one record and fails the next.
+            oxpinyin_store::copy_faults::fail_destination_write_after(1);
+            pinyin_save(context);
+        },
+    );
+    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
+    let after = files_of(&run.user_dir);
+    for (name, bytes) in &before {
+        assert_eq!(after.get(name), Some(bytes), "{name} was replaced");
+    }
+    assert!(
+        after.keys().any(|name| name.ends_with(".tmp")),
+        "the copy left no staged file: {:?}",
+        after.keys()
+    );
+}
