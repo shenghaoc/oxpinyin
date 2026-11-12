@@ -441,12 +441,19 @@ pub extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
+    // The token the row carries before a promotion replaces it.
+    let published_token = inst.state.candidates[index].token.get();
     // SAFETY: the prior view is no longer used. Promotion borrows the retained
     // owner only for its own reads and write, before the new instance view.
     let addon_token = unsafe { try_promote_addon(instance, index) };
     // SAFETY: promotion has released its context borrow; the live instance
     // is re-borrowed for the remainder of this serialized operation.
     let mut inst = unsafe { instance_mut(instance) };
+    if addon_token.is_some() {
+        // A live repeat choose of this row forces the token the row was
+        // published with, not the promoted one (PR 3 decides that case).
+        inst.state.candidates.note_promotion(index, published_token);
+    }
     // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
     // reached after the addon promotion exactly as the pin's dispatch
     // falls through to it: only the unigram trains, by the LONGER
@@ -467,10 +474,26 @@ pub extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
-    let source_index = inst.state.candidates[index].source_index as usize;
-    // Resolve the selection against the window the caller actually saw,
-    // and keep the row's end in that window for the answer below.
-    let window_end = match inst.core.select_candidate(source_index, addon_token) {
+    // Select the row the caller actually saw by its own span, and keep the
+    // span's end for the answer below.
+    let row = &inst.state.candidates[index];
+    let text = inst.state.candidates.phrase_text(index, row.text);
+    let published = oxpinyin_facade::PublishedRow {
+        span: row.selection,
+        token: inst
+            .state
+            .candidates
+            .published_token(index)
+            .unwrap_or_else(|| row.token.get()),
+        // The engine lists at most `NBEST_ROWS` sentence rows, each with
+        // its rank, and every other row with none; the snapshot types a
+        // sentence row `NBEST_MATCH_CANDIDATE` alone.
+        nbest_row: (row.candidate_type() == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
+            .then_some(row.nbest_index),
+        text: &text,
+        source_index: row.source_index as usize,
+    };
+    let window_end = match inst.core.select_published(&published, addon_token) {
         Ok((oxpinyin_engine::Selection::Refused, _)) => {
             return c_int::try_from(offset).unwrap_or(c_int::MAX);
         }
@@ -478,7 +501,7 @@ pub extern "C" fn pinyin_choose_candidate(
             oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed,
             window_end,
         )) => {
-            inst.core.anchored_window = None;
+            inst.core.selection_live = false;
             window_end
         }
         Err(_) => return -1,

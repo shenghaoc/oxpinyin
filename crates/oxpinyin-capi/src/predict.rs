@@ -87,7 +87,7 @@ fn guess_predicted_result(
 ) -> Result<bool, &'static str> {
     // Prediction frees the previous list first (074a2219 pinyin.cpp:2420).
     // Its replacement has no phonetic lookup window.
-    inst.core.anchored_window = None;
+    inst.core.selection_live = false;
     inst.state.candidates.clear();
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
@@ -146,6 +146,7 @@ fn guess_predicted_result(
             nbest_index: 0,
             token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
             source_index: 0,
+            selection: oxpinyin_facade::SelectionSpan::default(),
         });
         return Ok(true);
     }
@@ -181,6 +182,7 @@ fn guess_predicted_result(
             // path, so the window index is unused here; record the snapshot
             // position for determinism.
             source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
+            selection: oxpinyin_facade::SelectionSpan::default(),
         });
     }
     Ok(true)
@@ -211,7 +213,7 @@ pub fn clear_borrowed_prefix(
             .iter()
             .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));
     if borrowed {
-        inst.core.anchored_window = None;
+        inst.core.selection_live = false;
         inst.state.candidates.clear();
         inst.core
             .session
@@ -310,6 +312,7 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
             nbest_index: 0,
             token: Cell::new(None),
             source_index: u32::try_from(inst.state.candidates.len()).unwrap_or(u32::MAX),
+            selection: oxpinyin_facade::SelectionSpan::default(),
         });
     }
     inst.state.candidates.append(rest);
@@ -508,8 +511,7 @@ mod tests {
         // SAFETY: the live instance is read between serialized ABI calls.
         let prior_window = unsafe { crate::state::instance_ref(instance) }
             .core
-            .anchored_window
-            .is_some();
+            .selection_live;
         assert!(prior_window);
         let owned = cstr(prefix);
         let prefix = if borrowed {
@@ -540,10 +542,9 @@ mod tests {
         // (pinyin.cpp:2420-2427, 2459). Prediction has no parse window to
         // retain, even when it leaves an empty snapshot.
         // SAFETY: the live instance is read between serialized ABI calls.
-        let window_cleared = unsafe { crate::state::instance_ref(instance) }
+        let window_cleared = !unsafe { crate::state::instance_ref(instance) }
             .core
-            .anchored_window
-            .is_none();
+            .selection_live;
         assert!(window_cleared);
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);

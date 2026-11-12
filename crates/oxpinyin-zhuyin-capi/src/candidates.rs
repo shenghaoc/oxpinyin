@@ -196,8 +196,17 @@ pub extern "C" fn zhuyin_choose_candidate(
     {
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
-    let source_index = inst.state.candidates[index].source_index as usize;
-    let window_end = match inst.core.select_candidate(source_index, None) {
+    let row = &inst.state.candidates[index];
+    let text = inst.state.candidates.phrase_text(index, row.text);
+    // Only a BEST_MATCH row is a sentence row, and it answered above.
+    let published = oxpinyin_facade::PublishedRow {
+        span: row.selection,
+        token: row.token,
+        nbest_row: None,
+        text: &text,
+        source_index: row.source_index as usize,
+    };
+    let window_end = match inst.core.select_published(&published, None) {
         Ok((oxpinyin_engine::Selection::Refused, _)) => {
             let chosen = &inst.state.candidates[index];
             let offset = if chosen.candidate_type
@@ -380,6 +389,9 @@ pub fn snapshot_candidates(
         let Some(text) = inst.state.candidates.intern(&bytes) else {
             continue;
         };
+        if cand.text().outward_bytes().is_none() {
+            inst.state.candidates.keep_stored_text(cand.text().clone());
+        }
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
@@ -392,6 +404,8 @@ pub fn snapshot_candidates(
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
             span_end: u32::try_from(span_end).unwrap_or(u32::MAX),
+            token: cand.token(),
+            selection: oxpinyin_facade::SelectionSpan::of_candidate(cand, anchor),
         });
     }
 }
