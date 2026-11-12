@@ -325,7 +325,7 @@ over the full `PhoneticKeyMatrix` with `CONSTRAINT_ONESTEP` /
   rows: the seed context that the rows were decoded against. The next
   lookup and `reset` clear it with the rows.
 - When the user selects an n-best row (`nbest_row().is_some()`),
-  `Session::select_inner` assigns the candidate text to `self.selected`
+  `Session::select_target` assigns the candidate text to `self.selected`
   and does not append it, because the text already contains the prefix.
   Other candidates append. The row selection also restores the history
   snapshot before it extends the history with the tokens of the row. A

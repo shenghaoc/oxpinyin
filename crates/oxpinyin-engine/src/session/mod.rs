@@ -325,7 +325,7 @@ mod guess;
 mod lookup;
 mod offsets;
 mod selection;
-pub use selection::TrainingPlan;
+pub use selection::{SelectionTarget, TrainingPlan};
 pub(crate) use selection::{column_is_empty, training_readings};
 mod state;
 
