@@ -997,6 +997,29 @@ fn an_increment_after_an_import_into_a_failed_layout_sees_the_item_sum() {
     close(context, instance);
 }
 
+/// A save after an import into the layout-failed library 2. The save's
+/// compact rebuilds the sub-index from its items (`pinyin.cpp:1139`,
+/// `phrase_index.cpp:648-675`), and the journal's header record holds the
+/// remapped chunk's total T and the item sum (`phrase_index.cpp:345`,
+/// `:392-400`): count 9 times the import's factor 3 (`pinyin.cpp:522`,
+/// `:603-605`). An unload then takes that local total out of the facade
+/// total T + 27 (`phrase_index.cpp:261-269`).
+#[test]
+fn a_save_after_an_import_into_a_failed_layout_journals_the_item_sum() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (context, total) = layout_failed_gbk_context(scratch.path());
+    assert_eq!(import_batch(context, 2, &[("龘龘", "da2'da2", 9)]), [true]);
+    assert!(pinyin_save(context));
+    assert!(pinyin_unload_phrase_library(context, 2));
+    assert_eq!(facade_total(context), total);
+    pinyin_fini(context);
+    let journal = std::fs::read(scratch.path().join("user/gbk_char.dbin")).expect("gbk_char.dbin");
+    let word = |at: usize| u32::from_le_bytes(journal[8 + at..12 + at].try_into().expect("a word"));
+    // LOG_MODIFY_HEADER, null token, then the old and the new total.
+    assert_eq!((word(0), word(4)), (4, 0));
+    assert_eq!((u64::from(word(10)), word(14)), (total, 27));
+}
+
 // ── Libraries and iterators ───────────────────────────────────────────────
 
 /// `load_phrase_library(0)` asserts on the reserved library.

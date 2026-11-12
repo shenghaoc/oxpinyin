@@ -2673,7 +2673,17 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 }
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
-                    let new_total = compacted.contains(&nibble).then_some(0);
+                    // A layout-failed library's save compact rebuilds its
+                    // sub-index from the items the session added
+                    // (074a2219 `pinyin.cpp:1139`, `phrase_index.cpp:648-675`),
+                    // and the journal's header takes that total
+                    // (`phrase_index.cpp:395-400`): the readable item sum.
+                    let new_total = compacted.contains(&nibble).then(|| {
+                        live.map_or_else(
+                            || original.item_total(),
+                            |items| items.compacted_total(nibble, original),
+                        )
+                    });
                     let payload =
                         log_payload(state, live, nibble, original, baseline.as_ref(), new_total)?;
                     // `PhraseIndexLogger::store` copies the whole journal
