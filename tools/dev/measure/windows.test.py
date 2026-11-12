@@ -294,7 +294,9 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
                     self.assertEqual(len({path for path, _, _ in staged.values()}), 3)
                     self.assertEqual(staged[recipes.CONTROL][1], staged['A'][1])
                     self.assertEqual(staged[recipes.CONTROL][0].parent, staged[recipes.CONTROL][2])
-                    self.assertEqual(staged[recipes.CONTROL][0].parents[1].name, 'A-control')
+                    self.assertEqual(staged[recipes.CONTROL][0].parents[1].name, 'C')
+                    # One length for every staged prefix: the same bytes sit at same-length paths.
+                    self.assertEqual({len(str(path)) for path, _, _ in staged.values()}, {len(str(staged['A'][0]))})
                     self.assertFalse(destinations[0].parent.exists())
 
         def test_unsupported_modes_fail_before_preparation(self):

@@ -116,7 +116,7 @@ HARNESS_DEPENDENCIES = {
 # Native measurement extends these existing services. Keep its contracts selected.
 for _measurement_source in ('bench', 'identity', 'neutrality', 'prepare', 'recipes', 'reports'):
     _measurement_path = f'tools/dev/measure/{_measurement_source}.py'
-    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py',)
+    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py', 'tools/dev/measure/linux.test.py')
 
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.

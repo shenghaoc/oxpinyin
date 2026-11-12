@@ -153,6 +153,166 @@ def comparison(rows, *, windows=False):
     return result
 
 
+# Linux. Both instruction sources count the steady cycles 1..n-1 that the driver
+# brackets with bisect_perf_steady_unit; wall and CPU time are summed over the
+# same cycles. One comparison uses one source, and the metric name carries it.
+LINUX_SOURCES = {'perf_event_open': 'loop_hw_instructions', 'callgrind': 'loop_callgrind_ir'}
+LINUX_UNITS = {'loop_hw_instructions': 'instructions retired in user space in the measured loop'
+                                       ' (perf_event_open PERF_COUNT_HW_INSTRUCTIONS)',
+               'loop_callgrind_ir': 'Callgrind Ir collected in the measured loop'
+                                    ' (--toggle-collect=bisect_perf_steady_unit)',
+               'wall_seconds': 'seconds, measured loop (CLOCK_MONOTONIC)',
+               'cpu_seconds': 'seconds, measured loop (CLOCK_PROCESS_CPUTIME_ID)',
+               'anonymous_kib': 'KiB after the measured loop (/proc/self/smaps_rollup Anonymous)',
+               'private_dirty_kib': 'KiB after the measured loop (/proc/self/smaps_rollup Private_Dirty)'}
+LINUX_RESIDENCY = ('anonymous_kib', 'private_dirty_kib')
+LINUX_LOOP = 'steady cycles 1..n-1 of bisect --perf; cycle 0, initialization and teardown excluded'
+
+
+def linux_measures(source):
+    """Report order: the labelled instruction count and wall time lead."""
+    return (LINUX_SOURCES[source], 'wall_seconds', 'cpu_seconds', *LINUX_RESIDENCY)
+
+
+def linux_observation(raw, *, cycles, library, source=None, fingerprint=None):
+    """Validate one bisect --perf row and reduce it to the measured loop.
+
+    SOURCE None is a Callgrind worker: only its identity and work are read; its
+    clocks and residency ran under Valgrind and are not native readings.
+    """
+    import re
+    row = json.loads(raw)
+
+    def count(value, minimum=0):
+        return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+    if cycles < 2:
+        raise ValueError('the measured loop needs at least two cycles')
+    if not count(row.get('pid'), 1) or row.get('repeats') != 1:
+        raise ValueError('incomplete workload')
+    if row.get('so') != str(library):
+        raise ValueError('wrong loaded library')
+    clocks = [row.get(name) for name in ('cycles_ns', 'cycles_cpu_ns')]
+    if any(not isinstance(values, list) or len(values) != cycles or not all(count(value) for value in values)
+           for values in clocks):
+        raise ValueError('incomplete workload')
+    if not re.fullmatch('[0-9a-f]{16}', str(row.get('workload_checksum', ''))):
+        raise ValueError('missing operation fingerprint')
+    if fingerprint is not None and row['workload_checksum'] != fingerprint:
+        raise ValueError('operation fingerprint mismatch')
+    result = dict(pid=row['pid'], cycles=cycles, steady_cycles=cycles - 1, fingerprint=row['workload_checksum'])
+    if source is None:
+        return result
+    result.update(wall_seconds=sum(clocks[0][1:]) / 1e9, cpu_seconds=sum(clocks[1][1:]) / 1e9)
+    for name in LINUX_RESIDENCY:
+        # The driver's reader leaves -1 for a field it could not read.
+        value = (row.get('rollup_cycle') or {}).get(name)
+        if not count(value):
+            raise ValueError('broken required capture: ' + name)
+        result[name] = value
+    if source == 'perf_event_open':
+        if 'hw_errno' in row:
+            raise ValueError(f"perf_event_open was refused (errno {row['hw_errno']}) after this comparison"
+                             ' selected the hardware counter; instruction sources are never mixed')
+        if row.get('steady_hw_cycles') != cycles - 1 or not count(row.get('steady_hw_instructions'), 1):
+            raise ValueError('broken required capture: loop_hw_instructions')
+        result['loop_hw_instructions'] = row['steady_hw_instructions']
+    for name in ('wall_seconds', 'cpu_seconds'):
+        if result[name] <= 0:
+            raise ValueError('broken required capture: ' + name)
+    return result
+
+
+def linux_comparison(rows, *, source, functions=None, creators=()):
+    """Paired block estimates, with the Linux same-bytes control rules applied to A against A'.
+
+    Wall time, CPU time and the hardware count use stats.stable_control;
+    residency uses stats.stable_residency on paired KiB differences. An
+    unstable control is DIAGNOSTIC: the estimate stays, beside the control
+    limits. Callgrind Ir must be equal in every run of A and A'. A varying
+    count is DIAGNOSTIC, reported as ranges and bounds, when every varying
+    function is one of sentence.RANDOMSTATE_TYPING; otherwise it is INVALID
+    and the Ir comparison is withheld. FUNCTIONS maps (kind, block, arm) to
+    that run's exclusive Ir by function.
+    """
+    from . import stats
+    if {row.get('instruction_source') for row in rows} != {source}:
+        raise ValueError('instruction sources are never mixed in one comparison')
+    counter = LINUX_SOURCES[source]
+    measures = linux_measures(source)
+    result = {'platform': 'linux', 'instruction_source': source, 'loop': LINUX_LOOP,
+              'units': {name: LINUX_UNITS[name] for name in measures}, 'verdicts': {}}
+    paired = {}
+    for kind in ('comparison', 'control'):
+        blocks = {}
+        for row in rows:
+            if row['kind'] == kind:
+                blocks.setdefault(row['block'], {})[row['arm']] = row
+        paired[kind] = [block for block in blocks.values() if set(block) == {'A', 'B'}]
+    control = paired['control']
+    if not control:
+        raise ValueError('the Linux comparison requires its same-bytes control')
+    ir = None
+    if source == 'callgrind':
+        ir = linux_ir_control(rows, control, functions or {}, creators)
+        result['verdicts'][counter] = ir['verdict']
+    for kind, pairs in paired.items():
+        if not pairs:
+            continue
+
+        def values(arm, metric):
+            return [pair[arm][metric] for pair in pairs]
+        result[kind] = {}
+        for metric in measures:
+            entry = {arm: {**stats.summary(values(arm, metric)), **stats.paired_bootstrap(values(arm, metric))}
+                     for arm in 'AB'}
+            if metric in LINUX_RESIDENCY:
+                entry['B_minus_A_kib'] = stats.paired_difference(values('B', metric), values('A', metric))
+                gate = stats.stable_residency
+            else:
+                entry['B_over_A'] = stats.paired_ratio(values('B', metric), values('A', metric))
+                gate = stats.stable_control
+            if metric == counter and ir is not None:
+                if ir['verdict'] == 'INVALID':
+                    entry = {'withheld': 'INVALID same-bytes instruction control'}
+                elif ir['verdict'] == 'DIAGNOSTIC':
+                    # Ranges and bounds only: a varying count carries no point estimate.
+                    del entry['B_over_A']
+                    base, head = ([min(values(arm, metric)), max(values(arm, metric))] for arm in 'AB')
+                    entry.update(Ir_ranges={'A': base, 'B': head},
+                                 B_minus_A_bounds=[head[0] - base[1], head[1] - base[0]])
+                if kind == 'control':
+                    entry['gate'] = ir
+            elif kind == 'control':
+                entry['gate'] = gate(values('A', metric), values('B', metric))
+                result['verdicts'][metric] = 'VALID' if entry['gate']['stable'] else 'DIAGNOSTIC'
+            result[kind][metric] = entry
+    return result
+
+
+def linux_ir_control(rows, control, functions, creators):
+    """The exact Callgrind control over every run of the same bytes: A and A'."""
+    from . import sentence
+    counter = LINUX_SOURCES['callgrind']
+    first = [row for row in rows if row['arm'] == 'A']
+    second = [pair['B'] for pair in control]
+    counts = [row[counter] for row in (*first, *second)]
+    result = dict(rule='exact', counts=dict(A=[row[counter] for row in first],
+                                            control=[row[counter] for row in second]),
+                  spread=max(counts) - min(counts))
+    if len(set(creators)) != 1:
+        return dict(result, verdict='INVALID', reason='Callgrind creator changed between runs')
+    if len(set(counts)) == 1:
+        return dict(result, verdict='VALID')
+
+    def tables(selected):
+        return [functions[row['kind'], row['block'], row['arm']] for row in selected]
+    # The 2026-10-23 typing-sequence rule, as sentence.py applies it to its identical pair.
+    by_pair, outside = sentence.randomstate_scopes(dict(main=tables(first), mctl=tables(second), pr__=[], pctl=[]))
+    return dict(result, rule='randomstate', varying_functions=by_pair['main'], outside_allowlist=outside,
+                verdict='INVALID' if outside else 'DIAGNOSTIC')
+
+
 def capture_rows(xml, *, pid, uuid, allocations):
     """Require target-process data and a product frame in its recorded backtrace.
 

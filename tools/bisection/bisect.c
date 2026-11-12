@@ -329,6 +329,14 @@ static uint64_t now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
+/* Process CPU time, read beside each cycle's wall-clock reads. */
+static uint64_t cpu_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0)
+        return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
 struct perf_memory {
     long rss_kib;
     long hwm_kib;
@@ -915,7 +923,7 @@ static int run_perf_mode(int argc, char **argv) {
         }
     }
 
-    printf("{\"backend\":");
+    printf("{\"pid\":%ld,\"backend\":", (long)getpid());
     perf_json_string(backend);
     printf(",\"so\":");
     perf_json_string(so_path);
@@ -937,9 +945,12 @@ static int run_perf_mode(int argc, char **argv) {
 
     if (strcmp(mode, "ram-init") != 0) {
         uint64_t *cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
+        uint64_t *cycle_cpu_ns = calloc((size_t)cycles, sizeof *cycle_cpu_ns);
         struct perf_memory after_first;
         struct perf_memory after_last;
-        if (!cycle_ns) {
+        if (!cycle_ns || !cycle_cpu_ns) {
+            free(cycle_ns);
+            free(cycle_cpu_ns);
             fprintf(stderr, "fatal: calloc cycle_ns failed\n");
             sym.free_instance(inst);
             sym.fini(ctx);
@@ -973,6 +984,9 @@ static int run_perf_mode(int argc, char **argv) {
             uint64_t sink_before = perf_sink;
             if (i > 0 && hw_fd >= 0)
                 (void)ioctl(hw_fd, PERF_EVENT_IOC_ENABLE, 0);
+            /* The CPU reads sit outside the wall-clock reads, so wall time is
+             * unchanged; with PERF_HW the counter also sees their user half. */
+            uint64_t cpu_start = cpu_ns();
             uint64_t start = now_ns();
             /* Cycle 0 is the cold one and goes through its own anchor, so a
              * callgrind toggle on the steady anchor never sees it. */
@@ -980,6 +994,7 @@ static int run_perf_mode(int argc, char **argv) {
                              ? bisect_perf_cold_unit(&sym, inst, repeats)
                              : bisect_perf_steady_unit(&sym, inst, repeats);
             uint64_t end = now_ns();
+            uint64_t cpu_end = cpu_ns();
             /* Outside the timer: retain the existing cycle's return/count
              * fingerprint without XOR-cancelling an even number of cycles.
              * Full observable equivalence still belongs to contract-diff. */
@@ -1000,6 +1015,7 @@ static int run_perf_mode(int argc, char **argv) {
                 (void)ioctl(hw_fd, PERF_EVENT_IOC_RESET, 0);
             }
             cycle_ns[i] = end - start;
+            cycle_cpu_ns[i] = cpu_end - cpu_start;
             if (i == 0)
                 read_perf_memory(&after_first);
         }
@@ -1054,6 +1070,9 @@ static int run_perf_mode(int argc, char **argv) {
         printf(",\"cycles_ns\":[");
         for (int i = 0; i < cycles; i++)
             printf("%s%llu", i ? "," : "", (unsigned long long)cycle_ns[i]);
+        printf("],\"cycles_cpu_ns\":[");
+        for (int i = 0; i < cycles; i++)
+            printf("%s%llu", i ? "," : "", (unsigned long long)cycle_cpu_ns[i]);
         printf("],\"after_first\":");
         perf_print_memory_body(&after_first);
         printf(",\"after_last\":");
@@ -1084,6 +1103,7 @@ static int run_perf_mode(int argc, char **argv) {
             printf(",\"hw_errno\":%d", hw_errno);
         }
         free(cycle_ns);
+        free(cycle_cpu_ns);
     }
 
     printf("}\n");

@@ -309,12 +309,16 @@ class Bench:
         runtime_check(self.label, cell or self.cell, side, arm.so, env=env)
 
     def launch(self, arm: Arm, mode: str, cycles, *, repeats=None, extra: Mapping[str, str] | None = None,
-               prefix: Sequence = (), diagnostics=None) -> pool.Completed:
+               prefix: Sequence = (), diagnostics=None, timeout=None, deadline=None) -> pool.Completed:
         """Check ARM, then run the harness on it pinned to the CPU and return what it printed.
 
         PREFIX is a profiler in front of the harness (valgrind and its options). The shell
         sent a worker's whole chain, its libtkrzw check included, to the worker's stderr
         file; DIAGNOSTICS names that file, and a refusal is appended there and not printed.
+        TIMEOUT bounds the worker in seconds: expiry raises subprocess.TimeoutExpired
+        and a failed worker ends the run. DEADLINE is a time.monotonic() instant that
+        replaces TIMEOUT with the time left after the check; with none left the
+        worker is not launched and subprocess.TimeoutExpired is raised.
         """
         env = self.environment(arm, mode, cycles, repeats, extra)
         command = [*map(str, prefix), str(self.harness), '--perf', str(arm.so), str(arm.data)]
@@ -328,7 +332,16 @@ class Bench:
             except Finished:
                 append(diagnostics, refusal.getvalue().encode())
                 raise
-        return capture(pinned(command, self.cpu, required=self.required), env=env)
+        command = pinned(command, self.cpu, required=self.required)
+        if deadline is not None:
+            import subprocess
+            # The check above took time: the worker gets what the campaign has left, not more.
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+        if timeout is None:
+            return capture(command, env=env)
+        return pool.Completed(0, measured_process(command, env=env, timeout=timeout, usage=False)[0], b'')
 
     def sample(self, arm: Arm, mode: str, out, err, cycles, *, repeats=None, extra: Mapping[str, str] | None = None) -> None:
         """Launch one worker, appending its stdout to OUT and its stderr to ERR; its failure ends the run.
