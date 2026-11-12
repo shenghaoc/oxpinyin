@@ -38,13 +38,15 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         tool::k_mixture_model::report_wrong_arguments();
         tool::exit(tool::EINVAL);
     }
-    let prune_k = match parsed.values[0] {
-        OptionValue::Int(value) => value,
-        _ => 0,
+    let prune_k = if let OptionValue::Int(value) = parsed.values[0] {
+        value
+    } else {
+        0
     };
-    let cdf = match parsed.values[1] {
-        OptionValue::Double(value) => value,
-        _ => 0.0,
+    let cdf = if let OptionValue::Double(value) = parsed.values[1] {
+        value
+    } else {
+        0.0
     };
     let filename = CString::new(parsed.args[1].clone()).unwrap_or_default();
     crate::k_mixture_model::prune::run(Some(&filename), prune_k, cdf);

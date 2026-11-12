@@ -52,7 +52,14 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
         Err(SystemLibraryError::Chunk(_, LibraryError::Row(RowFault::ChunkHeaderRead))) => {
             tool::abort()
         }
-        Err(SystemLibraryError::Chunk(name, _)) => {
+        Err(SystemLibraryError::Chunk(
+            name,
+            LibraryError::Io(_)
+            | LibraryError::Format(_)
+            | LibraryError::Layout(_)
+            | LibraryError::Unmappable { .. }
+            | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+        )) => {
             let c_name = oxpinyin_input::c_path(Path::new(name.as_ref()));
             tool::storage::report_load_failed(c_name.as_deref());
             tool::exit(tool::ENOENT);

@@ -24,9 +24,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         Ok(parsed) => parsed,
         Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
     };
-    let filename = match &parsed.values[0] {
-        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
-        _ => None,
+    let filename = if let OptionValue::Filename(value) = &parsed.values[0] {
+        value.clone().and_then(|bytes| CString::new(bytes).ok())
+    } else {
+        None
     };
 
     let phrases = crate::phrase_index::load_system_phrases();

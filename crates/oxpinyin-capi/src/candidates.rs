@@ -304,8 +304,30 @@ pub extern "C" fn pinyin_remove_user_candidate(
             | oxpinyin_user::UserStoreError::ResidualUserBigramGram
             | oxpinyin_user::UserStoreError::UserReadingRemoval,
         ) => std::process::abort(),
+        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
+        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
+        // `:67`). This call does not copy, so it never reaches here.
+        Err(oxpinyin_user::UserStoreError::FatalCopy) => std::process::abort(),
         // A store failure the pin has no counterpart for.
-        Err(_) => {
+        Err(
+            oxpinyin_user::UserStoreError::Io(_)
+            | oxpinyin_user::UserStoreError::Store(_)
+            | oxpinyin_user::UserStoreError::Decode
+            | oxpinyin_user::UserStoreError::InvalidPhrase
+            | oxpinyin_user::UserStoreError::Persistence(_)
+            | oxpinyin_user::UserStoreError::UnknownDatabaseFormat
+            | oxpinyin_user::UserStoreError::ChunkHeaderWrite(_)
+            | oxpinyin_user::UserStoreError::LibraryChunkHeaderRead
+            | oxpinyin_user::UserStoreError::SaveRemapFailed
+            | oxpinyin_user::UserStoreError::SaveTooLarge
+            | oxpinyin_user::UserStoreError::UnigramTotalOverflow
+            | oxpinyin_user::UserStoreError::OverlongIndexKey
+            | oxpinyin_user::UserStoreError::Journal(_)
+            | oxpinyin_user::UserStoreError::LibraryLoop(_)
+            | oxpinyin_user::UserStoreError::TrainingSetFreqMiss
+            | oxpinyin_user::UserStoreError::SessionSeed(_)
+            | oxpinyin_user::UserStoreError::FailedUserBigramStore,
+        ) => {
             crate::ffi::log_warning("pinyin_remove_user_candidate: the user store failed");
             false
         }
@@ -452,7 +474,10 @@ pub extern "C" fn pinyin_choose_candidate(
         Ok((oxpinyin_engine::Selection::Refused, _)) => {
             return c_int::try_from(offset).unwrap_or(c_int::MAX);
         }
-        Ok((_, window_end)) => {
+        Ok((
+            oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed,
+            window_end,
+        )) => {
             inst.core.anchored_window = None;
             window_end
         }
@@ -500,9 +525,10 @@ pub extern "C" fn pinyin_choose_candidate(
 /// other answer: a library with no sub-index (`ERROR_NO_SUB_PHRASE_INDEX`) and
 /// a missing item (`ERROR_NO_ITEM`) among them.
 fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
-    match outcome {
-        UnigramAdd::Refused => 0,
-        _ => 1,
+    if matches!(outcome, UnigramAdd::Refused) {
+        0
+    } else {
+        1
     }
 }
 
@@ -678,6 +704,10 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
             // the predecessor's gram, one too short for its total, and
             // `get_total_freq`'s assert dies.
             Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => std::process::abort(),
+            // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
+            // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
+            // `:67`). This call does not copy, so it never reaches here.
+            Err(oxpinyin_user::UserStoreError::FatalCopy) => std::process::abort(),
             // Class (b), register row 100: a partial item tail is read past
             // by `get_freq`/`insert_freq` (`ngram.cpp:241`, `:190`). Nothing
             // changed; one warning, as before.
@@ -688,7 +718,28 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
                 );
                 false
             }
-            Err(_) => false,
+            Err(
+                oxpinyin_user::UserStoreError::Io(_)
+                | oxpinyin_user::UserStoreError::Store(_)
+                | oxpinyin_user::UserStoreError::Decode
+                | oxpinyin_user::UserStoreError::InvalidPhrase
+                | oxpinyin_user::UserStoreError::Persistence(_)
+                | oxpinyin_user::UserStoreError::UnknownDatabaseFormat
+                | oxpinyin_user::UserStoreError::ChunkHeaderWrite(_)
+                | oxpinyin_user::UserStoreError::LibraryChunkHeaderRead
+                | oxpinyin_user::UserStoreError::SaveRemapFailed
+                | oxpinyin_user::UserStoreError::SaveTooLarge
+                | oxpinyin_user::UserStoreError::UnigramTotalOverflow
+                | oxpinyin_user::UserStoreError::OverlongIndexKey
+                | oxpinyin_user::UserStoreError::NonTokenUserBigramKey
+                | oxpinyin_user::UserStoreError::ResidualUserBigramGram
+                | oxpinyin_user::UserStoreError::Journal(_)
+                | oxpinyin_user::UserStoreError::LibraryLoop(_)
+                | oxpinyin_user::UserStoreError::TrainingSetFreqMiss
+                | oxpinyin_user::UserStoreError::UserReadingRemoval
+                | oxpinyin_user::UserStoreError::SessionSeed(_)
+                | oxpinyin_user::UserStoreError::FailedUserBigramStore,
+            ) => false,
         }
     }
 }

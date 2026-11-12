@@ -81,9 +81,12 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     ];
     let parsed = tool::parse_options(c"- test pinyin parser", &entries, args)
         .unwrap_or_else(|_| tool::exit(tool::EINVAL));
-    let string = |index| match &parsed.values[index] {
-        OptionValue::String(Some(value)) => value.as_slice(),
-        _ => b"",
+    let string = |index| {
+        if let OptionValue::String(Some(value)) = &parsed.values[index] {
+            value.as_slice()
+        } else {
+            b""
+        }
     };
     let parser = match string(0) {
         b"doublepinyin" => Parser::Double,

@@ -790,7 +790,13 @@ impl PersistenceError {
         match self {
             Self::Io(_) => true,
             Self::Store(error) => !matches!(error, StoreError::FatalCopy),
-            _ => false,
+            Self::Codec(_)
+            | Self::ChunkHeaderWrite { .. }
+            | Self::LibraryChunkHeaderRead
+            | Self::SystemRemapFailed
+            | Self::UnknownDatabaseFormat
+            | Self::SaveTooLarge
+            | Self::FatalCopy => false,
         }
     }
 }
@@ -803,11 +809,12 @@ impl From<std::io::Error> for PersistenceError {
 
 impl From<StoreError> for PersistenceError {
     fn from(error: StoreError) -> Self {
-        match error {
-            // Never a soft [`Self::Store`]: `tolerate` and `Staged::finish`
-            // pass those through.
-            StoreError::FatalCopy => Self::FatalCopy,
-            error => Self::Store(error),
+        // Never a soft [`Self::Store`]: `tolerate` and `Staged::finish`
+        // pass those through.
+        if matches!(error, StoreError::FatalCopy) {
+            Self::FatalCopy
+        } else {
+            Self::Store(error)
         }
     }
 }
@@ -2142,9 +2149,12 @@ fn masked_log(
             Err(LogFault::OverRead) => break,
         }
     }
-    let mut headers = records.iter().filter_map(|record| match record {
-        LogRecord::ModifyHeader { old_total, .. } => Some(*old_total),
-        _ => None,
+    let mut headers = records.iter().filter_map(|record| {
+        if let LogRecord::ModifyHeader { old_total, .. } = record {
+            Some(*old_total)
+        } else {
+            None
+        }
     });
     let Some(old_total) = headers.next() else {
         return Ok(None);
@@ -2187,7 +2197,10 @@ fn masked_log(
                 new_total = new_total.wrapping_sub(unigram(old_item, token)?);
                 new_total = new_total.wrapping_add(unigram(new_item, token)?);
             }
-            _ => {}
+            LogRecord::Add { .. }
+            | LogRecord::Remove { .. }
+            | LogRecord::Modify { .. }
+            | LogRecord::ModifyHeader { .. } => {}
         }
     }
     let mut masked = vec![LogRecord::ModifyHeader {
@@ -2200,7 +2213,10 @@ fn masked_log(
                 return Err(JournalFault::SurvivingRecord { library, token });
             }
             LogRecord::Modify { token, .. } if kept(token) => masked.push(record),
-            _ => {}
+            LogRecord::Add { .. }
+            | LogRecord::Remove { .. }
+            | LogRecord::Modify { .. }
+            | LogRecord::ModifyHeader { .. } => {}
         }
     }
     Ok(Some(masked))
@@ -2627,7 +2643,15 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                                 SaveBaseline::ChunkHeaderRead
                             }
-                            Err(_) => SaveBaseline::Unmappable,
+                            Err(
+                                LibraryError::Io(_)
+                                | LibraryError::Format(_)
+                                | LibraryError::Layout(_)
+                                | LibraryError::Unmappable { .. }
+                                | LibraryError::Row(
+                                    RowFault::NotDictionary | RowFault::NullChunkName,
+                                ),
+                            ) => SaveBaseline::Unmappable,
                         })
                     }),
                 LibraryFile::User => None,

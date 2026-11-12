@@ -98,20 +98,12 @@ pub enum ExportAssert {
     /// (`chewing_key.cpp:48`, reached from `:728` for each key in turn): a
     /// `USER_FILE` reading carries a tone past `MAX_KEY_TONE`.
     KeyTone,
-}
-
-impl ExportAssert {
-    /// The asserted expression, as the pin's `assert` prints it.
-    #[must_use]
-    pub const fn expression(self) -> &'static str {
-        match self {
-            Self::Item => "ERROR_OK == retval",
-            Self::PhraseString => "item.get_phrase_string(phrase_ucs4)",
-            Self::Pronunciation => "nth_pronun < n_pronuns",
-            Self::NthPronunciation => "item.get_nth_pronunciation(nth_pronun, keys, freq)",
-            Self::KeyTone => "m_tone < CHEWING_NUMBER_OF_TONES",
-        }
-    }
+    /// A tkrzw or Berkeley DB record copy failed where the pin's
+    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
+    /// `bdb_utils.h:61`, `:67`). No export read copies, so the cursor never
+    /// answers it today; it keeps [`oxpinyin_user::UserStoreError::FatalCopy`]
+    /// from reading as a soft miss.
+    FatalCopy,
 }
 
 /// What one [`PhraseExportCursor::get_next_with`] call produced: a row, or
@@ -130,11 +122,34 @@ pub enum ExportStep<R> {
 /// present item whose text or pronunciation row does not decode is read at
 /// the pin and dies at `:714` or `:724`. Only a standalone row store, which
 /// no C context holds, answers `phrase` from a database; a libpinyin
-/// session answers it from its arenas and never fails.
+/// session answers it from its arenas and never fails. A failed record copy
+/// is the pin's assert in `copy_tkrzwdb` / `copy_bdb`, never a soft miss;
+/// `phrase` does not copy, so it never reaches here.
 fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
     match error {
         UserStoreError::Decode => Some(ExportAssert::PhraseString),
-        _ => None,
+        UserStoreError::FatalCopy => Some(ExportAssert::FatalCopy),
+        UserStoreError::Io(_)
+        | UserStoreError::Store(_)
+        | UserStoreError::InvalidPhrase
+        | UserStoreError::Persistence(_)
+        | UserStoreError::UnknownDatabaseFormat
+        | UserStoreError::ChunkHeaderWrite(_)
+        | UserStoreError::LibraryChunkHeaderRead
+        | UserStoreError::SaveRemapFailed
+        | UserStoreError::SaveTooLarge
+        | UserStoreError::UnigramTotalOverflow
+        | UserStoreError::OverlongIndexKey
+        | UserStoreError::NonTokenUserBigramKey
+        | UserStoreError::ShortUserBigramValue
+        | UserStoreError::PartialUserBigramTail
+        | UserStoreError::ResidualUserBigramGram
+        | UserStoreError::Journal(_)
+        | UserStoreError::LibraryLoop(_)
+        | UserStoreError::TrainingSetFreqMiss
+        | UserStoreError::UserReadingRemoval
+        | UserStoreError::SessionSeed(_)
+        | UserStoreError::FailedUserBigramStore => None,
     }
 }
 

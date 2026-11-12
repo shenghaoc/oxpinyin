@@ -66,7 +66,13 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
             // `MemoryChunk::load`'s `assert(ret_len == sizeof(length))` on a
             // directory named as a system chunk (`memory_chunk.h:429`).
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => tool::abort(),
-            Err(_) => return Err(TablesError::Chunk(c_name)),
+            Err(
+                LibraryError::Io(_)
+                | LibraryError::Format(_)
+                | LibraryError::Layout(_)
+                | LibraryError::Unmappable { .. }
+                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+            ) => return Err(TablesError::Chunk(c_name)),
         }
     }
     let bigram = with_bigram

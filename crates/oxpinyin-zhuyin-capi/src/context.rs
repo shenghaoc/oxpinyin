@@ -163,7 +163,10 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
         // `:67`). The save stopped in that copy, before its rename and the
         // marker.
         oxpinyin_facade::SaveOutcome::FatalCopy => std::process::abort(),
-        outcome => outcome.is_saved(),
+        outcome
+        @ (oxpinyin_facade::SaveOutcome::NotSaved | oxpinyin_facade::SaveOutcome::Saved) => {
+            outcome.is_saved()
+        }
     }
 }
 

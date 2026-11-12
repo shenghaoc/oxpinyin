@@ -115,7 +115,13 @@ impl Libraries {
                 SystemLibraryError::MissingName
                 | SystemLibraryError::Chunk(_, LibraryError::Row(_)),
             ) => tool::abort(),
-            Err(SystemLibraryError::Chunk(name, _)) => {
+            Err(SystemLibraryError::Chunk(
+                name,
+                LibraryError::Io(_)
+                | LibraryError::Format(_)
+                | LibraryError::Layout(_)
+                | LibraryError::Unmappable { .. },
+            )) => {
                 let c_name = name_c_string(name.as_ref());
                 tool::storage::report_load_failed(c_name.as_deref());
                 tool::exit(failure_status);

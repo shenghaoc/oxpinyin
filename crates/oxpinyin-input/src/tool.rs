@@ -135,9 +135,10 @@ impl OptionArg {
     }
 
     fn default_string(&self) -> *mut c_char {
-        match self {
-            Self::Filename(Some(text)) | Self::String(Some(text)) => text.as_ptr().cast_mut(),
-            _ => core::ptr::null_mut(),
+        if let Self::Filename(Some(text)) | Self::String(Some(text)) = self {
+            text.as_ptr().cast_mut()
+        } else {
+            core::ptr::null_mut()
         }
     }
 

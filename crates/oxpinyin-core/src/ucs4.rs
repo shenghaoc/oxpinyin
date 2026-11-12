@@ -107,9 +107,10 @@ impl PhraseText {
     /// Full stored words, including the zero and its suffix, if present.
     #[must_use]
     pub fn stored_words(&self) -> Option<&[u32]> {
-        match &self.0 {
-            TextStorage::Stored(buffer) => Some(buffer.get(1..).unwrap_or_default()),
-            _ => None,
+        if let TextStorage::Stored(buffer) = &self.0 {
+            Some(buffer.get(1..).unwrap_or_default())
+        } else {
+            None
         }
     }
 
@@ -150,10 +151,7 @@ impl PhraseText {
     /// Scalar count, or None for stored words.
     #[must_use]
     pub fn char_count(&self) -> Option<usize> {
-        match self.0 {
-            TextStorage::Stored(_) => None,
-            _ => Some(self.phrase_length()),
-        }
+        matches!(self.0, TextStorage::Scalar(_)).then(|| self.phrase_length())
     }
 
     /// Whether the outward text is empty.
@@ -190,7 +188,7 @@ impl PhraseTextConcat {
                     words.extend(part.outward_words());
                 }
             }
-            _ => {
+            TextStorage::Scalar(_) => {
                 if let Some(words) = &mut self.words {
                     words.extend(part.outward_words());
                 } else if let Some(text) = part.as_str() {

@@ -190,11 +190,12 @@ impl ConstraintStore {
             .cells
             .iter()
             .enumerate()
-            .filter_map(|(index, cell)| match cell {
-                Cell::OneStep { token, end, text } => {
+            .filter_map(|(index, cell)| {
+                if let Cell::OneStep { token, end, text } = cell {
                     Some((index, *token, *end, text.phrase_length()))
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect();
         let mut dropped = false;
@@ -258,9 +259,12 @@ impl ConstraintStore {
         self.cells
             .iter()
             .enumerate()
-            .filter_map(|(start, cell)| match cell {
-                Cell::OneStep { token, end, text } => Some((start, *end, *token, text.clone())),
-                _ => None,
+            .filter_map(|(start, cell)| {
+                if let Cell::OneStep { token, end, text } = cell {
+                    Some((start, *end, *token, text.clone()))
+                } else {
+                    None
+                }
             })
             .collect()
     }

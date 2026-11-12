@@ -209,7 +209,10 @@ pub extern "C" fn zhuyin_choose_candidate(
             };
             return c_int::try_from(offset).unwrap_or(c_int::MAX);
         }
-        Ok((_, window_end)) => window_end,
+        Ok((
+            oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed,
+            window_end,
+        )) => window_end,
         Err(_) => return -1,
     };
     // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663` at the
@@ -221,7 +224,8 @@ pub extern "C" fn zhuyin_choose_candidate(
     let end = match chosen.candidate_type {
         lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin as usize,
-        _ => {
+        lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
+        | lookup_candidate_type_t::ZOMBIE_CANDIDATE => {
             let end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
             if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
                 oxpinyin_facade::zhuyin_original_offset(parse, end)

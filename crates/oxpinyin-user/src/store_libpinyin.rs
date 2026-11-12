@@ -141,7 +141,9 @@ impl From<PersistenceError> for UserStoreError {
             PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
             PersistenceError::SaveTooLarge => UserStoreError::SaveTooLarge,
             PersistenceError::FatalCopy => UserStoreError::FatalCopy,
-            other => UserStoreError::Persistence(other.to_string()),
+            other @ (PersistenceError::Io(_)
+            | PersistenceError::Store(_)
+            | PersistenceError::Codec(_)) => UserStoreError::Persistence(other.to_string()),
         }
     }
 }

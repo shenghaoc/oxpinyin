@@ -52,22 +52,26 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
     };
     let params = crate::k_mixture_model::generate::GenerateParams {
-        max_occurs: match parsed.values[1] {
-            OptionValue::Int(value) => value,
-            _ => crate::k_mixture_model::generate::DEFAULT_MAX_OCCURS,
+        max_occurs: if let OptionValue::Int(value) = parsed.values[1] {
+            value
+        } else {
+            crate::k_mixture_model::generate::DEFAULT_MAX_OCCURS
         },
-        max_increase_rate: match parsed.values[2] {
-            OptionValue::Double(value) => value,
-            _ => crate::k_mixture_model::generate::DEFAULT_MAX_INCREASE_RATE,
+        max_increase_rate: if let OptionValue::Double(value) = parsed.values[2] {
+            value
+        } else {
+            crate::k_mixture_model::generate::DEFAULT_MAX_INCREASE_RATE
         },
-        train_pi_gram: match parsed.values[0] {
-            OptionValue::Flag(value) => value,
-            _ => true,
+        train_pi_gram: if let OptionValue::Flag(value) = parsed.values[0] {
+            value
+        } else {
+            true
         },
     };
-    let filename = match &parsed.values[3] {
-        OptionValue::Filename(value) => value.clone().and_then(|bytes| CString::new(bytes).ok()),
-        _ => None,
+    let filename = if let OptionValue::Filename(value) = &parsed.values[3] {
+        value.clone().and_then(|bytes| CString::new(bytes).ok())
+    } else {
+        None
     };
     let documents: Vec<CString> = parsed.args[1..]
         .iter()

@@ -466,7 +466,28 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
             | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
         ) => std::process::abort(),
         // A graph failure the pin has no counterpart for.
-        Err(_) => {
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
             crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
             return false;
         }
@@ -528,7 +549,28 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
             | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
         ) => std::process::abort(),
         // A graph failure the pin has no counterpart for.
-        Err(_) => {
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
             crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
             return false;
         }
