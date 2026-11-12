@@ -193,8 +193,10 @@ macro_rules! write_owned_sentence {
         /// Writes the allocator's result for `phrases` through the
         /// caller-owned out-param, NULL where the pin's would be, and
         /// answers `true` (`lookup.cpp:69`).
-        fn write_owned_sentence<'a>(
-            phrases: impl IntoIterator<Item = &'a ::oxpinyin_core::PhraseText>,
+        fn write_owned_sentence(
+            phrases: impl IntoIterator<
+                Item = impl ::core::borrow::Borrow<::oxpinyin_core::PhraseText>,
+            >,
             sentence: *mut *mut ::std::os::raw::c_char,
         ) -> bool {
             if !sentence.is_null() {

@@ -9,7 +9,7 @@ use oxpinyin_core::{
     ZhuyinParse,
 };
 use oxpinyin_engine::{
-    CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
+    CandidateList, EngineError, SentencePart, check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_user::UserStore;
@@ -308,9 +308,34 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         self.session.sentence_lookup_active()
     }
 
-    /// The decoded phrases of n-best row `index`, while a lookup is active.
-    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = &PhraseText>> {
-        self.session.sentence_phrases(index)
+    /// The decoded phrases of n-best row `index`, while a lookup is active,
+    /// each token resolved through the live phrase index now, as the pin's
+    /// `convert_to_utf8` does when the caller reads the sentence
+    /// (`src/lookup/lookup.cpp:37-48` at 074a2219).
+    ///
+    /// The pin ignores the result of `get_phrase_item` (`:43`), and a failed
+    /// read leaves the item as it was (`SubPhraseIndex::get_phrase_item`,
+    /// `storage/phrase_index.cpp:180-206`). A token that does not resolve
+    /// thus repeats the last phrase that resolved in the same read, or adds
+    /// "" when none has: the default item has length 0
+    /// (`storage/phrase_index.h:81-84`).
+    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = PhraseText> + '_> {
+        let mut last = PhraseText::default();
+        Some(
+            self.session
+                .sentence_phrases(index)?
+                .map(move |part| match part {
+                    SentencePart::Token(token) => {
+                        if let Some(text) = self.dict.token_text(token.value()) {
+                            last.clone_from(&text);
+                            text
+                        } else {
+                            last.clone()
+                        }
+                    }
+                    SentencePart::Raw(text) => text,
+                }),
+        )
     }
 
     /// The phrase-segment result's token count.

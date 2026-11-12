@@ -149,14 +149,16 @@ use oxpinyin_core::PhraseText;
 /// Stands for a facade's sentence allocator: the phrases joined into a
 /// copy the test can reclaim, or NULL for no phrase, as a sentence whose
 /// every conversion failed answers.
-fn test_sentence_text<'a>(phrases: impl IntoIterator<Item = &'a PhraseText>) -> *mut c_char {
-    let phrases: Vec<&PhraseText> = phrases.into_iter().collect();
+fn test_sentence_text(
+    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<PhraseText>>,
+) -> *mut c_char {
+    let phrases: Vec<_> = phrases.into_iter().collect();
     if phrases.is_empty() {
         return ptr::null_mut();
     }
     let joined: String = phrases
         .iter()
-        .filter_map(|phrase| phrase.as_str())
+        .filter_map(|phrase| phrase.borrow().as_str())
         .collect();
     std::ffi::CString::new(joined).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
 }

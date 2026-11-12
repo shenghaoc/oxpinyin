@@ -243,6 +243,74 @@ fn adding_a_user_phrase_again_after_a_reload_aborts() {
     );
 }
 
+/// The sentence getter resolves each kept token through the phrase index
+/// when the caller reads it (`convert_to_utf8`, `lookup/lookup.cpp:37-48`
+/// at 074a2219), and the candidate getter returns its saved string
+/// (`zhuyin.cpp:1865-1870`). After a reload drops an unsaved phrase, its
+/// token does not resolve: `get_phrase_item` fails and leaves the default
+/// item of length 0 (`lookup.cpp:35,43`, `storage/phrase_index.h:81-84`),
+/// so the token adds "". The next import reuses the token
+/// (`zhuyin.cpp:474-478`, register row 104), and the kept sentence then
+/// reads the new phrase with no new guess.
+#[test]
+fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
+    let user_dir = TempUserDir::new("sentence-token-reuse");
+    let (context, spare) = open_with_user(&user_dir.path);
+    // The count makes the 1-best row A's token alone, not the two system
+    // phrases 好 and 你, which also read "好你". The read after the reload
+    // tells the two rows apart.
+    assert!(import(context, 7, "好你", "ㄏㄠˇ ㄋㄧˇ".as_bytes(), 10_000));
+    let instance = chewing(context, "cl3su3");
+    let user_tokens = |text| {
+        tokens_of(instance, text)
+            .into_iter()
+            .filter(|token| token >> 24 == 7)
+            .collect::<Vec<_>>()
+    };
+    let [token] = user_tokens("好你")[..] else {
+        panic!("one user token for 好你");
+    };
+    assert!(zhuyin_guess_sentence(instance));
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    let candidate = candidate_at(instance, 0);
+    let candidate_text = || {
+        let mut text: *const c_char = ptr::null();
+        assert!(zhuyin_get_candidate_string(
+            instance,
+            candidate,
+            &raw mut text
+        ));
+        // SAFETY: the getter answered the candidate's NUL-terminated text,
+        // which the instance owns until its candidates are rebuilt.
+        unsafe { std::ffi::CStr::from_ptr(text) }
+            .to_str()
+            .expect("UTF-8")
+            .to_owned()
+    };
+    assert_eq!(
+        token_phrase(instance, token),
+        (true, 2, Some("好你".into()))
+    );
+    assert_eq!(sentence(instance), (true, Some("好你".into())));
+    assert_eq!(candidate_text(), "好你");
+
+    assert!(zhuyin_unload_phrase_library(context, 7));
+    assert!(zhuyin_load_phrase_library(context, 7));
+    assert_eq!(token_phrase(instance, token), (false, UNTOUCHED, None));
+    assert_eq!(sentence(instance), (true, Some(String::new())));
+
+    assert!(import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 50));
+    assert_eq!(user_tokens("你好"), [token]);
+    assert_eq!(
+        token_phrase(instance, token),
+        (true, 2, Some("你好".into()))
+    );
+    assert_eq!(sentence(instance), (true, Some("你好".into())));
+    assert_eq!(candidate_text(), "好你");
+    zhuyin_free_instance(instance);
+    close(context, spare);
+}
+
 /// A save that the file-size limit cuts after the chunk's length word aborts
 /// on the checksum word (`memory_chunk.h:547`). Unix only: `RLIMIT_FSIZE`.
 #[cfg(unix)]

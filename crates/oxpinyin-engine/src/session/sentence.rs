@@ -21,6 +21,21 @@ use oxpinyin_core::{PhraseText, PhraseToken};
 use crate::constraint::PhraseSpan;
 use crate::nbest::NbestRow;
 
+/// One phrase of a decoded sentence, as the C sentence getters read it.
+///
+/// The pin keeps the result tokens and resolves each one through the
+/// phrase index when the caller reads the sentence (`convert_to_utf8`,
+/// `src/lookup/lookup.cpp:37-48` at 074a2219). A token is therefore kept
+/// as a token and resolved at read time. A raw gap of the selection record
+/// has no token and keeps its typed text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SentencePart {
+    /// A phrase token, resolved through the live phrase index on each read.
+    Token(PhraseToken),
+    /// Text that has no token: a typed but unselected gap.
+    Raw(PhraseText),
+}
+
 /// The last sentence lookup's decoded output.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SentenceState {
@@ -45,9 +60,9 @@ pub(super) struct SentenceState {
     /// against the constraint store.
     pub(super) last_result: Vec<PhraseSpan>,
     /// The selection record's pieces the remaining-input walk prepended to
-    /// every row's text, empty when it prepended none: the leading phrases
-    /// of each row's per-phrase texts ([`SentenceState::phrases`]).
-    pub(super) prefix: Vec<PhraseText>,
+    /// every row's text, empty when it prepended none: the leading parts of
+    /// each row ([`SentenceState::parts`]).
+    pub(super) prefix: Vec<SentencePart>,
 }
 
 impl SentenceState {
@@ -56,24 +71,25 @@ impl SentenceState {
         self.active
     }
 
-    /// `row`'s text phrase by phrase, as the pin's result vector holds it
-    /// for `convert_to_utf8` (`src/lookup/lookup.cpp:37-66` at 074a2219):
-    /// one entry per token of the decoded path in position order, the
-    /// trellis having written a token only at each phrase's start column
-    /// and `null_token` elsewhere (`extract_result`,
+    /// `row` phrase by phrase, as the pin's result vector holds it for
+    /// `convert_to_utf8` (`src/lookup/lookup.cpp:37-48` at 074a2219): one
+    /// token per phrase of the decoded path in position order, the trellis
+    /// having written a token only at each phrase's start column and
+    /// `null_token` elsewhere (`extract_result`,
     /// `lookup/phonetic_lookup.h:370-396`). A row the trellis decoded
     /// carries those phrases as its spans, after any prepended selection
-    /// pieces.
-    pub(super) fn phrases<'a>(
+    /// parts. The caller resolves each token when it reads the sentence.
+    pub(super) fn parts<'a>(
         &'a self,
         row: &'a NbestRow,
-    ) -> impl Iterator<Item = &'a PhraseText> + 'a {
+    ) -> impl Iterator<Item = SentencePart> + 'a {
         let whole = row.spans.is_empty();
-        let prefix: &[PhraseText] = if whole { &[] } else { &self.prefix };
+        let prefix: &[SentencePart] = if whole { &[] } else { &self.prefix };
         prefix
             .iter()
-            .chain(row.spans.iter().map(|span| &span.text))
-            .chain(whole.then_some(&row.text))
+            .cloned()
+            .chain(row.spans.iter().map(|span| SentencePart::Token(span.token)))
+            .chain(whole.then(|| SentencePart::Raw(row.text.clone())))
     }
 
     /// Clears the decoded state and marks a lookup active — the head of
