@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Portable cell settings, loader paths, atomic ownership and build launch tests."""
 import contextlib
 import io

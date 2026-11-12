@@ -23,9 +23,9 @@ The last stdout line is the absolute path of the extracted directory.
 """
 
 if __name__ == '__main__':
-    from .entry import require_normal_imports
+    from .entry import require_utf8_mode
 
-    require_normal_imports()
+    require_utf8_mode()
 
 import hashlib
 import os

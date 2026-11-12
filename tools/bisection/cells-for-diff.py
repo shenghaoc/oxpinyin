@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Select the verification cells for a diff: docs/runbooks/verification.md, rule 2.
 
 Runs rule 2's three checks on BASE...HEAD and prints the cells to run, which check

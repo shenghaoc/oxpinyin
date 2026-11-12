@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Native ABI call-order and campaign refusal tests for #1348; no model needed."""
 import contextlib
 import io

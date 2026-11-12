@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Unit tests for the nextest argument mapping."""
 from pathlib import Path
 import contextlib
@@ -298,7 +298,7 @@ print('END ' + name, file=sys.stderr, flush=True)
         with tempfile.TemporaryDirectory() as temp:
             (Path(temp) / 'tools').mkdir()
             (Path(temp) / 'tools/probe.test.py').write_text(probe)
-            result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', runner, temp, str(ROOT)],
+            result = subprocess.run([sys.executable, '-X', 'utf8', '-c', runner, temp, str(ROOT)],
                                     env=dict(environ, OXPINYIN_TEST_TOKEN=sentinel, OXPINYIN_TEST_KEPT='kept'),
                                     capture_output=True, text=True, timeout=60)
         # Not assertNotIn(sentinel, output): a failure would print the output.
@@ -336,8 +336,8 @@ class InterpreterTests(unittest.TestCase):
     if sys.platform == 'win32':
         def test_an_interpreter_behind_a_junction_is_resolved(self):
             with tempfile.TemporaryDirectory() as directory:
-                target = os.path.realpath(os.path.join(directory, 'python-3.15.2'))
-                link = os.path.join(directory, 'python-3.15')
+                target = os.path.realpath(os.path.join(directory, 'python-3.14.2'))
+                link = os.path.join(directory, 'python-3.14')
                 os.mkdir(target)
                 subprocess.run(['cmd', '/c', 'mklink', '/J', link, target], check=True, capture_output=True)
                 self.assertTrue(os.path.isjunction(link))

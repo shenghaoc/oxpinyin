@@ -24,7 +24,7 @@ The handoff tests cover a pin-written file that oxpinyin reads. The other direct
 needs the pin, so it is a local command:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal \
+uv run --no-project --managed-python python -X utf8 \
   tools/bisection/reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX \
   --data "$(just fetch-contract-data)" \
   target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so

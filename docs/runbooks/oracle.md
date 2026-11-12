@@ -29,7 +29,7 @@ The model20 archive is not redistributable
 ([model provenance](../findings/model-provenance.md)). No CI job fetches it, and nothing
 below that needs it runs on GitHub-hosted runners. No workflow in this
 repository builds the reference image. Build it on a host with
-`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image`.
+`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image`.
 The image holds the libraries only and ships no model-derived data (section 2a).
 
 ## Pin identity
@@ -227,7 +227,7 @@ arm64 (see [native arm64](#native-arm64)). The amd64 image is
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
-`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag` prints `<tag>`.
+`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`.
 The tag holds:
 
 - the libpinyin commit and the base image tag, both from `oracle-pin.txt`;
@@ -243,7 +243,7 @@ image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 step below before any differential can use it.
 
 ```sh
-tag=$(uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag)
+tag=$(uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag)
 platform=linux/amd64                       # or linux/arm64
 suffix=
 [[ $platform == linux/amd64 ]] || suffix=-arm64
@@ -269,7 +269,7 @@ done
 ```
 
 Check the image's current pin/recipe stamp and its own recorded library hashes
-with `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --platform "$platform" "$img"`.
+with `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image verify-image --platform "$platform" "$img"`.
 No tool compares a built digest with a frozen repository value.
 
 ### Native arm64
@@ -396,7 +396,7 @@ ELF build ID is omitted. The libraries then hash the same for any work
 directory, given the same toolchain and `--prefix`. Inside `just performance`, run:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
+uv run --no-project --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
 ```
 
 This command builds each cell twice in different work directories, with the same install
@@ -407,7 +407,7 @@ library bytes and absence of model-derived data.
 For oracle-only provisioning in the same native container, run:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 The provisioner rebuilds missing or stale pin/recipe prefixes and regenerates

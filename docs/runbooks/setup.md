@@ -95,8 +95,25 @@ shipping-size measurements and oracle/reference images keep Debian's tkrzw.
 Ubuntu's packaged tkrzw is defective; development uses the overlay instead
 ([finding](../findings/tkrzw-distro-compat.md)).
 
-Repository Python uses uv and its managed CPython 3.15 series with the GIL.
-`uv.toml` sets the uv floor, 0.13.1. CI installs the newest uv that satisfies it.
+Repository Python uses uv and its managed CPython 3.14 series with the GIL.
+`uv.toml` sets the uv floor, 0.11.32. CI installs the newest uv that satisfies it.
+
+### Comparing against another revision
+
+`just packaging sizes` builds each side with that revision's own tooling
+([shipping-library sizes](../packaging.md#shipping-library-sizes)). It extracts
+the revision and runs `just --justfile <source>/justfile packaging install`
+there. The `packaging` and `python` recipes of that revision choose its
+interpreter from its `.python-version` and `uv.toml`, install it and pass its
+startup flags. The tooling of the checkout names no interpreter or flag of
+another revision.
+
+Revisions before the change to CPython 3.14 name CPython 3.15 and a newer uv
+floor. A comparison against such a revision needs just and a uv that can
+install CPython 3.15 final. uv 0.11.32 cannot install it, although it meets the
+floor of this checkout. CI's `astral-sh/setup-uv` step installs a uv that can.
+When the revision's recipe fails, the command names the revision and prints the
+message of just.
 
 `just doctor` is the one check of the minimum of every tool: Bash 5.0, uv,
 CPython, just, cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov, and
@@ -116,7 +133,7 @@ Install or upgrade a tool only when `just doctor`
 says that it is missing or too old.
 
 `just doctor` cannot run until uv exists. Install uv only
-when it is missing or older than 0.13.1 (`uv --version` shows the version):
+when it is missing or older than 0.11.32 (`uv --version` shows the version):
 
 ```bash
 # Exact on purpose (#1074): a checksum is only known for a known version.
@@ -147,13 +164,13 @@ the interpreter:
 
 ```bash
 just python
-uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+uv run --no-project --managed-python python -X utf8 - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
 import sysconfig
 assert sys.implementation.name == "cpython"
-assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
 managed = subprocess.check_output(
@@ -184,7 +201,7 @@ appears anywhere else, outside the dated records in `docs/findings/`.
 
 **Rule (#1230).** Provision the managed Python interpreter of the repository
 through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling
-relies on the `-X lazy_imports` modes of 3.15. Do not use a system Python, a virtual
+runs with explicit UTF-8 mode (`-X utf8`). Do not use a system Python, a virtual
 environment, `pyproject.toml` or `uv.lock`. The `.python-version`
 and `uv.toml` of the checkout name the same interpreter series and uv floor.
 
@@ -572,8 +589,8 @@ PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names a
 
 | Task | Command |
 | --- | --- |
-| Build and verify the oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image` |
-| Verify an oracle image | `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image verify-image --engine wslc IMAGE` |
+| Build and verify the oracle image | `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image` |
+| Verify an oracle image | `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image verify-image --engine wslc IMAGE` |
 | Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
 | Provision the oracle cells in the performance image | `just provision-oracle` |
 | Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
@@ -586,7 +603,7 @@ commands unchanged. These `wslc` limits apply:
   host architecture in any case ([container runtimes](#container-runtimes)).
 - **`inspect` prints JSON only.** It has no Go templates, so
   `Architecture` and `Id` are read from the JSON record
-  (`uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-field`).
+  (`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-field`).
 - **No top-level `cp` and no `rm`.** `verify-image` runs `wslc export` and
   extracts only `opt/pinyin-oracle` from the tar. Containers are removed with
   `wslc remove -f`.

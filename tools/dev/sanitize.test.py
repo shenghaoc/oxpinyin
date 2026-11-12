@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Sanitizer selection, backend flags and host-runtime fixtures."""
 import io
 import os
@@ -78,7 +78,7 @@ class ToolchainTests(unittest.TestCase):
                            if name != 'OXPINYIN_SANITIZER_TOOLCHAIN'}
 
             def python(*arguments):
-                return subprocess.run([sys.executable, '-X', 'lazy_imports=normal', *arguments],
+                return subprocess.run([sys.executable, '-X', 'utf8', *arguments],
                                       cwd=root, env=environment, capture_output=True,
                                       text=True, timeout=60)
 

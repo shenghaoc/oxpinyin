@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Capture the pin's proposed observations into a staging directory.
 
     pin_capture.py capture RUN --prefix PREFIX --data DATA --provision-cache CACHE --model-dir MODEL
@@ -946,7 +946,7 @@ def observe(name, prefix, data):
     """Run C API observation NAME in a fresh worker process; answer its calls, results and end."""
     with tempfile.TemporaryDirectory(prefix='pin-capture-') as scratch:
         try:
-            result = subprocess.run([sys.executable, __file__, 'worker', name, str(prefix), str(data)],
+            result = subprocess.run([sys.executable, '-X', 'utf8', __file__, 'worker', name, str(prefix), str(data)],
                                     capture_output=True, env=dict(os.environ, TMPDIR=scratch),
                                     timeout=WORKER_TIMEOUT)
         except subprocess.TimeoutExpired as error:

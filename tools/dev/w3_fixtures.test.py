@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """The w3 subset recipe: the subset, the table.conf renderings and the model directory."""
 from pathlib import Path
 import sys

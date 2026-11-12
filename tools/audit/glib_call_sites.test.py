@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for the GLib/libc call-site generator."""
 import ctypes
 import importlib.util
@@ -140,7 +140,7 @@ class RecipeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout)[-10:], [
                     'run', '--no-project', '--managed-python', '--with', driver.CLANG_REQUIREMENT,
-                    'python', '-X', 'lazy_imports=normal', 'tools/audit/glib_call_sites.py', str(pin)])
+                    'python', '-X', 'utf8', 'tools/audit/glib_call_sites.py', str(pin)])
 
     if os.name == 'nt':
         # The audit needs bear, make and Unix linker options: the recipe refuses on Windows.
@@ -267,7 +267,7 @@ if sys.platform in ("linux", "darwin"):
                 "print(json.dumps([driver.render(driver.build_rows(rows, table)), missing]))\n")
             return subprocess.run(
                 ["uv", "run", "--no-project", "--managed-python", "--with", driver.CLANG_REQUIREMENT,
-                 "python", "-X", "lazy_imports=normal", "-c", program,
+                 "python", "-X", "utf8", "-c", program,
                  str(Path(__file__).with_name("glib_call_sites.py")), str(work), str(families)],
                 capture_output=True, text=True, timeout=300, check=False)
 

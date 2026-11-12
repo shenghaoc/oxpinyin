@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Synthetic provisioning fixtures with fake host processes."""
 import contextlib
 import io
@@ -38,7 +38,7 @@ class EntrypointFixtureTests(unittest.TestCase):
             root = Path(directory)
             copy_entrypoint_tree(root)
             result = subprocess.run(
-                [sys.executable, '-I', '-X', 'lazy_imports=normal', '-c',
+                [sys.executable, '-I', '-X', 'utf8', '-c',
                  'import sys; sys.path.insert(0, sys.argv[1]); '
                  'from tools.dev.provision import vcpkg; print(vcpkg.triplet())', str(root)],
                 cwd=root, capture_output=True, text=True)
@@ -144,7 +144,7 @@ if sys.platform.startswith('linux'):
                         program = ('from pathlib import Path; from tools.dev.provision import Provision; '
                                    'import sys; p=Provision(); p.pin=Path(sys.argv[1]); p.platform="linux/amd64"; '
                                    'raise SystemExit(0 if p.data_ok("bdb",sys.argv[2]) else 1)')
-                        current = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program,
+                        current = subprocess.run([sys.executable, '-X', 'utf8', '-c', program,
                                                   str(self.service.pin), str(prefix)], cwd=ROOT, env=self.env, capture_output=True)
                         self.assertEqual(current.returncode, 1)
                         path.write_bytes(original)
@@ -299,7 +299,7 @@ if sys.platform.startswith('linux'):
 import os,pathlib,sys,time
 name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 if name=='uv':
-    if a==['--version']: print('uv '+os.environ.get('FAKE_UV_VERSION','0.13.1')+' (synthetic)')
+    if a==['--version']: print('uv '+os.environ.get('FAKE_UV_VERSION','0.11.32')+' (synthetic)')
     elif a[:2]==['python','find']:
         if os.environ.get('FAKE_PYTHON_FAILURE'): sys.exit(1)
         print(sys.executable)
@@ -377,11 +377,11 @@ elif name in ('curl','apt-get','sudo'):
                 self.assertEqual(done.stderr, (option + ': requires an argument\n').encode())
 
         def test_uv_bootstrap_semver_and_install_failures(self):
-            for version in ('0.13.1', '0.14.2', '0.13.1+build.7', '0.14.0-beta.1', '0.13.2-rc.1+build.7'):
+            for version in ('0.11.32', '0.14.2', '0.11.32+build.7', '0.14.0-beta.1', '0.13.2-rc.1+build.7'):
                 with self.subTest(version=version):
                     self.env['FAKE_UV_VERSION'] = version
                     self.check_entry(['--python-only'], 0)
-            for version in ('0.13.0', '0.13.1-beta.1', '0.13.1-rc.1+build.7', '0.13.1-0', '0.12.9-rc.1'):
+            for version in ('0.11.31', '0.11.32-beta.1', '0.11.32-rc.1+build.7', '0.11.32-0', '0.10.9-rc.1'):
                 with self.subTest(version=version):
                     self.env['FAKE_UV_VERSION'] = version
                     result = self.check_entry(['--python-only'], 1)
@@ -675,7 +675,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertEqual(libs[:3], ['wslc', 'run', '--rm'])
         self.assertIn(f'{service.oracle_root}:/opt/pinyin-oracle:ro', libs)
         self.assertEqual(libs[libs.index('deps:tag'):], ['deps:tag', 'uv', 'run', '--no-project', '--managed-python', 'python',
-                                                         '-X', 'lazy_imports=normal', '-m', 'tools.dev.provision',
+                                                         '-X', 'utf8', '-m', 'tools.dev.provision',
                                                          'prefix-check', 'libs', 'tkrzw',
                                                          '/opt/pinyin-oracle/tkrzw', '/run/oracle-pin.txt'])
         self.assertEqual(data[-4:], ['data', 'kc', '/opt/pinyin-oracle/kc', '/run/oracle-pin.txt'])

@@ -1,9 +1,9 @@
 """Native test harness and sanitizer entry points. Standard library only."""
 
 if __name__ == '__main__':
-    from .entry import require_normal_imports
+    from .entry import require_utf8_mode
 
-    require_normal_imports()
+    require_utf8_mode()
 
 import argparse
 from collections.abc import Mapping
@@ -237,7 +237,7 @@ def run_tools(files=(), pattern=None, changed=None):
                 locks.mkdir()
                 child = dict(env, TMPDIR=str(temporary), TMP=str(temporary), TEMP=str(temporary),
                              OXPINYIN_LOCK_DIR=str(locks))
-                command = [harness_interpreter(), '-X', 'lazy_imports=normal', str(ROOT / path)]
+                command = [harness_interpreter(), '-X', 'utf8', str(ROOT / path)]
                 if pattern is not None:
                     command += ['-k', pattern]
                 result = context.launch(command, env=child)

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """tools/oracle/image.py: the oracle image tag, pin fields, image verification and runtime selection."""
 import contextlib
 import hashlib
@@ -157,7 +157,7 @@ class ImageTests(unittest.TestCase):
     def invoke(self, recipe, args):
         program = ('import sys\nfrom tools.oracle import image\n'
                    'raise SystemExit(image.main(sys.argv[1:]))\n')
-        return subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program, *recipe, *args],
+        return subprocess.run([sys.executable, '-X', 'utf8', '-c', program, *recipe, *args],
                               cwd=ROOT, env=self.env, capture_output=True, timeout=20)
 
     def test_image_options_and_invalid_platform_statuses(self):
@@ -247,7 +247,7 @@ if sys.argv[1]=='cp': sys.exit(19)
                 with self.subTest(absent=absent, override=override):
                     if absent:
                         (self.directory / (absent + '.exe')).unlink()
-                    result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program], cwd=ROOT,
+                    result = subprocess.run([sys.executable, '-X', 'utf8', '-c', program], cwd=ROOT,
                                             env=dict(env, OXPINYIN_CONTAINER=override), capture_output=True, text=True)
                     if absent:
                         shutil.copyfile(sys.executable, self.directory / (absent + '.exe'))
@@ -266,7 +266,7 @@ if sys.argv[1]=='cp': sys.exit(19)
                                              ('Darwin', 'docker', 'docker')):
             env = dict(self.env, SYNTHETIC_HOST=platform, OXPINYIN_CONTAINER=override,
                        PATH=str(self.directory) + os.pathsep + os.environ['PATH'])
-            result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program],
+            result = subprocess.run([sys.executable, '-X', 'utf8', '-c', program],
                                     cwd=ROOT, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('selected:' + expected, result.stdout)
@@ -867,7 +867,7 @@ class CaptureLauncherTests(unittest.TestCase):
                 '-v', f'{ROOT}:/work:ro', '-v', f'{ROOT / "target/pin-observations"}:/work/target/pin-observations:rw',
                 '-v', '/cache/data:/data:ro', '-v', f'{self.provision}:/provision:ro',
                 '-v', f'{self.model}:/model20:ro', '-w', '/work', 'sha256:capture-id', python,
-                '-X', 'lazy_imports=normal', 'tools/oracle/pin_capture.py', 'capture', '1', '--prefix',
+                '-X', 'utf8', 'tools/oracle/pin_capture.py', 'capture', '1', '--prefix',
                 '/opt/reference/tkrzw', '--data', '/data', '--provision-cache', '/provision',
                 '--model-dir', '/model20/extracted', '--staging', '/work/target/pin-observations']
 
@@ -929,7 +929,7 @@ class CaptureLauncherTests(unittest.TestCase):
               mock.patch.object(images, 'quiet', return_value=1), mock.patch.object(images, 'run', fail_pull),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished)):
             images.capture_pin(['1'], root=ROOT, env=self.env)
-        self.assertIn('is unavailable; build it with: uv run --no-project --managed-python python -X lazy_imports=normal '
+        self.assertIn('is unavailable; build it with: uv run --no-project --managed-python python -X utf8 '
                       '-m tools.oracle.image build-image', error.getvalue())
 
     def test_a_missing_provision_or_model_cache_is_refused_before_any_runtime_call(self):

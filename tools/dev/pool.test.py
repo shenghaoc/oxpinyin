@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for tools/dev/pool.py: the plan arithmetic, the pool loop with a
 fake launcher, callable units under the same loop, and a real SIGTERM against the CLI (POSIX only:
 Windows has no signal delivery to a process or process groups). /proc and CPU affinity are faked, and
@@ -175,7 +175,7 @@ class CommandTemplateTests(unittest.TestCase):
 
 class CliTests(unittest.TestCase):
     def run_cli(self, *args, **kwargs):
-        return subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', *args],
+        return subprocess.run([sys.executable, '-X', 'utf8', '-m', 'tools.dev.pool', *args],
                               cwd=ROOT, capture_output=True, text=True, timeout=60, **kwargs)
 
     def test_items_run_with_their_planned_jobs_and_log_files(self):
@@ -211,7 +211,7 @@ class CliTests(unittest.TestCase):
                 script = ('import os, sys, time; '
                           'open(sys.argv[1] + "/" + sys.argv[2], "w").write(str(os.getpid())); time.sleep(60)')
                 process = subprocess.Popen(
-                    [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', 'run', '--items', 'a,b,c,d',
+                    [sys.executable, '-X', 'utf8', '-m', 'tools.dev.pool', 'run', '--items', 'a,b,c,d',
                      '--cpus', '4',
                      '--', sys.executable, '-c', script, str(directory), '{item}'],
                     cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -321,7 +321,7 @@ class ContainerOwnershipTests(unittest.TestCase):
                 '--container-label', 'oxpinyin.test', '--', *self.command(name, script)]
 
     def cli(self, *args):
-        return [sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.pool', *args]
+        return [sys.executable, '-X', 'utf8', '-m', 'tools.dev.pool', *args]
 
     def run_two_at_once(self, items, name, script, **environment):
         """Run `pool run` in this process with four allowed CPUs; return its status and messages.

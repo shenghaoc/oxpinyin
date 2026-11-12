@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for neutrality.py: the instruction normalization, symbol accounting and report of the debug-info comparison.
 
 The logic runs on listings written out here and on stand-ins for the GNU tools, so it runs on macOS and Linux.

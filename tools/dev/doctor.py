@@ -17,9 +17,9 @@ setup.sh point here instead of repeating version lists.
 """
 
 if __name__ == '__main__':
-    from .entry import require_normal_imports
+    from .entry import require_utf8_mode
 
-    require_normal_imports()
+    require_utf8_mode()
 
 import json
 import os
@@ -47,12 +47,12 @@ OVERRIDES = (
     'PYTHONPATH',
 )
 # The request .python-version states, the one place the interpreter version is
-# written. The 3.15 series bounds below stay a deliberate step: the
-# -X lazy_imports modes this tooling relies on are new in 3.15.
+# written. The 3.14 series bounds below stay a deliberate step: the
+# tools run with explicit UTF-8 mode.
 MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read_text().strip()
-PYTHON_MINIMUM = '3.15.0'
-PYTHON_BELOW = '3.16'
-UV_MINIMUM = '0.13.1'
+PYTHON_MINIMUM = '3.14.0'
+PYTHON_BELOW = '3.15'
+UV_MINIMUM = '0.11.32'
 PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
 
 
@@ -291,10 +291,10 @@ def uv_version(environ=None):
 
 
 def check_python(numbers=None, releaselevel=None):
-    """Require a final version in the managed 3.15 series.
+    """Require a final version in the managed 3.14 series.
 
     Default to the running version and release level. Raise DoctorError for
-    a prerelease, a version below 3.15.0, or a version at least 3.16; this
+    a prerelease, a version below 3.14.0, or a version at least 3.15; this
     helper does not check interpreter implementation or ownership.
     """
     numbers = tuple(sys.version_info[:3]) if numbers is None else tuple(numbers)

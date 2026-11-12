@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for the valgrind recipes: the callgrind differential's seven stages and system-import-profile.
 
 The differential runs in the fake world (fake_world.py): its stages, banners, files and stopping

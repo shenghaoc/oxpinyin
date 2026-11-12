@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tree identity, provenance, incomplete evidence and aggregate regressions."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Development environment selection must match runtime certification, and CI delegates vcpkg to Python."""
 import contextlib
 import hashlib
@@ -245,7 +245,7 @@ class Workflow(unittest.TestCase):
         text = job('test-windows')
         for command in ('cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"', 'cache-report',
                         'install --triplet x64-windows --packages "$VCPKG_PACKAGES"'):
-            self.assertIn(f'        run: uv run --no-project --managed-python python -X lazy_imports=normal'
+            self.assertIn(f'        run: uv run --no-project --managed-python python -X utf8'
                           f' -m tools.dev.vcpkg {command}\n', text)
         for shell in ('sha256sum', ' vcpkg install', 'specs', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'rev-parse'):
             self.assertNotIn(shell, text)
@@ -253,7 +253,7 @@ class Workflow(unittest.TestCase):
     def test_macos_job_delegates_to_this_module(self):
         text = job('test-macos')
         for command in ('cache-key', 'install'):
-            self.assertIn(f'        run: uv run --no-project --managed-python python -X lazy_imports=normal'
+            self.assertIn(f'        run: uv run --no-project --managed-python python -X utf8'
                           f' -m tools.dev.vcpkg {command} --triplet "$VCPKG_TRIPLET"\n', text)
         for shell in ('shasum', 'readlink', '"$VCPKG_ROOT/vcpkg" install', 'vcpkg_cache', 'GITHUB_ENV'):
             self.assertNotIn(shell, text)
@@ -268,7 +268,7 @@ class Workflow(unittest.TestCase):
     def test_ci_commands_need_only_the_standard_library(self):
         # The container jobs run them with the image's Python: no managed-interpreter guard, no process service.
         source = (ROOT / 'tools/dev/vcpkg.py').read_text(encoding='utf-8')
-        self.assertNotIn('require_normal_imports', source)
+        self.assertNotIn('require_utf8_mode', source)
         self.assertEqual(source.count('from .process import run'), 1)
 
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """tools/oracle/pin_capture.py: a capture of a rejected prefix, another libpinyin or libzhuyin,
 other data, or a utility build not tied to a verified prefix is refused before any observation;
 a capture writes nothing outside its staging directory; a utility run stages its end, streams

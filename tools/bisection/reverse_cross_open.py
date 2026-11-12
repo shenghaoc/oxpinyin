@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Local-only cross-open checks for the user profile formats.
 
     reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX --data DIR \
@@ -205,7 +205,7 @@ def run_worker(name, mode, library, data, scratch, extra_env=None):
     environment = dict(os.environ)
     environment.update(extra_env or {})
     environment.update(CONTRACT_CELL=CELL, TMPDIR=str(scratch))
-    command = [sys.executable, '-X', 'lazy_imports=normal', str(Path(__file__).resolve()),
+    command = [sys.executable, '-X', 'utf8', str(Path(__file__).resolve()),
                '--worker', name, '--mode', mode, '--library', str(library),
                '--data', str(data), '--scratch', str(scratch)]
     result = subprocess.run(command, capture_output=True, timeout=TIMEOUT, env=environment)

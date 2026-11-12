@@ -1,9 +1,10 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Shipping-size recipe key, export check, report and orchestration; no builds."""
 import contextlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -177,16 +178,19 @@ class BuildSideTests(unittest.TestCase):
                     ver.parent.mkdir(parents=True, exist_ok=True)
                     ver.write_text(VER.replace('pinyin', prefix))
 
+            def fake_recipe(revision, source, recipe, env):
+                argv = [str(word) for word in recipe]
+                calls.append((argv, source, env))
+                library = argv[argv.index('install') + 1]
+                destdir = next(word for word in argv if word.startswith('--destdir=')).split('=', 1)[1]
+                so = Path(destdir, 'usr/lib', library + '.so.15.0.0')
+                so.parent.mkdir(parents=True, exist_ok=True)
+                so.write_bytes(b'x' * 100)
+
             def fake_run(argv, *, cwd=None, env=None, capture=True):
                 argv = [str(word) for word in argv]
                 calls.append((argv, cwd, env))
-                if 'install' in argv:
-                    library = argv[argv.index('install') + 1]
-                    destdir = next(word for word in argv if word.startswith('--destdir=')).split('=', 1)[1]
-                    so = Path(destdir, 'usr/lib', library + '.so.15.0.0')
-                    so.parent.mkdir(parents=True, exist_ok=True)
-                    so.write_bytes(b'x' * 100)
-                elif argv[0] == 'strip':
+                if argv[0] == 'strip':
                     if strip_status:
                         raise ship_sizes.Failure('strip failed')
                     Path(argv[-1]).write_bytes(b'x' * 60)
@@ -197,6 +201,7 @@ class BuildSideTests(unittest.TestCase):
                 return ''
 
             with mock.patch.object(ship_sizes, 'extract', fake_extract), \
+                    mock.patch.object(ship_sizes, 'revision_recipe', fake_recipe), \
                     mock.patch.object(ship_sizes, 'run', fake_run), \
                     mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'):
                 outcome = ship_sizes.build_side('HEAD', work, Path(directory, 'target'))
@@ -207,7 +212,9 @@ class BuildSideTests(unittest.TestCase):
         installs = [call for call in calls if 'install' in call[0]]
         self.assertEqual(len(installs), 2)
         for argv, cwd, env in installs:
-            self.assertEqual(argv[argv.index('-m') + 1:argv.index('-m') + 3], ['tools.dev.packaging', 'install'])
+            # The revision's own recipe starts its tooling: no interpreter and no flag is named here.
+            self.assertEqual(argv[:2], ['packaging', 'install'])
+            self.assertNotIn(sys.executable, argv)
             self.assertEqual(cwd.name, 'src')
             self.assertIn('--release', argv)
             self.assertIn('--locked', argv)
@@ -229,6 +236,115 @@ class BuildSideTests(unittest.TestCase):
         with mock.patch.object(ship_sizes, 'platform_system', return_value='Darwin'), \
                 self.assertRaisesRegex(ship_sizes.Failure, 'Linux'):
             ship_sizes.build_side('HEAD', Path('/nonexistent'), Path('/nonexistent'))
+
+
+# Set in CI's harness job, which installs just: there a missing just fails the
+# revision-recipe cases instead of skipping them, so CI always runs them.
+REQUIRE_JUST = 'OXPINYIN_REQUIRE_JUST'
+# What the fixture revision's packaging recipe runs: it records its arguments, the
+# flags it was started with and whether the python recipe ran first, then installs.
+RECORDER = '''import json, os, pathlib, sys
+arguments = sys.argv[1:]
+with open('recorded.jsonl', 'a') as stream:
+    stream.write(json.dumps({'arguments': arguments, 'xoptions': sys._xoptions, 'cwd': os.getcwd(),
+                             'python_recipe_ran': os.path.exists('python-recipe-ran')}) + '\\n')
+if arguments[:1] == ['install']:
+    destdir = next(word for word in arguments if word.startswith('--destdir=')).split('=', 1)[1]
+    library = pathlib.Path(destdir, 'usr/lib', arguments[1] + '.so.15.0.0')
+    library.parent.mkdir(parents=True, exist_ok=True)
+    library.write_bytes(b'x' * 100)
+'''
+
+
+def just_or_skip(case):
+    """Skip CASE where the real just (and, on Windows, its sh) is absent and not required."""
+    if shutil.which('just') and (os.name != 'nt' or shutil.which('sh')):
+        return
+    if os.environ.get(REQUIRE_JUST) == '1':
+        case.fail(f'just is required for the revision-recipe test ({REQUIRE_JUST}=1)')
+    case.skipTest('just is not installed; the revision-recipe cases run in CI, where the harness job '
+                  f'installs just and sets {REQUIRE_JUST}=1')
+
+
+class RevisionRecipeTests(unittest.TestCase):
+    """build_side starts each revision's tooling through that revision's own just recipe."""
+
+    def setUp(self):
+        just_or_skip(self)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        (self.directory / 'repo').mkdir()
+        self.repo = Repo(self.directory / 'repo')
+
+    def revision(self, python, flags, recipe=True):
+        """Commit a revision that names PYTHON and whose packaging recipe starts with FLAGS."""
+        interpreter = Path(sys.executable).as_posix()
+        justfile = ('set positional-arguments\n\n'
+                    'python:\n'
+                    f'    @"{interpreter}" -c "open(\'python-recipe-ran\', \'w\').close()"\n')
+        if recipe:
+            justfile += ('\npackaging *args: python\n'
+                         f'    @"{interpreter}" {flags} record.py "$@"\n')
+        files = {'.python-version': python + '\n', 'justfile': justfile, 'record.py': RECORDER}
+        for library, (crate, prefix) in ship_sizes.LIBRARIES.items():
+            files[f'crates/{crate}/{library}.ver'] = VER.replace('pinyin', prefix)
+        return self.repo.commit(files)
+
+    def build(self, revision):
+        """Run build_side on REVISION with the real just; strip, nm and the reference cell are faked."""
+        work = self.directory / 'work'
+
+        def fake_run(argv, *, cwd=None, env=None, capture=True):
+            argv = [str(word) for word in argv]
+            if argv[0] == 'strip':
+                Path(argv[-1]).write_bytes(b'x' * 60)
+            elif argv[0] == 'nm':
+                return NM.replace('pinyin', 'zhuyin') if 'libzhuyin' in argv[-1] else NM
+            elif argv[:2] == ['git', 'rev-parse']:
+                return revision + '\n'
+            return ''
+
+        extract = ship_sizes.extract
+        with mock.patch.object(ship_sizes, 'extract', lambda rev, destination, root=None: extract(rev, destination, self.repo.root)), \
+                mock.patch.object(ship_sizes, 'run', fake_run), \
+                mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'), \
+                contextlib.redirect_stderr(io.TextIOWrapper(io.BytesIO())):
+            outcome = ship_sizes.build_side(revision, work, self.directory / 'target')
+        records = [json.loads(line) for line in (work / 'src/recorded.jsonl').read_text().splitlines()]
+        return outcome, records, work
+
+    def test_each_revision_reaches_its_install_step_with_its_own_flags(self):
+        for python, flags, xoptions in (('3.15', '-X lazy_imports=normal', {'lazy_imports': 'normal'}),
+                                        ('3.14', '-X utf8', {'utf8': True})):
+            with self.subTest(python=python):
+                outcome, records, work = self.build(self.revision(python, flags))
+                self.assertEqual((work / 'src/.python-version').read_text().strip(), python)
+                self.assertEqual([record['arguments'][:2] for record in records],
+                                 [['install', library] for library in ship_sizes.LIBRARIES])
+                for record in records:
+                    self.assertEqual(record['xoptions'], xoptions)
+                    self.assertTrue(record['python_recipe_ran'])
+                    self.assertEqual(Path(record['cwd']).resolve(), (work / 'src').resolve())
+                    if os.name != 'nt':  # Git's sh on Windows rewrites /usr to its own directory.
+                        self.assertEqual(record['arguments'][2:4], ['--prefix=/usr', '--libdir=/usr/lib'])
+                    self.assertEqual(record['arguments'][4:6], [f'--destdir={work / "stage"}', '--'])
+                    self.assertEqual(record['arguments'][6:9], ['--release', '--locked', '--no-default-features'])
+                self.assertEqual(outcome['libraries'], {'libpinyin': 60, 'libzhuyin': 60})
+
+    def test_a_revision_without_the_recipe_fails_with_the_message_of_just(self):
+        revision = self.revision('3.15', '', recipe=False)
+        with self.assertRaises(ship_sizes.Failure) as raised:
+            self.build(revision)
+        message = str(raised.exception)
+        self.assertTrue(message.startswith(f'{revision}: its own `just packaging` recipe exited '), message)
+        self.assertRegex(message, r'(?i)justfile does not contain recipe')
+        self.assertIn('docs/runbooks/setup.md#comparing-against-another-revision', message)
+
+    def test_a_missing_just_names_the_revision_and_the_runbook(self):
+        with mock.patch.object(ship_sizes.subprocess, 'Popen', side_effect=FileNotFoundError('just')), \
+                self.assertRaisesRegex(ship_sizes.Failure, r'^REV: could not start just .*setup\.md#comparing'):
+            ship_sizes.revision_recipe('REV', self.directory, ['packaging', 'install'], {})
 
 
 class ExtractTests(unittest.TestCase):
