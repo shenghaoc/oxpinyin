@@ -235,7 +235,7 @@ The tag holds:
   ([reproducibility boundary](#reproducibility-boundary)).
 
 The tag therefore changes whenever the library hashes or their record can.
-A published tag is never overwritten. `tools/cloud/setup.sh`
+A published tag is never overwritten. `tools.dev.provision`
 and the commands below derive the tag the same way. The
 image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 `lib/pkgconfig/` and `oracle-pin.txt`. It holds **no model-derived data**
@@ -277,7 +277,7 @@ No tool compares a built digest with a frozen repository value.
 The arm64 oracle uses the same recipe and pin as amd64. It is built natively, with
 no emulation. Build the image with
 `--build-arg ORACLE_PLATFORM=linux/arm64` and `--platform linux/arm64`.
-`tools/dev/provision.py` and `tools/cloud/setup.sh` select the platform from
+`tools/dev/provision.py` selects the platform from
 the host. On Apple `container`, provisioning builds the libraries in the deps
 image and does not pull the published image
 ([container runtimes](setup.md#container-runtimes)).

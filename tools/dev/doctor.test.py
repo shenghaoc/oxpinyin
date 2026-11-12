@@ -89,7 +89,7 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertTrue(any(re.fullmatch(r'interpreter: cpython 3\.14\.\d+ \(minimum 3\.14\.0, below 3\.15\)', line)
                             for line in lines), lines)
-        self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+ \(minimum 0\.11\.32\)', line) for line in lines), lines)
+        self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+.*', line) for line in lines), lines)
         self.assertTrue(any(line.startswith('executable: ') for line in lines))
 
     def test_free_threaded_build_is_rejected(self):
@@ -99,6 +99,10 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor.sysconfig, 'get_config_var', side_effect=config):
             with self.assertRaisesRegex(doctor.DoctorError, 'free-threaded'):
                 doctor.identity()
+
+    def test_cargo_c_fallback_is_separate_from_the_installed_floor(self):
+        self.assertEqual(doctor.cargo_tool('cargo-c').minimum, '0.10.11')
+        self.assertEqual(doctor.CARGO_TOOL_PINS['cargo-c'], '0.10.25')
 
     def test_python_outside_the_series_is_refused(self):
         for numbers, level, found in (((3, 13, 7), 'final', '3.13.7'),
@@ -115,23 +119,20 @@ class DoctorTests(unittest.TestCase):
 
     def test_missing_uv_is_named(self):
         with mock.patch.object(doctor, '_run', return_value=None), \
-                self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.11\.32 or newer;'):
+                self.assertRaisesRegex(doctor.DoctorError, r'^uv did not run; install it as '):
             doctor.uv_version({'PATH': '/nonexistent'})
 
-    def test_unparseable_uv_version_is_rejected(self):
-        for output in ('uv', 'uv version unknown', 'uv 0.13', 'uv 0.13.1-', 'uv v0.13.1', '', 'ruff 0.13.1'):
-            result = mock.Mock(returncode=0, stdout=output, stderr='')
+    def test_uv_version_is_reported_without_a_comparison(self):
+        # uv refuses a version below uv.toml's required-version itself.
+        for output in ('uv 0.0.1', 'uv 99.0.0-rc.1 (abc 2026-11-01 x86_64-unknown-linux-gnu)', 'unrecognised'):
             with self.subTest(output=output), \
-                    mock.patch.object(doctor, '_run', return_value=result):
-                with self.assertRaisesRegex(doctor.DoctorError,
-                                            r'^unparseable uv version output: .*; '
-                                            r'uv 0\.11\.32 or newer required$'):
-                    doctor.uv_version({'PATH': '/tools'})
+                    mock.patch.object(doctor, '_run', return_value=completed(output)):
+                self.assertEqual(doctor.uv_version({'PATH': '/tools'}), output)
 
     def test_collect_reports_an_unsupported_tool(self):
         info = dict(uv='uv 0.13.1', implementation='cpython', version='3.14.0',
                     managed=True, gil_enabled=True, executable='/managed/python')
-        failure = 'cargo-nextest 0.9.115 or later required; found cargo-nextest 0.9.114'
+        failure = 'cargo-c 0.10.11 or later required; found 0.10.10 at /tools/cargo-cinstall'
         with mock.patch.object(doctor, 'host_lines', return_value=[]), \
                 mock.patch.object(doctor, 'identity', return_value=info), \
                 mock.patch.object(doctor, 'tool_lines',
@@ -146,15 +147,12 @@ class DoctorTests(unittest.TestCase):
 # shapes are the ones the tools print on the hosts this repository runs on.
 SAMPLES = {
     'pwsh': ('PowerShell {}', '7.4.99', doctor.PWSH_MINIMUM, '7.6.1'),
-    'bash': ('GNU bash, version {} (1)-release (x86_64-pc-linux-gnu)', '4.4.23', '5.0.0', '5.2.37'),
-    'cargo-nextest': ('cargo-nextest {} (60fa45f63 2026-08-04)', '0.9.114', '0.9.115', '0.10.0'),
-    'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.23', '0.10.24', '0.10.26'),
+    'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.10', '0.10.11', '0.10.25'),
     'cargo-fuzz': ('cargo-fuzz {}', '0.13.1', '0.13.2', '0.14.0'),
     'cargo-llvm-cov': ('cargo-llvm-cov {}', '0.8.9', '0.9.0', '0.10.1'),
-    'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.42', '2.43', '2.47'),
-    'gcov': ('gcov (Debian 16.2.0-3) {}', '13.3.0', '14.0.0', '16.2.0'),
+    'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.41', '2.42', '2.47'),
+    'gcov': ('gcov (Debian 16.2.0-3) {}', '12.3.0', '13.0.0', '16.2.0'),
     'valgrind': ('valgrind-{}', '3.21.0', '3.22.0', '3.27.1'),
-    'shellcheck': ('ShellCheck - shell script analysis tool\nversion: {}', '0.10.0', '0.11.0', '0.12.0'),
 }
 
 
@@ -168,10 +166,9 @@ class ToolCase(unittest.TestCase):
         return line
 
     def assert_found(self, subject, output, shown):
-        suffix = ' (advisory)' if subject.optional else ''
         self.assertEqual(self.check(subject, output),
                          f'{subject.name}: {shown} at /tools/{subject.executable} '
-                         f'(minimum {subject.minimum}){suffix}')
+                         f'(minimum {subject.minimum})')
 
     def assert_too_old(self, subject, output):
         with self.assertRaises(doctor.DoctorError) as caught:
@@ -183,9 +180,13 @@ class ToolCase(unittest.TestCase):
                          f'found {shown} at /tools/{subject.executable}')
 
 
+# The tools whose version doctor compares; a tool with a verdict answers for itself.
+VERSIONED = tuple(candidate for candidate in doctor.TOOLS if candidate.verdict is None)
+
+
 class ToolMinimumTests(ToolCase):
     def test_a_tool_at_or_above_its_minimum_passes(self):
-        for candidate in doctor.TOOLS:
+        for candidate in VERSIONED:
             template, _, at, above = SAMPLES[candidate.name]
             for version in (at, above):
                 with self.subTest(tool=candidate.name, version=version):
@@ -195,13 +196,13 @@ class ToolMinimumTests(ToolCase):
                                            rf'\(minimum {re.escape(candidate.minimum)}\)$')
 
     def test_a_tool_below_its_minimum_fails_with_both_versions(self):
-        for candidate in doctor.TOOLS:
+        for candidate in VERSIONED:
             template, below, _, _ = SAMPLES[candidate.name]
             with self.subTest(tool=candidate.name):
                 self.assert_too_old(candidate, template.format(below))
 
     def test_unreadable_output_fails(self):
-        for candidate in doctor.TOOLS:
+        for candidate in VERSIONED:
             if candidate.identity:
                 continue  # another program under the name is reported, not failed
             with self.subTest(tool=candidate.name):
@@ -212,7 +213,7 @@ class ToolMinimumTests(ToolCase):
                     self.check(candidate, 'Apple LLVM version 21')
 
     def test_a_failing_command_fails(self):
-        for candidate in doctor.TOOLS:
+        for candidate in VERSIONED:
             template, _, at, _ = SAMPLES[candidate.name]
             with self.subTest(tool=candidate.name):
                 with self.assertRaisesRegex(doctor.DoctorError, 'or later required'):
@@ -229,7 +230,7 @@ class ToolMinimumTests(ToolCase):
                     continue
                 line = doctor.check_tool(candidate, {'PATH': '/tools'})
             test_support.assert_not_called(self, run)
-            self.assertEqual(line, f'{candidate.name}: missing (requires {candidate.minimum} or later; '
+            self.assertEqual(line, f'{candidate.name}: missing (requires {doctor.requirement(candidate)}; '
                                    f'install: {candidate.install})')
 
     def test_another_linker_under_the_name_ld_is_not_a_failure(self):
@@ -239,13 +240,14 @@ class ToolMinimumTests(ToolCase):
             with self.subTest(output=output):
                 line = self.check(ld, output)
                 self.assertTrue(line.startswith(f'GNU ld: not found, ld is {output} at /tools/ld '), line)
-                self.assertIn('requires 2.43 or later', line)
+                self.assertIn('requires 2.42 or later', line)
 
     def test_linux_only_tools_are_skipped_elsewhere(self):
         linux_only = {candidate.name for candidate in doctor.TOOLS if candidate.platform == 'linux'}
         self.assertEqual(linux_only, {'GNU ld', 'gcov', 'valgrind'})
-        for platform_name, expected in (('darwin', set(SAMPLES) - linux_only - {'pwsh'}),
-                                        ('linux', set(SAMPLES) - {'pwsh'})):
+        reported = set(SAMPLES) | {'cargo-nextest'}
+        for platform_name, expected in (('darwin', reported - linux_only - {'pwsh'}),
+                                        ('linux', reported - {'pwsh'})):
             with self.subTest(platform=platform_name), \
                     mock.patch.object(doctor.sys, 'platform', platform_name), \
                     mock.patch.object(doctor.shutil, 'which', return_value=None):
@@ -254,67 +256,24 @@ class ToolMinimumTests(ToolCase):
             self.assertEqual({line.split(':')[0] for line in lines}, expected)
 
     def test_tool_lines_collects_every_required_failure(self):
-        required = [candidate for candidate in doctor.TOOLS
-                    if not candidate.optional and not candidate.platform]
+        # nextest answers for itself, and its fake answer here is a success.
+        required = [candidate for candidate in VERSIONED if not candidate.platform]
         with mock.patch.object(doctor.sys, 'platform', 'darwin'), \
                 mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
                 mock.patch.object(doctor, '_run', return_value=completed('unrecognised version output')):
             lines, failures = doctor.tool_lines({'PATH': '/tools'})
         self.assertEqual(len(failures), len(required))
-        self.assertTrue(all(line == f'FAIL: {failure}' for line, failure in zip(lines, failures)))
-        self.assertTrue(any(line.startswith('advisory: shellcheck ') for line in lines), lines)
+        self.assertEqual([line for line in lines if line.startswith('FAIL: ')],
+                         [f'FAIL: {failure}' for failure in failures])
 
 
-class BashFloorTests(ToolCase):
-    """The Bash floor does not apply on Windows."""
-
-    def test_bash_is_not_applicable_on_windows(self):
-        # An old Bash on PATH (Git Bash, MSYS) is neither run nor failed there.
-        executed = []
-
-        def fake_run(command, environ):
-            executed.append(command[0])
-            if command[0] == '/tools/bash':
-                return completed('GNU bash, version 3.2.57(1)-release (x86_64-pc-msys)')
-            return completed('unrecognised version output')
-
-        with mock.patch.object(doctor.sys, 'platform', 'win32'), \
-                mock.patch.object(doctor.shutil, 'which', side_effect=lambda name, path: f'/tools/{name}'), \
-                mock.patch.object(doctor, '_run', side_effect=fake_run):
-            lines, failures = doctor.tool_lines({'PATH': '/tools'})
-        self.assertIn('bash: not applicable on win32', lines)
-        self.assertNotIn('/tools/bash', executed)
-        self.assertFalse(any(failure.startswith('bash ') for failure in failures), failures)
-
-class AdvisoryToolTests(unittest.TestCase):
-    """ShellCheck is reported against 0.11.0 without blocking work that does not need it."""
-
-    def lines_for(self, shellcheck):
-        def fake_check(subject, environ=None):
-            if subject.name == 'shellcheck':
-                if isinstance(shellcheck, Exception):
-                    raise shellcheck
-                return shellcheck
-            return f'{subject.name}: ok'
-
-        with mock.patch.object(doctor, 'check_tool', side_effect=fake_check):
-            return doctor.tool_lines({'PATH': '/tools'})
-
-    def test_an_old_shellcheck_is_reported_without_failing(self):
-        failure = 'shellcheck 0.11.0 or later required; found 0.10.0 at /tools/shellcheck'
-        lines, failures = self.lines_for(doctor.DoctorError(failure))
-        self.assertEqual(failures, [])
-        self.assertIn(f'advisory: {failure}', lines)
-
-
-SEMVER_TOOLS = ('pwsh', 'cargo-nextest', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
+SEMVER_TOOLS = ('pwsh', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
 
 
 def semver_line(subject, version):
-    """The first line `<tool> --version` prints for VERSION. cargo-nextest adds a commit and a date."""
-    trailer = ' (60fa45f63 2026-08-04)' if subject.name == 'cargo-nextest' else ''
+    """The first line `<tool> --version` prints for VERSION."""
     name = 'PowerShell' if subject.name == 'pwsh' else subject.name
-    return f'{name} {version}{trailer}'
+    return f'{name} {version}'
 
 
 def numbers_of(version):
@@ -337,7 +296,7 @@ def previous(minimum):
 
 
 class SemverToolTests(ToolCase):
-    """PowerShell, cargo-nextest, cargo-c, cargo-fuzz and cargo-llvm-cov print semantic versions
+    """PowerShell, cargo-c, cargo-fuzz and cargo-llvm-cov print semantic versions
     (semver.org 2.0.0): a pre-release is older than the release it precedes, a pre-release of a
     newer release is newer than the minimum, and build metadata does not count."""
 
@@ -353,10 +312,8 @@ class SemverToolTests(ToolCase):
         self.assert_too_old(subject, semver_line(subject, version))
 
     def test_tool_semver_minimums(self):
-        subjects = [None, *self.semver_tools()]
-        for candidate in subjects:
-            name = candidate.name if candidate else 'uv'
-            minimum = candidate.minimum if candidate else doctor.UV_MINIMUM
+        for candidate in self.semver_tools():
+            name, minimum = candidate.name, candidate.minimum
             cases = [(minimum + suffix, False)
                      for suffix in ('-beta.1', '-rc.1', '-alpha', '-0', '-rc.1+build.5')]
             cases += [(minimum + suffix, True)
@@ -367,26 +324,9 @@ class SemverToolTests(ToolCase):
             cases += [(version, False) for version in (
                 previous(minimum) + '-rc.1', minimum.rsplit('.', 1)[0], minimum + '-',
                 'v' + minimum, minimum + '-beta..1')]
-            if candidate is None:
-                cases = [(version, False) for version in (
-                    '0.11.32-beta.1', '0.11.32-rc.1', '0.11.32-alpha', '0.11.32-0',
-                    '0.11.32-rc.1+build.5', '0.11.31-rc.1', '0.10.9-beta.1')]
-                cases += [(version, True) for version in (
-                    '0.11.32', '0.11.32+build.5', '0.11.32+20261014', '0.13.2',
-                    '0.14.0-beta.1', '0.13.2-rc.1', '1.0.0-alpha', '0.13.2-rc.1+build.5')]
             for version, accepted in cases:
                 with self.subTest(tool=name, version=version):
-                    if candidate is None:
-                        text = f'uv {version} (abc123def 2026-10-14 x86_64-unknown-linux-gnu)'
-                        with mock.patch.object(doctor, '_run', return_value=completed(text)):
-                            if accepted:
-                                self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
-                            else:
-                                with self.assertRaises(doctor.DoctorError) as caught:
-                                    doctor.uv_version({'PATH': '/tools'})
-                                self.assertEqual(str(caught.exception),
-                                                 f'uv {minimum} or newer required; found {text}')
-                    elif accepted:
+                    if accepted:
                         self.assert_passes(candidate, version)
                     else:
                         self.assert_fails(candidate, version)
@@ -403,22 +343,22 @@ OBSERVED = (
     ('GNU ld', 'GNU ld (GNU Binutils for Debian) 2.47', '2.47'),
     ('gcov', 'gcov (Debian 16.2.0-3) 16.2.0', '16.2.0'),
     ('valgrind', 'valgrind-3.27.1', '3.27.1'),
-    ('GNU ld', 'GNU ld (GNU Binutils for Ubuntu) 2.42', None),
-    ('gcov', 'gcov (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0', None),
+    ('GNU ld', 'GNU ld (GNU Binutils for Ubuntu) 2.42', '2.42'),
+    ('gcov', 'gcov (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0', '13.3.0'),
     ('valgrind', 'valgrind-3.22.0', '3.22.0'),
     ('GNU ld', 'GNU ld version 2.46.1-1.fc44', '2.46.1'),   # -1.fc44 is Fedora's package release
     ('gcov', 'gcov (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)', '16.2.1'),
 )
 
 # Forms other distributions and the projects use, not run here. Development builds: binutils calls
-# master after 2.43 branched 2.43.50 (newer than 2.43) and before it 2.42.50; GCC calls trunk snapshots
+# master after 2.42 branched 2.42.50 (newer than 2.42) and before it 2.41.50; GCC calls trunk snapshots
 # "(experimental)" and release-branch snapshots "(prerelease)"; Valgrind adds .GIT to the number of the
 # release a git build leads up to.
 OTHER_FORMS = (
     ('GNU ld', 'GNU ld (Gentoo 2.43 p3) 2.43.1', '2.43.1'),
     ('GNU ld', 'GNU ld (GNU Binutils; SUSE Linux Enterprise 15) 2.41.0.20231213-150100.7.46', None),
-    ('GNU ld', 'GNU ld (GNU Binutils) 2.43.50.20240101', '2.43.50.20240101'),
-    ('GNU ld', 'GNU ld (GNU Binutils) 2.42.50.20240101', None),
+    ('GNU ld', 'GNU ld (GNU Binutils) 2.42.50.20240101', '2.42.50.20240101'),
+    ('GNU ld', 'GNU ld (GNU Binutils) 2.41.50.20230801', None),
     ('gcov', 'gcov (GCC) 14.2.1 20240910', '14.2.1'),
     ('gcov', 'gcov (Alpine 14.2.0) 14.2.0', '14.2.0'),
     ('gcov', 'gcov (Homebrew GCC 14.2.0_1) 14.2.0', '14.2.0'),
@@ -426,14 +366,60 @@ OTHER_FORMS = (
     ('gcov', 'gcov (Debian 14-20240330-1) 14.0.1 20240330 (experimental) [master r14-9766-g6a4b5c9d1e2f]',
      '14.0.1 experimental'),
     ('gcov', 'gcov (GCC) 14.2.1 20240801 (prerelease)', '14.2.1 prerelease'),
-    ('gcov', 'gcov (GCC) 13.0.1 20230101 (experimental)', None),
-    ('gcov', 'gcov (GCC) 13.3.1 20240801 (prerelease)', None),
+    ('gcov', 'gcov (GCC) 13.0.1 20230101 (experimental)', '13.0.1 experimental'),
+    ('gcov', 'gcov (GCC) 13.3.1 20240801 (prerelease)', '13.3.1 prerelease'),
+    ('gcov', 'gcov (GCC) 12.0.1 20220101 (experimental)', None),
+    ('gcov', 'gcov (GCC) 12.4.1 20240801 (prerelease)', None),
     ('valgrind', 'valgrind-3.18.1', None),
     ('valgrind', 'valgrind-3.21.0', None),
     ('valgrind', 'valgrind-3.22.0.GIT', '3.22.0.GIT'),
     ('valgrind', 'valgrind-3.23.0.GIT', '3.23.0.GIT'),
     ('valgrind', 'valgrind-3.21.0.GIT', None),
 )
+
+
+class NextestVerdictTests(unittest.TestCase):
+    """nextest enforces the nextest-version in .config/nextest.toml: doctor reports its answer."""
+
+    def verdict(self, result):
+        subject = tool('cargo-nextest')
+        with mock.patch.object(doctor.shutil, 'which', return_value='/tools/cargo-nextest'), \
+                mock.patch.object(doctor, '_run', return_value=result) as run:
+            try:
+                return doctor.check_tool(subject, {'PATH': '/tools'})
+            finally:
+                test_support.assert_calls(self, run, [mock.call(
+                    ['/tools/cargo-nextest', 'nextest', 'show-config', 'version'], {'PATH': '/tools'},
+                    cwd=doctor.ROOT)])
+
+    def report(self, result):
+        return 'current nextest version: N.N.N\nevaluation result: ' + result
+
+    def test_a_met_or_only_recommended_requirement_passes(self):
+        for status, result in ((0, 'ok'), (10, 'does not meet recommended version')):
+            with self.subTest(status=status):
+                self.assertEqual(self.verdict(completed(self.report(result), status)),
+                                 'cargo-nextest: N.N.N at /tools/cargo-nextest '
+                                 '(the nextest-version in .config/nextest.toml: met)')
+
+    def test_a_missed_required_version_fails(self):
+        with self.assertRaises(doctor.DoctorError) as caught:
+            self.verdict(completed(self.report('does not meet required version'), 92))
+        self.assertEqual(str(caught.exception), 'cargo-nextest N.N.N at /tools/cargo-nextest does not meet '
+                                                'the nextest-version in .config/nextest.toml')
+
+    def test_a_check_that_cannot_run_fails(self):
+        for result, status in ((completed('error: could not find Cargo.toml', 102), 'exit 102'),
+                               (None, 'did not start')):
+            with self.subTest(status=status), self.assertRaises(doctor.DoctorError) as caught:
+                self.verdict(result)
+            self.assertEqual(str(caught.exception), 'cargo-nextest at /tools/cargo-nextest could not check '
+                                                    f'the nextest-version in .config/nextest.toml ({status})')
+
+    def test_doctor_compares_no_nextest_version(self):
+        self.assertNotIn('nextest', ''.join(SAMPLES))
+        self.assertIsNone(tool('cargo-c').verdict)
+        self.assertIsNotNone(tool('cargo-nextest').verdict)
 
 
 class OtherFormatTests(ToolCase):

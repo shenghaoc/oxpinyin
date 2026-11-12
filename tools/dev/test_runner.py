@@ -67,7 +67,6 @@ def harness_environment(environ):
 PACKAGING_HARNESSES = (
     'tools/dev/packaging.test.py',
     'tools/dev/just.test.py',
-    'tools/dev/bash_floor.test.py',
 )
 # U4-owned services only. Shared callers, registry,
 # helpers and documentation retain the full-suite fallback.
@@ -122,7 +121,6 @@ for _measurement_source in ('bench', 'identity', 'neutrality', 'prepare', 'recip
 # documentation stay unmapped: repository-wide audits read their tracked text.
 COMPAT_HARNESS = (
     'tools/tkrzw/runtime.test.py',
-    'tools/dev/bash_floor.test.py',
     'tools/dev/measure/bench.test.py',
 )
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
@@ -141,11 +139,9 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
 # U6-owned provisioner inputs; shared CLI, recipes, policies and docs stay broad.
 PROVISION_HARNESS = ('tools/dev/provision.test.py', 'tools/dev/vcpkg.test.py', 'tools/dev/doctor.test.py',
                      'tools/dev/python-request.test.py',
-                     'tools/tkrzw/runtime.test.py', 'tools/dev/bash_floor.test.py',
-                     'tools/dev/ci_tree.test.py')
+                     'tools/tkrzw/runtime.test.py', 'tools/dev/ci_tree.test.py')
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
-    'tools/dev/provision.py', 'tools/dev/vcpkg.py', 'tools/cloud/setup.sh',
-    'tools/cloud/env.sh', 'tools/cloud/env.test.sh',
+    'tools/dev/provision.py', 'tools/dev/vcpkg.py',
 ), PROVISION_HARNESS))
 
 # The model20 fetch and its callers; the retired script's path selects the same.

@@ -17,19 +17,68 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import provision
+from tools.dev import provision, test_support
 from tools.oracle.image import digest_file
 from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
+
+# The environment file is sourced from these shells. dash is Debian's /bin/sh.
+SOURCE_SHELLS = ('sh', 'dash', 'zsh')
+# Set in CI's harness job, which installs zsh: there a missing zsh fails the zsh case
+# instead of skipping it, so CI always runs it.
+REQUIRE_ZSH = 'OXPINYIN_REQUIRE_ZSH'
+
+
+def shell_or_skip(case, shell):
+    """The executable of SHELL; skip CASE's zsh subtest where zsh is absent and not required."""
+    executable = shutil.which(shell)
+    if executable:
+        return executable
+    if shell == 'zsh' and os.environ.get(REQUIRE_ZSH) != '1':
+        case.skipTest('zsh is not installed; the zsh case runs in CI, where the harness job '
+                      f'installs zsh and sets {REQUIRE_ZSH}=1')
+    case.fail(f'{shell} is required for the environment-file source test')
+# The documented provisioning command after `uv python install`, run from the repository root.
+PROVISION_COMMAND = ('uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'utf8', '-m', 'tools.dev.provision')
 
 
 def copy_entrypoint_tree(root):
     """Copy the provisioning sources and their repository data dependencies."""
     shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
-    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin-store/Cargo.toml'):
+    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin-store/Cargo.toml', 'justfile',
+                 '.config/nextest.toml'):
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
+
+
+# How each fake cargo tool answers the provisioner's check, as a tool that meets its requirement.
+# just and nextest enforce their own minimums, so their fakes answer for themselves and name no
+# version; the cargo-c fake reports the floor in the doctor's row of ROOT's tree.
+FAKE_ANSWERS = {
+    'just': ("if '--summary' in sys.argv: sys.exit(0)\n"
+             "if sys.argv[1:] == ['--version']: print('just (synthetic)'); sys.exit(0)\n"
+             "sys.exit(97)\n"),
+    'cargo-nextest': ("if sys.argv[1:] != ['nextest', 'show-config', 'version']: sys.exit(97)\n"
+                      "print('current nextest version: synthetic'); print('evaluation result: ok')\n"),
+    'cargo-cinstall': ("if sys.argv[1:] != ['--version']: sys.exit(97)\n"
+                       "sys.path.insert(0, str(root)); from tools.dev.doctor import TOOLS\n"
+                       "print('cargo-c', next(t.minimum for t in TOOLS if t.name == 'cargo-c'))\n"),
+}
+
+
+# A fake tool is a .cmd on Windows, and cmd.exe does not start without SYSTEMROOT.
+WINDOWS_ENV = {'SYSTEMROOT': os.environ['SYSTEMROOT']} if os.name == 'nt' else {}
+
+
+def floor_source(name, root, answer=None):
+    """The source of the fake NAME for ROOT's tree: ANSWER, or the answer of a tool that meets it."""
+    return f'import pathlib, sys\nroot = pathlib.Path({str(root)!r})\n{answer or FAKE_ANSWERS[name]}'
+
+
+def floor_tool(directory, name, root, answer=None):
+    """Write the fake NAME in DIRECTORY with the shared fake-tool helper."""
+    return test_support.python_tool(directory, name, floor_source(name, root, answer))
 
 
 class EntrypointFixtureTests(unittest.TestCase):
@@ -44,6 +93,205 @@ class EntrypointFixtureTests(unittest.TestCase):
                 cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), provision.vcpkg.triplet())
+
+
+class CargoToolTests(unittest.TestCase):
+    """The provisioner keeps just, cargo-nextest and cargo-c at their floors, or installs them."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.bin = Path(temporary.name)
+        self.calls = self.bin / 'calls'
+        self.env = {'PATH': str(self.bin), 'OXPINYIN_CACHE': str(self.bin / 'cache'), **WINDOWS_ENV}
+
+    def fake_cargo(self):
+        """A cargo whose `install` records the call and writes that crate's fake at its floor."""
+        sources = {crate: (executable, floor_source(executable, ROOT)) for crate, executable in
+                   (('just', 'just'), ('cargo-nextest', 'cargo-nextest'), ('cargo-c', 'cargo-cinstall'))}
+        test_support.python_tool(self.bin, 'cargo', (
+            f'import sys\nsys.path.insert(0, {str(ROOT)!r})\nfrom tools.dev import test_support\n'
+            f'with open({str(self.calls)!r}, "a") as calls: calls.write(" ".join(sys.argv[1:]) + "\\n")\n'
+            'if len(sys.argv) != 7 or sys.argv[1] != "install" or sys.argv[3] != "--version" or sys.argv[5:] != ["--locked", "--quiet"]: sys.exit(97)\n'
+            f'test_support.python_tool({str(self.bin)!r}, *{sources!r}[sys.argv[2]])\n'))
+
+    def provision(self):
+        service = provision.Provision(root=ROOT, env=self.env)
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            try:
+                service.cargo_tools()
+                status = 0
+            except Finished as finished:
+                status = finished.status
+        return status, error.getvalue(), service
+
+    def recorded(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_tools_that_meet_their_requirements_are_kept_silently(self):
+        for name in FAKE_ANSWERS:
+            floor_tool(self.bin, name, ROOT)
+        self.fake_cargo()
+        for _ in range(2):
+            self.assertEqual(self.provision()[:2], (0, ''))
+        self.assertEqual(self.recorded(), [])
+
+    def test_a_missing_tool_is_installed_once(self):
+        floor_tool(self.bin, 'cargo-nextest', ROOT)
+        floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        self.fake_cargo()
+        status, error, _ = self.provision()
+        self.assertEqual(status, 0, error)
+        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
+        self.assertIn("installing just 1.59.0 with cargo (requires the justfile's minimum-version)", error)
+        self.assertIn("installed just: just (synthetic) at ", error)
+        self.assertEqual(self.provision()[:2], (0, ''))
+        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
+
+    def test_missing_nextest_and_cargo_c_install_the_pinned_fallbacks(self):
+        floor_tool(self.bin, 'just', ROOT)
+        self.fake_cargo()
+        status, error, _ = self.provision()
+        self.assertEqual(status, 0, error)
+        self.assertEqual(self.recorded(), [
+            'install cargo-nextest --version 0.9.150 --locked --quiet',
+            'install cargo-c --version 0.10.25 --locked --quiet',
+        ])
+
+    def test_a_just_that_refuses_the_justfile_is_replaced(self):
+        floor_tool(self.bin, 'just', ROOT, "sys.exit(1 if '--summary' in sys.argv else 97)\n")
+        floor_tool(self.bin, 'cargo-nextest', ROOT)
+        floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        self.fake_cargo()
+        status, error, _ = self.provision()
+        self.assertEqual(status, 0, error)
+        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
+
+    def test_a_nextest_that_refuses_its_requirement_stops_when_cargo_cannot_fix_it(self):
+        floor_tool(self.bin, 'just', ROOT)
+        floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        floor_tool(self.bin, 'cargo-nextest', ROOT, "print('evaluation result: does not meet required version')\n"
+                                                    "sys.exit(92)\n")
+        test_support.python_tool(self.bin, 'cargo', 'import sys\nsys.exit(0)\n')
+        status, error, _ = self.provision()
+        self.assertEqual(status, 1)
+        self.assertTrue(error.endswith('FAIL: cargo-nextest does not meet the nextest-version in '
+                                       '.config/nextest.toml after cargo install; put $CARGO_HOME/bin on PATH\n'),
+                        error)
+
+    def test_a_missing_tool_without_cargo_stops(self):
+        floor_tool(self.bin, 'just', ROOT)
+        floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        status, error, _ = self.provision()
+        self.assertEqual((status, error), (1, 'FAIL: installing cargo-nextest needs cargo; follow docs/runbooks/setup.md\n'))
+
+    def test_an_installed_tool_that_stays_below_its_floor_stops(self):
+        for name in ('just', 'cargo-nextest'):
+            floor_tool(self.bin, name, ROOT)
+        test_support.python_tool(self.bin, 'cargo', 'import sys\nsys.exit(0)\n')
+        status, error, _ = self.provision()
+        self.assertEqual(status, 1)
+        self.assertRegex(error, r'FAIL: cargo-c does not meet \S+ or later after cargo install; '
+                                r'put \$CARGO_HOME/bin on PATH\n$')
+
+    def test_the_cache_root_comes_from_just_when_it_is_unset(self):
+        for name in ('cargo-nextest', 'cargo-cinstall'):
+            floor_tool(self.bin, name, ROOT)
+        cache = str(self.bin / 'from-just')
+        floor_tool(self.bin, 'just', ROOT, (
+            f'if sys.argv[1:] == ["--justfile", {str(ROOT / "justfile")!r}, "cache-root"]: print({cache!r}); sys.exit(0)\n'
+            + FAKE_ANSWERS['just']))
+        self.env.pop('OXPINYIN_CACHE')
+        status, error, service = self.provision()
+        self.assertEqual((status, error), (0, ''))
+        self.assertEqual(service.env['OXPINYIN_CACHE'], cache)
+        self.env['OXPINYIN_CACHE'] = ''
+        self.assertEqual(self.provision()[2].env['OXPINYIN_CACHE'], '')
+
+    def test_the_cache_root_from_just_loses_a_crlf_line_ending(self):
+        # The Windows cache-root recipe writes its line with Console.WriteLine.
+        for name in ('cargo-nextest', 'cargo-cinstall'):
+            floor_tool(self.bin, name, ROOT)
+        cache = str(self.bin / 'from-just')
+        floor_tool(self.bin, 'just', ROOT, (
+            f'if sys.argv[1:] == ["--justfile", {str(ROOT / "justfile")!r}, "cache-root"]:\n'
+            f'    sys.stdout.buffer.write({cache!r}.encode() + bytes([13, 10])); sys.exit(0)\n'
+            + FAKE_ANSWERS['just']))
+        self.env.pop('OXPINYIN_CACHE')
+        status, error, service = self.provision()
+        self.assertEqual((status, error), (0, ''))
+        self.assertEqual(service.env['OXPINYIN_CACHE'], cache)
+
+
+class RustAnalyzerTests(unittest.TestCase):
+    """The provisioner keeps the toolchain's rust-analyzer component, or adds it with rustup."""
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.bin = Path(temporary.name)
+        self.calls = self.bin / 'calls'
+        self.added = self.bin / 'added'
+        self.env = {'PATH': str(self.bin), **WINDOWS_ENV}
+        test_support.python_tool(self.bin, 'rust-analyzer', "print('rust-analyzer (synthetic)')\n")
+
+    def fake_rustup(self, add_status=0):
+        """A rustup whose `component add` succeeds with ADD_STATUS 0 and makes `which` find it."""
+        test_support.python_tool(self.bin, 'rustup', (
+            'import pathlib, sys\n'
+            f'added = pathlib.Path({str(self.added)!r})\n'
+            f'with open({str(self.calls)!r}, "a") as calls: calls.write(" ".join(sys.argv[1:]) + "\\n")\n'
+            "if sys.argv[1:] == ['which', 'rust-analyzer']: sys.exit(0 if added.exists() else 1)\n"
+            "if sys.argv[1:] == ['component', 'add', 'rust-analyzer']:\n"
+            f"    {'added.touch()' if not add_status else 'pass'}; sys.exit({add_status})\n"
+            'sys.exit(97)\n'))
+
+    def provision(self):
+        service = provision.Provision(root=ROOT, env=self.env)
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            try:
+                service.rust_analyzer()
+                status = 0
+            except Finished as finished:
+                status = finished.status
+        return status, error.getvalue()
+
+    def recorded(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def test_a_present_component_is_kept_silently(self):
+        self.fake_rustup()
+        self.added.touch()
+        self.assertEqual(self.provision(), (0, ''))
+        self.assertEqual(self.recorded(), ['which rust-analyzer'])
+
+    def test_a_missing_component_is_added_once(self):
+        self.fake_rustup()
+        status, error = self.provision()
+        self.assertEqual(status, 0, error)
+        self.assertEqual(self.recorded(), ['which rust-analyzer', 'component add rust-analyzer', 'which rust-analyzer'])
+        self.assertIn('adding the rust-analyzer component with rustup', error)
+        self.assertIn('added rust-analyzer (synthetic)', error)
+        self.assertEqual(self.provision(), (0, ''))
+
+    def test_a_failed_add_stops(self):
+        self.fake_rustup(add_status=1)
+        status, error = self.provision()
+        self.assertEqual(status, 1)
+        self.assertTrue(error.endswith('FAIL: rustup component add rust-analyzer failed\n'), error)
+
+    def test_a_rust_analyzer_that_runs_is_kept_without_rustup(self):
+        self.assertEqual(self.provision(), (0, ''))
+        self.assertEqual(self.recorded(), [])
+
+    def test_a_rust_analyzer_that_fails_without_rustup_stops(self):
+        test_support.python_tool(self.bin, 'rust-analyzer', 'import sys\nsys.exit(1)\n')
+        self.assertEqual(self.provision(),
+                         (1, 'FAIL: adding rust-analyzer needs rustup; follow docs/runbooks/setup.md\n'))
+
+    def test_a_missing_rust_analyzer_without_rustup_stops(self):
+        for path in self.bin.glob('rust-analyzer*'):
+            path.unlink()
+        self.assertEqual(self.provision(),
+                         (1, 'FAIL: adding rust-analyzer needs rustup; follow docs/runbooks/setup.md\n'))
 
 
 def record_prefix(prefix, backend, root=ROOT, pin=None, architecture=None):
@@ -121,10 +369,50 @@ if sys.platform.startswith('linux'):
                 path.write_bytes(data)
             self.assertTrue(self.service.libs_ok('bdb'))
 
-        def source(self, cell, path=None):
-            command = 'source "$1" || exit; printf "%s\\0" "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_LIBPINYIN_DATA_DIR" "${OXPINYIN_TKRZW_PREFIX:-}" "${OXPINYIN_TKRZW_LIBRARY:-}" "$PATH" "${LD_LIBRARY_PATH:-}" "${PKG_CONFIG_PATH:-}"'
-            return subprocess.run(['bash', '-c', command, 'fixture', str(path or self.service.env_file)],
+        def source(self, cell, path=None, shell='sh'):
+            command = '. "$1" || exit; printf "%s\\0" "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_LIBPINYIN_DATA_DIR" "${OXPINYIN_TKRZW_PREFIX:-}" "${OXPINYIN_TKRZW_LIBRARY:-}" "$PATH" "${LD_LIBRARY_PATH:-}" "${PKG_CONFIG_PATH:-}"'
+            executable = shell_or_skip(self, shell)
+            return subprocess.run([executable, '-c', command, 'fixture', str(path or self.service.env_file)],
                                   env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
+
+        def test_the_environment_file_sources_alike_in_sh_dash_and_zsh(self):
+            self.service.tkrzw_host_library = ''
+            self.write()
+            text = self.service.env_file.read_text()
+            self.assertTrue(text.startswith(provision.ENV_HEADER + '\n'))
+            self.assertNotIn("$'", text)
+            for cell in provision.CELLS:
+                answers = set()
+                for shell in SOURCE_SHELLS:
+                    with self.subTest(cell=cell, shell=shell):
+                        done = self.source(cell, shell=shell)
+                        self.assertEqual(done.returncode, 0, done.stderr.decode())
+                        fields = done.stdout.split(b'\0')
+                        self.assertEqual(fields[0], str(self.service.oracle_root / cell).encode())
+                        self.assertEqual(fields[1], str(self.service.oracle_root / cell / 'lib/libpinyin/data').encode())
+                        self.assertTrue(fields[4].startswith(self.service.uv_dir.encode()) or
+                                        fields[4].startswith(str(self.service.tkrzw_prefix).encode()), fields[4])
+                        answers.add(done.stdout)
+                self.assertEqual(len(answers), 1, f'{cell}: the shells disagree')
+            for shell in SOURCE_SHELLS:
+                with self.subTest(shell=shell):
+                    done = self.source('other', shell=shell)
+                    self.assertEqual(done.returncode, 1)
+                    self.assertEqual(done.stderr, b'cell other was not provisioned by this environment file\n')
+
+        def test_a_file_from_the_retired_shell_setup_is_regenerated_not_parsed(self):
+            legacy = self.work / 'legacy-prefix'
+            self.service.env_file.write_text(
+                '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
+                "_oxp_provisioned=' bdb kc tkrzw '\n"
+                f'export OXPINYIN_ORACLE_PREFIX_KC=$\'{legacy}\'\n'
+                f"export OXPINYIN_ORACLE_PREFIX_TKRZW='{self.service.oracle_root / 'tkrzw'}'\n")
+            self.service.cells = ['bdb']
+            self.assertIn('not written by this provisioner; regenerated', self.write())
+            self.assertEqual(provision.read_env(self.service.env_file).keys() & {
+                'OXPINYIN_ORACLE_PREFIX_KC', 'OXPINYIN_ORACLE_PREFIX_TKRZW'}, set())
+            self.assertEqual(self.source('bdb').returncode, 0)
+            self.assertEqual(self.source('tkrzw').returncode, 1)
 
         def test_data_manifest_cases_and_exact_diagnostics(self):
             for cell in provision.CELLS:
@@ -274,16 +562,23 @@ if sys.platform.startswith('linux'):
                 self.assertEqual(provision.main(['probe-host']), 1)
 
         def test_shell_quoting_round_trips_without_evaluating_values(self):
-            for value in ("", "plain/a-b.c_+=,:%@", "quotes '\" and $dollars`", "a\nb\tc\r\x01\x7f", "~#&|;()<>!?[]{}*"):
-                for always in (False, True):
-                    with self.subTest(value=value, always=always):
-                        decoded = subprocess.check_output(['bash', '-c', 'value=' + provision.quote(value, always=always) + '; printf "%s" "$value"'], env=self.env).decode()
-                        self.assertEqual(decoded, value)
+            for value in ("", "plain/a-b.c_+=,:%@", "quotes '\" and $dollars`", "'", "''\\", "~#&|;()<>!?[]{}*", "路径 with spaces"):
+                line = 'export VALUE=' + provision.quote(value)
+                for shell in SOURCE_SHELLS:
+                    with self.subTest(value=value, shell=shell):
+                        decoded = subprocess.check_output([shell_or_skip(self, shell), '-c', line + '; printf "%s" "$VALUE"'], env=self.env)
+                        self.assertEqual(decoded.decode(), value)
+                with self.subTest(value=value, reader='read_env'):
+                    self.service.env_file.write_text(provision.ENV_HEADER + '\n' + line + '\n')
+                    self.assertEqual(provision.read_env(self.service.env_file), {'VALUE': value})
+            for value in ("a\nb", "tab\there", "\x01", "\x7f"):
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'control character'):
+                    provision.quote(value)
 
 
 if sys.platform.startswith('linux'):
     class EntrypointTests(unittest.TestCase):
-        """Run the setup entry point with fake host processes."""
+        """Run the documented provisioning command with fake host processes."""
         def setUp(self):
             temp = tempfile.TemporaryDirectory()
             self.addCleanup(temp.cleanup)
@@ -299,7 +594,7 @@ if sys.platform.startswith('linux'):
 import os,pathlib,sys,time
 name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 if name=='uv':
-    if a==['--version']: print('uv '+os.environ.get('FAKE_UV_VERSION','0.11.32')+' (synthetic)')
+    if a==['--version']: print('uv 0.0.0 (synthetic)')
     elif a[:2]==['python','find']:
         if os.environ.get('FAKE_PYTHON_FAILURE'): sys.exit(1)
         print(sys.executable)
@@ -344,6 +639,9 @@ elif name in ('curl','apt-get','sudo'):
                             OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'), OXPINYIN_CCR_DIR=str(self.work / 'ccr'),
                             OXPINYIN_SYSTEM_CA_BUNDLES=str(self.work / 'no-system-ca'), OXPINYIN_CONTAINER='podman',
                             CALLS=str(self.calls))
+            # The cargo tools the provisioner keeps, each at its floor, so it installs nothing.
+            for name in FAKE_ANSWERS:
+                floor_tool(self.bin, name, self.root)
             # Keep host executables isolated; cargo and dump utilities never execute.
             (self.bin / 'db5.3_dump').symlink_to('/bin/true')
             cargo = self.bin / 'cargo'
@@ -351,7 +649,7 @@ elif name in ('curl','apt-get','sudo'):
             cargo.chmod(0o755)
 
         def run_entry(self, args):
-            return subprocess.run(['bash', str(self.root / 'tools/cloud/setup.sh'), *args],
+            return subprocess.run([*PROVISION_COMMAND, *args], executable=self.bin / 'uv',
                                   cwd=self.root, env=self.env, capture_output=True, timeout=25)
 
         def check_entry(self, args, expected):
@@ -364,9 +662,12 @@ elif name in ('curl','apt-get','sudo'):
             for args in (['--unknown'], ['--cells', 'bad'], ['--cells', '']):
                 with self.subTest(args=args):
                     self.check_entry(args, 2)
-            for option in ('--cells', '--jobs', '--no-pull'):
-                args = ['--python-only', option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs') else [])
-                self.check_entry(args, 2)
+            for mode in (['--python-only'], ['--dev-tools'], ['--python-only', '--dev-tools']):
+                for option in ('--cells', '--jobs', '--no-pull'):
+                    args = mode + [option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs') else [])
+                    with self.subTest(args=args):
+                        self.assertEqual(self.check_entry(args, 2).stderr, b'--python-only and --dev-tools cannot be '
+                                                                           b'combined with --cells, --jobs or --no-pull\n')
             # The host takes OXPINYIN_CACHE; --cache-dir exists only at the performance image's mount.
             self.check_entry(['--cache-dir', str(self.work / 'named')], 2)
             for option in ('--cells', '--jobs'):
@@ -376,24 +677,22 @@ elif name in ('curl','apt-get','sudo'):
                 self.assertEqual(done.returncode, 1)
                 self.assertEqual(done.stderr, (option + ': requires an argument\n').encode())
 
-        def test_uv_bootstrap_semver_and_install_failures(self):
-            for version in ('0.11.32', '0.14.2', '0.11.32+build.7', '0.14.0-beta.1', '0.13.2-rc.1+build.7'):
-                with self.subTest(version=version):
-                    self.env['FAKE_UV_VERSION'] = version
-                    self.check_entry(['--python-only'], 0)
-            for version in ('0.11.31', '0.11.32-beta.1', '0.11.32-rc.1+build.7', '0.11.32-0', '0.10.9-rc.1'):
-                with self.subTest(version=version):
-                    self.env['FAKE_UV_VERSION'] = version
-                    result = self.check_entry(['--python-only'], 1)
-                    self.assertIn(b'FAIL: uv download failed', result.stderr)
-            self.env.pop('FAKE_UV_VERSION')
-            destination = self.work / 'regular-file'
-            destination.touch()
-            self.env['UV_INSTALL_DIR'] = str(destination)
-            self.assertIn(b'uv installation directory is not writable', self.check_entry(['--python-only'], 1).stderr)
-            self.env.pop('UV_INSTALL_DIR')
+        def test_interpreter_overrides_are_refused_before_any_work(self):
+            # PYTHONHOME is refused too, but a wrong one stops the interpreter before any check.
+            for name in ('UV_PYTHON', 'PYTHONPATH', 'UV_PYTHON_PREFERENCE'):
+                self.env[name] = str(self.work / 'override')
+                for args in (['--python-only'], ['--cells', 'bdb'], ['--unknown']):
+                    with self.subTest(name=name, args=args):
+                        self.calls.unlink(missing_ok=True)
+                        done = self.check_entry(args, 1)
+                        self.assertEqual(done.stderr.decode(), f'FAIL: unsupported interpreter override(s): '
+                                                               f'{name}; unset them before provisioning\n')
+                        self.assertFalse(self.calls.exists())
+                self.env.pop(name)
+
+        def test_an_unmanaged_interpreter_is_refused(self):
             self.env['FAKE_PYTHON_FAILURE'] = '1'
-            self.assertIn(b'FAIL: managed Python provisioning failed', self.check_entry(['--python-only'], 1).stderr)
+            self.assertIn(b'FAIL: the running interpreter is not a uv-managed', self.check_entry(['--python-only'], 1).stderr)
             self.env.pop('FAKE_PYTHON_FAILURE')
 
         def test_valgrind_minimum_and_install_retry(self):
@@ -433,6 +732,38 @@ elif name in ('curl','apt-get','sudo'):
             self.env['FAKE_EXT4'] = 'unknown'
             self.check_entry(['--python-only'], 0)
 
+        def only_fakes_on_path(self, *absent):
+            """Leave only the fake directory on PATH, without the ABSENT tools."""
+            self.env['PATH'] = str(self.bin)
+            for name in absent:
+                (self.bin / name).unlink()
+
+        def test_python_only_needs_no_cargo_rustup_or_cargo_tools(self):
+            self.only_fakes_on_path('cargo', 'rustup', *FAKE_ANSWERS)
+            self.env.pop('OXPINYIN_CACHE')
+            done = self.check_entry(['--python-only'], 0)
+            self.assertIn(b'Verified managed CPython', done.stdout)
+            self.assertIn(b'stopping after Python provisioning (--python-only)', done.stderr)
+            self.assertNotIn(b'FAIL', done.stderr)
+
+        def test_dev_tools_keeps_present_tools_without_cargo(self):
+            self.only_fakes_on_path('cargo')
+            for args in (['--dev-tools'], ['--python-only', '--dev-tools']):
+                with self.subTest(args=args):
+                    done = self.check_entry(args, 0)
+                    self.assertIn(b'Verified managed CPython', done.stdout)
+                    self.assertIn(b'stopping after the development tools (--dev-tools)', done.stderr)
+                    self.assertNotIn(b'installing', done.stderr)
+            self.assertFalse((self.work / 'oracle.env').exists())
+
+        def test_dev_tools_stops_when_a_missing_tool_needs_an_absent_cargo(self):
+            self.only_fakes_on_path('cargo', 'cargo-nextest')
+            for args in (['--dev-tools'], ['--python-only', '--dev-tools']):
+                with self.subTest(args=args):
+                    done = self.check_entry(args, 1)
+                    self.assertEqual(done.stderr, b'FAIL: installing cargo-nextest needs cargo; '
+                                                  b'follow docs/runbooks/setup.md\n')
+
         def test_wslc_and_apple_container_are_provisioned_through_the_adapter(self):
             # Neither is refused: each reaches its own readiness command, which these fakes fail.
             self.verified_model()
@@ -466,7 +797,7 @@ elif name in ('curl','apt-get','sudo'):
             rows = [line for line in current.stdout.decode().splitlines() if 'data manifest OK' in line]
             self.assertEqual([line.split()[0] for line in rows], ['kc', 'bdb'])
             for cell in ('bdb', 'kc'):
-                source = subprocess.run(['bash', '-c', 'source "$1"; printf "%s" "$PINYIN_ORACLE_PREFIX"',
+                source = subprocess.run(['sh', '-c', '. "$1"; printf "%s" "$PINYIN_ORACLE_PREFIX"',
                                          'fixture', self.env['OXPINYIN_ORACLE_ENV']],
                                         env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
                 self.assertEqual(source.returncode, 0, source.stderr.decode())
@@ -506,8 +837,8 @@ elif name in ('curl','apt-get','sudo'):
                 else:
                     self.env.pop('OXPINYIN_PROXY_CA', None)
                 ready.unlink(missing_ok=True)
-                setup = self.root / 'tools/cloud/setup.sh'
-                child = subprocess.Popen(['bash', str(setup), '--cells', 'bdb'], cwd=self.root, env=self.env,
+                child = subprocess.Popen([*PROVISION_COMMAND, '--cells', 'bdb'], executable=self.bin / 'uv',
+                                         cwd=self.root, env=self.env,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 self.addCleanup(lambda: child.poll() is not None or os.killpg(child.pid, signal.SIGKILL))
                 deadline = time.monotonic() + 10

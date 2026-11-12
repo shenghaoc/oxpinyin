@@ -26,7 +26,7 @@ ARG ORACLE_PLATFORM=linux/amd64
 
 FROM --platform=$ORACLE_PLATFORM debian:testing AS deps
 
-# Behind a TLS-intercepting egress proxy (a cloud session: tools/cloud/setup.sh)
+# Behind a TLS-intercepting egress proxy (a cloud session: tools.dev.provision)
 # the proxy arrives as the predefined build arg https_proxy and its CA as the
 # optional BuildKit secret `cacert`; apt trusts that CA for any https source.
 # The base image keeps its default Debian mirrors, so the packages and the

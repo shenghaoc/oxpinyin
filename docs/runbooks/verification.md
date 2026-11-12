@@ -61,7 +61,6 @@ Subject to [verification scope and precedence](#verification-scope-and-precedenc
   - `cargo deny --locked --log-level error check`
   - `cargo deny --locked --all-features --log-level error check`
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
-- ShellCheck when a shell script changed.
 - Lizard 1.24.0 (`lizard crates/ -l rust -C 40 -w`) when Rust functions changed. CCN 40 is the limit. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
 - `just test-tools` when `tools/` changed.
 
@@ -176,7 +175,7 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 
 Run the tkrzw cell, the reference cell, only against a sound libtkrzw.
 Linux development and CI use the repository's vcpkg overlay port.
-`tools/cloud/setup.sh` installs it and writes the library path and certification
+`tools.dev.provision` installs it and writes the library path and certification
 prefix. Debian release packaging, shipping-size measurements and oracle/reference
 images retain Debian's library. Ubuntu's packaged library is not a development route.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
@@ -201,9 +200,6 @@ If no sound library is available, report "tkrzw: not run (no sound libtkrzw on t
 - Report results and reproduction commands under the [reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
   Use the benches procedure to interpret measurements.
   Raw captures are not submission requirements.
-- Use Bash 5.0 or newer for shell scripts.
-  ShellCheck 0.11.0 is the lint floor.
-  See [setup](setup.md).
 
 ## 10. CI merge conditions
 

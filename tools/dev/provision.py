@@ -1,6 +1,8 @@
-"""Post-bootstrap cloud provisioning and shell-readable oracle environments.
+"""Cloud provisioning and the shell-readable oracle environment.
 
-The shell entry point owns only uv/interpreter bootstrap. Compatibility identity,
+Run from the repository root after `uv python install`:
+`uv run --no-project --managed-python python -X utf8 -m tools.dev.provision`.
+uv enforces its own floor (uv.toml required-version). Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
 """
@@ -34,74 +36,40 @@ from tools.tkrzw import runtime
 from . import vcpkg
 
 CELLS = backend_cell.CELLS
-SELECT = '''case $_oxp_provisioned in
-    *" $PINYIN_ORACLE_DBM "*) ;;
-    *) echo "cell $PINYIN_ORACLE_DBM was not provisioned by this environment file" >&2; unset _oxp_provisioned; return 1 ;;
-esac
-_oxp_cell=${PINYIN_ORACLE_DBM^^}
-_oxp_prefix=OXPINYIN_ORACLE_PREFIX_$_oxp_cell
-_oxp_data=OXPINYIN_ORACLE_DATA_$_oxp_cell
-export PINYIN_ORACLE_PREFIX=${!_oxp_prefix:?cell not provisioned by tools/cloud/setup.sh}
-export OXPINYIN_LIBPINYIN_DATA_DIR=${!_oxp_data}
-unset _oxp_cell _oxp_prefix _oxp_data _oxp_provisioned
-'''
+# The first line of every environment file this module writes. A file without it came from
+# the retired shell setup and is regenerated, never parsed.
+ENV_HEADER = '# Written by tools.dev.provision; source it from sh, dash, bash or zsh; do not edit it.'
+_EXPORT = re.compile(r"export ([A-Za-z_][A-Za-z_0-9]*)=((?:'[^']*'|\\')+)")
+_QUOTED = re.compile(r"'([^']*)'|\\(')")
 
 
-def quote(value, *, always=False):
-    """Serialize Bash %q words and @Q path prefixes without evaluating values."""
+def quote(value):
+    """Single-quote VALUE as one POSIX shell word; refuse control characters.
+
+    The environment file holds paths and cell names, so no value needs ANSI-C quoting."""
     value = str(value)
-    if not value:
-        return "''"
-    controls = {'\a': r'\a', '\b': r'\b', '\t': r'\t', '\n': r'\n',
-                '\v': r'\v', '\f': r'\f', '\r': r'\r', '\x1b': r'\E'}
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
-        escaped = ''.join(controls.get(char, '\\' + char if char in "'\\" else
-                                      r'\177' if ord(char) == 127 else
-                                      f'\\{ord(char):03o}' if ord(char) < 32 else char) for char in value)
-        return "$'" + escaped + "'"
-    if always:
-        return "'" + value.replace("'", "'\\''") + "'"
-    special = set(" ,'" + '"' + '\\' + '`$&|;()<>!*?[]{}')
-    return ''.join('\\' + char if char in special or char == '#' and index == 0 or
-                   char == '~' and (index == 0 or value[index - 1] in '=:') else char
-                   for index, char in enumerate(value))
+        raise ValueError(f'environment file value has a control character: {value!r}')
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
-def assignments(path, names):
-    """Read only generated assignments, omitting the environment selector.
+def read_env(path):
+    """Return the single-quoted exports of an environment file this module wrote.
 
-    Legacy printf %q files use backslash or ANSI-C quoting. Bash sources only
-    their assignment words; membership/selector and arbitrary lines never run.
-    The caller supplies the allowlisted variable names and an empty inheritance.
-    """
-    selected = []
-    if Path(path).is_file():
-        for line in Path(path).read_text().splitlines():
-            match = re.fullmatch(r'(?:export )?([A-Za-z_][A-Za-z_0-9]*)=(.*)', line)
-            if match and match[1] in names:
-                selected.append(line)
-    if not selected:
-        return {}
-    # Existing files are setup-generated shell source. Keep its quoting and
-    # intentional empty loader inheritance when decoding those exact fields.
-    script = '\n'.join(selected) + '\n' + '\n'.join(
-        'printf "%s\\0" "${' + name + '-}"' for name in names)
-    done = capture(['bash', '-c', script], env={'PATH': os.environ.get('PATH', '')})
-    return dict(zip(names, done.stdout.decode().split('\0')[:-1]))
-
-
-def tkrzw_env_prefix(path):
-    """Read a cache prefix, including pre-OXPINYIN_TKRZW_PREFIXES files."""
+    Only lines that start `export NAME='...'` count; the first assignment of a name wins.
+    An absent file, or one without ENV_HEADER, yields {}."""
     path = Path(path)
     if not path.is_file():
-        return ''
+        return {}
     lines = path.read_text().splitlines()
-    if any(line.startswith('export OXPINYIN_TKRZW_PREFIX=') for line in lines):
-        return assignments(path, ['OXPINYIN_TKRZW_PREFIX']).get('OXPINYIN_TKRZW_PREFIX', '')
-    if any(line.startswith('export OXPINYIN_TKRZW_LIBRARY=') for line in lines):
-        return ''
-    lib = assignments(path, ['LD_LIBRARY_PATH']).get('LD_LIBRARY_PATH', '').split(':')[0]
-    return lib[:-4] if lib.endswith('/lib') else ''
+    if lines[:1] != [ENV_HEADER]:
+        return {}
+    values = {}
+    for line in lines[1:]:
+        match = _EXPORT.match(line)
+        if match:
+            values.setdefault(match[1], ''.join(a or b for a, b in _QUOTED.findall(match[2])))
+    return values
 
 
 def check_manifest(manifest, cwd):
@@ -185,9 +153,9 @@ class Provision:
                 self.jobs = '2'
         else:
             self.jobs = str(os.cpu_count() or 2)
-        self.pull, self.python_only = True, False
+        self.pull, self.python_only, self.dev_tools = True, False, False
         self.platform = ''
-        self.started = time.monotonic() - int(self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_SECONDS', '0'))
+        self.started = time.monotonic()
         self.tkrzw_local = False
         self.tkrzw_host_library = ''
         self.ctr = ''
@@ -196,6 +164,11 @@ class Provision:
         self.custom_ca = False
         self.net_flags, self.env_flags = ['--network', 'host'], []
         self.uv_dir = str(Path(shutil.which('uv', path=self.env.get('PATH')) or 'uv').parent)
+
+    @property
+    def without_oracle(self):
+        """--python-only and --dev-tools both stop before the oracle setup."""
+        return self.python_only or self.dev_tools
 
     @property
     def linux(self):
@@ -247,9 +220,11 @@ class Provision:
         while args:
             option = args.pop(0)
             if option in ('-h', '--help'):
-                raise Finished(0)  # Historical setup.sh's header extraction prints nothing.
+                raise Finished(0)  # The retired shell setup printed nothing for --help.
             if option == '--python-only':
                 self.python_only = True
+            elif option == '--dev-tools':
+                self.dev_tools = True
             elif option in ('--cells', '--jobs') or option == '--cache-dir' and in_image:
                 oracle_options = True
                 if not args:
@@ -266,8 +241,8 @@ class Provision:
                 self.pull = False
             else:
                 fail(f'unknown option: {option}', 2)
-        if self.python_only and oracle_options:
-            fail('--python-only cannot be combined with --cells, --jobs or --no-pull', 2)
+        if self.without_oracle and oracle_options:
+            fail('--python-only and --dev-tools cannot be combined with --cells, --jobs or --no-pull', 2)
         arch = platform.machine()
         self.platform = {'x86_64': 'linux/amd64', 'AMD64': 'linux/amd64', 'aarch64': 'linux/arm64',
                          'arm64': 'linux/arm64', 'ARM64': 'linux/arm64'}.get(arch, '')
@@ -293,7 +268,7 @@ class Provision:
 
     def prerequisites(self):
         """Require native tools only for full setup; share doctor's version formats."""
-        if self.python_only:
+        if self.without_oracle:
             return
         for name, diagnostic in (
                 ('cargo', 'cargo is missing; install the rustup-managed toolchain from rust-toolchain.toml (docs/runbooks/setup.md)'),
@@ -337,6 +312,70 @@ class Provision:
                 self.die(f'valgrind {tool.minimum} or newer required; the distribution archive provides: {found() or "none"}')
         self.valgrind_version = found()
 
+    def accepted(self, tool):
+        """Whether TOOL is on PATH and meets its requirement, by the doctor's own check."""
+        if not self.which(tool.executable):
+            return False
+        try:
+            doctor.check_tool(tool, self.env)
+        except doctor.DoctorError:
+            return False
+        return True
+
+    def cargo_tools(self):
+        """Keep tools at their floors or install their pinned crates.io fallbacks."""
+        for crate, pin in doctor.CARGO_TOOL_PINS.items():
+            tool = doctor.cargo_tool(crate, self.root)
+            if self.accepted(tool):
+                continue
+            if not self.which('cargo'):
+                self.die(f'installing {crate} needs cargo; follow docs/runbooks/setup.md')
+            self.log(f'installing {crate} {pin} with cargo (requires {doctor.requirement(tool)})')
+            if run([self.which('cargo'), 'install', crate, '--version', pin, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
+                self.die(f'cargo install {crate} failed; allow index.crates.io and static.crates.io '
+                         '(docs/runbooks/cloud.md)')
+            if not self.accepted(tool):
+                self.die(f'{crate} does not meet {doctor.requirement(tool)} after cargo install; '
+                         'put $CARGO_HOME/bin on PATH')
+            self.log('installed ' + doctor.check_tool(tool, self.env))
+        # The setup entry does not start from a just recipe, so it asks just for the cache root
+        # that the recipes export (docs/runbooks/setup.md#cache-directory). Without an answer the
+        # variable stays unset: a run that needs the cache refuses, and --python-only needs none.
+        if 'OXPINYIN_CACHE' not in self.env:
+            done = capture([self.which('just') or 'just', '--justfile', str(self.root / 'justfile'), 'cache-root'],
+                           env=self.env, check=False, stderr=False)
+            if not done.status:
+                # The Windows recipe ends its line with CRLF.
+                self.env['OXPINYIN_CACHE'] = done.stdout.decode().rstrip('\r\n')
+
+    def rust_analyzer(self):
+        """Keep the toolchain's rust-analyzer component, or add it with rustup.
+
+        Development hosts need it; CI does not, so rust-toolchain.toml does not list it. rustup
+        runs in the checkout, so the component belongs to the toolchain that file selects."""
+        # Each program runs at the path found on self.env's PATH: on Windows a bare name
+        # resolves against the PATH of this process instead.
+        rustup, analyzer = self.which('rustup'), self.which('rust-analyzer')
+        with open(os.devnull, 'wb') as null:
+            if not rustup:
+                # Without rustup no proxy answers for a missing component: a rust-analyzer
+                # that runs is a real one, and it is kept.
+                if analyzer and not run([analyzer, '--version'], env=self.env, cwd=self.root,
+                                        stdout=null, stderr=null, check=False):
+                    return
+                self.die('adding rust-analyzer needs rustup; follow docs/runbooks/setup.md')
+            if not run([rustup, 'which', 'rust-analyzer'], env=self.env, cwd=self.root,
+                       stdout=null, stderr=null, check=False):
+                return
+            self.log('adding the rust-analyzer component with rustup')
+            if run([rustup, 'component', 'add', 'rust-analyzer'], env=self.env, cwd=self.root,
+                   stdout=null, check=False):
+                self.die('rustup component add rust-analyzer failed')
+            if run([rustup, 'which', 'rust-analyzer'], env=self.env, cwd=self.root,
+                   stdout=null, stderr=null, check=False):
+                self.die('rust-analyzer is missing after rustup component add')
+        self.log('added ' + text([self.which('rust-analyzer') or 'rust-analyzer', '--version'], env=self.env, cwd=self.root))
+
     def report_ext4(self):
         """Report writable candidates without claiming measurement readiness."""
         if not self.linux:
@@ -371,9 +410,10 @@ class Provision:
 
     def oracle(self, argv):
         """Provision only oracle cells inside the native oracle performance image."""
+        self.refuse_overrides()
         self.options(argv, in_image=True)
-        if self.python_only or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
-            fail('provision oracle needs positive --jobs and does not accept --python-only', 2)
+        if self.without_oracle or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
+            fail('provision oracle needs positive --jobs and does not accept --python-only or --dev-tools', 2)
         marker = Path('/usr/local/share/oxpinyin/performance-os-release')
         if (self.env.get('GITHUB_ACTIONS') == 'true' or not marker.is_file()
                 or marker.read_bytes() != Path('/etc/os-release').read_bytes()):
@@ -486,14 +526,15 @@ class Provision:
         path = self.env_file
         env_cells = list(self.cells)
         prefixes = {cell: str(self.oracle_root / cell) for cell in env_cells}
-        names = ['_oxp_provisioned', *(f'OXPINYIN_ORACLE_{kind}_{cell.upper()}' for cell in CELLS for kind in ('PREFIX', 'DATA'))]
-        previous = assignments(path, names)
-        kept_paths, kept_library = '', ''
+        previous = read_env(path)
+        if path.is_file() and not previous:
+            self.log(f'{path}: not written by this provisioner; regenerated with the cells of this run')
+        kept_prefix, kept_local, kept_library = '', False, ''
         for cell in CELLS:
-            if cell in prefixes or f' {cell} ' not in previous.get('_oxp_provisioned', ''):
-                continue
             prefix = previous.get(f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}', '')
-            if not prefix or not self.libs_ok(cell, prefix):
+            if cell in prefixes or not prefix:
+                continue
+            if not self.libs_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; current pin/recipe or recorded library bytes failed validation')
             elif not self.data_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; data manifest check failed')
@@ -501,51 +542,49 @@ class Provision:
                 prefixes[cell] = prefix
                 env_cells.append(cell)
                 if cell == 'tkrzw':
-                    lines, taking = [], False
-                    for line in path.read_text().splitlines():
-                        if line.startswith('export PKG_CONFIG_PATH='):
-                            taking = True
-                        if taking:
-                            lines.append(line)
-                        if taking and line.startswith('export PATH='):
-                            taking = False
-                    kept_paths = '\n'.join(lines)
-                    kept_library = assignments(path, ['OXPINYIN_TKRZW_LIBRARY']).get('OXPINYIN_TKRZW_LIBRARY', '')
+                    kept_prefix = previous.get('OXPINYIN_TKRZW_PREFIX', '')
+                    kept_local = bool(kept_prefix) and 'PKG_CONFIG_PATH' in previous
+                    kept_library = previous.get('OXPINYIN_TKRZW_LIBRARY', '')
         if len(env_cells) == 1:
             default = env_cells[0]
         else:
             preferred = backend_cell.default_cell()
             default = preferred if preferred in env_cells else env_cells[0]
         runtime_prefix = str(self.tkrzw_prefix) if self.tkrzw_local else ''
+        local_prefix = runtime_prefix
         library = self.tkrzw_host_library
-        if not runtime_prefix and not library and kept_paths:
-            runtime_prefix = tkrzw_env_prefix(path)
+        if not runtime_prefix and not library and kept_local:
+            runtime_prefix = local_prefix = kept_prefix
         if runtime_prefix:
             obj = Path(runtime_prefix) / 'lib/libtkrzw.so.1'
             library = str(obj.resolve()) if obj.exists() else ''
         elif not library:
             library = kept_library
-        lines = ['# Written by tools/cloud/setup.sh; source it, do not edit it.',
-                 '_oxp_provisioned=' + quote(' ' + ' '.join(env_cells) + ' '),
+        lines = [ENV_HEADER,
                  'export PINYIN_MODEL_DIR=' + quote(self.model_cache / 'extracted'),
-                 'export PATH=' + quote(self.uv_dir, always=True) + ':$PATH']
+                 'export PATH=' + quote(self.uv_dir) + ':"$PATH"']
         if library:
             lines.append('export OXPINYIN_TKRZW_LIBRARY=' + quote(library))
         if runtime_prefix:
             lines += ['export OXPINYIN_TKRZW_PREFIX=' + quote(runtime_prefix),
-                      'export OXPINYIN_TKRZW_PREFIXES=' + quote(runtime_prefix, always=True) + '${OXPINYIN_TKRZW_PREFIXES:+:$OXPINYIN_TKRZW_PREFIXES}']
-        if self.tkrzw_local:
-            lines += ['export PKG_CONFIG_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}',
-                      'export LD_LIBRARY_PATH=' + quote(self.tkrzw_prefix, always=True) + '/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}',
-                      'export PATH=' + quote(self.tkrzw_prefix, always=True) + '/tools/tkrzw/bin:$PATH']
-        elif library and not runtime_prefix:
-            lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent, always=True) + '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}')
-        elif kept_paths:
-            lines.append(kept_paths)
+                      'export OXPINYIN_TKRZW_PREFIXES=' + quote(runtime_prefix) + '"${OXPINYIN_TKRZW_PREFIXES:+:$OXPINYIN_TKRZW_PREFIXES}"']
+        if local_prefix:
+            lines += ['export PKG_CONFIG_PATH=' + quote(local_prefix + '/lib/pkgconfig') + '"${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"',
+                      'export LD_LIBRARY_PATH=' + quote(local_prefix + '/lib') + '"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+                      'export PATH=' + quote(local_prefix + '/tools/tkrzw/bin') + ':"$PATH"']
+        elif library:
+            lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent) + '"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"')
         for cell in env_cells:
             lines += [f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}=' + quote(prefixes[cell]),
                       f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote(prefixes[cell] + '/lib/libpinyin/data')]
-        lines += ['export PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-' + default + '}', SELECT.rstrip('\n')]
+        # One arm per provisioned cell, its values computed here; no shell expansion selects them.
+        lines += ['export PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-' + default + '}"',
+                  'case "$PINYIN_ORACLE_DBM" in']
+        lines += [f'{cell}) export PINYIN_ORACLE_PREFIX={quote(prefixes[cell])} '
+                  f'OXPINYIN_LIBPINYIN_DATA_DIR={quote(prefixes[cell] + "/lib/libpinyin/data")} ;;'
+                  for cell in env_cells]
+        lines += ["*) printf '%s\\n' \"cell $PINYIN_ORACLE_DBM was not provisioned by this environment file\" >&2; return 1 ;;",
+                  'esac']
         staging = Path(str(path) + '.new')
         try:
             staging.write_text('\n'.join(lines) + '\n')
@@ -829,18 +868,33 @@ class Provision:
         self.tkrzw_local = True
         self.log(f'tkrzw: certified vcpkg install at {prefix}')
 
+    def refuse_overrides(self):
+        """Refuse interpreter-selection settings before any other work.
+
+        uv has already read them for `uv python install` and `uv run`, so a run under one
+        stops here rather than provisioning with another interpreter."""
+        try:
+            doctor.reject_overrides(self.env, before='provisioning')
+        except doctor.DoctorError as error:
+            self.die(str(error))
+
     def execute(self, argv):
+        self.refuse_overrides()
         self.options(argv)
         self.prerequisites()
-        if self.env.get('OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV', '1') == '1':
-            self.log('using ' + text(['uv', '--version'], env=self.env))
-        # Bootstrap selected the managed interpreter. Doctor owns its policy;
-        # setup retains the historical successful verification line.
+        # --python-only alone needs no Cargo, rustup or just (docs/runbooks/cloud.md).
+        if self.dev_tools or not self.python_only:
+            self.cargo_tools()
+            self.rust_analyzer()
+        self.log('using ' + text(['uv', '--version'], env=self.env))
+        # uv selected the managed interpreter. Doctor owns its policy; provisioning
+        # keeps the successful verification line.
         identity = doctor.identity(self.env)
         print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
-        if self.python_only:
+        if self.without_oracle:
             self.report_ext4()
-            self.log('stopping after Python provisioning (--python-only)')
+            self.log('stopping after the development tools (--dev-tools)' if self.dev_tools
+                     else 'stopping after Python provisioning (--python-only)')
             return 0
         with ExitStack() as stack:
             self.proxy_ca(stack)
@@ -913,7 +967,7 @@ class Provision:
 
 
 def main(argv=None):
-    """Dispatch cloud provisioning after bootstrap, including native host callers."""
+    """Dispatch cloud provisioning, including native host callers."""
     args = list(sys.argv[1:] if argv is None else argv)
     service = None
     try:

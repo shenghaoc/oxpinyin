@@ -44,7 +44,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs after the gate:
-#   lint — rustfmt, Clippy, ShellCheck and the Lizard complexity limit
+#   lint — rustfmt, Clippy and the Lizard complexity limit
 #   test — the workspace tests on Linux; the macOS and Windows runs are in
 #          verify-nightly.yml
 #   deny — the supply-chain check: advisories, licenses, sources, duplicates
@@ -76,9 +76,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Require the Bash floor
-        shell: bash
-        run: . tools/lib/bash-floor.sh
       - name: Compute the path-gate flags
         id: gate
         run: python3 -m tools.dev.ci_tree gate
@@ -121,7 +118,6 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-          rustup-components: clippy rustfmt
           rust-cache: 'true'
           rust-cache-key: lint-job
           uv: ${{ needs.changes.outputs.reuse != 'true' }}
@@ -131,18 +127,6 @@ jobs:
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
-      # The distribution package supplies ShellCheck. The minimum is the
-      # version whose findings this tree is clean under.
-      - name: ShellCheck tracked scripts (>= 0.11.0)
-        if: needs.changes.outputs.reuse != 'true'
-        run: |
-          set -euo pipefail
-          apt-get install -y --no-install-recommends shellcheck
-          version=$(shellcheck --version | sed -n 's/^version: //p')
-          printf 'ShellCheck %s\n' "$version"
-          dpkg --compare-versions "$version" ge 0.11.0 ||
-            { printf '::error::ShellCheck %s is older than 0.11.0\n' "$version"; exit 1; }
-          git ls-files -z -- '*.sh' | xargs -0 -r shellcheck --severity=warning
       - run: cargo fmt --all --check
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -178,9 +162,6 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       - run: pip install --break-system-packages lizard==1.24.0
         if: needs.changes.outputs.reuse != 'true'
-      - name: Bash floor source lines
-        if: needs.changes.outputs.reuse != 'true'
-        run: python3 tools/dev/bash_floor.py
       - run: lizard crates/ -l rust -C 40 -w
         if: needs.changes.outputs.reuse != 'true'
       - name: Refresh the main Rust cache using the lane's compile mode
@@ -347,14 +328,16 @@ jobs:
         # objcopy, objdump, ld), Clang and the libclang package for the
         # call-site fixture's major, taskset for the CPU-pinned child, and
         # Valgrind for the end-to-end Linux comparison on the stub library.
+        # zsh: the oracle environment file is sourced under sh, dash and zsh.
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind
-      # just is installed above, so the size build's revision-recipe test must run
-      # here rather than skip.
+          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
+      # just and zsh are installed above, so the size build's revision-recipe test and
+      # the environment-file source test's zsh case must run here rather than skip.
       - run: just test-tools
         env:
           OXPINYIN_REQUIRE_JUST: '1'
+          OXPINYIN_REQUIRE_ZSH: '1'
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the

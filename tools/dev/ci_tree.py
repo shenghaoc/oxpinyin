@@ -97,7 +97,7 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 
 
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
-SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "tools/lib", "rust-toolchain.toml", ".cargo",
+SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version")
 RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
@@ -134,12 +134,12 @@ GENERATED_TABLES = (
     "crates/oxpinyin-engine/src/session/split_tables.rs",
 )
 CI_INPUTS = {
-    # ShellCheck reads every tracked script; cargo fmt reads the fuzz workspace.
-    "lint": Inputs((*RUST, "fuzz", "clippy.toml", "*.sh"), PYTHON_ONLY,
-                   (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py", "*.sh")),
+    # cargo fmt reads the fuzz workspace.
+    "lint": Inputs((*RUST, "fuzz", "clippy.toml"), PYTHON_ONLY,
+                   (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
     # cargo deny reads the manifests and lockfiles only.
-    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "tools/lib", "rust-toolchain.toml",
+    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "rust-toolchain.toml",
                     ".cargo", "Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml", "deny.toml",
                     "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
     # tools/ and what its tests read outside it: the store-backends gate script,

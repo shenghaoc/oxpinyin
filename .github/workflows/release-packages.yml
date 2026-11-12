@@ -292,10 +292,8 @@ jobs:
             return 0;
           }
           EOF
-          # shellcheck disable=SC2046
           cc smoke_pinyin.c -o smoke_pinyin $(pkg-config --cflags --libs libpinyin) \
             || fail "libpinyin smoke compile/link on /usr"
-          # shellcheck disable=SC2046
           cc smoke_zhuyin.c -o smoke_zhuyin $(pkg-config --cflags --libs libzhuyin) \
             || fail "libzhuyin smoke compile/link on /usr"
           SYSDATA="$(pkg-config --variable=pkgdatadir libpinyin)/data"

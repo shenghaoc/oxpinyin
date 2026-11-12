@@ -6,8 +6,8 @@ Pin-comparison campaigns use the local oracle `performance` stage; see
 
 A remote Linux host that meets the requirements below can run every
 non-measurement gate. Measurement gates also need the ext4 paths below.
-Provision the host with `tools/cloud/setup.sh`, which also installs Valgrind for
-measurement work. Ordinary native development uses [native setup](setup.md)
+Provision the host with `tools.dev.provision` (the [setup command](#setup-command)),
+which also installs Valgrind for measurement work. Ordinary native development uses [native setup](setup.md)
 and does not need a remote host.
 
 The host may be a root container, may supply its own container runtime, and
@@ -20,9 +20,9 @@ No particular editor or IDE is required. When several worktrees share a host, gi
 ## Host requirements
 
 Full setup requires Linux on a supported native platform:
-linux/amd64 or linux/arm64. `tools/cloud/setup.sh` selects the platform from
-`uname -m` and refuses any other architecture.
-The script also requires:
+linux/amd64 or linux/arm64. `tools.dev.provision` selects the platform from
+the machine architecture and refuses any other.
+It also requires:
 
 - Cargo on `PATH`, rustup, and the installed toolchain and components that
   `rust-toolchain.toml` selects. Setup checks these before provisioning. It does not
@@ -34,14 +34,26 @@ The script also requires:
   a specific missing- or outdated-Valgrind failure before the oracle downloads.
   Ask the environment owner to install it, or choose a host that already has a suitable
   Valgrind.
-- A writable uv installation directory when uv needs installing or replacing
-  (default `$HOME/.local/bin`), and writable managed-Python and cache locations.
-  Setup probes the uv destination before it downloads. If the host image mounts
-  the destination read-only, set `UV_INSTALL_DIR`, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR`
-  to task-owned writable paths, then put `UV_INSTALL_DIR` on `PATH`.
-  Setup can reuse an existing suitable uv without writing to its installation
-  directory. Setup installs the checksummed uv 0.13.1 only when uv is missing
-  or older than 0.11.32. It keeps a newer uv.
+- uv on `PATH`. If `uv --version` fails, or uv refuses to run because it is
+  older than the `required-version` in `uv.toml`, run uv's official
+  [standalone installer](https://docs.astral.sh/uv/getting-started/installation/#standalone-installer):
+  `curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS and Linux, or
+  `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+  on Windows. Then put its install directory first on `PATH`, ahead of any older
+  uv: `~/.local/bin`, or `%USERPROFILE%\.local\bin` on Windows. When `HOME` is
+  read-only, set `UV_INSTALL_DIR` to a writable directory before you run the
+  installer, and put that directory first on `PATH` instead. If astral.sh is
+  blocked, stop and report it; most environments already provide a uv that
+  meets the floor.
+  Provisioning does not install uv: it starts through `uv run`, so a uv below the
+  floor refuses before provisioning runs.
+  [Installing uv and cargo-c](setup.md#installing-uv-and-cargo-c) has the details.
+  Setup keeps just, cargo-nextest and cargo-c when they meet their floors and
+  installs the pinned fallbacks otherwise. It needs
+  writable managed-Python and cache locations. Cargo tool provisioning needs
+  `index.crates.io` and `static.crates.io`.
+  Setup adds the toolchain's `rust-analyzer` component with `rustup component add`
+  only when it is missing. CI does not install it.
 - A usable Podman or Docker runtime, the backend dump utilities described
   below, and the native build prerequisites in [native setup](setup.md).
   Non-root accounts must arrange missing backend utilities with the owner.
@@ -71,7 +83,9 @@ On a host that does not have these capabilities, stop at the named prerequisite.
 Ask the environment owner to provide it, or move to a suitable host.
 Do not route around network policy. `--python-only`
 has the narrower requirements documented below. It needs no Cargo, Rust,
-Valgrind, backend utilities or container runtime.
+Valgrind, backend utilities or container runtime. `--dev-tools` adds the
+development tools to that mode. It needs Cargo or rustup only for a tool that
+it must install.
 
 ## Setup command
 
@@ -90,11 +104,18 @@ ninja-build` from Debian packages before that step. GLib stays on the system.
 
 **When to run it.** Run the setup only when the work needs the pin oracle:
 a differential, a same-run measurement against the pin, or a data check.
-Work that does not touch the oracle does not need it. From the checkout, run:
+Work that does not touch the oracle does not need it. From the repository
+root, run these two commands. They are the same in sh, zsh and pwsh:
 
 ```sh
-tools/cloud/setup.sh
+uv python install
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision
 ```
+
+The first installs the interpreter that `.python-version` names, and does nothing
+when it is present. The second runs provisioning in that interpreter; pass the
+options below after `tools.dev.provision`. Both must run from the repository root,
+where uv finds `.python-version` and `uv.toml` and Python finds `tools`.
 
 The setup is idempotent. Every step checks its result and skips when the result holds,
 so a second run only verifies again. The options are:
@@ -118,19 +139,20 @@ For a Linux x86_64 or arm64 host that needs only `tools.dev`, provision Python
 without the oracle setup:
 
 ```sh
-tools/cloud/setup.sh --python-only
-export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
+uv python install
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --python-only
 uv run --no-project --managed-python python -X utf8 -m tools.dev.doctor
 ```
 
 This mode runs the existing Linux and supported-platform checks. It then runs the
-same uv and managed CPython (3.14 series, GIL build) provisioning and
-interpreter verification as full setup. It installs neither when it is
-already present at or above its minimum; `just doctor` reports both. The mode
+same managed CPython verification as full setup.
+See [Installing uv and cargo-c](setup.md#installing-uv-and-cargo-c)
+for host installation. The mode
 prints the verified-interpreter line and the informational ext4 path report.
 It logs that it stops after Python provisioning, and it exits successfully. It does
 not do these steps:
 
+- install or check just, cargo-nextest, cargo-c or rust-analyzer;
 - select, start or pull a container runtime;
 - install Valgrind or backend utilities;
 - provision oracle libraries or model data;
@@ -141,9 +163,29 @@ On a host that has `just`, `just python` provisions the same interpreter.
 
 `--python-only` cannot be combined with `--cells`, `--jobs`
 or `--no-pull`. These combinations fail with exit 2 before
-provisioning. For concurrent worktrees, `UV_INSTALL_DIR`,
-`UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned uv,
-interpreter and download-cache locations.
+provisioning.
+
+### Development tools without the oracle
+
+`--dev-tools` keeps or installs just, cargo-nextest, cargo-c and the
+rust-analyzer component, as full setup does. It then verifies managed CPython,
+prints the ext4 path report and stops before the oracle setup:
+
+```sh
+uv python install
+uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --dev-tools
+```
+
+A tool that meets its requirement is kept, and needs neither Cargo nor rustup.
+A missing or outdated just, cargo-nextest or cargo-c needs Cargo for
+`cargo install`. A missing rust-analyzer needs rustup. Without the program that
+it needs, setup exits 1, names the tool and refers to
+[native setup](setup.md#installing-uv-and-cargo-c). `--dev-tools` and
+`--python-only --dev-tools` are the same mode. `--dev-tools` cannot be combined
+with `--cells`, `--jobs` or `--no-pull`; these combinations fail with exit 2.
+
+For concurrent worktrees, `UV_PYTHON_INSTALL_DIR` and
+`UV_CACHE_DIR` can select task-owned interpreter and download-cache locations.
 
 ### The environment file
 
@@ -181,7 +223,10 @@ The file exports:
   These two are computed again each time the file is sourced.
 
 A cell that the setup did not
-provision stops the `source` with an error. The file needs bash.
+provision stops the `source` with an error. The file sources alike in sh,
+dash, bash and zsh: every value is single-quoted, and a `case` on the quoted
+`PINYIN_ORACLE_DBM` selects the cell. A file written by the retired shell
+setup is regenerated from the cells of the run, not read.
 
 ### Data verification
 
@@ -266,7 +311,7 @@ by the inherited value. These sites set the path differently:
 | `measure callgrind-differential`: all launch sites | Use each selected object's directory, then inheritance. |
 | `just cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
 | `tools/oracle/build.py`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
-| `tools/dev/provision.py`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
+| `tools/dev/provision.py`: generated-path parsing and host-probe filtering; the cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 
 No measurement path is exempt as never-tkrzw. The profiling and packaging
 launches, and the Python contract, gcov, training and ordering tools, share
@@ -280,8 +325,8 @@ uv run --no-project --managed-python python -B -X utf8 tools/tkrzw/runtime.test.
 
 ## What it does
 
-0. Bootstraps uv and managed CPython. It checks the uv installation
-   destination before the download. The Python provisioning service then
+0. `uv python install` provides managed CPython; uv itself must already be on
+   `PATH`. The Python provisioning service refuses interpreter overrides first, then
    checks Cargo and the repository toolchain on every OS. On Linux it also
    requires or installs Valgrind.
    On Linux it requires the backend dump utilities for the requested cells:
@@ -419,7 +464,7 @@ The network policy of the host must allow at least these hosts:
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the Debian base image (`debian:testing`); the registry can answer 429 under load, and setup retries |
 | `deb.debian.org` | the Debian testing package mirror for the `deps` image build |
 | `github.com` | libpinyin at the pinned commit (`git fetch --depth=1 <url> <sha>`) |
-| `github.com`, `release-assets.githubusercontent.com` | uv fallback archive and uv-managed CPython release assets, when uncached |
+| `github.com`, `release-assets.githubusercontent.com` | uv-managed CPython release assets, when uncached |
 | `downloads.sourceforge.net` and its redirect target, a rotating `*.dl.sourceforge.net` mirror | model20 archive |
 | `ghcr.io` (and the blob host it redirects to) | the published oracle and `deps` images |
 | `index.crates.io`, `static.crates.io` | cargo |
@@ -448,7 +493,7 @@ shipping-size measurements retain Debian's tkrzw.
 
 ### When the published image cannot be pulled
 
-`setup.sh` keeps the stderr of the pull in `<cache>/pull-published.err` and logs its
+Setup keeps the stderr of the pull in `<cache>/pull-published.err` and logs its
 last five lines. Before it builds the libraries, it states which case applies:
 
 - `manifest unknown / not found`: the tag is not published;
@@ -470,14 +515,15 @@ side.
 
 ## Failure modes
 
-- An unwritable uv destination: setup exits 1 with the prerequisite and the
-  next action before any download.
+- uv missing or below the floor: the shell or uv reports it on the first
+  command; install uv as the host requirements describe.
+- An interpreter override such as `UV_PYTHON`: setup exits 1 before any other
+  work. A `UV_PYTHON` set before `uv python install` has already installed
+  that interpreter; unset it and run both commands again.
 - Missing Cargo/toolchain, or Valgrind without root/sudo: setup exits 1 with
-  the prerequisite and the next action after the uv and managed-Python bootstrap,
-  but before the oracle downloads. `--python-only` omits the Cargo/toolchain
-  and Valgrind checks.
-- A read-only `~/.local/bin`: set the `UV_*` overrides in
-  [host requirements](#host-requirements).
+  the prerequisite and the next action, before the oracle downloads. `--python-only` omits the Cargo/toolchain
+  and Valgrind checks. `--dev-tools` omits them too, and exits 1 only when a tool
+  that it must install needs a missing Cargo or rustup.
 - `429 Too Many Requests` from the registry: the script retries; run it again.
 - `403` from the proxy: the host is not allowed for the environment. Do
   not route around it. Add the host (table above) to Allowed domains.
@@ -488,9 +534,8 @@ side.
 
 ### Provisioning implementation and fixture checks
 
-`tools/cloud/setup.sh` runs the pre-interpreter uv/bootstrap step and then
-calls the single `tools.dev.provision` service. `just provision` uses an already
-provisioned interpreter.
+`tools.dev.provision` is the single provisioning service. `just provision` runs
+`just python` and then the same module.
 
 Run the synthetic provisioning fixtures through normal Python discovery:
 
@@ -498,7 +543,10 @@ Run the synthetic provisioning fixtures through normal Python discovery:
 just test-tools tools/dev/provision.test.py
 ```
 
-The fixtures check the setup entry point with fake host tools, pins, data, proxy CA
-and generated environment paths. Missing option values return status 1 with an
-`--option: requires an argument` diagnostic. On a fresh host, the
-uv/interpreter bootstrap comes before the Python-owned native prerequisite checks.
+The fixtures run the documented `uv run ... -m tools.dev.provision` command with
+fake host tools, pins, data, proxy CA and generated environment paths, and source
+the environment file in sh, dash and zsh. The zsh case is skipped where zsh is not
+installed, except in CI's harness job, which installs zsh and sets
+`OXPINYIN_REQUIRE_ZSH=1`. Missing option values return status 1
+with an `--option: requires an argument` diagnostic. Interpreter overrides are
+refused before the native prerequisite checks.

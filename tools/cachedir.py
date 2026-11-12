@@ -3,7 +3,7 @@
 Everything the tooling fetches or builds from pinned sources goes under this
 one directory, which every worktree shares. The justfile exports it: a non-empty
 OXPINYIN_CACHE, else `oxpinyin` in the user's cache directory. A
-caller that does not start from a recipe (CI, tools/cloud/setup.sh, a
+caller that does not start from a recipe (CI, tools.dev.provision, a
 container run) sets it itself. `just cache-root` prints it.
 
 Each entry carries its pinned version or hash in its name, so a new pin gets a

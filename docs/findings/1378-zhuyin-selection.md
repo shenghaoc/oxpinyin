@@ -48,7 +48,8 @@
 - **Prior rulings:** the 2026-10-29 ruling supplies these exact keys. It
   preserves single-slot admission and pinyin front eviction.
 - **Reproduction:**
-  1. Provision with `tools/cloud/setup.sh`.
+  1. Provision from the repository root with `uv python install`, then
+     `uv run --no-project --managed-python python -X utf8 -m tools.dev.provision`.
   2. Build debug artifacts with `just cell-artifacts`.
   3. Run `
      the recorded runner contract-diff bdb "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_CAPI_SO"
