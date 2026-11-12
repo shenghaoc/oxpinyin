@@ -1361,7 +1361,11 @@ fn save_aborts_where_the_chunk_header_write_fails() {
     let staged = std::fs::metadata(run.user_dir.join("gb_char.dbin.tmp")).expect("staged log");
     assert_eq!(staged.len(), 4);
     let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    assert!(conf.ends_with("open counter:1\n"), "{conf}");
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    assert!(
+        conf.ends_with(&format!("open counter:1{newline}")),
+        "{conf}"
+    );
 }
 
 /// Init refuses a NULL system directory, a missing one and one without
@@ -3204,7 +3208,11 @@ fn init_aborts_where_a_copy_fails_a_source_read() {
     let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
     let after = files_of(&run.user_dir);
     let conf = String::from_utf8_lossy(&after["user.conf"]).into_owned();
-    assert!(conf.ends_with("open counter:2\n"), "{conf}");
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    assert!(
+        conf.ends_with(&format!("open counter:2{newline}")),
+        "{conf}"
+    );
     assert_eq!(after["user_bigram.db"], before["user_bigram.db"]);
 }
 
