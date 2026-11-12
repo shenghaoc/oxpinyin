@@ -110,6 +110,12 @@ pub enum UserStoreError {
     /// `.tmp` files, libzhuyin's completed renames), nothing later happens,
     /// no marker is written, the session stays dirty and a later save retries.
     SaveTooLarge,
+    /// A tkrzw or Berkeley DB record copy of a load or a save failed where
+    /// the pin's `copy_tkrzwdb` or `copy_bdb` asserts
+    /// (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`). The load or
+    /// save stopped there: no later rename and no marker. The C adapters
+    /// abort.
+    FatalCopy,
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
@@ -213,6 +219,7 @@ impl fmt::Display for UserStoreError {
                 f,
                 "a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)"
             ),
+            Self::FatalCopy => write!(f, "{}", StoreError::FatalCopy),
             Self::UnigramTotalOverflow => write!(
                 f,
                 "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
@@ -278,6 +285,7 @@ impl std::error::Error for UserStoreError {
             | Self::LibraryChunkHeaderRead
             | Self::SaveRemapFailed
             | Self::SaveTooLarge
+            | Self::FatalCopy
             | Self::UnigramTotalOverflow
             | Self::OverlongIndexKey
             | Self::NonTokenUserBigramKey
@@ -309,6 +317,7 @@ impl From<StoreError> for UserStoreError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::Io(io) => Self::Io(io),
+            StoreError::FatalCopy => Self::FatalCopy,
             other @ (StoreError::Backend(_)
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)

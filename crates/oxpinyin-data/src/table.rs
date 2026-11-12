@@ -52,7 +52,8 @@ impl From<StoreError> for TableError {
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
             | StoreError::ReadAfterCheck
-            | StoreError::ShortArrayHeader) => Self::Store(other),
+            | StoreError::ShortArrayHeader
+            | StoreError::FatalCopy) => Self::Store(other),
         }
     }
 }

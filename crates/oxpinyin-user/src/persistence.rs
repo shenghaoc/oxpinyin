@@ -730,6 +730,11 @@ pub enum PersistenceError {
     /// (register row 112, #1514): the save stops there and answers `false`,
     /// keeping the earlier files as written, and the session stays dirty.
     SaveTooLarge,
+    /// A tkrzw or Berkeley DB record copy failed where the pin's
+    /// `copy_tkrzwdb` or `copy_bdb` asserts ([`StoreError::FatalCopy`]).
+    /// No soft path absorbs it: the load or save stops there, before any
+    /// later rename or marker write, and the C adapters abort.
+    FatalCopy,
 }
 
 impl std::fmt::Display for PersistenceError {
@@ -761,11 +766,26 @@ impl std::fmt::Display for PersistenceError {
                 f,
                 "a save copy reaches the pin's unsafe size (memory_chunk.h:95-98)"
             ),
+            Self::FatalCopy => write!(f, "user file store: {}", StoreError::FatalCopy),
         }
     }
 }
 
 impl std::error::Error for PersistenceError {}
+
+impl PersistenceError {
+    /// Whether a save carries on past this failure of one file, as the
+    /// pin's `_write_files` and `zhuyin_save` do: a filesystem or container
+    /// failure the pin answers with `false`. A copy the pin asserts on is
+    /// never one, however it is wrapped.
+    fn is_soft_write(&self) -> bool {
+        match self {
+            Self::Io(_) => true,
+            Self::Store(error) => !matches!(error, StoreError::FatalCopy),
+            _ => false,
+        }
+    }
+}
 
 impl From<std::io::Error> for PersistenceError {
     fn from(error: std::io::Error) -> Self {
@@ -775,7 +795,12 @@ impl From<std::io::Error> for PersistenceError {
 
 impl From<StoreError> for PersistenceError {
     fn from(error: StoreError) -> Self {
-        Self::Store(error)
+        match error {
+            // Never a soft [`Self::Store`]: `tolerate` and `Staged::finish`
+            // pass those through.
+            StoreError::FatalCopy => Self::FatalCopy,
+            error => Self::Store(error),
+        }
     }
 }
 
@@ -1000,7 +1025,7 @@ pub fn load(
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
     let check = check_format(dir, versions, originals.layout(), law)?;
-    let mut loaded = load_checked(dir, originals, &check).loaded;
+    let mut loaded = load_checked(dir, originals, &check)?.loaded;
     if check.conform {
         load_bigram_rows(dir, &mut loaded);
     }
@@ -1021,7 +1046,7 @@ pub(crate) fn load_profile(
     law: UserConfLaw,
 ) -> Result<LoadedProfile, PersistenceError> {
     let check = check_format(dir, versions, originals.layout(), law)?;
-    Ok(load_session_checked(dir, originals, &check))
+    load_session_checked(dir, originals, &check)
 }
 
 /// What `check_format` decided about a profile: the open counter this
@@ -1092,12 +1117,15 @@ pub(crate) fn check_format(
 /// nothing to read when it was wiped. Returns the crate-private
 /// [`LoadedProfile`] so the pinyin index key metadata survives to the
 /// session wiring.
-#[must_use]
+///
+/// # Errors
+///
+/// [`PersistenceError::FatalCopy`] where a user index copy fails.
 pub(crate) fn load_checked(
     dir: &Path,
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
-) -> LoadedProfile {
+) -> Result<LoadedProfile, PersistenceError> {
     load_checked_impl(dir, originals, check, false, BTreeMap::new())
 }
 
@@ -1106,7 +1134,7 @@ pub(crate) fn load_session_checked(
     dir: &Path,
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
-) -> LoadedProfile {
+) -> Result<LoadedProfile, PersistenceError> {
     load_checked_impl(dir, originals, check, true, BTreeMap::new())
 }
 
@@ -1115,16 +1143,24 @@ pub(crate) fn load_session_checked(
 /// (`:377-392`). Without a conforming profile the loop only maps: the wipe
 /// left nothing to read. The stop is the loop's first fault, after everything
 /// the pin does before it.
+///
+/// # Errors
+///
+/// [`PersistenceError::FatalCopy`] where a user index copy fails, before
+/// the loop (`pinyin.cpp:350-373` precede it).
 pub(crate) fn load_session_in_loop(
     dir: &Path,
     originals: &mut SystemOriginals,
     rows: &crate::library_loop::LibraryLoopRows<'_>,
     check: &ProfileCheck,
-) -> (
-    LoadedProfile,
-    Result<(), crate::library_loop::LibraryLoopStop>,
-) {
-    let mut profile = begin_session_profile(dir, check);
+) -> Result<
+    (
+        LoadedProfile,
+        Result<(), crate::library_loop::LibraryLoopStop>,
+    ),
+    PersistenceError,
+> {
+    let mut profile = begin_session_profile(dir, check)?;
     let stop = crate::library_loop::run(
         rows.steps(),
         &mut SessionSteps {
@@ -1135,11 +1171,18 @@ pub(crate) fn load_session_in_loop(
             conform: check.conform,
         },
     );
-    (profile, stop)
+    Ok((profile, stop))
 }
 
 /// The part of a session load that precedes the library loop.
-pub(crate) fn begin_session_profile(dir: &Path, check: &ProfileCheck) -> LoadedProfile {
+///
+/// # Errors
+///
+/// [`PersistenceError::FatalCopy`] where a user index copy fails.
+pub(crate) fn begin_session_profile(
+    dir: &Path,
+    check: &ProfileCheck,
+) -> Result<LoadedProfile, PersistenceError> {
     let mut profile = LoadedProfile {
         loaded: Loaded {
             open_counter: check.open_counter,
@@ -1160,10 +1203,10 @@ pub(crate) fn begin_session_profile(dir: &Path, check: &ProfileCheck) -> LoadedP
             &mut profile.overlong_index_keys,
             &mut profile.index,
             true,
-        );
-        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, true);
+        )?;
+        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, true)?;
     }
-    profile
+    Ok(profile)
 }
 
 /// The library loop's steps over a user profile.
@@ -1245,7 +1288,7 @@ pub(crate) fn load_session_checked_live(
     dir: &Path,
     originals: &mut SystemOriginals,
     check: &ProfileCheck,
-) -> LoadedProfile {
+) -> Result<LoadedProfile, PersistenceError> {
     let initial = originals.take_live_libraries();
     load_checked_impl(dir, originals, check, true, initial)
 }
@@ -1257,7 +1300,7 @@ pub(crate) fn load_profile_live(
     law: UserConfLaw,
 ) -> Result<LoadedProfile, PersistenceError> {
     let check = check_format(dir, versions, originals.layout(), law)?;
-    Ok(load_session_checked_live(dir, originals, &check))
+    load_session_checked_live(dir, originals, &check)
 }
 
 fn load_checked_impl(
@@ -1266,7 +1309,7 @@ fn load_checked_impl(
     check: &ProfileCheck,
     lazy: bool,
     initial: BTreeMap<u8, ReplayedLibrary>,
-) -> LoadedProfile {
+) -> Result<LoadedProfile, PersistenceError> {
     let mut profile = LoadedProfile {
         loaded: Loaded {
             open_counter: check.open_counter,
@@ -1294,8 +1337,8 @@ fn load_checked_impl(
             &mut profile.overlong_index_keys,
             &mut profile.index,
             lazy,
-        );
-        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, lazy);
+        )?;
+        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, lazy)?;
         if lazy {
             profile.loaded.journal_fault = replay_logs(
                 dir,
@@ -1311,7 +1354,7 @@ fn load_checked_impl(
             load_logs(dir, originals, &mut profile.loaded);
         }
     }
-    profile
+    Ok(profile)
 }
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
@@ -1440,18 +1483,19 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
 
 /// One walk of `user_pinyin_index.bin` into the session's owned record
 /// arena, plus the over-long readings the pin's mask `switch` refuses. An
-/// absent or unreadable file leaves the table empty, as an empty
-/// `ChewingLargeTable2` does.
+/// absent file or one that does not open leaves the table empty, as an
+/// empty `ChewingLargeTable2` does. A copy that fails part way on tkrzw or
+/// Berkeley DB is [`PersistenceError::FatalCopy`] ([`RawReadStore::copy_raw`]).
 fn load_user_pinyin_index(
     dir: &Path,
     loaded: &mut Loaded,
     overlong: &mut Vec<Vec<u16>>,
     index: &mut UserIndex,
     lazy: bool,
-) {
+) -> Result<(), PersistenceError> {
     let path = build_path(dir, OsStr::new(&UserDbm::PinyinIndex.file_name()));
     if !path.exists() {
-        return;
+        return Ok(());
     }
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
@@ -1460,26 +1504,25 @@ fn load_user_pinyin_index(
                 &mut loaded.skip_notes(),
                 format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
             );
-            return;
+            return Ok(());
         }
     };
     let mut exceptional = Vec::new();
-    let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
+    // `ChewingLargeTable2::load_db`'s copy into its in-memory table: on
+    // tkrzw and Berkeley DB a failed walk is fatal, as the pin's copy
+    // asserts; Kyoto Cabinet's snapshot load keeps what it read.
+    match store.copy_raw(|key, value| {
         index.push_record(key, value);
         if key.len() < 2 || key.len() / 2 > crate::phrase::MAX_PHRASE_LENGTH {
             exceptional.push(key.to_vec());
         }
-        Ok(())
-    };
-    if let Err(error) = store.range_raw(
-        std::ops::Bound::Unbounded,
-        std::ops::Bound::Unbounded,
-        &mut visit,
-    ) {
-        record_skip(
+    }) {
+        Ok(()) => {}
+        Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
+        Err(error) => record_skip(
             &mut loaded.skip_notes(),
             format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
-        );
+        ),
     }
     index.finish_load();
     if !lazy {
@@ -1517,20 +1560,22 @@ fn load_user_pinyin_index(
                 .collect()
         })
         .collect();
+    Ok(())
 }
 
 /// Copy `user_phrase_index.bin` records without interpreting either key or value,
-/// as the pin's `PhraseLargeTable3::load_db` does. Missing or unreadable files
-/// leave the table empty.
+/// as the pin's `PhraseLargeTable3::load_db` does. A missing file or one that
+/// does not open leaves the table empty; a failed copy is as for the pinyin
+/// index.
 fn load_user_phrase_index(
     dir: &Path,
     loaded: &mut Loaded,
     arena: &mut UserPhraseTable,
     lazy: bool,
-) {
+) -> Result<(), PersistenceError> {
     let path = build_path(dir, OsStr::new(&UserDbm::PhraseIndex.file_name()));
     if !path.exists() {
-        return;
+        return Ok(());
     }
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
@@ -1539,30 +1584,27 @@ fn load_user_phrase_index(
                 &mut loaded.skip_notes(),
                 format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
             );
-            return;
+            return Ok(());
         }
     };
-    let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
+    // `PhraseLargeTable3::load_db`'s copy, as for the pinyin index.
+    let phrase_table = &mut loaded.state.phrase_table;
+    let copied = store.copy_raw(|key, value| {
         arena.push_record(key, value);
         if !lazy {
-            loaded
-                .state
-                .phrase_table
-                .insert(key.to_vec(), value.to_vec());
+            phrase_table.insert(key.to_vec(), value.to_vec());
         }
-        Ok(())
-    };
-    if let Err(error) = store.range_raw(
-        std::ops::Bound::Unbounded,
-        std::ops::Bound::Unbounded,
-        &mut visit,
-    ) {
-        record_skip(
+    });
+    match copied {
+        Ok(()) => {}
+        Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
+        Err(error) => record_skip(
             &mut loaded.skip_notes(),
             format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
-        );
+        ),
     }
     arena.finish_load();
+    Ok(())
 }
 
 /// `pinyin_init`'s `m_user_bigram->load_db(user_bigram.db)`
@@ -2405,11 +2447,7 @@ impl Staged {
         written: Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
         if written.is_ok()
-            || (self.immediate
-                && matches!(
-                    &written,
-                    Err(PersistenceError::Io(_) | PersistenceError::Store(_))
-                ))
+            || (self.immediate && written.as_ref().is_err_and(PersistenceError::is_soft_write))
         {
             self.push(paths);
         }
@@ -2458,10 +2496,12 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
 
 /// The save carries on past a file it could not write, as the pin's
 /// `_write_files` does. A chunk header write the pin `assert`s on and an
-/// encoding failure stop it.
+/// encoding failure stop it, and so does [`PersistenceError::FatalCopy`], a
+/// DBM copy that the pin asserts on: none of them is passed through here.
 fn tolerate<T>(result: Result<T, PersistenceError>) -> Result<(), PersistenceError> {
     match result {
-        Ok(_) | Err(PersistenceError::Io(_) | PersistenceError::Store(_)) => Ok(()),
+        Ok(_) => Ok(()),
+        Err(error) if error.is_soft_write() => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -3639,7 +3679,7 @@ mod tests {
             let check =
                 check_format(&split, &versions(), &UserFileLayout::stock(), law).expect("check");
             assert_eq!(recorded_counter(&split), recorded_counter(&whole));
-            let parts = load_checked(&split, &originals, &check);
+            let parts = load_checked(&split, &originals, &check).expect("load the split profile");
             // `load` alone reads the user bigram's raw rows; the checked
             // profile read is the session's, whose container reads them.
             assert_eq!(loaded.state.bigram, state().bigram);

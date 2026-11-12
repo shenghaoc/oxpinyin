@@ -261,7 +261,7 @@ mod tests {
                 oxpinyin_data::phrase_libraries::PhraseLibraries::empty(),
                 layout,
             );
-            let mut profile = begin_session_profile(&self.user, &check);
+            let mut profile = begin_session_profile(&self.user, &check).expect("the user tables");
             let mut steps = Traced {
                 inner: SessionSteps {
                     user_dir: &self.user,

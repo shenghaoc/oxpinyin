@@ -1857,7 +1857,9 @@ impl Runtime {
     /// directory, opened as is.
     /// When `user_dir` is given, the learning store opens that profile (an
     /// unreadable or partial profile loads per file as the pin's does, so a
-    /// bad user dir cannot fail init), under libpinyin's
+    /// bad user dir cannot fail init; a tkrzw or Berkeley DB copy that fails
+    /// part way fails the open, where the pin's copy asserts and the C
+    /// adapters abort), under libpinyin's
     /// `user.conf` law ([`UserConfLaw::Pinyin`]). An empty `user_dir` is
     /// given, not absent: it is the working directory, as `pinyin_init`'s
     /// `""` is, and stays relative for the life of the store.

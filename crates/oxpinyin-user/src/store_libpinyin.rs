@@ -140,6 +140,7 @@ impl From<PersistenceError> for UserStoreError {
             PersistenceError::LibraryChunkHeaderRead => UserStoreError::LibraryChunkHeaderRead,
             PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
             PersistenceError::SaveTooLarge => UserStoreError::SaveTooLarge,
+            PersistenceError::FatalCopy => UserStoreError::FatalCopy,
             other => UserStoreError::Persistence(other.to_string()),
         }
     }
@@ -270,7 +271,7 @@ impl UserStore {
                 // fini guard is armed, so the raised counter stays on disk.
                 Some((check, rows)) => {
                     let (profile, stop) =
-                        persistence::load_session_in_loop(dir, originals, rows, &check);
+                        persistence::load_session_in_loop(dir, originals, rows, &check)?;
                     stop.map_err(UserStoreError::LibraryLoop)?;
                     profile
                 }
@@ -369,7 +370,18 @@ impl UserStore {
         // refused; one the pin cannot create ends the process in the
         // backend, and a Berkeley DB one whose open failed is the pin's
         // failed container.
-        let bigram_db = P::bigram(target.dir.as_deref()).map_err(|e| seed_fault(&e))?;
+        let bigram_db = P::bigram(target.dir.as_deref()).map_err(|error| {
+            let seeded = seed_fault(&error);
+            // `copy_tkrzwdb` / `copy_bdb` assert in `load_db`
+            // (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`): the
+            // guard is abandoned as for any seed fault, and the copy keeps
+            // its own typed error.
+            if matches!(error, PersistenceError::FatalCopy) {
+                UserStoreError::FatalCopy
+            } else {
+                seeded
+            }
+        })?;
         let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
             oxpinyin_input::path::build_path(
                 dir,

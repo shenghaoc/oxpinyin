@@ -825,13 +825,23 @@ fn drive_scan(
     hi: Bound<&[u8]>,
     row: &mut RowVisitor<'_>,
 ) -> Result<(), StoreError> {
+    drive_cursor(db.cursor()?, lo, hi, row)
+}
+
+/// [`drive_scan`] past `MakeIterator`: the positioning and the record loop
+/// over an iterator the caller made.
+fn drive_cursor(
+    mut cursor: Cursor<'_>,
+    lo: Bound<&[u8]>,
+    hi: Bound<&[u8]>,
+    row: &mut RowVisitor<'_>,
+) -> Result<(), StoreError> {
     // `Jump` is a lower-bound seek, so an Excluded lower bound lands on the
     // excluded key itself and is skipped by the bounds check below.
     let start: &[u8] = match lo {
         Bound::Unbounded => &[],
         Bound::Included(key) | Bound::Excluded(key) => key,
     };
-    let mut cursor = db.cursor()?;
     // An empty start is the unbounded walk's first record: `First`. A
     // `Jump` with the empty string is not equivalent on the hash
     // containers — `HashDBM` answers `NOT_FOUND_ERROR` for `Jump("")` on a
@@ -912,6 +922,19 @@ impl crate::RawReadStore for TkrzwStore {
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
         open_hash(path)
     }
+
+    /// `copy_tkrzwdb(&tmp_db, m_db)` in `ChewingLargeTable2::load_db` and
+    /// `PhraseLargeTable3::load_db` (`chewing_large_table2_tkrzwdb.cpp:
+    /// 92-109`, `phrase_large_table3_tkrzwdb.cpp:83-100` at 074a2219): the
+    /// file's iterator walk into the in-memory table. An iterator that is not
+    /// made is its own error; a failed copy is [`StoreError::FatalCopy`]
+    /// (`tkrzwdb_utils.h:72`).
+    fn copy_raw(&self, mut visit: impl FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
+        copy_tkrzwdb(&self.db, |key, value| {
+            visit(key, value);
+            Ok(())
+        })
+    }
 }
 
 impl WriteStore for TkrzwStore {
@@ -978,7 +1001,8 @@ impl WriteStore for TkrzwStore {
     ) -> Result<(), StoreError> {
         crate::remove_if_present(path)?;
         let file = open(path, true)?;
-        records(&mut |key, value| file.db.set(key, value))?;
+        // `copy_tkrzwdb` asserts on a failed `Set` or source walk.
+        crate::copy::copy(records, |key, value| file.db.set(key, value))?;
         file.db.synchronize(false)
     }
 
@@ -1115,15 +1139,33 @@ pub struct TkrzwUserBigramDb {
     db: std::sync::OnceLock<Db>,
 }
 
-/// Visits one borrowed record at a time in the database's native order.
-fn visit_db(
-    db: &Db,
-    mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+/// `copy_tkrzwdb(src, destdb)` (`tkrzwdb_utils.h:48-74` at 074a2219): the
+/// records of `src` in its iterator order, each handed to `set`.
+/// `MakeIterator` comes before the copy's fatal phase: an iterator that is
+/// not made is the pin's soft `return false` (`:52-54`), its own error. A
+/// failed `Set` or a `Get` that ends in anything but `NOT_FOUND_ERROR` is
+/// [`StoreError::FatalCopy`], where the copy asserts (`:65`, `:72`).
+fn copy_tkrzwdb(
+    src: &Db,
+    set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    scan_rows(db, Bound::Unbounded, Bound::Unbounded, |key, value| {
-        visit(key, value)?;
-        Ok(Flow::Continue(()))
-    })
+    #[cfg(feature = "test-hooks")]
+    crate::copy::faults::make_iterator()?;
+    let cursor = src.cursor()?;
+    crate::copy::copy(
+        |visit| {
+            drive_cursor(
+                cursor,
+                Bound::Unbounded,
+                Bound::Unbounded,
+                &mut |key, value| {
+                    visit(key, value)?;
+                    Ok(Flow::Continue(()))
+                },
+            )
+        },
+        set,
+    )
 }
 
 impl crate::UserBigramDb for TkrzwUserBigramDb {
@@ -1156,9 +1198,13 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
                 return Ok(this);
             }
             let db = this.db.get_or_init(|| Db::new(Class::Tiny));
-            // A failed source walk must not discard unrelated learned data.
-            if let Err(error) = visit_db(&file, |key, value| db.set(key, value)) {
-                eprintln!("user-bigram load {}: {error}", path.display());
+            // `copy_tkrzwdb` asserts on a failed `Set` or source walk
+            // (`tkrzwdb_utils.h:65`, `:72`): the init stops there. An
+            // iterator that is not made leaves the container as it is, and
+            // `load_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:58`).
+            if let Err(StoreError::FatalCopy) = copy_tkrzwdb(&file, |key, value| db.set(key, value))
+            {
+                return Err(StoreError::FatalCopy);
             }
         }
         Ok(this)
@@ -1216,8 +1262,12 @@ fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
     // `copy_tkrzwdb`: one `Set` per record (`tkrzwdb_utils.h:48-74`).
     // An empty source contributes no Set and no destination metadata. Keep
     // the native destination sequence, including its empty file and timestamp.
-    if let Some(db) = db {
-        visit_db(db, |key, value| file.db.set(key, value))?;
+    // `save_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:78`), so an
+    // iterator that is not made goes on to the synchronize.
+    if let Some(db) = db
+        && let Err(StoreError::FatalCopy) = copy_tkrzwdb(db, |key, value| file.db.set(key, value))
+    {
+        return Err(StoreError::FatalCopy);
     }
     file.db.synchronize(false)
 }
@@ -1254,7 +1304,7 @@ mod tests {
     use super::{
         Class, Db, HASH_METADATA_SIZE, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR,
         STATUS_PRECONDITION_ERROR, STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash,
-        open_hash_create, open_system, record_base, visit_db,
+        open_hash_create, open_system, record_base,
     };
     use crate::{StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -1309,7 +1359,8 @@ mod tests {
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
             | StoreError::ReadAfterCheck
-            | StoreError::ShortArrayHeader => None,
+            | StoreError::ShortArrayHeader
+            | StoreError::FatalCopy => None,
         }
     }
 
@@ -1637,32 +1688,30 @@ mod tests {
         }
         drop(file);
 
+        // The load's copy reads the file in its iterator order.
         let file = open_hash(&path).unwrap();
-        let reference = super::Db::new(super::Class::Tiny);
         let mut source_keys = Vec::new();
-        visit_db(&file.db, |key, value| {
+        super::copy_tkrzwdb(&file.db, |key, _| {
             source_keys.push(key.to_vec());
-            // The previous path, retained as an independent reference.
-            reference.set(key, value)
+            Ok(())
         })
         .unwrap();
         assert_eq!(source_keys, [b.to_vec(), a.to_vec(), c.to_vec()]);
         drop(file);
 
+        // The save's copy walks the loaded container in its chain order.
         let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
         let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
-        for db in [&reference, loaded.db.get().unwrap()] {
-            let mut actual = Vec::new();
-            visit_db(db, |key, value| {
-                actual.push((key.to_vec(), value.to_vec()));
-                Ok(())
-            })
-            .unwrap();
-            assert_eq!(
-                actual, expected,
-                "native bucket-chain order, not sorted rows"
-            );
-        }
+        let mut actual = Vec::new();
+        super::copy_tkrzwdb(loaded.db.get().unwrap(), |key, value| {
+            actual.push((key.to_vec(), value.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            actual, expected,
+            "native bucket-chain order, not sorted rows"
+        );
     }
 
     #[test]

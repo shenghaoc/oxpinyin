@@ -349,6 +349,18 @@ impl RawReadStore for BdbStore {
             db: Db::open(path, ffi::DB_HASH, true, false, ffi::SYSTEM_FILE_MODE)?,
         })
     }
+
+    /// `copy_bdb(tmp_db, m_db)` in `ChewingLargeTable2::load_db` and
+    /// `PhraseLargeTable3::load_db` (`chewing_large_table2_bdb.cpp:99-133`,
+    /// `phrase_large_table3_bdb.cpp:114-148` at 074a2219): the file's cursor
+    /// walk into the in-memory table. A cursor that does not open is its
+    /// own error; a failed copy is [`StoreError::FatalCopy`].
+    fn copy_raw(&self, mut visit: impl FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
+        copy_bdb(&self.db, |key, value| {
+            visit(key, value);
+            Ok(())
+        })
+    }
 }
 
 impl WriteStore for BdbStore {
@@ -444,7 +456,8 @@ impl WriteStore for BdbStore {
     ) -> Result<(), StoreError> {
         crate::remove_if_present(path)?;
         let file = Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?;
-        records(&mut |key, value| file.put(key, value))?;
+        // `copy_bdb` asserts on a failed `put` or source walk.
+        crate::copy::copy(records, |key, value| file.put(key, value))?;
         file.close_unsynced();
         Ok(())
     }
@@ -556,18 +569,29 @@ pub struct BdbUserBigramDb {
     db: Result<Db, BdbUnopenedHandle>,
 }
 
-/// Visits one borrowed record at a time in the database's native order.
-fn visit_db(
-    db: &Db,
-    mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+/// `copy_bdb(srcdb, destdb)` (`bdb_utils.h:43-74` at 074a2219): the
+/// records of `src` in its cursor order, each handed to `set`. A cursor
+/// that does not open is the pin's soft `return false` (`:49-52`): its own
+/// error. A failed `put` or a cursor walk that ends in an error is
+/// [`StoreError::FatalCopy`], where the copy asserts (`:61`, `:67`).
+fn copy_bdb(
+    src: &Db,
+    set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    let mut cursor = db.cursor()?;
-    let mut seek = ffi::Seek::First;
-    while let Some(row) = cursor.get(seek)? {
-        visit(row.key, row.value)?;
-        seek = ffi::Seek::Next;
-    }
-    Ok(())
+    #[cfg(feature = "test-hooks")]
+    crate::copy::faults::make_iterator()?;
+    let mut cursor = src.cursor()?;
+    crate::copy::copy(
+        |visit| {
+            let mut seek = ffi::Seek::First;
+            while let Some(row) = cursor.get(seek)? {
+                visit(row.key, row.value)?;
+                seek = ffi::Seek::Next;
+            }
+            Ok(())
+        },
+        set,
+    )
 }
 
 impl BdbUserBigramDb {
@@ -603,10 +627,11 @@ impl BdbUserBigramDb {
         // `copy_bdb(tmp_db, m_db)`; a file that does not open leaves the
         // container empty, as the pin's does.
         if let Ok(file) = Db::open(path, ffi::DB_HASH, true, false, ffi::USER_FILE_MODE) {
-            // Keep the usable in-memory container if source traversal fails;
-            // callers of the pin retain it even when load_db returns false.
-            if let Err(error) = visit_db(&file, |key, value| db.put(key, value)) {
-                eprintln!("user-bigram load {}: {error}", path.display());
+            // A cursor that does not open leaves the container as it is:
+            // `load_db` returns false and its callers ignore the answer. A
+            // failed copy is where the pin asserts.
+            if let Err(StoreError::FatalCopy) = copy_bdb(&file, |key, value| db.put(key, value)) {
+                return Err(StoreError::FatalCopy);
             }
         }
         Ok(Self { db: Ok(db) })
@@ -652,7 +677,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
-        // `visit_db`'s walk without the values: the same cursor order, into
+        // `copy_bdb`'s cursor walk without the values: the same cursor order, into
         // one vector of four-byte tokens, as `get_all_items` appends them
         // to one `GArray` (`ngram_bdb.cpp:178-215` at 074a2219). Berkeley
         // DB keeps no record count to reserve by, so it grows as it goes.
@@ -718,7 +743,7 @@ fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
     // in-memory container, not of the file — then close the file.
     crate::remove_if_present(path)?;
     let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
-    visit_db(db, |key, value| file.put(key, value))?;
+    copy_bdb(db, |key, value| file.put(key, value))?;
     // The pin discards this call's return code, and so does this.
     let _sync = db.sync();
     file.close_unsynced();

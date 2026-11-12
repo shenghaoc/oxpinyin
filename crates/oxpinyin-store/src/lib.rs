@@ -121,6 +121,12 @@ pub enum StoreError {
     /// (class (b), `eio-flexible-bigram-malformed-records.md`), and the tools
     /// report it as a store error.
     ShortArrayHeader,
+    /// A tkrzw or Berkeley DB record copy failed a destination write, or
+    /// its source walk did not end normally. The pin's `copy_tkrzwdb` and
+    /// `copy_bdb` assert there (`tkrzwdb_utils.h:65`, `:72`;
+    /// `bdb_utils.h:61`, `:67` at 074a2219), so the C adapters abort. No
+    /// caller may treat it as a soft failure.
+    FatalCopy,
 }
 
 /// A non-I/O failure the storage backend reported: its message, and the
@@ -188,6 +194,10 @@ impl fmt::Display for StoreError {
             Self::ShortArrayHeader => {
                 f.write_str("flexible bigram single gram is shorter than its array header")
             }
+            Self::FatalCopy => f.write_str(
+                "a record copy failed where upstream asserts \
+                 (tkrzwdb_utils.h:65, :72; bdb_utils.h:61, :67)",
+            ),
         }
     }
 }
@@ -200,7 +210,8 @@ impl std::error::Error for StoreError {
             Self::ReadOnly
             | Self::InvalidInput(_)
             | Self::ReadAfterCheck
-            | Self::ShortArrayHeader => None,
+            | Self::ShortArrayHeader
+            | Self::FatalCopy => None,
         }
     }
 }
@@ -725,6 +736,26 @@ pub trait RawReadStore {
         })
     }
 
+    /// Copies every record of a saved user index into `visit`, in the walk
+    /// order, as the pin's `load_db` copies the file into its in-memory
+    /// table. The default is the whole [`Self::range_raw`] walk, whose
+    /// error the caller handles: Kyoto Cabinet's `load_snapshot` asserts
+    /// nothing (074a2219 chewing_large_table2_kyotodb.cpp:94-105). tkrzw and
+    /// Berkeley DB copy with `copy_tkrzwdb` and `copy_bdb`, which assert on a
+    /// failed source walk: there they answer [`StoreError::FatalCopy`].
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::FatalCopy`] where the pin's copy asserts, which no
+    /// caller may treat as soft; any other [`StoreError`] when the walk
+    /// fails where the pin does not assert.
+    fn copy_raw(&self, mut visit: impl FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
+        self.range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
+            visit(key, value);
+            Ok(())
+        })
+    }
+
     /// Every raw key in the container's **own walk order** — the order
     /// libpinyin's `Bigram::get_all_items` collects
     /// (`ngram_tkrzwdb.cpp:143-172`, `ngram_bdb.cpp`,
@@ -1039,6 +1070,14 @@ fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
 /// gated to the backends that use it (see the module docs).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
+/// The record copy of the pin's tkrzw and Berkeley DB `load_db` and
+/// `save_db`, which answers [`StoreError::FatalCopy`] where the pin's copy
+/// asserts.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+mod copy;
+/// The copy's fault points for other crates' death tests.
+#[cfg(all(feature = "test-hooks", any(feature = "tkrzw", feature = "bdb")))]
+pub use copy::faults as copy_faults;
 #[cfg(test)]
 mod death_test;
 
