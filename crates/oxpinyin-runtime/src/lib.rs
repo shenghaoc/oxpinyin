@@ -2269,12 +2269,14 @@ impl Runtime {
     }
 
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
-    /// sub-indices. Returns the compacted nibbles.
+    /// sub-indices that are loaded: an unloaded library has no sub-index to
+    /// compact (`phrase_index.cpp:651-652`). Returns the compacted nibbles.
     #[must_use]
     pub fn compact_layout_failed(&mut self) -> Vec<u8> {
+        let unloaded = self.unloaded_libraries();
         self.originals_mut()
             .phrase_libraries_mut()
-            .compact_layout_failed()
+            .compact_layout_failed(unloaded)
     }
 
     /// The current loaded-library mask, snapshotted for an exclusive save.

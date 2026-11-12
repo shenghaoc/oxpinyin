@@ -422,15 +422,21 @@ impl PhraseLibraries {
     /// `FacadePhraseIndex::compact` over the layout-failed empty
     /// sub-indices (`phrase_index.cpp:648-675`, called by `pinyin_save`
     /// at `pinyin.cpp:1139`, `zhuyin_save` at `zhuyin.cpp:554`,
-    /// `begin_add_phrases` at `pinyin.cpp:657` / `zhuyin.cpp:542`, and
+    /// `end_add_phrases` at `pinyin.cpp:657` / `zhuyin.cpp:542`, and
     /// `mask_out` at `pinyin.cpp:1294` / `zhuyin.cpp:829`). Their local
     /// total becomes zero; the facade aggregate already excludes it. A
     /// well-formed library's stored total equals its item sum, so it is
-    /// left alone. Returns the compacted nibbles.
+    /// left alone. A library whose bit `unloaded` sets has no sub-index
+    /// after `FacadePhraseIndex::unload` (`phrase_index.cpp:261-269`), and
+    /// the pin's compact skips it (`:651-652`): its total stays as the
+    /// unload took it out. Returns the compacted nibbles.
     #[must_use]
-    pub fn compact_layout_failed(&mut self) -> Vec<u8> {
+    pub fn compact_layout_failed(&mut self, unloaded: u32) -> Vec<u8> {
         let mut compacted = Vec::new();
         for (nibble, slot) in self.by_nibble.iter_mut().enumerate() {
+            if unloaded & (1 << nibble) != 0 {
+                continue;
+            }
             if let Some(loaded) = slot.as_mut()
                 && loaded.library.is_layout_failed()
             {
