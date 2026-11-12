@@ -3,6 +3,7 @@
 This is the procedure to cut a release.
 [`docs/packaging.md`](../packaging.md) is the design record: cargo-c, the installed tree,
 the four version streams and the distro recipes.
+See [Installing uv and cargo-c](setup.md#installing-uv-and-cargo-c) for host setup.
 
 ## Trigger
 
@@ -52,6 +53,14 @@ installs the package in a fresh container and runs `pinyin_init` /
 `zhuyin_init` against the data of the distro. A null context fails the
 lane, because a package whose init fails against the system data must
 not ship.
+Before the install, the Debian lane runs lintian's md5sums tags on both
+`.deb` files. After the install, each lane requires mode 0755 on the two
+installed shared libraries.
+
+A pull request that changes a packaging path runs the same workflow as a
+dry run, with the version 0.0.0. The dry run builds, installs and gates
+the packages of the three lanes. It resolves the release repository
+through gh, as the upload does, and it stops before the upload.
 
 ## Locally
 

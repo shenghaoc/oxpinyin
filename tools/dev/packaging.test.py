@@ -2,11 +2,13 @@
 
 Assert statuses, payloads and outputs using explicit fake Tools adapters.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -361,7 +363,7 @@ for word in sys.argv[2:]:
                 (pcdir / (module + '.pc')).write_text('Name: '+module+'\nDescription: fixture\nVersion: 2.88.0\nLibs: -l'+module+'\nCflags:\n')
             self.env['PKG_CONFIG_LIBDIR'] = str(pcdir)
             self.fake('md5sum', "import hashlib,sys; from pathlib import Path; "
-                      "[(print(hashlib.md5(Path(name).read_bytes()).hexdigest()+'  '+name,flush=True)) for name in sys.argv[1:]]")
+                      "[(print(hashlib.md5(Path(name).read_bytes()).hexdigest()+'  '+name,flush=True)) for name in sys.argv[1:] if name != '--']")
             self.fake('sort', r"""import sys
 from pathlib import Path
 files=[word for word in sys.argv[1:] if not word.startswith('-')]
@@ -673,6 +675,73 @@ Path(args[args.index('-o')+1]).mkdir()
             (inc / 'header.h').write_bytes(b'header')
             return stage
 
+        def test_installed_shared_libraries_must_have_the_pins_mode(self):
+            libdir = self.work / 'installed-lib'
+            libdir.mkdir()
+            for library in ('libpinyin', 'libzhuyin'):
+                path = libdir / f'{library}.so.15.0.0'
+                path.write_bytes(b'library')
+                path.chmod(0o755)
+            result = self.invoke('check-library-mode', [libdir])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.decode().splitlines(),
+                             [f'{libdir}/libpinyin.so.15.0.0: mode 755', f'{libdir}/libzhuyin.so.15.0.0: mode 755'])
+            for mode in (0o644, 0o775, 0o4755):
+                with self.subTest(mode=oct(mode)):
+                    (libdir / 'libzhuyin.so.15.0.0').chmod(mode)
+                    result = self.invoke('check-library-mode', [libdir])
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f'error: {libdir}/libzhuyin.so.15.0.0 has mode {mode:o}, not 755'.encode(),
+                                  result.stderr)
+            (libdir / 'libzhuyin.so.15.0.0').chmod(0o755)
+            # A link reports its own mode, as `stat -c %a` does, not its target's: 777 on Linux,
+            # where the workflow runs. macOS gives links the umask's mode.
+            (libdir / 'libpinyin.so.15.0.0').unlink()
+            if sys.platform.startswith('linux'):
+                (libdir / 'libpinyin.so.15.0.0').symlink_to('libzhuyin.so.15.0.0')
+                result = self.invoke('check-library-mode', [libdir])
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(b'has mode 777, not 755', result.stderr)
+                (libdir / 'libpinyin.so.15.0.0').unlink()
+            result = self.invoke('check-library-mode', [libdir])
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn(b'cannot read the mode of', result.stderr)
+            self.assertEqual(self.invoke('check-library-mode').returncode, 1)
+
+        def test_distro_tkrzw_library_requires_a_dpkg_owned_soname(self):
+            target = self.work / 'libtkrzw.so.1.0'
+            target.touch()
+            link = self.work / 'libtkrzw.so.1'
+            link.symlink_to(target)
+            self.fake('ldconfig', f'print({f"libtkrzw.so.1 => {link}"!r})')
+            self.fake('dpkg', f'import sys; assert sys.argv[1:] == ["-S", "--", {str(target.resolve())!r}]; '
+                      f'print({f"libtkrzw1: {target}"!r})')
+            result = self.invoke('distro-tkrzw-library')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.decode().splitlines(), [str(target.resolve())])
+
+            environment = self.work / 'github-env'
+            environment.write_text('EARLIER=1\n')
+            result = self.invoke('distro-tkrzw-library', ['--github-env'], env={'GITHUB_ENV': str(environment)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(environment.read_text(), f'EARLIER=1\nOXPINYIN_TKRZW_LIBRARY={target.resolve()}\n')
+            for args, env in ((['--github-env'], {'GITHUB_ENV': ''}), (['--other'], {})):
+                with self.subTest(args=args):
+                    result = self.invoke('distro-tkrzw-library', args, env=env)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+
+            self.fake('dpkg', 'raise SystemExit(1)')
+            result = self.invoke('distro-tkrzw-library')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(result.stdout, b'')
+            self.assertIn(b'no package owns', result.stderr)
+
+            self.fake('ldconfig', 'print("libtkrzw.so.10 => /other/library")')
+            result = self.invoke('distro-tkrzw-library')
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(result.stdout, b'')
+            self.assertIn(b'soname libtkrzw.so.1 not in ldconfig cache', result.stderr)
+
         def test_deb_payload_metadata_and_builder_failures(self):
             stage, out = self.staged(), self.work / 'packages'
             self.fake('objdump', "import sys; print(' NEEDED libc.so.6\\n NEEDED libglib.so.0' if sys.argv[1]=='-p' else 'GLIBC_2.17\\nGLIBC_2.9')")
@@ -696,6 +765,14 @@ os.utime(package,(1,1))
             self.assertIn('Conflicts: libpinyin15, libzhuyin15', control)
             dev_control = (payload / 'dev/DEBIAN/control').read_text()
             self.assertIn('Depends: oxpinyin-libpinyin15-bdb (= 0.1.0-1), libglib2.0-dev\n', dev_control)
+            for tree in (payload / 'runtime', payload / 'dev'):
+                with self.subTest(tree=tree.name):
+                    files = sorted(str(path.relative_to(tree)) for path in tree.rglob('*') if path.is_file()
+                                   and not path.is_symlink() and path.relative_to(tree).parts[0] != 'DEBIAN')
+                    self.assertIn('usr/share/doc', '\n'.join(files))
+                    expected = ''.join(hashlib.md5((tree / name).read_bytes()).hexdigest() + '  ' + name + '\n'
+                                       for name in files)
+                    self.assertEqual((tree / 'DEBIAN/md5sums').read_text(), expected)
             result = self.invoke('release-deb', ['bdb','0.1.0',stage,'/usr/lib',out], env={'FAIL_PACKAGE':'1'})
             self.assertEqual(result.returncode, 39)
 
@@ -773,6 +850,9 @@ if os.environ.get('EXTRA_EXPORT'): print('00000002 T leak@@LIBPINYIN')
                     result = self.invoke('relink-versioned', arguments, env=environment)
                     self.assertEqual(result.returncode == 0, not environment, result.stderr)
                     self.assertEqual(dest.read_bytes(), b'original' if environment else b'linked')
+                    if not environment:
+                        # mktemp creates 0600; the installed object has the pin's 0755.
+                        self.assertEqual(stat.S_IMODE(dest.stat().st_mode), 0o755)
                     args = json.loads((self.work / 'calls').read_text())
                     self.assertEqual(args.count('-Wl,-z,defs'), 1)
                     self.assertIn('-Wl,--version-script=' + str(ver), args)
@@ -856,6 +936,31 @@ for line in text.split('global:')[1].split('local:')[0].splitlines():
             self.assertIn(b'release-stage gates passed (backend: bdb)',result.stdout)
             self.assertIn(b'pinyin=fixture',result.stdout)
             self.assertIn(b'zhuyin=fixture',result.stdout)
+
+        def test_release_stage_refuses_dest_that_holds_an_install_root(self):
+            self.stage_fakes()
+            # rm is the stage's first write. The fake records the call and stops the
+            # run there, so even a broken guard deletes and writes nothing.
+            removed = self.work / 'removed'
+            self.fake('rm', "import json,os,sys; open(os.environ['REMOVED'],'a').write(json.dumps(sys.argv[1:])+'\\n'); sys.exit(97)")
+            for name in ('cargo', 'cargo-cinstall', 'mkdir'):
+                self.fake(name, 'import sys; sys.exit(98)')
+            link = self.work / 'usr-link'
+            link.symlink_to('/usr')
+            for prefix, dest in (('/usr', '/'), ('/usr', '//'), ('/usr', '/usr'), ('/usr', '/usr/'),
+                                 ('/usr', '/usr/lib/'), ('/usr', '/usr/../usr'), ('/usr', '/usr/lib/.'),
+                                 ('/usr', str(link)), ('/usr/local', '/usr')):
+                with self.subTest(prefix=prefix, dest=dest):
+                    arguments = ['bdb', '--prefix=' + prefix, '--libdir=' + prefix + '/lib', '--dest=' + dest]
+                    result = self.invoke('release-stage', arguments, env={'REMOVED': str(removed)})
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(b'collides with a real install root', result.stderr)
+                    self.assertFalse(removed.exists())
+            stage = self.work / 'stage'
+            arguments = ['bdb', '--prefix=/usr', '--libdir=/usr/lib', '--dest=' + str(stage)]
+            result = self.invoke('release-stage', arguments, env={'REMOVED': str(removed)})
+            self.assertEqual(result.returncode, 97, result.stderr)
+            self.assertEqual(removed.read_text(), json.dumps(['-rf', '--', str(stage)]) + '\n')
 
 
 if sys.platform == 'win32':

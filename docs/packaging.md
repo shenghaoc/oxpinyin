@@ -432,6 +432,7 @@ Use the local command to debug a CI failure, not to collect sizes for a PR.
 
 Every published GitHub release triggers `.github/workflows/release-packages.yml`.
 The workflow builds drop-in packages for the three distribution families and attaches them, with a `SHA256SUMS`, to the release with `gh release upload`.
+A pull request that changes a packaging path runs the workflow as a dry run that stops before the upload ([release runbook](runbooks/release.md#what-each-lane-gates)).
 
 Each lane builds on the rolling branch of its distribution: Debian testing, Fedora Rawhide and Arch.
 Fedora's lane uses `fedora:rawhide`, not `fedora:latest`, which is the current stable release.
@@ -449,10 +450,12 @@ The drop-in therefore reads the data already on the system:
 It runs `just packaging install` (cargo cinstall and the complete `.pc`) once for each library, with `--destdir` set to the staging root.
 cargo-c's ordinary `--no-default-features --features <backend>` selects the backend, with `shipped` added on the pinyin crate.
 cargo-c forwards both flags to `cargo build`, because its subcommands register cargo's full set of feature arguments.
-Each lane uses the `cargo-c` package of its distribution, the one that the distribution's libpinyin packaging would use; rustc and cargo still come from `rust-toolchain.toml`.
+See [Installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c) for host setup.
+Rustc and Cargo come from `rust-toolchain.toml`.
 
 The script then strips the shared objects and checks the tree again before any packaging runs.
 The checks are the fixed file list of `docs/findings/installed-naming.md`, the SONAME, the five pkg-config reads that real consumers perform, and a C compile/link/run.
+The run certifies the `libtkrzw` that the smoke binaries load against `OXPINYIN_TKRZW_LIBRARY`. The Debian lane sets it to the dpkg-owned `libtkrzw.so.1` that its package depends on.
 
 The maker for each distribution wraps that staged tree in the shape that the distribution's real libpinyin packaging uses.
 Every package takes over the distribution's libpinyin and libzhuyin **in their entirety**:

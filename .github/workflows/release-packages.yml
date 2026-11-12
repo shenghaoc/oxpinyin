@@ -35,18 +35,37 @@
 # `--no-default-features --features <backend>`. See the header of
 # just packaging release-stage.
 #
-# Two jobs:
+# Three jobs:
 #   package — 3-container matrix; each child stages the drop-in tree, builds
 #             the distro's package shape, INSTALLS the packages back into
 #             its own container and re-runs the consumer gates against /usr
-#   attach   — collects every artifact, writes SHA256SUMS, and uploads them
-#             to the published release with the runner's gh CLI
+#   attach   — collects every artifact, writes SHA256SUMS and resolves the
+#             release repository through gh, as the upload does
+#   publish  — uploads the assets to the published release with the
+#             runner's gh CLI; release events only
+#
+# A pull request that changes a packaging path runs the same jobs up to
+# publish, as a dry run with the version 0.0.0. publish does not run, so a
+# pull request never gets a write token.
 
 name: Release packages
 
 on:
   release:
     types: [published]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-packages.yml
+      - .github/actions/bootstrap/**
+      - tools/dev/packaging.py
+      - tools/dev/packaging_templates.py
+      - tools/dev/cell.py
+      - tools/tkrzw/runtime.py
+      - crates/oxpinyin-capi/Cargo.toml
+      - crates/oxpinyin-capi/*.ver
+      - crates/oxpinyin-zhuyin-capi/Cargo.toml
+      - crates/oxpinyin-zhuyin-capi/*.ver
 
 permissions:
   contents: read
@@ -55,17 +74,21 @@ defaults:
   run:
     shell: bash
 
-# One run per release: a re-published or edited release must not race an
-# attach still uploading assets for the same tag. Queue, never cancel — the
-# run in flight is the one whose packages are already half-attached.
+# One run per release: a re-published or edited release must not race a
+# publish still uploading assets for the same tag. Queue, never cancel — the
+# run in flight is the one whose packages are already half-attached. A new
+# push to a pull request cancels that pull request's older dry run.
 concurrency:
-  group: release-packages-${{ github.event.release.id }}
-  cancel-in-progress: false
+  group: release-packages-${{ github.event.release.id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   DEBIAN_FRONTEND: noninteractive
+  # gh resolves the repository from GH_REPO: the attach and publish jobs
+  # have no checkout and no git remote.
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   package:
@@ -174,9 +197,10 @@ jobs:
       # Stable three-component versions only: a prerelease suffix (-rc1)
       # is not a legal pkgver for makepkg and sorts wrongly under dpkg/rpm,
       # so anything but vX.Y.Z / X.Y.Z fails here rather than in a maker.
+      # A pull request dry run has no tag and builds 0.0.0.
       - name: Derive the package version from the release tag
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.event.release.tag_name || 'v0.0.0' }}
         run: |
           set -euo pipefail
           if [[ "$TAG" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -186,6 +210,15 @@ jobs:
             exit 1
           fi
           echo "VERSION=$VER" >> "$GITHUB_ENV"
+
+      # release-stage certifies the libtkrzw that its smoke binaries load
+      # against OXPINYIN_TKRZW_LIBRARY (tools/tkrzw/runtime.py), and refuses
+      # an unconfigured runtime. The package depends on the distro's own
+      # libtkrzw: the library that release-deb resolves, the first ldconfig
+      # entry for libtkrzw.so.1, owned by a dpkg package. Name that library.
+      - name: Select the distro tkrzw runtime
+        if: matrix.backend == 'tkrzw'
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging distro-tkrzw-library --github-env
 
       - name: Build and stage the drop-in tree
         env:
@@ -240,12 +273,21 @@ jobs:
           # the distro's real model, as it will on a user's system; the Arch
           # package carries the data itself.
           case "$DISTRO" in
-            debian) apt-get install -y libpinyin-data "$PWD"/dist/*.deb ;;
+            debian)
+              # The md5sums manifest lists each payload file once and only
+              # payload files (lintian's md5sums check).
+              apt-get install -y --no-install-recommends lintian
+              lintian --tags md5sums-lists-nonexistent-file,md5sum-mismatch,file-missing-in-md5sums \
+                --fail-on error,warning "$PWD"/dist/*.deb
+              apt-get install -y libpinyin-data "$PWD"/dist/*.deb
+              ;;
             fedora) dnf -y install libpinyin-data "$PWD"/dist/*.rpm ;;
             arch)   pacman -U --noconfirm "$PWD"/dist/*.pkg.tar.zst ;;
           esac
           ldconfig
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
+          # The pin installs its shared libraries with mode 0755.
+          uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging check-library-mode "$LIBDIR"
           PCVER="$(uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging pc-version)"
           [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
@@ -309,11 +351,9 @@ jobs:
           if-no-files-found: error
 
   attach:
-    name: Attach packages to the release
+    name: Collect the release assets
     needs: package
     runs-on: *ubuntu
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -326,9 +366,33 @@ jobs:
           cd dist
           ls -l
           sha256sum -- * > SHA256SUMS
-      # gh ships on the hosted runner (this job is NOT containerized), so no
-      # third-party release-upload action is needed. --clobber makes
-      # re-running a failed attach replace partial assets.
+      # gh ships on the hosted runner (this job is NOT containerized). The
+      # release list resolves the repository the way publish's upload does,
+      # with no checkout, so a pull request run proves the upload can find it.
+      - name: Resolve the release repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release list --limit 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach packages to the release
+    needs: attach
+    if: github.event_name == 'release'
+    runs-on: *ubuntu
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      # No third-party release-upload action is needed. --clobber makes
+      # re-running a failed publish replace partial assets.
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
