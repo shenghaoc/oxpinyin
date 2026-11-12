@@ -488,12 +488,12 @@ pub extern "C" fn pinyin_guess_candidates(
     } else {
         normalized
     };
-    // Retain the re-anchored window on the instance: a session's
-    // selection records against the cached (composition-anchored) list,
-    // but the row the caller saw came from the offset-anchored window —
-    // an index into the cached list would select a different row
-    // whenever the two differ. `anchored_window` is set here and a later
-    // `pinyin_choose_candidate` resolves its index against it.
+    // Publish each row of the re-anchored window with its own span: a
+    // session's selection records against the cached (composition-anchored)
+    // list, but the row the caller saw came from the offset-anchored window
+    // — an index into the cached list would select a different row whenever
+    // the two differ. A later `pinyin_choose_candidate` selects the row's
+    // span, as the pin's reads `m_begin` and `m_end` off the row.
     let window = match inst.core.session.candidates_at(session_offset) {
         Ok(window) => window,
         // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
@@ -551,12 +551,11 @@ pub extern "C" fn pinyin_guess_candidates(
             return false;
         }
     };
-    inst.core.replace_anchored_window(session_offset, window);
     // A lookup strictly inside a key of the active transformed parse: the
     // pin's matrix column there is empty (keys sit on their key rests'
     // `m_raw_begin` only), so the search finds nothing and the list is the
     // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
-    // The window stays anchored at the containing key for a later choose,
+    // The rows keep their spans at the containing key for a later choose,
     // as in the zhuyin facade (issue #577); only its sentence rows are
     // snapshot.
     let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
@@ -578,14 +577,7 @@ pub extern "C" fn pinyin_guess_candidates(
     // so a row the dedup removes still counts. A lookup strictly inside a
     // key searches nothing at the pin. The process aborts there, before the
     // phrase strings are read.
-    if facade_total_is_zero(&inst.read())
-        && !sentence_rows_only
-        && inst
-            .core
-            .anchored_window
-            .as_ref()
-            .is_some_and(|(_, window)| window.ranked_phrase_row())
-    {
+    if facade_total_is_zero(&inst.read()) && !sentence_rows_only && window.ranked_phrase_row() {
         std::process::abort();
     }
     // Class (b), `pinyin.cpp:1635-1637` / `:2053`: a token of a loaded
@@ -593,23 +585,16 @@ pub extern "C" fn pinyin_guess_candidates(
     // the pin's duplicate removal compares it (a NULL or wild read, SIGSEGV).
     // Only a `table.conf` that points a library at another file (or at
     // none) gets here. The call fails, once.
-    if inst
-        .core
-        .anchored_window
-        .as_ref()
-        .is_some_and(|(_, window)| window.had_unreadable_item())
-    {
-        inst.core.anchored_window = None;
+    if window.had_unreadable_item() {
+        inst.core.selection_live = false;
+        inst.core.session.recycle_candidates(window);
         inst.state.candidates.clear();
         crate::ffi::log_warning(
             "pinyin_guess_candidates: a candidate's phrase item cannot be read",
         );
         return false;
     }
-    let Ok(candidates) = inst.core.lookup_window() else {
-        inst.state.candidates.clear();
-        return false;
-    };
+    let candidates = &window;
     // One row vector and one text buffer, each sized once for the window
     // (rows the loop skips leave a little slack, never a second growth).
     // The size is the texts' encoded length, so each text is encoded once,
@@ -656,6 +641,9 @@ pub extern "C" fn pinyin_guess_candidates(
         let Some(text) = inst.state.candidates.intern(&bytes) else {
             continue;
         };
+        if cand.text().outward_bytes().is_none() {
+            inst.state.candidates.keep_stored_text(cand.text().clone());
+        }
         inst.state.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
@@ -683,8 +671,12 @@ pub extern "C" fn pinyin_guess_candidates(
             nbest_index: cand.nbest_index(),
             token: Cell::new(cand.token()),
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
+            selection: oxpinyin_facade::SelectionSpan::of_candidate(cand, session_offset),
         });
     }
+    // Every row now carries its span; the window's storage goes back to
+    // the session for the next guess.
+    inst.core.publish_window(window);
     // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
     // parse that produced no keys answers false, not an empty list.
     // A non-empty parse with no candidates (apostrophe-only runs,

@@ -430,6 +430,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
         nbest_index: 0,
         token: Cell::new(Some(PhraseToken::new(token))),
         source_index: 0,
+        selection: oxpinyin_facade::SelectionSpan::default(),
     });
     let candidate = crate::state::candidate_ptr(&inst.state.candidates[0]);
     let before = inst.core.lm.amplified_total();

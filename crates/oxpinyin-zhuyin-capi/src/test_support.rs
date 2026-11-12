@@ -142,7 +142,7 @@ pub fn with_store<R>(
     f(inst.core.user)
 }
 
-/// The token of the window row the candidate pointer was snapshotted from.
+/// The token the candidate pointer's row was published with.
 pub fn token_of(instance: *mut ZhuyinInstance, cand: *mut LookupCandidate) -> u32 {
     // SAFETY: `cand` was produced by a guess on `instance` and no later
     // guess invalidated the snapshot.
@@ -152,11 +152,7 @@ pub fn token_of(instance: *mut ZhuyinInstance, cand: *mut LookupCandidate) -> u3
         .iter()
         .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
         .expect("the candidate is in the snapshot");
-    inst.core
-        .anchored_window
-        .as_ref()
-        .and_then(|(_, window)| window.get(row.source_index as usize))
-        .and_then(oxpinyin_engine::Candidate::token)
+    row.token
         .expect("a phrase candidate carries its token")
         .value()
 }

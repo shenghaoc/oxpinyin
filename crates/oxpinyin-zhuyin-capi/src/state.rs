@@ -90,8 +90,8 @@ impl CapiContext {
 /// Sized to need, as the pinyin facade's row is: the text lives in the
 /// instance's [`CandidateSnapshot`](oxpinyin_facade::CandidateSnapshot)
 /// buffer and the counts are `u32`. It carries only what this facade's
-/// getters and its choose read; everything else about the row is in the
-/// window it was snapshotted from, at `source_index`.
+/// getters and its choose read: the pin's choose reads the row's own
+/// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219).
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: oxpinyin_facade::TextSpan,
@@ -108,11 +108,15 @@ pub struct CapiCandidate {
     pub(crate) span_begin: u32,
     /// Original `m_end`, also returned when reparsing makes the span refuse.
     pub(crate) span_end: u32,
+    /// The row's scoring token, `m_token`, which a choose forces.
+    pub(crate) token: Option<oxpinyin_core::PhraseToken>,
+    /// The row's span in session coordinates, which a choose selects.
+    pub(crate) selection: oxpinyin_facade::SelectionSpan,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
+const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 48);
 
 #[cfg(test)]
 impl CapiCandidate {

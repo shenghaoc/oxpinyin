@@ -9,15 +9,17 @@ use oxpinyin_core::{
     ZhuyinParse,
 };
 use oxpinyin_engine::{
-    CandidateList, EngineError, SentencePart, check_lookup_offset_range, normalize_lookup_offset,
+    Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
+    check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_user::UserStore;
 
 use crate::context::LiveOptions;
 
-/// The [`InstanceState::anchored_window`] anchor for a **before-cursor**
-/// window — the buffer start, not the lookup offset.
+/// The anchor of a **before-cursor** window — the buffer start, not the
+/// lookup offset — that [`SelectionSpan::of_candidate`] places its rows'
+/// spans from.
 ///
 /// The two window builders measure a candidate's `consumed_bytes` in
 /// different coordinates, and [`oxpinyin_engine::Session::select_anchored`]
@@ -36,10 +38,69 @@ use crate::context::LiveOptions;
 ///
 /// Reusing the after-cursor anchor here would read the span as
 /// `[offset, 2 * offset)` and walk the composition off the end of the
-/// buffer; leaving the window unanchored resolves the row's index against
-/// the composition-anchored cached list instead, which is a different list
-/// — the caller would commit a row it never displayed.
+/// buffer; resolving the row's index against the composition-anchored
+/// cached list instead reads a different list — the caller would commit a
+/// row it never displayed.
 pub const BEFORE_CURSOR_ANCHOR: usize = 0;
+
+/// A published row's chosen span in the session's store coordinates — the
+/// pin's `m_begin` and `m_end` (`lookup_candidate_t`, 074a2219
+/// `pinyin.cpp:97-105`), which its choose reads off the row alone
+/// (`:2577-2590`, `zhuyin.cpp:1646-1666`). Each snapshot row carries its
+/// own, so a choose needs no retained window.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SelectionSpan {
+    begin: u32,
+    end: u32,
+}
+
+impl SelectionSpan {
+    /// The span of `candidate` in a window anchored at `anchor`, as
+    /// [`SelectionTarget::of_candidate`] places it.
+    ///
+    /// Both ends are positions in the raw buffer, which a segment-graph
+    /// position bounds ([`oxpinyin_core::graph::MAX_GRAPH_POSITION`]), so
+    /// the `u32` narrowing never saturates.
+    #[must_use]
+    pub fn of_candidate(candidate: &Candidate, anchor: usize) -> Self {
+        let target = SelectionTarget::of_candidate(candidate, anchor, None);
+        Self {
+            begin: u32::try_from(target.span_start).unwrap_or(u32::MAX),
+            end: u32::try_from(target.span_end).unwrap_or(u32::MAX),
+        }
+    }
+
+    /// Where the span starts.
+    #[must_use]
+    pub const fn begin(self) -> usize {
+        self.begin as usize
+    }
+
+    /// Where the span ends.
+    #[must_use]
+    pub const fn end(self) -> usize {
+        self.end as usize
+    }
+}
+
+/// What a choose reads off one published row.
+#[derive(Clone, Copy, Debug)]
+pub struct PublishedRow<'a> {
+    /// The row's own span ([`SelectionSpan`]).
+    pub span: SelectionSpan,
+    /// The token the row was published with — before any in-place
+    /// promotion, which the caller passes separately.
+    pub token: Option<oxpinyin_core::PhraseToken>,
+    /// The n-best tail rank, for a sentence row only.
+    pub nbest_row: Option<u8>,
+    /// The row's text, stored words included.
+    pub text: &'a PhraseText,
+    /// The row's position in the list it was built from, which resolves a
+    /// choose made after the selection ended
+    /// ([`InstanceState::selection_live`]) against the session's cached
+    /// list.
+    pub source_index: usize,
+}
 
 /// State behind a facade's instance handle, minus the C parts: everything
 /// the two C-ABI crates' `CapiInstance`s held in identical shape.
@@ -66,12 +127,15 @@ pub struct InstanceState {
     /// upstream `m_parsed_len`, in the active parse mode's own
     /// coordinates. Allocation and reset both store 0.
     pub parsed_len: usize,
-    /// The candidate window from the most recent guess, as `(anchor, window)`.
-    /// Retained across parsing so a later choose resolves its index against
-    /// the same window the caller saw, including a guess at offset zero.
-    /// A new guess replaces it and full reset drops it. Pinyin drops it on
-    /// an accepted choose. Zhuyin retains it for further choices.
-    pub anchored_window: Option<(usize, CandidateList)>,
+    /// Whether the published rows of the most recent guess select by their
+    /// own spans ([`PublishedRow`]). Kept across parsing, so a later choose
+    /// uses the span and token the caller saw, including after a guess at
+    /// offset zero. A guess that publishes a window sets it; full reset,
+    /// prediction and a failed guess clear it. Pinyin clears it on an
+    /// accepted choose, after which a choose resolves the row's
+    /// `source_index` against the session's cached list. Zhuyin keeps it
+    /// for further choices.
+    pub selection_live: bool,
     /// Most recent double-pinyin parse, when the last parse call was the
     /// double-pinyin entry point. Used for aux text and
     /// candidate-offset mapping back to the original input bytes.
@@ -163,18 +227,12 @@ impl<
     E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
 > InstanceView<'_, S, E>
 {
-    /// Retains a successful guess's `window` as the anchored window, and
-    /// hands the window it replaces back to the session for its storage.
-    /// Every other path that ends an anchored window simply drops it.
-    pub fn replace_anchored_window(&mut self, anchor: usize, window: CandidateList) {
-        if let Some((_, replaced)) = self
-            .state
-            .borrow_mut()
-            .anchored_window
-            .replace((anchor, window))
-        {
-            self.session.recycle_candidates(replaced);
-        }
+    /// Ends a guess whose rows were published from `window`: the rows
+    /// select by their own spans from now on, and the window goes back to
+    /// the session for its storage.
+    pub fn publish_window(&mut self, window: CandidateList) {
+        self.state.borrow_mut().selection_live = true;
+        self.session.recycle_candidates(window);
     }
 }
 
@@ -187,7 +245,7 @@ impl InstanceCore {
                 live,
                 phrase_result: Vec::new(),
                 parsed_len: 0,
-                anchored_window: None,
+                selection_live: false,
                 double_parse: None,
                 double_input: String::new(),
                 zhuyin_parse: None,
@@ -391,33 +449,17 @@ impl<
     E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
 > InstanceView<'_, S, E>
 {
-    /// The list a lookup answers from: the window the last
-    /// `pinyin_guess_candidates` re-anchored, else the session's own list,
-    /// built first if a deferred parse or sentence guess left it stale
-    /// ([`oxpinyin_engine::Session::set_defer_list_builds`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when the deferred build hits a backend
-    /// failure.
-    pub fn lookup_window(&mut self) -> Result<&CandidateList, EngineError> {
-        if let Some((_, window)) = self.state.borrow().anchored_window.as_ref() {
-            return Ok(window);
-        }
-        self.session.refresh_candidates()?;
-        Ok(self.session.candidates())
-    }
-
     /// The parse-path reset: the composition's parse state goes, the
     /// selection record and the constraint store stay — upstream's
     /// parse-never-touches-constraints rule; the frontend re-sends the
     /// whole buffer every keystroke, so the chosen cursor must survive
     /// the re-parse.
     ///
-    /// Candidate snapshots survive parsing in both ABIs. Keep their anchored
-    /// window too, so a later choose resolves the retained row's token and
-    /// span rather than an index into the new parse's candidate list
-    /// (074a2219, pinyin.cpp:2580-2587, zhuyin.cpp:1646-1666).
+    /// Candidate snapshots survive parsing in both ABIs, and so does
+    /// [`InstanceState::selection_live`], so a later choose uses the
+    /// retained row's token and span rather than an index into the new
+    /// parse's candidate list (074a2219, pinyin.cpp:2580-2587,
+    /// zhuyin.cpp:1646-1666).
     pub fn reset_parse_state(&mut self) {
         self.session.reset_composition();
         self.parsed_len = 0;
@@ -452,41 +494,38 @@ impl<
         Ok(matched)
     }
 
-    /// Selects the candidate at `source_index` in the window the caller saw,
-    /// or its promoted token when the facade promoted an addon row first.
-    /// Returns the selection outcome and the chosen row's absolute end when
-    /// anchored. The caller controls the window's lifetime.
+    /// Selects the published `row`, or its `promoted` token when the facade
+    /// promoted an addon row first. Returns the selection outcome and the
+    /// row's span end while the selection is live.
+    ///
+    /// While [`InstanceState::selection_live`] holds, the row's own span,
+    /// rank and text are selected, forcing `promoted` or else the row's
+    /// published token. Otherwise the row's `source_index` is resolved
+    /// against the session's cached list.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError`] from the engine's selection.
-    pub fn select_candidate(
+    pub fn select_published(
         &mut self,
-        source_index: usize,
-        promoted: Option<PhraseToken>,
-    ) -> Result<(oxpinyin_engine::Selection, Option<usize>), EngineError> {
-        let (window_end, selection) = {
-            let state = self.state.borrow();
-            let window = state.anchored_window.as_ref();
-            let window_end = window.and_then(|(anchor, window)| {
-                window
-                    .get(source_index)
-                    .map(|row| anchor + row.span_start() + row.consumed_bytes())
-            });
-            let selection = match (promoted, window) {
-                (Some(promoted), Some((anchor, window))) => {
-                    self.session
-                        .select_anchored_promoted(source_index, window, *anchor, promoted)
-                }
-                (Some(promoted), None) => self.session.select_promoted(source_index, promoted),
-                (None, Some((anchor, window))) => {
-                    self.session.select_anchored(source_index, window, *anchor)
-                }
-                (None, None) => self.session.select(source_index),
+        row: &PublishedRow<'_>,
+        promoted: Option<oxpinyin_core::PhraseToken>,
+    ) -> Result<(Selection, Option<usize>), EngineError> {
+        if !self.state.borrow().selection_live {
+            let selection = match promoted {
+                Some(promoted) => self.session.select_promoted(row.source_index, promoted)?,
+                None => self.session.select(row.source_index)?,
             };
-            (window_end, selection)
+            return Ok((selection, None));
+        }
+        let target = SelectionTarget {
+            span_start: row.span.begin(),
+            span_end: row.span.end(),
+            token: promoted.or(row.token),
+            nbest_row: row.nbest_row,
+            text: row.text,
         };
-        Ok((selection?, window_end))
+        Ok((self.session.select_target(&target)?, Some(row.span.end())))
     }
 
     /// Clears the constraint at `offset`, mapping the caller's original-input
@@ -558,7 +597,7 @@ impl<
     /// record, n-best rows, constraint store) all go.
     pub fn full_reset(&mut self) {
         self.reset_parse_state();
-        self.anchored_window = None;
+        self.selection_live = false;
         self.phrase_result.clear();
         self.session.reset();
     }

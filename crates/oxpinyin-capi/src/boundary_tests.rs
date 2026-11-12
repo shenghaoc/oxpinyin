@@ -2697,6 +2697,43 @@ fn a_system_phrase_above_unicode_is_chosen_and_trained() {
     close(context, instance);
 }
 
+/// A row whose phrase is stored words keeps them through a choose of its
+/// published handle, after a reparse of the same input: the selection
+/// record takes the row's text with its stored length and words. The packed
+/// string the handle points at cannot give them back — it stops at a zero
+/// word and drops the stored length — so the snapshot keeps that text.
+#[rstest::rstest]
+#[case::zero_word(0, &[0x7532])]
+#[case::above_unicode(0x11_0000, &[0x7532, 0x11_0000, 0x4e59])]
+fn a_stored_words_row_is_chosen_through_its_handle_with_its_stored_text(
+    #[case] word: u32,
+    #[case] stored: &[u32],
+) {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = phrase_text_system(scratch.path(), word);
+    let user = TempUserDir::new("stored-words-handle");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert_eq!(parse(instance, "da1da1da1ba1"), 12);
+    assert!(pinyin_guess_candidates(
+        instance,
+        0,
+        crate::test_support::DEFAULT_SORT
+    ));
+    let row = row_of(instance, NORMAL);
+    assert_eq!(parse(instance, "da1da1da1ba1"), 12);
+    assert_eq!(pinyin_choose_candidate(instance, 0, row), 9);
+    // SAFETY: the live instance is read between serialized ABI calls.
+    let inst = unsafe { crate::state::instance_ref(instance) };
+    let selected = inst.core.session.selected_text();
+    assert_eq!(
+        (selected.stored_words(), selected.phrase_length()),
+        (Some(stored), 3)
+    );
+    close(context, instance);
+}
+
 /// A negative remember count is stored as its bit pattern: `i32::MIN`
 /// exports as itself.
 #[test]

@@ -169,10 +169,11 @@ impl CapiContext {
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
 ///
-/// The row is sized to need (32 bytes): its text lives in the instance's
+/// The row is sized to need (40 bytes): its text lives in the instance's
 /// [`CandidateSnapshot`] buffer and the row keeps the span, the type is
-/// one byte ([`CapiCandidate::candidate_type`]), and the window index is a
-/// `u32` because a window holds at most a few hundred rows.
+/// one byte ([`CapiCandidate::candidate_type`]), and the window index and
+/// both ends of the selection span are `u32` because a window holds at
+/// most a few hundred rows over a raw buffer a graph position bounds.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: TextSpan,
@@ -190,16 +191,22 @@ pub struct CapiCandidate {
     pub(crate) token: Cell<Option<PhraseToken>>,
     /// The index this candidate held in the window it was snapshotted from.
     /// The snapshot (`Vec<CapiCandidate>`) may omit entries (the engine's
-    /// `Fallback` row, a `CString` conversion failure), so a candidate's position in the snapshot is NOT its
-    /// position in the window; `pinyin_choose_candidate` must select by
-    /// THIS index, which is the one `Session::select[_anchored]` indexes.
+    /// `Fallback` row, a `CString` conversion failure), so a candidate's
+    /// position in the snapshot is NOT its position in the window. A choose
+    /// made after the selection ended
+    /// ([`oxpinyin_facade::InstanceState::selection_live`]) resolves THIS
+    /// index against the session's cached list.
     pub(crate) source_index: u32,
+    /// The row's own span, the pin's `m_begin` and `m_end` in session
+    /// coordinates, which a live choose selects (`pinyin.cpp:2577-2590` at
+    /// 074a2219). Zero for a predicted row.
+    pub(crate) selection: oxpinyin_facade::SelectionSpan,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(core::mem::size_of::<CapiCandidate>() == 32);
+    assert!(core::mem::size_of::<CapiCandidate>() == 40);
     assert!(core::mem::align_of::<CapiCandidate>() == 8);
 };
 

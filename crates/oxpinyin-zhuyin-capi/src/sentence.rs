@@ -520,14 +520,14 @@ fn guess_candidates_result(
             | oxpinyin_engine::EngineError::Graph(_)
             | oxpinyin_engine::EngineError::Scoring(_)),
         ) => {
-            inst.core.anchored_window = None;
+            inst.core.selection_live = false;
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));
         }
     };
-    // The window is retained on the instance after the snapshot below
-    // (moved, not cloned): the snapshot borrows it, and the retained list
-    // is the one a later `zhuyin_choose_candidate` resolves against.
+    // Every snapshot row below carries its own span in this window, which a
+    // later `zhuyin_choose_candidate` selects; the window's storage then
+    // goes back to the session.
     let window_anchor = if before_cursor {
         oxpinyin_facade::BEFORE_CURSOR_ANCHOR
     } else {
@@ -560,7 +560,7 @@ fn guess_candidates_result(
     // removal compares it (SIGSEGV). Only a `table.conf` that points a
     // library at another file (or at none) gets here. The call fails, once.
     if window_owned.had_unreadable_item() {
-        inst.core.anchored_window = None;
+        inst.core.selection_live = false;
         inst.state.candidates.clear();
         return Err(CandidateGuessRefusal::UnreadableItem);
     }
@@ -577,8 +577,7 @@ fn guess_candidates_result(
         window_anchor,
         sentence_rows_only,
     );
-    inst.core
-        .replace_anchored_window(window_anchor, window_owned);
+    inst.core.publish_window(window_owned);
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (074a2219,
     // zhuyin.cpp:1460-1551). The empty matrix was refused above.
