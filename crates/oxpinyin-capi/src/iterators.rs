@@ -13,7 +13,7 @@ use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep, plan_add};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, toned_key};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
-use crate::state::{ContextOwner, context_mut, context_owner, context_ref, owner_mut, owner_ref};
+use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
@@ -133,13 +133,8 @@ pub extern "C" fn pinyin_begin_add_phrases(
         return Box::into_raw(Box::new(handle)).cast();
     }
 
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`; the
-    // borrow lasts only for this constructor.
-    let ctx = unsafe { context_mut(context) };
-    // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
-    // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
-    // becomes zero there.
-    ctx.core.begin_import();
+    // The constructor only builds the iterator (`pinyin.cpp:506-512`); the compact is
+    // `end_add_phrases`'s (`ContextCore::end_import`).
     // SAFETY: the public context is live for this serialized constructor call.
     let owner = unsafe { context_owner(context) };
     let handle = ImportHandle {

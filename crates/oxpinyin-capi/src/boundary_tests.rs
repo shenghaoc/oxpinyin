@@ -13,7 +13,9 @@ use crate::candidates::{
     pinyin_get_candidate_nbest_index, pinyin_get_candidate_type, pinyin_get_n_candidate,
     pinyin_is_user_candidate, pinyin_remove_user_candidate,
 };
-use crate::config::{pinyin_load_phrase_library, pinyin_mask_out, pinyin_set_options};
+use crate::config::{
+    pinyin_load_phrase_library, pinyin_mask_out, pinyin_set_options, pinyin_unload_phrase_library,
+};
 use crate::context::{pinyin_fini, pinyin_init, pinyin_save};
 use crate::cursor::{
     pinyin_get_left_pinyin_offset, pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest,
@@ -26,8 +28,9 @@ use crate::dict::{
 use crate::e2e_tests::{capture_rows, import_batch};
 use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
 use crate::iterators::{
-    pinyin_begin_get_bigram_phrases, pinyin_bigram_iterator_get_next_phrase,
-    pinyin_bigram_iterator_has_next_phrase,
+    pinyin_begin_add_phrases, pinyin_begin_get_bigram_phrases,
+    pinyin_bigram_iterator_get_next_phrase, pinyin_bigram_iterator_has_next_phrase,
+    pinyin_end_add_phrases,
 };
 use crate::keys::{pinyin_get_pinyin_is_incomplete, pinyin_parse_full_pinyin};
 use crate::parse::pinyin_parse_more_full_pinyins;
@@ -836,6 +839,102 @@ fn a_prefix_choose_past_the_unigram_limit_is_refused() {
     assert!(!pinyin_choose_predicted_candidate(instance, row));
     assert_eq!(unigram(instance, token), (true, 4_294_966_893));
     close(context, instance);
+}
+
+/// The facade total of a fresh instance on `context`.
+fn facade_total(context: *mut PinyinContext) -> u64 {
+    let instance = alloc(context);
+    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+    let total = unsafe { crate::state::instance_ref(instance) }
+        .core
+        .lm
+        .amplified_total();
+    pinyin_free_instance(instance);
+    total
+}
+
+/// A context on a private system under `scratch` whose `gbk_char.bin`
+/// (library 2) is a checksum-valid, in-bounds chunk that
+/// `SubPhraseIndex::load` refuses at its second separator
+/// (`phrase_index.cpp:355`). Its local total is T, the facade total of the
+/// other libraries, which the facade does not add (`:242-246`). Answers the
+/// context and T.
+fn layout_failed_gbk_context(scratch: &Path) -> (*mut PinyinContext, u64) {
+    let system = private_system(scratch);
+    let user = scratch.join("user");
+    std::fs::create_dir(&user).expect("user directory");
+    let library = system.join("gbk_char.bin");
+    let write = |total: u32| {
+        let mut payload = [0_u8; 32];
+        for (at, value) in [(0, total), (4, 17), (8, 20), (12, 24)] {
+            payload[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        payload[16] = b'#';
+        payload[19] = b'!';
+        let chunk = oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame");
+        std::fs::remove_file(&library).expect("unlink gbk_char.bin");
+        std::fs::write(&library, chunk).expect("write gbk_char.bin");
+    };
+    write(0);
+    let context = init_at(&system, &user);
+    assert!(!context.is_null());
+    let total = facade_total(context);
+    pinyin_fini(context);
+    assert!(total > 0, "the other libraries hold a total");
+    write(u32::try_from(total).expect("a guint32 total"));
+    let context = init_at(&system, &user);
+    assert!(!context.is_null());
+    assert_eq!(
+        facade_total(context),
+        total,
+        "the refused library adds nothing"
+    );
+    (context, total)
+}
+
+/// The import iterator's constructor does not compact
+/// (`pinyin.cpp:506-512`). An unload of the layout-failed library 2 while
+/// the iterator is open takes its local total T out of the facade total T
+/// (`pinyin.cpp:473`, `phrase_index.cpp:265`), and the scorer aborts on the
+/// zero total (`pinyin.cpp:1859`, register row 61).
+#[test]
+fn an_unload_inside_an_open_import_zeroes_the_facade_total() {
+    assert_aborts(
+        "boundary_tests::an_unload_inside_an_open_import_zeroes_the_facade_total",
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let (context, _) = layout_failed_gbk_context(scratch.path());
+            let iter = pinyin_begin_add_phrases(context, 1);
+            assert!(!iter.is_null());
+            assert!(pinyin_unload_phrase_library(context, 2));
+            let instance = alloc(context);
+            assert_eq!(parse(instance, "nihao"), 5);
+            pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT);
+        },
+    );
+}
+
+/// An unload inside the open import takes library 2's local total T out
+/// of the facade total T (`phrase_index.cpp:261-269`). The end's compact
+/// has no sub-index of library 2 left to rebuild (`phrase_index.cpp:651-652`),
+/// so the total stays zero and the scorer aborts (`pinyin.cpp:1859`,
+/// register row 61).
+#[test]
+fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
+    assert_aborts(
+        "boundary_tests::an_import_that_ends_after_the_unload_keeps_the_zero_total",
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let (context, _) = layout_failed_gbk_context(scratch.path());
+            let iter = pinyin_begin_add_phrases(context, 1);
+            assert!(!iter.is_null());
+            assert!(pinyin_unload_phrase_library(context, 2));
+            pinyin_end_add_phrases(iter);
+            let instance = alloc(context);
+            assert_eq!(parse(instance, "nihao"), 5);
+            pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT);
+        },
+    );
 }
 
 // ── Libraries and iterators ───────────────────────────────────────────────

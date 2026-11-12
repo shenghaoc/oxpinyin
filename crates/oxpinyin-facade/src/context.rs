@@ -559,7 +559,7 @@ impl ContextCore {
 
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
     /// sub-indices. The pin calls it before a save (`pinyin.cpp:1139`,
-    /// `zhuyin.cpp:554`), at `begin_add_phrases` (`pinyin.cpp:657`,
+    /// `zhuyin.cpp:554`), at `end_add_phrases` (`pinyin.cpp:657`,
     /// `zhuyin.cpp:542`) and at the end of `mask_out` (`pinyin.cpp:1294`,
     /// `zhuyin.cpp:829`). Returns the compacted nibbles.
     #[must_use]
@@ -848,15 +848,17 @@ impl ContextCore {
         self.runtime.user_store_mut()
     }
 
-    /// The import iterator's constructor step: compact every sub-index so a
-    /// layout-failed empty one reports its local total as zero.
-    pub fn begin_import(&mut self) {
-        let _compacted = self.compact_layout_failed();
-    }
-
-    /// The import iterator's close step: compact each library's total from
-    /// its items and arm the store's modified flag for the next save.
+    /// The import iterator's close step (`pinyin_end_add_phrases`,
+    /// `zhuyin_end_add_phrases`, 074a2219 `pinyin.cpp:655-660`,
+    /// `zhuyin.cpp:540-545`): `FacadePhraseIndex::compact` (`:657`, `:542`)
+    /// rebuilds each sub-index from its items, so a layout-failed empty
+    /// sub-index's local total becomes zero, and `m_modified` arms the next
+    /// save. The constructors do not compact (`pinyin.cpp:506-512`,
+    /// `zhuyin.cpp:392-398`): while an iterator is open, an unload of a
+    /// layout-failed library takes its local total out of the facade total
+    /// (`phrase_index.cpp:261-269`).
     pub fn end_import(&mut self) {
+        let _compacted = self.compact_layout_failed();
         let user = self.user_store_mut();
         user.compact_libraries();
         user.mark_modified();
