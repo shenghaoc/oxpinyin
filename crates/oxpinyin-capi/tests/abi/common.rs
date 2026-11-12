@@ -59,16 +59,34 @@ pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
 /// binary runs.
 const DEATH_TEST: &str = "OXPINYIN_CAPI_DEATH_TEST";
 
+/// The exit status of a death-test child whose operation panicked. A panic
+/// that reaches a non-unwinding `extern "C"` function aborts the process,
+/// so without this status an unrelated panic passes as the pin's abort.
+const OPERATION_PANICKED: i32 = 86;
+
+/// Arms the strict check in a death-test child: from here on, a panic
+/// writes its message to fd 2 (past libtest's capture, which an abort
+/// discards) and ends the child with [`OPERATION_PANICKED`].
+fn exit_on_panic() {
+    std::panic::set_hook(Box::new(|info| {
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
+        std::process::exit(OPERATION_PANICKED);
+    }));
+}
+
 /// Runs `body` in a child process and requires an abort:
 /// SIGABRT on Unix, fast-fail on Windows. This is how
 /// the facade reproduces a pin `assert`/`abort()` (register rows retired
 /// from class (c), 2026-10-31 UTC). `name` is the calling test's full path
 /// as libtest prints it (`contract::name`); the test binary is re-executed
 /// with `--exact name`, and in that child `body` runs and must not return.
+/// A panic in `body` fails with its own message.
 pub fn assert_aborts(name: &str, body: impl FnOnce()) {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+        exit_on_panic();
         body();
         // Reached only when `body` did not abort.
         std::process::exit(0);
@@ -76,14 +94,21 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) {
     // The child's scratch directories outlive its abort; keep them under
     // one this process removes.
     let scratch = tempfile::tempdir().expect("death-test scratch");
-    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
         .args(["--exact", name, "--test-threads=1"])
         .env(DEATH_TEST, name)
         .env(if cfg!(windows) { "TMP" } else { "TMPDIR" }, scratch.path())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
+        .stderr(std::process::Stdio::piped())
+        .output()
         .expect("re-run the test binary");
+    let status = output.status;
+    assert_ne!(
+        status.code(),
+        Some(OPERATION_PANICKED),
+        "{name}: the operation panicked: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     #[cfg(unix)]
     assert_eq!(status.signal(), Some(6), "{name} must die of SIGABRT");
     #[cfg(windows)]
@@ -98,4 +123,28 @@ pub fn assert_aborts(name: &str, body: impl FnOnce()) {
         Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
         "{name} must die of STATUS_STACK_BUFFER_OVERRUN"
     );
+}
+
+mod death_tests {
+    /// A panic that reaches this non-unwinding function aborts the process,
+    /// as a facade panic inside an entry point would.
+    extern "C" fn panic_in_an_entry_point() {
+        panic!("an unrelated panic");
+    }
+
+    /// The witness: a death test whose operation panics at a C boundary
+    /// fails with its own message, not as the pin's abort.
+    #[test]
+    fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
+        const NAME: &str = "common::death_tests::a_panic_at_the_c_boundary_is_not_the_pins_abort";
+        let parent = std::panic::catch_unwind(|| {
+            super::assert_aborts(NAME, || panic_in_an_entry_point());
+        });
+        let message = parent.expect_err("a panic must not pass as an abort");
+        let message = message
+            .downcast_ref::<String>()
+            .expect("the helper's assertion message");
+        assert!(message.contains("the operation panicked"), "{message}");
+        assert!(message.contains("an unrelated panic"), "{message}");
+    }
 }
