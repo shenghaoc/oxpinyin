@@ -9,6 +9,28 @@
 use std::collections::BTreeMap;
 
 /// Record header: key length and value length, both little-endian `u32`.
+///
+/// On the tkrzw and Berkeley DB backends, a `u32` holds every key and
+/// value length that the pin's own containers can hold, so the
+/// conversions to `u32` below add no check. tkrzw keeps
+/// `int32_t key_size` and `int32_t value_size` in both the in-memory
+/// `BabyRecord` (`tkrzw_dbm_baby.cc:37-42`, tkrzw 1.0.34) that `load_db` fills
+/// (`chewing_large_table2_tkrzwdb.cpp:92-109` and
+/// `phrase_large_table3_tkrzwdb.cpp:83-100` at 074a2219) and the file's
+/// `TreeRecord` (`tkrzw_dbm_tree_impl.h:40-42`). The Berkeley DB load
+/// copies `DBT` rows (`bdb_utils.h:43-74`), whose `size` is a `u_int32_t`.
+///
+/// Kyoto Cabinet sets no such bound. Its `load_db` fills a `ProtoTreeDB`
+/// from a snapshot (`chewing_large_table2_kyotodb.cpp:94-105` and
+/// `phrase_large_table3_kyotodb.cpp:109-120` at 074a2219).
+/// `BasicDB::load_snapshot` reads `size_t` lengths (`kcdb.h:2370-2389`,
+/// Kyoto Cabinet 1.2.80), and `ProtoTreeDB` keeps `std::string` keys and
+/// values (`kcprotodb.h:1351`, `kcutil.h:89`). On that backend, a key or
+/// value of 4 GiB or more affects only the read of that record: its
+/// length saturates to `u32::MAX`, and every other record keeps its own
+/// offset.
+///
+/// The pin sets no limit on the total size, so the offsets are `usize`.
 const HEADER: usize = 8;
 
 /// The pin's rows in one owned arena.
@@ -22,7 +44,7 @@ pub(crate) struct RecordArena {
     /// `[u32 key_len][u32 value_len][key][value]` records.
     arena: Vec<u8>,
     /// Sorted offsets into `arena`, one per record.
-    offsets: Vec<u32>,
+    offsets: Vec<usize>,
     /// Records a session edited or created, by key, in key order.
     overlay: BTreeMap<Vec<u8>, Vec<u8>>,
 }
@@ -121,15 +143,14 @@ impl RecordArena {
         let mut arena = Vec::with_capacity(self.arena.len());
         let mut offsets = Vec::with_capacity(self.offsets.len() + self.overlay.len());
         if let Err(infallible) = self.for_each_record::<std::convert::Infallible>(|key, record| {
-            let offset = u32::try_from(arena.len()).unwrap_or(u32::MAX);
+            let offset = arena.len();
             arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
             arena.extend_from_slice(&0_u32.to_le_bytes());
             arena.extend_from_slice(key);
             let value_start = arena.len();
             keep(key, record, &mut arena);
             let value_len = u32::try_from(arena.len() - value_start).unwrap_or(u32::MAX);
-            arena[offset as usize + 4..offset as usize + 8]
-                .copy_from_slice(&value_len.to_le_bytes());
+            arena[offset + 4..offset + 8].copy_from_slice(&value_len.to_le_bytes());
             offsets.push(offset);
             Ok(())
         }) {
@@ -196,8 +217,8 @@ impl RecordArena {
 
 /// Appends one `[u32 key_len][u32 value_len][key][value]` record and its
 /// offset.
-fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value: &[u8]) {
-    let offset = u32::try_from(arena.len()).unwrap_or(u32::MAX);
+fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<usize>, key: &[u8], value: &[u8]) {
+    let offset = arena.len();
     arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
     arena.extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
     arena.extend_from_slice(key);
@@ -205,14 +226,12 @@ fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<u32>, key: &[u8], value:
     offsets.push(offset);
 }
 
-fn key_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
+fn key_at(arena: &[u8], at: usize) -> &[u8] {
     let len = u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
     &arena[at + HEADER..at + HEADER + len]
 }
 
-fn value_at(arena: &[u8], offset: u32) -> &[u8] {
-    let at = offset as usize;
+fn value_at(arena: &[u8], at: usize) -> &[u8] {
     let key_len =
         u32::from_le_bytes([arena[at], arena[at + 1], arena[at + 2], arena[at + 3]]) as usize;
     let value_len =
