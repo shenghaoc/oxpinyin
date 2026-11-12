@@ -2,7 +2,7 @@
 # libraries from the published oracle image, and the managed Python. It holds no source,
 # no pin build and no model data. The interpreter is linked as python<major.minor>, the name a managed
 # interpreter has: the pin's assertion messages begin with the process name, and the recorded
-# observations hold `python3.15:`. (g++, pkg-config and the GLib headers build the OOM-injection
+# observations hold `python3.14:`. (g++, pkg-config and the GLib headers build the OOM-injection
 # helper of the glib-924 cases; db5.3_dump reads the BDB rows of tools/oracle/pin_capture.py's utility
 # runs); tools/oracle/capture-contract.sh mounts the checkout
 # read-only and the system data (libpinyin-data) beside it.

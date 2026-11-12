@@ -622,7 +622,7 @@ def capture_image_command(runtime, out, command, *, root, data, image, selected,
         '-e', f'OXPINYIN_CAPTURE_IMAGE={image}',
         '-e', f'OXPINYIN_TKRZW_LIBRARY=/usr/lib/{MULTIARCH[architecture]}/libtkrzw.so.1',
         '-v', f'{Path(root)}:/work:ro', '-v', f'{Path(root) / out}:/work/{out}:rw', '-v', f'{data}:/data:ro',
-        *mounts, '-w', '/work', reference or image, python, '-X', 'lazy_imports=normal', *command])
+        *mounts, '-w', '/work', reference or image, python, '-X', 'utf8', *command])
 
 
 def capture_build_command(runtime, reference, capture_image, *, selected, flags):
@@ -667,7 +667,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
     if quiet([runtime, 'image', 'inspect', reference], environment):
         if run(runtime_command([runtime, 'pull', '--platform', selected, reference]), env=environment, check=False):
             fail(f'FAIL: {reference} is unavailable; build it with: '
-                 'uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image build-image')
+                 'uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image')
     actual = image_field(runtime, 'Architecture', reference, env=environment, platform=selected)
     if actual != architecture:
         fail(f'FAIL: {reference} is {actual}, expected native {architecture}')
@@ -679,7 +679,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
     actual = image_field(runtime, 'Architecture', capture_image, env=environment, platform=selected)
     if actual != architecture:
         fail(f'FAIL: {capture_image} is {actual}, expected native {architecture}')
-    fetched = capture([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.contract_data'],
+    fetched = capture([sys.executable, '-X', 'utf8', '-m', 'tools.dev.contract_data'],
                       cwd=root, env=environment)
     data = fetched.stdout.decode().splitlines()[-1].strip()
     image = image_field(runtime, 'Id', capture_image, env=environment)
@@ -815,7 +815,7 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, 
             '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{Path(cache).resolve()}:/provision',
             '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
             '-e', 'PYTHONDONTWRITEBYTECODE=1', *home, '-w', '/repo', tag,
-            'uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'lazy_imports=normal',
+            'uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'utf8',
             '-m', 'tools.dev.provision', 'oracle', '--cache-dir', '/provision', *argv]
 
 

@@ -7,9 +7,9 @@ GPL-3.0-or-later, as the pin; its model20 source is documented in README.md.
 """
 
 if __name__ == '__main__':
-    from .entry import require_normal_imports
+    from .entry import require_utf8_mode
 
-    require_normal_imports()
+    require_utf8_mode()
 
 import argparse
 import ast
@@ -472,7 +472,7 @@ def verify_input_candidates(model_archive, tsi_table):
                     raise ValueError(f'model20 member missing or ambiguous: {name}')
                 with archive.extractfile(matches[0]) as stream:
                     (work / 'data' / name).write_bytes(stream.read())
-        python = [sys.executable, '-B', '-X', 'lazy_imports=normal']
+        python = [sys.executable, '-B', '-X', 'utf8']
         subprocess.run([*python, 'tools/distill.py'], cwd=scripts, check=True)
         if (scripts / 'pinyins.txt').read_bytes() != (SOURCE / 'inputs/pinyins.txt').read_bytes():
             raise ValueError('distilled pinyins.txt differs from accepted fixture')

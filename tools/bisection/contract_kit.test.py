@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """The native kit keeps the facade's handle, cell and loader guard at call time."""
 from pathlib import Path
 import sys

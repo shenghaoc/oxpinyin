@@ -82,7 +82,7 @@ Run `just test-tools` for the packaging fixtures.
 After the build above, run the explicit real-tool integration test in the same Python test file:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
+uv run --no-project --managed-python python -X utf8 tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
 ```
 
 It checks every reached path and runs `../utils/training/gen_unigram --help` from the created `data/`.
@@ -422,6 +422,7 @@ just packaging sizes run --base origin/main
 ```
 
 `run` builds the base commit and `HEAD`, then prints the same table.
+Each side runs its own revision's `just packaging install`, so the host needs just and a uv that can install each revision's interpreter ([setup](runbooks/setup.md#comparing-against-another-revision)).
 Use `--base-cache FILE` to reuse a base result and `--work DIR` and `--target DIR` to keep the build directories.
 `just packaging sizes build --commit REV --out FILE` writes one side as JSON.
 `just packaging sizes key --commit REV` prints the cache key.

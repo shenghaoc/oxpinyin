@@ -147,7 +147,7 @@ runs:
         enable-cache: false
 
     # The one install and build check for every job that takes uv. The frozen
-    # references contain the process name python3.15:, and a free-threaded
+    # references contain the process name python3.14:, and a free-threaded
     # interpreter must fail here rather than as a behaviour difference later.
     - name: Set up pinned repository Python
       if: inputs.uv == 'true'
@@ -155,13 +155,13 @@ runs:
       run: |
         set -euo pipefail
         uv python install
-        uv run --no-project --managed-python python -X lazy_imports=normal - <<'PYTHON'
+        uv run --no-project --managed-python python -X utf8 - <<'PYTHON'
         from pathlib import Path
         import subprocess
         import sys
         import sysconfig
         assert sys.implementation.name == "cpython"
-        assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
+        assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
         assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
         assert sys._is_gil_enabled()
         managed = subprocess.check_output(

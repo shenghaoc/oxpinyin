@@ -5,7 +5,7 @@
 . "${0%/*}/../lib/bash-floor.sh"
 set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-uv_minimum=0.13.1
+uv_minimum=0.11.32
 SECONDS=0
 log() { printf '[%4ds] %s\n' "$SECONDS" "$*" >&2; }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -28,9 +28,9 @@ semver_at_least() {
 	[[ -z $prerelease ]]
 }
 
-# uv.toml sets the floor (required-version = ">=0.13.1"). Keep a uv at or
+# uv.toml sets the floor (required-version = ">=0.11.32"). Keep a uv at or
 # above it; install the checksummed 0.13.1 only when uv is missing or older.
-# uv prints a semantic version, so a pre-release of the floor (0.13.1-beta.1) is older.
+# uv prints a semantic version, so a pre-release of the floor (0.11.32-beta.1) is older.
 uv_at_least_floor() {
 	local version
 	version=$(uv --version 2>/dev/null) || return 1
@@ -101,5 +101,5 @@ if [[ -z ${OXPINYIN_CACHE+x} ]] && root=$(just --justfile "$repo/justfile" cache
 fi
 
 OXPINYIN_CLOUD_BOOTSTRAP_SECONDS=$SECONDS OXPINYIN_CLOUD_BOOTSTRAP_KEPT_UV=$kept_uv \
-exec uv run --no-project --managed-python --python "$python_request" python -X lazy_imports=normal \
+exec uv run --no-project --managed-python --python "$python_request" python -X utf8 \
     -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)' "$repo" "$@"

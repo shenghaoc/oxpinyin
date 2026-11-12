@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Unit tests for tools.dev.doctor."""
 from pathlib import Path
 import json
@@ -87,9 +87,9 @@ class DoctorTests(unittest.TestCase):
         with mock.patch.object(doctor, 'tool_lines', return_value=([], [])):
             lines, status = doctor.collect()
         self.assertEqual(status, 0)
-        self.assertTrue(any(re.fullmatch(r'interpreter: cpython 3\.15\.\d+ \(minimum 3\.15\.0, below 3\.16\)', line)
+        self.assertTrue(any(re.fullmatch(r'interpreter: cpython 3\.14\.\d+ \(minimum 3\.14\.0, below 3\.15\)', line)
                             for line in lines), lines)
-        self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+ \(minimum 0\.13\.1\)', line) for line in lines), lines)
+        self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+ \(minimum 0\.11\.32\)', line) for line in lines), lines)
         self.assertTrue(any(line.startswith('executable: ') for line in lines))
 
     def test_free_threaded_build_is_rejected(self):
@@ -101,21 +101,21 @@ class DoctorTests(unittest.TestCase):
                 doctor.identity()
 
     def test_python_outside_the_series_is_refused(self):
-        for numbers, level, found in (((3, 14, 7), 'final', '3.14.7'),
+        for numbers, level, found in (((3, 13, 7), 'final', '3.13.7'),
                                       ((3, 16, 0), 'final', '3.16.0'),
                                       ((3, 17, 2), 'final', '3.17.2'),
-                                      ((3, 15, 0), 'candidate', '3.15.0 (candidate)'),
-                                      ((3, 15, 0), 'beta', '3.15.0 (beta)')):
+                                      ((3, 14, 0), 'candidate', '3.14.0 (candidate)'),
+                                      ((3, 14, 0), 'beta', '3.14.0 (beta)')):
             with self.subTest(numbers=numbers, level=level):
                 with self.assertRaisesRegex(
                         doctor.DoctorError,
-                        r'^CPython 3\.15\.0 or newer, below 3\.16, required; found '
+                        r'^CPython 3\.14\.0 or newer, below 3\.15, required; found '
                         + re.escape(found) + '$'):
                     doctor.check_python(numbers, level)
 
     def test_missing_uv_is_named(self):
         with mock.patch.object(doctor, '_run', return_value=None), \
-                self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.13\.1 or newer;'):
+                self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.11\.32 or newer;'):
             doctor.uv_version({'PATH': '/nonexistent'})
 
     def test_unparseable_uv_version_is_rejected(self):
@@ -125,11 +125,11 @@ class DoctorTests(unittest.TestCase):
                     mock.patch.object(doctor, '_run', return_value=result):
                 with self.assertRaisesRegex(doctor.DoctorError,
                                             r'^unparseable uv version output: .*; '
-                                            r'uv 0\.13\.1 or newer required$'):
+                                            r'uv 0\.11\.32 or newer required$'):
                     doctor.uv_version({'PATH': '/tools'})
 
     def test_collect_reports_an_unsupported_tool(self):
-        info = dict(uv='uv 0.13.1', implementation='cpython', version='3.15.0',
+        info = dict(uv='uv 0.13.1', implementation='cpython', version='3.14.0',
                     managed=True, gil_enabled=True, executable='/managed/python')
         failure = 'cargo-nextest 0.9.115 or later required; found cargo-nextest 0.9.114'
         with mock.patch.object(doctor, 'host_lines', return_value=[]), \
@@ -369,10 +369,10 @@ class SemverToolTests(ToolCase):
                 'v' + minimum, minimum + '-beta..1')]
             if candidate is None:
                 cases = [(version, False) for version in (
-                    '0.13.1-beta.1', '0.13.1-rc.1', '0.13.1-alpha', '0.13.1-0',
-                    '0.13.1-rc.1+build.5', '0.13.0-rc.1', '0.12.9-beta.1')]
+                    '0.11.32-beta.1', '0.11.32-rc.1', '0.11.32-alpha', '0.11.32-0',
+                    '0.11.32-rc.1+build.5', '0.11.31-rc.1', '0.10.9-beta.1')]
                 cases += [(version, True) for version in (
-                    '0.13.1', '0.13.1+build.5', '0.13.1+20261014', '0.13.2',
+                    '0.11.32', '0.11.32+build.5', '0.11.32+20261014', '0.13.2',
                     '0.14.0-beta.1', '0.13.2-rc.1', '1.0.0-alpha', '0.13.2-rc.1+build.5')]
             for version, accepted in cases:
                 with self.subTest(tool=name, version=version):

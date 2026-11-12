@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --with clang==21.1.7 python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --with clang==21.1.7 python -X utf8
 """Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 
 The checkout must be at 074a2219c90feaf962d0d24f034514033ece5f99. Each DBM

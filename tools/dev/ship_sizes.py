@@ -22,6 +22,7 @@ The key and report subcommands use the standard library only.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import hashlib
 import json
 import os
@@ -184,6 +185,36 @@ def build_env(source: Path, target: Path, cell: str) -> dict[str, str]:
     return env
 
 
+def revision_recipe(revision: str, source: Path, recipe: Sequence[str | Path], env: dict[str, str]) -> None:
+    """Run a just recipe of REVISION from its extracted SOURCE.
+
+    The revision's own justfile starts its tooling: its recipe and the `python`
+    recipe that it depends on choose the interpreter (`.python-version` and
+    `uv.toml` in SOURCE), install it and pass the startup flags. This module
+    names no interpreter and no flag of another revision.
+
+    Output is not captured: a release build reports its progress. The last
+    lines of stderr are kept for the failure message.
+    """
+    argv = ['just', '--justfile', str(source / 'justfile'), *(str(word) for word in recipe)]
+    try:
+        process = subprocess.Popen(argv, cwd=source, env=env, stderr=subprocess.PIPE)
+    except OSError as error:
+        raise Failure(f'{revision}: could not start just ({error}); '
+                      'see docs/runbooks/setup.md#comparing-against-another-revision') from error
+    tail: deque[str] = deque(maxlen=20)
+    with process:
+        for line in process.stderr:
+            sys.stderr.buffer.write(line)
+            sys.stderr.buffer.flush()
+            tail.append(line.decode(errors='replace').rstrip())
+    status = process.returncode
+    if status:
+        raise Failure('\n'.join([f'{revision}: its own `just {recipe[0]}` recipe exited {status}:', *tail,
+                                 "The revision's justfile chooses its interpreter and startup flags; "
+                                 'see docs/runbooks/setup.md#comparing-against-another-revision']))
+
+
 def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> dict[str, object]:
     """Build both facades of one commit with that commit's own `packaging install`.
 
@@ -199,10 +230,11 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
     env = build_env(source, target, cell.cell)
     for library in LIBRARIES:
         features = cell.feature + (',shipped' if library == 'libpinyin' else '')
-        run([sys.executable, '-X', 'lazy_imports=normal', '-m', 'tools.dev.packaging', 'install', library,
-             '--prefix=/usr', '--libdir=/usr/lib', f'--destdir={stage}', '--',
-             '--release', '--locked', '--no-default-features', '--features', features,
-             f'--target-dir={target}'], cwd=source, env=env, capture=False)
+        revision_recipe(revision, source, [
+            'packaging', 'install', library,
+            '--prefix=/usr', '--libdir=/usr/lib', f'--destdir={stage}', '--',
+            '--release', '--locked', '--no-default-features', '--features', features,
+            f'--target-dir={target}'], env)
     sizes = {}
     for library, (crate, _) in LIBRARIES.items():
         installed = stage / 'usr/lib' / f'{library}.so.15.0.0'

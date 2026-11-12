@@ -35,7 +35,7 @@ Build the pin with `python3 tools/oracle/build.py --dbm CELL
 `kyotocabinet`, or `tkrzw`). Both sides read the pin data of that cell:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.transformed_options_sweep \
+uv run --no-project --managed-python python -X utf8 -m tools.oracle.transformed_options_sweep \
   --oracle "$PREFIX/lib/libpinyin.so" \
   --subject "$TARGET/debug/libpinyin_capi.so" \
   --data "$PREFIX/lib/libpinyin/data" --expect fixed

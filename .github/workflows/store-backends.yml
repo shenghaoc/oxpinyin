@@ -401,7 +401,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -436,7 +436,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
+          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -497,7 +497,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -520,7 +520,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
+          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -576,7 +576,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X lazy_imports=normal -c 'from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -599,7 +599,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X lazy_imports=normal -c 'import sys; from tools.dev.entry import require_normal_imports; require_normal_imports(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
+          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Portable runner policy tests with explicit command and host observations."""
 from contextlib import suppress
 from pathlib import Path
@@ -139,13 +139,13 @@ raise SystemExit(result)
 '''
         outer = ("import sys; from tools.dev import slot; "
                  f"code={inner!r}; "
-                 "result=slot.run_command([sys.executable,'-X','lazy_imports=normal','-c',code,*sys.argv[1:]]); "
+                 "result=slot.run_command([sys.executable,'-X','utf8','-c',code,*sys.argv[1:]]); "
                  "raise SystemExit(128-result if result<0 else result)")
         with tempfile.TemporaryDirectory() as scratch:
             directory = Path(scratch)
             record, children = directory / 'record', directory / 'children'
             env = dict(os.environ)
-            process = subprocess.Popen([sys.executable, '-X', 'lazy_imports=normal', '-c', outer, str(record), str(children)],
+            process = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', outer, str(record), str(children)],
                                        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             pids, failure = [], None
             try:

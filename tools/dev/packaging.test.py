@@ -384,7 +384,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             path.chmod(0o755)
 
         def invoke(self, name, args=(), *, env=None):
-            command = [sys.executable, '-X', 'lazy_imports=normal', '-c', DRIVER, str(self.root), name]
+            command = [sys.executable, '-X', 'utf8', '-c', DRIVER, str(self.root), name]
             return subprocess.run([*command, *map(str, args)], env={**self.env, **(env or {})},
                                   cwd=ROOT, capture_output=True, timeout=20)
 
@@ -791,7 +791,7 @@ if os.environ.get('EXTRA_EXPORT'): print('00000002 T leak@@LIBPINYIN')
             for sig in (signal.SIGINT, signal.SIGTERM):
                 dest.write_bytes(b'original')
                 ready.unlink(missing_ok=True)
-                command = [sys.executable,'-X','lazy_imports=normal','-c',DRIVER,str(self.root),'relink-versioned']
+                command = [sys.executable,'-X','utf8','-c',DRIVER,str(self.root),'relink-versioned']
                 with subprocess.Popen([*command,*arguments],cwd=ROOT,env={**self.env,'READY':str(ready)},
                                       stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True) as process:
                     deadline = time.monotonic()+5

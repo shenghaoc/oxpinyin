@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """rss-smaps.py — group a /proc/self/smaps dump by mapping, and diff two.
 
 Written for the RSS diagnosis.

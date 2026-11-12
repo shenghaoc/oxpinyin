@@ -30,7 +30,7 @@ build or run the oracle on GitHub Actions.
 ```sh
 just performance
 # Inside the shell:
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.measure.prepare callgrind
+uv run --no-project --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
 ```
 
 These rules apply to the `performance` shell:
@@ -280,7 +280,7 @@ It is a disposable workload input, not a committed fixture or profile
 capture:
 
 ```sh
-uv run --no-project --managed-python python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+uv run --no-project --managed-python python -X utf8 - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
 import hashlib
 import subprocess
 import sys
@@ -456,6 +456,14 @@ just measure compare --base origin/main --head origin/main
 just measure profile --revision origin/main --template 'CPU Profiler'
 just measure profile --revision origin/main --template Allocations
 ```
+
+`just measure` builds the source of each revision with the tooling of the
+checkout, so a comparison needs only the interpreter of the checkout.
+`just packaging sizes` is different: it runs each revision's own `packaging`
+recipe. A size comparison against a revision that names CPython 3.15 needs a
+uv that can install CPython 3.15 final; uv 0.11.32 cannot, and CI's
+`astral-sh/setup-uv` step provides one. See
+[comparing against another revision](setup.md#comparing-against-another-revision).
 
 These commands use the same typing corpus in `bisect.c`. Schedule defaults
 live in `tools/dev/measure/recipes.py`; `just measure --help` lists overrides.

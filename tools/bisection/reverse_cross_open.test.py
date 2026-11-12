@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """The local cross-open command keeps its cell, data and pin inputs explicit."""
 import contextlib
 import io

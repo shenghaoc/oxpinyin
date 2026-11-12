@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Lint: the Python version request is written once, in .python-version (#1246).
 
 Every other file lets that file decide, or reads or passes its contents on. A literal request
@@ -23,7 +23,7 @@ from tools.dev import test_support
 ALLOWED = ('.python-version', 'docs/findings/')
 # A request in uv's forms: the implementation prefix with a version, or an explicit version given
 # to `uv python install|find|pin` or `--python`. Managed-install directory names
-# (cpython-3.x-linux...), prose such as "CPython 3.15" and version tuples are not requests.
+# (cpython-3.x-linux...), prose such as "CPython 3.14" and version tuples are not requests.
 REQUEST = re.compile(r'cpython@\d|uv python (?:install|find|pin)[^\n]*? \d\.\d|--python[ =]["\']?\d\.\d')
 
 
@@ -72,11 +72,11 @@ class RequestLiteralTests(unittest.TestCase):
         for line in (
                 '/opt/uv/python/cpython-' + series + '.0-linux-x86_64-gnu/bin/python' + series,
                 'managed CPython ' + series + ' series',
-                'assert (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)',
+                'assert (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)',
                 'PYTHON_MINIMUM = "' + series + '.0"',
                 'uv python install',
                 'uv python find --managed-python',
-                'uv run --no-project --managed-python python -X lazy_imports=normal',
+                'uv run --no-project --managed-python python -X utf8',
                 'cpython@ is a request prefix',
                 'python' + series,
         ):
@@ -119,7 +119,7 @@ class CheckoutInterpreterTests(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if key not in ('UV_PYTHON', 'PYTHONHOME', 'PYTHONPATH')}
             env.update(PATH=f'{stubs}{os.pathsep}{os.environ["PATH"]}', RECORD=str(record))
-            result = subprocess.run([shutil.which('uv', path=env['PATH']), 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'lazy_imports=normal', '-c', 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)', str(ROOT), '--python-only'],
+            result = subprocess.run([shutil.which('uv', path=env['PATH']), 'run', '--no-project', '--managed-python', '--python', checkout_request, 'python', '-X', 'utf8', '-c', 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("tools.dev.provision", run_name="__main__", alter_sys=True)', str(ROOT), '--python-only'],
                                     cwd=outer, env=env, capture_output=True, text=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = record.read_text().splitlines()

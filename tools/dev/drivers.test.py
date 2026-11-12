@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Shared launcher preserves parent and driver stream order under redirection."""
 from pathlib import Path
 import subprocess
@@ -20,7 +20,7 @@ result = DriverServices(Settings.read(os.environ)).command(
 print('after driver')
 raise SystemExit(result.returncode)
 '''
-        result = subprocess.run([sys.executable, '-X', 'lazy_imports=normal', '-c', program],
+        result = subprocess.run([sys.executable, '-X', 'utf8', '-c', program],
                                 cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, 'before driver\ndriver output\nafter driver\n')

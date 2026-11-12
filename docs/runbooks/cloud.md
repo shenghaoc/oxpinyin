@@ -41,7 +41,7 @@ The script also requires:
   to task-owned writable paths, then put `UV_INSTALL_DIR` on `PATH`.
   Setup can reuse an existing suitable uv without writing to its installation
   directory. Setup installs the checksummed uv 0.13.1 only when uv is missing
-  or older than its minimum. It keeps a newer uv.
+  or older than 0.11.32. It keeps a newer uv.
 - A usable Podman or Docker runtime, the backend dump utilities described
   below, and the native build prerequisites in [native setup](setup.md).
   Non-root accounts must arrange missing backend utilities with the owner.
@@ -120,11 +120,11 @@ without the oracle setup:
 ```sh
 tools/cloud/setup.sh --python-only
 export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
-uv run --no-project --managed-python python -X lazy_imports=normal -m tools.dev.doctor
+uv run --no-project --managed-python python -X utf8 -m tools.dev.doctor
 ```
 
 This mode runs the existing Linux and supported-platform checks. It then runs the
-same uv and managed CPython (3.15 series, GIL build) provisioning and
+same uv and managed CPython (3.14 series, GIL build) provisioning and
 interpreter verification as full setup. It installs neither when it is
 already present at or above its minimum; `just doctor` reports both. The mode
 prints the verified-interpreter line and the informational ext4 path report.
@@ -275,7 +275,7 @@ the same implementation. A refusal is a failed run, never MATCH or SKIP.
 Run the loader fixtures with:
 
 ```sh
-uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrzw/runtime.test.py
+uv run --no-project --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
 ```
 
 ## What it does
@@ -314,7 +314,7 @@ uv run --no-project --managed-python python -B -X lazy_imports=normal tools/tkrz
    Each prefix records their built hashes and installed versions.
    - If `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
      `<tag>-arm64` for arm64, setup pulls it and copies the cells out of it.
-     `uv run --no-project --managed-python python -X lazy_imports=normal -m tools.oracle.image image-tag` prints `<tag>`
+     `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`
      (pin, base image tag and a hash of the recipe and `oracle-pin.txt`).
    - Setup discards a cell whose pin/recipe stamp or recorded bytes fail validation, and builds it
      instead. It builds every cell when no image exists. For the build, it builds the
