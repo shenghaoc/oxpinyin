@@ -648,8 +648,8 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     crate::context::pinyin_fini(context);
 }
 
-/// Snapshot of phrase candidates as `(token, text, cost)`.
-fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
+/// Snapshot of phrase candidates as `(token, text)`.
+fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let mut inst = unsafe { instance_mut(instance) };
     // The facade defers the parse's list build to its first reader.
@@ -665,7 +665,6 @@ fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
             Some((
                 candidate.token()?.value(),
                 candidate.text().as_str().unwrap_or_default().to_owned(),
-                candidate.cost(),
             ))
         })
         .collect()

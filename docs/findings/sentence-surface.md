@@ -361,9 +361,8 @@ strictnesses means reproducing those `gfloat` values, which means a
 floating-point natural `log` per step. `f64::ln` delegates to the platform
 libm with no cross-platform bit-exactness guarantee; the build forbids
 `-march=native` for exactly this reason; constitution item 6 requires
-output to be a pure function of (input, user state, config) on every OS;
-and `crates/oxpinyin-core/src/cost.rs:11-15` records this as the reason the
-cost scale is integer fixed-point at all. The float dependency reaches the
+output to be a pure function of (input, user state, config) on every OS.
+The float dependency reaches the
 tiebreak too — heap-pop order is seeded by the exact-float comparator — so
 no fixed-point transform recovers the order either.
 

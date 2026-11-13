@@ -31,8 +31,8 @@ Three results govern the inventory:
    [ruling](compatibility-policy.md#lc_numeric-after-init-row-39)).
 
 The math surface is `log` only: seven reachable sites, all class (a)
-under row 11. oxpinyin's costs use `f64::log2` directly
-(`core/src/cost.rs`).
+under row 11. oxpinyin's sentence scores use `ln` directly
+(`engine/src/nbest.rs` and `engine/src/phrase.rs`).
 
 ## Reachability and negative coverage
 
@@ -102,7 +102,7 @@ prediction-only surfaces; `all` means bdb, kc and tkrzw. `Disposition`:
 | G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | the pin's own calls in `oxpinyin-input` `config.rs` / `native.rs` through the `libc` crate, decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: the host libc's `%d`/`%f`/`%255s` scanner, the pin's own call; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: the pin's call except the class (b) refusals; host scanner host-dependent (policy row 78); `LC_NUMERIC` row 39 |
 | G12 | file I/O and `MemoryChunk`: `mmap` 1, `munmap` 2, `lseek` 4, `read` 5, `write` 3, `open` 3, `close` 12, `unlink` 20, `fopen` 3, `fclose` 8, `feof` 1, `fprintf` 27 | both; all | `input/src/chunk.rs` `load` / `save` (the pin's `open`/`read`/`mmap`/`write`/`fsync`/`close`); `data/src/phrase_library.rs` `map_chunk`; `user/src/persistence.rs`; `data/src/c_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) row 76, abort row 96, row 109 |
 | G13 | C primitives: `memset` 86, `memcpy` 11, `strlen` 16, `strcmp` 18, `memcmp` 3, `memmove` 7, `strchr` 1 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at rows 80, 106 |
-| G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `core/src/cost.rs` `cost_of_probability` / `surprisal` (`f64::log2`); `engine/src/phrase.rs` (`ln`) | valid: class (a) last-bit differences are accepted. | class (a), row 11 |
+| G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `engine/src/nbest.rs` and `engine/src/phrase.rs` (`f64::ln`) | valid: class (a) last-bit differences are accepted. | class (a), row 11 |
 | G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts` (whole stored words per punctuation; infallible); `data/src/punct.rs` `PunctTable::punctuations` (`Err` only for a failed read; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs` `RuntimeDict::punctuations`; `capi/src/predict.rs` `prepend_punctuations` (`phrase_text_bytes` at the C boundary) | valid: identical punctuation strings. malformed: partitions below; misaligned lengths read whole words ([Punctuation values contain whole words](upstream-divergences.md#punctuation-values-contain-whole-words)). | contract; class (b) for the unterminated over-read |
 | G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `utils/src/utils_helper/taglib.rs` (the pin's taglib); `input/src/tool.rs` (`g_strsplit_set`, `g_unichar_isgraph`, `atoi`, `atol`, `fprintf` through `glib-sys` and `libc`) | valid: tool input, identical records. malformed: the pin's calls, so its results. | tool scope: the pin's calls ([external I/O](external-io-boundary.md)) |
 | G17 | dead code: `pinyin_lookup2.cpp`, `chewing_large_table.cpp`, `phrase_large_table2.cpp`, `facade_chewing_table.h`, `facade_phrase_table2.h`, `PunctTableEntry::escape/append/remove`, `#if 0` dumps | none | no shipped counterpart; the runtime uses `PhoneticLookup`, `PhraseLookup` and the large-table-3/chunk path | n/a | negative coverage |
@@ -871,7 +871,7 @@ The only reachable libm call is `log`. The n-best trellis and the phrase
 lookup accumulate natural logs in `gfloat`. Three of the seven sites
 (`phonetic_lookup.h:39,250`, `phrase_lookup.cpp:40`) pass a `float`, so
 they resolve to `std::log(float)` in `<cmath>`. oxpinyin uses Rust's
-standard maths (`f64::log2` in `core/src/cost.rs`, `ln` in
+standard maths (`ln` in
 `engine/src/nbest.rs` and `engine/src/phrase.rs`). The class (a) register is
 row 11. Basic arithmetic and float-to-integer comparator or frequency
 conversion are not class (a) because floats occur; they are G5 and G6.
@@ -1158,8 +1158,8 @@ absolute name replaces the directory.
 
 ## C-maths record
 
-oxpinyin's floating-point sites call `std` directly: `core/src/cost.rs`
-(`f64::log2`), `engine/src/nbest.rs` and `engine/src/phrase.rs` (`ln`),
+oxpinyin's floating-point sites call `std` directly:
+`engine/src/nbest.rs` and `engine/src/phrase.rs` (`ln`),
 and `utils/src/training/eval/decode.rs` (`ln`). The scaled candidate
 frequency in `session/mod.rs` `amplified_frequency_with_bigram` is `f32`
 arithmetic stored with `as u32`. Its saturation on out-of-range scores is

@@ -37,7 +37,7 @@ use oxpinyin_core::PhraseText;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges,
+    ChewingKey, Completeness, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges,
     PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
 };
 use smallvec::SmallVec;
@@ -125,8 +125,6 @@ pub struct NbestRow {
     pub(crate) keys: usize,
     /// Bytes of the input the sentence spans.
     pub(crate) span: usize,
-    /// Integer cost of the row; zero for every trellis row.
-    pub(crate) cost: Cost,
     /// Accumulated log possibility of a trellis row.
     pub(crate) poss: Option<f32>,
 }
@@ -921,7 +919,6 @@ where
             spans: phrase_spans,
             keys: tail.keys as usize,
             span,
-            cost: 0,
             poss: Some(tail.poss),
         });
     }
@@ -1613,7 +1610,7 @@ mod tests {
     use oxpinyin_core::PhraseEntry;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
-        Cost, Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseToken, SyllableKey,
+        Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseToken, SyllableKey,
     };
     use std::cell::RefCell;
 
@@ -1692,10 +1689,6 @@ mod tests {
 
     fn loses_to(left: &Value, right: &Value) -> bool {
         super::node_loses_to(left, right, 2)
-    }
-
-    fn value(cost: Cost, length: u32, _seq: u64) -> Value {
-        scored(-(cost as f32) * std::f32::consts::LN_2 / 1000.0, length)
     }
 
     fn scored(poss: f32, length: u32) -> Value {
@@ -2101,7 +2094,7 @@ mod tests {
                 Value {
                     token,
                     from: 0,
-                    ..value(0, 1, 0)
+                    ..scored(0.0, 1)
                 },
             );
         }
@@ -2109,17 +2102,17 @@ mod tests {
             2,
             Value {
                 token: 99,
-                ..value(0, 2, 0)
+                ..scored(0.0, 2)
             },
         );
-        for (cost, prev_token) in [(100, 7), (200, 8)] {
+        for (poss, prev_token) in [(-0.1, 7), (-0.2, 8)] {
             trellis.insert(
                 2,
                 Value {
                     token: 11,
                     prev_token,
                     from: 1,
-                    ..value(cost, 2, 0)
+                    ..scored(poss, 2)
                 },
             );
         }
@@ -2131,8 +2124,8 @@ mod tests {
         assert_eq!(predecessor.batch_position, 2);
         let paths = super::SpanPaths::default();
         let model = Fixed {
-            blended: Some(0),
-            unigram: Some(0),
+            blended: Some(1.0),
+            unigram: Some(1.0),
         };
         super::expand_one(
             &super::SpanEntry {
@@ -2159,11 +2152,11 @@ mod tests {
         assert_eq!(trellis.extract(&tails[0]), [(0, 8), (1, 11), (2, 22)]);
     }
 
-    /// A model answering fixed step costs, so the tests measure the trellis
+    /// A model answering fixed step probabilities, so the tests measure the trellis
     /// and not the blend.
     struct Fixed {
-        blended: Option<Cost>,
-        unigram: Option<Cost>,
+        blended: Option<f64>,
+        unigram: Option<f64>,
     }
 
     impl LanguageModel for Fixed {
@@ -2176,10 +2169,8 @@ mod tests {
             _token: &PhraseToken,
         ) -> Result<NbestStepCosts, EngineError> {
             Ok(NbestStepCosts {
-                blended: (self.blended)
-                    .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
-                unigram: (self.unigram)
-                    .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+                blended: self.blended,
+                unigram: self.unigram,
 
                 unigram_lambda: 1.0,
             })
@@ -2392,8 +2383,7 @@ mod tests {
                 _: &mut NbestStepRow,
             ) -> Result<NbestStepCosts, EngineError> {
                 Ok(NbestStepCosts {
-                    blended: (item.map(|(freq, _)| Cost::from(freq)))
-                        .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+                    blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
                     unigram: Some(0.25),
 
                     unigram_lambda: 1.0,
@@ -2519,8 +2509,8 @@ mod tests {
             "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=hao\ttext=好\tunigram=900\n";
         let dict = FixtureDictionary::parse(VOCAB).expect("authored fixture");
         let model = Fixed {
-            blended: Some(1_000),
-            unigram: Some(2_000),
+            blended: Some(0.5),
+            unigram: Some(0.25),
         };
         let (matrix, bound) = one_column_matrix("nihao");
         let rows: Vec<NbestRow> =
@@ -2543,8 +2533,8 @@ mod tests {
                              token=3\tkeys=hao\ttext=好\tunigram=900\n";
         let dict = FixtureDictionary::parse(VOCAB).expect("authored fixture");
         let model = Fixed {
-            blended: Some(1_000),
-            unigram: Some(2_000),
+            blended: Some(0.5),
+            unigram: Some(0.25),
         };
         let (matrix, bound) = one_column_matrix("nihao");
         let pinyin = nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)

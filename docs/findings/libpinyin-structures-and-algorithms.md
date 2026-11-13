@@ -577,9 +577,8 @@ sufficient: a difference that remains after that is investigated and
 attributed, not classified as a host difference by default. The decoder
 follows these types and conversion points in `f32` and `f64` (`expand_one`,
 `nbest.rs`; `nbest_step_costs_using`, `oxpinyin-data/src/lm/mod.rs`).
-Register row 11 classes std-maths precision differences as (a). No production code calls the integer helpers in
-`oxpinyin-core/src/cost.rs`. The `Cost` type stays as the type of
-`Candidate::cost` and `NbestRow::cost`; every production row carries 0.
+Register row 11 classes std-maths precision differences as (a).
+Candidate and sentence rows carry no separate integer score.
 
 ### Constraint revalidation
 

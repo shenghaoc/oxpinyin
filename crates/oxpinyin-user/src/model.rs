@@ -4,7 +4,7 @@
 //! and the stored counts are exposed as
 //! [`oxpinyin_core::UserCountDelta`] for the decode-time additive merge.
 //! The seam carries counts only: decode reads them through the language
-//! model, because a `Cost` added after the λ blend would be a new weighting
+//! model, because a score added after the λ blend would be a new weighting
 //! scheme.
 //!
 //! T3 types the seam with the engine's vocabulary token

@@ -18,7 +18,6 @@
 
 mod chewing_key;
 mod chewing_key_data;
-pub mod cost;
 pub mod direct;
 mod full_pinyin_index;
 pub mod graph;
@@ -74,11 +73,6 @@ pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{
     PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey, fuzzy_chewing_alternatives,
 };
-
-/// Deterministic signed cost used by scoring seams.
-///
-/// The concrete scale is defined by the decoder/scoring specification.
-pub type Cost = i64;
 
 /// User-side count overlay for the decode-time additive merge
 /// (`docs/findings/user-store.md` §5).

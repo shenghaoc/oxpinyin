@@ -65,8 +65,7 @@ fn an_anchor_inside_an_exact_segment_decodes_nothing() {
 }
 
 use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
-    UserModel,
+    Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey, UserModel,
 };
 
 use super::{Selection, SelectionTarget, Session};
@@ -624,7 +623,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
         spans: Vec::new(),
         keys: 1,
         span: 2,
-        cost: 0,
     }];
     let mut recorder = Recorder {
         observed: Vec::new(),
@@ -757,8 +755,8 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
         SessionSettings::default(),
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         TrellisModel {
-            blended: 100,
-            unigram: 200,
+            blended: 0.5,
+            unigram: 0.25,
         },
     );
     let choose = |session: &mut Session<FixtureDictionary, TrellisModel>, offset, token| {
@@ -864,7 +862,6 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
         spans,
         keys: 2,
         span: 2,
-        cost: 0,
     }];
     let mut recorder = Recorder {
         observed: Vec::new(),
@@ -981,7 +978,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
         spans,
         keys: 1,
         span: 2,
-        cost: 0,
     }];
     let mut model = Readings(Vec::new());
     assert!(train_prepared(&session, 0, &mut model).expect("the forced span trains"));
@@ -1020,7 +1016,6 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
                 crate::CandidateKind::Phrase,
                 1,
                 2,
-                0,
                 Some(PhraseToken::new(7)),
                 None,
             )]);
@@ -1075,7 +1070,6 @@ fn train_reports_a_failing_user_model() {
         spans: Vec::new(),
         keys: 1,
         span: 2,
-        cost: 0,
     }];
     // The engine renders the model's error at the boundary: the failing
     // model reports an `EngineError::UserModel`, so the wrap doubles the
@@ -1104,7 +1098,6 @@ fn a_row_records_its_whole_token_path() {
         spans: Vec::new(),
         keys: 1,
         span: 2,
-        cost: 0,
     }];
     session.refresh().expect("refresh cannot fail");
     assert!(
@@ -1139,7 +1132,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: Vec::new(),
             keys: 1,
             span: 3,
-            cost: 10,
         },
         NbestRow {
             poss: None,
@@ -1148,7 +1140,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: Vec::new(),
             keys: 1,
             span: 3,
-            cost: 20,
         },
         NbestRow {
             poss: None,
@@ -1157,7 +1148,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: Vec::new(),
             keys: 1,
             span: 3,
-            cost: 30,
         },
     ];
     session.refresh().expect("refresh cannot fail");
@@ -1198,7 +1188,6 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
         spans: Vec::new(),
         keys: 2,
         span: 5,
-        cost: 10,
     }];
     session.refresh().expect("refresh cannot fail");
 
@@ -1696,7 +1685,6 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             2,
             4,
-            0,
             Some(PhraseToken::new(0x0300_16df)),
             None,
         ),
@@ -1705,7 +1693,6 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             2,
             4,
-            0,
             Some(PhraseToken::new(0x0100_4c41)),
             None,
         ),
@@ -1714,7 +1701,6 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             1,
             4,
-            0,
             Some(PhraseToken::new(0x0100_4c41)),
             None,
         ),
@@ -1739,7 +1725,6 @@ fn window_row(text: &str, token: Option<u32>) -> crate::candidate::Candidate {
         super::CandidateKind::Phrase,
         1,
         2,
-        0,
         token.map(PhraseToken::new),
         None,
     )
@@ -1865,7 +1850,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             CandidateKind::Phrase,
             1,
             3,
-            0,
             Some(PhraseToken::new(1)),
             None,
         ),
@@ -1874,7 +1858,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             CandidateKind::Addon,
             1,
             3,
-            0,
             Some(PhraseToken::new(2)),
             None,
         ),
@@ -1916,7 +1899,6 @@ fn candidate_frequencies_price_a_captured_live_unigram_without_the_model() {
             CandidateKind::Phrase,
             1,
             3,
-            0,
             Some(PhraseToken::new(token)),
             None,
         )
@@ -2263,12 +2245,11 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     assert!(!columns[0].iter().any(|key| key.key.text() == "bi"));
 }
 
-/// A model whose n-best step costs exist, so the trellis runs: both
-/// branches at a fixed cost, `score` passes the edge through.
+/// A model whose n-best step probabilities exist, so the trellis runs.
 #[derive(Clone)]
 struct TrellisModel {
-    blended: Cost,
-    unigram: Cost,
+    blended: f64,
+    unigram: f64,
 }
 
 impl LanguageModel for TrellisModel {
@@ -2281,10 +2262,8 @@ impl LanguageModel for TrellisModel {
         _token: &PhraseToken,
     ) -> Result<NbestStepCosts, EngineError> {
         Ok(NbestStepCosts {
-            blended: (Some(self.blended))
-                .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
-            unigram: (Some(self.unigram))
-                .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+            blended: Some(self.blended),
+            unigram: Some(self.unigram),
 
             unigram_lambda: 1.0,
         })
@@ -2296,8 +2275,8 @@ fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
         SessionSettings::default(),
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         TrellisModel {
-            blended: 100,
-            unigram: 200,
+            blended: 0.5,
+            unigram: 0.25,
         },
     )
 }
@@ -2685,7 +2664,6 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
             }],
             keys: 1,
             span: 3,
-            cost: 10,
         },
         crate::nbest::NbestRow {
             poss: None,
@@ -2698,7 +2676,6 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
             }],
             keys: 1,
             span: 3,
-            cost: 30,
         },
     ];
     session.refresh().expect("refresh cannot fail");
@@ -2933,7 +2910,6 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         spans: Vec::new(),
         keys: 3,
         span: 11,
-        cost: 10,
     }];
     session.refresh().expect("refresh cannot fail");
 
@@ -2959,14 +2935,13 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     use super::CandidateKind;
     use crate::nbest::NbestRow;
 
-    let row = |text: &str, cost: i64| NbestRow {
+    let row = |text: &str| NbestRow {
         poss: None,
         text: text.into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
         keys: 2,
         span: 5,
-        cost,
     };
 
     // libzhuyin fills every BEST_MATCH row from `zhuyin_get_sentence`
@@ -2979,7 +2954,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     session
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
-    session.sentence.rows = vec![row("你好世界", 10), row("你", 12)];
+    session.sentence.rows = vec![row("你好世界"), row("你")];
 
     // Default — the pinyin law: both rows ride the prepend, and the
     // phrase 你 collides with the second row's own text and is dropped.
@@ -3111,7 +3086,6 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
         spans: Vec::new(),
         keys: 2,
         span: 5,
-        cost: 10,
     }];
     session.set_collapse_sentence_rows_to_best(true);
     let window = session
@@ -3840,7 +3814,7 @@ fn candidate_rank_sort_keeps_equal_keys_and_aligns_dedup_frequencies() {
     use crate::candidate::{Candidate, CandidateKind};
     let mut rows: Vec<_> = ["first", "long", "second", "short"]
         .into_iter()
-        .map(|text| Candidate::new(text, CandidateKind::Phrase, 1, 1, 0, None, None))
+        .map(|text| Candidate::new(text, CandidateKind::Phrase, 1, 1, None, None))
         .collect();
     let mut keys: Vec<_> = [(2, 7), (3, 5), (2, 9), (1, 11)]
         .into_iter()
@@ -3906,7 +3880,7 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
             frequency: 0,
             m_freq,
         };
-        (key, Candidate::new(text, kind, 2, 6, 0, None, None))
+        (key, Candidate::new(text, kind, 2, 6, None, None))
     };
     let (keys, mut ranked): (Vec<_>, Vec<_>) = [
         row("书学", CandidateKind::Phrase, 3),
@@ -4218,8 +4192,8 @@ fn wide_abbreviation_session(
             failing: false,
         },
         TrellisModel {
-            blended: 100,
-            unigram: 200,
+            blended: 0.5,
+            unigram: 0.25,
         },
     );
     session
@@ -4388,7 +4362,6 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
         spans: Vec::new(),
         keys: 1,
         span: 2,
-        cost: 10,
     }];
 
     let after = session.candidates_at(0).expect("offset 0 is in range");
