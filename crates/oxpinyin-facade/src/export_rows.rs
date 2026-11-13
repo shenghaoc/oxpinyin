@@ -8,9 +8,8 @@ use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText, SyllableKey};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
-    ADDON_DICTIONARY, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, SystemItem,
-    USER_DICTIONARY, UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token,
-    key_syllable, key_tone,
+    MAX_KEY_TONE, PinyinKey, SENTENCE_START, SystemItem, UserPhrase, UserPronunciation, UserStore,
+    UserStoreError, is_user_file_token, key_syllable, key_tone,
 };
 
 use std::collections::VecDeque;
@@ -29,8 +28,7 @@ use crate::ContextCore;
 ///
 /// Items come from three places, each read when a call needs it: a system
 /// library's own item from the mapped chunk, the session's replacement for
-/// it from the user store's override map (borrowed, never cloned), and a
-/// `USER_FILE` library's item from the session store. The probes skip a
+/// it from the live buffer, and an item from the session arena. The probes skip a
 /// token only where the pin's do, an absent item or one with no
 /// pronunciation; a present item that is malformed is read and refused at
 /// the pin's assert site ([`ExportAssert`]). Every read is infallible, as
@@ -38,9 +36,8 @@ use crate::ContextCore;
 /// phrases in memory, in per-library arenas (policy row 62).
 ///
 /// What the store answers is held while its write generation stands still
-/// and re-read as soon as it moves: the end of the appended system tokens,
-/// a `USER_FILE` library's token end, the token the probe found without a
-/// replacement, and the `USER_FILE` item under the cursor. The pin re-reads
+/// and re-read as soon as it moves: an arena's token end and the decoded
+/// arena item under the cursor. The pin re-reads
 /// its range and its item on every call because both are offset reads; the
 /// session store's are a borrow, a map probe or a range scan, and no write
 /// can change their answer without moving the generation.
@@ -49,9 +46,6 @@ pub struct PhraseExportCursor {
     index: u8,
     next_token: u32,
     next_pronunciation: usize,
-    /// Whether `table.conf` gives this `USER_FILE` library a file: fixed
-    /// for the session, the pin's `NULL` sub-index otherwise.
-    user_library_present: bool,
     memo: Memo,
     current: Option<CurrentUserItem>,
 }
@@ -60,9 +54,7 @@ pub struct PhraseExportCursor {
 #[derive(Default)]
 struct Memo {
     generation: Option<u64>,
-    /// One past the highest system token the session appended.
-    appended_end: u32,
-    /// One past the highest token of the `USER_FILE` library (`5..=7`).
+    /// One past the highest token of a library backed by an arena.
     user_end: u32,
 }
 
@@ -453,19 +445,16 @@ impl PhraseExportRead<'_> {
         if self.memo.generation == Some(generation) {
             return;
         }
-        let user_end = if self.user_library_present {
-            user.user_library_token_end(self.index)
-                .unwrap_or((u32::from(self.index) << 24) | 1)
+        let user_end = if user.originals().get(&self.index).is_none() {
+            self.system
+                .live_items_ignoring_mask()
+                .system_range_end(self.index)
+                .unwrap_or(NULL_TOKEN)
         } else {
             NULL_TOKEN
         };
         self.memo = Memo {
             generation: Some(generation),
-            appended_end: self
-                .system
-                .live_items_ignoring_mask()
-                .overlay_end(self.index)
-                .unwrap_or(NULL_TOKEN),
             user_end,
         };
     }
@@ -477,32 +466,26 @@ impl PhraseExportRead<'_> {
     fn probe_from(&mut self, start: u32) {
         self.next_token = NULL_TOKEN;
         self.refresh();
-        if self.system.is_system_library(self.index) {
+        if self.user.originals().get(&self.index).is_some() {
             self.probe_system(start);
-        } else if matches!(
-            self.index,
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
-        ) {
+        } else if self.system.library_visible(u32::from(self.index)) {
             self.probe_user(start);
         }
     }
 
     /// `FacadePhraseIndex::get_range` for a system sub-index
     /// (`phrase_index.cpp:610-622`, the trailing-zero end at `:624-646`):
-    /// one past the highest token with an item, past the chunk or past the
-    /// session's appended items, whichever is further; then the forward
+    /// one past the highest nonzero offset in the current buffer; then the forward
     /// probe. An unloaded library is `ERROR_NO_SUB_PHRASE_INDEX`: no token.
     fn probe_system(&mut self, start: u32) {
         let dict = &self.system;
         if !dict.library_visible(u32::from(self.index)) {
             return;
         }
-        let base = u32::from(self.index) << 24;
-        let Some(library) = dict.system().libraries().library(base) else {
+        let live = dict.live_items_ignoring_mask();
+        let Some(end) = live.system_range_end(self.index) else {
             return;
         };
-        let end = (base | library.token_range().end).max(self.memo.appended_end);
-        let live = dict.live_items_ignoring_mask();
         let mut token = start;
         while token < end {
             // `get_phrase_item` fails for a token a journal REMOVE took out,
@@ -519,15 +502,11 @@ impl PhraseExportRead<'_> {
         }
     }
 
-    /// The same for a `USER_FILE` sub-index: its range ends at the store's
-    /// token end; a library `table.conf` gives no file has no sub-index.
+    /// The same for an arena sub-index, including one made by a promotion.
     /// The pin's probe reads `n_prons` from the item's header (`:682`,
     /// `:763`), so a present item the store cannot decode is selected, not
     /// skipped; the read that follows is the assert.
     fn probe_user(&mut self, start: u32) {
-        if !self.user_library_present {
-            return;
-        }
         let end = self.memo.user_end;
         let mut token = start;
         while token < end {
@@ -554,21 +533,14 @@ impl PhraseExportRead<'_> {
         read: impl FnOnce(ItemRef<'_>) -> R,
     ) -> Result<Option<R>, ExportAssert> {
         self.refresh();
-        if self.system.is_system_library(self.index) {
+        if self.user.originals().get(&self.index).is_some() {
             return Ok(self
                 .system
                 .live_items_ignoring_mask()
                 .read(token, |item| read(ItemRef::from(item)))
                 .found());
         }
-        if matches!(
-            self.index,
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
-        ) {
-            self.with_user_item(token, read)
-        } else {
-            Ok(None)
-        }
+        self.with_user_item(token, read)
     }
 
     /// The `USER_FILE` item under `token`: the session's arena item, or
@@ -626,15 +598,10 @@ impl ContextCore {
     #[must_use]
     pub fn phrase_export_cursor(&self, index: u32) -> PhraseExportCursor {
         let [index, ..] = index.to_le_bytes();
-        let user_library_present = matches!(
-            index,
-            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY
-        ) && self.user_store().has_user_library(index);
         let mut cursor = PhraseExportCursor {
             index,
             next_token: NULL_TOKEN,
             next_pronunciation: 0,
-            user_library_present,
             memo: Memo::default(),
             current: None,
         };
@@ -1340,6 +1307,59 @@ mod phrase_cursor_tests {
             ));
         }
         assert!(!PhraseExportCursor::default().has_next());
+    }
+
+    /// Promotion creates the missing sub-index (074a2219 phrase_index.h:663-670).
+    /// Export probes that live range (phrase_index.cpp:610-646,
+    /// pinyin.cpp:670-685,748-767).
+    #[test]
+    fn an_addon_promoted_into_a_missing_library_is_exported() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/w3")
+            .join(oxpinyin_data::DEFAULT_STORE_EXT);
+        let system = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(root).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), system.path().join(entry.file_name())).unwrap();
+        }
+        let conf = system.path().join("table.conf");
+        let stock = std::fs::read_to_string(&conf).unwrap();
+        let user_row = "default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE";
+        assert!(stock.contains(user_row));
+        std::fs::write(
+            &conf,
+            stock.replace(user_row, "default ADDON_DICTIONARY NULL NULL NULL NOT_USED"),
+        )
+        .unwrap();
+        let mut ctx = ContextCore::open(
+            system.path(),
+            None,
+            crate::PINYIN_DEFAULT_OPTION_WORD,
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
+        assert_eq!(ctx.user_store().addon_promotion_range_end(), None);
+        assert!(!ctx.phrase_export_cursor(5).has_next());
+
+        ctx.user_store_mut()
+            .promote_addon_phrase(
+                0x0500_0001,
+                "二簧",
+                &[(user_keys(&["er", "huang"], 0), 7)],
+                9,
+            )
+            .unwrap();
+        assert_eq!(
+            ctx.user_store()
+                .user_unigram_frequency(0x0500_0001)
+                .unwrap(),
+            Some(9)
+        );
+        let mut cursor = ctx.phrase_export_cursor(5);
+        assert_eq!(
+            drain(&ctx, &mut cursor),
+            Some(vec![row("二簧", "er'huang", 7)])
+        );
     }
 
     /// `pinyin.cpp:728` → `chewing_key.cpp:48`: a reading the probe counts

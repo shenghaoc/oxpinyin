@@ -15,7 +15,7 @@ impl RuntimeDict<'_> {
             return *found;
         }
         // Classification runs outside LiveSystemItems::read's callback. In
-        // particular, with_user_item probes arena and replay provenance before
+        // particular, with_user_item probes the arena and live replay buffer before
         // the ordinary body read; an imported item retains its old error reads.
         let found = if self
             .live_items()
@@ -112,15 +112,14 @@ impl RuntimeLm<'_> {
         let total = *facts
             .total
             .get_or_insert_with(|| user.unigram_total_over(|nibble| self.inner.is_visible(nibble)));
-        // The unchanged live-visible branch ignores both unigram_delta and
-        // imported_item. No score is cached: each row occurrence supplies its
+        // The unchanged live-visible branch ignores unigram_delta. No score is cached: each row occurrence supplies its
         // own freq/total, and expand_one applies path pronunciation and log.
         let extra = UserCountDelta {
             unigram_live: Some(saved.unigram),
             unigram_total_delta: total,
             ..UserCountDelta::ZERO
         };
-        Some(self.inner.nbest_item_costs(token, extra, false, item))
+        Some(self.inner.nbest_item_costs(token, extra, item))
     }
 }
 

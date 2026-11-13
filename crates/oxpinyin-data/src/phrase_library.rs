@@ -426,11 +426,6 @@ impl PhraseContent {
     pub fn offsets(&self) -> &[u8] {
         &self.mapping.as_slice()[self.offsets.clone()]
     }
-
-    /// Borrow the offset array for an in-place journal write.
-    pub fn offsets_mut(&mut self) -> &mut [u8] {
-        &mut self.mapping.as_mut_slice()[self.offsets.clone()]
-    }
 }
 
 enum LibraryBytes {
@@ -779,8 +774,7 @@ impl PhraseLibrary {
     }
 
     /// Transfer the sole mapping to its live sub-index without scanning
-    /// slots. No original state stays behind: the live owner tracks what it
-    /// needs of a slot's provenance itself.
+    /// slots. The live owner reads the loaded offsets from this mapping.
     pub fn take_live_content(&mut self) -> Option<PhraseContent> {
         if self.detached_range_end.is_some() {
             return None;

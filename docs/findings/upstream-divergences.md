@@ -159,7 +159,7 @@ An entry holds nothing else.
 ### `table.conf` follows its rows; malformed ones fail the triggering call (policy rows 78, 79, 80 and 83)
 
 - **Pin:** a missing `source table format:` line leaves `str` unwritten and compares it (`src/storage/table_info.cpp:209-229`): undefined. A `table.conf` that points a loaded library at another file leaves tokens with no item, and `_remove_duplicated_items_by_phrase_string` compares the unset string and dies of SIGSEGV in `strcmp` (`src/pinyin.cpp:1635-1637`, `:2001-2007`, `:2053`).
-- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. The candidate guesses answer `false` with one warning when their lookups meet such a token (`had_unreadable_item` in the C adapters’ `sentence.rs`).
+- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. Candidate guesses omit tokens whose live item cannot be read and return true without a warning, as in register row 106.
 - **Decision:** accepted, class (b) (row 80); rows 78 and 83 read the rows and λ as the pin does, and row 79 reproduces the pin.
 - **Tests:** `table_info::tests::header_misses_are_the_ordinary_false_or_the_uninitialised_read` (header parsing), `e2e_tests::table_conf_919_short_row_merged` (row handling).
 

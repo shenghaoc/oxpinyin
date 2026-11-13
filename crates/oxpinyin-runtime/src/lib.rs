@@ -839,7 +839,11 @@ impl<'a> RuntimeDict<'a> {
     /// either way ([`Self::phrase_table_token_enabled`]).
     #[must_use]
     pub fn library_visible_token(&self, token: u32) -> bool {
-        self.live_items().is_visible(token)
+        let live = self.live_items();
+        if live.is_system_library(library_of(token)) {
+            return live.read(token, |_| ()).found().is_some();
+        }
+        live.is_visible(token)
     }
 
     /// Whether any entry-level filter can hide a token: a library is
@@ -1490,7 +1494,6 @@ pub struct RuntimeLm<'a> {
         &'a Cell<u32>,
     >,
     user: &'a UserStore,
-    libraries: &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
     addons: &'a RefCell<AddonSet>,
 }
 
@@ -1509,16 +1512,6 @@ fn user_gram_or_none(
 }
 
 impl RuntimeLm<'_> {
-    /// Whether the session holds an item for `token` that the shipped chunk
-    /// does not: a SYSTEM_FILE ADD, absent from the immutable chunk but
-    /// present in the current facade (074a2219 `pinyin.cpp:598-607`). A store
-    /// that cannot read the held item's count fails the step.
-    fn imported_item(&self, token: u32) -> Result<bool, LmError> {
-        LiveSystemItems::unmasked(self.libraries, self.user)
-            .is_imported(token)
-            .map_err(|error| LmError::User(error.to_string()))
-    }
-
     fn delta(&self, prev: Option<u32>, token: u32) -> Result<UserCountDelta, LmError> {
         let mut delta = self
             .user
@@ -1616,11 +1609,8 @@ impl LanguageModel for RuntimeLm<'_> {
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
         let extra = self.delta(Some(prev.value()), token.value())?;
-        // A SYSTEM_FILE ADD is absent from the immutable chunk but present
-        // in the current facade (074a2219 pinyin.cpp:598-607).
-        let imported = self.imported_item(token.value())?;
         self.inner
-            .nbest_step_costs_with_imported_item(prev, token, extra, imported)
+            .nbest_step_costs_with_user_delta(prev, token, extra)
     }
 
     fn nbest_item_costs_with_facts(
@@ -1645,8 +1635,7 @@ impl LanguageModel for RuntimeLm<'_> {
         _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         let extra = self.delta(None, token.value())?;
-        let imported = self.imported_item(token.value())?;
-        self.inner.nbest_item_costs(token, extra, imported, item)
+        self.inner.nbest_item_costs(token, extra, item)
     }
 
     fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
@@ -2087,7 +2076,6 @@ impl Runtime {
         RuntimeLm {
             inner: self.model.read(self.libraries(), &self.library_mask),
             user: &self.user,
-            libraries: self.libraries(),
             addons: &self.addons,
         }
     }
@@ -2995,7 +2983,7 @@ mod tests {
         assert_eq!(runtime.user_store().system_unigram(token), None);
         assert_eq!(
             runtime.dict().live_items().read(token, |_| ()),
-            oxpinyin_user::Lookup::Removed
+            oxpinyin_user::Lookup::Absent
         );
         // The removed item leaves no entry, so nothing is captured for it;
         // the other items of the window capture what the model answers.

@@ -1612,9 +1612,8 @@ impl UserStore {
     }
 
     /// Whether `table.conf` gives sub-index `library` a `USER_FILE` row
-    /// with a file: a `NOT_USED` row is not a library the pin loaded, and
-    /// nothing can be added to it. A store without a system `table.conf`
-    /// behind it keeps the stock layout.
+    /// with a file. Addon promotion can create a live sub-index without a
+    /// file. A store without a system `table.conf` keeps the stock layout.
     #[must_use]
     pub fn has_user_library(&self, library: u8) -> bool {
         self.originals.layout().has_user_library(library)
@@ -2503,23 +2502,7 @@ impl UserStore {
     /// the chunk holds one.
     #[must_use]
     pub(crate) fn system_item_removed(&self, token: Token) -> bool {
-        self.has_removed_system_items()
-            && self.inner.system_items.borrow().is_removed(
-                token,
-                self.originals.get(&phrase_index_library_index(token)),
-            )
-    }
-
-    /// Whether system library `nibble`'s live buffer records any slot's
-    /// first-write provenance.
-    #[cfg(test)]
-    pub(crate) fn system_provenance_recorded(&self, nibble: u8) -> bool {
-        self.inner.system_items.borrow().has_provenance(nibble)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_forget_removal(&self, _token: Token) {
-        self.inner.has_removed_system_items.set(false);
+        self.inner.system_items.borrow().is_removed(token)
     }
 
     #[cfg(test)]
@@ -2607,28 +2590,23 @@ impl UserStore {
         }
     }
 
-    /// Exclusive token end of imported system items in one library, without
-    /// cloning payloads for the streaming export's range probe.
-    #[must_use]
-    pub(crate) fn system_item_end(&self, library: u8) -> Option<Token> {
-        if !self.is_system_library(library) {
-            return None;
-        }
-        let arena_end = self
-            .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .get(&library)
-            .filter(|items| !items.is_empty())
-            .map(|items| (u32::from(library) << 24) | items.token_end());
-        self.inner
-            .system_items
-            .borrow()
-            .end(library)
-            .into_iter()
-            .chain(arena_end)
-            .max()
+    /// The live sub-index's range end for the export probe. A promotion can
+    /// create a sub-index with no original (074a2219 phrase_index.h:663-670).
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
+        let end = if let Some(original) = self.originals.get(&library) {
+            self.inner
+                .system_items
+                .borrow()
+                .range_end(library, original)
+        } else {
+            let phrases = self.inner.libpinyin.phrases();
+            phrases
+                .libraries
+                .get(&library)
+                .map(crate::user_library::UserLibrary::token_end)
+                .or_else(|| self.has_user_library(library).then_some(1))?
+        };
+        Some(crate::phrase_index_make_token(library, end))
     }
 
     /// The effective live system item shared by export, n-best and token

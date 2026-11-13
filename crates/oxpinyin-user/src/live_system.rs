@@ -18,7 +18,7 @@ use oxpinyin_core::PhraseText;
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::phrase_library::PhraseItemView;
 
-use crate::store::{Token, UserStore, UserStoreError};
+use crate::store::{Token, UserStore};
 
 /// Where a [`SystemItem`] lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,9 +150,6 @@ impl<'a> SystemItem<'a> {
 pub enum Lookup<R> {
     /// The token's library is unloaded.
     Unloaded,
-    /// A journal REMOVE took the item out of its sub-index; the shipped chunk
-    /// and the phrase table still hold it.
-    Removed,
     /// The library is loaded and holds no item under the token.
     Absent,
     /// The effective item and what the reader made of it.
@@ -165,7 +162,7 @@ impl<R> Lookup<R> {
     pub fn found(self) -> Option<R> {
         match self {
             Self::Found(value) => Some(value),
-            Self::Unloaded | Self::Removed | Self::Absent => None,
+            Self::Unloaded | Self::Absent => None,
         }
     }
 }
@@ -271,7 +268,7 @@ impl<'a> LiveSystemItems<'a> {
         let mut read = Some(read);
         let store = self.user;
         if store.system_item_removed(token) {
-            return Lookup::Removed;
+            return Lookup::Absent;
         }
         // The library's live buffer holds the session's item, or the
         // shipped one it was made from.
@@ -312,11 +309,11 @@ impl<'a> LiveSystemItems<'a> {
             return Lookup::Unloaded;
         }
         let store = self.user;
-        if store.system_item_removed(token) {
-            return Lookup::Removed;
-        }
         if let Some(found) = store.live_pronunciation_count(token) {
             return Lookup::Found(found);
+        }
+        if store.system_item_removed(token) {
+            return Lookup::Absent;
         }
         if store.live_item_past_buffer(token) {
             return Lookup::Absent;
@@ -339,33 +336,10 @@ impl<'a> LiveSystemItems<'a> {
         self.read(token, |item| u64::from(item.unigram())).found()
     }
 
-    /// Whether the session holds an item for `token`, in its arena or its
-    /// library's live buffer, whatever the mask or a removal says: an item the
-    /// shipped chunk lacks. The store's unigram delta of a held item is
-    /// read as well, only for its error, because the check this replaces built
-    /// the item with its live count and failed when that read did.
-    /// Consumer: the n-best step's imported-item flag, `RuntimeLm`.
-    ///
-    /// # Errors
-    /// Returns the store's error when the unigram delta of a held item cannot
-    /// be read.
-    pub fn is_imported(&self, token: Token) -> Result<bool, UserStoreError> {
-        let store = self.user;
-        if !self.is_system_library(crate::phrase::phrase_index_library_index(token)) {
-            return Ok(false);
-        }
-        let held = store.with_user_item(token, |_| ()).is_some();
-        if held {
-            store.unigram_delta(token)?;
-        }
-        Ok(held)
-    }
-
-    /// Exclusive token end of the session items one library holds. Consumer:
-    /// the export range probe, `appended_end`.
+    /// The current sub-index's range end (phrase_index.cpp:610–646).
     #[must_use]
-    pub fn overlay_end(&self, library: u8) -> Option<Token> {
-        self.user.system_item_end(library)
+    pub fn system_range_end(&self, library: u8) -> Option<Token> {
+        self.user.system_range_end(library)
     }
 }
 
@@ -431,7 +405,6 @@ mod tests {
         let store =
             crate::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
         assert!(store.live_item_past_buffer(0x0100_0001));
-        store.test_forget_removal(0x0100_0001);
         let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(&shipped, &store, &unloaded);
         assert_eq!(
