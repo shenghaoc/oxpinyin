@@ -98,17 +98,10 @@ the installed header keeps the declarations and the linked `.so` in
 step by construction. `crates/oxpinyin-store/build.rs` gives the
 full reasons.
 
-`OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION` is for CI hosts that have no
-surveyed libdb.
-
-- Unset or blank: the
-  Berkeley DB backend refuses at open any linked libdb other than 5.3
-  (`check_runtime_version` in `crates/oxpinyin-store/src/bdb/ffi.rs`).
-- Set to a non-empty value: that comparison alone warns once, and the open continues.
-  The warning line names the linked version and the surveyed 5.3.
-  The variable does not skip any other check.
-
-No workflow or developer recipe sets it:
+The Berkeley DB backend refuses at open any linked libdb other than 5.3
+(`check_runtime_version` in `crates/oxpinyin-store/src/bdb/ffi.rs`).
+The build defaults to `-ldb`, not a version-specific library name, and
+accepts the library overrides above. It does not enforce 5.3 at link time.
 Linux `libdb-dev` and Homebrew `berkeley-db@5` are the surveyed 5.3.
 
 ## Fixtures per backend

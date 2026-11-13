@@ -61,8 +61,6 @@ last Sleepycat-licensed line. Oracle relicensed 6.0 and later under the
 AGPL. The default Homebrew `berkeley-db` formula (18.1) is not surveyed, and
 the open refuses it. The reason: this backend writes user profiles that the
 user's own libpinyin must read back.
-`OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION` turns that one refusal into a
-warning. No workflow or recipe sets it.
 
 ## Key ordering
 
