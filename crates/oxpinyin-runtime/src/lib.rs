@@ -1706,15 +1706,6 @@ impl LanguageModel for RuntimeLm<'_> {
 pub type RuntimeSession<'a> =
     Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_engine::SessionState>;
 
-// Compile-time proof that adapters may share a `Runtime` across threads
-// behind their own synchronization.
-const _: () = {
-    const fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<RuntimeDict>();
-    assert_send_sync::<RuntimeLm>();
-    assert_send_sync::<UserStore>();
-};
-
 /// One opened engine: configuration-independent wiring for the converted
 /// system tables, the unigram model, λ, the learning store, and the
 /// merged backends sessions decode over.

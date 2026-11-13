@@ -151,7 +151,7 @@ impl DefaultDbm {
     }
 }
 
-impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm<S> {
+impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn attachment_failed(&self) -> bool {
         self.store().is_none()
     }
