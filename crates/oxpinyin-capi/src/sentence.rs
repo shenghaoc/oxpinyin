@@ -687,10 +687,7 @@ pub extern "C" fn pinyin_guess_candidates(
     // parse that produced no keys answers false, not an empty list.
     // A non-empty parse with no candidates (apostrophe-only runs,
     // unmatchable tails) answers true with zero rows.
-    if inst.state.candidates.is_empty() && inst.core.parsed_len == 0 {
-        return false;
-    }
-    true
+    !(inst.state.candidates.is_empty() && inst.core.parsed_len == 0)
 }
 
 /// `session_offset` in the active parse mode's original input coordinates,

@@ -136,8 +136,8 @@ impl ConstraintStore {
             self.clear_by_offset(index);
         }
         self.cells[start] = Cell::OneStep { token, end, text };
-        for index in start + 1..end {
-            self.cells[index] = Cell::NoSearch { start };
+        for cell in &mut self.cells[start + 1..end] {
+            *cell = Cell::NoSearch { start };
         }
         end - start
     }
