@@ -108,7 +108,7 @@ pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigra
 # The context the instance was allocated from — the same pointer
 # `pinyin_init` returned, not a second handle.
 pinyin_get_context                       return      borrowed                      n/a                n/a
-pinyin_get_candidate                     candidate   borrowed                      false-nulls        unverified
+pinyin_get_candidate                     candidate   borrowed                      false-nulls        source:pinyin.cpp:2851-2864
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (pinyin.cpp:2873-2878).
 pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:pinyin.cpp:2873-2878
@@ -150,4 +150,9 @@ pinyin_bigram_iterator_get_next_phrase   phrase      g_free                     
 pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates    source:pinyin.cpp:896-909
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
-pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        unverified
+# The facade passes `*symbols` by reference to `in_chewing_scheme`
+# (pinyin.cpp:1623-1624). Each of the three parsers NULLs it first
+# (storage/zhuyin_parser2.cpp:304, :499, :801) and writes it again only
+# before `return true`, so an unmapped key answers `false` with NULL
+# (:320, :332, :544, :851).
+pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        source:pinyin.cpp:1615-1625

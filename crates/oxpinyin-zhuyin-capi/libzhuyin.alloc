@@ -51,7 +51,7 @@ zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phras
 # separator column holds (`xi1'` at offset 3), so they are reachable too
 # (zhuyin.cpp:1736, :1750; the key getter does not skip separators,
 # :1886-1906).
-zhuyin_get_candidate                     candidate   borrowed                      false-nulls        unverified
+zhuyin_get_candidate                     candidate   borrowed                      false-nulls        source:zhuyin.cpp:1843-1851
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (zhuyin.cpp:1865-1870).
 zhuyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:zhuyin.cpp:1865-1870
@@ -65,4 +65,9 @@ zhuyin_get_pinyin_string                 utf8_str    g_free                     
 zhuyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:zhuyin-token-get-phrase-out
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
-zhuyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        unverified
+# The facade passes `*symbols` by reference to `in_chewing_scheme`
+# (zhuyin.cpp:1092-1093). Each of the three parsers NULLs it first
+# (storage/zhuyin_parser2.cpp:304, :499, :801) and writes it again only
+# before `return true`, so an unmapped key answers `false` with NULL
+# (:320, :332, :544, :851).
+zhuyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        source:zhuyin.cpp:1087-1094
