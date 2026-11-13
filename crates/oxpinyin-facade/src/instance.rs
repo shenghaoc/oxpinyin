@@ -2,8 +2,6 @@
 //! the parse-mode state machine, and the snapshot-adjacent fields both
 //! facades' C layers borrow against.
 
-use std::sync::atomic::Ordering;
-
 use oxpinyin_core::{
     Dictionary, DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken,
     ZhuyinParse,
@@ -269,7 +267,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// The current live option word.
     #[must_use]
     pub fn options(&self) -> OptionBits {
-        OptionBits::from_bits(self.live.options.load(Ordering::Relaxed))
+        OptionBits::from_bits(self.live.options.get())
     }
 
     /// The generalized lookup-offset law in the active parse mode's own

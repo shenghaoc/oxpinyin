@@ -1,7 +1,6 @@
 //! Configuration symbols: options, schemes, phrase library loading.
 
 use std::os::raw::c_int;
-use std::sync::atomic::Ordering;
 
 use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut};
 use crate::types::{PinyinContext, PinyinOptionT};
@@ -70,7 +69,7 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
         // `default:` is an `abort()`.
         std::process::abort();
     }
-    ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
+    ctx.core.live.full_scheme.set(scheme);
     true
 }
 
@@ -123,19 +122,14 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
         // (`:614`), and the wrapper ignores that `false` and answers `true`
         // (`pinyin.cpp:1155-1159`).  Set the packed fallback-cleared bit.
         _ => {
-            ctx.core
-                .live
-                .double_scheme
-                .fetch_or(oxpinyin_facade::FALLBACK_CLEARED_BIT, Ordering::Relaxed);
+            let live = &ctx.core.live.double_scheme;
+            live.set(live.get() | oxpinyin_facade::FALLBACK_CLEARED_BIT);
             return true;
         }
     };
     // A valid scheme (1-6) never has bit 30, so this store clears the
     // fallback-cleared flag implicitly.
-    ctx.core
-        .live
-        .double_scheme
-        .store(scheme as i32, Ordering::Relaxed);
+    ctx.core.live.double_scheme.set(scheme as i32);
     true
 }
 
@@ -171,7 +165,7 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
         // `abort()`, with the old parser already deleted in memory.
         std::process::abort();
     }
-    ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
+    ctx.core.live.zhuyin_scheme.set(scheme);
     true
 }
 

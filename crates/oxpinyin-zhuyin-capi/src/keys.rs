@@ -9,7 +9,6 @@
 
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::atomic::Ordering;
 
 use crate::ffi::key_text;
 use crate::state::instance_ref;
@@ -148,7 +147,7 @@ pub extern "C" fn zhuyin_get_pinyin_string(
     if instance.is_null() {
         return false;
     }
-    // The scheme lives on the shared context atomic, read through the
+    // The scheme lives in the context's shared live options, read through the
     // instance; pass it into the closure so the shared getter can dispatch.
     display_string_getter(key, utf8_str, |core| {
         // SAFETY: `instance` is non-null and was produced by
@@ -157,7 +156,7 @@ pub extern "C" fn zhuyin_get_pinyin_string(
             .core
             .live
             .full_scheme
-            .load(Ordering::Relaxed);
+            .get();
         match oxpinyin_facade::full_scheme(scheme) {
             Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
             Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),

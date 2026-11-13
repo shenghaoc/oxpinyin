@@ -1,9 +1,9 @@
 //! Live context state: the option/scheme word shared by a context and
 //! every instance it allocated, plus the context-level open/save laws.
 
+use std::cell::Cell;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU32};
+use std::rc::Rc;
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
 use oxpinyin_engine::SessionSettings;
@@ -319,8 +319,7 @@ fn null_chunk_refused(dir: &Path) {
 /// scheme's fallback table is suppressed — upstream's half-mutation
 /// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`
 /// row 5b).  A valid-scheme store clears it implicitly (values 1–6
-/// never have bit 30), and the out-of-enum arm sets it with
-/// `fetch_or`.
+/// never have bit 30), and the out-of-enum arm sets it.
 pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 
 /// The live option/scheme state a context owns and every instance it
@@ -331,21 +330,21 @@ pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 /// Both C-ABI facades carry the same fields; the seed word differs
 /// per facade and is the caller's choice at [`ContextCore::open`].
 #[derive(Clone)]
-pub struct LiveOptions(Arc<LiveOptionsInner>);
+pub struct LiveOptions(Rc<LiveOptionsInner>);
 
-/// The shared atomics behind [`LiveOptions`].
+/// The shared cells behind [`LiveOptions`].
 pub struct LiveOptionsInner {
     /// Live double-pinyin scheme (header discriminant value, bits 0–29)
     /// with the fallback-cleared flag packed into bit 30
     /// ([`FALLBACK_CLEARED_BIT`]).
-    pub double_scheme: AtomicI32,
+    pub double_scheme: Cell<i32>,
     /// Live Zhuyin scheme (header discriminant value).
-    pub zhuyin_scheme: AtomicI32,
+    pub zhuyin_scheme: Cell<i32>,
     /// Live full-pinyin scheme (header discriminant value).
-    pub full_scheme: AtomicI32,
+    pub full_scheme: Cell<i32>,
     /// Live option word. The parsers read `FORCE_TONE`, `USE_TONE` and
     /// `PINYIN_INCOMPLETE` off it.
-    pub options: AtomicU32,
+    pub options: Cell<u32>,
 }
 
 impl core::ops::Deref for LiveOptions {
@@ -361,11 +360,11 @@ impl LiveOptions {
     /// defaults both facades share (MS double, Standard zhuyin, Hanyu full).
     #[must_use]
     pub(crate) fn new(option_word: u32) -> Self {
-        Self(Arc::new(LiveOptionsInner {
-            double_scheme: AtomicI32::new(DoublePinyinScheme::Ms as i32),
-            zhuyin_scheme: AtomicI32::new(ZhuyinScheme::Standard as i32),
-            full_scheme: AtomicI32::new(FullPinyinScheme::Hanyu as i32),
-            options: AtomicU32::new(option_word),
+        Self(Rc::new(LiveOptionsInner {
+            double_scheme: Cell::new(DoublePinyinScheme::Ms as i32),
+            zhuyin_scheme: Cell::new(ZhuyinScheme::Standard as i32),
+            full_scheme: Cell::new(FullPinyinScheme::Hanyu as i32),
+            options: Cell::new(option_word),
         }))
     }
 }
@@ -476,9 +475,7 @@ impl ContextCore {
     pub fn set_options(&mut self, options: u32) {
         let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
         self.settings.incomplete_pinyin = enabled;
-        self.live
-            .options
-            .store(options, std::sync::atomic::Ordering::Relaxed);
+        self.live.options.set(options);
     }
 
     /// Allocates one instance's orchestration state over this context's

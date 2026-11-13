@@ -1,7 +1,5 @@
 //! The batch-parse seams and one-key probes over the core parsers.
 
-use std::sync::atomic::Ordering;
-
 use oxpinyin_core::graph::ExactSegment;
 use oxpinyin_core::{
     ChewingKey, DoublePinyinKey, DoublePinyinParser, DoublePinyinScheme, FullPinyinParser,
@@ -197,7 +195,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         // at 074a2219): under LUOMA / SECONDARY_ZHUYIN the spelling is
         // looked up in that scheme's table — plain rows, no option gating
         // — and the key is the canonical syllable's (issue #547).
-        if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
+        if let Some(scheme) = full_scheme(self.live.full_scheme.get())
             && let Some(index) = scheme.index()
         {
             return parse_one_scheme_key(options, text.as_bytes(), index);
@@ -210,7 +208,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// `false`.
     #[must_use]
     pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
-        let raw = self.live.double_scheme.load(Ordering::Relaxed);
+        let raw = self.live.double_scheme.get();
         let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
         let scheme = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT)?;
         let parser = {
@@ -230,7 +228,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// the chewing parser). `None` is upstream's `false`.
     #[must_use]
     pub fn parse_one_chewing(&self, text: &str) -> Option<ChewingKey> {
-        let scheme = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed))?;
+        let scheme = zhuyin_scheme(self.live.zhuyin_scheme.get())?;
         let options = self.options().bits() & !ZHUYIN_CORRECT_ALL;
         ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
     }
@@ -242,7 +240,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     #[must_use]
     pub fn in_keyboard(&self, key: u8) -> Vec<String> {
         let use_tone = self.options().contains(USE_TONE);
-        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
+        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
             return Vec::new();
         };
         ZhuyinParser::with_scheme(scheme).symbols_for(key, use_tone)
@@ -276,7 +274,7 @@ impl<
             let _ = self.session.replace_raw("");
             return 0;
         }
-        if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
+        if let Some(scheme) = full_scheme(self.live.full_scheme.get())
             && let Some(index) = scheme.index()
         {
             let parsed = match parse_full_pinyin_index_with_options(
@@ -349,7 +347,7 @@ impl<
             return 0;
         }
 
-        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
+        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
             return 0;
         };
         let parser = ZhuyinParser::with_scheme(scheme);
@@ -406,7 +404,7 @@ impl<
             return 0;
         }
 
-        let raw = self.live.double_scheme.load(Ordering::Relaxed);
+        let raw = self.live.double_scheme.get();
         let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
         let Some(scheme) = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT) else {
             return 0;
