@@ -470,6 +470,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 
 - Stored gram partitions, phrase segmentation: the facade total awaits a ruling.
 - Stored gram partitions, training: the facade total awaits a ruling.
-- A user phrase-table token with high bits set (the pin files it under the four bits of `PHRASE_INDEX_LIBRARY_INDEX`): reading has not settled it.
+- Promotion of an addon candidate with `table.conf` row 5 `NOT_USED`: the pin reads `range.m_range_end` unwritten (`pinyin.cpp:2541-2545`; `phrase_index.cpp:612-613`), a pin defect. oxpinyin reads its own unwritten local, so the token is not defined on either side.
+- The same promotion, where the unwritten token names an unloaded system library: the pin makes a new sub-index there (`phrase_index.h:665-668`), and oxpinyin refuses the promotion. oxpinyin has no state for a live sub-index in a library whose chunk is unloaded.
 - `pinyin_choose_candidate` with a candidate pointer outside the current list (oxpinyin returns `-1` before row 45's check): reading has not settled it.
 - A system library's user `.dbin` that is a directory: reading has not settled it.

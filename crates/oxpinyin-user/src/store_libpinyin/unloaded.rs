@@ -35,7 +35,7 @@ fn keys(syllable: &str) -> Vec<crate::phrase::PinyinKey> {
 fn totals(store: &UserStore) -> (u64, Option<u32>) {
     (
         store.unigram_total().expect("facade extra"),
-        store.system_library_total(1),
+        Some(crate::test_session::library_total(store, 1)),
     )
 }
 

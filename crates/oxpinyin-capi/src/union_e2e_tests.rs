@@ -619,3 +619,113 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// With `table.conf` row 5 `NOT_USED` the pin has no sub-index 5:
+/// `get_range` answers `ERROR_NO_SUB_PHRASE_INDEX` and writes nothing
+/// (`phrase_index.cpp:612-613` at the pin `074a2219`), and the promotion
+/// takes its token from the unwritten `range.m_range_end`
+/// (`pinyin.cpp:2541-2545`). That one token then goes to the pinyin index
+/// (`:2548-2553`), to the phrase table (`:2555-2557`) and to
+/// `add_phrase_item`, which files the item under the token's own library
+/// bits (`:2558`, `phrase_index.h:663-671`), and to the candidate
+/// (`:2561-2562`). The token's value is whatever the stack held, so it is
+/// not asserted.
+#[test]
+fn a_promotion_without_sub_index_5_writes_one_token_three_times() {
+    let system = TempSystemDir::new("addon-promote-not-used");
+    let conf = std::fs::read_to_string(system.path.join("table.conf")).expect("table.conf");
+    let row = "default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE";
+    assert!(conf.contains(row));
+    system.write(
+        "table.conf",
+        &conf.replace(row, "default ADDON_DICTIONARY NULL NULL NULL NOT_USED"),
+    );
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("addon-promote-not-used-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let input = cstr("erhuang");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let (index, text, readings) = {
+        // SAFETY: live instance; snapshot valid until the next guess.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(
+            inst.core.user.addon_promotion_range_end(),
+            None,
+            "get_range has no sub-index 5 to answer for"
+        );
+        let (index, cand) = inst
+            .candidates
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
+            .expect("art addon offers an ADDON candidate for erhuang");
+        let item = inst
+            .core
+            .dict
+            .addon_phrase_item(cand.token.get().expect("an addon token").value())
+            .expect("the addon item");
+        (
+            index,
+            cand.text_str().expect("UTF-8 text").to_owned(),
+            item.readings,
+        )
+    };
+    let mut cand: *mut crate::types::LookupCandidate = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small candidate index"),
+        &raw mut cand
+    ));
+    assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+
+    // SAFETY: snapshot untouched since the choose (no intervening guess).
+    let inst = unsafe { instance_ref(instance) };
+    let snapshot = &inst.state.candidates[index];
+    assert_eq!(
+        snapshot.candidate_type(),
+        lookup_candidate_type_t::NORMAL_CANDIDATE
+    );
+    let token = snapshot.token.get().expect("the promoted token").value();
+    let store = inst.core.user;
+    let library = oxpinyin_user::phrase_index_library_index(token);
+    assert_eq!(
+        store
+            .token_for_phrase_in(library, &text)
+            .expect("store read"),
+        Some(token),
+        "the phrase table holds the token"
+    );
+    assert!(
+        store.user_pronunciation_count(token).is_some(),
+        "the item is filed under the token's library and slot"
+    );
+    let keys: Vec<oxpinyin_core::SyllableKey> = readings
+        .first()
+        .expect("a reading")
+        .0
+        .iter()
+        .map(|k| oxpinyin_core::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
+        .collect();
+    assert!(
+        store
+            .lookup()
+            .lookup(&keys)
+            .iter()
+            .any(|entry| entry.token().value() == token),
+        "the pinyin index holds the token"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}

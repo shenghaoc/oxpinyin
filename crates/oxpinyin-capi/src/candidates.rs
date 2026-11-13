@@ -435,9 +435,12 @@ pub extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
+    // `PhraseIndexRange range;` (`pinyin.cpp:2541` at 074a2219): the pin
+    // declares the local and writes nothing to it before `get_range`.
+    let mut range = core::mem::MaybeUninit::<PhraseIndexRange>::uninit();
     // SAFETY: the prior view is no longer used. Promotion borrows the retained
     // owner only for its own reads and write, before the new instance view.
-    let addon_token = unsafe { try_promote_addon(instance, index) };
+    let addon_token = unsafe { try_promote_addon(instance, index, &mut range) };
     // SAFETY: promotion has released its context borrow; the live instance
     // is re-borrowed for the remainder of this serialized operation.
     let mut inst = unsafe { instance_mut(instance) };
@@ -571,15 +574,32 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
     inst.core.clear_abi_constraint(offset, true, true)
 }
 
+/// The pin's `PhraseIndexRange` (`novel_types.h:53-56` at 074a2219): the two
+/// tokens `FacadePhraseIndex::get_range` writes.
+#[repr(C)]
+struct PhraseIndexRange {
+    range_begin: u32,
+    range_end: u32,
+}
+
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
 /// (`pinyin.cpp:2532-2561`): copies the addon phrase item into the default
-/// facade's nibble-5 sub-index, rewrites the snapshot candidate to a
-/// `NORMAL_CANDIDATE` at the promoted token, and returns that token so the
-/// constraint records it in place of the addon-facade token.
+/// facade under the token the range's end holds, rewrites the snapshot
+/// candidate to a `NORMAL_CANDIDATE` at that token, and returns the token
+/// so the constraint records it in place of the addon-facade token.
+///
+/// `range` is the caller's local, as the pin's is `pinyin_choose_candidate`'s
+/// own. `get_range` writes it when library 5 has a sub-index and writes
+/// nothing when it has none (`phrase_index.cpp:612-613`); the pin ignores
+/// the error and reads `m_range_end` either way (`pinyin.cpp:2542-2545`).
 ///
 /// `None` — leaving a plain selection — when the candidate is not an addon
 /// candidate, the addon item cannot be resolved, or the store write fails.
-unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Option<PhraseToken> {
+unsafe fn try_promote_addon(
+    instance: *mut PinyinInstance,
+    index: usize,
+    range: &mut core::mem::MaybeUninit<PhraseIndexRange>,
+) -> Option<PhraseToken> {
     let item = {
         // SAFETY: the caller supplies a live instance and snapshot index.
         let inst = unsafe { instance_ref(instance) };
@@ -597,15 +617,63 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         // SAFETY: the read view above has ended; the caller serializes this
         // context mutation with every other operation on its instances.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        ctx.core
-            .user_store_mut()
-            .promote_addon_phrase(text, &item.readings, item.unigram)
-            .ok()?
+        let store = ctx.core.user_store_mut();
+        // `context->m_phrase_index->get_range(ADDON_DICTIONARY, range);`
+        // (`pinyin.cpp:2542`): the answer is written when there is one, and
+        // the error is ignored.
+        if let Some(range_end) = store.addon_promotion_range_end() {
+            range.write(PhraseIndexRange {
+                range_begin: oxpinyin_user::phrase_index_make_token(
+                    oxpinyin_user::ADDON_DICTIONARY,
+                    1,
+                ),
+                range_end,
+            });
+        }
+        // With no sub-index 5 (`table.conf` row 5 `NOT_USED`), `get_range`
+        // returns `ERROR_NO_SUB_PHRASE_INDEX` without writing the range. The pin
+        // still reads `range.m_range_end` (`pinyin.cpp:2541-2545` at 074a2219,
+        // `phrase_index.cpp:612-613`). In the pin-built objects for each
+        // backend, `pinyin_choose_candidate+0x1f7` is `mov 0x3c(%rsp),%eax`,
+        // after the call at `+0x1f2`. No instruction on that path writes
+        // `0x38..0x3f(%rsp)`. The maintainer's ruling of 2026-11-13 UTC
+        // takes the value from the stack as it stands.
+        let token: u32;
+        // SAFETY: the raw field pointer addresses four valid, aligned bytes
+        // in the caller's live stack allocation. The instruction loads those
+        // bytes as they are into a register. The assembly output is a u32,
+        // for which every bit pattern is valid.
+        unsafe {
+            let address = &raw const (*range.as_ptr()).range_end;
+            #[cfg(target_arch = "x86_64")]
+            core::arch::asm!(
+                "mov {token:e}, dword ptr [{address}]",
+                address = in(reg) address,
+                token = out(reg) token,
+                options(nostack, readonly, preserves_flags),
+            );
+            #[cfg(target_arch = "aarch64")]
+            core::arch::asm!(
+                "ldr {token:w}, [{address}]",
+                address = in(reg) address,
+                token = out(reg) token,
+                options(nostack, readonly, preserves_flags),
+            );
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+            compile_error!("the addon promotion range_end read requires x86_64 or aarch64");
+        }
+        // `pinyin.cpp:2547-2558`: both index adds and `add_phrase_item`
+        // take this one token.
+        store
+            .promote_addon_phrase(token, text, &item.readings, item.unigram)
+            .ok()?;
+        token
     };
     let promoted = PhraseToken::new(promoted);
     // SAFETY: the context write has ended and the same live snapshot remains.
     let inst = unsafe { crate::state::instance_state_ref(instance) };
     let snapshot = &inst.state.candidates[index];
+    // `pinyin.cpp:2561-2562`.
     snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
     snapshot.token.set(Some(promoted));
     Some(promoted)
@@ -995,6 +1063,21 @@ mod unloaded_library_tests {
             read(inst.core.user)
         }
 
+        /// The total a system library's sub-index holds once it is loaded
+        /// and before any write: `SubPhraseIndex::load` reads it from the
+        /// chunk (`phrase_index.cpp:345` at the pin `074a2219`).
+        fn loaded_total(&self, library: u8) -> u32 {
+            // SAFETY: as in `store`.
+            unsafe { instance_ref(self.instance) }
+                .core
+                .dict
+                .system()
+                .libraries()
+                .library(u32::from(library) << 24)
+                .map(oxpinyin_data::phrase_library::PhraseLibrary::total_freq)
+                .expect("the library is mapped")
+        }
+
         /// The facade total the model divides by.
         fn amplified_total(&self) -> u64 {
             // SAFETY: as in `store`.
@@ -1213,9 +1296,7 @@ mod unloaded_library_tests {
     fn choosing_a_row_whose_unigram_add_overflows_under_the_sort_bit_answers_zero() {
         let open = Open::new("sort-bit-overflow");
         let (row, gbk) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
-        let total = open
-            .store(|store| store.system_library_total(2))
-            .expect("the GBK library's total");
+        let total = open.loaded_total(2);
         assert!(pinyin_token_add_unigram_frequency(
             open.instance,
             gbk,
@@ -1234,9 +1315,7 @@ mod unloaded_library_tests {
             kind == lookup_candidate_type_t::LONGER_CANDIDATE
         });
         let library = u8::try_from(token >> 24).expect("a library nibble");
-        let total = open
-            .store(|store| store.system_library_total(library))
-            .expect("the row's library total");
+        let total = open.loaded_total(library);
         assert!(pinyin_token_add_unigram_frequency(
             open.instance,
             token,

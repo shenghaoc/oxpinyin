@@ -1747,7 +1747,7 @@ fn window_row(text: &str, token: Option<u32>) -> crate::candidate::Candidate {
 
 #[test]
 fn ordered_window_skips_sort_and_dedup_with_identical_output() {
-    use super::{order_window_tail, sort_dedup_window_tail, window_tokens_are_strictly_increasing};
+    use super::{order_window_tail, sort_dedup_window_tail, window_ascends_by_library_then_token};
 
     let mut rows = vec![
         window_row("prefix", None),
@@ -1757,15 +1757,15 @@ fn ordered_window_skips_sort_and_dedup_with_identical_output() {
     ];
     let original = rows.clone();
     let mut fallback = rows.clone();
-    assert!(window_tokens_are_strictly_increasing(&rows[1..]));
+    assert!(window_ascends_by_library_then_token(&rows[1..]));
     order_window_tail(&mut rows, 1);
     sort_dedup_window_tail(&mut fallback, 1);
     assert_eq!(rows, fallback);
     assert_eq!(rows, original);
 
     // Empty and single-token windows also need neither operation.
-    assert!(window_tokens_are_strictly_increasing(&[]));
-    assert!(window_tokens_are_strictly_increasing(&rows[1..2]));
+    assert!(window_ascends_by_library_then_token(&[]));
+    assert!(window_ascends_by_library_then_token(&rows[1..2]));
     let end = rows.len();
     order_window_tail(&mut rows, end);
     assert_eq!(rows, original);
@@ -1773,13 +1773,14 @@ fn ordered_window_skips_sort_and_dedup_with_identical_output() {
 
 #[test]
 fn unordered_windows_keep_the_existing_sort_and_dedup() {
-    use super::{order_window_tail, window_tokens_are_strictly_increasing};
+    use super::{order_window_tail, window_ascends_by_library_then_token};
 
     let first = window_row("first", Some(0x0100_0002));
     let smaller = window_row("smaller", Some(0x0100_0001));
     let other_library = window_row("other library", Some(0x0200_0001));
     let tokenless = window_row("tokenless", None);
     let duplicate = window_row("later duplicate", Some(0x0100_0002));
+    let tagged = window_row("tagged", Some(0x8100_0005));
     for (name, window, expected) in [
         (
             "tokenless",
@@ -1796,10 +1797,20 @@ fn unordered_windows_keep_the_existing_sort_and_dedup() {
         (
             "interleaved libraries retain encounter order within each library",
             vec![first.clone(), other_library.clone(), smaller.clone()],
-            vec![first, smaller, other_library],
+            vec![first, smaller, other_library.clone()],
+        ),
+        // `_append_items` walks the range array a token's masked library
+        // names (`pinyin.cpp:1772-1788`, `chewing_large_table2.h:107`,
+        // `novel_types.h:44` at the pin `074a2219`), so a token of library
+        // 1 with high bits set comes before library 2, though its value
+        // is the larger.
+        (
+            "a token with high bits set files with its masked library",
+            vec![other_library.clone(), tagged.clone()],
+            vec![tagged, other_library],
         ),
     ] {
-        assert!(!window_tokens_are_strictly_increasing(&window), "{name}");
+        assert!(!window_ascends_by_library_then_token(&window), "{name}");
         let prefix = window_row("prior window", Some(0x0100_0002));
         let mut rows = vec![prefix.clone()];
         rows.extend(window);

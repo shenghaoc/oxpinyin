@@ -350,6 +350,12 @@ pub struct AddonPhraseItem {
     pub unigram: u64,
 }
 
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at the pin
+/// `074a2219`): the library a token names. The high four bits are masked.
+const fn library_of(token: u32) -> u8 {
+    oxpinyin_user::phrase_index_library_index(token)
+}
+
 /// Splits a `'`-joined pinyin spelling into [`SyllableKey`] ids, or `None`
 /// when any syllable is not a frozen key. The canonical lookup is used, so the
 /// zhuyin-only syllables a stored reading can carry (`fe`, `den`, ...) resolve
@@ -847,11 +853,12 @@ impl<'a> RuntimeDict<'a> {
     /// facade (074a2219 phrase_index.h:762-772; phrase_large_table3.cpp:40-42).
     #[must_use]
     pub fn phrase_table_token_enabled(&self, token: u32) -> bool {
-        let nibble = token >> 24;
-        self.library_visible(nibble)
+        // `add_index` files a token under its masked library
+        // (074a2219 phrase_large_table3.cpp:42, novel_types.h:44).
+        let library = library_of(token);
+        self.library_visible(u32::from(library))
             && (self.system.library_loaded(token)
-                || ((5..=7).contains(&nibble)
-                    && self.user.has_user_library(token.to_be_bytes()[0])))
+                || ((5..=7).contains(&library) && self.user.has_user_library(library)))
     }
 
     /// Read the live item's stored pronunciation count.
@@ -863,12 +870,12 @@ impl<'a> RuntimeDict<'a> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
         let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
-        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if self.is_system_library(library_of(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
-        match token >> 24 {
+        match library_of(token) {
             5..=7 => {
-                if !self.library_visible(token >> 24) {
+                if !self.library_visible(u32::from(library_of(token))) {
                     return None;
                 }
                 self.user.user_pronunciation_count(token)
@@ -882,16 +889,16 @@ impl<'a> RuntimeDict<'a> {
     /// frequencies and the unigram do not participate in those checks.
     #[must_use]
     pub fn token_text(&self, token: u32) -> Option<PhraseText> {
-        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if self.is_system_library(library_of(token)) {
             return self
                 .live_items()
                 .read(token, |item| item.phrase_text())
                 .found()
                 .flatten();
         }
-        match token >> 24 {
+        match library_of(token) {
             5..=7 => {
-                if !self.library_visible(token >> 24) {
+                if !self.library_visible(u32::from(library_of(token))) {
                     return None;
                 }
                 let store = self.user;
@@ -913,16 +920,17 @@ impl<'a> RuntimeDict<'a> {
     /// No text or pronunciation payload is decoded.
     #[must_use]
     pub fn token_exists(&self, token: u32) -> bool {
-        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if self.is_system_library(library_of(token)) {
             return self
                 .live_items()
                 .pronunciation_count(token)
                 .found()
                 .is_some();
         }
-        match token >> 24 {
+        match library_of(token) {
             5..=7 => {
-                self.library_visible(token >> 24) && self.user.phrase_exists(token).unwrap_or(false)
+                self.library_visible(u32::from(library_of(token)))
+                    && self.user.phrase_exists(token).unwrap_or(false)
             }
             _ => false,
         }
@@ -934,7 +942,7 @@ impl<'a> RuntimeDict<'a> {
     /// (074a2219 `pinyin.cpp:2801-2818`, `zhuyin.cpp:1793-1810`).
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
-        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if self.is_system_library(library_of(token)) {
             return self
                 .live_items()
                 .read(token, |item| TokenPronunciation {
@@ -945,9 +953,9 @@ impl<'a> RuntimeDict<'a> {
                 })
                 .found();
         }
-        match token >> 24 {
+        match library_of(token) {
             5..=7 => {
-                if !self.library_visible(token >> 24) {
+                if !self.library_visible(u32::from(library_of(token))) {
                     return None;
                 }
                 let store = self.user;
@@ -974,7 +982,9 @@ impl<'a> RuntimeDict<'a> {
         nth: usize,
         read: impl FnOnce(usize, Option<&[u8]>) -> R,
     ) -> Option<R> {
-        if !(5..=7).contains(&(token >> 24)) || !self.library_visible(token >> 24) {
+        if !(5..=7).contains(&library_of(token))
+            || !self.library_visible(u32::from(library_of(token)))
+        {
             return None;
         }
         self.user.with_nth_pronunciation_words(token, nth, read)
@@ -1229,7 +1239,7 @@ impl Dictionary for RuntimeDict<'_> {
         } else {
             self.system
                 .phrase_prefix_exists_visible(syllables, |token| {
-                    self.library_visible(token >> 24)
+                    self.library_visible(u32::from(library_of(token)))
                         && self
                             .system
                             .libraries()
@@ -1385,7 +1395,7 @@ impl Dictionary for RuntimeDict<'_> {
             .note_pinyin_suggestion(|| chewing_query(syllables));
         tokens.extend(user.suggest_extensions(syllables));
         if self.library_mask.get() != 0 {
-            tokens.retain(|token| self.library_visible(*token >> 24));
+            tokens.retain(|token| self.library_visible(u32::from(library_of(*token))));
         }
         oxpinyin_core::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
@@ -1425,14 +1435,14 @@ impl Dictionary for RuntimeDict<'_> {
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
-        if u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if self.is_system_library(library_of(token)) {
             return self
                 .live_items()
                 .read(token, |item| item.phrase_length())
                 .found();
         }
-        match token >> 24 {
-            5..=7 if self.library_visible(token >> 24) => {
+        match library_of(token) {
+            5..=7 if self.library_visible(u32::from(library_of(token))) => {
                 self.user.phrase_length(token).ok().flatten()
             }
             _ => None,
@@ -1564,7 +1574,7 @@ impl LanguageModel for RuntimeLm<'_> {
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         let live = self.user.system_unigram(token.value());
-        let extra = if live.is_some() && self.inner.is_visible((token.value() >> 24) as u8) {
+        let extra = if live.is_some() && self.inner.is_visible(library_of(token.value())) {
             // The model uses only the live field on this branch.
             // A live value also implies a libpinyin session,
             // where unigram_delta is infallible: skipping it loses no error.
@@ -2199,7 +2209,7 @@ impl Runtime {
         // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
         // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
         let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
-        if !self.dict().library_visible(token >> 24) {
+        if !self.dict().library_visible(u32::from(library_of(token))) {
             return UnigramAdd::Missing;
         }
         let Ok(delta) = u32::try_from(delta) else {

@@ -370,7 +370,7 @@ fn append_scan_entries(
 /// used to sort the batch by token, which reordered every such tie
 /// (issue #536: `n` under ibus listed 竜/黏 the other way round from the
 /// pin). The scan appends each path's records in chunk order already, so
-/// the pin's order is a stable sort by library nibble over the batch,
+/// the pin's order is a stable sort by masked library index over the batch,
 /// keeping the first occurrence of a token reached through several
 /// key-paths — the duplicate the pin's string dedup drops later.
 fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
@@ -385,35 +385,41 @@ fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
 /// membership rule as [`flush_window_batch`], without a batch buffer
 /// between the lookups and the output.
 fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
-    // Strict token order implies library order and uniqueness. No row can
-    // move or be removed by the fallback, so this O(n), O(1)-space check
-    // avoids its sort and membership-set allocation on ordered windows.
-    if window_tokens_are_strictly_increasing(&into[start..]) {
+    // A window that ascends strictly by (library, token) is in library
+    // order and holds each token once. No row can move or be removed by
+    // the fallback, so this O(n), O(1)-space check avoids its sort and
+    // membership-set allocation on ordered windows.
+    if window_ascends_by_library_then_token(&into[start..]) {
         return;
     }
     sort_dedup_window_tail(into, start);
 }
 
-fn window_tokens_are_strictly_increasing(window: &[Candidate]) -> bool {
+/// The library `_append_items` walks a token under: the range array
+/// `PHRASE_INDEX_LIBRARY_INDEX` names (`pinyin.cpp:1772-1788`,
+/// `chewing_large_table2.h:107`, `novel_types.h:44` at the pin
+/// `074a2219`). The token's high four bits are masked.
+const fn window_library(token: oxpinyin_core::PhraseToken) -> usize {
+    oxpinyin_core::phrase_index_library(token.value())
+}
+
+fn window_ascends_by_library_then_token(window: &[Candidate]) -> bool {
     let mut previous = None;
     for candidate in window {
         let Some(token) = candidate.token() else {
             return false;
         };
-        if previous.is_some_and(|previous| previous >= token) {
+        let key = (window_library(token), token);
+        if previous.is_some_and(|previous| previous >= key) {
             return false;
         }
-        previous = Some(token);
+        previous = Some(key);
     }
     true
 }
 
 fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
-    into[start..].sort_by_key(|candidate| {
-        candidate
-            .token()
-            .map_or(u32::MAX, |token| token.value() >> 24)
-    });
+    into[start..].sort_by_key(|candidate| candidate.token().map_or(usize::MAX, window_library));
     // Membership only: the retained candidates keep the batch's order, so
     // the set's own (unspecified) iteration order is never observed.
     let mut seen: std::collections::HashSet<u32> =
