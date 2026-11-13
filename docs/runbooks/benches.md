@@ -447,7 +447,7 @@ budget fails the campaign and preserves completed runs. Keystrokes are work
 items, not independent statistical observations. Estimates use process pairs.
 
 Each distinct source SHA builds once, into a fresh directory for each invocation, through the
-packaging install procedure: locked release, the `shipped` feature and Cargo's default backend,
+packaging install procedure: locked release and Cargo's default backend,
 with `RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none'` and `OXPINYIN_DSYM=1` for symbols. The dylib and
 dSYM must have matching arm64 UUIDs. Product code uses no profiling profile or instrumentation.
 `VCPKG_ROOT` names the checkout installed by the [macOS setup](setup.md#macos); measurement
@@ -571,7 +571,7 @@ Callgrind anchor and the `smaps_rollup` reader. It adds no second measurement
 system. tkrzw is the vcpkg overlay install of [Linux setup](setup.md#linux)
 for every arm; `tools/tkrzw/runtime.py` certifies each launch against it.
 Each distinct SHA builds once through the packaging install procedure: locked
-release, the `shipped` feature, Cargo's default backend and no added flags.
+release, Cargo's default backend and no added flags.
 This is the plain shipping library, the arm that Linux times. A′ is staged as
 on macOS. Each sample is one fresh process, pinned to the first allowed CPU,
 with the staged library's directory first on the loader path.

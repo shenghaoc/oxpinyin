@@ -228,10 +228,7 @@ jobs:
       - name: C++ pinyin.h smoke gate
         if: needs.changes.outputs.reuse != 'true'
         run: just cpp-smoke
-      # The exported-symbol gate: each cdylib exports exactly its pin
-      # version script's set and nothing else, in the development build
-      # and in the packaged one (--features shipped). The packaged mode is
-      # the last step of this job.
+      # Each cdylib exports exactly its pin version script's set and nothing else.
       - name: ABI export gate (development build)
         if: needs.changes.outputs.reuse != 'true'
         run: just abi exports
@@ -245,15 +242,6 @@ jobs:
       - name: Allocator-pairing gate
         if: needs.changes.outputs.reuse != 'true'
         run: just abi alloc-pairing
-      # The packaged mode runs after every gate that uses the development
-      # build. Its build of oxpinyin-capi replaces the development one: the
-      # cdylib's two feature sets share files and a fingerprint in
-      # target/cells/tkrzw, so a later development-build gate would compile
-      # oxpinyin-capi again.
-      - name: ABI export gate (shipped build)
-        if: needs.changes.outputs.reuse != 'true'
-        run: just abi exports --shipped
-
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh test

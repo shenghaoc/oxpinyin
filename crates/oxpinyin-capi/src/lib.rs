@@ -67,7 +67,6 @@ mod ffi;
 #[cfg(feature = "fuzz-api")]
 #[allow(missing_docs)]
 pub mod fuzz_api {
-    #[cfg(not(feature = "shipped"))]
     pub use crate::candidates::oxpinyin_train_aborts;
     pub use crate::candidates::{
         pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
@@ -77,7 +76,6 @@ pub mod fuzz_api {
     pub use crate::config::pinyin_set_double_pinyin_scheme;
     pub use crate::context::{pinyin_fini, pinyin_init};
     pub use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
-    #[cfg(not(feature = "shipped"))]
     pub use crate::iterators::oxpinyin_import_aborts;
     pub use crate::iterators::{
         pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,

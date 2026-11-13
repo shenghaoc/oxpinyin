@@ -807,7 +807,7 @@ fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
 /// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
 /// which skips such a call: not in `pinyin.h`, a Rust function compiled
 /// only with `fuzz-api` and never into the shipped artifact.
-#[cfg(all(feature = "fuzz-api", not(feature = "shipped")))]
+#[cfg(feature = "fuzz-api")]
 #[must_use]
 pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {

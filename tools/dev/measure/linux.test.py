@@ -355,7 +355,7 @@ class LinuxPreparation(PreparationFixture, unittest.TestCase):
             (installed / 'lib/pkgconfig/tkrzw.pc').touch()
             arm = prepare.native_build('a' * 40, Path(directory) / 'plain', env, linux=True, symbols=False)
             arguments, tools = install.call_args.args
-            self.assertEqual(arguments[2:], ['--', '--locked', '--release', '--features', 'shipped'])
+            self.assertEqual(arguments[2:], ['--', '--locked', '--release'])
             for name in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_DEBUG', 'OXPINYIN_DSYM'):
                 self.assertNotIn(name, tools.env)
             self.assertTrue(tools.env['PKG_CONFIG_PATH'].startswith(str(installed / 'lib/pkgconfig')))

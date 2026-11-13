@@ -41,8 +41,7 @@
 //!
 //! Symbol scope is therefore enforced in the source — the shipped
 //! artifact defines every symbol in `libpinyin.ver` and nothing else —
-//! not by a linker script. (The build without `--features shipped`
-//! exports the same set.)
+//! not by a linker script.
 //!
 //! # The complete `libpinyin.pc`
 //!

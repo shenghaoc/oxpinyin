@@ -878,8 +878,8 @@ the surface stays minimal.
 ## Boundary notes
 
 Every exported `pinyin_*` symbol is in scope and implemented live, with
-no placeholder bodies. The shipped build (`--features shipped`) compiles
-out the `fuzz-api` helpers only; no build exports a test hook.
+no placeholder bodies. Shipping recipes do not enable the `fuzz-api`
+helpers; no build exports a test hook.
 
 Every C-ABI symbol requires:
 

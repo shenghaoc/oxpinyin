@@ -229,7 +229,7 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
     shutil.rmtree(stage, ignore_errors=True)
     env = build_env(source, target, cell.cell)
     for library in LIBRARIES:
-        features = cell.feature + (',shipped' if library == 'libpinyin' else '')
+        features = cell.feature
         revision_recipe(revision, source, [
             'packaging', 'install', library,
             '--prefix=/usr', '--libdir=/usr/lib', f'--destdir={stage}', '--',
