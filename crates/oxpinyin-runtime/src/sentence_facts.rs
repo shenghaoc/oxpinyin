@@ -42,13 +42,6 @@ impl RuntimeDict<'_> {
         } else {
             None
         };
-        #[cfg(test)]
-        if test_boundary(Boundary::Fill) {
-            facts.validate(user.generation().wrapping_add(1));
-        }
-        if !facts.validate(user.generation()) {
-            return None;
-        }
         facts.tokens.insert(token, found);
         found
     }
@@ -98,9 +91,6 @@ impl RuntimeDict<'_> {
             },
             text,
         };
-        if !facts.validate(self.user.generation()) {
-            return self.priced_on_path(path, token, want_text);
-        }
         Ok(Some(result))
     }
 }
@@ -128,40 +118,8 @@ impl RuntimeLm<'_> {
             unigram_total_delta: total,
             ..UserCountDelta::ZERO
         };
-        let result = self.inner.nbest_item_costs(token, extra, false, item);
-        #[cfg(test)]
-        if test_boundary(Boundary::Score) {
-            facts.validate(user.generation().wrapping_add(1));
-        }
-        if !facts.validate(user.generation()) {
-            return None;
-        }
-        Some(result)
+        Some(self.inner.nbest_item_costs(token, extra, false, item))
     }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, PartialEq)]
-enum Boundary {
-    Fill,
-    Score,
-}
-#[cfg(test)]
-std::thread_local! {
-    // Inject the changed observation at the same boundary as a concurrent
-    // commit. Shared-context C calls themselves must be serialized.
-    static BOUNDARY: std::cell::Cell<Option<Boundary>> = const { std::cell::Cell::new(None) };
-}
-#[cfg(test)]
-fn test_boundary(at: Boundary) -> bool {
-    BOUNDARY.with(|slot| {
-        if slot.get() == Some(at) {
-            slot.set(None);
-            true
-        } else {
-            false
-        }
-    })
 }
 
 #[cfg(test)]
@@ -321,33 +279,6 @@ mod tests {
         assert_eq!(facts.total, Some(total + 18));
     }
 
-    #[test]
-    fn generation_change_during_fill_or_score_retires_only_the_facts() {
-        for boundary in [Boundary::Fill, Boundary::Score] {
-            let runtime = opened();
-            let token = token(&runtime);
-            let path = path(&runtime, "ni");
-            let mut facts = SentenceFacts::default();
-            if boundary == Boundary::Score {
-                price(&runtime, &path, token, &mut facts);
-            }
-            BOUNDARY.with(|slot| slot.set(Some(boundary)));
-            if boundary == Boundary::Fill {
-                price(&runtime, &path, token, &mut facts);
-            } else {
-                score(&runtime, token, &mut facts);
-            }
-            assert!(facts.tokens.is_empty());
-            assert!(facts.bytes.is_empty());
-            assert!(facts.total.is_none());
-            price(&runtime, &path, token, &mut facts);
-            score(&runtime, token, &mut facts);
-            assert!(
-                facts.tokens.is_empty(),
-                "disabled for remainder, not refilled"
-            );
-        }
-    }
     fn fallback(runtime: &Runtime, token: u32) {
         let mut facts = SentenceFacts::default();
         price(runtime, &path(runtime, "ni"), token, &mut facts);
@@ -372,11 +303,9 @@ mod tests {
         fallback(&runtime, imported);
         fallback(&runtime, 0x01ff_fffe);
         let ordinary = token(&runtime);
-        runtime
-            .library_mask
-            .store(1 << (ordinary >> 24), Ordering::SeqCst);
+        runtime.library_mask.set(1 << (ordinary >> 24));
         fallback(&runtime, ordinary);
-        runtime.library_mask.store(0, Ordering::SeqCst);
+        runtime.library_mask.set(0);
         // A session detached from this runtime's system libraries.
         runtime.user = UserStore::open_transient(
             oxpinyin_user::SystemOriginals::new(

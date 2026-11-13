@@ -37,12 +37,11 @@
 
 mod sentence_facts;
 
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
-use std::sync::{Mutex, RwLock};
 
 use oxpinyin_core::{
     Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
@@ -64,13 +63,6 @@ use oxpinyin_user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, PinyinKey, SaveBaseline,
     SystemLibrary, UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
-
-fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
-    match result {
-        Ok(value) => value,
-        Err(_) => std::process::abort(),
-    }
-}
 
 /// Orders the system and user phrase-table suggestion tokens the way
 /// `_compute_predicted_prefix_candidates` receives them
@@ -401,12 +393,11 @@ struct TextTokens {
     tokens: Vec<u32>,
 }
 
-type TextLookupCache = Mutex<Option<TextTokens>>;
+type TextLookupCache = RefCell<Option<TextTokens>>;
 
 /// The system dictionary with the user-phrase lookup merged in.
 ///
-/// `SystemDictionary` holds DBM handles and mappings, so it rides an
-/// `Arc`.
+/// It borrows the runtime's tables and store for one operation.
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
     system: SystemDictionary<
@@ -415,7 +406,7 @@ pub struct RuntimeDict<'a> {
     >,
     user: &'a UserStore,
     text_lookup_cache: &'a TextLookupCache,
-    addons: &'a RwLock<AddonSet>,
+    addons: &'a RefCell<AddonSet>,
     punct: &'a PunctTable,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
@@ -423,7 +414,7 @@ pub struct RuntimeDict<'a> {
     /// `unload_library` setter — that all consult it).  The pinyin ABI only
     /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
     /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
-    library_mask: &'a AtomicU32,
+    library_mask: &'a Cell<u32>,
 }
 
 #[cfg(test)]
@@ -716,7 +707,7 @@ impl<'a> RuntimeDict<'a> {
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
     fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
-        let mut addons = lock_result_or_abort(self.addons.write());
+        let mut addons = self.addons.borrow_mut();
         addons.load_reporting(index, system_dir)
     }
 
@@ -744,7 +735,7 @@ impl<'a> RuntimeDict<'a> {
     /// availability-class concern, not a runtime one.
     #[must_use]
     fn unload_addon(&self, index: u8) -> bool {
-        let mut addons = lock_result_or_abort(self.addons.write());
+        let mut addons = self.addons.borrow_mut();
         addons.unload(index)
     }
 
@@ -762,7 +753,7 @@ impl<'a> RuntimeDict<'a> {
             return false;
         }
         let mask = 1u32 << index;
-        self.library_mask.fetch_or(mask, Ordering::SeqCst);
+        self.library_mask.set(self.library_mask.get() | mask);
         true
     }
 
@@ -780,10 +771,10 @@ impl<'a> RuntimeDict<'a> {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        self.library_mask
-            .fetch_and(!(1u32 << index), Ordering::SeqCst)
-            & (1u32 << index)
-            != 0
+        let bit = 1u32 << index;
+        let mask = self.library_mask.get();
+        self.library_mask.set(mask & !bit);
+        mask & bit != 0
     }
 
     /// Whether the configured default row is a system library.
@@ -817,7 +808,7 @@ impl<'a> RuntimeDict<'a> {
     /// place.
     #[must_use]
     pub fn library_visible(&self, nibble: u32) -> bool {
-        let mask = self.library_mask.load(Ordering::SeqCst);
+        let mask = self.library_mask.get();
         if mask == 0 || nibble >= 32 {
             return true;
         }
@@ -992,7 +983,7 @@ impl<'a> RuntimeDict<'a> {
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         addons.phrase_item(token)
     }
 }
@@ -1080,8 +1071,7 @@ impl Dictionary for RuntimeDict<'_> {
             self.trellis_ranges(syllables, tones, ranges)?;
             return self.phrase_prefix_exists(syllables);
         };
-        if self.library_mask.load(Ordering::SeqCst) != 0 && !self.system.pinyin_attachment_failed()
-        {
+        if self.library_mask.get() != 0 && !self.system.pinyin_attachment_failed() {
             self.trellis_ranges(syllables, tones, ranges)?;
             return self.phrase_prefix_exists(syllables);
         }
@@ -1234,7 +1224,7 @@ impl Dictionary for RuntimeDict<'_> {
         // at 074a2219), and the removal clears only the sub-index. The removed item
         // leaves where `get_phrase_item` is read, so the walk below sees the library
         // mask and nothing else.
-        let system_extends = if self.library_mask.load(Ordering::SeqCst) == 0 {
+        let system_extends = if self.library_mask.get() == 0 {
             self.system.phrase_prefix_exists(syllables)?
         } else {
             self.system
@@ -1278,7 +1268,7 @@ impl Dictionary for RuntimeDict<'_> {
         // query rebuild the full pronunciation and phrase indices.
         {
             let store = self.user;
-            let mut cache = lock_result_or_abort(self.text_lookup_cache.lock());
+            let mut cache = self.text_lookup_cache.borrow_mut();
             let generation = store.phrase_table_generation();
             if cache
                 .as_ref()
@@ -1348,7 +1338,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         addons.lookup_into(syllables, out)
     }
 
@@ -1357,7 +1347,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), Self::Error> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         addons.lookup_candidates_into(syllables, out)
     }
 
@@ -1365,7 +1355,7 @@ impl Dictionary for RuntimeDict<'_> {
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<bool, Self::Error> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         addons.prefix_exists(syllables)
     }
 
@@ -1408,7 +1398,7 @@ impl Dictionary for RuntimeDict<'_> {
         self.user
             .note_pinyin_suggestion(|| chewing_query(syllables));
         tokens.extend(user.suggest_extensions(syllables));
-        if self.library_mask.load(Ordering::SeqCst) != 0 {
+        if self.library_mask.get() != 0 {
             tokens.retain(|token| self.library_visible(*token >> 24));
         }
         tokens.sort_by_key(|token| token >> 24);
@@ -1501,11 +1491,11 @@ pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<
         &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
         &'a oxpinyin_data::lm::BigramTables,
-        &'a AtomicU32,
+        &'a Cell<u32>,
     >,
     user: &'a UserStore,
     libraries: &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
-    addons: &'a RwLock<AddonSet>,
+    addons: &'a RefCell<AddonSet>,
 }
 
 /// `m_user_bigram->load`'s answer to a failed read: no gram, which
@@ -1611,7 +1601,7 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         if addons.is_empty() {
             return Ok(None);
         }
@@ -1619,7 +1609,7 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        let addons = lock_result_or_abort(self.addons.read());
+        let addons = self.addons.borrow();
         Ok(addons.unigram_total())
     }
 
@@ -1658,19 +1648,9 @@ impl LanguageModel for RuntimeLm<'_> {
         item: Option<(u32, u32)>,
         _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
-        loop {
-            // A committed write moves the generation under the same database
-            // guard used by the unigram and override reads below.
-            let generation = self.user.generation();
-            let result = (|| {
-                let extra = self.delta(None, token.value())?;
-                let imported = self.imported_item(token.value())?;
-                self.inner.nbest_item_costs(token, extra, imported, item)
-            })();
-            if self.user.generation() == generation {
-                return result;
-            }
-        }
+        let extra = self.delta(None, token.value())?;
+        let imported = self.imported_item(token.value())?;
+        self.inner.nbest_item_costs(token, extra, imported, item)
     }
 
     fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
@@ -1684,19 +1664,13 @@ impl LanguageModel for RuntimeLm<'_> {
         prev: &Self::Token,
         row: &'a mut oxpinyin_core::NbestStepRow,
     ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
-        loop {
-            let generation = self.user.generation();
-            let result = row
-                .get_or_try_init_in_generation(generation, || self.merged_row(prev.value()))
-                .map(|_| ());
-            if self.user.generation() == generation {
-                result?;
-                return Ok(Some(match row.cached_merged() {
-                    Some(gram) => oxpinyin_core::NbestSuccessors::Row(gram),
-                    None => oxpinyin_core::NbestSuccessors::Miss,
-                }));
-            }
-        }
+        row.get_or_try_init_in_generation(self.user.generation(), || {
+            self.merged_row(prev.value())
+        })?;
+        Ok(Some(match row.cached_merged() {
+            Some(gram) => oxpinyin_core::NbestSuccessors::Row(gram),
+            None => oxpinyin_core::NbestSuccessors::Miss,
+        }))
     }
 }
 
@@ -1723,9 +1697,9 @@ pub struct Runtime {
     user: UserStore,
     conf: TableConf,
     text_lookup_cache: TextLookupCache,
-    addons: RwLock<AddonSet>,
+    addons: RefCell<AddonSet>,
     punct: PunctTable,
-    library_mask: AtomicU32,
+    library_mask: Cell<u32>,
 }
 
 impl Runtime {
@@ -1739,9 +1713,7 @@ impl Runtime {
         // finish finds them gone.
         self.system.finish_failed_attachments();
         self.model.finish_failed_attachment();
-        lock_result_or_abort(self.addons.read())
-            .dict
-            .finish_failed_attachments();
+        self.addons.borrow().dict.finish_failed_attachments();
         self.punct.finish_failed_attachment();
     }
 
@@ -1751,9 +1723,7 @@ impl Runtime {
     pub fn failed_attachments_finished(&self) -> bool {
         self.system.failed_attachments_finished()
             && self.model.failed_attachment_finished()
-            && lock_result_or_abort(self.addons.read())
-                .dict
-                .failed_attachments_finished()
+            && self.addons.borrow().dict.failed_attachments_finished()
             && (!self.punct.retains_failed_attachment() || self.punct.failed_attachment_finished())
     }
 
@@ -1967,7 +1937,7 @@ impl Runtime {
         // The library mask is shared with the language model: an unloaded
         // library's items leave both the lookups and the unigram denominator,
         // as freeing the sub-index does upstream.
-        let library_mask = AtomicU32::new(0);
+        let library_mask = Cell::new(0);
         let mut originals = oxpinyin_user::system_originals(
             oxpinyin_data::phrase_libraries::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
@@ -2041,7 +2011,7 @@ impl Runtime {
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
-        let addons = RwLock::new(AddonSet {
+        let addons = RefCell::new(AddonSet {
             dict: match law {
                 UserConfLaw::Pinyin => {
                     AddonDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?
@@ -2342,7 +2312,7 @@ impl Runtime {
 
     /// The current loaded-library mask, snapshotted for an exclusive save.
     pub fn unloaded_libraries(&self) -> u32 {
-        self.library_mask.load(Ordering::SeqCst)
+        self.library_mask.get()
     }
 
     /// Read a save baseline while its unique owner performs the operation.
@@ -2570,91 +2540,6 @@ mod tests {
 
     use super::*;
 
-    /// The exit status of a death-test child whose operation panicked. A
-    /// panic that reaches a non-unwinding `extern "C"` function aborts the
-    /// process, so without this status an unrelated panic passes as the
-    /// pin's abort.
-    const OPERATION_PANICKED: i32 = 86;
-
-    /// The variable that names the one test a child runs for real.
-    const DEATH_TEST: &str = "OXPINYIN_RUNTIME_DEATH_TEST";
-
-    /// Runs `setup` and then `operation` in a child copy of this test binary
-    /// that runs only the test `name`, and requires the child to abort.
-    /// `setup` may panic on purpose (a poisoned mutex): the strict check is
-    /// armed only after it, and a panic in `operation` then fails with its
-    /// own message.
-    fn assert_aborts_after_setup<T>(
-        name: &str,
-        setup: impl FnOnce() -> T,
-        operation: impl FnOnce(T),
-    ) {
-        if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
-            let value = setup();
-            // From here on, a panic writes its message to fd 2 (past
-            // libtest's capture, which an abort discards) and exits with
-            // `OPERATION_PANICKED`.
-            std::panic::set_hook(Box::new(|info| {
-                use std::io::Write as _;
-                let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
-                std::process::exit(OPERATION_PANICKED);
-            }));
-            operation(value);
-            // Reached only when `operation` did not abort.
-            std::process::exit(0);
-        }
-
-        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args(["--exact", name, "--test-threads=1"])
-            .env(DEATH_TEST, name)
-            .output()
-            .expect("re-run the test binary");
-        assert_ne!(
-            output.status.code(),
-            Some(OPERATION_PANICKED),
-            "{name}: the operation panicked: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt as _;
-            assert_eq!(
-                output.status.signal(),
-                Some(6),
-                "expected SIGABRT: {output:?}"
-            );
-        }
-        #[cfg(windows)]
-        assert_eq!(
-            output.status.code(),
-            Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
-            "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
-        );
-    }
-
-    #[test]
-    fn poisoned_mutex_aborts() {
-        assert_aborts_after_setup(
-            "tests::poisoned_mutex_aborts",
-            // The panic that poisons the mutex is setup, before the strict
-            // check is armed.
-            || {
-                let mutex = std::sync::Mutex::new(());
-                let panic = std::panic::catch_unwind(|| {
-                    let _guard = mutex.lock().expect("unpoisoned mutex");
-                    panic!("poison the mutex");
-                });
-                assert!(panic.is_err());
-                mutex
-            },
-            |mutex| {
-                let result = mutex.lock();
-                assert!(result.is_err(), "the mutex must be poisoned");
-                drop(lock_result_or_abort(result));
-            },
-        );
-    }
-
     fn w3_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -2835,9 +2720,7 @@ mod tests {
             );
 
             // Keep the live buffer while masking the library.
-            runtime
-                .library_mask
-                .store(1 << (token >> 24), Ordering::SeqCst);
+            runtime.library_mask.set(1 << (token >> 24));
             runtime
                 .user_store_mut()
                 .set_library_loaded((token >> 24) as u8, false);
@@ -2850,7 +2733,7 @@ mod tests {
                 Some(0),
                 "the masked token cannot use the live system count"
             );
-            runtime.library_mask.store(0, Ordering::SeqCst);
+            runtime.library_mask.set(0);
             runtime
                 .user_store_mut()
                 .set_library_loaded((token >> 24) as u8, true);
@@ -2935,9 +2818,7 @@ mod tests {
 
         // A masked library leaves no entry to capture, and the model's
         // fallback answer for its token omits the live system item.
-        runtime
-            .library_mask
-            .store(1 << (token >> 24), Ordering::SeqCst);
+        runtime.library_mask.set(1 << (token >> 24));
         runtime
             .user_store_mut()
             .set_library_loaded((token >> 24) as u8, false);
@@ -2955,7 +2836,7 @@ mod tests {
             Some(delta),
             "the masked token prices from its user delta"
         );
-        runtime.library_mask.store(0, Ordering::SeqCst);
+        runtime.library_mask.set(0);
         runtime
             .user_store_mut()
             .set_library_loaded((token >> 24) as u8, true);
@@ -3265,7 +3146,7 @@ mod tests {
         let system = w3_dir();
         let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
         assert!(
-            pinyin.dict().addons.read().unwrap().dict.has_open_indexes(),
+            pinyin.dict().addons.borrow().dict.has_open_indexes(),
             "vacuity guard: pinyin eagerly opens the fixture's addon indexes"
         );
         assert!(
@@ -3279,7 +3160,7 @@ mod tests {
                 .expect("zhuyin fixture opens");
             // An empty loaded-library set would also pass before the fix;
             // inspect the actual index handles, not just visible items.
-            assert!(!zhuyin.dict().addons.read().unwrap().dict.has_open_indexes());
+            assert!(!zhuyin.dict().addons.borrow().dict.has_open_indexes());
             assert!(!zhuyin.dict().punct.is_open());
 
             // Default user library 5 (addon.bin) is separate from the
@@ -3324,7 +3205,7 @@ mod tests {
         for user_dir in [None, Some(user.path())] {
             let zhuyin = Runtime::open_with_law(system.path(), user_dir, UserConfLaw::Zhuyin)
                 .expect("edited fixture opens");
-            let addons = zhuyin.dict().addons.read().unwrap();
+            let addons = zhuyin.dict().addons.borrow();
             assert!(
                 !addons.dict.has_open_indexes(),
                 "no addon index handle is open"
@@ -3386,8 +3267,7 @@ mod tests {
         let row_tokens = runtime
             .dict()
             .text_lookup_cache
-            .lock()
-            .unwrap()
+            .borrow()
             .as_ref()
             .unwrap()
             .tokens
@@ -3411,8 +3291,7 @@ mod tests {
             runtime
                 .dict()
                 .text_lookup_cache
-                .lock()
-                .unwrap()
+                .borrow()
                 .as_ref()
                 .unwrap()
                 .generation,
@@ -3422,8 +3301,7 @@ mod tests {
             runtime
                 .dict()
                 .text_lookup_cache
-                .lock()
-                .unwrap()
+                .borrow()
                 .as_ref()
                 .unwrap()
                 .tokens

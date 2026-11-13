@@ -1792,7 +1792,7 @@ mod tests {
 
     /// The `(origin, first reading's frequency)` of one token, or its state.
     fn frequency_of(store: &UserStore, token: u32) -> crate::Lookup<(crate::ItemOrigin, u32)> {
-        let unloaded = std::sync::atomic::AtomicU32::new(0);
+        let unloaded = std::cell::Cell::new(0);
         let libraries = store.originals().phrase_libraries();
         crate::LiveSystemItems::new(libraries, store, &unloaded).read(token, |item| {
             (
@@ -1884,7 +1884,7 @@ mod tests {
         // Exercise the live-buffer fallback independently of the removal
         // marker; the shipped original must not reappear for an over-read.
         store.test_forget_removal(token(2));
-        let unloaded = std::sync::atomic::AtomicU32::new(0);
+        let unloaded = std::cell::Cell::new(0);
         let live =
             crate::LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         assert_eq!(live.read(token(2), |_| ()), Lookup::Absent);
@@ -1978,7 +1978,7 @@ mod tests {
             let first = (1_u32 << 24) | 1;
             let second = (1_u32 << 24) | 2;
             let reading = {
-                let unloaded = std::sync::atomic::AtomicU32::new(0);
+                let unloaded = std::cell::Cell::new(0);
                 let live = crate::LiveSystemItems::new(
                     store.originals().phrase_libraries(),
                     &store,
@@ -2085,7 +2085,7 @@ mod tests {
         let first = (1_u32 << 24) | 1;
         let second = (1_u32 << 24) | 2;
         let reading = {
-            let unloaded = std::sync::atomic::AtomicU32::new(0);
+            let unloaded = std::cell::Cell::new(0);
             let live = crate::LiveSystemItems::new(
                 store.originals().phrase_libraries(),
                 &store,
@@ -2175,7 +2175,7 @@ mod tests {
         use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
         use oxpinyin_data::phrase_library::PhraseLibrary;
         use oxpinyin_data::user_files::LogRecord;
-        use std::sync::atomic::AtomicU32;
+        use std::cell::Cell;
 
         let ni = ChewingKey::new(23, 0, 1, 0).to_packed();
         let item = |word: u32, unigram: u32, frequency: u32| ChunkItem {
@@ -2235,7 +2235,7 @@ mod tests {
         let store = UserStore::open_libpinyin(&dir, originals, versions(), UserConfLaw::Pinyin)
             .expect("open");
 
-        let unloaded = AtomicU32::new(0);
+        let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         let (replayed, removed, untouched, absent) = (
             (1_u32 << 24) | 1,
@@ -2322,7 +2322,7 @@ mod tests {
         assert!(store.system_item_removed(removed));
 
         // An unloaded library hides every token, whatever it holds.
-        let unloaded = AtomicU32::new(1 << 1);
+        let unloaded = Cell::new(1 << 1);
         let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
         for token in [replayed, removed, untouched, absent] {
             assert_eq!(hidden.read(token, summary), Lookup::Unloaded);

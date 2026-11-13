@@ -49,6 +49,14 @@ the process with `std::process::abort()`. Never recover poisoned state, use
 Rust's lock state. The pin has no lock poisoning. Test code keeps its
 existing lock handling.
 
+### Double borrows
+
+A `RefCell` holds state that the C contract already serializes: one call at a time on a context and all its handles.
+A borrow that conflicts with a live borrow of the same cell is an internal integrity failure.
+`borrow` and `borrow_mut` panic on it, and in the C libraries that panic aborts the process at the `extern "C"` boundary.
+Do not recover from it with `try_borrow` or `try_borrow_mut`, and do not catch the panic.
+End a borrow before you call a visitor or callback that can reach the same cell.
+
 ## Enums and matches
 
 **Enums and matches (maintainer decision 2026-10-30 UTC):**

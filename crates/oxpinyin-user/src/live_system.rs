@@ -12,7 +12,7 @@
 //! one implementation exists and the consumers differ in what they read, not
 //! in who answers.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
@@ -178,7 +178,8 @@ impl<R> Lookup<R> {
 pub struct LiveSystemItems<'a> {
     libraries: &'a PhraseLibraries,
     user: &'a UserStore,
-    unloaded: &'a AtomicU32,
+    /// `None` reads as no library unloaded.
+    unloaded: Option<&'a Cell<u32>>,
 }
 
 impl<'a> LiveSystemItems<'a> {
@@ -188,12 +189,12 @@ impl<'a> LiveSystemItems<'a> {
     pub const fn new(
         libraries: &'a PhraseLibraries,
         user: &'a UserStore,
-        unloaded: &'a AtomicU32,
+        unloaded: &'a Cell<u32>,
     ) -> Self {
         Self {
             libraries,
             user,
-            unloaded,
+            unloaded: Some(unloaded),
         }
     }
 
@@ -202,13 +203,20 @@ impl<'a> LiveSystemItems<'a> {
     /// library's visibility once when it probes and then reads the items it
     /// probed whatever the mask says.
     #[must_use]
-    pub fn unmasked(libraries: &'a PhraseLibraries, user: &'a UserStore) -> Self {
-        static ALL_LOADED: AtomicU32 = AtomicU32::new(0);
-        Self::new(libraries, user, &ALL_LOADED)
+    pub const fn unmasked(libraries: &'a PhraseLibraries, user: &'a UserStore) -> Self {
+        Self {
+            libraries,
+            user,
+            unloaded: None,
+        }
+    }
+
+    fn unloaded_mask(&self) -> u32 {
+        self.unloaded.map_or(0, Cell::get)
     }
 
     fn library_loaded(&self, nibble: u32) -> bool {
-        let mask = self.unloaded.load(Ordering::SeqCst);
+        let mask = self.unloaded_mask();
         mask == 0 || nibble >= 32 || mask & (1 << nibble) == 0
     }
 
@@ -230,7 +238,7 @@ impl<'a> LiveSystemItems<'a> {
     /// `RuntimeDict::token_filter_active`.
     #[must_use]
     pub fn filter_active(&self) -> bool {
-        self.unloaded.load(Ordering::SeqCst) != 0 || self.user.has_removed_system_items()
+        self.unloaded_mask() != 0 || self.user.has_removed_system_items()
     }
 
     /// Whether the token's library is loaded and no journal REMOVE took its
@@ -423,7 +431,7 @@ mod tests {
             UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
         assert!(store.live_item_past_buffer(0x0100_0001));
         store.test_forget_removal(0x0100_0001);
-        let unloaded = AtomicU32::new(0);
+        let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(&shipped, &store, &unloaded);
         assert_eq!(
             live.read(0x0100_0001, |item| item.unigram()),
@@ -472,7 +480,7 @@ mod tests {
         .unwrap();
         let store =
             UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
-        let unloaded = AtomicU32::new(0);
+        let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(&libraries, &store, &unloaded);
         assert!(live.is_system_library(6));
         assert!(!live.is_system_library(5));

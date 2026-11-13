@@ -1,8 +1,8 @@
 //! Integration tests for `BigramLanguageModel` over `bigram.db` and the
 //! chunk-file unigrams.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::cell::Cell;
+use std::rc::Rc;
 
 use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta};
 use oxpinyin_data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
@@ -16,6 +16,9 @@ const NI: u32 = 0x0100_0010;
 const HAO: u32 = 0x0100_0011;
 const NIHAO: u32 = 0x0100_0099;
 const GBK: u32 = 0x0200_0001;
+
+/// The unloaded-library mask a test keeps a second handle on.
+type Mask = Rc<Cell<u32>>;
 
 struct Fixture {
     dir: TempDir,
@@ -55,15 +58,15 @@ impl Fixture {
     fn open(
         &self,
     ) -> (
-        BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Arc<AtomicU32>>,
-        Arc<AtomicU32>,
+        BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Mask>,
+        Mask,
     ) {
         let libraries = PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap();
-        let mask = Arc::new(AtomicU32::new(0));
+        let mask = Rc::new(Cell::new(0));
         let lm = BigramLanguageModel::open_with_mask(
             &self.dir.path().join(SystemDbm::Bigram.file_name()),
             libraries,
-            Arc::clone(&mask),
+            Rc::clone(&mask),
         )
         .unwrap();
         (lm, mask)
@@ -99,7 +102,7 @@ fn unigrams_are_the_chunk_item_fields() {
 fn an_unloaded_library_leaves_the_model() {
     let fix = Fixture::new();
     let (lm, mask) = fix.open();
-    mask.store(1 << 2, Ordering::SeqCst);
+    mask.set(1 << 2);
     assert_eq!(lm.unigram_count(GBK), None);
     assert_eq!(lm.unigram_total(), 16, "gbk's total leaves");
     assert_eq!(lm.unigram_count(NI), Some(10));
@@ -214,7 +217,7 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
 /// with its system gram, read with `get_freq` and `get_total_freq`, then
 /// priced from that item.
 fn merged_row_costs(
-    lm: &BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Arc<AtomicU32>>,
+    lm: &BigramLanguageModel<PhraseLibraries, oxpinyin_data::lm::BigramTables, Mask>,
     prev: u32,
     token: u32,
     user: UserCountDelta,
@@ -362,7 +365,7 @@ fn unigram_availability_survives_a_total_that_wraps_to_zero() {
         "gb_char's total plus gbk_char's 3 wraps"
     );
     assert!(lm.has_unigrams());
-    mask.store((1 << 1) | (1 << 2), Ordering::SeqCst);
+    mask.set((1 << 1) | (1 << 2));
     assert!(!lm.has_unigrams(), "no visible library holds an item");
 }
 
@@ -447,7 +450,7 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
     // default however large the delta — the counterfactual's
     // `unwrap_or(0)` would have priced all three (register #35).
     let (lm2, mask) = fix.open();
-    mask.store(1 << 7, Ordering::SeqCst);
+    mask.set(1 << 7);
     let masked = lm2
         .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), delta)
         .unwrap();
@@ -567,7 +570,7 @@ fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
     let (lm, mask) = fix.open();
     let mut row = NbestStepRow::default();
     let prev = PhraseToken::new(NI);
-    mask.store(1 << 2, Ordering::SeqCst);
+    mask.set(1 << 2);
     assert_eq!(
         lm.nbest_item_costs_in_row(&prev, &PhraseToken::new(GBK), Some((1, 1)), &mut row)
             .unwrap(),
