@@ -1347,7 +1347,6 @@ fn load_user_pinyin_index(
             format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
         ),
     }
-    index.finish_load();
     // Match the arena’s raw-key order, even for an unordered DBM walk.
     exceptional.sort_unstable();
     *overlong = exceptional
@@ -1396,7 +1395,6 @@ fn load_user_phrase_index(
             format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
         ),
     }
-    arena.finish_load();
     Ok(())
 }
 

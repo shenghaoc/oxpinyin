@@ -34,10 +34,6 @@ impl UserPhraseTable {
         self.records.push_record(key, value);
     }
 
-    pub(crate) fn finish_load(&mut self) {
-        self.records.finish_load();
-    }
-
     pub(crate) fn record(&self, key: &[u8]) -> Option<&[u8]> {
         self.records.record(key)
     }
