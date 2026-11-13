@@ -579,7 +579,7 @@ The differential dispositions are:
 
 - **`MATCH`**: identical observations on both sides for an ordinary case. A registered class (b) case is compared with its declared semantics, so a pin crash against oxpinyin's prescribed result is `MATCH`.
 - **`DIFFER`**: a difference with no current register entry. It is a defect until it is classified.
-- **`POLICY-ACCEPTED`**: a non-`MATCH` that a current register entry admits. The case keeps its pin and subject observations. It is never deleted, never renamed `MATCH`, and never counted as an exact match. It passes when both sides behave as its entry specifies, and it is reported separately from exact matches.
+- **`POLICY-ACCEPTED`**: a non-`MATCH` that a current register entry admits. The case keeps its pin and subject observations. The case is removed only when its ruling is withdrawn. It is never renamed `MATCH` or counted as an exact match. It passes when both sides behave as its entry specifies, and it is reported separately from exact matches.
 - **`HOST-DEPENDENT`**: the disposition of the four host-libc `%f` cases (row 78). It does not excuse a scanner that differs from the pin's call ([external I/O](#external-io)); the owning [external-I/O stage](external-io-boundary.md) updates these cases.
 - **`SKIP`**, **`INVALID`** and **`TIMEOUT`**: the case produced no comparable verdict.
 
