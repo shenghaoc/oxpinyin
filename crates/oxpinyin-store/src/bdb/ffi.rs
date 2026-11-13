@@ -50,7 +50,6 @@
     reason = "FFI over the system libdb; every block carries a SAFETY comment"
 )]
 
-use std::cell::Cell;
 use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 use std::ptr;
@@ -195,11 +194,6 @@ pub(crate) struct Db {
     /// [`Db::close_unsynced`] clears it for a `save_db` copy, which the pin
     /// closes with no sync of its own handle.
     sync_on_drop: bool,
-    /// One initialized pair lent to a cursor at a time. Active cursors own
-    /// their buffers, so a visitor can open another cursor without aliasing.
-    /// Retain only page-sized buffers; a large record must not permanently
-    /// enlarge the handle's scratch space.
-    cursor_buffers: Cell<Option<(Vec<u8>, Vec<u8>)>>,
 }
 
 /// The mode libpinyin's `attach` passes to `DB->open` — the system
@@ -338,7 +332,6 @@ impl Db {
             hash: db_type == DB_HASH,
             opened: false,
             sync_on_drop: true,
-            cursor_buffers: Cell::new(None),
         };
 
         let mut flags = 0;
@@ -582,29 +575,17 @@ impl Db {
         }))
     }
 
-    /// Whether a spare cursor buffer pair is waiting for the next cursor.
-    #[cfg(test)]
-    fn has_spare_cursor_buffers(&self) -> bool {
-        let spare = self.cursor_buffers.take();
-        let has = spare.is_some();
-        self.cursor_buffers.set(spare);
-        has
-    }
-
-    /// Opens a cursor that borrows this database. It takes the spare buffer
-    /// pair when one is free, so no buffer is borrowed from the handle while
-    /// a visitor runs.
+    /// Opens a cursor that borrows this database. Each cursor owns its
+    /// own buffer pair for its walk, as each pin walk owns its `DBT` pair
+    /// (`ngram_bdb.cpp:194-205` at `074a2219`), so a visitor can open
+    /// another cursor without aliasing.
     pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
         let handle = self.cursor_handle()?;
-        let (key_buf, value_buf) = self
-            .cursor_buffers
-            .take()
-            .unwrap_or_else(|| (vec![0_u8; INITIAL_BUFFER], vec![0_u8; INITIAL_BUFFER]));
         Ok(Cursor {
             handle,
-            key_buf,
-            value_buf,
-            db: self,
+            key_buf: vec![0_u8; INITIAL_BUFFER],
+            value_buf: vec![0_u8; INITIAL_BUFFER],
+            db: std::marker::PhantomData,
         })
     }
 
@@ -712,11 +693,12 @@ impl Drop for Db {
 /// the cursor — hazard (c) below.
 pub(crate) struct Cursor<'db> {
     handle: *mut sys::DBC,
-    /// Reusable key buffer: grows to the largest key seen, never shrinks.
+    /// This walk's key buffer: grows to the largest key seen, never shrinks.
     key_buf: Vec<u8>,
-    /// Reusable value buffer: same policy.
+    /// This walk's value buffer: same policy.
     value_buf: Vec<u8>,
-    db: &'db Db,
+    /// The cursor must not outlive its database.
+    db: std::marker::PhantomData<&'db Db>,
 }
 
 /// Where to move the cursor before reading.
@@ -850,21 +832,6 @@ impl Drop for Cursor<'_> {
                 close(self.handle);
             }
         }
-        // The pin consumes each cursor result before advancing or closing
-        // (074a2219 ngram_bdb.cpp:178-212). Our USERMEM buffers stay owned
-        // by that cursor until this point, then serve the next walk. Every
-        // byte remains initialized, including the input/output seek buffer.
-        let mut spare = self.db.cursor_buffers.take();
-        if spare.is_none()
-            && self.key_buf.capacity() <= INITIAL_BUFFER
-            && self.value_buf.capacity() <= INITIAL_BUFFER
-        {
-            spare = Some((
-                std::mem::take(&mut self.key_buf),
-                std::mem::take(&mut self.value_buf),
-            ));
-        }
-        self.db.cursor_buffers.set(spare);
     }
 }
 
@@ -996,53 +963,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_buffers_are_reused_across_walks_without_aliasing_nested_cursors() {
-        let db = Db::open_in_memory_tree().unwrap();
-        db.put(b"a", b"first").unwrap();
-        db.put(b"b", b"second").unwrap();
-        let mut outer = db.cursor().unwrap();
-        let outer_buffers = (outer.key_buf.as_ptr(), outer.value_buf.as_ptr());
-        let row = outer.get(Seek::First).unwrap().unwrap();
-        let nested_buffers;
-        {
-            let mut nested = db.cursor().unwrap();
-            nested_buffers = (nested.key_buf.as_ptr(), nested.value_buf.as_ptr());
-            assert_ne!(outer_buffers.0, nested_buffers.0);
-            assert_ne!(outer_buffers.1, nested_buffers.1);
-            assert_eq!(
-                nested.get(Seek::AtOrAfter(b"b")).unwrap().unwrap().value,
-                b"second"
-            );
-            db.put(b"a", b"overwritten during walk").unwrap();
-            assert_eq!((row.key, row.value), (b"a".as_slice(), b"first".as_slice()));
-        }
-        // The nested cursor returned its pair while the outer row is live.
-        let mut reused = db.cursor().unwrap();
-        assert_eq!(
-            (reused.key_buf.as_ptr(), reused.value_buf.as_ptr()),
-            nested_buffers
-        );
-        assert_eq!(
-            reused.get(Seek::First).unwrap().unwrap().value,
-            b"overwritten during walk"
-        );
-        assert_eq!(row.value, b"first");
-        drop(reused);
-        assert_eq!(outer.get(Seek::Next).unwrap().unwrap().value, b"second");
-        drop(outer);
-        db.put(b"a", b"overwritten after walk").unwrap();
-        let mut next = db.cursor().unwrap();
-        assert_eq!(
-            (next.key_buf.as_ptr(), next.value_buf.as_ptr()),
-            nested_buffers
-        );
-        assert_eq!(
-            next.get(Seek::First).unwrap().unwrap().value,
-            b"overwritten after walk"
-        );
-    }
-
-    #[test]
     fn cursor_rows_stay_owned_across_another_cursor_and_a_put() {
         let db = Db::open_in_memory_tree().unwrap();
         db.put(b"a", b"original").unwrap();
@@ -1065,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_values_survive_growth_misses_and_reuse() {
+    fn cursor_values_survive_growth_and_misses() {
         struct TempPath(std::path::PathBuf);
         impl Drop for TempPath {
             fn drop(&mut self) {
@@ -1083,22 +1003,18 @@ mod tests {
         for len in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899] {
             let expected: Vec<u8> = (0..len).map(|index| (index % 251) as u8).collect();
             db.put(b"m", &expected).unwrap();
-            for _ in 0..2 {
-                let mut cursor = db.cursor().unwrap();
-                // Missing seek target between rows, exact seek, and DB_NEXT
-                // all reach the same value, including DB_BUFFER_SMALL.
-                for seek in [Seek::AtOrAfter(b"l"), Seek::AtOrAfter(b"m")] {
-                    let row = cursor.get(seek).unwrap().unwrap();
-                    assert_eq!((row.key, row.value), (b"m".as_slice(), expected.as_slice()));
-                }
-                assert_eq!(cursor.get(Seek::First).unwrap().unwrap().value, b"first");
-                assert_eq!(cursor.get(Seek::Next).unwrap().unwrap().value, expected);
-                assert_eq!(cursor.get(Seek::Next).unwrap().unwrap().value, b"last");
-                assert!(cursor.get(Seek::Next).unwrap().is_none());
-                assert!(cursor.get(Seek::AtOrAfter(b"zz")).unwrap().is_none());
-                drop(cursor);
-                assert_eq!(db.has_spare_cursor_buffers(), len <= INITIAL_BUFFER);
+            let mut cursor = db.cursor().unwrap();
+            // Missing seek target between rows, exact seek, and DB_NEXT
+            // all reach the same value, including DB_BUFFER_SMALL.
+            for seek in [Seek::AtOrAfter(b"l"), Seek::AtOrAfter(b"m")] {
+                let row = cursor.get(seek).unwrap().unwrap();
+                assert_eq!((row.key, row.value), (b"m".as_slice(), expected.as_slice()));
             }
+            assert_eq!(cursor.get(Seek::First).unwrap().unwrap().value, b"first");
+            assert_eq!(cursor.get(Seek::Next).unwrap().unwrap().value, expected);
+            assert_eq!(cursor.get(Seek::Next).unwrap().unwrap().value, b"last");
+            assert!(cursor.get(Seek::Next).unwrap().is_none());
+            assert!(cursor.get(Seek::AtOrAfter(b"zz")).unwrap().is_none());
         }
     }
 
@@ -1140,11 +1056,8 @@ mod tests {
         }
         assert_eq!(keys, rows);
         assert_eq!(keys.len(), 5);
-        // No value was copied, so the buffers never grew past one page
-        // and go back to the handle.
+        // No value was copied, so the value buffer never grew past one page.
         assert!(cursor.value_buf.len() <= INITIAL_BUFFER);
-        drop(cursor);
-        assert!(db.has_spare_cursor_buffers());
     }
 
     #[test]
@@ -1175,44 +1088,38 @@ mod tests {
                     (long_key.as_slice(), expected.as_slice())
                 );
             }
-            assert!(
-                !db.has_spare_cursor_buffers(),
-                "oversized buffers must not be retained"
-            );
         }
     }
 
     #[test]
-    fn empty_and_missing_ranges_remain_empty_after_buffer_reuse() {
+    fn empty_and_missing_ranges_stay_empty() {
         use crate::{BdbStore, RawReadStore, WriteStore, WriteTxn};
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let store = BdbStore::create_in_memory().unwrap();
         assert_eq!(store.count_raw().unwrap(), 0);
         store.write(|txn| txn.put_raw(b"b", b"value")).unwrap();
-        for _ in 0..2 {
-            for (lo, hi) in [
-                (Unbounded, Excluded(b"b".as_slice())),
-                (Included(b"b".as_slice()), Excluded(b"b".as_slice())),
-                (Included(b"c".as_slice()), Unbounded),
-            ] {
-                let mut count = 0;
-                store
-                    .range_raw(lo, hi, |_, _| {
-                        count += 1;
-                        Ok(())
-                    })
-                    .unwrap();
-                assert_eq!(count, 0);
-            }
-            let mut seen = Vec::new();
+        for (lo, hi) in [
+            (Unbounded, Excluded(b"b".as_slice())),
+            (Included(b"b".as_slice()), Excluded(b"b".as_slice())),
+            (Included(b"c".as_slice()), Unbounded),
+        ] {
+            let mut count = 0;
             store
-                .range_raw(Included(b"a"), Unbounded, |key, value| {
-                    seen.push((key.to_vec(), value.to_vec()));
+                .range_raw(lo, hi, |_, _| {
+                    count += 1;
                     Ok(())
                 })
                 .unwrap();
-            assert_eq!(seen, vec![(b"b".to_vec(), b"value".to_vec())]);
+            assert_eq!(count, 0);
         }
+        let mut seen = Vec::new();
+        store
+            .range_raw(Included(b"a"), Unbounded, |key, value| {
+                seen.push((key.to_vec(), value.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(seen, vec![(b"b".to_vec(), b"value".to_vec())]);
     }
 
     #[test]
