@@ -3108,8 +3108,7 @@ mod tests {
         }
 
         /// One item at `slot` of `library`'s arena, so its `get_range` end
-        /// is one past it. A slot far past the content takes the sparse
-        /// offset map, not the pin's dense offset array.
+        /// is one past it.
         fn plant_item(store: &UserStore, library: u8, slot: u32) {
             let bytes = encode_phrase_item(&ChunkItem {
                 phrase: vec![0x7532],
@@ -3852,8 +3851,7 @@ mod tests {
         /// the reserved id (`pinyin.cpp:592-594`): every later add lands on
         /// slot 1, where `add_phrase_item` overwrites the offset word and
         /// adds the new unigram to a total that keeps the overwritten one
-        /// (`phrase_index.cpp:208-217`). Register row 119. The planted item
-        /// takes the arena's sparse offset map, not the pin's 64 MiB array.
+        /// (`phrase_index.cpp:208-217`). Register row 119.
         #[test]
         fn add_phrase_fills_the_last_slot_then_wraps_to_slot_1() {
             let mut store = transient();
