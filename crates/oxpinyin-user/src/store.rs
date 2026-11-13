@@ -13,15 +13,14 @@
 //! [`oxpinyin_core::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::rc::Rc;
 
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
 use oxpinyin_store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 
-use crate::lock_result_or_abort;
 use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
@@ -702,24 +701,19 @@ pub(crate) type Offsets = BTreeMap<u8, u32>;
 
 /// One session's state, owned by its [`UserStore`].
 pub struct StoreInner {
-    pub(crate) has_system_items: AtomicBool,
-    // When nested, acquire the session phrase-arena mutex before
-    // `system_items`; never reverse this order.
-    pub(crate) system_items: Mutex<crate::system_items::SystemItems>,
+    pub(crate) has_system_items: Cell<bool>,
+    pub(crate) system_items: RefCell<crate::system_items::SystemItems>,
     /// Whether a journal REMOVE took out an item of a loaded system library:
     /// `get_phrase_item` fails for it from then on (074a2219
     /// `phrase_index.cpp:180-206`, `:219-236`), though the shipped chunk still
     /// holds the item and the phrase table the token. The library's live
     /// buffer is the record; this only gates the per-token check.
-    pub(crate) has_removed_system_items: AtomicBool,
-    /// Decode-time count memo. Declared before `offsets` so it is dropped
-    /// first (struct fields drop in declaration order).
-    pub(crate) count_cache: Mutex<Option<CountCache>>,
-    /// The user libraries' stored-total differences ([`Offsets`]). Its
-    /// mutex serializes every write to the session, so a reader that holds
-    /// it sees one side of a commit.
-    pub(crate) offsets: Mutex<Offsets>,
-    pub(crate) dirty: AtomicBool,
+    pub(crate) has_removed_system_items: Cell<bool>,
+    /// Decode-time count memo.
+    pub(crate) count_cache: RefCell<Option<CountCache>>,
+    /// The user libraries' stored-total differences ([`Offsets`]).
+    pub(crate) offsets: RefCell<Offsets>,
+    pub(crate) dirty: Cell<bool>,
     /// Bumped after every committed user-data write, which
     /// retires any `count_cache` built against an older generation.
     ///
@@ -730,36 +724,34 @@ pub struct StoreInner {
     /// consulted *first* — an import that only bumped the generation would
     /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
     /// silently and permanently, however much data it wrote.
-    pub(crate) write_generation: AtomicU64,
+    pub(crate) write_generation: Cell<u64>,
     /// Exact text-to-token rows changed. Pronunciation-only merges leave
     /// this stamp alone, so repeated text queries can retain their row.
-    pub(crate) phrase_table_generation: AtomicU64,
+    pub(crate) phrase_table_generation: Cell<u64>,
     /// First gate on the decode read path: `false` answers `count_delta` and
-    /// `unigram_delta` with zero from this one atomic, taking no mutex.
+    /// `unigram_delta` with zero from this one flag.
     /// Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
-    pub(crate) has_user_data: AtomicBool,
+    pub(crate) has_user_data: Cell<bool>,
     /// Whether any library still carries its own share of that difference
     /// in [`Self::offsets`]: from the load until the next
     /// `compact` (a save, the end of an import, a mask_out), which
     /// rebuilds each library's total from its items.
-    pub(crate) has_library_offsets: AtomicBool,
+    pub(crate) has_library_offsets: Cell<bool>,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin`): `save()` exports the
     /// session and writes the file set.
-    pub(crate) libpinyin: std::sync::Arc<crate::store_libpinyin::Target>,
+    pub(crate) libpinyin: Rc<crate::store_libpinyin::Target>,
     /// The pin's own in-memory user bigram container (`Bigram::m_db`
     /// after `load_db`): the session's only copy of the user bigram, the
     /// raw `SingleGram` values every bigram operation reads and writes, so
     /// its walk order — the export's order and the saved file's layout —
-    /// is the pin's. A writer takes the offsets guard first, then this one,
-    /// and bumps `write_generation` before releasing the offsets guard.
-    pub(crate) bigram_db: Mutex<oxpinyin_store::DefaultUserBigramDb>,
+    /// is the pin's.
+    pub(crate) bigram_db: oxpinyin_store::DefaultUserBigramDb,
     /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
     /// ([`oxpinyin_store::UserBigramDb::is_failed`]), recorded when it is
-    /// created: it never changes, so a training step reads it without the
-    /// container's lock.
+    /// created: it never changes.
     pub(crate) bigram_failed: bool,
 }
 
@@ -770,8 +762,7 @@ pub struct StoreInner {
 ///
 /// The context owns the store and lends it to each operation. System chunk
 /// originals belong to this owner; sessions and cursors cannot retain them.
-/// The offsets mutex serializes every write to the session, while public
-/// mutations require an exclusive borrow of this store.
+/// Public mutations require an exclusive borrow of this store.
 pub struct UserStore {
     /// The facade fini's `user.conf` write: armed only on the handle a
     /// libpinyin open returned ([`FiniGuard`]).
@@ -840,14 +831,6 @@ impl fmt::Debug for UserStore {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Runs once on this thread right after the next mask's container key
-    /// walk: a test's window between that walk and the mask.
-    pub(crate) static AFTER_CONTAINER_KEYS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
 impl UserStore {
     /// Borrow the uniquely owned init baselines for a read operation.
     pub const fn originals(&self) -> &crate::persistence::SystemOriginals {
@@ -874,10 +857,15 @@ impl UserStore {
         &mut self.originals
     }
 
-    /// Locks the session's offsets, the guard every write takes first.
-    /// See the [poisoned locks convention](https://github.com/shenghaoc/oxpinyin/blob/main/docs/rust-conventions.md#poisoned-locks).
-    pub(crate) fn offsets(&self) -> MutexGuard<'_, Offsets> {
-        lock_result_or_abort(self.inner.offsets.lock())
+    /// Borrows the session's offsets.
+    /// See the [double borrows convention](https://github.com/shenghaoc/oxpinyin/blob/main/docs/rust-conventions.md#double-borrows).
+    pub(crate) fn offsets(&self) -> Ref<'_, Offsets> {
+        self.inner.offsets.borrow()
+    }
+
+    /// Borrows the session's offsets for a change.
+    pub(crate) fn offsets_mut(&self) -> RefMut<'_, Offsets> {
+        self.inner.offsets.borrow_mut()
     }
 
     /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables,
@@ -899,23 +887,22 @@ impl UserStore {
         !self.overlong_index_readings().is_empty()
     }
 
-    /// The pin's in-memory user bigram container, locked. Taken after the
-    /// offsets guard when both are held, never before it.
-    fn container(&self) -> MutexGuard<'_, DefaultUserBigramDb> {
-        lock_result_or_abort(self.inner.bigram_db.lock())
+    /// The pin's in-memory user bigram container.
+    const fn container(&self) -> &DefaultUserBigramDb {
+        &self.inner.bigram_db
     }
 
     /// Whether the session's user bigram is the failed Berkeley DB container
     /// ([`oxpinyin_store::UserBigramDb::is_failed`]), as recorded when it was
-    /// created: no lock is taken, and on a backend whose container cannot
-    /// fail this is the constant `false`.
+    /// created. On a backend whose container cannot fail this is the
+    /// constant `false`.
     #[inline]
     fn user_bigram_failed(&self) -> bool {
         <DefaultUserBigramDb as oxpinyin_store::UserBigramDb>::CAN_FAIL && self.inner.bigram_failed
     }
 
-    /// `Bigram::load(prev)`: the raw gram stored under `prev` — one lock
-    /// and one point read of the pin's container. `None` when `prev` has
+    /// `Bigram::load(prev)`: the raw gram stored under `prev` — one
+    /// point read of the pin's container. `None` when `prev` has
     /// no gram.
     ///
     /// # Errors
@@ -930,16 +917,15 @@ impl UserStore {
         self.gram_in(prev)
     }
 
-    /// [`Self::bigram_row`] without the user-data gate, for a caller that
-    /// holds the offsets guard.
+    /// [`Self::bigram_row`] without the user-data gate.
     fn gram_in(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
-        Ok(container_gram(&self.container(), prev)?)
+        Ok(container_gram(self.container(), prev)?)
     }
 
     /// `Bigram::get_all_items`: every key in the container's walk order,
     /// with `None` for a key that is not a four-byte `phrase_token_t`.
     fn gram_keys(&self) -> Result<Vec<Option<Token>>, UserStoreError> {
-        Ok(ContainerGrams(&self.container()).keys()?)
+        Ok(ContainerGrams(self.container()).keys()?)
     }
 
     /// Store `value` raw under `token` in the session's container, as a
@@ -950,7 +936,7 @@ impl UserStore {
             .store(&token.to_le_bytes(), value)
             .expect("plant raw value");
         // A stored gram is user data, as after any gram write.
-        self.inner.has_user_data.store(true, Ordering::Release);
+        self.inner.has_user_data.set(true);
     }
 
     /// Whether the gram stored under `token` is shorter than a `guint32`
@@ -994,27 +980,14 @@ impl UserStore {
     /// The session container's `Bigram::get_all_items` walk
     /// (`ngram_tkrzwdb.cpp:161-172` and its Kyoto Cabinet and Berkeley DB
     /// twins at 074a2219). A mask takes it once and hands it to both its
-    /// fault check and its walk. The caller holds the offsets guard from
-    /// before this walk until the mask has run, so no other handle's
-    /// `set_bigram_count` adds a gram the walk missed.
+    /// fault check and its walk. The mask takes `&mut self`, so no other
+    /// handle's `set_bigram_count` adds a gram the walk missed.
     fn container_keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
-        let keys = self.collect_container_keys();
-        #[cfg(test)]
-        AFTER_CONTAINER_KEYS.with(|hook| {
-            if let Some(hook) = hook.borrow_mut().take() {
-                hook();
-            }
-        });
-        keys
-    }
-
-    fn collect_container_keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
-        ContainerGrams(&self.container()).keys()
+        ContainerGrams(self.container()).keys()
     }
 
     /// [`Self::bigram_mask_fault`] over the container keys
-    /// [`Self::container_keys`] collected, with the offsets guard held by
-    /// the caller.
+    /// [`Self::container_keys`] collected.
     fn bigram_mask_fault_over(
         &self,
         keys: &Result<Vec<Option<Token>>, StoreError>,
@@ -1024,7 +997,7 @@ impl UserStore {
         let Ok(keys) = keys else {
             return None;
         };
-        gram_mask_fault_over(&ContainerGrams(&self.container()), keys, mask, value).unwrap_or(None)
+        gram_mask_fault_over(&ContainerGrams(self.container()), keys, mask, value).unwrap_or(None)
     }
 
     /// Check a step using operation-owned bookkeeping while phrase storage is borrowed.
@@ -1126,16 +1099,16 @@ impl UserStore {
             .any(|reading| reading.len() > projection.len() && reading.starts_with(&projection))
     }
 
-    fn count_cache(&self) -> MutexGuard<'_, Option<CountCache>> {
-        lock_result_or_abort(self.inner.count_cache.lock())
+    fn count_cache(&self) -> RefMut<'_, Option<CountCache>> {
+        self.inner.count_cache.borrow_mut()
     }
 
     fn write_generation(&self) -> u64 {
-        self.inner.write_generation.load(Ordering::Acquire)
+        self.inner.write_generation.get()
     }
 
     fn has_user_data(&self) -> bool {
-        self.inner.has_user_data.load(Ordering::Acquire)
+        self.inner.has_user_data.get()
     }
 
     /// The gate in front of the count reads, as the session holds it.
@@ -1147,57 +1120,47 @@ impl UserStore {
     /// Sets the gate and retires the count cache, as a committed write does.
     #[cfg(test)]
     pub(crate) fn force_gate_for_test(&self, open: bool) {
-        self.inner.has_user_data.store(open, Ordering::Release);
-        self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
+        self.inner.has_user_data.set(open);
+        self.inner
+            .write_generation
+            .set(self.inner.write_generation.get().wrapping_add(1));
         *self.count_cache() = None;
     }
 
     /// Runs `read` against the count cache for the current write
     /// generation, discarding a cache built against an older one first.
     ///
-    /// The offsets guard is taken for the whole call, in the lock order
-    /// every write path uses — cache first, then offsets, then the
-    /// container.
-    /// `write_generation` is read under that guard, so cache validation
-    /// is ordered against the same critical section every commit bumps
-    /// in: the observed state and generation always belong to one side of
-    /// a commit, never straddle it. Holding the guard across the call is
-    /// also what makes a multi-value read atomic without MVCC: every write
-    /// path takes the same guard, so no commit can land between the values
-    /// `count_delta` reads.
+    /// Every commit takes `&mut self`, so none can land between the
+    /// values `read` reads: the observed state and generation belong to
+    /// one side of a commit.
     fn with_count_cache<T>(
         &self,
         read: impl FnOnce(&mut CountCache) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
         let mut cache = self.count_cache();
-        let offsets = self.offsets();
         let generation = self.write_generation();
         let mut current = match cache.take() {
             Some(cached) if cached.generation == generation => cached,
             _ => CountCache::new(generation),
         };
         let out = read(&mut current);
-        drop(offsets);
         *cache = Some(current);
         out
     }
 
     /// Invalidate cached reads after a committed user-data write.
     ///
-    /// The generation bump lands while the offsets guard is still held:
-    /// paired with [`Self::with_count_cache`] reading the generation under
-    /// the same guard, no reader can observe post-commit rows against a
-    /// pre-commit generation (or vice versa).
-    fn mark_committed_write(&self, offsets: MutexGuard<'_, Offsets>, has_user_data: bool) {
-        self.inner
-            .has_user_data
-            .store(has_user_data, Ordering::Release);
-        self.invalidate_write_caches(offsets);
+    /// Every caller's entry point takes `&mut self`, so no reader observes
+    /// post-commit rows against a pre-commit generation, or the reverse.
+    fn mark_committed_write(&self, has_user_data: bool) {
+        self.inner.has_user_data.set(has_user_data);
+        self.invalidate_write_caches();
     }
 
-    fn invalidate_write_caches(&self, offsets: MutexGuard<'_, Offsets>) {
-        self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
-        drop(offsets);
+    fn invalidate_write_caches(&self) {
+        self.inner
+            .write_generation
+            .set(self.inner.write_generation.get().wrapping_add(1));
         *self.count_cache() = None;
     }
 
@@ -1205,27 +1168,27 @@ impl UserStore {
     /// and pronunciation merges, which keep the phrase table's
     /// text-to-token rows (074a2219 pinyin.cpp:563-582), take
     /// [`Self::mark_committed_write`].
-    fn mark_committed_phrase_write(&self, offsets: MutexGuard<'_, Offsets>, has_user_data: bool) {
+    fn mark_committed_phrase_write(&self, has_user_data: bool) {
         self.inner
             .phrase_table_generation
-            .fetch_add(1, Ordering::AcqRel);
-        self.mark_committed_write(offsets, has_user_data);
+            .set(self.inner.phrase_table_generation.get().wrapping_add(1));
+        self.mark_committed_write(has_user_data);
     }
 
     // Keep the import memo's publication separate from whether this write
     // changed the exact-text row; reading-only merges retain queried rows.
-    fn mark_committed_import_write(&self, offsets: MutexGuard<'_, Offsets>, added_token: bool) {
+    fn mark_committed_import_write(&self, added_token: bool) {
         if added_token {
-            self.mark_committed_phrase_write(offsets, true);
+            self.mark_committed_phrase_write(true);
         } else {
-            self.mark_committed_write(offsets, true);
+            self.mark_committed_write(true);
         }
     }
 
     /// A search of the user pinyin table for the query `keys` makes
     /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
     /// into the length's table entry, which the next `mask_out` walk starts
-    /// from (#785). Read that record under the canonical table's guard.
+    /// from (#785). Read that record from the canonical table.
     pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
         if !crate::user_index::ENTRY_PER_LENGTH {
             return;
@@ -1238,7 +1201,7 @@ impl UserStore {
     /// Record an exact search using keys already built for lookup.
     pub fn note_pinyin_search_keys(&self, keys: &[ChewingKey]) {
         if crate::user_index::ENTRY_PER_LENGTH {
-            self.inner.libpinyin.phrases().index.note_search(keys);
+            self.inner.libpinyin.phrases_mut().index.note_search(keys);
         }
     }
 
@@ -1249,7 +1212,11 @@ impl UserStore {
             return;
         }
         if let Some(keys) = keys() {
-            self.inner.libpinyin.phrases().index.note_suggestion(&keys);
+            self.inner
+                .libpinyin
+                .phrases_mut()
+                .index
+                .note_suggestion(&keys);
         }
     }
 
@@ -1294,7 +1261,6 @@ impl UserStore {
         cur: Token,
         count: u64,
     ) -> Result<(), UserStoreError> {
-        let offsets = self.offsets();
         let mut gram = self
             .gram_in(prev)?
             .filter(|gram| gram.len() >= single_gram::TOTAL_LEN)
@@ -1315,12 +1281,11 @@ impl UserStore {
             .min(u64::from(u32::MAX));
         single_gram::set_total_freq(&mut gram, new_total as u32);
         self.store_gram(prev, &gram)?;
-        self.mark_committed_write(offsets, true);
+        self.mark_committed_write(true);
         Ok(())
     }
 
-    /// `Bigram::store(prev, gram)` on the pin's container, with the
-    /// offsets guard held by the caller.
+    /// `Bigram::store(prev, gram)` on the pin's container.
     fn store_gram(&self, prev: Token, gram: &[u8]) -> Result<(), UserStoreError> {
         self.container().store(&prev.to_le_bytes(), gram)?;
         Ok(())
@@ -1342,7 +1307,7 @@ impl UserStore {
 
     /// A user item's unigram frequency, or `None` when the item is absent. A
     /// present zero count stays `Some(0)`. The existence check and the count
-    /// read happen under one arena guard, as the pin reads one item
+    /// read happen under one arena borrow, as the pin reads one item
     /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
     /// applies library visibility.
     ///
@@ -1366,7 +1331,10 @@ impl UserStore {
         if let Some(count) = self.with_user_item(token, |item| item.unigram()) {
             return Some(count);
         }
-        lock_result_or_abort(self.inner.system_items.lock()).unigram(token, Some(original))
+        self.inner
+            .system_items
+            .borrow()
+            .unigram(token, Some(original))
     }
 
     /// Whether the session layout names a library as a system chunk.
@@ -1386,7 +1354,10 @@ impl UserStore {
     #[must_use]
     pub fn system_library_total(&self, library: u8) -> Option<u32> {
         let original = self.originals.get(&library)?;
-        lock_result_or_abort(self.inner.system_items.lock()).library_total(library, Some(original))
+        self.inner
+            .system_items
+            .borrow()
+            .library_total(library, Some(original))
     }
 
     /// Apply the exported unigram increment to a loaded system library, as
@@ -1424,11 +1395,10 @@ impl UserStore {
         if self.originals.get(&library).is_none() && !self.has_user_library(library) {
             return Ok(UnigramAdd::Missing);
         }
-        let offsets = self.offsets();
         let (outcome, has_sub_index) = self.arena_add_unigram_outcome(token, delta);
         // Even a missing item or refused increment can change the facade total.
         if has_sub_index && delta != 0 {
-            self.invalidate_write_caches(offsets);
+            self.invalidate_write_caches();
         }
         Ok(outcome)
     }
@@ -1442,7 +1412,7 @@ impl UserStore {
     ///
     /// None: the `Result` is the callers' signature.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
-        Ok(lock_result_or_abort(self.inner.system_items.lock()).facade_extra())
+        Ok(self.inner.system_items.borrow().facade_extra())
     }
 
     /// What a session's facade total holds beyond the stored totals of the
@@ -1451,7 +1421,7 @@ impl UserStore {
     /// wrapping `guint32` the model adds to those stored totals.
     #[must_use]
     pub fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        let items = lock_result_or_abort(self.inner.system_items.lock());
+        let items = self.inner.system_items.borrow();
         let mut extra = items.facade_extra();
         for (&library, original) in self.originals.iter() {
             if !visible(library) {
@@ -1489,7 +1459,7 @@ impl UserStore {
     /// # Errors
     /// None: the `Result` is the callers' signature.
     pub fn library_offset(&self, library: u8) -> Result<u32, UserStoreError> {
-        if !self.inner.has_library_offsets.load(Ordering::SeqCst) {
+        if !self.inner.has_library_offsets.get() {
             return Ok(0);
         }
         Ok(self.offsets().get(&library).copied().unwrap_or(0))
@@ -1505,16 +1475,14 @@ impl UserStore {
     pub fn compact_libraries(&mut self) {
         // Flag invariant: `has_library_offsets` is never false while an
         // offset entry exists (true with no entries is harmless: the read
-        // gives 0). `library_offset` reads the flag without the lock, so the
-        // flag is cleared only after the entries are gone, under the offsets
-        // lock that every offset writer also holds.
-        let target = Arc::clone(&self.inner.libpinyin);
+        // gives 0).
+        let target = Rc::clone(&self.inner.libpinyin);
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
         // difference moves to the facade's extra.
         let mut rebased = Vec::new();
         {
-            let mut items = lock_result_or_abort(self.inner.system_items.lock());
+            let mut items = self.inner.system_items.borrow_mut();
             for (&library, original) in self.originals.iter() {
                 // An unloaded library has no sub-index to compact: the pin's
                 // loop skips it (`phrase_index.cpp:651-652`) and its total
@@ -1552,17 +1520,15 @@ impl UserStore {
         for (library, total) in rebased {
             self.originals.set_total(library, total);
         }
-        let mut offsets = self.offsets();
+        let mut offsets = self.offsets_mut();
         offsets.clear();
-        for library in target.phrases().libraries.values_mut() {
+        for library in target.phrases_mut().libraries.values_mut() {
             library.compact();
         }
-        self.inner
-            .has_library_offsets
-            .store(false, Ordering::SeqCst);
+        self.inner.has_library_offsets.set(false);
     }
 
-    /// The §5 overlay for scoring `token` after `prev`, read under one guard.
+    /// The §5 overlay for scoring `token` after `prev`, read between two commits.
     ///
     /// # Errors
     ///
@@ -1611,7 +1577,7 @@ impl UserStore {
     /// item tail (register row 100); nothing changes then.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
-        self.inner.dirty.store(true, Ordering::Relaxed);
+        self.inner.dirty.set(true);
         Ok(seed)
     }
 
@@ -1651,9 +1617,8 @@ impl UserStore {
     pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
-        let offsets = self.offsets();
         let accepted = self.arena_add_unigram(cur, delta);
-        self.mark_committed_write(offsets, true);
+        self.mark_committed_write(true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }
@@ -1669,7 +1634,6 @@ impl UserStore {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
-        let offsets = self.offsets();
         let row = self.gram_in(last)?;
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,
@@ -1691,7 +1655,7 @@ impl UserStore {
                 let delta =
                     u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
                 let accepted = self.arena_add_unigram(cur, delta);
-                self.mark_committed_write(offsets, true);
+                self.mark_committed_write(true);
                 if !accepted {
                     return Err(UserStoreError::UnigramTotalOverflow);
                 }
@@ -1725,7 +1689,7 @@ impl UserStore {
         } else {
             Ok(())
         };
-        self.mark_committed_write(offsets, true);
+        self.mark_committed_write(true);
         match stored {
             Ok(()) => {}
             // The failed container's `store` answers false.
@@ -2013,18 +1977,18 @@ impl UserStore {
     /// library replacements move it. Pronunciation-only writes do not.
     #[must_use]
     pub fn phrase_table_generation(&self) -> u64 {
-        self.inner.phrase_table_generation.load(Ordering::Acquire)
+        self.inner.phrase_table_generation.get()
     }
 
     /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
-        self.inner.dirty.load(Ordering::Relaxed)
+        self.inner.dirty.get()
     }
 
     /// Arm `m_modified` without a data write.
     pub fn mark_modified(&mut self) {
-        self.inner.dirty.store(true, Ordering::Relaxed);
+        self.inner.dirty.set(true);
     }
 
     /// Export rows for one `USER_FILE` nibble.
@@ -2165,7 +2129,7 @@ impl UserStore {
         if !self.is_modified() {
             return Ok(());
         }
-        let target = Arc::clone(&self.inner.libpinyin);
+        let target = Rc::clone(&self.inner.libpinyin);
         let Some(dir) = target.dir.as_deref() else {
             return Ok(());
         };
@@ -2174,12 +2138,12 @@ impl UserStore {
         let state = crate::store_libpinyin::export_for_save(self)?;
         let bigram_db = self.container();
         let phrases = target.phrases();
-        let live = lock_result_or_abort(self.inner.system_items.lock());
+        let live = self.inner.system_items.borrow();
         {
             let mut reporting = crate::persistence::SaveReporting {
                 versions: &target.versions,
                 open_counter: target.open_counter,
-                bigram_db: Some(&*bigram_db),
+                bigram_db: Some(bigram_db),
                 interleaved: target.law == crate::persistence::UserConfLaw::Zhuyin,
                 baseline: baseline
                     .as_mut()
@@ -2199,9 +2163,8 @@ impl UserStore {
                 &mut reporting,
             )?;
         }
-        drop(bigram_db);
         *self.count_cache() = None;
-        self.inner.dirty.store(false, Ordering::Relaxed);
+        self.inner.dirty.set(false);
         Ok(())
     }
 
@@ -2219,9 +2182,8 @@ impl UserStore {
     }
 
     /// `Bigram::mask_out(mask, value)` on the pin's container over the keys
-    /// [`Self::container_keys`] collected before the mask's fault check,
-    /// with the offsets guard held ([`mask_grams_over`]). Answers whether a
-    /// gram remains.
+    /// [`Self::container_keys`] collected before the mask's fault check
+    /// ([`mask_grams_over`]). Answers whether a gram remains.
     fn mask_container_over(
         &self,
         keys: Result<Vec<Option<Token>>, StoreError>,
@@ -2229,7 +2191,7 @@ impl UserStore {
         value: Token,
     ) -> Result<bool, UserStoreError> {
         Ok(mask_grams_over(
-            &ContainerGrams(&self.container()),
+            &ContainerGrams(self.container()),
             keys?,
             mask,
             value,
@@ -2352,7 +2314,7 @@ impl UserStore {
             std::collections::BTreeMap::new(),
             &std::collections::BTreeMap::new(),
         );
-        self.inner.libpinyin.phrases().unloaded.extend(unloaded);
+        self.inner.libpinyin.phrases_mut().unloaded.extend(unloaded);
     }
 
     /// `_load_phrase_library`'s `USER_FILE` branch for `library`: its
@@ -2405,7 +2367,7 @@ impl UserStore {
     ) {
         self.apply_system_libraries(&originals, replayed, library_totals);
         {
-            let mut phrases = self.inner.libpinyin.phrases();
+            let mut phrases = self.inner.libpinyin.phrases_mut();
             for nibble in originals.keys() {
                 phrases.unloaded.remove(nibble);
             }
@@ -2420,7 +2382,7 @@ impl UserStore {
         if nibble >= 16 || !self.is_system_library(nibble) {
             return;
         }
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         if loaded {
             phrases.unloaded.remove(&nibble);
         } else {
@@ -2438,7 +2400,7 @@ impl UserStore {
             std::collections::BTreeMap::new(),
             &Default::default(),
         );
-        self.inner.libpinyin.phrases().unloaded.insert(nibble);
+        self.inner.libpinyin.phrases_mut().unloaded.insert(nibble);
     }
 
     fn apply_system_libraries(
@@ -2447,12 +2409,11 @@ impl UserStore {
         mut replayed: std::collections::BTreeMap<u8, crate::replay::ReplayedLibrary>,
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) {
-        let target = Arc::clone(&self.inner.libpinyin);
-        let mut offsets = self.offsets();
+        let target = Rc::clone(&self.inner.libpinyin);
+        let mut offsets = self.offsets_mut();
         // Flag invariant (see `compact_libraries`): set before the entries
-        // can exist, and cleared below only once none is left, still under
-        // the offsets lock.
-        self.inner.has_library_offsets.store(true, Ordering::SeqCst);
+        // can exist, and cleared below only once none is left.
+        self.inner.has_library_offsets.set(true);
         // A reloaded library has no stored total difference any more: its
         // total is the one its replay left, held in the live scalar below.
         for nibble in originals.keys() {
@@ -2462,14 +2423,12 @@ impl UserStore {
         {
             // A library with an original keeps its items in its live buffer;
             // the arenas of the reloaded libraries hold nothing.
-            let mut phrases = target.phrases();
+            let mut phrases = target.phrases_mut();
             phrases
                 .libraries
                 .retain(|nibble, _| !originals.contains_key(nibble));
         }
-        self.inner
-            .has_library_offsets
-            .store(offsets_left, Ordering::SeqCst);
+        self.inner.has_library_offsets.set(offsets_left);
         let buffer_live;
         {
             let phrases = target.phrases();
@@ -2477,7 +2436,7 @@ impl UserStore {
                 .libraries
                 .iter()
                 .any(|(library, items)| (1..=4).contains(library) && !items.is_empty());
-            let mut items = lock_result_or_abort(self.inner.system_items.lock());
+            let mut items = self.inner.system_items.borrow_mut();
             // `FacadePhraseIndex::load` and `merge_with_mask` swap the old
             // sub-index for the new one (`phrase_index.cpp:237-248`,
             // `:301-332`): the library's live buffer and total go, and the
@@ -2495,13 +2454,10 @@ impl UserStore {
                 }
             }
             buffer_live = items.has_added();
-            self.inner.has_system_items.store(
-                !items.is_empty() || arena_has_system_items,
-                Ordering::Relaxed,
-            );
             self.inner
-                .has_removed_system_items
-                .store(items.has_removed(), Ordering::Relaxed);
+                .has_system_items
+                .set(!items.is_empty() || arena_has_system_items);
+            self.inner.has_removed_system_items.set(items.has_removed());
         }
         let arena_live = {
             let phrases = target.phrases();
@@ -2512,7 +2468,7 @@ impl UserStore {
         } || buffer_live;
         // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
-        self.mark_committed_phrase_write(offsets, has_grams || arena_live);
+        self.mark_committed_phrase_write(has_grams || arena_live);
     }
 
     /// The faults [`Self::mask_out`] reaches before it changes anything, in
@@ -2537,8 +2493,7 @@ impl UserStore {
             .phrase_table
             .check_mask()
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        let _offsets = self.offsets();
-        let container_keys = self.collect_container_keys();
+        let container_keys = self.container_keys();
         match self.bigram_mask_fault_over(&container_keys, mask, value) {
             Some(error) => Err(error),
             None => Ok(()),
@@ -2555,15 +2510,14 @@ impl UserStore {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
-        // The same checks [`Self::check_mask_out`] makes, under the guards
-        // the mask below keeps.
+        // The same checks [`Self::check_mask_out`] makes.
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
         // `pinyin_mask_out` masks the user phrase table next
         // (`pinyin.cpp:1229` at 074a2219); a record whose entry walk it
         // would read past (register row 101) is refused before any change.
-        let target = Arc::clone(&self.inner.libpinyin);
+        let target = Rc::clone(&self.inner.libpinyin);
         target
             .phrases()
             .phrase_table
@@ -2572,8 +2526,7 @@ impl UserStore {
         // The bigram walk's faults, in the pin's order: a non-token key
         // (`get_all_items`), then a short value (`get_total_freq`), then a
         // mask residual (`get_length`). The one `get_all_items` walk serves
-        // the check and the mask below, under one offsets guard.
-        let offsets = self.offsets();
+        // the check and the mask below.
         let container_keys = self.container_keys();
         if let Some(error) = self.bigram_mask_fault_over(&container_keys, mask, value) {
             return Err(error);
@@ -2581,7 +2534,7 @@ impl UserStore {
         // The pin's mask walk edits every record of the user pinyin index,
         // arena or overlay; the next save writes the table as it stands.
         {
-            let mut phrases = target.phrases();
+            let mut phrases = target.phrases_mut();
             phrases.index.mask(mask, value);
             phrases
                 .phrase_table
@@ -2595,7 +2548,7 @@ impl UserStore {
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
         // `zhuyin.cpp:765`).
         let grams_left = self.mask_container_over(container_keys, mask, value)?;
-        self.mark_committed_phrase_write(offsets, grams_left || self.arena_has_items());
+        self.mark_committed_phrase_write(grams_left || self.arena_has_items());
         Ok(())
     }
 
@@ -2658,25 +2611,21 @@ impl UserStore {
         &self,
         originals: &impl crate::persistence::OriginalLibraries,
     ) -> std::collections::BTreeMap<Token, Option<oxpinyin_data::chunk_write::ChunkItem>> {
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .changed_items(originals)
+        self.inner.system_items.borrow().changed_items(originals)
     }
 
     /// Whether this session carries system-item payloads from imports or logs.
     #[must_use]
     pub(crate) fn has_system_items(&self) -> bool {
-        self.inner.has_system_items.load(Ordering::Relaxed)
+        self.inner.has_system_items.get()
     }
 
     /// Whether a journal REMOVE took out a system item of this session
-    /// ([`Self::system_item_removed`]): the one atomic that gates the
+    /// ([`Self::system_item_removed`]): the one flag that gates the
     /// per-token check.
     #[must_use]
     pub(crate) fn has_removed_system_items(&self) -> bool {
-        self.inner.has_removed_system_items.load(Ordering::Relaxed)
+        self.inner.has_removed_system_items.get()
     }
 
     /// Whether a journal REMOVE took the item behind system `token` out of
@@ -2687,7 +2636,7 @@ impl UserStore {
     #[must_use]
     pub(crate) fn system_item_removed(&self, token: Token) -> bool {
         self.has_removed_system_items()
-            && lock_result_or_abort(self.inner.system_items.lock()).is_removed(
+            && self.inner.system_items.borrow().is_removed(
                 token,
                 self.originals.get(&phrase_index_library_index(token)),
             )
@@ -2697,18 +2646,12 @@ impl UserStore {
     /// first-write provenance.
     #[cfg(test)]
     pub(crate) fn system_provenance_recorded(&self, nibble: u8) -> bool {
-        self.inner
-            .system_items
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .has_provenance(nibble)
+        self.inner.system_items.borrow().has_provenance(nibble)
     }
 
     #[cfg(test)]
     pub(crate) fn test_forget_removal(&self, _token: Token) {
-        self.inner
-            .has_removed_system_items
-            .store(false, Ordering::Relaxed);
+        self.inner.has_removed_system_items.set(false);
     }
 
     #[cfg(test)]
@@ -2811,7 +2754,9 @@ impl UserStore {
             .get(&library)
             .filter(|items| !items.is_empty())
             .map(|items| (u32::from(library) << 24) | items.token_end());
-        lock_result_or_abort(self.inner.system_items.lock())
+        self.inner
+            .system_items
+            .borrow()
             .end(library)
             .into_iter()
             .chain(arena_end)
@@ -2847,13 +2792,13 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        let items = lock_result_or_abort(self.inner.system_items.lock());
+        let items = self.inner.system_items.borrow();
         items.get(&token).map(|item| read(&item))
     }
 
     #[cfg(test)]
-    pub(crate) fn system_items_locked(&self) -> bool {
-        self.inner.system_items.try_lock().is_err()
+    pub(crate) fn system_items_borrowed(&self) -> bool {
+        self.inner.system_items.try_borrow_mut().is_err()
     }
 
     /// Reads the item a system library's live buffer holds under `token`.
@@ -2866,20 +2811,26 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        lock_result_or_abort(self.inner.system_items.lock()).with_live(token, read)
+        self.inner.system_items.borrow().with_live(token, read)
     }
 
     /// Count the pristine items held by one transferred library.
     pub fn pristine_system_item_count(&self, nibble: u8) -> Option<u64> {
-        lock_result_or_abort(self.inner.system_items.lock()).pristine_item_count(nibble)
+        self.inner.system_items.borrow().pristine_item_count(nibble)
     }
 
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
-        lock_result_or_abort(self.inner.system_items.lock()).live_pronunciation_count(token)
+        self.inner
+            .system_items
+            .borrow()
+            .live_pronunciation_count(token)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
-        lock_result_or_abort(self.inner.system_items.lock()).live_item_past_buffer(token)
+        self.inner
+            .system_items
+            .borrow()
+            .live_item_past_buffer(token)
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's
@@ -2954,8 +2905,7 @@ impl UserStore {
             packed: &packed,
             delta,
         };
-        let offsets = self.offsets();
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         let mut item = items
             .get(&token)
             .or_else(|| original.item(token & PHRASE_MASK))
@@ -2981,8 +2931,8 @@ impl UserStore {
             );
         }
         drop(items);
-        self.inner.has_system_items.store(true, Ordering::Relaxed);
-        self.mark_committed_import_write(offsets, false);
+        self.inner.has_system_items.set(true);
+        self.mark_committed_import_write(false);
         Ok(token)
     }
 }
@@ -3002,9 +2952,8 @@ mod tests {
 
     /// Runs `setup` and then `operation` in a child copy of this test binary
     /// that runs only the test `name`, and requires the child to abort.
-    /// `setup` may panic on purpose (a poisoned mutex): the strict check is
-    /// armed only after it, and a panic in `operation` then fails with its
-    /// own message.
+    /// `setup` may panic on purpose: the strict check is armed only after
+    /// it, and a panic in `operation` then fails with its own message.
     fn assert_aborts_after_setup<T>(
         name: &str,
         setup: impl FnOnce() -> T,
@@ -3050,29 +2999,6 @@ mod tests {
             output.status.code(),
             Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
             "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
-        );
-    }
-
-    #[test]
-    fn poisoned_mutex_aborts() {
-        assert_aborts_after_setup(
-            "store::tests::poisoned_mutex_aborts",
-            // The panic that poisons the mutex is setup, before the strict
-            // check is armed.
-            || {
-                let mutex = std::sync::Mutex::new(());
-                let panic = std::panic::catch_unwind(|| {
-                    let _guard = mutex.lock().expect("unpoisoned mutex");
-                    panic!("poison the mutex");
-                });
-                assert!(panic.is_err());
-                mutex
-            },
-            |mutex| {
-                let result = mutex.lock();
-                assert!(result.is_err(), "the mutex must be poisoned");
-                drop(lock_result_or_abort(result));
-            },
         );
     }
 
@@ -3254,7 +3180,7 @@ mod tests {
             .unwrap();
             store
                 .session_target()
-                .phrases()
+                .phrases_mut()
                 .libraries
                 .entry(library)
                 .or_default()
@@ -4196,8 +4122,7 @@ mod tests {
                     store
                         .inner
                         .system_items
-                        .lock()
-                        .unwrap()
+                        .borrow_mut()
                         .set_library_total(1, u32::MAX - 4);
                     if !has_dir {
                         store.mark_modified();
@@ -4291,20 +4216,12 @@ mod tests {
         assert_eq!(store.system_unigram(token), Some(2000));
         assert_eq!(store.system_library_total(1), Some(2000));
         assert_eq!(store.unigram_total().unwrap(), 0);
-        // Readers of one store share it by `&`; the writer holds `&mut`, so the
-        // two never overlap. Several readers see the same live state.
-        let shared = &store;
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                scope.spawn(move || {
-                    for _ in 0..500 {
-                        let counts = shared.count_delta(None, token).unwrap();
-                        assert_eq!(counts.unigram_live, Some(2000));
-                        assert_eq!(shared.system_library_total(1), Some(2000));
-                    }
-                });
-            }
-        });
+        // Repeated reads of the store see the same live state.
+        for _ in 0..4 {
+            let counts = store.count_delta(None, token).unwrap();
+            assert_eq!(counts.unigram_live, Some(2000));
+            assert_eq!(store.system_library_total(1), Some(2000));
+        }
     }
 
     /// Only the checked-read failure is the pin's assert; every other

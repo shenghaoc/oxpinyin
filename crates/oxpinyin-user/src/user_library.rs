@@ -97,7 +97,7 @@ struct Replacement {
 }
 
 impl PreparedReplacement {
-    /// The caller holds the session's phrase guard from preparation to apply.
+    /// The caller holds the session's phrase borrow from preparation to apply.
     pub(crate) fn apply(self, library: &mut UserLibrary) {
         library.apply_replacement(self.change, &self.bytes);
     }

@@ -20,7 +20,10 @@ impl UserStore {
     /// difference from it.
     fn library_total_of(&self, offsets: &Offsets, phrases: &SessionPhrases, library: u8) -> u32 {
         if let Some(original) = self.originals.get(&library) {
-            return lock_result_or_abort(self.inner.system_items.lock())
+            return self
+                .inner
+                .system_items
+                .borrow()
                 .library_total(library, Some(original))
                 .unwrap_or(original.total);
         }
@@ -37,7 +40,7 @@ impl UserStore {
     /// `library` (`phrase_index.h:669`): the facade total takes it, and a
     /// system library's total takes it too when the item's unigram was kept.
     fn take_item_in(&self, library: u8, unigram: u32, accepted: bool) {
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         match self.originals.get(&library) {
             Some(original) if accepted => {
                 let total = items
@@ -52,7 +55,7 @@ impl UserStore {
     /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
     /// facade and the library's totals lose the item's unigram.
     fn take_item_out(&self, library: u8, unigram: u32) {
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         match self.originals.get(&library) {
             Some(original) => {
                 let total = items
@@ -70,8 +73,8 @@ impl UserStore {
     /// session's state is process memory, so this cannot fail, as
     /// `FacadePhraseIndex::load` and `unload` cannot (policy row 103).
     pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
-        let mut offsets = self.offsets();
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut offsets = self.offsets_mut();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         let sum = |library: &UserLibrary| {
             library.items().fold(0_u64, |sum, (_, item)| {
                 sum.wrapping_add(u64::from(item.unigram()))
@@ -82,7 +85,7 @@ impl UserStore {
         let offset = library
             .as_ref()
             .map_or(0, |library| library.total().wrapping_sub(after as u32));
-        self.inner.has_library_offsets.store(true, Ordering::SeqCst);
+        self.inner.has_library_offsets.set(true);
         let old_offset = if offset == 0 {
             offsets.remove(&nibble)
         } else {
@@ -93,7 +96,9 @@ impl UserStore {
         let offsets_left = !offsets.is_empty();
         // The facade total takes the library's new total in and the old one
         // out (`phrase_index.cpp:237-248`).
-        lock_result_or_abort(self.inner.system_items.lock())
+        self.inner
+            .system_items
+            .borrow_mut()
             .add_facade_extra(after.wrapping_sub(before).wrapping_add(u64::from(moved)));
         phrases.libraries.remove(&nibble);
         if let Some(library) = library {
@@ -107,11 +112,9 @@ impl UserStore {
             .values()
             .any(|library| !library.is_empty());
         drop(phrases);
-        self.inner
-            .has_library_offsets
-            .store(offsets_left, Ordering::SeqCst);
+        self.inner.has_library_offsets.set(offsets_left);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
-        self.mark_committed_phrase_write(offsets, arena_live || grams_live);
+        self.mark_committed_phrase_write(arena_live || grams_live);
     }
 
     /// Whether the session holds an item beyond the shipped chunks: an arena
@@ -123,7 +126,7 @@ impl UserStore {
             .libraries
             .values()
             .any(|library| !library.is_empty())
-            || lock_result_or_abort(self.inner.system_items.lock()).has_added()
+            || self.inner.system_items.borrow().has_added()
     }
 
     /// Addon selection copies the complete item to the current range end,
@@ -146,7 +149,7 @@ impl UserStore {
         };
         let bytes = encoded(&item)?;
         let offsets = self.offsets();
-        let mut phrases = target.phrases();
+        let mut phrases = target.phrases_mut();
         // The pin's promote reaches `phrase_table->add_index`
         // (`pinyin.cpp:2557` at 074a2219) before it changes anything it
         // keeps; a record it would read past (register row 101) is refused
@@ -183,7 +186,7 @@ impl UserStore {
             phrases.index.add(&keys, token);
         }
         drop(phrases);
-        self.mark_committed_phrase_write(offsets, true);
+        self.mark_committed_phrase_write(true);
         Ok(token)
     }
 
@@ -197,8 +200,7 @@ impl UserStore {
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
     ) -> Result<(), UserStoreError> {
-        let offsets = self.offsets();
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         // The unloaded sub-index owns no item. The pin instead uses its
         // stale context cache here (phonetic_lookup.h:924-927); the
         // unloaded-cache ruling in compatibility-policy.md skips that write.
@@ -213,33 +215,31 @@ impl UserStore {
                 library.train(token & PHRASE_MASK, readings, delta);
             }
             drop(phrases);
-            self.mark_committed_write(offsets, true);
+            self.mark_committed_write(true);
             return Ok(());
         }
         drop(phrases);
         // Any system item is trained in place in its library's live buffer; a
         // removed one answers no item there and is left alone.
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         if items.train_live(
             self.originals.get(&phrase_index_library_index(token)),
             token,
             readings,
             delta,
         ) {
-            self.inner.has_system_items.store(true, Ordering::Relaxed);
+            self.inner.has_system_items.set(true);
             // A trained count may overlap another item's header; the live
             // per-token check decides whether that item is still readable.
-            self.inner
-                .has_removed_system_items
-                .store(true, Ordering::Relaxed);
+            self.inner.has_removed_system_items.set(true);
         }
         drop(items);
-        self.mark_committed_write(offsets, true);
+        self.mark_committed_write(true);
         Ok(())
     }
 
     /// Borrow a live user item directly from the session arena. The callback
-    /// cannot retain the view past the guard or a later writer.
+    /// cannot retain the view past the borrow or a later writer.
     pub fn with_user_item<R>(
         &self,
         token: Token,
@@ -254,8 +254,7 @@ impl UserStore {
 
     /// Reads the item a system library's live buffer holds under `token` and
     /// its shipped chunk lacks: an import or a replayed ADD. The buffer is the
-    /// only copy; no arena holds it. Locks the buffers after the arena, as
-    /// every caller does.
+    /// only copy; no arena holds it.
     pub(crate) fn with_appended_item<R>(
         &self,
         token: Token,
@@ -268,7 +267,10 @@ impl UserStore {
             if !self.has_system_items() {
                 return None;
             }
-            return lock_result_or_abort(self.inner.system_items.lock())
+            return self
+                .inner
+                .system_items
+                .borrow()
                 .with_added(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
                 .flatten();
         }
@@ -294,7 +296,7 @@ impl UserStore {
         let target = &self.inner.libpinyin;
         let packed = packed(keys)?;
         let offsets = self.offsets();
-        let mut phrases = target.phrases();
+        let mut phrases = target.phrases_mut();
         // `_add_phrase` searches the phrase table before any change
         // (`pinyin.cpp:536-542` at 074a2219); a record that search would read
         // past (register row 101) is refused here, before any commit.
@@ -332,7 +334,7 @@ impl UserStore {
                 .add_reading(token & PHRASE_MASK, &packed, delta)
                 .map_err(UserStoreError::Persistence)?;
             drop(phrases);
-            self.mark_committed_import_write(offsets, false);
+            self.mark_committed_import_write(false);
             return Ok(token);
         }
         let end = phrases
@@ -379,9 +381,9 @@ impl UserStore {
         }
         drop(phrases);
         if (1..=4).contains(&library) {
-            self.inner.has_system_items.store(true, Ordering::Relaxed);
+            self.inner.has_system_items.set(true);
         }
-        self.mark_committed_import_write(offsets, true);
+        self.mark_committed_import_write(true);
         Ok(token)
     }
 
@@ -406,8 +408,7 @@ impl UserStore {
             .get(&library)
             .ok_or(UserStoreError::InvalidPhrase)?;
         let packed = packed(keys)?;
-        let offsets = self.offsets();
-        let mut phrases = target.phrases();
+        let mut phrases = target.phrases_mut();
         // `_add_phrase` searches the phrase table before any change
         // (`pinyin.cpp:536-542`); a record that search would read past (register
         // row 101) is refused here, before any commit.
@@ -432,7 +433,7 @@ impl UserStore {
                 tokens.first().copied()
             }
         };
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         // An unloaded library has no sub-index: `get_range` fails and
         // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
         if items.lacks_sub_index(library, original) {
@@ -465,13 +466,11 @@ impl UserStore {
             let overwrote = items.add_item(original, token, &merged);
             drop(items);
             drop(phrases);
-            self.inner.has_system_items.store(true, Ordering::Relaxed);
+            self.inner.has_system_items.set(true);
             if overwrote {
-                self.inner
-                    .has_removed_system_items
-                    .store(true, Ordering::Relaxed);
+                self.inner.has_removed_system_items.set(true);
             }
-            self.mark_committed_import_write(offsets, false);
+            self.mark_committed_import_write(false);
             return Ok(token);
         }
         let end = items.range_end(library, original);
@@ -483,9 +482,7 @@ impl UserStore {
             prons: vec![(packed.clone(), delta)],
         })?;
         if items.add_item(original, token, &bytes) {
-            self.inner
-                .has_removed_system_items
-                .store(true, Ordering::Relaxed);
+            self.inner.has_removed_system_items.set(true);
         }
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let outcome = items
@@ -506,8 +503,8 @@ impl UserStore {
             .collect();
         phrases.index.add(&chewing, token);
         drop(phrases);
-        self.inner.has_system_items.store(true, Ordering::Relaxed);
-        self.mark_committed_import_write(offsets, true);
+        self.inner.has_system_items.set(true);
+        self.mark_committed_import_write(true);
         Ok(token)
     }
 
@@ -526,13 +523,13 @@ impl UserStore {
     /// The second result reports whether the facade total received the delta.
     pub(super) fn arena_add_unigram_outcome(&self, token: Token, delta: u32) -> (UnigramAdd, bool) {
         let library = phrase_index_library_index(token);
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         // phrase_index.h:631-632 returns before the facade total changes.
         if phrases.unloaded.contains(&library) {
             return (UnigramAdd::Missing, false);
         }
         let original = self.originals.get(&library);
-        let mut items = lock_result_or_abort(self.inner.system_items.lock());
+        let mut items = self.inner.system_items.borrow_mut();
         if original.is_some() {
             // An unloaded library has no sub-index: the pin answers
             // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
@@ -546,7 +543,7 @@ impl UserStore {
                 .add_unigram(original, token, delta)
                 .unwrap_or(UnigramAdd::Missing);
             if outcome.is_accepted() {
-                self.inner.has_system_items.store(true, Ordering::Relaxed);
+                self.inner.has_system_items.set(true);
             } else {
                 items.add_facade_extra(u64::from(delta));
             }
@@ -575,11 +572,9 @@ impl UserStore {
 
     pub(super) fn arena_remove(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let mask = PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK;
-        // Hold the offsets guard from the snapshot through the mask.
-        let offsets = self.offsets();
         let container_keys = self.container_keys();
         let bigram_fault = self.bigram_mask_fault_over(&container_keys, mask, token);
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         let Some(view) = phrases.item(token) else {
             return Ok(false);
         };
@@ -636,12 +631,12 @@ impl UserStore {
             .libraries
             .values()
             .all(UserLibrary::is_empty);
-        self.mark_committed_phrase_write(offsets, has || grams_left);
+        self.mark_committed_phrase_write(has || grams_left);
         Ok(true)
     }
 
     pub(super) fn mask_arena(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
-        let mut phrases = self.inner.libpinyin.phrases();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
         for (&nibble, library) in &mut phrases.libraries {
             let selected = |slot: u32| (((u32::from(nibble) << 24) | slot) & mask) == value;
             // `FacadePhraseIndex::mask_out` takes the old sub-index total out

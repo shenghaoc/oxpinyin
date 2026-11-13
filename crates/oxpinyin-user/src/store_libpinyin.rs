@@ -40,15 +40,15 @@
 //!   training updates them in place, which lookup, export and save all
 //!   observe.
 
+use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
 
-use crate::lock_result_or_abort;
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase;
 use crate::store::{StoreInner, UserStore, UserStoreError};
@@ -62,7 +62,7 @@ pub struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: Option<PathBuf>,
     /// Live item arenas and independent pinyin-index membership.
-    pub(crate) phrases: std::sync::Mutex<crate::user_library::SessionPhrases>,
+    pub(crate) phrases: RefCell<crate::user_library::SessionPhrases>,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
     /// Whose `user.conf` lifecycle the profile follows.
@@ -80,8 +80,12 @@ pub struct Target {
 }
 
 impl Target {
-    pub(crate) fn phrases(&self) -> std::sync::MutexGuard<'_, crate::user_library::SessionPhrases> {
-        lock_result_or_abort(self.phrases.lock())
+    pub(crate) fn phrases(&self) -> Ref<'_, crate::user_library::SessionPhrases> {
+        self.phrases.borrow()
+    }
+
+    pub(crate) fn phrases_mut(&self) -> RefMut<'_, crate::user_library::SessionPhrases> {
+        self.phrases.borrow_mut()
     }
 }
 
@@ -94,7 +98,7 @@ impl Target {
 /// counter on disk, as upstream's does.
 
 #[derive(Debug)]
-pub(crate) struct FiniGuard(Option<Arc<Target>>);
+pub(crate) struct FiniGuard(Option<Rc<Target>>);
 
 impl FiniGuard {
     /// Leave without the fini write: an open that fails where the pin dies
@@ -308,15 +312,15 @@ impl UserStore {
         // which abandons the guard: the pin dies without `pinyin_fini`, so
         // the raised counter stays on disk and nothing is written or saved.
         // Only an open that completes hands it to the store.
-        let target = Arc::new(Target {
+        let target = Rc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
-            phrases: std::sync::Mutex::new(Default::default()),
+            phrases: RefCell::new(Default::default()),
             versions,
             law,
             open_counter: loaded.open_counter,
             overlong_index_keys,
         });
-        let mut fini = FiniGuard(Some(Arc::clone(&target)));
+        let mut fini = FiniGuard(Some(Rc::clone(&target)));
         // From here the session owns the system libraries (`replayed`), so a
         // failure cannot leave a store without them: each is the pin's
         // death, never a degraded open, and leaves without finalizing.
@@ -332,7 +336,7 @@ impl UserStore {
             &user_libraries,
         );
         {
-            let mut phrases = target.phrases();
+            let mut phrases = target.phrases_mut();
             phrases.libraries = user_libraries;
             phrases.index = index;
             phrases.phrase_table = phrase_table;
@@ -413,18 +417,18 @@ impl UserStore {
             .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
 
         let inner = StoreInner {
-            has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
-            system_items: std::sync::Mutex::new(system_items),
-            has_removed_system_items: std::sync::atomic::AtomicBool::new(has_removed_system_items),
-            count_cache: std::sync::Mutex::new(None),
-            has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
-            offsets: std::sync::Mutex::new(library_offsets),
-            dirty: std::sync::atomic::AtomicBool::new(false),
-            write_generation: std::sync::atomic::AtomicU64::new(0),
-            phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
-            has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
+            has_system_items: Cell::new(has_system_items),
+            system_items: RefCell::new(system_items),
+            has_removed_system_items: Cell::new(has_removed_system_items),
+            count_cache: RefCell::new(None),
+            has_library_offsets: Cell::new(!library_offsets.is_empty()),
+            offsets: RefCell::new(library_offsets),
+            dirty: Cell::new(false),
+            write_generation: Cell::new(0),
+            phrase_table_generation: Cell::new(0),
+            has_user_data: Cell::new(has_user_data),
             bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
-            bigram_db: std::sync::Mutex::new(bigram_db),
+            bigram_db,
             libpinyin: target,
         };
         Ok(Self::from_parts(
@@ -804,7 +808,7 @@ mod tests {
             .unwrap();
         {
             let target = store.session_target();
-            let mut phrases = target.phrases();
+            let mut phrases = target.phrases_mut();
             let words: Vec<u32> = "他".chars().map(u32::from).collect();
             phrases
                 .phrase_table
@@ -831,64 +835,6 @@ mod tests {
             "{masked:?}"
         );
         assert_eq!(snapshot(&store), before);
-    }
-
-    /// A mask walks the container's keys once and masks over that walk.
-    /// Another operation's `set_bigram_count` must not land between the two,
-    /// or the mask misses its gram and can clear `has_user_data` while the
-    /// gram exists. The second operation writes from another thread in that
-    /// window; it waits for the storage owner's guard, so its gram is
-    /// written after the mask and the gate stays true.
-    #[test]
-    fn a_gram_written_by_another_handle_during_a_mask_is_not_missed() {
-        let keys = |text: &str| {
-            packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
-        };
-        for remove in [false, true] {
-            let dir = tempdir("mask-key-walk-race");
-            let mut store =
-                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                    .unwrap();
-            let token = store
-                .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
-                .unwrap();
-            let store = std::sync::Arc::new(std::sync::Mutex::new(store));
-            let other = std::sync::Arc::clone(&store);
-            let (sent, written) = std::sync::mpsc::channel();
-            let (starting, started) = std::sync::mpsc::channel();
-            let writer = std::sync::Arc::new(std::sync::Mutex::new(None));
-            let slot = std::sync::Arc::clone(&writer);
-            crate::store::AFTER_CONTAINER_KEYS.with(|hook| {
-                *hook.borrow_mut() = Some(Box::new(move || {
-                    let thread = std::thread::spawn(move || {
-                        starting.send(()).unwrap();
-                        other.lock().unwrap().set_bigram_count(token, 9, 3).unwrap();
-                        let _ = sent.send(());
-                    });
-                    started.recv().unwrap();
-                    assert!(matches!(
-                        written.recv_timeout(std::time::Duration::from_millis(500)),
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                    ));
-                    *slot.lock().unwrap() = Some(thread);
-                }));
-            });
-            {
-                let mut store = store.lock().unwrap();
-                if remove {
-                    assert!(store.remove_user_phrase(token).unwrap());
-                } else {
-                    store.mask_out(0xffff_ffff, token).unwrap();
-                }
-            }
-            writer.lock().unwrap().take().unwrap().join().unwrap();
-            assert_eq!(
-                store.lock().unwrap().bigram_count(token, 9).unwrap(),
-                3,
-                "remove={remove}"
-            );
-            assert!(store.lock().unwrap().gate_for_test(), "remove={remove}");
-        }
     }
 
     fn profile_snapshot(dir: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
@@ -1323,7 +1269,7 @@ mod tests {
         };
         let library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
         let target = store.session_target();
-        let mut phrases = target.phrases();
+        let mut phrases = target.phrases_mut();
         phrases.libraries.insert(crate::USER_DICTIONARY, library);
         drop(phrases);
         let token = (u32::from(crate::USER_DICTIONARY) << 24) | 1;
@@ -2277,10 +2223,10 @@ mod tests {
         assert!(live.filter_active());
         assert!(live.is_visible(untouched) && !live.is_visible(removed));
 
-        // A session item is borrowed under its mutex; accessors are called
-        // after the callback rather than re-entering the locked store.
+        // A session item is read under a borrow of its cell; accessors are
+        // called after the callback rather than borrowing the cell again.
         assert_eq!(
-            live.read(replayed, |_| store.system_items_locked()),
+            live.read(replayed, |_| store.system_items_borrowed()),
             Lookup::Found(true)
         );
 
