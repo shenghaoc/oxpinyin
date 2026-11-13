@@ -24,6 +24,10 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+# Mechanizes the "// SAFETY: on every block" constitution clause wherever a
+# crate root lets unsafe code in.
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
 # Grows #[must_use] coverage on value-returning queries; kept at zero hits —
 # new sites must annotate or consume.
 must_use_candidate = "warn"

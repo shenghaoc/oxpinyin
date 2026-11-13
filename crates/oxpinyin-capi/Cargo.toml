@@ -61,18 +61,8 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 # drop-in through `cargo cbuild --no-default-features`.)
 shipped = []
 
-[lints.rust]
-unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
-missing_docs = "warn"
-unused_must_use = "deny"
-unsafe_op_in_unsafe_fn = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-# Mechanizes the "// SAFETY: on every block" constitution clause.
-undocumented_unsafe_blocks = "deny"
-missing_safety_doc = "deny"
-must_use_candidate = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 # Marshalling macros shared with oxpinyin-zhuyin-capi (macro-only, no

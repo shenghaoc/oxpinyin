@@ -39,18 +39,8 @@ kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw"]
 
-[lints.rust]
-unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
-missing_docs = "warn"
-unused_must_use = "deny"
-unsafe_op_in_unsafe_fn = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-# Mechanizes the "// SAFETY: on every block" constitution clause.
-undocumented_unsafe_blocks = "deny"
-missing_safety_doc = "deny"
-must_use_candidate = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 # Marshalling macros shared with oxpinyin-capi (macro-only, no compiled

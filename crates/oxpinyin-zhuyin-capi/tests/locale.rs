@@ -3,6 +3,8 @@
 //! Keep every locale scenario in the single test below so the default
 //! parallel test runner cannot interleave them within this process.
 
+#![expect(unsafe_code, reason = "calls the C ABI and the C library setlocale")]
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr;

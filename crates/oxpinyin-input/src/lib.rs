@@ -33,15 +33,22 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod chunk;
 pub mod config;
 pub mod diagnostic;
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the library's libc and glib-sys calls behind owned handles; every block carries a SAFETY comment"
+)]
 mod native;
 pub mod path;
 #[cfg(feature = "tools")]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "the pin utilities' libc and glib-sys calls; every block carries a SAFETY comment"
+)]
 pub mod tool;
 
 use std::ffi::CString;

@@ -4,9 +4,12 @@
 // The macro bodies stamp `unsafe` blocks (pointer casts, `Box::from_raw`),
 // and the tests themselves call `unsafe` functions / reclaim pointers.
 // The library crate forbids unsafe_code; the workspace denies it.
-// Integration tests are separate compilation units, so this allow is scoped
+// Integration tests are separate compilation units, so this expectation is scoped
 // to the test binary only.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "the macros expand unsafe blocks here and the tests reclaim their pointers"
+)]
 //!
 //! These tests live in `tests/` (a separate compilation unit) because the
 //! macro bodies stamp `unsafe` blocks that are type-checked in the
@@ -93,6 +96,8 @@ fn context_mut_modification() {
     assert_eq!(r.locale, "zh_TW");
 
     // Reclaim.
+    // SAFETY: `ptr` was produced by `box_context`, has not been freed, and
+    // no reference to it is used again.
     let _ = unsafe { Box::from_raw(ptr.cast::<ContextBacking>()) };
 }
 
@@ -107,6 +112,8 @@ fn instance_round_trip() {
     let r = unsafe { instance_ref(ptr) };
     assert_eq!(r.cursor, 7);
 
+    // SAFETY: `ptr` was produced by `box_instance`, has not been freed, and
+    // no reference to it is used again.
     let _ = unsafe { Box::from_raw(ptr.cast::<InstanceBacking>()) };
 }
 
@@ -118,9 +125,12 @@ fn instance_mut_modification() {
     let m = unsafe { instance_mut(ptr) };
     m.cursor = 123;
 
+    // SAFETY: same pointer; `m` is not used again.
     let r = unsafe { instance_ref(ptr) };
     assert_eq!(r.cursor, 123);
 
+    // SAFETY: `ptr` was produced by `box_instance`, has not been freed, and
+    // no reference to it is used again.
     let _ = unsafe { Box::from_raw(ptr.cast::<InstanceBacking>()) };
 }
 

@@ -11,8 +11,13 @@ Update the toolchain in a dedicated PR.
 
 The [constitution](constitution.md) (§5) sets which crates forbid, deny or scope `unsafe`; the [crate table](architecture.md#crates) shows each crate's current level.
 
-A store module waiver is an `#![expect(unsafe_code, reason = "...")]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations`, an error under `-D warnings`.
-In a crate that denies `clippy::undocumented_unsafe_blocks`, Clippy enforces that a `// SAFETY:` comment is present, not that it is true; review verifies it.
+Every crate inherits `[workspace.lints]` with `[lints] workspace = true`.
+A crate-local `[lints]` table replaces the workspace table instead of extending it, so do not add one.
+Set a crate's unsafe level, where it differs from the workspace's `deny`, with a crate-root attribute.
+That attribute covers only the library or binary; a build script, test or example that uses `unsafe` carries its own waiver.
+
+A module, build-script, test or example waiver is an `#[expect(unsafe_code, reason = "...")]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations`, an error under `-D warnings`.
+The workspace denies `clippy::undocumented_unsafe_blocks`: Clippy enforces that a `// SAFETY:` comment is present, not that it is true; review verifies it.
 
 ## Panics and errors
 
