@@ -6,7 +6,7 @@ if __name__ == '__main__':
     require_utf8_mode()
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 import os
 import platform
@@ -79,14 +79,12 @@ def darwin_export_trie(text: str) -> set[str]:
     return result
 
 
-def check_exports(settings: Settings, argv: Sequence[str], facts: HostFacts) -> int:
+def check_exports(settings: Settings, facts: HostFacts) -> int:
     if facts.system not in ('Linux', 'Darwin'):
         print(f'fatal: unsupported host {facts.system}', file=sys.stderr)
         return 2
-    shipped = bool(argv) and argv[0] == '--shipped'
     extension = 'so' if facts.system == 'Linux' else 'dylib'
-    pinyin = replace(settings, extra_features=('shipped',)) if shipped else settings
-    libraries = [('libpinyin', pinyin.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
+    libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
                   settings.root / 'crates/oxpinyin-capi/libpinyin.ver', 'pinyin',
                   set()),
                  ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxpinyin-zhuyin-capi'),
@@ -180,8 +178,8 @@ def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
 def dispatch(argv: Sequence[str]) -> int:
     try:
         settings = Settings.read(os.environ)
-        if argv and argv[0] == 'exports':
-            status = check_exports(settings, argv[1:], HostFacts.current())
+        if argv == ['exports']:
+            status = check_exports(settings, HostFacts.current())
         elif argv and argv[0] == 'alloc-failure':
             status = check_alloc_failure(settings, argv[1:])
         elif argv and argv[0] == 'alloc-pairing':

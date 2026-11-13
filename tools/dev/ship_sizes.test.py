@@ -222,7 +222,7 @@ class BuildSideTests(unittest.TestCase):
             self.assertEqual(env['PINYIN_ORACLE_DBM'], CELL.cell)
             self.assertIn(f'--remap-path-prefix={cwd}=/oxpinyin', env['RUSTFLAGS'])
         features = {call[0][call[0].index('install') + 1]: call[0][call[0].index('--features') + 1] for call in installs}
-        self.assertEqual(features, {'libpinyin': CELL.feature + ',shipped', 'libzhuyin': CELL.feature})
+        self.assertEqual(features, {'libpinyin': CELL.feature, 'libzhuyin': CELL.feature})
         strips = [call[0] for call in calls if call[0][0] == 'strip']
         self.assertEqual([call[:2] for call in strips], [['strip', '--strip-unneeded']] * 2)
         self.assertEqual(outcome['libraries'], {'libpinyin': 60, 'libzhuyin': 60})

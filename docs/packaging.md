@@ -108,7 +108,6 @@ In short:
   `rlib` stays so that the fuzz targets and Rust tests can use the crate in-process.
 - `[features] capi = []`.
   cargo-c identifies the crate to package by the presence of a `capi` feature; without it, cargo-c skips the crate.
-  `[features] shipped = []` compiles out the two `fuzz-api` helpers and gates no exported symbol; only the shipped drop-in artifact enables it.
 - `[package.metadata.capi.header] generation = false`, `subdirectory = "libpinyin-2.11.92"`.
   `pinyin.h` and its two companion headers ship **verbatim** under libpinyin's version-stamped include subdirectory and are never regenerated.
 - `[package.metadata.capi.pkg_config] name = "libpinyin"`, `version = "2.11.92"`.
@@ -314,11 +313,8 @@ On Linux, `just packaging install` relinks the installed object from the staticl
 `libzhuyin.so.15` uses `LIBZHUYIN` and its 52 symbols the same way.
 
 **Symbol scope.** The shipped library exports every symbol in its `.ver` script and nothing else.
-The `shipped` feature gates no exported symbol.
-It compiles out only the `fuzz-api` helpers `oxpinyin_import_aborts` and `oxpinyin_train_aborts`, which are Rust functions and not exports.
-The feature is subtractive.
-An additive, default-on helper feature would depend on the default features, which also select the backend.
-Every build on a non-default backend would then drop the helpers.
+The `fuzz-api` feature exposes Rust helpers to the in-tree fuzz workspace.
+Shipping recipes do not enable it; no build exports a test hook.
 
 ## Export gate
 
@@ -327,10 +323,8 @@ It proves that the set of exported `pinyin_*` / `zhuyin_*` symbols is exactly th
 The version scripts are `crates/oxpinyin-capi/libpinyin.ver` (79) and `crates/oxpinyin-zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
 It also proves that no other symbol leaks.
 
-CI runs it twice on every change:
-
-- on the development build, which may export no `oxpinyin_*` symbol, the same as the shipped build;
-- with `--shipped`, on the packaged artifact, where only the set of the version script may remain.
+The PR test job checks the development build when its path gate selects it.
+The nightly macOS job also checks the installed release artifacts.
 
 No symbol in a version script is feature-gated.
 
@@ -350,8 +344,8 @@ The replacement keeps cargo-c's install name, compatibility and current versions
 Before the atomic replacement, both `nm -gU` and the export trie (`dyld_info -exports`) must equal the `.ver` set.
 `nm -gU` covers all external defined types, including data, absolute and weak symbols.
 The installed native dylib must then load and resolve its entry point.
-The nightly `test-macos` job provisions cargo-c, stages both release libraries and runs `just abi exports --shipped`, with `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set to those installed files.
-Without overrides, that command checks Cargo development artifacts built with the `shipped` feature.
+The nightly `test-macos` job provisions cargo-c, stages both release libraries and runs `just abi exports`, with `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set to those installed files.
+Without overrides, that command checks Cargo development artifacts.
 The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 
 The cxx bridges of the tkrzw and Kyoto Cabinet backends link the `cxx` crate.
@@ -397,7 +391,7 @@ Tree reuse does not skip the job: a reused tree proves the tests, not the sizes 
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
-It builds each facade with `just packaging install` and the release recipe on the [default backend](runbooks/backends.md), plus `shipped` on libpinyin.
+It builds each facade with `just packaging install` and the release recipe on the [default backend](runbooks/backends.md), without extra features.
 It copies `libpinyin.so.15.0.0` and `libzhuyin.so.15.0.0`, strips each copy with `strip --strip-unneeded`, and counts its bytes.
 It then checks that the stripped library exports exactly the symbols of its version script, `libpinyin.ver` (79) or `libzhuyin.ver` (52), and no `oxpinyin_*` symbol.
 It writes a table to the job summary: base bytes, PR bytes, difference and ratio for each library.
@@ -459,7 +453,7 @@ The drop-in therefore reads the data already on the system:
 
 `just packaging release-stage` builds and stages through the supported path.
 It runs `just packaging install` (cargo cinstall and the complete `.pc`) once for each library, with `--destdir` set to the staging root.
-cargo-c's ordinary `--no-default-features --features <backend>` selects the backend, with `shipped` added on the pinyin crate.
+cargo-c's ordinary `--no-default-features --features <backend>` selects the backend for both crates.
 cargo-c forwards both flags to `cargo build`, because its subcommands register cargo's full set of feature arguments.
 See [Installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c) for host setup.
 Rustc and Cargo come from `rust-toolchain.toml`.

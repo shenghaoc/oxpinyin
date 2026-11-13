@@ -911,11 +911,9 @@ def release_stage(argv, tools):
     with directory(tools.root):
         tools.run(['rm', '-rf', '--', dest])
         for library in LIBRARIES:
-            suffix = ', features: shipped' if library == 'libpinyin' else ''
-            emit(f'== installing {library} into {dest} (backend: {backend}{suffix}) ==')
+            emit(f'== installing {library} into {dest} (backend: {backend}) ==')
             install([library, f'--prefix={prefix}', f'--libdir={libdir}', f'--destdir={dest}', '--',
-                     '--release', '--locked', *cell.feature_flags(backend),
-                     *(['--features', 'shipped'] if library == 'libpinyin' else [])], tools)
+                     '--release', '--locked', *cell.feature_flags(backend)], tools)
         lib, inc = Path(dest + libdir), Path(dest + prefix) / 'include' / ('libpinyin-' + pcver)
         pc = lib / 'pkgconfig'
         expected = [lib / (library + extension) for library in LIBRARIES
@@ -1028,7 +1026,7 @@ def metadata(argv, tools):
             layout += [f'--{key}={values[key]}' for key in ('libdir', 'includedir') if values[key]]
             for library in LIBRARIES:
                 install([library, *layout, '--', '--profile', 'dev', '--locked', '--no-default-features',
-                         '--features', backend + (',shipped' if library == 'libpinyin' else '')], tools)
+                         '--features', backend], tools)
         roots = []
         for key, label in [('pin_root', 'pin'), ('subject_root', 'subject')]:
             if not Path(values[key]).is_dir():

@@ -371,7 +371,7 @@ class NativePreparation(unittest.TestCase):
             arm = prepare.native_build('a'*40, destination, env)
             arguments, tools = install.call_args.args
             self.assertEqual(arguments, ['libpinyin', '--prefix='+str(destination/'prefix'), '--',
-                                         '--locked', '--release', '--features', 'shipped'])
+                                         '--locked', '--release'])
             self.assertEqual(tools.env['RUSTFLAGS'], '-Cdebuginfo=1 -Cstrip=none')
             self.assertEqual(tools.env['RUSTUP_TOOLCHAIN'], 'selected')
             self.assertEqual(tools.env['OXPINYIN_DSYM'], '1')

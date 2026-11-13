@@ -193,8 +193,7 @@ METADATA_USAGE = r'''Usage: just packaging check-pc-metadata --pin-root=DIR --su
            [--build-subject=FEATURES] [--modules="libpinyin libzhuyin"]
   --build-subject  run the install for both libraries into --subject-root
                    first (emptying it), with `--profile dev --locked
-                   --no-default-features --features FEATURES` (libpinyin
-                   also gets `shipped`); FEATURES is the backend
+                   --no-default-features --features FEATURES`; FEATURES is the backend
                    (bdb|kyotocabinet|tkrzw).
   --libdir / --includedir  the values BOTH sides were installed with;
                    omitted means autoconf's defaults (<prefix>/lib,

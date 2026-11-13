@@ -193,7 +193,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
         else:
             # Use this tooling revision with each product source revision. No backend override.
             packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
-                                       '--locked', '--release', '--features', 'shipped'],
+                                       '--locked', '--release'],
                                       packaging.Tools(build_env, root=source))
             if linux:
                 dylib = prefix / 'lib/libpinyin.so.15.0.0'
@@ -217,7 +217,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                     windows=windows, import_library=target / 'release/pinyin_capi.dll.lib',
                     default_features=package['features']['default'],
                     cold_build_seconds=time.monotonic() - started,
-                    build_options={'profile': 'release', 'features': [] if windows else ['shipped'],
+                    build_options={'profile': 'release', 'features': [],
                                    'RUSTFLAGS': build_env.get('RUSTFLAGS', ''),
                                    'OXPINYIN_DSYM': build_env.get('OXPINYIN_DSYM', ''),
                                    'toolchain': build_env.get('RUSTUP_TOOLCHAIN', ''),

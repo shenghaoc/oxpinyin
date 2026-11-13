@@ -67,20 +67,20 @@ class DarwinExportGateTests(unittest.TestCase):
             output = io.StringIO()
             with patch.object(abi.subprocess, 'run', side_effect=inspect), \
                  contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-                result = abi.check_exports(settings, ['--shipped'], HostFacts('Darwin'))
+                result = abi.check_exports(settings, HostFacts('Darwin'))
             return result, output.getvalue()
 
-    def test_shipped_gate_accepts_exact_installed_sets(self):
+    def test_installed_gate_accepts_exact_installed_sets(self):
         status, output = self.gate()
         self.assertEqual(status, 0, output)
         self.assertIn('PASS:', output)
 
-    def test_shipped_gate_rejects_dependency_data_exports(self):
+    def test_installed_gate_rejects_dependency_data_exports(self):
         status, output = self.gate('20 D _dependency_data\n', '0x20 _dependency_data\n')
         self.assertEqual(status, 1, output)
         self.assertIn('LEAKED non-ABI export: dependency_data', output)
 
-    def test_shipped_gate_rejects_exports_hidden_from_nm(self):
+    def test_installed_gate_rejects_exports_hidden_from_nm(self):
         status, output = self.gate(trie_extra='0x20 _dependency_function\n')
         self.assertEqual(status, 1, output)
         self.assertIn('nm and export trie differ', output)
