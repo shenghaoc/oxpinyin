@@ -67,6 +67,7 @@ The parser returns it only when the mapped initial is non-null and is not the ze
 1. `parse_one_key` clears the correction and ambiguity bits and forces `PINYIN_CORRECT_UE_VE | PINYIN_CORRECT_V_U` (`:409, :434-436`).
 2. It reads the first key as shengmu; the `"'"` entry means zero initial.
 3. It tries the first yunmu, then the second yunmu (`:452-499`).
+   An absent first yunmu goes straight to the fallback table without trying the second (`:478-479`).
 4. If neither matches, it searches the scheme's fallback table by exact two-byte input (`:501-524`).
 
 ### Tone
