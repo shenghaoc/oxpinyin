@@ -2,13 +2,8 @@
 //!
 //! `ChewingLargeTable2` holds the user index as one DBM keyed by packed
 //! `ChewingKey` runs; each value is a sorted `PinyinIndexItem2<L>` array.
-//! This module keeps that table in one owned arena: the load walks the
-//! DBM once, appends each key and value in the walk's (ascending) order,
-//! and records a sorted offset vector. `indexed()` and the save read the
-//! stored records; a session edit writes only the affected record into an
-//! overlay, which the save merges in key order.
-//!
-//! The overlay is still the pin's table. `Entry` applies the same
+//! The session keeps these records in the backend's ordered in-memory
+//! tree. `Entry` applies the pin's
 //! `ChewingTableEntry::add_index` / `remove_index` / `mask_out` edits, and
 //! the Kyoto Cabinet and tkrzw mask walk keeps its per-length entry
 //! (`Slot`) because those backends store the whole reused chunk back and
@@ -19,6 +14,8 @@
 //! markers and malformed rows: the pin's `load_db` copies the table and
 //! `save_db` copies it back.
 
+use oxpinyin_store::StoreError;
+
 use std::collections::BTreeSet;
 
 use oxpinyin_core::ChewingKey;
@@ -28,7 +25,7 @@ use oxpinyin_data::row_format::pinyin_index::{
 use smallvec::SmallVec;
 
 use crate::phrase::MAX_PHRASE_LENGTH;
-use crate::records::RecordArena;
+use crate::records::NativeTable;
 
 /// Whether the table keeps one entry per key length between operations,
 /// as the Kyoto Cabinet and tkrzw `ChewingLargeTable2` do: `search` loads
@@ -212,20 +209,20 @@ fn query_key(keys: &[ChewingKey]) -> QueryKey {
     query
 }
 
-/// The user pinyin index, owned in one arena.
-#[derive(Clone, Debug, Default)]
+/// The user pinyin index and its per-length entry state.
+#[derive(Debug, Default)]
 pub(crate) struct UserIndex {
     /// The pin's `(key, value)` rows.
-    records: RecordArena,
+    records: NativeTable,
     /// The pin's per-length entry state for the KC/tkrzw mask walk.
     slots: [Slot; MAX_PHRASE_LENGTH + 1],
 }
 
 impl UserIndex {
     #[cfg(test)]
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            records: RecordArena::new(),
+            records: NativeTable::default(),
             slots: [const { Slot::Empty }; MAX_PHRASE_LENGTH + 1],
         }
     }
@@ -236,38 +233,33 @@ impl UserIndex {
     pub(crate) fn from_entries(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
         let mut index = Self::new();
         for (key, value) in &entries {
-            index.push_record(key, value);
+            index.push_record(key, value).unwrap();
         }
         index
     }
 
     /// Sets one DBM record.
-    pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
-        self.records.push_record(key, value);
+    pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.records.insert(key, value)
     }
 
-    /// The value stored under `key`, arena or overlay.
-    pub(crate) fn record(&self, key: &[u8]) -> Option<&[u8]> {
+    /// The value stored under `key`, in the native tree.
+    pub(crate) fn record(&self, key: &[u8]) -> Option<Vec<u8>> {
         self.records.record(key)
+    }
+
+    pub(crate) fn save(&self, path: &std::path::Path) -> Result<(), StoreError> {
+        self.records.save(path)
     }
 
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
         self.records.contains_key(key)
     }
 
-    /// Every key in ascending order, arena and overlay merged.
+    /// Every key in ascending order, in native order.
     #[cfg(test)]
     pub(crate) fn keys(&self) -> Vec<Vec<u8>> {
         self.records.keys()
-    }
-
-    /// Visits every record in ascending key order, arena and overlay
-    /// merged, without materialising a row vector.
-    pub(crate) fn for_each_record<E>(
-        &self,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
-    ) -> Result<(), E> {
-        self.records.for_each_record(visit)
     }
 
     /// Whether the exact bytes `key` names a table row. Used by the
@@ -290,7 +282,7 @@ impl UserIndex {
             .collect();
         for key in index_keys(&keys) {
             if let Some(value) = self.record(&key)
-                && value_has_reading(value, keys.len(), token, packed)
+                && value_has_reading(&value, keys.len(), token, packed)
             {
                 return true;
             }
@@ -310,8 +302,12 @@ impl UserIndex {
             if !self.contains_key(&key) {
                 let mut bytes = Vec::new();
                 Entry::new(&mut bytes, len).add_index(keys, token);
-                self.records.insert(key.clone(), bytes);
-                self.create_prefixes(&key);
+                if self.records.insert(&key, &bytes).is_err() {
+                    return false;
+                }
+                if !self.create_prefixes(&key) {
+                    return false;
+                }
                 // A new key is built in a local entry; the length's shared
                 // entry keeps what it held (`add_index_internal`,
                 // `chewing_large_table2_tkrzwdb.cpp:274-299` and
@@ -319,11 +315,13 @@ impl UserIndex {
                 inserted = true;
                 continue;
             }
-            let mut bytes = self.record(&key).unwrap_or_default().to_vec();
+            let mut bytes = self.record(&key).unwrap_or_default();
             if Entry::new(&mut bytes, len).add_index(keys, token) {
                 inserted = true;
             }
-            self.records.insert(key.clone(), bytes);
+            if self.records.insert(&key, &bytes).is_err() {
+                return false;
+            }
             *self.slot_mut(len) = Slot::Record(key);
         }
         inserted
@@ -331,7 +329,7 @@ impl UserIndex {
 
     /// The pin's `add_index_internal` creates an empty marker for every
     /// proper prefix when the full record is new.
-    fn create_prefixes(&mut self, key: &[u8]) {
+    fn create_prefixes(&mut self, key: &[u8]) -> bool {
         // `add_index_internal` walks shorter keys downward and stops at the
         // first prefix the table already holds.
         for words in (1..key.len() / 2).rev() {
@@ -339,8 +337,34 @@ impl UserIndex {
             if self.contains_key(&prefix) {
                 break;
             }
-            self.records.insert(prefix, Vec::new());
+            if self.records.insert(&prefix, &[]).is_err() {
+                return false;
+            }
         }
+        true
+    }
+
+    /// Check the ordered removal sequence using only the affected rows.
+    pub(crate) fn can_remove(
+        &self,
+        readings: impl IntoIterator<Item = Vec<ChewingKey>>,
+        token: u32,
+    ) -> bool {
+        let mut rows = std::collections::BTreeMap::new();
+        for keys in readings {
+            let len = keys.len();
+            if len == 0 || len > MAX_PHRASE_LENGTH {
+                return false;
+            }
+            for key in index_keys(&keys) {
+                let bytes = rows.entry(key.clone()).or_insert_with(|| self.record(&key));
+                let Some(bytes) = bytes else { return false };
+                if !Entry::new(bytes, len).remove_index(&keys, token) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// `ChewingLargeTable2::remove_index`. The pin stops after the first
@@ -351,11 +375,13 @@ impl UserIndex {
             return false;
         }
         for key in index_keys(keys) {
-            let Some(mut bytes) = self.record(&key).map(<[u8]>::to_vec) else {
+            let Some(mut bytes) = self.record(&key) else {
                 return false;
             };
             let removed = Entry::new(&mut bytes, len).remove_index(keys, token);
-            self.records.insert(key.clone(), bytes);
+            if self.records.insert(&key, &bytes).is_err() {
+                return false;
+            }
             *self.slot_mut(len) = Slot::Record(key);
             if !removed {
                 return false;
@@ -416,8 +442,7 @@ impl UserIndex {
     /// and Berkeley DB twins at 074a2219). Berkeley DB gives each record a
     /// fresh chunk; Kyoto Cabinet and tkrzw reuse one entry per length, so a
     /// shorter record written back can keep the previous one's tail (#785).
-    /// The records are rewritten into a new arena in the same pass and the
-    /// overlay is emptied, so no record is held twice.
+    /// The visitor writes each replacement into the native container.
     pub(crate) fn mask(&mut self, mask: u32, value: u32) {
         #[cfg(not(feature = "bdb"))]
         let mut chunks: [Vec<u8>; MAX_PHRASE_LENGTH + 1] = std::array::from_fn(|len| {
@@ -429,30 +454,32 @@ impl UserIndex {
         });
         #[cfg(feature = "bdb")]
         let mut scratch = Vec::new();
-        self.records.rebuild(|key, record, kept| {
-            let len = key.len() / 2;
-            if len == 0 || len > MAX_PHRASE_LENGTH {
-                kept.extend_from_slice(record);
-                return;
-            }
-            #[cfg(not(feature = "bdb"))]
-            {
-                let chunk = &mut chunks[len];
-                if chunk.len() < record.len() {
-                    chunk.resize(record.len(), 0);
+        self.records
+            .rewrite(&mut |key, record, kept| {
+                let len = key.len() / 2;
+                if len == 0 || len > MAX_PHRASE_LENGTH {
+                    kept.extend_from_slice(record);
+                    return;
                 }
-                chunk[..record.len()].copy_from_slice(record);
-                Entry::new(chunk, len).mask_out(mask, value);
-                kept.extend_from_slice(chunk);
-            }
-            #[cfg(feature = "bdb")]
-            {
-                scratch.clear();
-                scratch.extend_from_slice(record);
-                Entry::new(&mut scratch, len).mask_out(mask, value);
-                kept.extend_from_slice(&scratch);
-            }
-        });
+                #[cfg(not(feature = "bdb"))]
+                {
+                    let chunk = &mut chunks[len];
+                    if chunk.len() < record.len() {
+                        chunk.resize(record.len(), 0);
+                    }
+                    chunk[..record.len()].copy_from_slice(record);
+                    Entry::new(chunk, len).mask_out(mask, value);
+                    kept.extend_from_slice(chunk);
+                }
+                #[cfg(feature = "bdb")]
+                {
+                    scratch.clear();
+                    scratch.extend_from_slice(record);
+                    Entry::new(&mut scratch, len).mask_out(mask, value);
+                    kept.extend_from_slice(&scratch);
+                }
+            })
+            .unwrap_or_else(|_| std::process::abort());
         #[cfg(not(feature = "bdb"))]
         for (len, chunk) in chunks.into_iter().enumerate().skip(1) {
             *self.slot_mut(len) = if chunk.is_empty() {
@@ -472,7 +499,7 @@ impl UserIndex {
         match &self.slots[len] {
             Slot::Empty => Vec::new(),
             Slot::Bytes(bytes) => bytes.clone(),
-            Slot::Record(key) => self.record(key).unwrap_or_default().to_vec(),
+            Slot::Record(key) => self.record(key).unwrap_or_default(),
         }
     }
 
@@ -597,7 +624,7 @@ impl UserIndex {
             match infallible {}
         }
         for (key, value) in missing {
-            self.records.insert(key, value);
+            self.records.insert(&key, &value).unwrap();
         }
     }
 }
@@ -694,7 +721,7 @@ mod tests {
     fn index(rows: &[(Vec<u8>, Vec<u8>)]) -> UserIndex {
         let mut index = UserIndex::new();
         for (key, value) in rows {
-            index.push_record(key, value);
+            index.push_record(key, value).unwrap();
         }
         index
     }
@@ -726,22 +753,27 @@ mod tests {
         let complete = encode_complete_key(&keys);
         let incomplete = encode_incomplete_key(&keys);
         assert_eq!(
-            index.record(&complete),
+            index.record(&complete).as_deref(),
             Some(record(&[(7, &keys)]).as_slice())
         );
         assert_eq!(
-            index.record(&incomplete),
+            index.record(&incomplete).as_deref(),
             Some(record(&[(7, &keys)]).as_slice())
         );
-        assert_eq!(index.record(&complete[..2]), Some(&[][..]));
+        assert_eq!(index.record(&complete[..2]).as_deref(), Some(&[][..]));
         assert!(!index.add(&keys, 7));
         assert!(index.remove(&keys, 7));
-        assert!(index.record(&complete).is_some_and(<[u8]>::is_empty));
+        assert!(
+            index
+                .record(&complete)
+                .as_deref()
+                .is_some_and(|bytes| bytes.is_empty())
+        );
         assert!(!index.remove(&keys, 7));
     }
 
     #[test]
-    fn has_prefix_probes_the_arena_and_the_overlay_markers() {
+    fn has_prefix_probes_existing_and_new_markers() {
         let full = pair(1, 2);
         let mut index = index(&[(encode_complete_key(&full), record(&[(7, &full)]))]);
         assert!(!index.has_prefix(&full[..1]));
@@ -754,7 +786,7 @@ mod tests {
         assert!(
             index
                 .record(&encode_complete_key(&pair(3, 4)[..1]))
-                .is_some_and(<[u8]>::is_empty)
+                .is_some_and(|bytes| bytes.is_empty())
         );
         assert!(index.has_prefix(&pair(3, 4)[..1]));
         assert!(!index.has_prefix(&pair(5, 6)[..1]));
@@ -899,11 +931,11 @@ mod tests {
         ]);
         index.mask(0xffff_ffff, 5);
         assert_eq!(
-            index.record(&encode_complete_key(&a)),
+            index.record(&encode_complete_key(&a)).as_deref(),
             Some(record(&[(1, &a)]).as_slice())
         );
         assert_eq!(
-            index.record(&encode_complete_key(&b)),
+            index.record(&encode_complete_key(&b)).as_deref(),
             Some(record(&[(2, &b)]).as_slice())
         );
     }
@@ -958,22 +990,22 @@ mod tests {
         for _ in 0..2 {
             index.mask(0xffff_ffff, 99);
             assert_eq!(
-                index.record(&encode_complete_key(&short)),
+                index.record(&encode_complete_key(&short)).as_deref(),
                 Some(record(&[(1, &short)]).as_slice())
             );
             assert_eq!(
-                index.record(&encode_complete_key(&long)),
+                index.record(&encode_complete_key(&long)).as_deref(),
                 Some(long_items.as_slice())
             );
         }
         // The same walk also removes what the mask names, record by record.
         index.mask(0xffff_ffff, 3);
         assert_eq!(
-            index.record(&encode_complete_key(&long)),
+            index.record(&encode_complete_key(&long)).as_deref(),
             Some(record(&[(2, &long)]).as_slice())
         );
         assert_eq!(
-            index.record(&encode_complete_key(&short)),
+            index.record(&encode_complete_key(&short)).as_deref(),
             Some(record(&[(1, &short)]).as_slice())
         );
     }
@@ -1000,12 +1032,12 @@ mod tests {
         searched.mask(0xffff_ffff, 99);
         let item_len = record(&[(2, &long)]).len();
         assert_eq!(
-            searched.record(&encode_complete_key(&short)),
+            searched.record(&encode_complete_key(&short)).as_deref(),
             Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
             "the searched record's tail follows the first record"
         );
         assert_eq!(
-            searched.record(&encode_complete_key(&long)),
+            searched.record(&encode_complete_key(&long)).as_deref(),
             Some(long_record(&long).as_slice()),
             "the next record overwrites the whole entry"
         );
@@ -1014,7 +1046,7 @@ mod tests {
         let mut fresh = index(&rows);
         fresh.mask(0xffff_ffff, 99);
         assert_eq!(
-            fresh.record(&encode_complete_key(&short)),
+            fresh.record(&encode_complete_key(&short)).as_deref(),
             Some(record(&[(1, &short)]).as_slice())
         );
     }
@@ -1035,19 +1067,19 @@ mod tests {
         ]);
         index.mask(0xffff_ffff, 99);
         assert_eq!(
-            index.record(&encode_complete_key(&short)),
+            index.record(&encode_complete_key(&short)).as_deref(),
             Some(record(&[(1, &short)]).as_slice()),
             "the first pass starts from an empty entry"
         );
         index.mask(0xffff_ffff, 99);
         let item_len = record(&[(2, &long)]).len();
         assert_eq!(
-            index.record(&encode_complete_key(&short)),
+            index.record(&encode_complete_key(&short)).as_deref(),
             Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
             "the second pass starts from the long record's chunk"
         );
         assert_eq!(
-            index.record(&encode_complete_key(&long)),
+            index.record(&encode_complete_key(&long)).as_deref(),
             Some(long_record(&long).as_slice())
         );
     }
@@ -1072,11 +1104,14 @@ mod tests {
         index.note_suggestion(prefix);
         index.mask(0xffff_ffff, 99);
         assert_eq!(
-            index.record(&encode_complete_key(&short)),
+            index.record(&encode_complete_key(&short)).as_deref(),
             Some(record(&[(1, &short)]).as_slice()),
             "the visited length's entry was emptied"
         );
-        assert_eq!(index.record(&encode_complete_key(prefix)), Some(&[][..]));
+        assert_eq!(
+            index.record(&encode_complete_key(prefix)).as_deref(),
+            Some(&[][..])
+        );
     }
 
     #[cfg(not(feature = "bdb"))]
@@ -1098,7 +1133,7 @@ mod tests {
         index.mask(0xffff_ffff, 99);
         let item_len = record(&[(2, &long)]).len();
         assert_eq!(
-            index.record(&encode_complete_key(&short)),
+            index.record(&encode_complete_key(&short)).as_deref(),
             Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
         );
     }

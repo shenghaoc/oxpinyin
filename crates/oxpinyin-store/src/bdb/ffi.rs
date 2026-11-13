@@ -782,6 +782,17 @@ impl Cursor<'_> {
         self.read(seek, true)
     }
 
+    /// Replace the current cursor value. The key is ignored for DB_CURRENT.
+    pub(crate) fn put_current(&mut self, value: &[u8]) -> Result<(), StoreError> {
+        let put = method!(self.handle, put, "DBC->put")?;
+        let mut key = dbt_from(&[])?;
+        let mut value = dbt_from(value)?;
+        // SAFETY: the cursor owns a live position, and both DBTs and the
+        // replacement bytes stay valid until libdb finishes copying them.
+        let code = unsafe { put(self.handle, &raw mut key, &raw mut value, sys::DB_CURRENT) };
+        check(code, "DBC->put(DB_CURRENT)")
+    }
+
     /// [`Self::get`] for the key alone. The value `DBT` asks for zero
     /// bytes at offset zero (`DB_DBT_PARTIAL`), so libdb copies none of it
     /// (`src/db/db_ret.c:106-114`) and reads no overflow page for it

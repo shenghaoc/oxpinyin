@@ -599,6 +599,14 @@ impl Db {
         Ok(())
     }
 
+    pub(crate) fn rewrite(&self, rewrite: &mut crate::RecordRewrite<'_>) -> Result<(), StoreError> {
+        if sys::rewrite(&self.db, &mut crate::Rewriter(rewrite)) {
+            Ok(())
+        } else {
+            Err(self.error("iterate writable"))
+        }
+    }
+
     /// Insert or overwrite.
     pub(crate) fn set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         if self.read_only {

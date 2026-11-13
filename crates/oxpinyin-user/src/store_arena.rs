@@ -125,7 +125,7 @@ impl UserStore {
             .any(|library| !library.is_empty());
         drop(phrases);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
-        self.mark_committed_phrase_write(arena_live || grams_live);
+        self.mark_committed_write(arena_live || grams_live);
     }
 
     /// Whether the session holds an item beyond the shipped chunks: an arena
@@ -219,7 +219,7 @@ impl UserStore {
             phrases.index.add(&keys, token);
         }
         drop(phrases);
-        self.mark_committed_phrase_write(true);
+        self.mark_committed_write(true);
         Ok(())
     }
 
@@ -368,7 +368,7 @@ impl UserStore {
                 .add_reading(token & PHRASE_MASK, &packed, delta)
                 .map_err(UserStoreError::Persistence)?;
             drop(phrases);
-            self.mark_committed_import_write(false);
+            self.mark_committed_write(true);
             return Ok(token);
         }
         let end = phrases
@@ -414,7 +414,7 @@ impl UserStore {
         if (1..=4).contains(&library) {
             self.inner.has_system_items.set(true);
         }
-        self.mark_committed_import_write(true);
+        self.mark_committed_write(true);
         Ok(token)
     }
 
@@ -501,7 +501,7 @@ impl UserStore {
             if overwrote {
                 self.inner.has_removed_system_items.set(true);
             }
-            self.mark_committed_import_write(false);
+            self.mark_committed_write(true);
             return Ok(token);
         }
         let end = items.range_end(library, original);
@@ -535,7 +535,7 @@ impl UserStore {
         phrases.index.add(&chewing, token);
         drop(phrases);
         self.inner.has_system_items.set(true);
-        self.mark_committed_import_write(true);
+        self.mark_committed_write(true);
         Ok(token)
     }
 
@@ -619,18 +619,15 @@ impl UserStore {
         if !phrase_tokens.contains(&token) {
             return Ok(false);
         }
-        // Simulate the pin's ordered removals, including repeated projections
-        // and readings, before changing any live table.
-        let mut index = phrases.index.clone();
-        for (packed, _) in &item.prons {
-            let keys: Vec<_> = packed
+        let readings = item.prons.iter().map(|(packed, _)| {
+            packed
                 .iter()
                 .copied()
                 .map(oxpinyin_core::ChewingKey::from_packed)
-                .collect();
-            if !index.remove(&keys, token) {
-                return Err(UserStoreError::UserReadingRemoval);
-            }
+                .collect()
+        });
+        if !phrases.index.can_remove(readings, token) {
+            return Err(UserStoreError::UserReadingRemoval);
         }
         if let Some(fault) = bigram_fault {
             return Err(fault);
@@ -662,7 +659,7 @@ impl UserStore {
             .libraries
             .values()
             .all(UserLibrary::is_empty);
-        self.mark_committed_phrase_write(has || grams_left);
+        self.mark_committed_write(has || grams_left);
         Ok(true)
     }
 

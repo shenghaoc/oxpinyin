@@ -156,7 +156,7 @@ The differences are deliberate:
 | Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | journal MODIFY writes into a separate `PhraseContent` private mapping; `SystemItems` retains completed replay views and caches `ChunkItem`s on first use; later imports/training use those decoded items and saves rebuild the pin's chunk format | different / argued (journal replay, below) |
 | Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438`): 16 `SubPhraseIndex*` and a running `m_total_freq` | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs`): 16 lock-guarded slots; system total read from the chunk header, user total a separate row | different / unverified |
 | Pinyin key → tokens | `ChewingLargeTable2` per backend (`storage/chewing_large_table2_bdb.h:34` and peers): DBM keyed by packed `ChewingKey[len]`, values `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:181`), per-length `ChewingTableEntry` objects with a reused buffer (`storage/chewing_large_table2.h:74`); results compressed to token ranges by `convert` (`:90`) | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs`) over the same file and keys; each lookup decodes rows into a fresh `Vec`; range compression ported as `PhraseIndexRanges::convert` (`oxpinyin-core/src/lib.rs`) | different / unverified; one heap allocation per record per lookup where the pin reuses a buffer |
-| User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`) borrows the session's canonical `UserIndex`; packed records and independent prefix markers remain in their arena/overlay, written back at save | different / argued (lookup ownership, below) |
+| User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`) borrows the session's canonical `UserIndex`; packed records and independent prefix markers live in the backend’s ordered in-memory tree, written back at save | different / argued (lookup ownership, below) |
 | Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup and lookup ownership, below) |
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
@@ -260,16 +260,13 @@ and order within each library. Its stable library sort implements
 both tables (`storage/facade_phrase_table3.h:120-126`) and appends enabled
 tokens (`storage/phrase_large_table3.cpp:29-51`).
 The BDB search makes one keyed get (`storage/phrase_large_table3_bdb.cpp:196-205`).
-The Rust user query caches one text and its matching tokens. A different
-query or a phrase-table generation change triggers one keyed get. It scans
-no other phrases or pronunciations. The cached space is O(query length +
-matches). The pin also retains its last entry's buffer. New tokens, deletes,
-masks and library replacement move the shared generation. Reading merges
-keep it: the pin edits the item without calling `add_index`
-(`pinyin.cpp:563-582`), while a new token calls it (`:596-599`).
-`UserStore` advances the generation while it holds the database guard.
-Another store handle therefore invalidates the row after a token edit.
-Library visibility filters the cached raw tokens on every query.
+Each Rust user query makes one keyed get. New tokens, deletes and masks
+change the native records. A reading merge edits the item without calling
+`add_index` (`pinyin.cpp:563-582`), while a new token calls it (`:596-599`).
+The two user indexes use the pin's BabyDBM, ProtoTreeDB or in-memory DB_BTREE.
+Mask visits and rewrites records in native walk order using the library's
+visitor or cursor. It retains only the current replacement and the
+backend-specific entry scratch state, including the carried tail (#785).
 
 ## 2. Parsing
 

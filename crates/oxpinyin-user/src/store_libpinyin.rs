@@ -389,7 +389,6 @@ impl UserStore {
             offsets: RefCell::new(library_offsets),
             dirty: Cell::new(false),
             write_generation: Cell::new(0),
-            phrase_table_generation: Cell::new(0),
             has_user_data: Cell::new(has_user_data),
             bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
             bigram_db,
@@ -637,7 +636,7 @@ pub fn export_state(
 #[cfg(test)]
 pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreError> {
     let mut state = UserState::default();
-    // A session save writes the index, the phrase-table arena and the user
+    // A session save writes the index, the phrase table and the user
     // libraries directly; the value model carries only system overrides.
     let phrases = store.session_target().phrases();
     for (&nibble, library) in &phrases.libraries {
@@ -737,7 +736,8 @@ mod tests {
             let words: Vec<u32> = "他".chars().map(u32::from).collect();
             phrases
                 .phrase_table
-                .push_record(&crate::phrase_table::key_ucs4(&words), &[1, 0, 0, 7, 9]);
+                .push_record(&crate::phrase_table::key_ucs4(&words), &[1, 0, 0, 7, 9])
+                .unwrap();
         }
         let snapshot = |store: &UserStore| format!("{:?}", store.session_target().phrases());
         let before = snapshot(&store);
@@ -3452,7 +3452,7 @@ mod tests {
         // keeps its entry.
         store.unload_user_library(crate::USER_DICTIONARY);
         assert!(readings(&store).is_empty());
-        // The unloaded library's chunk is skipped; the index arena is not,
+        // The unloaded library's chunk is skipped; the index table is not,
         // so the saved profile carries the reading with no item behind it.
         store.mark_modified();
         store

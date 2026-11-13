@@ -169,5 +169,25 @@ NativeStatus iter_get(DbmIterator& iter, std::string& key, std::string& value) {
   return wrap(iter.Get(&key, &value));
 }
 
+NativeStatus rewrite(const ::tkrzw::DBM& db, Rewriter& rewriter) {
+  class Visitor final : public ::tkrzw::DBM::RecordProcessor {
+   public:
+    explicit Visitor(Rewriter& rewriter) : rewriter_(rewriter) {}
+
+    std::string_view ProcessFull(std::string_view key, std::string_view value) override {
+      replacement_ = rewriter_.replacement(
+          {reinterpret_cast<const std::uint8_t*>(key.data()), key.size()},
+          {reinterpret_cast<const std::uint8_t*>(value.data()), value.size()});
+      return {reinterpret_cast<const char*>(replacement_.data()), replacement_.size()};
+    }
+
+   private:
+    Rewriter& rewriter_;
+    rust::Vec<std::uint8_t> replacement_;
+  };
+  Visitor visitor(rewriter);
+  return wrap(mutable_dbm(db).ProcessEach(&visitor, true));
+}
+
 }  // namespace tkrzw
 }  // namespace oxpinyin

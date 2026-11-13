@@ -102,6 +102,11 @@ pub(super) mod sys {
         fn full(self: &mut Sink<'_>, key: &[u8], value: &[u8]);
     }
 
+    extern "Rust" {
+        type Rewriter<'a, 'f>;
+        fn replacement(self: &mut Rewriter<'_, '_>, key: &[u8], value: &[u8]) -> Vec<u8>;
+    }
+
     unsafe extern "C++" {
         include!("oxpinyin-store/src/kyotocabinet/adapter.h");
 
@@ -146,6 +151,7 @@ pub(super) mod sys {
         unsafe fn remove(db: &BasicDB, key: &[u8]) -> bool;
         fn iterate(db: &BasicDB, sink: &mut Sink<'_>) -> bool;
         fn count(db: &BasicDB) -> i64;
+        fn rewrite(db: &BasicDB, rewriter: &mut Rewriter<'_, '_>) -> bool;
         fn synchronize(db: &BasicDB, hard: bool) -> bool;
         fn begin_transaction(db: &BasicDB, hard: bool) -> bool;
         fn end_transaction(db: &BasicDB, commit: bool) -> bool;
@@ -161,3 +167,5 @@ pub(super) mod sys {
         fn cursor_accept(cursor: Pin<&mut DbCursor<'_>>, sink: &mut Sink<'_>, step: bool) -> bool;
     }
 }
+
+use crate::Rewriter;

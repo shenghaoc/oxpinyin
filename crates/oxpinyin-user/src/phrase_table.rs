@@ -49,6 +49,11 @@ impl PhraseTableEntry {
         Ok(Self { bytes })
     }
 
+    #[cfg(feature = "bdb")]
+    pub(crate) fn from_validated_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
     /// Stored bytes, including duplicate tokens.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
@@ -108,13 +113,11 @@ impl PhraseTableEntry {
     }
 
     #[cfg(not(feature = "bdb"))]
-    pub(crate) fn set_content(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
-        validate(bytes)?;
+    pub(crate) fn set_validated_content(&mut self, bytes: &[u8]) {
         if bytes.len() > self.bytes.len() {
             self.bytes.resize(bytes.len(), 0);
         }
         self.bytes[..bytes.len()].copy_from_slice(bytes);
-        Ok(())
     }
 }
 

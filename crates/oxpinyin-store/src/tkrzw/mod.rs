@@ -964,6 +964,14 @@ impl WriteStore for TkrzwStore {
         ))
     }
 
+    fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
+    fn rewrite_raw(&self, rewrite: &mut crate::RecordRewrite<'_>) -> Result<(), StoreError> {
+        check(&ffi::rewrite(&self.db.dbm, &mut crate::Rewriter(rewrite)))
+    }
+
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(open_in_memory())
     }
