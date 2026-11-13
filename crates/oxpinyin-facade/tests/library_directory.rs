@@ -120,7 +120,7 @@ fn conforming_profile(system: &Path, user: &Path) {
     persistence::save_state_reporting(
         user,
         &persistence::UserState::default(),
-        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
+        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
         &SystemVersions::from_conf(&conf),
         1,
     )

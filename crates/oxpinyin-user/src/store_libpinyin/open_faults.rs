@@ -50,7 +50,7 @@ fn item(code: u32, unigram: u32) -> ChunkItem {
 
 /// Library 1 with one item at slot 1, unigram 100.
 fn originals() -> SystemOriginals {
-    BTreeMap::from([(
+    crate::LibraryTable::from([(
         1_u8,
         SystemLibrary {
             mapped: None,
@@ -88,8 +88,8 @@ fn plant(profile: &mut crate::persistence::LoadedProfile) {
         .loaded
         .state
         .libraries
-        .entry(7)
-        .or_default()
+        .get_or_default(7)
+        .unwrap()
         .insert(2, item(0x597d, 7));
 }
 

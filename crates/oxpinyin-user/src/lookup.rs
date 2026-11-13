@@ -219,8 +219,8 @@ mod tests {
         .unwrap();
         phrases
             .libraries
-            .entry(USER_DICTIONARY)
-            .or_default()
+            .get_or_default(USER_DICTIONARY)
+            .unwrap()
             .replace(token & crate::PHRASE_MASK, &bytes)
             .unwrap();
         let keys = [oxpinyin_core::ChewingKey::from_pinyin("ni").unwrap()];

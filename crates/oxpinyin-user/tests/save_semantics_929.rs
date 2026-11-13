@@ -30,7 +30,7 @@ fn originals() -> SystemOriginals {
                 },
             )
         })
-        .collect::<BTreeMap<_, _>>()
+        .collect::<oxpinyin_user::LibraryTable<_>>()
         .into()
 }
 

@@ -41,6 +41,7 @@ pub mod phrase_table;
 pub mod seed;
 
 mod library_loop;
+mod library_table;
 mod live_system;
 mod lookup;
 mod model;
@@ -55,6 +56,7 @@ mod user_library;
 mod user_phrase_table;
 
 pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
+pub use library_table::{LibrarySet, LibraryTable};
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;
 pub use oxpinyin_data::c_stderr;

@@ -395,7 +395,7 @@ mod tests {
         let mut shipped = PhraseLibraries::empty();
         shipped.load(1, &path).unwrap();
         let original = PhraseLibrary::open(&path).unwrap();
-        let originals = SystemOriginals::from(BTreeMap::from([(
+        let originals = SystemOriginals::from(crate::LibraryTable::from([(
             1,
             SystemLibrary {
                 total: original.total_freq(),
@@ -461,7 +461,7 @@ mod tests {
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load(6, &path).unwrap());
         let original = PhraseLibrary::open(&path).unwrap();
-        let originals = SystemOriginals::from(BTreeMap::from([(
+        let originals = SystemOriginals::from(crate::LibraryTable::from([(
             6,
             SystemLibrary {
                 total: original.total_freq(),

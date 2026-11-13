@@ -1,6 +1,6 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use oxpinyin_data::chunk_write::{sub_phrase_index_sections, validate_phrase_item};
 use oxpinyin_data::phrase_library::PhraseItemView;
@@ -107,11 +107,11 @@ impl PreparedReplacement {
 /// independently, as the pin's two structures do.
 #[derive(Debug, Default)]
 pub(crate) struct SessionPhrases {
-    pub(crate) libraries: BTreeMap<u8, UserLibrary>,
+    pub(crate) libraries: crate::LibraryTable<UserLibrary>,
     pub(crate) index: UserIndex,
     /// Explicitly unloaded system and user sub-indices; a successful load
     /// clears the entry. Originals metadata alone does not imply visibility.
-    pub(crate) unloaded: BTreeSet<u8>,
+    pub(crate) unloaded: crate::LibrarySet,
     pub(crate) phrase_table: UserPhraseTable,
 }
 
@@ -121,10 +121,11 @@ impl SessionPhrases {
     /// reads `m_total_freq` at load, items or none) as its retained offset;
     /// the new arena starts from it, since its own total is authoritative
     /// from then on and every later add and overflow check begins there.
-    pub(crate) fn arena(&mut self, nibble: u8, retained_total: u32) -> &mut UserLibrary {
+    ///
+    /// `None` for an index that names no library.
+    pub(crate) fn arena(&mut self, nibble: u8, retained_total: u32) -> Option<&mut UserLibrary> {
         self.libraries
-            .entry(nibble)
-            .or_insert_with(|| UserLibrary::empty_with_total(retained_total))
+            .get_or_insert_with(nibble, || UserLibrary::empty_with_total(retained_total))
     }
 
     pub(crate) fn item(&self, token: u32) -> Option<PhraseItemView<'_>> {
