@@ -8,7 +8,6 @@
 * text=auto eol=lf
 
 fixtures/** -text
-tests/parity/** -text
 fuzz/corpus/** -text
 
 # proptest writes these itself and recommends committing them: the seeds are
