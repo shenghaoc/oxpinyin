@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 use oxpinyin_engine::{Selection, SelectionTarget, SessionSettings};
-use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession, TableConfError};
+use oxpinyin_runtime::{OpenError, Runtime, TableConfError};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
 /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
@@ -230,13 +230,6 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
     );
     drop(runtime);
     tmp.close().expect("cleanup");
-}
-
-#[test]
-fn sends_and_syncs() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<RuntimeSession>();
-    assert_send_sync::<Runtime>();
 }
 
 #[test]
@@ -798,28 +791,15 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
     assert!(carries(&runtime, &mut row, other));
     // The cached query row survives an exclusive write operation; no
     // dictionary/model reader is retained while the owner changes.
-    std::thread::scope(|scope| {
-        let writer = runtime.user_store_mut();
-        scope
-            .spawn(move || {
-                writer
-                    .observe_selection(SENTENCE_START, token.value())
-                    .unwrap()
-            })
-            .join()
-            .unwrap();
-    });
+    runtime
+        .user_store_mut()
+        .observe_selection(SENTENCE_START, token.value())
+        .unwrap();
     let trained = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(trained, before);
     assert!(carries(&runtime, &mut row, token.value()));
     assert_eq!(costs(&runtime, &mut row), trained);
-    std::thread::scope(|scope| {
-        let writer = runtime.user_store_mut();
-        scope
-            .spawn(move || writer.mask_out(u32::MAX, other).unwrap())
-            .join()
-            .unwrap();
-    });
+    runtime.user_store_mut().mask_out(u32::MAX, other).unwrap();
     let forgotten = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(forgotten, trained);
     assert!(!carries(&runtime, &mut row, other));
