@@ -48,8 +48,8 @@ concurrency:
 #   test — the workspace tests on Linux; the macOS and Windows runs are in
 #          verify-nightly.yml
 #   deny — the supply-chain check: advisories, licenses, sources, duplicates
-#   harness — the Python harness tests of tools/, when tools/ or a file its
-#             tests read changed
+#   harness — the ruff F check and the Python harness tests of tools/, when
+#             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
 # The fuzz targets build and run in verify-nightly.yml only.
 
@@ -332,6 +332,9 @@ jobs:
         run: |
           llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
+      # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
+      # the lint job does not run for Python-only paths such as tools/audit.
+      - run: just ruff
       # just and zsh are installed above, so the size build's revision-recipe test and
       # the environment-file source test's zsh case must run here rather than skip.
       - run: just test-tools

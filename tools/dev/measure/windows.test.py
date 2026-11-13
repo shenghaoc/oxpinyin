@@ -258,7 +258,7 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
             from tools.dev import contract_data
             for outcome in (None, ValueError('sample failed')):
                 with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
-                    root=Path(directory);destinations=[];digests=[];staged={}
+                    destinations=[];digests=[];staged={}
                     def build(sha, destination, env, **options):
                         destinations.append(destination)
                         destination.mkdir(parents=True)

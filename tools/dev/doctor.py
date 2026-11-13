@@ -256,7 +256,7 @@ def _run(command, environ, cwd=None):
     """Capture a command with the supplied environment; return None on spawn errors."""
     try:
         return subprocess.run(command, capture_output=True, text=True, env=environ, cwd=cwd, check=False)
-    except OSError as exc:
+    except OSError:
         return None
 
 

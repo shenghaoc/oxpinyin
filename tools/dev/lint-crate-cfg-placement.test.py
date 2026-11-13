@@ -48,7 +48,7 @@ class LintTests(unittest.TestCase):
     def test_docs_above_the_gate_pass(self):
         path = self.fixture('docs_then_gate', '//! Crate docs.\n'
                             '#![cfg(target_os = "linux")]\n\n#[test]\nfn t() {}\n')
-        self.assertEqual(self.lint(path), (0, f'crate-cfg-placement: 1 file(s) checked, '
+        self.assertEqual(self.lint(path), (0, 'crate-cfg-placement: 1 file(s) checked, '
                                             'no violations\n', ''))
 
     def test_docs_below_the_gate_report_both_lines(self):

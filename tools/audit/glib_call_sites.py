@@ -426,7 +426,7 @@ class Parser:
                 cindex.Config.set_library_file(tools.libclang)
             self.lib = cindex.conf.lib
         except cindex.LibclangError as error:
-            raise ValueError(f"cannot load {LIBCLANG}: {error}") from error
+            raise ValueError(f"cannot load {tools.libclang}: {error}") from error
         self.ci = cindex
         self.tools = tools
         kinds = cindex.CursorKind

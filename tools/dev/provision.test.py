@@ -776,7 +776,6 @@ elif name in ('curl','apt-get','sudo'):
 
         def test_cached_full_setup_preserves_result_order_files_and_selection(self):
             cache = provision.images.provision_cache(self.env, self.root)
-            pin = self.root / 'tools/oracle/oracle-pin.txt'
             for cell in ('bdb', 'kc'):
                 prefix = cache / 'oracle' / cell
                 data = prefix / 'lib/libpinyin/data'

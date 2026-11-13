@@ -63,6 +63,7 @@ Subject to [verification scope and precedence](#verification-scope-and-precedenc
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
 - Lizard 1.24.0 (`lizard crates/ -l rust -C 40 -w`) when Rust functions changed. CCN 40 is the limit. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
 - `just test-tools` when `tools/` changed.
+- `just ruff` when Python under `tools/` changed.
 
 WIP checkpoint pushes: `cargo fmt --all --check` only.
 
