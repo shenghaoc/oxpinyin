@@ -674,24 +674,6 @@ fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
 
 // ── UserStore ───────────────────────────────────────────────────
 
-/// Decode-time memo of the user bigram's raw grams, valid for one write
-/// generation: a gram is loaded from the container the first time its
-/// predecessor is scored and served from memory afterwards, and the whole
-/// cache is dropped the moment `write_generation` moves. Grams are
-/// memoised on demand, so a write costs no rebuild scan and the cache
-/// never grows past the predecessors decode asked about between two
-/// writes.
-#[derive(Debug)]
-pub struct CountCache {
-    /// The `write_generation` this cache was built for; a mismatch
-    /// retires it wholesale.
-    pub(crate) generation: u64,
-    /// The raw gram under each predecessor scored since the last write
-    /// that has one. Counts and totals are read from the bytes as the pin
-    /// reads them (`get_freq`, `get_total_freq`).
-    pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
-}
-
 /// Per library, how far the total the pin's sub-index holds lies from the
 /// one its items make, a wrapping `guint32` keyed by nibble: the
 /// difference a stored header or a `.dbin` replay left, until the next
@@ -709,21 +691,10 @@ pub struct StoreInner {
     /// holds the item and the phrase table the token. The library's live
     /// buffer is the record; this only gates the per-token check.
     pub(crate) has_removed_system_items: Cell<bool>,
-    /// Decode-time count memo.
-    pub(crate) count_cache: RefCell<Option<CountCache>>,
     /// The user libraries' stored-total differences ([`Offsets`]).
     pub(crate) offsets: RefCell<Offsets>,
     pub(crate) dirty: Cell<bool>,
-    /// Bumped after every committed user-data write, which
-    /// retires any `count_cache` built against an older generation.
-    ///
-    /// Future raw-write paths, including legacy migration import, must call
-    /// `UserStore::mark_committed_write` after commit rather than touching
-    /// this counter directly. Bumping the generation alone refreshes the
-    /// cache but leaves `has_user_data` as it was, and that flag is
-    /// consulted *first* — an import that only bumped the generation would
-    /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
-    /// silently and permanently, however much data it wrote.
+    /// Revision observed by runtime sentence facts and n-best step rows.
     pub(crate) write_generation: Cell<u64>,
     /// Exact text-to-token rows changed. Pronunciation-only merges leave
     /// this stamp alone, so repeated text queries can retain their row.
@@ -1094,10 +1065,6 @@ impl UserStore {
             .any(|reading| reading.len() > projection.len() && reading.starts_with(&projection))
     }
 
-    fn count_cache(&self) -> RefMut<'_, Option<CountCache>> {
-        self.inner.count_cache.borrow_mut()
-    }
-
     fn write_generation(&self) -> u64 {
         self.inner.write_generation.get()
     }
@@ -1112,35 +1079,10 @@ impl UserStore {
         self.has_user_data()
     }
 
-    /// Sets the gate and retires the count cache, as a committed write does.
+    /// Sets the decode gate.
     #[cfg(test)]
     pub(crate) fn force_gate_for_test(&self, open: bool) {
         self.inner.has_user_data.set(open);
-        self.inner
-            .write_generation
-            .set(self.inner.write_generation.get().wrapping_add(1));
-        *self.count_cache() = None;
-    }
-
-    /// Runs `read` against the count cache for the current write
-    /// generation, discarding a cache built against an older one first.
-    ///
-    /// Every commit takes `&mut self`, so none can land between the
-    /// values `read` reads: the observed state and generation belong to
-    /// one side of a commit.
-    fn with_count_cache<T>(
-        &self,
-        read: impl FnOnce(&mut CountCache) -> Result<T, UserStoreError>,
-    ) -> Result<T, UserStoreError> {
-        let mut cache = self.count_cache();
-        let generation = self.write_generation();
-        let mut current = match cache.take() {
-            Some(cached) if cached.generation == generation => cached,
-            _ => CountCache::new(generation),
-        };
-        let out = read(&mut current);
-        *cache = Some(current);
-        out
     }
 
     /// Invalidate cached reads after a committed user-data write.
@@ -1149,14 +1091,13 @@ impl UserStore {
     /// post-commit rows against a pre-commit generation, or the reverse.
     fn mark_committed_write(&self, has_user_data: bool) {
         self.inner.has_user_data.set(has_user_data);
-        self.invalidate_write_caches();
+        self.advance_write_generation();
     }
 
-    fn invalidate_write_caches(&self) {
+    fn advance_write_generation(&self) {
         self.inner
             .write_generation
             .set(self.inner.write_generation.get().wrapping_add(1));
-        *self.count_cache() = None;
     }
 
     /// A phrase-table edit invalidates exact-text rows. Count-only writes
@@ -1382,7 +1323,7 @@ impl UserStore {
         let (outcome, has_sub_index) = self.arena_add_unigram_outcome(token, delta);
         // Even a missing item or refused increment can change the facade total.
         if has_sub_index && delta != 0 {
-            self.invalidate_write_caches();
+            self.advance_write_generation();
         }
         Ok(outcome)
     }
@@ -1488,19 +1429,16 @@ impl UserStore {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
+        // Load the user gram for this step (pinyin_lookup2.cpp:369).
         // The pin merges the user gram whenever one is stored, item-less
         // ones included (`merge_single_gram`, `ngram.cpp:298-306`).
         let (bigram_count, bigram_total) = match prev {
-            Some(prev) if self.has_user_data() => self.with_count_cache(|cached| {
-                Ok(cached
-                    .bigram_row(prev, || self.gram_in(prev))?
-                    .map_or((0, 0), |gram| {
-                        (
-                            single_gram::get_freq(gram, token).map_or(0, u64::from),
-                            single_gram::get_total_freq(gram).map_or(0, u64::from),
-                        )
-                    }))
-            })?,
+            Some(prev) => self.gram_in(prev)?.as_deref().map_or((0, 0), |gram| {
+                (
+                    single_gram::get_freq(gram, token).map_or(0, u64::from),
+                    single_gram::get_total_freq(gram).map_or(0, u64::from),
+                )
+            }),
             _ => (0, 0),
         };
         // The session holds no unigram rows: a user item's count is its
@@ -2141,7 +2079,6 @@ impl UserStore {
                 &mut reporting,
             )?;
         }
-        *self.count_cache() = None;
         self.inner.dirty.set(false);
         Ok(())
     }
@@ -2532,48 +2469,6 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the phrase cannot be removed.
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
         self.arena_remove(token)
-    }
-}
-
-/// Entry cap per count-memo map. Bounds memo memory to O(cap) no matter
-/// how many distinct keys a session scores against; the value sits far
-/// above any trained store's working set. On overflow the map resets —
-/// entries are pure speed hints, so wholesale eviction changes nothing
-/// but repeat-read cost.
-const COUNT_MEMO_MAX_ENTRIES: usize = 8192;
-
-/// Inserts into a count-memo map, resetting it first once at capacity.
-fn memo_insert<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, key: K, value: V) {
-    if map.len() >= COUNT_MEMO_MAX_ENTRIES {
-        map.clear();
-    }
-    map.insert(key, value);
-}
-
-impl CountCache {
-    /// An empty memo bound to `generation`.
-    pub(crate) fn new(generation: u64) -> Self {
-        Self {
-            generation,
-            bigram_rows: HashMap::new(),
-        }
-    }
-
-    /// `prev`'s raw gram, memoised like [`Self::unigram`]: a present gram
-    /// is kept until the generation moves; an absent one reads as `None`
-    /// without entering the memo.
-    fn bigram_row(
-        &mut self,
-        prev: Token,
-        load: impl FnOnce() -> Result<Option<Vec<u8>>, UserStoreError>,
-    ) -> Result<Option<&[u8]>, UserStoreError> {
-        if !self.bigram_rows.contains_key(&prev) {
-            let Some(row) = load()? else {
-                return Ok(None);
-            };
-            memo_insert(&mut self.bigram_rows, prev, row);
-        }
-        Ok(self.bigram_rows.get(&prev).map(Vec::as_slice))
     }
 }
 
@@ -3243,25 +3138,18 @@ mod tests {
             assert_eq!(store.unigram_total().unwrap(), 0);
             assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
             assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
-            assert!(
-                store.count_cache().is_none(),
-                "empty count_delta must not build a count memo"
-            );
         }
 
         #[test]
-        fn cached_count_delta_refreshes_after_committed_writes() {
+        fn count_delta_reads_committed_writes() {
             let mut store = transient();
             let cur = bare_token(&mut store, "你", &[key("ni")]);
             assert_eq!(
                 store.count_delta(Some(1), cur).unwrap(),
                 UserCountDelta::ZERO
             );
-            let opened = store.write_generation();
 
             store.observe_selection(1, cur).unwrap();
-            let first_generation = store.write_generation();
-            assert!(first_generation > opened);
             assert!(store.has_user_data());
             assert_eq!(
                 store.count_delta(Some(1), cur).unwrap(),
@@ -3275,10 +3163,6 @@ mod tests {
             );
 
             store.observe_selection(1, cur).unwrap();
-            assert!(
-                store.write_generation() > first_generation,
-                "a committed write invalidates the cached count reads"
-            );
             assert_eq!(
                 store.count_delta(Some(1), cur).unwrap(),
                 UserCountDelta {
@@ -3307,10 +3191,6 @@ mod tests {
             assert_eq!(
                 store.count_delta(Some(1), cur).unwrap(),
                 UserCountDelta::ZERO
-            );
-            assert!(
-                store.count_cache().is_none(),
-                "an emptied store must not keep a count memo"
             );
         }
 
@@ -4291,48 +4171,5 @@ mod tests {
         assert!(!UserStoreError::Store(StoreError::Backend("x".into())).is_read_after_check());
         assert!(!UserStoreError::Io(std::io::Error::other("x")).is_read_after_check());
         assert!(!UserStoreError::Decode.is_read_after_check());
-    }
-
-    /// The gram memo, the one a session's `count_delta` runs on: a present
-    /// gram is kept until the generation moves, an absent one reads as
-    /// `None` without entering the memo, and the map resets at the cap.
-    #[test]
-    fn bigram_memo_resets_at_the_capacity_bound() {
-        let mut cache = CountCache::new(0);
-        let gram = |prev: Token| {
-            let mut bytes = prev.to_le_bytes().to_vec();
-            bytes.extend_from_slice(&[0; 4]);
-            bytes
-        };
-        assert_eq!(cache.bigram_row(7, || Ok(None)).unwrap(), None);
-        assert!(
-            !cache.bigram_rows.contains_key(&7),
-            "an absent gram must not occupy memo space"
-        );
-        for prev in 1..=u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap() {
-            assert_eq!(
-                cache.bigram_row(prev, || Ok(Some(gram(prev)))).unwrap(),
-                Some(gram(prev).as_slice())
-            );
-        }
-        assert!(
-            cache.bigram_rows.len() <= COUNT_MEMO_MAX_ENTRIES,
-            "memo must not exceed the cap"
-        );
-        // A memoised gram is served without a load; a reset one loads again.
-        let served = cache
-            .bigram_row(u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap(), || {
-                panic!("the freshest gram is memoised")
-            })
-            .unwrap()
-            .map(<[u8]>::to_vec);
-        assert_eq!(
-            served,
-            Some(gram(u32::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap()))
-        );
-        assert_eq!(
-            cache.bigram_row(1, || Ok(Some(gram(1)))).unwrap(),
-            Some(gram(1).as_slice())
-        );
     }
 }

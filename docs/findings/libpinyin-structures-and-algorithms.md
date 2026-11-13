@@ -521,7 +521,6 @@ shortest decimal (`Lambda::from_f32`).
 | Value | Where it acts | Parity path? | Status |
 | --- | --- | --- | --- |
 | `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does. (2) `lookup_finds_token` (`nbest.rs`), the constraint revalidation fallback for a dictionary that keeps no phrase items (the test doubles); the runtime's dictionaries read their items instead. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, which expands one key at a time, so the product never approaches the cap. | (1) no; (2) no; (3) yes, cap unreachable | off path or unreachable |
-| `COUNT_MEMO_MAX_ENTRIES = 8192` (`oxpinyin-user/src/store.rs`) | size of a count cache | no output effect | cache bound only |
 
 oxpinyin has no input-length clamp. The pin's full-pinyin stop at 32767
 bytes comes from its `gint16` parse steps, a recorded language artefact
