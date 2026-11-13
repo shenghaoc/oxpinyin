@@ -153,12 +153,6 @@ pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
 /// First token allocated in an empty network sub-index.
 pub const FIRST_NETWORK_TOKEN: Token = phrase_index_make_token(NETWORK_DICTIONARY, 1);
 
-/// First token of an empty `USER_FILE` sub-index `library`.
-#[must_use]
-pub const fn first_library_token(library: u8) -> Token {
-    phrase_index_make_token(library, 1)
-}
-
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end
 /// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`
 /// masks the sub-index end into the library nibble (`phrase_index.cpp:620`,

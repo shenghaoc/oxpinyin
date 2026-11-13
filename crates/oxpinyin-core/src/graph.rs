@@ -145,15 +145,6 @@ impl EdgeKind {
             Self::Incomplete => "incomplete",
         }
     }
-
-    /// Whether an edge of this kind carries a complete syllable.
-    #[must_use]
-    pub const fn completeness(self) -> Completeness {
-        match self {
-            Self::Exact | Self::Segmentation => Completeness::Complete,
-            Self::Incomplete => Completeness::Partial,
-        }
-    }
 }
 
 /// One key match spanning a byte range.
@@ -414,13 +405,7 @@ impl SegmentGraph {
         })
     }
 
-    /// Length of the input this graph was built for.
-    #[must_use]
-    pub const fn input_len(&self) -> usize {
-        self.input_len
-    }
-
-    /// Number of nodes, which is `input_len() + 1`.
+    /// Number of nodes: one per input byte, plus the end node.
     #[must_use]
     pub const fn node_count(&self) -> usize {
         self.input_len + 1

@@ -105,7 +105,7 @@ fn lower_bound_records(records: &[[u8; ITEM_LEN]], token: u32) -> usize {
     records.partition_point(|record| record_token(record) < token)
 }
 
-/// The walk `get_freq`, `set_freq` and `remove_freq` share: from
+/// The walk `get_freq` and `set_freq` share: from
 /// [`lower_bound`], stop at the first item above `token` (a miss) or the
 /// first equal one (a hit).
 fn find(gram: &[u8], token: u32) -> Option<usize> {
@@ -176,8 +176,8 @@ pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFaul
     Ok(None)
 }
 
-/// [`search`] into `out` where the pin's walk can leave the value
-/// (`ngram.cpp:153-176`): `lower_bound(begin)` (`:163`, which reads
+/// `SingleGram::search` into `out`, checked where the pin's walk can
+/// leave the value (`ngram.cpp:153-176`): `lower_bound(begin)` (`:163`, which reads
 /// nothing on a value shorter than its total), then `get_total_freq`
 /// (`:165`), then every item until the first at or past `end`
 /// (`:167-173`), duplicates included.
@@ -251,16 +251,6 @@ pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
     true
 }
 
-/// `SingleGram::remove_freq` (`ngram.cpp:207-229`): removes the first
-/// match walking from [`lower_bound`] and answers its frequency.
-pub fn remove_freq(gram: &mut Vec<u8>, token: u32) -> Option<u32> {
-    let index = find(gram, token)?;
-    let freq = item_freq(gram, index)?;
-    let offset = item_offset(index)?;
-    gram.drain(offset..offset.checked_add(ITEM_LEN)?);
-    Some(freq)
-}
-
 /// `SingleGram::mask_out` (`ngram.cpp:76-103`): removes every item with
 /// `(token & mask) == value`, subtracting each one's frequency from the
 /// stored total with `guint32` wrap, and answers how many it removed. A
@@ -296,14 +286,6 @@ pub fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
 pub fn retrieve_all(gram: &[u8]) -> impl Iterator<Item = (u32, u32)> + '_ {
     (0..get_length(gram))
         .map_while(|index| Some((item_token(gram, index)?, item_freq(gram, index)?)))
-}
-
-/// `SingleGram::search` (`ngram.cpp:153-176`): from [`lower_bound`] of
-/// `begin`, every item until the first at or past `end`.
-pub fn search(gram: &[u8], begin: u32, end: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
-    (lower_bound(gram, begin)..get_length(gram))
-        .map_while(|index| Some((item_token(gram, index)?, item_freq(gram, index)?)))
-        .take_while(move |&(token, _)| token < end)
 }
 
 /// `merge_single_gram` (`ngram.cpp:277-352`) into `merged`: `false` and
@@ -377,7 +359,7 @@ mod tests {
     use super::{
         GramFault, checked_get_freq, checked_search, get_freq, get_length, get_total_freq,
         insert_freq, item_freq, item_offset, item_token, lower_bound, mask_out, merge_single_gram,
-        new_gram, remove_freq, retrieve_all, search, set_freq,
+        new_gram, retrieve_all, set_freq,
     };
 
     fn gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
@@ -413,7 +395,6 @@ mod tests {
                 prop_assert_eq!(lower_bound(&bytes, begin), first);
                 let expected: Vec<_> = row[first..].iter().copied()
                     .take_while(|&(token, _)| token < end).collect();
-                prop_assert_eq!(search(&bytes, begin, end).collect::<Vec<_>>(), expected.clone());
                 let mut out = vec![(u32::MAX, 17)];
                 let status = checked_search(&bytes, begin, end, &mut out);
                 let reached_tail = first + expected.len() == row.len() && tail_len != 0;
@@ -434,12 +415,9 @@ mod tests {
             bytes.extend_from_slice(&tail);
             let before = bytes.clone();
             // Unpartitioned input has no promised search position. It must
-            // still return an in-bounds suffix without changing storage.
+            // still answer an in-bounds position without changing storage.
             let first = lower_bound(&bytes, probe);
             prop_assert!(first <= row.len());
-            let expected: Vec<_> = row[first..].iter().copied()
-                .take_while(|&(token, _)| token < u32::MAX).collect();
-            prop_assert_eq!(search(&bytes, probe, u32::MAX).collect::<Vec<_>>(), expected);
             prop_assert_eq!(retrieve_all(&bytes).collect::<Vec<_>>(), row);
             prop_assert_eq!(bytes, before);
         }
@@ -517,7 +495,6 @@ mod tests {
             );
             assert_eq!(out, [(7, 9)]);
             assert!(!set_freq(&mut bytes, 0, 1));
-            assert_eq!(remove_freq(&mut bytes, 0), None);
             assert_eq!(bytes, before);
         }
         let mut empty = new_gram();
@@ -559,11 +536,6 @@ mod tests {
         }
         assert_eq!(items(&bytes), expected);
         assert_eq!(get_total_freq(&bytes), Some(12));
-        assert_eq!(remove_freq(&mut bytes, 3), hit.map(|_| 69));
-        if let Some(at) = hit {
-            expected.remove(at);
-        }
-        assert_eq!(items(&bytes), expected);
     }
 
     /// Q2: get/set act on the first match; mask removes every match and
@@ -578,8 +550,6 @@ mod tests {
         assert_eq!(mask_out(&mut bytes, u32::MAX, 5), 2);
         assert_eq!(items(&bytes), [(6, 10)]);
         assert_eq!(get_total_freq(&bytes), Some(9));
-        assert_eq!(remove_freq(&mut bytes, 6), Some(10));
-        assert_eq!(get_length(&bytes), 0);
     }
 
     #[test]
@@ -590,18 +560,12 @@ mod tests {
             assert!(insert_freq(&mut row, token, count));
         }
         assert!(set_freq(&mut row, 3, 32));
-        assert_eq!(
-            search(&row, 0, 8).collect::<Vec<_>>(),
-            [(1, 16), (2, 1), (3, 32), (4, 4), (6, 2)]
-        );
-        assert_eq!(
-            search(&row, 2, 6).collect::<Vec<_>>(),
-            [(2, 1), (3, 32), (4, 4)]
-        );
         assert!(insert_freq(&mut row, 5, 8));
-        assert_eq!(remove_freq(&mut row, 1), Some(16));
         assert_eq!(get_total_freq(&row), Some(16));
-        assert_eq!(items(&row), [(2, 1), (3, 32), (4, 4), (5, 8), (6, 2)]);
+        assert_eq!(
+            items(&row),
+            [(1, 16), (2, 1), (3, 32), (4, 4), (5, 8), (6, 2)]
+        );
     }
 
     /// Removal subtracts from the stored total with wrap; a mask that
@@ -646,13 +610,11 @@ mod tests {
     }
 
     #[test]
-    fn insert_appends_past_the_largest_and_search_stops_at_the_end() {
+    fn insert_appends_past_the_largest() {
         let mut bytes = gram(0, &[(2, 1), (4, 1)]);
         assert!(insert_freq(&mut bytes, 9, 2));
         assert!(insert_freq(&mut bytes, 3, 2));
         assert_eq!(items(&bytes), [(2, 1), (3, 2), (4, 1), (9, 2)]);
-        let found: Vec<_> = search(&bytes, 3, 5).collect();
-        assert_eq!(found, [(3, 2), (4, 1)]);
     }
 
     #[test]

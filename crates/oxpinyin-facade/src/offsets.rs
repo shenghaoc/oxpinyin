@@ -86,24 +86,6 @@ pub fn full_offset_is_mid_key(parse: &FullPinyinIndexParse, offset: usize) -> bo
         .any(|item| item.start() < offset && offset < item.end())
 }
 
-/// Maps a session-coordinate span START back to original zhuyin input
-/// coordinates — [`zhuyin_original_offset`]'s sibling for `m_begin`.
-///
-/// The end mapper answers the END of the key an offset falls in, so
-/// feeding it a key's start (or 0) would answer that key's end, one key
-/// too far. A span start sits on a key boundary of the `'`-joined buffer:
-/// 0 for the first key, otherwise one past the apostrophe that follows
-/// the previous key, so the previous key's original end is exactly this
-/// key's original start (zhuyin keys are contiguous in the original).
-/// Mapping `start - 1` (the apostrophe byte, still inside the previous
-/// key's boundary) through the end mapper answers that; 0 stays 0.
-#[must_use]
-pub fn zhuyin_original_begin(parse: &ZhuyinParse, start: usize) -> usize {
-    start
-        .checked_sub(1)
-        .map_or(0, |before| zhuyin_original_offset(parse, before))
-}
-
 /// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
 /// transformed string is the `'`-joined canonical spellings, and each key
 /// remembers its original byte span (tone digit included).
@@ -285,16 +267,6 @@ mod tests {
         for offset in [1, 2, 4, 5] {
             assert!(zhuyin_offset_is_mid_key(&parse, offset), "offset {offset}");
         }
-    }
-
-    #[test]
-    fn zhuyin_original_begin_answers_the_key_start_and_keeps_zero() {
-        let parse = nihao();
-        // The end mapper would turn a first-key start into that key's end.
-        assert_eq!(zhuyin_original_begin(&parse, 0), 0);
-        // The second key starts one past the apostrophe (transformed 3):
-        // the previous key's original end, 3.
-        assert_eq!(zhuyin_original_begin(&parse, 3), 3);
     }
 
     /// Issue #602: a key boundary maps to the right key's MATRIX COLUMN —
