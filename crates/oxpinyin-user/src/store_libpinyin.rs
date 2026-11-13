@@ -786,7 +786,7 @@ mod tests {
             "{added:?}"
         );
         assert_eq!(snapshot(&store), before);
-        let promoted = store.promote_addon_phrase("他", &[(keys("ta"), 5)], 5);
+        let promoted = crate::test_session::promote(&mut store, "他", &[(keys("ta"), 5)], 5);
         assert!(
             matches!(promoted, Err(UserStoreError::Persistence(_))),
             "{promoted:?}"
@@ -1041,7 +1041,7 @@ mod tests {
             packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
         };
         assert_eq!(
-            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            crate::test_session::library_total(&store, crate::USER_DICTIONARY),
             u32::MAX - 20
         );
         let unigram = |store: &UserStore, token: u32| {
@@ -1061,7 +1061,7 @@ mod tests {
             .unwrap();
         assert_eq!(unigram(&store, second), 0, "the second overflows the total");
         assert_eq!(
-            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            crate::test_session::library_total(&store, crate::USER_DICTIONARY),
             u32::MAX - 5
         );
         drop(store);
@@ -1186,7 +1186,7 @@ mod tests {
             .unwrap();
         assert!(store.with_user_item(token, |_| ()).is_some());
         let delta = store.unigram_delta(token).unwrap();
-        let library = store.unigram_library_total(crate::USER_DICTIONARY).unwrap();
+        let library = crate::test_session::library_total(&store, crate::USER_DICTIONARY);
         let total = store.unigram_total().unwrap();
         assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
         // 3a's token read reaches the same arena item the predicted-prefix
@@ -1205,7 +1205,7 @@ mod tests {
         // take the same 483.
         assert_eq!(store.unigram_delta(token).unwrap(), delta + 483);
         assert_eq!(
-            store.unigram_library_total(crate::USER_DICTIONARY).unwrap(),
+            crate::test_session::library_total(&store, crate::USER_DICTIONARY),
             library + 483
         );
         assert_eq!(store.unigram_total().unwrap(), total + 483);
@@ -1661,7 +1661,10 @@ mod tests {
             .load_system_libraries(replacement.into())
             .expect("reload");
         assert_eq!(store.system_unigram(token), Some(57));
-        assert_eq!(store.system_library_total(1), Some(187));
+        assert_eq!(
+            Some(crate::test_session::library_total(&store, 1)),
+            Some(187)
+        );
     }
 
     /// An import after a transient reload merges into the replacement's
@@ -1909,14 +1912,17 @@ mod tests {
             if prior_add {
                 assert!(store.add_system_unigram_frequency(second, 2).expect("add"));
             }
-            let total = store.system_library_total(1).expect("library total");
+            let total = crate::test_session::library_total(&store, 1);
             let facade = 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32);
             store
                 .train_pronunciations(first, std::iter::once(reading), 7)
                 .expect("train");
             let expected = if prior_add { 59 } else { 57 };
             assert_eq!(store.system_unigram(second), Some(expected));
-            assert_eq!(store.system_library_total(1), Some(total));
+            assert_eq!(
+                Some(crate::test_session::library_total(&store, 1)),
+                Some(total)
+            );
             assert_eq!(
                 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
                 facade
@@ -1924,7 +1930,10 @@ mod tests {
             store.mark_modified();
             store.save_reporting().expect("save");
             assert_eq!(store.system_unigram(second), Some(expected));
-            assert_eq!(store.system_library_total(1), Some(total + 7));
+            assert_eq!(
+                Some(crate::test_session::library_total(&store, 1)),
+                Some(total + 7)
+            );
             assert_eq!(
                 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
                 facade
@@ -1938,7 +1947,10 @@ mod tests {
             )
             .expect("reopen");
             assert_eq!(reopened.system_unigram(second), Some(expected));
-            assert_eq!(reopened.system_library_total(1), Some(total + 7));
+            assert_eq!(
+                Some(crate::test_session::library_total(&reopened, 1)),
+                Some(total + 7)
+            );
             drop(reopened);
             std::fs::remove_dir_all(dir).expect("cleanup");
         }
@@ -2014,16 +2026,19 @@ mod tests {
             .expect("item")
         };
         assert_eq!(store.system_unigram(second), Some(50));
-        let total = store.system_library_total(1);
+        let total = Some(crate::test_session::library_total(&store, 1));
         store
             .train_pronunciations(first, std::iter::once(reading), 7)
             .expect("train");
         assert_eq!(store.system_unigram(second), None);
         assert!(store.system_item_removed(second));
-        assert_eq!(store.system_library_total(1), total);
+        assert_eq!(Some(crate::test_session::library_total(&store, 1)), total);
         store.mark_modified();
         store.save_reporting().expect("save");
-        assert_eq!(store.system_library_total(1), Some(130));
+        assert_eq!(
+            Some(crate::test_session::library_total(&store, 1)),
+            Some(130)
+        );
         drop(store);
         let reopened =
             crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -3276,11 +3291,14 @@ mod tests {
             // took: replay's second count lives in the sub-index until a
             // compact rebuilds it from the items.
             let facade = |store: &UserStore| {
-                u64::from(store.system_library_total(1).unwrap())
+                u64::from(crate::test_session::library_total(store, 1))
                     .wrapping_add(store.unigram_total().unwrap())
             };
             observe(&store);
-            assert_eq!(store.system_library_total(1), Some(174));
+            assert_eq!(
+                Some(crate::test_session::library_total(&store, 1)),
+                Some(174)
+            );
             assert_eq!(store.unigram_total().unwrap(), 0);
             store.unload_system_libraries(originals());
             assert!(store.with_user_item(token, |_| ()).is_none());
@@ -3292,7 +3310,7 @@ mod tests {
             store.save_reporting().unwrap();
             observe(&store);
             assert_eq!(
-                store.system_library_total(1),
+                Some(crate::test_session::library_total(&store, 1)),
                 Some(137),
                 "save compacts the sub-index only"
             );

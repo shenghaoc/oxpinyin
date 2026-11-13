@@ -367,7 +367,7 @@ impl<
     /// (upstream's `get_phrase_item` failing), or owns no such item.
     #[must_use]
     pub fn unigram_count(&self, token: u32) -> Option<u64> {
-        if !self.visible((token >> 24) as u8) {
+        if !self.visible(oxpinyin_core::phrase_index_library(token) as u8) {
             return None;
         }
         self.libraries().unigram_count(token)
@@ -468,7 +468,7 @@ impl<
     fn live_unigram_count(&self, token: u32, user: &UserCountDelta) -> u64 {
         match user
             .unigram_live
-            .filter(|_| self.visible((token >> 24) as u8))
+            .filter(|_| self.visible(oxpinyin_core::phrase_index_library(token) as u8))
         {
             Some(live) => u64::from(live),
             None => {
@@ -585,7 +585,7 @@ impl<
         // (`ERROR_NO_ITEM`). Only the first may pass; the other two keep
         // the seam's default answer — no n-best cost data, no rows — as
         // does no installed unigram table at all.
-        let nibble = (token.value() >> 24) as u8;
+        let nibble = oxpinyin_core::phrase_index_library(token.value()) as u8;
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {

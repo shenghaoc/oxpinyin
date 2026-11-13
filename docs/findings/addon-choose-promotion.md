@@ -99,6 +99,14 @@ list and replaces it (§5).
   in-memory default facade with no user-directory check
   (`pinyin.cpp:2534-2563`). A NULL user directory gives oxpinyin a
   transient user store, and `arena_promote` promotes into it in memory.
+- **Missing sub-index 5.** With a custom `table.conf` row 5 of `NOT_USED`,
+  `get_range` returns `ERROR_NO_SUB_PHRASE_INDEX` and leaves the range
+  unwritten (`phrase_index.cpp:610-613`). Promotion uses that undefined end
+  (`pinyin.cpp:2541-2545`). Ordinary import reads its range only after
+  `ERROR_OK` (`:585-607`). The stock row is `USER_FILE`
+  (`data/table.conf.in:13`), so init loads it or creates it empty
+  (`pinyin.cpp:303-321`). oxpinyin skips promotion when the range is absent
+  and leaves the candidate as `ADDON_CANDIDATE` (register row 121).
 - **Re-promotion duplicates.** The pin takes `range.m_range_end` as the new
   token on every choose (`:2543-2545`), so choosing the same addon phrase
   twice gives two identical nibble-5 items. `arena_promote` takes the

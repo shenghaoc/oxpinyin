@@ -303,3 +303,25 @@ pub(crate) fn save_state(
     assert!(info.save_path(&marker), "write the marker");
     Ok(())
 }
+
+/// `SubPhraseIndex::m_total_freq` of `library`, through the function the
+/// session's own adds read it with.
+pub(crate) fn library_total(store: &UserStore, library: u8) -> u32 {
+    store.library_total_for_test(library)
+}
+
+/// The addon promotion as `pinyin_choose_candidate` runs it where library 5
+/// has a sub-index (`pinyin.cpp:2541-2558` at 074a2219): the token is the
+/// range's end, and the writes take it.
+pub(crate) fn promote(
+    store: &mut UserStore,
+    phrase: &str,
+    readings: &[(Vec<crate::PinyinKey>, u64)],
+    unigram: u64,
+) -> Result<u32, UserStoreError> {
+    let token = store
+        .addon_promotion_range_end()
+        .expect("library 5 has a sub-index");
+    store.promote_addon_phrase(token, phrase, readings, unigram)?;
+    Ok(token)
+}

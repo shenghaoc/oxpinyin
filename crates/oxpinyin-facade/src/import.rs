@@ -56,7 +56,7 @@ pub fn plan_add(
     // item text is read without its pronunciation view.
     let same_library: Vec<u32> = tokens
         .into_iter()
-        .filter(|token| token >> 24 == u32::from(index))
+        .filter(|token| oxpinyin_user::phrase_index_library_index(*token) == index)
         .collect();
     if same_library.len() > 1 {
         return ImportPlan::Abort;

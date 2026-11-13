@@ -153,7 +153,7 @@ fn resolve_item(
 fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) -> bool {
     libraries.library(token).is_some()
         || 1_u32
-            .checked_shl(token >> 24)
+            .checked_shl(oxpinyin_core::phrase_index_library(token) as u32)
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 

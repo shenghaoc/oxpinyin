@@ -173,7 +173,10 @@ fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(70), "changed");
     assert_eq!(store.system_unigram(LIBRARY | 3), Some(25), "restored");
     assert_eq!(store.unigram_delta(LIBRARY | 5).expect("added"), 11);
-    assert_eq!(store.system_library_total(1), Some(971));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(971)
+    );
     assert_eq!(counts(&store, 1), [77]);
     assert!(
         store
@@ -232,7 +235,10 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     assert_eq!(exported(&store, &base, 1), [107, 40]);
     // The unigram is the live field: pricing and the totals read it.
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(150));
-    assert_eq!(store.system_library_total(1), Some(150));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(150)
+    );
     assert_eq!(store.unigram_total().expect("total"), 0);
 
     // One accepted path adds the seed to the matching live reading alone.
@@ -603,11 +609,11 @@ fn mixed_view(store: &UserStore, base: &SystemOriginals, tokens: &[u32]) -> Stri
             delta.bigram_total,
         ));
     }
-    out.push_str(&format!(
-        "gram {:?} lib1 {:?}\n",
-        store.bigram_row(LIBRARY | 1).ok(),
-        store.unigram_library_total(1).ok(),
-    ));
+    // The library's sub-index total is not part of this view either: the
+    // pin's merge counts a logged item's unigram beside the header's total,
+    // so a live session's and a reopened one's differ. The caller asserts
+    // each.
+    out.push_str(&format!("gram {:?}\n", store.bigram_row(LIBRARY | 1).ok()));
     let state = export_state(store, base).expect("export");
     out.push_str(&format!(
         "{:?} {:?} {:?}\n",
@@ -697,6 +703,13 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         .expect("known reading on the appended item");
     let live = mixed_view(&store, &base, &tokens);
     assert!(live.contains(&format!("{:#x} Some([", LIBRARY | 1)));
+    // The live sub-index total, by the pin's merge (074a2219
+    // `phrase_index.cpp`): the header record sets it to 230 (`:504-512`),
+    // the in-place MODIFY records leave it (`:490-498`), and the ADD
+    // record adds the item's 33 again (`:446-451`, `:215`), which the
+    // header's 230 already held. The session's adds and trainings then
+    // raise it with the items: 1086 + 560 + 516 - (120 + 77 + 33).
+    assert_eq!(crate::test_session::library_total(&store, 1), 263 + 1932);
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
@@ -705,6 +718,17 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     // the gram bytes, and the shipped item still owns no row of its own.
     let mut store = open(&dir, &base);
     assert_eq!(mixed_view(&store, &base, &tokens), live);
+    // The reopened sub-index total, by the pin's save and merge. The save
+    // compacts, so the total is the items' sum, 2162 (`pinyin.cpp:1139`,
+    // `phrase_index.cpp:648-675`), and `diff` logs it as the header's new
+    // total (`:395-397`). The merge sets it (`:504-512`). The MODIFY of
+    // item 1 grows the item, so it takes out the old item's 100 and adds
+    // the new one's 1086 (`:484-489`, `:233`, `:215`). The MODIFY of item 2
+    // is in place (`:490-498`). The ADD of item 3 adds its 516 (`:446-451`).
+    assert_eq!(
+        crate::test_session::library_total(&store, 1),
+        2162 - 100 + 1086 + 516
+    );
     assert_eq!(
         store
             .token_for_phrase_in(crate::USER_DICTIONARY, "龘")
@@ -864,7 +888,10 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     assert!(!arena_library(&store));
     assert!(store.with_user_item(appended, |_| ()).is_some());
     assert_eq!(store.system_unigram(appended), Some(11));
-    assert_eq!(store.system_library_total(1), Some(161));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(161)
+    );
 
     // A new phrase goes after the range's end, with no unigram and then the
     // count times three (`pinyin.cpp:593-604`): the item and the library's
@@ -875,7 +902,10 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     assert_eq!(new, LIBRARY | 6);
     assert!(!arena_library(&store));
     assert_eq!(store.system_unigram(new), Some(15));
-    assert_eq!(store.system_library_total(1), Some(176));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(176)
+    );
     assert_eq!(store.unigram_total().expect("extra"), 0);
 
     // A reading onto the appended item, onto a shipped one, and onto the new
@@ -894,7 +924,10 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     assert_eq!(counts(&store, 1), [17]);
     assert_eq!(counts(&store, 6), [8]);
     assert!(!arena_library(&store));
-    assert_eq!(store.system_library_total(1), Some(176));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(176)
+    );
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
 
     // The save reads the buffer, and a reopen finds the same items.
@@ -950,7 +983,7 @@ fn live_appended_item_accepts_import_after_failed_mask() {
         store.mask_out(u32::MAX, 0),
         Err(crate::UserStoreError::PartialUserBigramTail)
     ));
-    let before = store.system_library_total(1);
+    let before = Some(crate::test_session::library_total(&store, 1));
     assert_eq!(
         store
             .add_system_phrase_in(1, Some(token), &"五".into(), &dense("wu", 3), Some(4))
@@ -960,7 +993,7 @@ fn live_appended_item_accepts_import_after_failed_mask() {
     assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(counts(&store, 5), [54]);
     assert_eq!(store.system_unigram(token), Some(11));
-    assert_eq!(store.system_library_total(1), before);
+    assert_eq!(Some(crate::test_session::library_total(&store, 1)), before);
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

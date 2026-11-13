@@ -165,7 +165,10 @@ impl SystemItems {
         original: Option<SystemLibraryRef<'_>>,
     ) -> Option<u32> {
         let slot = token & 0x00ff_ffff;
-        match self.replayed.get(&((token >> 24) as u8)) {
+        match self
+            .replayed
+            .get(&crate::phrase::phrase_index_library_index(token))
+        {
             Some(library) => library.unigram(slot),
             None => original?.unigram(slot),
         }
@@ -216,7 +219,7 @@ impl SystemItems {
     pub(crate) fn is_removed(&self, token: Token, original: Option<SystemLibraryRef<'_>>) -> bool {
         let slot = token & 0x00ff_ffff;
         self.replayed
-            .get(&((token >> 24) as u8))
+            .get(&crate::phrase::phrase_index_library_index(token))
             .is_some_and(|library| {
                 // A mapped original's bytes are the buffer's own: what the
                 // chunk held is the buffer's record of its slots' first
@@ -233,7 +236,7 @@ impl SystemItems {
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency`'s sub-index half
-    /// (`phrase_index.cpp:150-176`) for system library `token >> 24`. `None`
+    /// (`phrase_index.cpp:150-176`) for the system library of `token`. `None`
     /// for a library with no original. The sub-index total moves with an
     /// accepted add; the caller moves the facade's.
     pub(crate) fn add_unigram(
@@ -252,14 +255,16 @@ impl SystemItems {
     /// kept.
     pub(crate) fn get(&self, token: &Token) -> Option<ChunkItem> {
         self.replayed
-            .get(&((*token >> 24) as u8))?
+            .get(&crate::phrase::phrase_index_library_index(*token))?
             .item(*token & 0x00ff_ffff)
     }
 
     /// Reads the item the live buffer of `token`'s library holds under its
     /// slot.
     pub(crate) fn with_live<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
-        let library = self.replayed.get(&((token >> 24) as u8))?;
+        let library = self
+            .replayed
+            .get(&crate::phrase::phrase_index_library_index(token))?;
         let bytes = library.item_bytes(token & 0x00ff_ffff)?;
         Some(read(&bytes))
     }
@@ -272,13 +277,13 @@ impl SystemItems {
 
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.replayed
-            .get(&((token >> 24) as u8))?
+            .get(&crate::phrase::phrase_index_library_index(token))?
             .pronunciation_count(token & 0x00ff_ffff)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
         self.replayed
-            .get(&((token >> 24) as u8))
+            .get(&crate::phrase::phrase_index_library_index(token))
             .is_some_and(|library| library.item_past_buffer(token & 0x00ff_ffff))
     }
 
@@ -315,14 +320,16 @@ impl SystemItems {
     /// replayed ADD's.
     pub(crate) fn is_added(&self, token: Token) -> bool {
         self.replayed
-            .get(&((token >> 24) as u8))
+            .get(&crate::phrase::phrase_index_library_index(token))
             .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
     }
 
     /// Reads the item under `token` where it is one its library's loaded
     /// chunk lacked ([`Self::is_added`]).
     pub(crate) fn with_added<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
-        let library = self.replayed.get(&((token >> 24) as u8))?;
+        let library = self
+            .replayed
+            .get(&crate::phrase::phrase_index_library_index(token))?;
         let slot = token & 0x00ff_ffff;
         if !library.is_added_slot(slot) {
             return None;

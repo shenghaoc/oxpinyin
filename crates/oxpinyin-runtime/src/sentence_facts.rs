@@ -17,7 +17,9 @@ impl RuntimeDict<'_> {
         // Classification runs outside LiveSystemItems::read's callback. In
         // particular, with_user_item probes arena and replay provenance before
         // the ordinary body read; an imported item retains its old error reads.
-        let found = if self.live_items().is_system_library((token >> 24) as u8)
+        let found = if self
+            .live_items()
+            .is_system_library(oxpinyin_user::phrase_index_library_index(token))
             && user.with_user_item(token, |_| ()).is_none()
         {
             self.live_items()

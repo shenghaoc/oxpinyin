@@ -708,14 +708,16 @@ pub const fn phrase_index_library(token: u32) -> usize {
 
 /// The order `reduce_tokens` gives a token list
 /// (`storage/phrase_large_table3.h:77-91` at the pin `074a2219`): it appends
-/// the per-library arrays in library order. A stable sort by each token's
-/// top byte gives a merged list that order and keeps the given order within
-/// one library. The whole top byte is the key, tag nibble included.
+/// the per-library arrays in library order. `add_index` files a token under
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` and keeps its whole value
+/// (`phrase_large_table3.cpp:42`), so the key is the masked library index.
+/// A stable sort by it gives a merged list that order and keeps the given
+/// order within one library.
 ///
 /// Every caller sorts through this function, so the libraries hold one
 /// instance of the sort.
 pub fn sort_tokens_by_library(tokens: &mut [u32]) {
-    tokens.sort_by_key(|token| token >> 24);
+    tokens.sort_by_key(|token| phrase_index_library(*token));
 }
 
 /// What one trellis step prices of a ranged token: the phrase's length in
@@ -1413,10 +1415,13 @@ impl Default for NbestStepCosts {
 mod tests {
     use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library, sort_tokens_by_library};
 
-    /// The key is the whole top byte, so a tagged token files after every
-    /// plain library, and the given order holds within one key.
+    /// `add_index` files a token under `PHRASE_INDEX_LIBRARY_INDEX(token)`
+    /// and keeps its whole value (`phrase_large_table3.cpp:42`,
+    /// `novel_types.h:44` at the pin `074a2219`); `reduce_tokens` appends
+    /// the arrays in library order (`phrase_large_table3.h:83-91`). A token
+    /// with high bits set files with its masked library, in the given order.
     #[test]
-    fn tokens_sort_by_their_whole_top_byte_and_keep_their_order_within_it() {
+    fn tokens_sort_by_their_masked_library_and_keep_their_order_within_it() {
         let mut tokens = [
             0x0700_0002,
             0x8100_0001,
@@ -1429,12 +1434,12 @@ mod tests {
         assert_eq!(
             tokens,
             [
+                0x8100_0001,
                 0x0100_0009,
                 0x0100_0003,
+                0x1100_0000,
                 0x0700_0002,
                 0x0700_0001,
-                0x1100_0000,
-                0x8100_0001,
             ]
         );
     }

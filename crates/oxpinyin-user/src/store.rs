@@ -1344,17 +1344,6 @@ impl UserStore {
                 .any(|(index, _)| *index == library)
     }
 
-    /// `SubPhraseIndex::m_total_freq` of system library `library`, where the
-    /// session holds its state; `None` for a library with no original.
-    #[must_use]
-    pub fn system_library_total(&self, library: u8) -> Option<u32> {
-        let original = self.originals.get(&library)?;
-        self.inner
-            .system_items
-            .borrow()
-            .library_total(library, Some(original))
-    }
-
     /// Apply the exported unigram increment to a loaded system library, as
     /// `FacadePhraseIndex::add_unigram_frequency` does (074a2219
     /// `phrase_index.h:628-635`, `phrase_index.cpp:150-176`): the facade total
@@ -1428,23 +1417,6 @@ impl UserStore {
             extra = extra.wrapping_add(u64::from(live.wrapping_sub(original.total)));
         }
         extra
-    }
-
-    /// The `guint32` total of a user library: its items' sum plus the stored
-    /// total's difference from it, until the next compaction.
-    ///
-    /// # Errors
-    ///
-    /// None: the `Result` is the callers' signature.
-    pub fn unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
-        let offset = self.offsets().get(&library).copied().unwrap_or(0);
-        Ok(self
-            .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .get(&library)
-            .map_or(offset, crate::user_library::UserLibrary::total))
     }
 
     /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
@@ -1743,18 +1715,50 @@ impl UserStore {
         self.arena_add_phrase(library, &words, keys, delta, None, 1)
     }
 
-    /// Promote a chosen addon phrase into the default-facade
-    /// [`ADDON_DICTIONARY`] (nibble 5) sub-index.
+    /// `FacadePhraseIndex::get_range(ADDON_DICTIONARY, range)`'s
+    /// `m_range_end` (`pinyin.cpp:2541-2542`, `phrase_index.cpp:608-622` at
+    /// 074a2219): the end of sub-index 5's range, masked into the library.
+    /// `None` is `ERROR_NO_SUB_PHRASE_INDEX`: `table.conf` gives library 5
+    /// no row, so the pin has no sub-index there and writes nothing to the
+    /// range. An empty sub-index answers slot 1 (`phrase_index.cpp:628-633`).
+    #[must_use]
+    pub fn addon_promotion_range_end(&self) -> Option<Token> {
+        if let Some(original) = self.originals.get(&ADDON_DICTIONARY) {
+            let items = self.inner.system_items.borrow();
+            return Some(phrase::phrase_index_make_token(
+                ADDON_DICTIONARY,
+                items.range_end(ADDON_DICTIONARY, original),
+            ));
+        }
+        let phrases = self.inner.libpinyin.phrases();
+        let arena = phrases.libraries.get(&ADDON_DICTIONARY);
+        if arena.is_none()
+            && !self.has_user_library(ADDON_DICTIONARY)
+            && !self.is_system_library(ADDON_DICTIONARY)
+        {
+            return None;
+        }
+        let end = arena.map_or(1, crate::user_library::UserLibrary::token_end);
+        Some(phrase::phrase_index_make_token(ADDON_DICTIONARY, end))
+    }
+
+    /// Copy a chosen addon phrase into the default facade under `token`
+    /// (`pinyin.cpp:2547-2558` at 074a2219): the pinyin index and the phrase
+    /// table take the token, and `add_phrase_item` puts the item in the
+    /// sub-index the token's own library bits name, which it makes when it
+    /// is missing (`phrase_index.h:663-671`). The caller read `token` from
+    /// the range, [`Self::addon_promotion_range_end`].
     ///
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the promotion cannot be written.
     pub fn promote_addon_phrase(
         &mut self,
+        token: Token,
         phrase: &str,
         readings: &[(Vec<PinyinKey>, u64)],
         unigram: u64,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<(), UserStoreError> {
         let valid: Vec<&(Vec<PinyinKey>, u64)> = readings
             .iter()
             .filter(|(keys, _)| phrase::phrase_and_keys_valid(phrase, keys))
@@ -1763,7 +1767,7 @@ impl UserStore {
             return Err(UserStoreError::InvalidPhrase);
         }
 
-        self.arena_promote(phrase, &valid, unigram as u32)
+        self.arena_promote(token, phrase, &valid, unigram as u32)
     }
 
     /// Read the stored count without decoding text or keys.
@@ -2689,7 +2693,7 @@ impl UserStore {
                     .collect()
             }));
         }
-        match token >> 24 {
+        match phrase_index_library_index(token) {
             5..=7 => Ok(self.phrase(token)?.map(|phrase| {
                 phrase
                     .pronunciations()
@@ -3107,7 +3111,10 @@ mod tests {
         );
         assert_eq!(store.unigram_total().unwrap(), 7);
         store.load_system_libraries(originals()).unwrap();
-        assert_eq!(store.system_library_total(1), Some(u32::MAX));
+        assert_eq!(
+            Some(crate::test_session::library_total(&store, 1)),
+            Some(u32::MAX)
+        );
         assert_eq!(store.unigram_total().unwrap(), 7);
     }
 
@@ -3994,7 +4001,10 @@ mod tests {
                 "the add past the last slot wraps"
             );
             assert_eq!(store.phrases().unwrap().len(), 3);
-            assert_eq!(store.unigram_library_total(USER_DICTIONARY).unwrap(), 30);
+            assert_eq!(
+                crate::test_session::library_total(&store, USER_DICTIONARY),
+                30
+            );
 
             // The range end stays past the last slot, so the next add lands
             // on slot 1 again: the offset word moves to the new item and the
@@ -4014,7 +4024,10 @@ mod tests {
                 "再见"
             );
             assert_eq!(store.unigram_delta(FIRST_USER_TOKEN).unwrap(), 15);
-            assert_eq!(store.unigram_library_total(USER_DICTIONARY).unwrap(), 45);
+            assert_eq!(
+                crate::test_session::library_total(&store, USER_DICTIONARY),
+                45
+            );
             assert_eq!(store.unigram_total().unwrap(), 45);
         }
 
@@ -4029,27 +4042,30 @@ mod tests {
             let mut store = transient();
             plant_item(&store, ADDON_DICTIONARY, PHRASE_MASK - 1);
             let readings = [(vec![key("er"), key("huang")], 100)];
-            let last = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            let last = crate::test_session::promote(&mut store, "二簧", &readings, 100).unwrap();
             assert_eq!(last, phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK));
             assert_eq!(
                 store.user_library_token_end(ADDON_DICTIONARY).unwrap(),
                 phrase_index_make_token(ADDON_DICTIONARY, 0)
             );
 
-            let wrapped = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            let wrapped = crate::test_session::promote(&mut store, "二簧", &readings, 100).unwrap();
             assert_eq!(
                 wrapped,
                 phrase_index_make_token(ADDON_DICTIONARY, 0),
                 "no `token++` on this path"
             );
             assert_eq!(store.unigram_delta(wrapped).unwrap(), 100);
-            assert_eq!(store.unigram_library_total(ADDON_DICTIONARY).unwrap(), 200);
+            assert_eq!(
+                crate::test_session::library_total(&store, ADDON_DICTIONARY),
+                200
+            );
 
-            let again = store.promote_addon_phrase("二簧", &readings, 100).unwrap();
+            let again = crate::test_session::promote(&mut store, "二簧", &readings, 100).unwrap();
             assert_eq!(again, wrapped);
             assert_eq!(store.unigram_delta(again).unwrap(), 100);
             assert_eq!(
-                store.unigram_library_total(ADDON_DICTIONARY).unwrap(),
+                crate::test_session::library_total(&store, ADDON_DICTIONARY),
                 300,
                 "the overwritten unigram stays in the total"
             );
@@ -4061,9 +4077,9 @@ mod tests {
             let mut store = transient();
             let keys = [key("er"), key("huang")];
 
-            let token = store
-                .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-                .unwrap();
+            let token =
+                crate::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100)
+                    .unwrap();
             assert_eq!(
                 phrase_index_library_index(token),
                 ADDON_DICTIONARY,
@@ -4086,9 +4102,9 @@ mod tests {
             // the range end again (`pinyin.cpp:2543-2558`), so the facade
             // total takes its unigram a second time and the first item
             // keeps its reading count.
-            let again = store
-                .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-                .unwrap();
+            let again =
+                crate::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100)
+                    .unwrap();
             assert_eq!(again, token + 1, "re-promotion takes the next range end");
             assert_eq!(store.unigram_delta(token).unwrap(), 100);
             assert_eq!(store.unigram_delta(again).unwrap(), 100);
@@ -4106,9 +4122,9 @@ mod tests {
         #[test]
         fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
             let mut store = transient();
-            let err = store
-                .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
-                .unwrap_err();
+            let err =
+                crate::test_session::promote(&mut store, "二簧", &[(vec![key("er")], 100)], 100)
+                    .unwrap_err();
             assert!(matches!(err, UserStoreError::InvalidPhrase));
             assert!(!store.has_user_data());
         }
@@ -4173,7 +4189,7 @@ mod tests {
                     let before = (
                         store.system_unigram(token),
                         store.unigram_total().unwrap(),
-                        store.system_library_total(1).unwrap(),
+                        crate::test_session::library_total(&store, 1),
                         store.is_modified(),
                     );
                     match entry {
@@ -4187,7 +4203,7 @@ mod tests {
                         (
                             store.system_unigram(token),
                             store.unigram_total().unwrap(),
-                            store.system_library_total(1).unwrap(),
+                            crate::test_session::library_total(&store, 1),
                             store.is_modified()
                         ),
                         before
@@ -4200,7 +4216,7 @@ mod tests {
                     assert_eq!(store.system_unigram(token), Some(102));
                     assert_eq!(
                         (store.unigram_total().unwrap() as u32)
-                            .wrapping_add(store.system_library_total(1).unwrap()),
+                            .wrapping_add(crate::test_session::library_total(&store, 1)),
                         1
                     );
                     drop(store);
@@ -4251,13 +4267,19 @@ mod tests {
             last = live;
         }
         assert_eq!(store.system_unigram(token), Some(2000));
-        assert_eq!(store.system_library_total(1), Some(2000));
+        assert_eq!(
+            Some(crate::test_session::library_total(&store, 1)),
+            Some(2000)
+        );
         assert_eq!(store.unigram_total().unwrap(), 0);
         // Repeated reads of the store see the same live state.
         for _ in 0..4 {
             let counts = store.count_delta(None, token).unwrap();
             assert_eq!(counts.unigram_live, Some(2000));
-            assert_eq!(store.system_library_total(1), Some(2000));
+            assert_eq!(
+                Some(crate::test_session::library_total(&store, 1)),
+                Some(2000)
+            );
         }
     }
 

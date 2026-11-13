@@ -30,7 +30,8 @@ impl PhraseIndex for SystemPhraseIndex {
     fn token_to_string(&self, token: u32) -> Option<Vec<u8>> {
         tag_token_text(
             token,
-            token >> 24 == 0,
+            // 074a2219 tag_utility.cpp:391.
+            oxpinyin_core::phrase_index_library(token) == 0,
             |token| self.libraries.phrase_text(token),
             |text| Some(text.outward_words().collect::<Vec<_>>()),
             |token| edge::report_unknown_token(token as i32),
