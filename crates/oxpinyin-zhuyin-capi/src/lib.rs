@@ -30,7 +30,7 @@
 //! crate calls `std::process::abort()` (class (c) retired 2026-10-31 UTC). The library crates on this
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
-//! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
+//! `expect_used`/`panic`/`panic_in_result_fn`/`unreachable` outside tests —
 //! the macro-only `oxpinyin-capi-marshal` carries the same lints. Permitted
 //! sites require narrowly scoped, justified
 //! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
@@ -49,6 +49,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 #![expect(
     unsafe_code,
     reason = "the C ABI crate; every block carries a SAFETY comment (constitution §5)"

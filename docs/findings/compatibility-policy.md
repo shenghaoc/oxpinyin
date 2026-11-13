@@ -176,7 +176,7 @@ For calls that the pin makes, the documented contract of the call governs, not o
 **Unreachable internal invariants.** A panic-producing assertion is permitted only where its failure is proven unreachable under the applicable preconditions.
 Where the pin continues or returns an error, oxpinyin must not introduce a panic.
 Use idiomatic Rust error handling; internal Rust APIs do not all need to return `Result`.
-The non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn` stay.
+The non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::panic_in_result_fn` and `clippy::unreachable` stay.
 A permitted site uses the narrowest scoped `#[expect(..., reason = "...")]` and cites the established invariant that makes failure unreachable.
 An `#[expect]` proves only that Clippy saw the construct; review establishes the invariant.
 The [Rust conventions](../rust-conventions.md#panics-and-errors) give the lint details.

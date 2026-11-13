@@ -6,7 +6,8 @@
         clippy::unwrap_used,
         clippy::expect_used,
         clippy::panic,
-        clippy::panic_in_result_fn
+        clippy::panic_in_result_fn,
+        clippy::unreachable
     )
 )]
 

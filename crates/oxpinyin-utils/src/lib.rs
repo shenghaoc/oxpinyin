@@ -9,6 +9,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 
 pub mod gen_pinyin_table;
 

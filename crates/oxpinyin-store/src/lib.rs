@@ -50,6 +50,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 
 // ── Exactly-one-backend invariant, enforced at compile time ────────────
 //

@@ -179,32 +179,39 @@ fn attach_mode(read_only: bool, create: bool) -> u32 {
 
 /// Where the bridge's visitor copies what it visits: one point read, the
 /// record at a cursor, every record, or every key.
-pub(super) enum Sink {
+///
+/// A sink borrows what the visitor writes and holds by value what it only
+/// reads. The caller keeps its buffers and reads them after the native
+/// call.
+pub(super) enum Sink<'a> {
     /// A point read into the caller's buffer, which arrives cleared.
-    Value { bytes: Vec<u8>, found: bool },
+    Value {
+        bytes: &'a mut Vec<u8>,
+        found: &'a mut bool,
+    },
     /// A bounded point read, retaining the complete record length.
     Bounded {
-        bytes: Vec<u8>,
+        bytes: &'a mut Vec<u8>,
         limit: usize,
-        size: Option<usize>,
+        size: &'a mut Option<usize>,
     },
-    /// The record at a cursor, key then value, in a buffer the cursor
+    /// The record at a cursor, key then value, in the buffer the cursor
     /// reuses.
     Record {
-        bytes: Vec<u8>,
-        key_len: usize,
+        bytes: &'a mut Vec<u8>,
+        key_len: &'a mut usize,
         with_value: bool,
     },
     /// Every record of a whole-file copy.
-    Records(Vec<Record>),
+    Records(&'a mut Vec<Record>),
     /// Every key, as the four-byte tokens the user bigram keys by; `None`
     /// for a key of any other length.
-    Keys(Vec<Option<[u8; 4]>>),
+    Keys(&'a mut Vec<Option<[u8; 4]>>),
     /// Every key, byte for byte, as the attached bigram's walk collects it.
-    RawKeys(Vec<Vec<u8>>),
+    RawKeys(&'a mut Vec<Vec<u8>>),
 }
 
-impl Sink {
+impl Sink<'_> {
     /// One visited record. Never a database call: the visitor runs under
     /// the record's lock (`kcdb.h:268-271`).
     pub(super) fn full(&mut self, key: &[u8], value: &[u8]) {
@@ -212,12 +219,12 @@ impl Sink {
             Self::Value { bytes, found } => {
                 bytes.reserve_exact(value.len());
                 bytes.extend_from_slice(value);
-                *found = true;
+                **found = true;
             }
             Self::Bounded { bytes, limit, size } => {
                 let count = value.len().min(*limit);
                 bytes.extend_from_slice(&value[..count]);
-                *size = Some(value.len());
+                **size = Some(value.len());
             }
             Self::Record {
                 bytes,
@@ -229,7 +236,7 @@ impl Sink {
                 bytes.reserve_exact(key.len() + value.len());
                 bytes.extend_from_slice(key);
                 bytes.extend_from_slice(value);
-                *key_len = key.len();
+                **key_len = key.len();
             }
             Self::Records(records) => {
                 let mut bytes = Vec::new();
@@ -493,16 +500,13 @@ impl Db {
     pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         let key = region(key)?;
         value.clear();
+        let mut found = false;
         let mut sink = Sink::Value {
-            bytes: std::mem::take(value),
-            found: false,
+            bytes: value,
+            found: &mut found,
         };
         // SAFETY: `region` bounds the key by MEMMAXSIZ.
         let ok = unsafe { sys::get(&self.db, key, &mut sink) };
-        let Sink::Value { bytes, found } = sink else {
-            unreachable!("the visitor keeps the sink's kind");
-        };
-        *value = bytes;
         if !ok {
             // The text `kcdbget` reported, so a failure reads as before.
             return Err(self.error("kcdbget"));
@@ -518,16 +522,15 @@ impl Db {
         value: &mut [u8],
     ) -> Result<Option<usize>, StoreError> {
         let key = region(key)?;
+        let mut bytes = Vec::with_capacity(value.len());
+        let mut size = None;
         let mut sink = Sink::Bounded {
-            bytes: Vec::with_capacity(value.len()),
+            bytes: &mut bytes,
             limit: value.len(),
-            size: None,
+            size: &mut size,
         };
         // SAFETY: `region` bounds the key by MEMMAXSIZ.
         let ok = unsafe { sys::get(&self.db, key, &mut sink) };
-        let Sink::Bounded { bytes, size, .. } = sink else {
-            unreachable!("the visitor keeps the sink's kind");
-        };
         if !ok {
             return Err(self.error("kcdbget"));
         }
@@ -585,9 +588,7 @@ impl Db {
     pub(crate) fn records(&self) -> Result<Vec<Record>, StoreError> {
         let mut records = Vec::new();
         records.reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
-        let Sink::Records(records) = self.iterate(Sink::Records(records))? else {
-            unreachable!("the visitor keeps the sink's kind");
-        };
+        self.iterate(Sink::Records(&mut records))?;
         Ok(records)
     }
 
@@ -596,29 +597,29 @@ impl Db {
     /// it (`ngram_kyotodb.cpp:186-196`). The keys grow one vector, as the
     /// pin appends them to one `GArray`.
     pub(crate) fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
-        let Sink::Keys(keys) = self.iterate(Sink::Keys(Vec::new()))? else {
-            unreachable!("the visitor keeps the sink's kind");
-        };
+        let mut keys = Vec::new();
+        self.iterate(Sink::Keys(&mut keys))?;
         Ok(keys)
     }
 
     /// [`Self::keys`] with each key's own bytes, whatever its length: the
     /// walk of an attached bigram, whose caller judges the key length.
     pub(crate) fn raw_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let Sink::RawKeys(keys) = self.iterate(Sink::RawKeys(Vec::new()))? else {
-            unreachable!("the visitor keeps the sink's kind");
-        };
+        let mut keys = Vec::new();
+        self.iterate(Sink::RawKeys(&mut keys))?;
         Ok(keys)
     }
 
-    fn iterate(&self, mut sink: Sink) -> Result<Sink, StoreError> {
+    /// One read-only `iterate` that copies every record it visits into
+    /// `sink`.
+    fn iterate(&self, mut sink: Sink<'_>) -> Result<(), StoreError> {
         let ok = sys::iterate(&self.db, &mut sink);
         #[cfg(test)]
         record_native_call(self.address(), NativeCall::Iterate);
         if !ok {
             return Err(self.error("kcdbiterate"));
         }
-        Ok(sink)
+        Ok(())
     }
 
     /// Insert or overwrite.
@@ -768,11 +769,8 @@ impl Db {
         Cursor {
             cursor: sys::make_cursor(&self.db),
             db: &self.db,
-            sink: Sink::Record {
-                bytes: Vec::new(),
-                key_len: 0,
-                with_value: true,
-            },
+            bytes: Vec::new(),
+            key_len: 0,
         }
     }
 }
@@ -812,7 +810,10 @@ impl Drop for Db {
 pub(crate) struct Cursor<'db> {
     cursor: UniquePtr<sys::DbCursor<'db>>,
     db: &'db sys::BasicDB,
-    sink: Sink,
+    /// The last record read, key then value.
+    bytes: Vec<u8>,
+    /// The length of the key at the start of `bytes`.
+    key_len: usize,
 }
 
 impl Cursor<'_> {
@@ -872,28 +873,21 @@ impl Cursor<'_> {
 
     /// The key of the last record read.
     pub(crate) fn key(&self) -> &[u8] {
-        let Sink::Record { bytes, key_len, .. } = &self.sink else {
-            unreachable!("a cursor's sink is a record");
-        };
-        &bytes[..*key_len]
+        &self.bytes[..self.key_len]
     }
 
     /// The value of the last record read.
     pub(crate) fn value(&self) -> &[u8] {
-        let Sink::Record { bytes, key_len, .. } = &self.sink else {
-            unreachable!("a cursor's sink is a record");
-        };
-        &bytes[*key_len..]
+        &self.bytes[self.key_len..]
     }
 
     fn read(&mut self, with_value: bool, step: bool) -> Result<bool, StoreError> {
-        if let Sink::Record {
-            with_value: wanted, ..
-        } = &mut self.sink
-        {
-            *wanted = with_value;
-        }
-        if sys::cursor_accept(self.cursor.pin_mut(), &mut self.sink, step) {
+        let mut sink = Sink::Record {
+            bytes: &mut self.bytes,
+            key_len: &mut self.key_len,
+            with_value,
+        };
+        if sys::cursor_accept(self.cursor.pin_mut(), &mut sink, step) {
             return Ok(true);
         }
         // A false return is the end of the database as well as a failure;

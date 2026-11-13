@@ -93,10 +93,12 @@ pub(super) mod sys {
     }
 
     extern "Rust" {
-        /// Where the adapter's visitor copies each record it visits.
-        type Sink;
+        /// Where the adapter's visitor copies each record it visits. It
+        /// borrows the caller's buffers for `'a`. C++ sees an opaque
+        /// type, which it holds by reference for one call.
+        type Sink<'a>;
         /// One record's key and value, valid for this call only.
-        fn full(self: &mut Sink, key: &[u8], value: &[u8]);
+        fn full(self: &mut Sink<'_>, key: &[u8], value: &[u8]);
     }
 
     unsafe extern "C++" {
@@ -132,7 +134,7 @@ pub(super) mod sys {
         /// # Safety
         ///
         /// `key.len()` is at most `MEM_MAX_SIZE` (`ffi.rs`).
-        unsafe fn get(db: &BasicDB, key: &[u8], sink: &mut Sink) -> bool;
+        unsafe fn get(db: &BasicDB, key: &[u8], sink: &mut Sink<'_>) -> bool;
         /// # Safety
         ///
         /// `key.len()` and `value.len()` are at most `MEM_MAX_SIZE` (`ffi.rs`).
@@ -141,7 +143,7 @@ pub(super) mod sys {
         ///
         /// `key.len()` is at most `MEM_MAX_SIZE` (`ffi.rs`).
         unsafe fn remove(db: &BasicDB, key: &[u8]) -> bool;
-        fn iterate(db: &BasicDB, sink: &mut Sink) -> bool;
+        fn iterate(db: &BasicDB, sink: &mut Sink<'_>) -> bool;
         fn count(db: &BasicDB) -> i64;
         fn synchronize(db: &BasicDB, hard: bool) -> bool;
         fn begin_transaction(db: &BasicDB, hard: bool) -> bool;
@@ -155,6 +157,6 @@ pub(super) mod sys {
         ///
         /// `key.len()` is at most `MEM_MAX_SIZE` (`ffi.rs`).
         unsafe fn jump_to(cursor: Pin<&mut DbCursor<'_>>, key: &[u8]) -> bool;
-        fn cursor_accept(cursor: Pin<&mut DbCursor<'_>>, sink: &mut Sink, step: bool) -> bool;
+        fn cursor_accept(cursor: Pin<&mut DbCursor<'_>>, sink: &mut Sink<'_>, step: bool) -> bool;
     }
 }
