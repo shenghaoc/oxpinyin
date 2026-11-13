@@ -571,12 +571,14 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
 /// (`pinyin.cpp:2532-2561`): copies the addon phrase item into the default
-/// facade's nibble-5 sub-index, rewrites the snapshot candidate to a
-/// `NORMAL_CANDIDATE` at the promoted token, and returns that token so the
-/// constraint records it in place of the addon-facade token.
+/// facade under the token the range's end holds, rewrites the snapshot
+/// candidate to a `NORMAL_CANDIDATE` at that token, and returns the token
+/// so the constraint records it in place of the addon-facade token.
 ///
-/// `None` — leaving a plain selection — when the candidate is not an addon
-/// candidate, the addon item cannot be resolved, or the store write fails.
+/// If sub-index 5 is missing, `get_range` leaves its output unwritten
+/// (074a2219 `phrase_index.cpp:610-613`). The pin reads it anyway
+/// (`pinyin.cpp:2541-2545`), so its token is undefined. Skip promotion
+/// on this path, as for an unreadable addon item.
 unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Option<PhraseToken> {
     let item = {
         // SAFETY: the caller supplies a live instance and snapshot index.
@@ -595,15 +597,20 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         // SAFETY: the read view above has ended; the caller serializes this
         // context mutation with every other operation on its instances.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        ctx.core
-            .user_store_mut()
-            .promote_addon_phrase(text, &item.readings, item.unigram)
-            .ok()?
+        let store = ctx.core.user_store_mut();
+        let range_end = store.addon_promotion_range_end()?;
+        // `pinyin.cpp:2547-2558`: both index adds and `add_phrase_item`
+        // take this one token.
+        store
+            .promote_addon_phrase(range_end, text, &item.readings, item.unigram)
+            .ok()?;
+        range_end
     };
     let promoted = PhraseToken::new(promoted);
     // SAFETY: the context write has ended and the same live snapshot remains.
     let inst = unsafe { crate::state::instance_state_ref(instance) };
     let snapshot = &inst.state.candidates[index];
+    // `pinyin.cpp:2561-2562`.
     snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
     snapshot.token.set(Some(promoted));
     Some(promoted)
@@ -993,6 +1000,21 @@ mod unloaded_library_tests {
             read(inst.core.user)
         }
 
+        /// The total a system library's sub-index holds once it is loaded
+        /// and before any write: `SubPhraseIndex::load` reads it from the
+        /// chunk (`phrase_index.cpp:345` at the pin `074a2219`).
+        fn loaded_total(&self, library: u8) -> u32 {
+            // SAFETY: as in `store`.
+            unsafe { instance_ref(self.instance) }
+                .core
+                .dict
+                .system()
+                .libraries()
+                .library(u32::from(library) << 24)
+                .map(oxpinyin_data::phrase_library::PhraseLibrary::total_freq)
+                .expect("the library is mapped")
+        }
+
         /// The facade total the model divides by.
         fn amplified_total(&self) -> u64 {
             // SAFETY: as in `store`.
@@ -1211,9 +1233,7 @@ mod unloaded_library_tests {
     fn choosing_a_row_whose_unigram_add_overflows_under_the_sort_bit_answers_zero() {
         let open = Open::new("sort-bit-overflow");
         let (row, gbk) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
-        let total = open
-            .store(|store| store.system_library_total(2))
-            .expect("the GBK library's total");
+        let total = open.loaded_total(2);
         assert!(pinyin_token_add_unigram_frequency(
             open.instance,
             gbk,
@@ -1232,9 +1252,7 @@ mod unloaded_library_tests {
             kind == lookup_candidate_type_t::LONGER_CANDIDATE
         });
         let library = u8::try_from(token >> 24).expect("a library nibble");
-        let total = open
-            .store(|store| store.system_library_total(library))
-            .expect("the row's library total");
+        let total = open.loaded_total(library);
         assert!(pinyin_token_add_unigram_frequency(
             open.instance,
             token,

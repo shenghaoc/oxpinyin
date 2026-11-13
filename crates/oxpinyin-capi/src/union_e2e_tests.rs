@@ -619,3 +619,102 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// With row 5 `NOT_USED`, the pin reads an unwritten token (074a2219
+/// phrase_index.cpp:610-613, pinyin.cpp:2541-2545). The class (b) outcome
+/// leaves the addon candidate and default sub-indices as they were.
+#[test]
+fn choosing_an_addon_without_sub_index_5_skips_promotion() {
+    let system = TempSystemDir::new("addon-promote-not-used");
+    let conf = std::fs::read_to_string(system.path.join("table.conf")).expect("table.conf");
+    let row = "default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE";
+    assert!(conf.contains(row));
+    system.write(
+        "table.conf",
+        &conf.replace(row, "default ADDON_DICTIONARY NULL NULL NULL NOT_USED"),
+    );
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("addon-promote-not-used-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let input = cstr("erhuang");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let (index, token, text, keys, total) = {
+        // SAFETY: live instance; the snapshot is valid until the next guess.
+        let inst = unsafe { instance_ref(instance) };
+        let store = inst.core.user;
+        assert_eq!(store.addon_promotion_range_end(), None);
+        let (index, cand) = inst
+            .candidates
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
+            .expect("art addon offers an ADDON candidate for erhuang");
+        let token = cand.token.get().expect("addon token");
+        let item = inst
+            .core
+            .dict
+            .addon_phrase_item(token.value())
+            .expect("addon item");
+        let keys: Vec<_> = item.readings[0]
+            .0
+            .iter()
+            .map(|&key| {
+                oxpinyin_core::SyllableKey::from_index(usize::from(key)).expect("stored key")
+            })
+            .collect();
+        (
+            index,
+            token,
+            cand.text_str().expect("addon text").to_owned(),
+            keys,
+            store.unigram_total().unwrap(),
+        )
+    };
+    let mut cand = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        index.try_into().unwrap(),
+        &raw mut cand
+    ));
+    assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+
+    let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
+    assert!(pinyin_get_candidate_type(instance, cand, &raw mut kind));
+    assert_eq!(kind, lookup_candidate_type_t::ADDON_CANDIDATE);
+    {
+        // SAFETY: the live instance still owns this snapshot.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(inst.state.candidates[index].token.get(), Some(token));
+        let store = inst.core.user;
+        assert_eq!(store.addon_promotion_range_end(), None);
+        assert!(
+            store
+                .phrase_table_tokens_for_text(&text)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(store.lookup().lookup(&keys).is_empty());
+        assert!(store.phrases().unwrap().is_empty());
+        assert_eq!(store.unigram_total().unwrap(), total);
+        assert!(!store.is_modified());
+    }
+    assert!(!crate::context::pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    let files: Vec<_> = std::fs::read_dir(&user.path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(files, [std::ffi::OsString::from("user.conf")]);
+}

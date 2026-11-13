@@ -18,7 +18,12 @@ impl UserStore {
     /// `SubPhraseIndex::m_total_freq` of `library`: a system library's live
     /// scalar, or a user library's items sum plus the stored total's
     /// difference from it.
-    fn library_total_of(&self, offsets: &Offsets, phrases: &SessionPhrases, library: u8) -> u32 {
+    pub(crate) fn library_total_of(
+        &self,
+        offsets: &Offsets,
+        phrases: &SessionPhrases,
+        library: u8,
+    ) -> u32 {
         if let Some(original) = self.originals.get(&library) {
             return self
                 .inner
@@ -34,6 +39,15 @@ impl UserStore {
             .libraries
             .get(&library)
             .map_or(offset, UserLibrary::total)
+    }
+
+    /// [`Self::library_total_of`] under the session's own borrows, for the
+    /// tests.
+    #[cfg(test)]
+    pub(crate) fn library_total_for_test(&self, library: u8) -> u32 {
+        let offsets = self.offsets();
+        let phrases = self.inner.libpinyin.phrases();
+        self.library_total_of(&offsets, &phrases, library)
     }
 
     /// `FacadePhraseIndex::add_phrase_item` for an item of `unigram` added to
@@ -126,15 +140,22 @@ impl UserStore {
             || self.inner.system_items.borrow().has_added()
     }
 
-    /// Addon selection copies the complete item to the current range end,
-    /// including its unigram, and indexes every pronunciation
-    /// (074a2219 pinyin.cpp:2531-2562).
+    /// Addon selection copies the complete item under `token`, including
+    /// its unigram, and indexes every pronunciation
+    /// (074a2219 pinyin.cpp:2547-2558).
+    ///
+    /// `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
+    /// overflow check and no reserved-id bump; `FacadePhraseIndex::get_range`
+    /// masks the end into the nibble (`phrase_index.cpp:620`), so a full
+    /// library wraps to slot 0, whose offset word `add_phrase_item`
+    /// overwrites (`phrase_index.cpp:208-217`; register row 119).
     pub(super) fn arena_promote(
         &mut self,
+        token: Token,
         phrase: &str,
         readings: &[&(Vec<PinyinKey>, u64)],
         unigram: u32,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<(), UserStoreError> {
         let target = &self.inner.libpinyin;
         let item = ChunkItem {
             phrase: phrase.chars().map(u32::from).collect(),
@@ -155,22 +176,36 @@ impl UserStore {
             .phrase_table
             .check_add(&item.phrase)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        let empty = UserLibrary::default();
-        let library = phrases.libraries.get(&ADDON_DICTIONARY).unwrap_or(&empty);
-        let slot = library.token_end();
-        // `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
-        // overflow check and no reserved-id bump; `FacadePhraseIndex::get_range`
-        // masks the end into the nibble (`phrase_index.cpp:620`), so a full
-        // library wraps to slot 0, whose offset word `add_phrase_item`
-        // overwrites (`phrase_index.cpp:208-217`; register row 119).
-        let token = phrase::phrase_index_make_token(ADDON_DICTIONARY, slot);
-        let retained = offsets.get(&ADDON_DICTIONARY).copied().unwrap_or(0);
-        phrases
-            .arena(ADDON_DICTIONARY, retained)
-            .ok_or(UserStoreError::InvalidPhrase)?
-            .add(token & PHRASE_MASK, &bytes)
-            .map_err(UserStoreError::Persistence)?;
-        self.take_item_in(ADDON_DICTIONARY, unigram, false);
+        // `add_phrase_item` selects the sub-index with
+        // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`phrase_index.h:664`).
+        let library = phrase_index_library_index(token);
+        if let Some(original) = self.originals.get(&library) {
+            // A system chunk's sub-index: the item goes to its live buffer
+            // and its total takes the unigram (`phrase_index.h:669-670`,
+            // `phrase_index.cpp:208-217`).
+            let mut items = self.inner.system_items.borrow_mut();
+            // An unloaded library's slot is NULL and the pin makes a new,
+            // empty sub-index there (`phrase_index.h:665-668`). The session
+            // has no buffer to stand for it.
+            if items.lacks_sub_index(library, original) {
+                return Err(UserStoreError::InvalidPhrase);
+            }
+            if items.add_item(original, token, &bytes) {
+                self.inner.has_removed_system_items.set(true);
+            }
+            drop(items);
+            self.inner.has_system_items.set(true);
+        } else {
+            // A user library's sub-index, or the one `add_phrase_item`
+            // makes for a library that had none (`phrase_index.h:665-668`).
+            let retained = offsets.get(&library).copied().unwrap_or(0);
+            phrases
+                .arena(library, retained)
+                .ok_or(UserStoreError::InvalidPhrase)?
+                .add(token & PHRASE_MASK, &bytes)
+                .map_err(UserStoreError::Persistence)?;
+            self.take_item_in(library, unigram, false);
+        }
         phrases
             .phrase_table
             .add(&item.phrase, token)
@@ -185,7 +220,7 @@ impl UserStore {
         }
         drop(phrases);
         self.mark_committed_phrase_write(true);
-        Ok(token)
+        Ok(())
     }
 
     #[cfg(test)]

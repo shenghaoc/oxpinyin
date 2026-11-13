@@ -373,13 +373,13 @@ impl PhraseLibraries {
         self.by_nibble.iter().all(Option::is_none)
     }
 
-    /// The library owning `token`'s nibble, when loaded. Nibbles at or
-    /// beyond the 16-library count answer `None`, matching upstream's
-    /// `PHRASE_INDEX_LIBRARY_INDEX` bound.
+    /// The library `PHRASE_INDEX_LIBRARY_INDEX(token)` names, when loaded
+    /// (`phrase_index.h:647`, `novel_types.h:44` at 074a2219). The macro
+    /// masks the token's high four bits.
     #[must_use]
     pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble
-            .get((token >> 24) as usize)?
+            .get(oxpinyin_core::phrase_index_library(token))?
             .as_ref()
             .map(|loaded| &loaded.library)
     }

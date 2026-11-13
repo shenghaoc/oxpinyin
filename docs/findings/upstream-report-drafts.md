@@ -2,7 +2,7 @@
 
 Status: **open**. Drafts, not filed.
 
-This file holds twelve draft upstream reports. Each states the defect with
+This file holds thirteen draft upstream reports. Each states the defect with
 its pin cites and, where one exists, a reproduction and a fix:
 
 - Items 1–4: four API defects, to file as one considered set.
@@ -12,8 +12,9 @@ its pin cites and, where one exists, a reproduction and a fix:
 - Item 8: every Berkeley DB `save_db` passes the wrong handle to `DB->sync`, with no observable effect.
 - Item 9: the `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits.
 - Items 10–12: reachable heap-comparator and tail-sort precondition violations, and the source-established node front-eviction inversion.
+- Item 13: a reloaded system library's total counts logged ADD and growing MODIFY records twice.
 
-Items 5–12 are separate reports. Filing is the maintainer's action (and
+Items 5–13 are separate reports. Filing is the maintainer's action (and
 account). Nothing here has been filed upstream. The contributor rules give the
 collection mandate ("collected to report back to libpinyin once the rewrite
 is complete"). Filing before the rewrite is complete is the maintainer's
@@ -709,6 +710,36 @@ bug-for-bug; changing it requires a separate maintainer ruling or Stage 3.
 
 ---
 
+## 13. A reloaded library's total applies logged item changes twice
+
+**Severity: low.** Wrong unigram probabilities for the session, with no memory or abort hazard.
+
+The defect follows from the source; no reproduction was run.
+
+`pinyin_save` compacts the phrase index, so each sub-index total is the sum of its items (`src/pinyin.cpp:1139`, `src/storage/phrase_index.cpp:648-675` at `074a2219`).
+`SubPhraseIndex::diff` then logs that total as the new value of a `LOG_MODIFY_HEADER` record, before the item records (`phrase_index.cpp:393-399`).
+The total already holds the effect of every addition, removal and item change.
+
+On the next load, `SubPhraseIndex::merge` replays the log over the system chunk:
+
+- `LOG_MODIFY_HEADER` sets `m_total_freq` to the logged total (`phrase_index.cpp:500-512`).
+- `LOG_ADD_RECORD` calls `add_phrase_item`, which adds the item's unigram frequency to `m_total_freq` again (`:453-457`, `:215`).
+- `LOG_REMOVE_RECORD` calls `remove_phrase_item`, which subtracts the item's unigram frequency from `m_total_freq` again (`:460-463`, `:219-234`, subtraction at `:233`).
+- A `LOG_MODIFY_RECORD` whose new item is larger removes the old item and adds the new one, which subtracts the old unigram frequency and adds the new one (`:486-491`, `:233`, `:215`).
+- An in-place `LOG_MODIFY_RECORD` leaves the total alone (`:492-499`).
+
+The reloaded total is the saved total, plus each logged ADD item's unigram frequency, minus each logged REMOVE item's unigram frequency, plus the frequency change of each MODIFY that enlarged its item. The change is the new frequency minus the old frequency and can be negative.
+`FacadePhraseIndex::merge` carries the total error into the facade total (`:291-296`), which divides every unigram probability (`src/pinyin.cpp:1814-1815`).
+
+For example, a library whose items sum to 2162 at save, with one MODIFY that enlarged an item and changed its frequency from 100 to 1086, one ADD of frequency 516 and no REMOVE, reloads with a total of 2162 + 516 − 0 + (1086 − 100) = 3664.
+These numbers are derived from the source; they are not a runtime capture.
+
+**Suggested fix:** keep the header record first and check the current total against its logged old total (`phrase_index.cpp:503-512`). Replaying an ADD first can change the current total and fail that check. After replaying the last item record, set `m_total_freq` to the header's new total.
+
+oxpinyin reproduces the reloaded total (unit test `a_mixed_profile_keeps_shipped_appended_and_user_state_apart`).
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another. Items 1–4 are filed as four issues.
@@ -721,6 +752,7 @@ bug-for-bug; changing it requires a separate maintainer ruling or Stage 3.
   - Item 9 is a separate ranking report.
   - Items 10 and 11 report distinct comparator contracts. Item 12 reports
     a contract-valid algorithm defect and must not be conflated with them.
+  - Item 13 is a separate phrase-index report.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Filing follows a search of GitHub and Fedora Bugzilla for an existing report.
 - Credit line under the historical attribution convention is the maintainer's to

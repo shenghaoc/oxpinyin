@@ -183,7 +183,10 @@ fn a_log_of_in_place_modifies_records_nothing() {
     let store = profile.open();
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(120));
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
-    assert_eq!(store.system_library_total(1), Some(232));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(232)
+    );
     assert!(!store.has_removed_system_items());
     assert_eq!(store.system_item_end(1), None, "no item was added");
     for slot in 1..=5 {
@@ -213,7 +216,10 @@ fn an_add_into_a_hole_and_one_past_the_array_are_appended_items() {
     assert!(!store.has_removed_system_items());
     assert_eq!(store.system_item_end(1), Some(LIBRARY | 10));
     assert_eq!(store.unigram_delta(LIBRARY | 4).expect("delta"), 40);
-    assert_eq!(store.system_library_total(1), Some(285));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(285)
+    );
     assert!(store.system_provenance_recorded(1));
 }
 
@@ -242,7 +248,10 @@ fn a_remove_of_a_shipped_item_is_a_removal_and_earlier_modifies_stand() {
     assert!(!appended(&store, 2));
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(120));
     assert_eq!(store.system_unigram(LIBRARY | 2), None);
-    assert_eq!(store.system_library_total(1), Some(155));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(155)
+    );
     assert_eq!(store.system_item_end(1), None);
 }
 
@@ -259,7 +268,10 @@ fn a_removed_added_item_is_not_a_removed_shipped_item() {
     assert!(!store.has_removed_system_items());
     assert!(!removed(&store, 4));
     assert!(!appended(&store, 4), "the slot holds no item");
-    assert_eq!(store.system_library_total(1), Some(185));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(185)
+    );
 }
 
 /// REMOVE of a shipped item, then ADD under the same slot: the slot held a
@@ -381,7 +393,10 @@ fn a_rolled_back_replay_leaves_no_provenance() {
     assert!(!appended(&store, 4));
     assert!(!appended(&store, 9));
     assert_eq!(store.system_item_end(1), None);
-    assert_eq!(store.system_library_total(1), Some(185));
+    assert_eq!(
+        Some(crate::test_session::library_total(&store, 1)),
+        Some(185)
+    );
     assert!(!store.system_provenance_recorded(1));
 }
 

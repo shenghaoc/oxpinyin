@@ -246,7 +246,8 @@ impl<'a> LiveSystemItems<'a> {
     /// probe's removed check.
     #[must_use]
     pub fn is_visible(&self, token: Token) -> bool {
-        self.library_loaded(token >> 24) && !self.user.system_item_removed(token)
+        self.library_loaded(u32::from(crate::phrase::phrase_index_library_index(token)))
+            && !self.user.system_item_removed(token)
     }
 
     /// Reads the effective item behind `token` in a configured system
@@ -261,10 +262,10 @@ impl<'a> LiveSystemItems<'a> {
     /// (`effective_possibility`), `token_text`, `token_nth_pronunciation`,
     /// the export probe and row reads.
     pub fn read<R>(&self, token: Token, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
-        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if !self.is_system_library(crate::phrase::phrase_index_library_index(token)) {
             return Lookup::Absent;
         }
-        if !self.library_loaded(token >> 24) {
+        if !self.library_loaded(u32::from(crate::phrase::phrase_index_library_index(token))) {
             return Lookup::Unloaded;
         }
         let mut read = Some(read);
@@ -304,10 +305,10 @@ impl<'a> LiveSystemItems<'a> {
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
     pub fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
-        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if !self.is_system_library(crate::phrase::phrase_index_library_index(token)) {
             return Lookup::Absent;
         }
-        if !self.library_loaded(token >> 24) {
+        if !self.library_loaded(u32::from(crate::phrase::phrase_index_library_index(token))) {
             return Lookup::Unloaded;
         }
         let store = self.user;
@@ -330,7 +331,7 @@ impl<'a> LiveSystemItems<'a> {
     /// when the token is hidden or holds no item.
     #[must_use]
     pub fn effective_unigram(&self, token: Token) -> Option<u64> {
-        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index))
+        if !self.is_system_library(crate::phrase::phrase_index_library_index(token))
             || !self.is_visible(token)
         {
             return None;
@@ -350,7 +351,7 @@ impl<'a> LiveSystemItems<'a> {
     /// be read.
     pub fn is_imported(&self, token: Token) -> Result<bool, UserStoreError> {
         let store = self.user;
-        if !u8::try_from(token >> 24).is_ok_and(|index| self.is_system_library(index)) {
+        if !self.is_system_library(crate::phrase::phrase_index_library_index(token)) {
             return Ok(false);
         }
         let held = store.with_user_item(token, |_| ()).is_some();
@@ -440,18 +441,20 @@ mod tests {
         assert_eq!(shipped.unigram_count(0x0100_0001), Some(1));
     }
 
-    /// 074a2219 pinyin.cpp:337-367 loads the libraries named by table.conf;
-    /// the configured library index is not restricted to the stock 1..=4.
-    #[test]
-    fn a_nonstock_loaded_library_is_a_system_library() {
+    /// A session whose `table.conf` makes library `nibble`, named `row`, a
+    /// `SYSTEM_FILE` holding one item at slot 1 with unigram 1.
+    fn session_over_system_library(
+        dir: &std::path::Path,
+        nibble: u8,
+        row: &str,
+    ) -> (PhraseLibraries, UserStore) {
         use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
         use oxpinyin_data::{
             phrase_library::PhraseLibrary,
             user_files::{SystemVersions, UserTableInfo},
         };
         use std::collections::BTreeMap;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("six.bin");
+        let path = dir.join("six.bin");
         let item = ChunkItem {
             phrase: vec![0x4f60],
             unigram: 1,
@@ -459,22 +462,24 @@ mod tests {
         };
         std::fs::write(&path, build_chunk(&[(1, item)]).unwrap()).unwrap();
         let mut libraries = PhraseLibraries::empty();
-        assert!(libraries.load(6, &path).unwrap());
+        assert!(libraries.load(nibble, &path).unwrap());
         let original = PhraseLibrary::open(&path).unwrap();
-        // A table.conf that makes library 6 a `SYSTEM_FILE`.
-        let conf_path = dir.path().join("table.conf");
+        // A table.conf that makes the library a `SYSTEM_FILE`.
+        let conf_path = dir.join("table.conf");
         std::fs::write(
             &conf_path,
-            "binary format version:7\nmodel data version:14\n\
-             lambda parameter:0.312699\n\nsource table format:pinyin\n\
-             database format:BerkeleyDB\n\n\
-             default NETWORK_DICTIONARY six.table six.bin six.dbin SYSTEM_FILE\n",
+            format!(
+                "binary format version:7\nmodel data version:14\n\
+                 lambda parameter:0.312699\n\nsource table format:pinyin\n\
+                 database format:BerkeleyDB\n\n\
+                 default {row} six.table six.bin six.dbin SYSTEM_FILE\n"
+            ),
         )
         .unwrap();
         let conf = oxpinyin_data::table_info::TableConf::load_path(&conf_path).unwrap();
         let originals = SystemOriginals::new(
             crate::LibraryTable::from([(
-                6,
+                nibble,
                 SystemLibrary {
                     total: original.total_freq(),
                     range_end: original.token_range().end,
@@ -485,7 +490,7 @@ mod tests {
             oxpinyin_data::user_files::UserFileLayout::from_conf(&conf),
         );
         let versions = SystemVersions::for_this_build(7, 14);
-        let user = dir.path().join("user");
+        let user = dir.join("user");
         std::fs::create_dir(&user).unwrap();
         std::fs::write(
             user.join("user.conf"),
@@ -494,6 +499,15 @@ mod tests {
         .unwrap();
         let store =
             crate::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
+        (libraries, store)
+    }
+
+    /// 074a2219 pinyin.cpp:337-367 loads the libraries named by table.conf;
+    /// the configured library index is not restricted to the stock 1..=4.
+    #[test]
+    fn a_nonstock_loaded_library_is_a_system_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let (libraries, store) = session_over_system_library(dir.path(), 6, "NETWORK_DICTIONARY");
         let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(&libraries, &store, &unloaded);
         assert!(live.is_system_library(6));
@@ -501,6 +515,43 @@ mod tests {
         assert_eq!(
             live.read(0x0600_0001, |item| item.unigram()),
             Lookup::Found(1)
+        );
+    }
+
+    /// With library 5 a `SYSTEM_FILE`, the promotion's token is the end of
+    /// that sub-index's range (`pinyin.cpp:2541-2544` at the pin
+    /// `074a2219`) and `add_phrase_item` puts the item in that sub-index,
+    /// whose total takes the unigram (`pinyin.cpp:2558`,
+    /// `phrase_index.h:663-671`, `phrase_index.cpp:208-217`). No second
+    /// library 5 exists beside it.
+    #[test]
+    fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let (libraries, mut store) = session_over_system_library(dir.path(), 5, "ADDON_DICTIONARY");
+        let keys = ["er", "huang"].map(|pinyin| {
+            crate::toned_key(
+                oxpinyin_core::SyllableKey::from_text(pinyin)
+                    .unwrap()
+                    .index(),
+                0,
+            )
+            .unwrap()
+        });
+        let token =
+            crate::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100).unwrap();
+        assert_eq!(token, 0x0500_0002, "the chunk's range ends past slot 1");
+        assert!(!store.has_user_library(5), "no arena beside the sub-index");
+        // `SubPhraseIndex::get_phrase_index_total_freq` answers the
+        // sub-index's `m_total_freq` (`phrase_index.cpp:146-148`), which
+        // `add_phrase_item` raised by the item's unigram (`:215`).
+        assert_eq!(crate::test_session::library_total(&store, 5), 101);
+        let unloaded = Cell::new(0);
+        let live = LiveSystemItems::new(&libraries, &store, &unloaded);
+        assert_eq!(live.read(token, |item| item.unigram()), Lookup::Found(100));
+        assert_eq!(
+            live.read(0x0500_0001, |item| item.unigram()),
+            Lookup::Found(1),
+            "the chunk's own item stays"
         );
     }
 }

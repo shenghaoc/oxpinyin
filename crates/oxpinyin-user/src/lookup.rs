@@ -148,8 +148,9 @@ impl<'a> UserLookup<'a> {
     }
 }
 
-// The old text map used the full token emitted by the library walk. Do not
-// alias a foreign index token's high bits to an otherwise valid arena item.
+// `get_phrase_item` selects the library with `PHRASE_INDEX_LIBRARY_INDEX`
+// and the slot with `PHRASE_MASK` (074a2219 phrase_index.h:647,
+// phrase_index.cpp:186), so a token's high four bits do not take part.
 fn session_text(
     phrases: &SessionPhrases,
     items: &RefCell<crate::system_items::SystemItems>,
@@ -157,7 +158,7 @@ fn session_text(
 ) -> Option<PhraseText> {
     if let Some(item) = phrases
         .libraries
-        .get(&((token >> 24) as u8))
+        .get(&crate::phrase::phrase_index_library_index(token))
         .and_then(|library| library.item(token & crate::PHRASE_MASK))
     {
         return item.phrase_text();
@@ -205,8 +206,13 @@ mod tests {
         .unwrap()
     }
 
+    /// `_token_get_phrase` reads the item `get_phrase_item` finds
+    /// (`pinyin.cpp:1627` at the pin `074a2219`), which selects the library
+    /// with `PHRASE_INDEX_LIBRARY_INDEX` and the slot with `PHRASE_MASK`
+    /// (`phrase_index.h:647`, `phrase_index.cpp:186`). An index token with
+    /// high bits set reads the same item and keeps its own value.
     #[test]
-    fn session_lookup_keeps_full_token_identity() {
+    fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
         let mut phrases = SessionPhrases::default();
         let token = crate::FIRST_USER_TOKEN;
         let bytes = oxpinyin_data::chunk_write::encode_phrase_item(
@@ -231,10 +237,15 @@ mod tests {
         let lookup = UserLookup::session(&phrases, &items);
         assert_eq!(lookup.search_toned(&keys), [token, token | 0x8000_0000]);
         let entries = lookup.lookup(&[key("ni")]);
-        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].token().value(), token);
         assert_eq!(entries[0].text(), "你");
-        assert!(lookup.phrase_text(token | 0x8000_0000).is_none());
+        assert_eq!(entries[1].token().value(), token | 0x8000_0000);
+        assert_eq!(entries[1].text(), "你");
+        assert_eq!(
+            lookup.phrase_text(token | 0x8000_0000).unwrap().as_str(),
+            Some("你")
+        );
     }
 
     #[test]

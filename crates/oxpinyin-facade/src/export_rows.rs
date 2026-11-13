@@ -699,8 +699,11 @@ impl ExportSource<'_> {
     /// user store's phrase/pronunciation tables, system tokens from the
     /// system phrase index and the pinyin index (reverse-scanned).
     fn render(&self, token: u32) -> Option<RenderedItem> {
-        let is_system =
-            u8::try_from(token >> 24).is_ok_and(|index| self.user.is_system_library(index));
+        // `get_phrase_item` resolves a gram's token by its masked library
+        // (074a2219 pinyin.cpp:812-815, phrase_index.h:647).
+        let is_system = self
+            .user
+            .is_system_library(oxpinyin_user::phrase_index_library_index(token));
         if is_system {
             return self
                 .dict
