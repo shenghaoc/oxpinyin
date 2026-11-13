@@ -556,58 +556,6 @@ impl Content {
     }
 }
 
-/// What a live sub-index keeps of its loaded slots' state before their first
-/// write. The pin keeps none (`SubPhraseIndex` holds its total and two chunks,
-/// `phrase_index.h:259-262` at 074a2219); the session needs one fact per
-/// slot, whether `get_phrase_item` found an item there before the slot's
-/// first write, to tell an item a journal or an import added from one the
-/// chunk shipped, and a removed item from a slot that never held one.
-///
-/// Only the exceptions are recorded. A slot in neither set that the offset
-/// array as loaded covers held an item at its first write, or has not been
-/// written: its offset word still answers for it. A slot past the loaded
-/// array never held one.
-///
-/// Each exceptional record takes O(log n) set work. The sets allocate only
-/// on insertion and stay empty for ordinary same-header in-place MODIFYs.
-#[derive(Clone, Debug, Default)]
-struct Provenance {
-    /// Loaded slots `get_phrase_item` found no item at when their first write
-    /// came: an ADD into a hole, a REMOVE of an absent slot.
-    absent: BTreeSet<u32>,
-    /// Loaded slots that held an item at their first write and that a later
-    /// write may have left without a readable one: a REMOVE of a present
-    /// slot, a MODIFY that moved the item or changed its header, and every
-    /// MODIFY of a log that holds such a record.
-    present: BTreeSet<u32>,
-}
-
-impl Provenance {
-    fn is_absent(&self, slot: u32) -> bool {
-        self.absent.contains(&slot)
-    }
-
-    fn is_present(&self, slot: u32) -> bool {
-        self.present.contains(&slot)
-    }
-
-    /// A write found no item at `slot`. It is the slot's first write unless
-    /// an earlier one found an item there.
-    fn note_absent(&mut self, slot: u32) {
-        if !self.is_present(slot) && !self.is_absent(slot) {
-            self.absent.insert(slot);
-        }
-    }
-
-    /// A write found an item at `slot`. An item an earlier ADD put into a
-    /// hole stays an added one.
-    fn note_present(&mut self, slot: u32) {
-        if !self.is_absent(slot) && !self.is_present(slot) {
-            self.present.insert(slot);
-        }
-    }
-}
-
 /// Where a mapped library's item offsets come from.
 enum Origin<'a> {
     Mapped(&'a PhraseLibrary),
@@ -736,18 +684,6 @@ pub(crate) struct Merge<'a, 'l> {
     origin: Origin<'a>,
     content: Content,
     live_owner: bool,
-    /// The slots' first-write provenance, moved into the retained view.
-    provenance: Provenance,
-    /// The provenance the replay started from, for [`Self::rollback`].
-    initial_provenance: Provenance,
-    /// Whether the library has a mapped original: only then does the finish
-    /// tell an added item from a shipped one.
-    tracks_original: bool,
-    /// A record moved an item, changed a header or an offset word, or wrote
-    /// through the stale `item`: from here on every MODIFY is recorded.
-    exceptional: bool,
-    /// Same-header in-place MODIFY records applied before `exceptional`.
-    plain_modifies: usize,
     /// One entry per mutation of the mapping, in order. Dropped when the replay
     /// ends or stops; applied backwards only by [`Self::rollback`].
     undo: Vec<Undo<'l>>,
@@ -770,7 +706,6 @@ pub(crate) struct Merge<'a, 'l> {
     /// The `PhraseItem` MODIFY reads into.
     stale: Stale,
     /// The slot behind `stale`, which an absent-token MODIFY can still edit.
-    stale_slot: Option<u32>,
     /// `add_phrase_item` calls so far.
     appends: u64,
 }
@@ -782,11 +717,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             origin,
             content,
             live_owner: false,
-            provenance: Provenance::default(),
-            initial_provenance: Provenance::default(),
-            tracks_original: original.is_some_and(|library| library.mapped.is_some()),
-            exceptional: false,
-            plain_modifies: 0,
             undo: Vec::new(),
             touched: Vec::new(),
             has_added_items: false,
@@ -794,7 +724,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             has_original: original.is_some(),
             initial_total: original.map_or(0, |library| library.total),
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
-            stale_slot: None,
             appends: 0,
         }
     }
@@ -808,13 +737,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             origin,
             content: live.content,
             live_owner: true,
-            initial_provenance: live.provenance.clone(),
-            provenance: live.provenance,
-            tracks_original: original.is_some_and(|library| library.mapped.is_some()),
-            // Without an original every readable touched slot counts as an
-            // added one (the utilities' index), so every MODIFY is recorded.
-            exceptional: original.is_none_or(|library| library.mapped.is_none()),
-            plain_modifies: 0,
             undo: Vec::new(),
             touched: Vec::new(),
             has_added_items: false,
@@ -822,7 +744,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             has_original: original.is_some(),
             initial_total,
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
-            stale_slot: None,
             appends: 0,
         }
     }
@@ -953,42 +874,6 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
-    /// The first record that is not a same-header in-place MODIFY: the plain
-    /// records before it are asked back, and every later MODIFY is recorded.
-    fn begin_exceptional(&mut self, backfill: &mut dyn FnMut(&mut Self)) {
-        if !self.exceptional {
-            self.exceptional = true;
-            if self.plain_modifies > 0 {
-                // Establish the earlier observations before this record's.
-                backfill(self);
-            }
-        }
-    }
-
-    /// A plain MODIFY the replay applied before its first exceptional record:
-    /// its slot held an item, and joins the slots the finish classifies.
-    pub(crate) fn backfill(&mut self, token: u32) {
-        let slot = token & PHRASE_MASK;
-        self.note_present(slot);
-        if self.live_owner {
-            self.touched.push(slot);
-        }
-    }
-
-    /// `get_phrase_item` found no item at `slot` as this write came.
-    fn note_absent(&mut self, slot: u32) {
-        if (slot as usize) < self.content.loaded_slots() {
-            self.provenance.note_absent(slot);
-        }
-    }
-
-    /// `get_phrase_item` found an item at `slot` as this write came.
-    fn note_present(&mut self, slot: u32) {
-        if (slot as usize) < self.content.loaded_slots() {
-            self.provenance.note_present(slot);
-        }
-    }
-
     fn set_offset(&mut self, slot: u32, offset: u32) {
         self.touched.push(slot);
         if self.content.slot_write_hits_mapping(slot)
@@ -1024,26 +909,15 @@ impl<'a, 'l> Merge<'a, 'l> {
         self.set_total(self.content.total.wrapping_sub(delta));
     }
 
-    #[cfg(test)]
     pub(crate) fn apply(&mut self, record: LogRecord<&'l [u8]>) -> Result<(), Stop> {
-        self.apply_backfilling(record, &mut |_| {})
-    }
-
-    /// Apply a record, asking the caller for earlier plain MODIFYs before
-    /// the first exceptional record observes a slot's presence.
-    pub(crate) fn apply_backfilling(
-        &mut self,
-        record: LogRecord<&'l [u8]>,
-        backfill: &mut dyn FnMut(&mut Self),
-    ) -> Result<(), Stop> {
         match record {
-            LogRecord::Add { token, new_item } => self.add(token, new_item, backfill),
-            LogRecord::Remove { token, old_item } => self.remove(token, old_item, backfill),
+            LogRecord::Add { token, new_item } => self.add(token, new_item),
+            LogRecord::Remove { token, old_item } => self.remove(token, old_item),
             LogRecord::Modify {
                 token,
                 old_item,
                 new_item,
-            } => self.modify(token, old_item, new_item, backfill),
+            } => self.modify(token, old_item, new_item),
             LogRecord::ModifyHeader {
                 old_total,
                 new_total,
@@ -1060,12 +934,7 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
-    fn add(
-        &mut self,
-        token: u32,
-        payload: &[u8],
-        backfill: &mut dyn FnMut(&mut Self),
-    ) -> Result<(), Stop> {
+    fn add(&mut self, token: u32, payload: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         // `add_phrase_item` stores the payload as it stands (`:208-217`); it
         // does not read the header, then reads the payload's unigram
@@ -1076,10 +945,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             return Err(Stop::ShortAdd(token));
         }
         let unigram = raw_unigram(payload);
-        self.begin_exceptional(backfill);
-        if !matches!(self.visible(slot), Found::Item { .. }) {
-            self.note_absent(slot);
-        }
         let offset = self.append_logged(payload);
         self.set_offset(slot, offset);
         self.add_total(unigram);
@@ -1105,12 +970,7 @@ impl<'a, 'l> Merge<'a, 'l> {
         appended.offset
     }
 
-    fn remove(
-        &mut self,
-        token: u32,
-        old_item: &'l [u8],
-        backfill: &mut dyn FnMut(&mut Self),
-    ) -> Result<(), Stop> {
+    fn remove(&mut self, token: u32, old_item: &'l [u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         match self.visible(slot) {
             // The item's length ends past the content buffer: the pin copies
@@ -1124,8 +984,6 @@ impl<'a, 'l> Merge<'a, 'l> {
                 if visible_len(old_item).is_none() {
                     return Err(Stop::Mismatch("REMOVE", token));
                 }
-                self.begin_exceptional(backfill);
-                self.note_absent(slot);
                 self.set_offset(slot, 0);
                 Ok(())
             }
@@ -1139,8 +997,6 @@ impl<'a, 'l> Merge<'a, 'l> {
                 // `remove_phrase_item` first: the item and its unigram leave,
                 // then the chunks are compared and a mismatch keeps the
                 // removal.
-                self.begin_exceptional(backfill);
-                self.note_present(slot);
                 self.set_offset(slot, 0);
                 self.subtract_total(unigram);
                 if equal {
@@ -1152,13 +1008,7 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
-    fn modify(
-        &mut self,
-        token: u32,
-        old_item: &'l [u8],
-        new_item: &[u8],
-        backfill: &mut dyn FnMut(&mut Self),
-    ) -> Result<(), Stop> {
+    fn modify(&mut self, token: u32, old_item: &'l [u8], new_item: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         let mismatch = || Stop::Mismatch("MODIFY", token);
         match self.visible(slot) {
@@ -1166,7 +1016,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             // the remove-and-add would read past it (class (b), row 107).
             Found::Past => Err(mismatch()),
             Found::Item { offset, len } => {
-                self.stale_slot = Some(slot);
                 self.stale = if self.content.items.owned.is_some() {
                     Stale::Owned {
                         offset,
@@ -1184,8 +1033,6 @@ impl<'a, 'l> Merge<'a, 'l> {
                     // A remove and an add of the whole new payload.
                     let old_unigram = raw_unigram(&bytes);
                     let new_unigram = raw_unigram(new_item);
-                    self.begin_exceptional(backfill);
-                    self.note_present(slot);
                     self.subtract_total(old_unigram);
                     self.add_total(new_unigram);
                     let offset = self.append_logged(new_item);
@@ -1198,9 +1045,6 @@ impl<'a, 'l> Merge<'a, 'l> {
                     let same_header = new_item.get(0..2) == bytes.get(0..2);
                     let overreach =
                         !same_header && declared_len(new_item).is_some_and(|new_len| new_len > len);
-                    if !same_header {
-                        self.begin_exceptional(backfill);
-                    }
                     // The compare above made `old_item` the stored bytes, so its
                     // prefix is what this write overwrites.
                     if self
@@ -1219,26 +1063,13 @@ impl<'a, 'l> Merge<'a, 'l> {
                     if overreach {
                         self.overreach = true;
                     }
-                    if self.exceptional {
-                        self.note_present(slot);
+                    if !same_header || !self.live_owner {
                         self.touched.push(slot);
-                    } else {
-                        // This slot's header and offset word stand. Another
-                        // slot may overlap these bytes; a later exceptional
-                        // record backfills this successful observation before
-                        // recording its own. A copy's finish still decodes
-                        // the slot.
-                        self.plain_modifies += 1;
-                        if !self.live_owner {
-                            self.touched.push(slot);
-                        }
                     }
                 }
                 Ok(())
             }
-            Found::Failed => self
-                .modify_stale(old_item, new_item, backfill)
-                .ok_or_else(mismatch),
+            Found::Failed => self.modify_stale(old_item, new_item).ok_or_else(mismatch),
         }
     }
 
@@ -1288,9 +1119,6 @@ impl<'a, 'l> Merge<'a, 'l> {
                 Stale::Shipped { .. } | Stale::Owned { .. } => false,
             },
             Place::Shipped { offset, .. } => {
-                if let Some(slot) = self.stale_slot {
-                    self.note_present(slot);
-                }
                 // The stale compare made `old` the bytes at this place.
                 if self.content.shipped_has(offset, bytes.len())
                     && let Some(old) = old.get(..bytes.len())
@@ -1302,12 +1130,7 @@ impl<'a, 'l> Merge<'a, 'l> {
                 }
                 self.content.write_shipped(offset, bytes)
             }
-            Place::Owned { offset, .. } => {
-                if let Some(slot) = self.stale_slot {
-                    self.note_present(slot);
-                }
-                self.content.write(offset, bytes)
-            }
+            Place::Owned { offset, .. } => self.content.write(offset, bytes),
         }
     }
 
@@ -1319,12 +1142,7 @@ impl<'a, 'l> Merge<'a, 'l> {
     /// over that storage; a longer new chunk calls `remove_phrase_item` for the
     /// missing token and `assert(olditem == *tmpitem)` dereferences NULL
     /// (`:486-491`, row 107), which stops here.
-    fn modify_stale(
-        &mut self,
-        old_item: &'l [u8],
-        new_item: &[u8],
-        backfill: &mut dyn FnMut(&mut Self),
-    ) -> Option<()> {
+    fn modify_stale(&mut self, old_item: &'l [u8], new_item: &[u8]) -> Option<()> {
         let place = self.stale_place()?;
         let size = self.stale_size();
         let old = self.stale_read(place);
@@ -1339,7 +1157,6 @@ impl<'a, 'l> Merge<'a, 'l> {
             !same_header && declared_len(new_item).is_some_and(|new_len| new_len > size);
         drop(old);
         // A write through the stale `item` lands on another record's storage.
-        self.begin_exceptional(backfill);
         if !self.stale_write(place, new_item, old_item) {
             return None;
         }
@@ -1368,7 +1185,6 @@ impl<'a, 'l> Merge<'a, 'l> {
         ReplayedLibrary {
             content: self.content,
             // The slots are as they were before the replay's first write.
-            provenance: self.initial_provenance,
             #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
@@ -1388,10 +1204,6 @@ impl<'a, 'l> Merge<'a, 'l> {
 /// No baseline byte owner survives the replay operation.
 pub(crate) struct ReplayedLibrary {
     content: Content,
-    /// The loaded slots' state before their first write, where it is not
-    /// what their offset word still says. It lives and dies with the buffer:
-    /// a reload, a mask-out or an unload replaces both.
-    provenance: Provenance,
     /// The slots the replay left touched, for the replay's own tests.
     #[cfg(test)]
     slots: Vec<u32>,
@@ -1420,7 +1232,6 @@ impl ReplayedLibrary {
         content.total = total;
         Self {
             content,
-            provenance: Provenance::default(),
             #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
@@ -1516,9 +1327,6 @@ impl ReplayedLibrary {
         // whose header names bytes past the buffer holds no item
         // (`Found::Past`), and this is its first write unless an earlier one
         // found an item there.
-        if !matches!(self.content.header(offset as usize), Found::Item { .. }) {
-            self.note_absent(slot);
-        }
         self.content
             .write(at, &field.wrapping_add(delta).to_le_bytes());
         self.content.total = total;
@@ -1537,9 +1345,6 @@ impl ReplayedLibrary {
     /// does for the same aliasing.
     #[must_use]
     pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8]) -> bool {
-        if self.item_bytes(slot).is_none() {
-            self.note_absent(slot);
-        }
         self.rejected.retain(|&rejected| rejected != slot);
         let unigram = raw_unigram(payload);
         let appended = self.content.append(payload);
@@ -1564,7 +1369,6 @@ impl ReplayedLibrary {
             return None;
         };
         let bytes = self.content.item(offset, len)?.into_owned();
-        self.note_present(slot);
         self.content.set_slot_offset(slot, 0);
         self.content.total = self.content.total.wrapping_sub(raw_unigram(&bytes));
         Some(bytes)
@@ -1597,7 +1401,6 @@ impl ReplayedLibrary {
         let (_, content) = origin_and_content(Some(original));
         Self {
             content,
-            provenance: Provenance::default(),
             #[cfg(test)]
             slots: Vec::new(),
             has_added_items: false,
@@ -1686,47 +1489,8 @@ impl ReplayedLibrary {
         self.content.item(offset, len)
     }
 
-    pub(crate) fn slot_has_offset(&self, slot: u32) -> bool {
-        self.content
-            .slot_offset(slot)
-            .is_some_and(|offset| offset != 0)
-    }
-
-    /// `get_phrase_item` found no item at `slot` as a write came.
-    fn note_absent(&mut self, slot: u32) {
-        if (slot as usize) < self.content.loaded_slots() {
-            self.provenance.note_absent(slot);
-        }
-    }
-
-    /// `get_phrase_item` found an item at `slot` as a write came.
-    fn note_present(&mut self, slot: u32) {
-        if (slot as usize) < self.content.loaded_slots() {
-            self.provenance.note_present(slot);
-        }
-    }
-
-    /// Whether the loaded chunk held an item under `slot`, as far as the
-    /// buffer can tell: the slot is one the loaded offset array covers, no
-    /// first write found it empty, and either a write found an item there or
-    /// its offset word, which only a recorded write clears, still names one.
-    pub(crate) fn originally_held(&self, slot: u32) -> bool {
-        (slot as usize) < self.content.loaded_slots()
-            && !self.provenance.is_absent(slot)
-            && (self.provenance.is_present(slot) || self.slot_has_offset(slot))
-    }
-
-    /// Whether an item under `slot` is one the loaded chunk lacked: the slot
-    /// lies past the loaded offset array, or its first write found no item.
     pub(crate) fn is_added_slot(&self, slot: u32) -> bool {
-        (slot as usize) >= self.content.loaded_slots() || self.provenance.is_absent(slot)
-    }
-
-    /// Whether the buffer records any slot's provenance. A log of same-header
-    /// in-place MODIFY records leaves none.
-    #[cfg(test)]
-    pub(crate) fn has_provenance(&self) -> bool {
-        !self.provenance.absent.is_empty() || !self.provenance.present.is_empty()
+        (slot as usize) >= self.content.loaded_slots()
     }
 
     pub(crate) fn readable_item_count(&self) -> u64 {
@@ -1936,15 +1700,6 @@ impl<'a> Merge<'a, '_> {
         BTreeMap<u32, Option<ChunkItem>>,
         Option<ReplayedLibrary>,
     ) {
-        // Only the slots of records that moved an item, changed a header or
-        // an offset word need a final classification, and once a log holds
-        // one such record, every MODIFY's slot (`begin_exceptional`). A log
-        // of same-header in-place MODIFY records has none: each wrote inside
-        // the item the compare read. Without internally overlapping slots,
-        // every slot's offset word and header are unchanged. A crafted
-        // internal overlap can change another header; defined in-buffer
-        // reads still see the shared bytes (the provenance regression covers
-        // that precondition, including save and reopen).
         let mut touched = std::mem::take(&mut self.touched);
         touched.sort_unstable();
         touched.dedup();
@@ -1955,20 +1710,15 @@ impl<'a> Merge<'a, '_> {
         #[cfg(test)]
         let mut retained_slots = Vec::new();
         for slot in touched {
-            // Every touched slot was written: it held an item at its first
-            // write unless that write recorded otherwise.
-            let original = self.tracks_original
-                && (slot as usize) < loaded
-                && !self.provenance.is_absent(slot);
             let offset = self.content.slot_offset(slot).unwrap_or(0);
             if offset == 0 {
-                removed |= original;
+                removed = true;
                 continue;
             }
             match self.content.header(offset as usize) {
-                Found::Failed => removed |= original,
+                Found::Failed => removed = true,
                 Found::Past => {
-                    removed |= original;
+                    removed = true;
                     rejected.push(slot);
                     record_skip(
                         skipped,
@@ -1984,7 +1734,7 @@ impl<'a> Merge<'a, '_> {
                 // `P(2L + 4)`). Those are all of its checks, so the slot is
                 // retained without reading the item.
                 Found::Item { .. } => {
-                    added |= !original;
+                    added |= slot as usize >= loaded;
                     #[cfg(test)]
                     retained_slots.push(slot);
                 }
@@ -1993,7 +1743,6 @@ impl<'a> Merge<'a, '_> {
         let total = self.has_original.then_some(self.content.total);
         let retained = ReplayedLibrary {
             content: self.content,
-            provenance: self.provenance,
             #[cfg(test)]
             slots: retained_slots,
             has_added_items: added,
@@ -2105,7 +1854,6 @@ impl<'a> Merge<'a, '_> {
             || removed)
             .then(|| ReplayedLibrary {
                 content: self.content,
-                provenance: std::mem::take(&mut self.provenance),
                 #[cfg(test)]
                 slots: std::mem::take(&mut self.touched),
                 has_added_items: self.has_added_items,
@@ -2438,19 +2186,19 @@ mod tests {
         let mut merge = Merge::new(Some(original.view()));
         let same = with_last(one(), 0x7f);
         let old = one();
-        assert!(merge.modify(1, &old, &same, &mut |_| {}).is_ok());
+        assert!(merge.modify(1, &old, &same).is_ok());
         assert!(!merge.overreach);
 
         let mut merge = Merge::new(Some(original.view()));
         let grown = bytes_with(&[3, 1], 200);
         let old = one();
-        assert!(merge.modify(1, &old, &grown, &mut |_| {}).is_ok());
+        assert!(merge.modify(1, &old, &grown).is_ok());
         assert!(merge.overreach);
 
         let mut merge = Merge::new(Some(original.view()));
         let shorter = bytes_with(&[0, 0], 0);
         let old = one();
-        assert!(merge.modify(1, &old, &shorter, &mut |_| {}).is_ok());
+        assert!(merge.modify(1, &old, &shorter).is_ok());
         assert!(!merge.overreach);
     }
 

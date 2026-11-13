@@ -1400,60 +1400,6 @@ mod tests {
     // Linux only: /proc/self/maps.
     #[cfg(target_os = "linux")]
     #[test]
-    fn session_owns_one_writable_whole_file_mapping() {
-        let dir = tempdir("one-live-mapping");
-        let path = dir.join("whole-file.bin");
-        let file =
-            oxpinyin_data::chunk_write::build_chunk(&[(1, three_items()[0].clone())]).unwrap();
-        let mut payload = file[8..].to_vec();
-        payload.resize(16_451, 0);
-        let file = oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap();
-        std::fs::write(&path, &file).unwrap();
-        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
-        let originals: SystemOriginals =
-            crate::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
-        let mut store =
-            UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
-        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-        let rows: Vec<_> = maps
-            .lines()
-            .filter(|line| line.ends_with(path.to_str().unwrap()))
-            .collect();
-        assert_eq!(rows.len(), 1, "one persistent mapping: {rows:?}");
-        let fields: Vec<_> = rows[0].split_whitespace().collect();
-        assert_eq!(fields[1], "rw-p");
-        assert_eq!(fields[2], "00000000");
-        let (start, end) = fields[0].split_once('-').unwrap();
-        let extent =
-            usize::from_str_radix(end, 16).unwrap() - usize::from_str_radix(start, 16).unwrap();
-        assert!(extent >= file.len(), "whole file mapped");
-        let has_provenance = |store: &UserStore| store.system_provenance_recorded(1);
-        assert!(!has_provenance(&store), "transfer records no provenance");
-        assert_eq!(store.system_unigram(0x0100_0001), Some(100));
-        assert!(!has_provenance(&store), "reads record no provenance");
-        assert!(
-            !store
-                .add_system_unigram_frequency(0x0100_0001, u32::MAX)
-                .unwrap()
-        );
-        assert!(!has_provenance(&store), "a refused write records none");
-        assert!(store.add_system_unigram_frequency(0x0100_0001, 2).unwrap());
-        assert!(
-            !has_provenance(&store),
-            "a write into a present item's field records none"
-        );
-        assert_eq!(store.system_unigram(0x0100_0001), Some(102));
-        drop(store);
-        assert!(
-            !std::fs::read_to_string("/proc/self/maps")
-                .unwrap()
-                .lines()
-                .any(|line| line.ends_with(path.to_str().unwrap()))
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn header_only_count_survives_session_transfer() {
         use crate::live_system::{LiveSystemItems, Lookup};
         let dir = tempdir("header-only-count");
@@ -1755,11 +1701,8 @@ mod tests {
             frequency_of(&store, token(1)),
             Lookup::Found((ItemOrigin::Overlay, 107))
         );
-        assert_eq!(frequency_of(&store, token(2)), Lookup::Removed);
+        assert_eq!(frequency_of(&store, token(2)), Lookup::Absent);
         assert!(store.system_item_removed(token(2)));
-        // Exercise the live-buffer fallback independently of the removal
-        // marker; the shipped original must not reappear for an over-read.
-        store.test_forget_removal(token(2));
         let unloaded = std::cell::Cell::new(0);
         let live =
             crate::LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
@@ -2057,7 +2000,7 @@ mod tests {
     }
 
     #[test]
-    fn live_items_tell_shipped_overlay_removed_and_unloaded_apart() {
+    fn live_items_distinguish_found_absent_and_unloaded() {
         use crate::{ItemOrigin, LiveSystemItems, Lookup};
         use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
         use oxpinyin_data::phrase_library::PhraseLibrary;
@@ -2157,7 +2100,7 @@ mod tests {
                 .flatten(),
             oxpinyin_core::PhraseText::from_words([0x4e16])
         );
-        assert_eq!(live.read(removed, summary), Lookup::Removed);
+        assert_eq!(live.read(removed, summary), Lookup::Absent);
         assert_eq!(live.read(absent, summary), Lookup::Absent);
         assert_eq!(live.read((5_u32 << 24) | 1, summary), Lookup::Absent);
         assert!(live.has_overlay());
@@ -2174,7 +2117,7 @@ mod tests {
         // The header-only count agrees with the view for every state.
         assert_eq!(live.pronunciation_count(replayed), Lookup::Found(1));
         assert_eq!(live.pronunciation_count(untouched), Lookup::Found(1));
-        assert_eq!(live.pronunciation_count(removed), Lookup::Removed);
+        assert_eq!(live.pronunciation_count(removed), Lookup::Absent);
         assert_eq!(live.pronunciation_count(absent), Lookup::Absent);
 
         // The stored field and the live count are separate reads: the stored
@@ -2188,16 +2131,10 @@ mod tests {
         );
         assert_eq!(live.effective_unigram(removed), None);
         assert_eq!(live.effective_unigram(absent), None);
-        assert_eq!(live.overlay_end(1), store.system_item_end(1));
 
         // The imported flag is an item the shipped chunk lacks, whatever the
         // mask or a removal says; a chunk item the replay modified is not
         // one.
-        assert!(!live.is_imported(replayed).expect("imported"));
-        assert!(!live.is_imported(untouched).expect("imported"));
-        assert!(!live.is_imported(removed).expect("imported"));
-        assert!(!live.is_imported(absent).expect("imported"));
-        assert!(!live.is_imported((5_u32 << 24) | 1).expect("imported"));
 
         // The store's own accessors answer the same.
         assert_eq!(
@@ -2217,8 +2154,6 @@ mod tests {
             assert!(!hidden.is_visible(token));
             assert_eq!(hidden.effective_unigram(token), None);
         }
-
-        assert!(!hidden.is_imported(replayed).expect("imported"));
 
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
@@ -2286,7 +2221,7 @@ mod tests {
         // the item, but `get_phrase_item` no longer finds it.
         assert!(store.has_removed_system_items());
         assert!(store.system_item_removed(token));
-        assert!(!store.system_item_removed(token + 1));
+        assert!(store.system_item_removed(token + 1));
         // What a save diffs from the session is the removal, not the item.
         let state = export_state(&store, &originals()).expect("export");
         assert_eq!(state.system_overrides[&1].get(&1), Some(&None));
@@ -4145,9 +4080,6 @@ mod tests {
                     .expect("add through c")
             );
             assert_eq!(store.system_unigram(c), Some(77));
-            // Field writes into present items record no provenance, shared
-            // offset or not.
-            assert!(!store.system_provenance_recorded(1));
             store.mark_modified();
             store.save_reporting().expect("save");
         }
@@ -4706,7 +4638,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod provenance;
+mod mapped_replay;
 #[cfg(test)]
 mod replayed_readings;
 #[cfg(test)]

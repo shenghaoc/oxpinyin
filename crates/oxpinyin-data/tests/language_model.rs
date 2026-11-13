@@ -234,7 +234,7 @@ fn merged_row_costs(
         .get_freq(token)
         .unwrap()
         .map(|freq| (freq, gram.total().unwrap()));
-    lm.nbest_item_costs(&PhraseToken::new(token), user, false, item)
+    lm.nbest_item_costs(&PhraseToken::new(token), user, item)
         .unwrap()
 }
 
@@ -529,7 +529,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
                         .unwrap()
                         .map(|freq| (freq, gram.total().unwrap()));
                     let actual = lm
-                        .nbest_item_costs(&PhraseToken::new(token), user, false, item)
+                        .nbest_item_costs(&PhraseToken::new(token), user, item)
                         .unwrap();
                     if token == NIHAO {
                         assert_eq!(item.map(|(freq, _)| freq), Some(0), "the stored zero stays");
@@ -642,12 +642,7 @@ fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
         let lambda = conf.lambda_f32();
         lm.set_lambda_from_conf(&conf);
         let branches = lm
-            .nbest_item_costs(
-                &PhraseToken::new(HAO),
-                UserCountDelta::ZERO,
-                false,
-                Some((7, 7)),
-            )
+            .nbest_item_costs(&PhraseToken::new(HAO), UserCountDelta::ZERO, Some((7, 7)))
             .unwrap();
         assert_eq!(branches.unigram, Some(5.0 / 19.0));
         let unilambda = (1.0_f64 - f64::from(lambda)) as f32;
@@ -671,14 +666,14 @@ fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
     let zero = PhraseToken::new(0x0700_0002);
     for (total, present) in [(1 << 24, false), (1 << 23, true)] {
         let step = lm
-            .nbest_item_costs(&zero, UserCountDelta::ZERO, true, Some((1, total)))
+            .nbest_item_costs(&zero, UserCountDelta::ZERO, Some((1, total)))
             .unwrap();
         assert!(step.unigram.is_none());
         assert_eq!(step.blended.is_some(), present);
     }
     // A zero-total stored gram is present; IEEE 0/0 passes the `<` gate.
     assert!(
-        lm.nbest_item_costs(&zero, UserCountDelta::ZERO, true, Some((0, 0)))
+        lm.nbest_item_costs(&zero, UserCountDelta::ZERO, Some((0, 0)))
             .unwrap()
             .blended
             .unwrap()

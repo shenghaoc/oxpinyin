@@ -533,23 +533,7 @@ impl<
         token: &PhraseToken,
         user: UserCountDelta,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_with_imported_item(prev, token, user, false)
-    }
-
-    /// The n-best overlay with a caller-verified appended system item.
-    /// Its base count is zero; its full frequency is in the user delta.
-    /// The visibility gate still applies (074a2219 phonetic_lookup.h:643-668).
-    ///
-    /// # Errors
-    /// Returns an error when the system bigram table cannot be read.
-    pub fn nbest_step_costs_with_imported_item(
-        &self,
-        prev: &PhraseToken,
-        token: &PhraseToken,
-        user: UserCountDelta,
-        imported_item: bool,
-    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, || {
+        self.nbest_step_costs_using(token, user, || {
             self.merged_transition(prev.value(), token.value(), user)
         })
     }
@@ -565,10 +549,9 @@ impl<
         &self,
         token: &PhraseToken,
         user: UserCountDelta,
-        imported_item: bool,
         item: Option<(u32, u32)>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, || {
+        self.nbest_step_costs_using(token, user, || {
             Ok(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
         })
     }
@@ -577,7 +560,6 @@ impl<
         &self,
         token: &PhraseToken,
         user: UserCountDelta,
-        imported_item: bool,
         transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
@@ -597,11 +579,7 @@ impl<
             None => {
                 let count = match self.unigram_count(token.value()) {
                     Some(count) => count,
-                    None if self.visible(nibble)
-                        && (is_user_file_library(nibble) || imported_item) =>
-                    {
-                        0
-                    }
+                    None if self.visible(nibble) && is_user_file_library(nibble) => 0,
                     None => return Ok(oxpinyin_core::NbestStepCosts::default()),
                 };
                 merge_unigram_counts(count, user.unigram_delta)
@@ -678,7 +656,7 @@ impl<
         item: Option<(u32, u32)>,
         _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
-        self.nbest_item_costs(token, UserCountDelta::ZERO, false, item)
+        self.nbest_item_costs(token, UserCountDelta::ZERO, item)
     }
 
     fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {

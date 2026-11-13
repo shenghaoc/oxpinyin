@@ -2503,23 +2503,7 @@ impl UserStore {
     /// the chunk holds one.
     #[must_use]
     pub(crate) fn system_item_removed(&self, token: Token) -> bool {
-        self.has_removed_system_items()
-            && self.inner.system_items.borrow().is_removed(
-                token,
-                self.originals.get(&phrase_index_library_index(token)),
-            )
-    }
-
-    /// Whether system library `nibble`'s live buffer records any slot's
-    /// first-write provenance.
-    #[cfg(test)]
-    pub(crate) fn system_provenance_recorded(&self, nibble: u8) -> bool {
-        self.inner.system_items.borrow().has_provenance(nibble)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_forget_removal(&self, _token: Token) {
-        self.inner.has_removed_system_items.set(false);
+        self.inner.system_items.borrow().is_removed(token)
     }
 
     #[cfg(test)]
@@ -2607,28 +2591,15 @@ impl UserStore {
         }
     }
 
-    /// Exclusive token end of imported system items in one library, without
-    /// cloning payloads for the streaming export's range probe.
-    #[must_use]
-    pub(crate) fn system_item_end(&self, library: u8) -> Option<Token> {
-        if !self.is_system_library(library) {
-            return None;
-        }
-        let arena_end = self
+    /// The live system sub-index's range end for the export probe.
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
+        let original = self.originals.get(&library)?;
+        let end = self
             .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .get(&library)
-            .filter(|items| !items.is_empty())
-            .map(|items| (u32::from(library) << 24) | items.token_end());
-        self.inner
             .system_items
             .borrow()
-            .end(library)
-            .into_iter()
-            .chain(arena_end)
-            .max()
+            .range_end(library, original);
+        Some(crate::phrase_index_make_token(library, end))
     }
 
     /// The effective live system item shared by export, n-best and token

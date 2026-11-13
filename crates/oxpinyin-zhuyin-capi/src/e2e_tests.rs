@@ -1192,13 +1192,8 @@ fn table_conf_919_short_row_merged() {
                 )) && marker.ends_with(&format!("{newline}open counter:0{newline}")),
                 "{marker}"
             );
-            let records = GLIB_LOG.lock().expect("log lock").clone();
-            let warning = (
-                "libzhuyin".to_owned(),
-                glib_sys::G_LOG_LEVEL_WARNING,
-                "zhuyin_guess_candidates: a candidate's phrase item cannot be read".to_owned(),
-            );
-            assert_eq!(records, [warning.clone(), warning]);
+            // Row 106 applies to a live item lookup failure here too.
+            assert!(GLIB_LOG.lock().expect("log lock").is_empty());
         });
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),

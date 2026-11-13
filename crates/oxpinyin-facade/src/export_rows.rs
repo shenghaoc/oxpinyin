@@ -60,8 +60,6 @@ pub struct PhraseExportCursor {
 #[derive(Default)]
 struct Memo {
     generation: Option<u64>,
-    /// One past the highest system token the session appended.
-    appended_end: u32,
     /// One past the highest token of the `USER_FILE` library (`5..=7`).
     user_end: u32,
 }
@@ -461,11 +459,6 @@ impl PhraseExportRead<'_> {
         };
         self.memo = Memo {
             generation: Some(generation),
-            appended_end: self
-                .system
-                .live_items_ignoring_mask()
-                .overlay_end(self.index)
-                .unwrap_or(NULL_TOKEN),
             user_end,
         };
     }
@@ -489,20 +482,17 @@ impl PhraseExportRead<'_> {
 
     /// `FacadePhraseIndex::get_range` for a system sub-index
     /// (`phrase_index.cpp:610-622`, the trailing-zero end at `:624-646`):
-    /// one past the highest token with an item, past the chunk or past the
-    /// session's appended items, whichever is further; then the forward
+    /// one past the highest nonzero offset in the current buffer; then the forward
     /// probe. An unloaded library is `ERROR_NO_SUB_PHRASE_INDEX`: no token.
     fn probe_system(&mut self, start: u32) {
         let dict = &self.system;
         if !dict.library_visible(u32::from(self.index)) {
             return;
         }
-        let base = u32::from(self.index) << 24;
-        let Some(library) = dict.system().libraries().library(base) else {
+        let live = dict.live_items_ignoring_mask();
+        let Some(end) = live.system_range_end(self.index) else {
             return;
         };
-        let end = (base | library.token_range().end).max(self.memo.appended_end);
-        let live = dict.live_items_ignoring_mask();
         let mut token = start;
         while token < end {
             // `get_phrase_item` fails for a token a journal REMOVE took out,

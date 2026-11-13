@@ -13,7 +13,7 @@
 
 use oxpinyin_core::ChewingKey;
 
-use super::provenance::{LIBRARY, Profile, header};
+use super::mapped_replay::{LIBRARY, Profile, header};
 use crate::store::{SENTENCE_START, UserStore, UserStoreError};
 
 /// A store whose library 1 holds the shipped chunk's four items, and which has
@@ -51,7 +51,6 @@ fn an_increment_into_an_unloaded_library_moves_nothing() {
             .expect("answer")
     );
     assert_eq!(totals(&store), before);
-    assert!(!store.system_provenance_recorded(1));
 }
 
 /// `_add_phrase` into a library without a sub-index: `get_range` fails, and the
@@ -65,7 +64,6 @@ fn an_import_into_an_unloaded_library_is_refused() {
         Err(UserStoreError::InvalidPhrase)
     ));
     assert_eq!(totals(&store), before);
-    assert!(!store.system_provenance_recorded(1));
 }
 
 /// A reading added to an item the library held: the item is looked up first
@@ -112,7 +110,6 @@ fn training_an_unloaded_library_keeps_the_bigram_and_nothing_else() {
         69
     );
     assert_eq!(totals(&store), before);
-    assert!(!store.system_provenance_recorded(1));
 }
 
 /// A prefix row of the prediction adds 483 to its unigram and returns before

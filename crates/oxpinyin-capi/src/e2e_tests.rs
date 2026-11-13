@@ -3323,16 +3323,8 @@ fn table_conf_919_short_row_merged() {
                 )) && marker.ends_with(&format!("{newline}open counter:0{newline}")),
                 "{marker}"
             );
-            // Two lookups, two warnings: the merged row's library and table
-            // disagree, and the pin's NULL item read becomes one warning per
-            // candidate-list fill.
-            let records = GLIB_LOG.lock().expect("log lock").clone();
-            let warning = (
-                "libpinyin".to_owned(),
-                glib_sys::G_LOG_LEVEL_WARNING,
-                "pinyin_guess_candidates: a candidate's phrase item cannot be read".to_owned(),
-            );
-            assert_eq!(records, [warning.clone(), warning]);
+            // Row 106 applies to a live item lookup failure here too.
+            assert!(GLIB_LOG.lock().expect("log lock").is_empty());
         });
     let user = run.user_dir.display();
     // `g_build_filename` joins with the host's separator, and the UCRT's
