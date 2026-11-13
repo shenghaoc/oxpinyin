@@ -124,16 +124,7 @@ COMPAT_HARNESS = (
     'tools/dev/measure/bench.test.py',
 )
 HARNESS_DEPENDENCIES.update(dict.fromkeys((
-    'tools/capture/run-capture.sh',
-    'tools/container/runtime.sh',
-    'tools/oracle/check-reproducible.sh',
-    'tools/oracle/image-tag.sh',
-    'tools/oracle/nightly-fixture-differentials.sh',
-    'tools/oracle/pin.test.sh',
-    'tools/oracle/run-differentials.sh',
-    'tools/oracle/verify-oracle-image.sh',
     'tools/tkrzw/runtime.py',
-    'tools/tkrzw/runtime.sh',
 ), COMPAT_HARNESS))
 
 # U6-owned provisioner inputs; shared CLI, recipes, policies and docs stay broad.
@@ -144,9 +135,9 @@ HARNESS_DEPENDENCIES.update(dict.fromkeys((
     'tools/dev/provision.py', 'tools/dev/vcpkg.py',
 ), PROVISION_HARNESS))
 
-# The model20 fetch and its callers; the retired script's path selects the same.
+# The model20 fetch and its callers.
 MODEL_HARNESS = ('tools/dev/model.test.py', 'tools/dev/provision.test.py')
-HARNESS_DEPENDENCIES.update(dict.fromkeys(('tools/dev/model.py', 'tools/model/fetch-model.sh'), MODEL_HARNESS))
+HARNESS_DEPENDENCIES.update(dict.fromkeys(('tools/dev/model.py',), MODEL_HARNESS))
 
 
 def changed_harness_files(files, paths):
