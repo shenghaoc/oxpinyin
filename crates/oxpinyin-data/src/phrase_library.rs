@@ -465,22 +465,20 @@ pub struct PhraseLibrary {
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
     layout_failed: bool,
-    /// Live mapped item sum, filled at first compact.
-    item_total: std::cell::OnceCell<u32>,
     /// `get_range`'s end at the moment the mapping moved to its live owner.
     detached_range_end: Option<u32>,
 }
 
 impl PhraseLibrary {
     /// The wrapping sum of mapped item frequencies, excluding slot zero.
-    /// Compaction queries share one scan after the first request.
+    /// Each call walks the items, as `FacadePhraseIndex::compact` walks the
+    /// sub-index on every compact (`phrase_index.cpp:648-675` at
+    /// `074a2219`).
     #[must_use]
     pub fn item_total(&self) -> u32 {
-        *self.item_total.get_or_init(|| {
-            self.items()
-                .filter(|(slot, _)| *slot >= 1)
-                .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram()))
-        })
+        self.items()
+            .filter(|(slot, _)| *slot >= 1)
+            .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram()))
     }
 
     /// `FacadePhraseIndex::compact` rebuilds the sub-index from its items
@@ -585,7 +583,6 @@ impl PhraseLibrary {
             offsets: 0..0,
             content: 0..0,
             layout_failed: true,
-            item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
         };
 
@@ -650,7 +647,6 @@ impl PhraseLibrary {
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
             layout_failed: false,
-            item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
         })
     }

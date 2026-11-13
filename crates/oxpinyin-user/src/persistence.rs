@@ -214,6 +214,7 @@ impl SystemLibrary {
     }
 
     /// Borrows the baseline for one read operation.
+    #[must_use]
     pub fn view(&self) -> SystemLibraryRef<'_> {
         SystemLibrary {
             total: self.total,
