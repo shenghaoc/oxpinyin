@@ -6,7 +6,7 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use super::*;
 
@@ -61,20 +61,19 @@ where
         &self,
         anchor: usize,
         remaining: &[u8],
-    ) -> Result<Arc<SegmentGraph>, EngineError> {
+    ) -> Result<Rc<SegmentGraph>, EngineError> {
         // A suffix has its own origin and reachability. Only byte-zero
         // callers share the whole-input graph; nonzero windows keep their
         // existing independent parse law.
         if anchor == 0 {
             if let Some(graph) = self.input.graph.get() {
-                return Ok(Arc::clone(graph));
+                return Ok(Rc::clone(graph));
             }
-            let graph = Arc::new(self.build_uncached_graph_at(anchor, remaining)?);
-            let _ = self.input.graph.set(Arc::clone(&graph));
+            let graph = Rc::new(self.build_uncached_graph_at(anchor, remaining)?);
+            let _ = self.input.graph.set(Rc::clone(&graph));
             return Ok(graph);
         }
-        self.build_uncached_graph_at(anchor, remaining)
-            .map(Arc::new)
+        self.build_uncached_graph_at(anchor, remaining).map(Rc::new)
     }
 
     pub(super) fn build_uncached_graph_at(

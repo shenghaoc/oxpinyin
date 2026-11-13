@@ -3941,7 +3941,7 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
 
 #[test]
 fn parse_consumers_share_the_whole_input_graph() {
-    use std::sync::Arc;
+    use std::rc::Rc;
 
     let mut session = session();
     session.replace_raw("ni'hao'").expect("parse");
@@ -3953,7 +3953,7 @@ fn parse_consumers_share_the_whole_input_graph() {
         .expect("window");
     assert_eq!(window, session.full_parsed_len());
     assert_eq!(window, 7);
-    assert!(Arc::ptr_eq(
+    assert!(Rc::ptr_eq(
         &original,
         session.input.graph.get().expect("shared graph")
     ));
@@ -3969,13 +3969,13 @@ fn parse_consumers_share_the_whole_input_graph() {
         .build_uncached_graph_at(2, &session.input.as_bytes()[2..])
         .expect("fresh suffix");
     assert_eq!(*nonzero, expected);
-    assert!(!Arc::ptr_eq(&original, &nonzero));
+    assert!(!Rc::ptr_eq(&original, &nonzero));
 }
 
 #[test]
 fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
     use oxpinyin_core::graph::ExactSegment;
-    use std::sync::Arc;
+    use std::rc::Rc;
 
     let mut session = session();
     session.replace_raw("sh").expect("parse");
@@ -3986,10 +3986,10 @@ fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
         .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
     session.set_options(options).expect("options");
     let changed = session.input.graph.get().expect("new graph").clone();
-    assert!(!Arc::ptr_eq(&first, &changed));
+    assert!(!Rc::ptr_eq(&first, &changed));
     assert_eq!(session.full_parsed_len(), 0);
     session.set_options(options).expect("same options");
-    assert!(Arc::ptr_eq(
+    assert!(Rc::ptr_eq(
         &changed,
         session.input.graph.get().expect("same graph")
     ));
@@ -3999,19 +3999,19 @@ fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
         .replace_raw_exact("sh", &[ExactSegment::new(0, 2, sh, 0)])
         .expect("exact parse");
     assert_eq!(session.full_parsed_len(), 2);
-    assert!(!Arc::ptr_eq(
+    assert!(!Rc::ptr_eq(
         &changed,
         session.input.graph.get().expect("exact graph")
     ));
     session.replace_raw("ni").expect("raw replacement");
     assert_eq!(session.full_parsed_len(), 2);
     let replaced = session.input.graph.get().expect("rebuilt graph").clone();
-    assert!(!Arc::ptr_eq(&changed, &replaced));
+    assert!(!Rc::ptr_eq(&changed, &replaced));
     session.replace_raw("nih").expect("raw growth");
     let grown = session.input.graph.get().expect("grown graph").clone();
-    assert!(!Arc::ptr_eq(&replaced, &grown));
+    assert!(!Rc::ptr_eq(&replaced, &grown));
     session.replace_raw("ni").expect("raw shrink");
-    assert!(!Arc::ptr_eq(
+    assert!(!Rc::ptr_eq(
         &grown,
         session.input.graph.get().expect("shrunk graph")
     ));

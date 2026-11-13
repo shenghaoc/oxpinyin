@@ -15,8 +15,8 @@
 //! See `docs/findings/bigram-punct-format-2026-09-01.md` §1
 //! and `ngram_tkrzwdb.cpp`.
 
+use std::cell::OnceCell;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use oxpinyin_core::SharedGram;
 use oxpinyin_store::{DefaultStore, RawReadStore};
@@ -50,7 +50,7 @@ pub struct BigramTable<D = DefaultDbm> {
     /// attached read-only for the table's lifetime (`pinyin.cpp:394-396`,
     /// `:1208`; [`Self::attach`], [`Self::open`]) and nothing here writes
     /// it. The slot is this attachment's alone ([`Self::load_gram`]).
-    sentence_start: OnceLock<SharedGram>,
+    sentence_start: OnceCell<SharedGram>,
 }
 
 /// One validated system gram value.
@@ -94,7 +94,7 @@ impl<D: ChewingDbm> BigramTable<D> {
     pub(crate) const fn new(dbm: D) -> Self {
         Self {
             dbm,
-            sentence_start: OnceLock::new(),
+            sentence_start: OnceCell::new(),
         }
     }
 

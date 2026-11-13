@@ -12,8 +12,8 @@
 //! one the addon libraries (`m_addon_phrase_index`, indexes 4–15, loaded
 //! on demand by `pinyin_load_addon_phrase_library`).
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
 
@@ -45,7 +45,7 @@ struct Loaded {
     /// Resident items, tallied once on the first query — upstream keeps
     /// `m_length` as O(1) bookkeeping; the reader pays one offset-array
     /// scan per library at the first count query, never at open.
-    item_count: OnceLock<u64>,
+    item_count: OnceCell<u64>,
 }
 
 impl Loaded {
@@ -264,7 +264,7 @@ impl PhraseLibraries {
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
-            item_count: OnceLock::new(),
+            item_count: OnceCell::new(),
         });
         Ok(true)
     }
@@ -293,7 +293,7 @@ impl PhraseLibraries {
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
-            item_count: OnceLock::new(),
+            item_count: OnceCell::new(),
         });
         Ok(true)
     }
@@ -334,7 +334,7 @@ impl PhraseLibraries {
         *slot = Some(Loaded {
             library,
             path,
-            item_count: OnceLock::new(),
+            item_count: OnceCell::new(),
         });
     }
 
