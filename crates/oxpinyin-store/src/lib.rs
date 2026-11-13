@@ -1061,13 +1061,6 @@ pub const DEFAULT_STORE_EXT: &str = "db";
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_DB_FORMAT: &str = env!("OXPINYIN_STORE_DATABASE_FORMAT");
 
-fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
-    match result {
-        Ok(value) => value,
-        Err(_) => std::process::abort(),
-    }
-}
-
 /// Helpers shared by the backends' raw walks and path checks; every item is
 /// gated to the backends that use it (see the module docs).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
@@ -1134,29 +1127,6 @@ impl<D: UserBigramDb> GramReadOwned for D {}
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn poisoned_mutex_aborts() {
-        crate::death_test::assert_aborts_after_setup(
-            "tests::poisoned_mutex_aborts",
-            // The panic that poisons the mutex is setup, before the strict
-            // check is armed.
-            || {
-                let mutex = std::sync::Mutex::new(());
-                let panic = std::panic::catch_unwind(|| {
-                    let _guard = mutex.lock().expect("unpoisoned mutex");
-                    panic!("poison the mutex");
-                });
-                assert!(panic.is_err());
-                mutex
-            },
-            |mutex| {
-                let result = mutex.lock();
-                assert!(result.is_err(), "the mutex must be poisoned");
-                drop(super::lock_result_or_abort(result));
-            },
-        );
-    }
-
     // Each peer backend can produce its own use-line tests
     // — the imports below are gated to whichever peer is compiled. Under
     // the exactly-one-backend invariant, at most one peer is enabled per
@@ -1765,8 +1735,6 @@ mod tests {
 
     /// `--no-default-features --features bdb` resolves `DefaultStore`
     /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
-    /// The type is `Send` and `Sync` through the Rust handle mutex
-    /// and caller-owned buffers `src/bdb/ffi.rs` documents.
     #[cfg(feature = "bdb")]
     #[test]
     fn default_store_is_bdb_when_only_bdb_is_on() {

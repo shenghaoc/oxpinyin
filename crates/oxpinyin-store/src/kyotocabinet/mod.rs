@@ -57,19 +57,15 @@
 //!
 //! # Threading
 //!
-//! [`KcStore`] is `Send + Sync`: Kyoto Cabinet's database classes carry
-//! their own locking (every access method takes the database's rwlock), and the
-//! `unsafe impl`s on the native owner record exactly that contract — see
-//! the SAFETY comment in `ffi.rs`. This is required for a peer backend that
-//! serves as the compiled-in `DefaultStore`: the user-store registry holds
-//! `DefaultStore` behind a `static Mutex`, and the runtime compile-asserts
-//! its handles `Send + Sync`.
+//! [`KcStore`] is neither `Send` nor `Sync`. The C contract serializes the
+//! calls that reach it: one call at a time on a context and all its handles.
+//! Kyoto Cabinet's database classes still take their own lock in every
+//! access method; nothing here relies on it.
 //!
 //! # Unsafe waiver
 //!
 //! This module carries none. Every `unsafe` in the backend — the calls
-//! to the bridge's region functions and the `unsafe impl Send`/`Sync` on
-//! the native owner — is confined to `ffi`, and the bridge's declarations
+//! to the bridge's region functions — is confined to `ffi`, and the bridge's declarations
 //! to `bridge`; each has an `expect(unsafe_code)` scoped to that module,
 //! so the safe wrapper here stays under the workspace `deny`.
 

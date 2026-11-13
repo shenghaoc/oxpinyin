@@ -65,18 +65,17 @@
 //!
 //! # Threading
 //!
-//! [`BdbStore`] is `Send` and `Sync` through a Rust `Mutex` around the
-//! standalone handle, opened with the pin's flags. Every database and
-//! cursor call has exclusive access. Cursor reads land in caller-owned
-//! (`DB_DBT_USERMEM`) buffers, so the lock can be released before a
-//! visitor reads a row or calls the store again; a point read is copied
-//! out of the handle's own return buffer while the lock is held. The user
-//! store also retains its own `Mutex` for whole write batches.
+//! [`BdbStore`] is neither `Send` nor `Sync`. The C contract serializes
+//! the calls that reach its standalone handle, opened with the pin's
+//! flags: one call at a time on a context and all its handles. Cursor
+//! reads land in caller-owned (`DB_DBT_USERMEM`) buffers, so a visitor can
+//! read a row or call the store again; a point read is copied out of the
+//! handle's own return buffer before the call returns.
 //!
 //! # Unsafe waiver
 //!
 //! This module carries none. Every `unsafe` in the backend — the `DB`
-//! and `DBC` member calls, the `unsafe impl Send` on the handle,
+//! and `DBC` member calls,
 //! the generated declarations — is confined to `ffi`, whose
 //! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
 //! here stays under the workspace `deny`.
@@ -91,7 +90,7 @@ use std::path::Path;
 use crate::common::{Row, in_bounds};
 use crate::{AttachMode, Flow, HashAttach, RawReadStore, StoreError, WriteStore, WriteTxn};
 
-use ffi::{Seek, SharedDb as Db};
+use ffi::{Db, Seek};
 
 /// A Berkeley DB store: a `DB_BTREE` container when opened by
 /// [`RawReadStore::open_read_only`] / [`WriteStore::create`], a `DB_HASH`
@@ -766,14 +765,12 @@ mod tests {
     use super::BdbStore;
     use crate::{RawReadStore as _, WriteStore as _, WriteTxn as _};
     use std::ops::{Bound, ControlFlow};
-    use std::sync::{Arc, Barrier};
 
-    // Berkeley DB's unthreaded native handles require the shared owner to
-    // serialize both ordered-tree and unordered-hash readers; the raw tier
-    // is what the data crate's shared chewing, phrase, bigram, addon and
-    // punctuation readers go through.
+    // A visitor reads the store it is walking, on both an ordered tree and
+    // an unordered hash; the raw tier is what the data crate's chewing,
+    // phrase, bigram, addon and punctuation readers go through.
     #[test]
-    fn shared_raw_readers_keep_rows_valid_during_concurrent_and_reentrant_reads() {
+    fn raw_readers_keep_rows_valid_during_reentrant_reads() {
         let dir = std::env::temp_dir().join(format!(
             "oxpinyin-bdb-shared-raw-readers-{}-{}",
             std::process::id(),
@@ -798,42 +795,32 @@ mod tests {
                 })
                 .unwrap();
             drop(store);
-            let store = Arc::new(if hash {
+            let store = if hash {
                 BdbStore::open_hash_read_only(&path).unwrap()
             } else {
                 BdbStore::open_read_only(&path).unwrap()
-            });
-            let barrier = Arc::new(Barrier::new(4));
-            std::thread::scope(|scope| {
-                for _ in 0..4 {
-                    let store = Arc::clone(&store);
-                    let barrier = Arc::clone(&barrier);
-                    scope.spawn(move || {
-                        barrier.wait();
-                        let mut read = Vec::new();
-                        for _ in 0..20 {
-                            assert!(store.get_raw(&[3], &mut read).unwrap());
-                            assert_eq!(read, [3; 9000]);
-                            assert!(store.contains_raw(&[3]).unwrap());
-                            let mut keys = Vec::new();
-                            store
-                                .scan_raw(
-                                    Bound::Included(&[2]),
-                                    Bound::Excluded(&[6]),
-                                    |key, value| {
-                                        assert!(store.get_raw(key, &mut read).unwrap());
-                                        assert_eq!(read, value);
-                                        assert!(value.iter().all(|byte| *byte == key[0]));
-                                        keys.push(key[0]);
-                                        Ok(ControlFlow::Continue(()))
-                                    },
-                                )
-                                .unwrap();
-                            assert_eq!(keys, [2, 3, 4, 5]);
-                        }
-                    });
-                }
-            });
+            };
+            let mut read = Vec::new();
+            for _ in 0..2 {
+                assert!(store.get_raw(&[3], &mut read).unwrap());
+                assert_eq!(read, [3; 9000]);
+                assert!(store.contains_raw(&[3]).unwrap());
+                let mut keys = Vec::new();
+                store
+                    .scan_raw(
+                        Bound::Included(&[2]),
+                        Bound::Excluded(&[6]),
+                        |key, value| {
+                            assert!(store.get_raw(key, &mut read).unwrap());
+                            assert_eq!(read, value);
+                            assert!(value.iter().all(|byte| *byte == key[0]));
+                            keys.push(key[0]);
+                            Ok(ControlFlow::Continue(()))
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(keys, [2, 3, 4, 5]);
+            }
             drop(store);
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -871,11 +858,7 @@ mod tests {
                 // The open dies before any file is read, so no directory.
                 let _ = super::BdbUserBigramDb::load_db_with(
                     std::path::Path::new("never-read/user_bigram.db"),
-                    || {
-                        super::ffi::SharedDb::failed_in_memory_hash_attach(
-                            super::ffi::FailedStep::Create,
-                        )
-                    },
+                    || super::ffi::Db::failed_in_memory_hash_attach(super::ffi::FailedStep::Create),
                 );
             },
         );
@@ -890,7 +873,7 @@ mod tests {
         // `ngram_bdb.cpp:54-57`: the in-memory `DB->open` fails and
         // `load_db` returns before the file is read; the init carries on.
         let db = super::BdbUserBigramDb::load_db_with(&path, || {
-            super::ffi::SharedDb::failed_in_memory_hash_attach(super::ffi::FailedStep::Open)
+            super::ffi::Db::failed_in_memory_hash_attach(super::ffi::FailedStep::Open)
         })
         .unwrap();
         assert!(db.is_failed());
