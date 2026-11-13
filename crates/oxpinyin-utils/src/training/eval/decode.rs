@@ -459,7 +459,7 @@ mod tests {
     use super::super::fixture_doubles::FixtureDictionary;
     use super::{EvalError, EvalLanguageModel, PhraseSource, correction_rate};
     use oxpinyin_core::{PhraseToken, SyllableKey};
-    use oxpinyin_data::Lambda;
+    use oxpinyin_data::PINNED_LAMBDA;
     use std::collections::BTreeMap;
 
     // The hand-computable homophone fixture in eval/tests.rs exercises the
@@ -487,7 +487,7 @@ mod tests {
         let dict = FixtureDictionary::parse(vocab).expect("vocab");
         let mut counts = Counts::default();
         counts.unigrams.insert(1, 10);
-        let model = EvalLanguageModel::from_counts(&counts, Lambda::PINNED);
+        let model = EvalLanguageModel::from_counts(&counts, PINNED_LAMBDA);
         (dict, model)
     }
 

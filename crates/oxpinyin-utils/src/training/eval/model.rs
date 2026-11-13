@@ -10,8 +10,6 @@ use std::collections::BTreeMap;
 use super::counts::Counts;
 #[cfg(test)]
 use oxpinyin_core::PhraseToken;
-#[cfg(test)]
-use oxpinyin_data::Lambda;
 
 /// An interpolated bigram model built from `interpolation2.text` counts or
 /// from the binary tables a data directory holds.
@@ -31,14 +29,14 @@ impl EvalLanguageModel {
     /// compiled bigram table stores it.
     #[must_use]
     #[cfg(test)]
-    pub fn from_counts(counts: &Counts, lambda: Lambda) -> Self {
+    pub fn from_counts(counts: &Counts, lambda: f32) -> Self {
         let unigram_total = counts.unigrams.values().sum();
         Self {
             unigrams: counts.unigrams.clone(),
             unigram_total,
             bigrams: counts.bigrams.clone(),
             bigram_totals: bigram_totals(counts),
-            lambda_f32: lambda.as_f64() as f32,
+            lambda_f32: lambda,
         }
     }
 
@@ -52,7 +50,7 @@ impl EvalLanguageModel {
     #[cfg(test)]
     pub fn from_counts_with_lexicon(
         counts: &Counts,
-        lambda: Lambda,
+        lambda: f32,
         lexicon: impl IntoIterator<Item = PhraseToken>,
     ) -> Self {
         let mut unigrams = BTreeMap::new();
@@ -73,7 +71,7 @@ impl EvalLanguageModel {
             unigram_total,
             bigrams: counts.bigrams.clone(),
             bigram_totals: bigram_totals(counts),
-            lambda_f32: lambda.as_f64() as f32,
+            lambda_f32: lambda,
         }
     }
 
@@ -152,7 +150,7 @@ fn bigram_totals(counts: &Counts) -> BTreeMap<u32, u64> {
 mod tests {
     use super::super::counts::Counts;
     use super::EvalLanguageModel;
-    use oxpinyin_data::Lambda;
+    use oxpinyin_data::PINNED_LAMBDA;
 
     fn model() -> EvalLanguageModel {
         let mut counts = Counts::default();
@@ -162,7 +160,7 @@ mod tests {
         counts.bigrams.insert((1, 10), 2);
         counts.bigrams.insert((10, 20), 4);
         counts.bigrams.insert((10, 10), 1);
-        EvalLanguageModel::from_counts(&counts, Lambda::PINNED)
+        EvalLanguageModel::from_counts(&counts, PINNED_LAMBDA)
     }
 
     #[test]

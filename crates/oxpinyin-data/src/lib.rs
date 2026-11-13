@@ -71,7 +71,7 @@ pub use system_files::{
     SystemDbm, addon_library_file,
 };
 pub use table::TableError;
-pub use table_conf::{Lambda, PINNED_LAMBDA};
+pub use table_conf::PINNED_LAMBDA;
 
 // Native row decoding for the pin test-program tools.
 pub use chewing_table::{index_key as chewing_index_key, search_row as search_chewing_row};

@@ -31,9 +31,4 @@ fuzz_target!(|data: &[u8]| {
         format!("{second:?}"),
         "load must be deterministic"
     );
-    if let Some(lambda) = first.ok().and_then(|conf| conf.lambda_unit()) {
-        // A rational λ is in [0, 1]; the accessors are total.
-        let value = lambda.as_f64();
-        assert!((0.0..=1.0).contains(&value), "λ out of range: {value}");
-    }
 });
