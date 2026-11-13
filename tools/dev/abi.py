@@ -290,14 +290,14 @@ def check_static(settings: Settings, abi: str, crate: str, header: str) -> int:
                 print('    ' + name)
             fail(reason)
     allowed = {'strv': 'g_strfreev', 'const-pp': 'borrowed', 'char-pp': 'g_free', 'opaque-pp': 'borrowed'}
-    for symbol, slot, shape in slots:
+    for symbol, slot_name, shape in slots:
         classes = '\n'.join(fields[2] for _, fields in register_rows(text)
-                            if len(fields) > 2 and fields[:2] == [symbol, slot])
+                            if len(fields) > 2 and fields[:2] == [symbol, slot_name])
         if not classes:
             continue
         valid = (classes == 'borrowed' or classes.startswith('handle:')) if shape == 'ptr-return' else classes == allowed[shape]
         if not valid:
-            fail(f"{symbol}/{slot} is '{shape}' in the header but '{classes}' in the register")
+            fail(f"{symbol}/{slot_name} is '{shape}' in the header but '{classes}' in the register")
     for symbol, _, ownership, _ in rows:
         if symbol not in exports:
             fail(f'{symbol} is in the register but not in {abi}.ver')

@@ -165,8 +165,7 @@ def native_compare(args, arms, data, env, output):
 
 
 def native_profile(args, arm, data, env, output):
-    import json
-    from . import bench, reports
+    from . import bench
     trace = output / 'capture.trace'
     stdout = output / 'driver.json'
     command = ['xcrun', 'xctrace', 'record', '--template', args.template,

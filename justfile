@@ -207,6 +207,16 @@ clippy *args:
 clippy *args:
     @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
 
+# Check tools/ Python with ruff's pyflakes rules (F) only. upstream/ holds
+# unmodified pin copies (tools/scripts2/README.md), so it is excluded.
+[unix]
+ruff: python
+    @uv run --no-project --managed-python --with 'ruff>=0.17.3' ruff check --select F --extend-exclude tools/scripts2/upstream tools
+
+[windows]
+ruff: python
+    @{{windows_args}} uv run --no-project --managed-python --with 'ruff>=0.17.3' ruff check --select F --extend-exclude tools/scripts2/upstream tools; exit $LASTEXITCODE
+
 # Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin-core
 # Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.
 [unix]

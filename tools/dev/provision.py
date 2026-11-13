@@ -29,7 +29,6 @@ import time
 from . import doctor, model, slot
 from .process import ROOT, capture, fail, run, text
 from .runners import Finished
-from tools import cachedir
 from tools.oracle import image as images
 from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime

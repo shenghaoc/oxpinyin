@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 from . import pool, slot
-from .cell import CellError, ROOT, Settings, library_path
+from .cell import CellError, Settings, library_path
 from .drivers import DriverServices
 
 
