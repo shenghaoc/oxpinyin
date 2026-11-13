@@ -167,7 +167,7 @@ impl UserStore {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session::<PinSteps>(None, &mut originals, versions, law)
+        Self::open_session(None, &mut originals, versions, law)
     }
 
     /// Open the user store on a libpinyin user directory whose profile
@@ -198,7 +198,7 @@ impl UserStore {
         law: UserConfLaw,
         check: crate::persistence::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session::<PinSteps>(Some((user_dir, check, rows)), originals, versions, law)
+        Self::open_session(Some((user_dir, check, rows)), originals, versions, law)
     }
 
     /// `check_format` alone, for an init that must judge the profile before
@@ -230,7 +230,7 @@ impl UserStore {
     // the C libraries reach: `shipping-sizes` measured +65,536 B
     // (libpinyin) and +69,632 B (libzhuyin) stripped at 235438d.
     #[inline(never)]
-    pub(crate) fn open_session<P: OpenSteps>(
+    fn open_session(
         user: Option<(
             &Path,
             crate::persistence::ProfileCheck,
@@ -257,8 +257,6 @@ impl UserStore {
                 ..Default::default()
             }
         };
-        let mut profile = profile;
-        P::profile(&mut profile);
         let persistence::LoadedProfile {
             loaded,
             replayed,
@@ -302,9 +300,10 @@ impl UserStore {
             phrases.phrase_table = phrase_table;
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
-                    let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
+                    let bytes =
+                        persistence::encode_persisted_item(item).map_err(|e| seed_fault(&e))?;
                     if let Some(library) = phrases.libraries.get_or_default(nibble) {
-                        P::replace(library, slot, &bytes).map_err(|e| seed_fault(&e))?;
+                        library.replace(slot, &bytes).map_err(|e| seed_fault(&e))?;
                     }
                 }
             }
@@ -317,9 +316,10 @@ impl UserStore {
                 }
                 for (&slot, item) in items {
                     if let Some(item) = item {
-                        let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
+                        let bytes =
+                            persistence::encode_persisted_item(item).map_err(|e| seed_fault(&e))?;
                         if let Some(library) = phrases.libraries.get_or_default(nibble) {
-                            P::replace(library, slot, &bytes).map_err(|e| seed_fault(&e))?;
+                            library.replace(slot, &bytes).map_err(|e| seed_fault(&e))?;
                         }
                     }
                 }
@@ -338,7 +338,11 @@ impl UserStore {
         // refused; one the pin cannot create ends the process in the
         // backend, and a Berkeley DB one whose open failed is the pin's
         // failed container.
-        let bigram_db = P::bigram(target.dir.as_deref()).map_err(|error| {
+        let bigram_db = match target.dir.as_deref() {
+            Some(dir) => persistence::load_user_bigram_db(dir),
+            None => DefaultUserBigramDb::empty().map_err(PersistenceError::from),
+        }
+        .map_err(|error| {
             let seeded = seed_fault(&error);
             // `copy_tkrzwdb` / `copy_bdb` assert in `load_db`
             // (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`): the
@@ -405,48 +409,6 @@ impl UserStore {
         ))
     }
 }
-
-/// The steps of a session open, past the hand-over of the system
-/// libraries, that can fail. Each default method is the real step, and the
-/// open is generic over the steps, so a production open ([`PinSteps`])
-/// calls them directly. A test type overrides one to inject its failure
-/// (#1576's `load_with` form), since none can be made to fail from data.
-pub(crate) trait OpenSteps {
-    /// The loaded profile, before the session is built from it.
-    #[inline]
-    fn profile(_profile: &mut persistence::LoadedProfile) {}
-
-    /// A loaded item's encoding ([`persistence::encode_persisted_item`]).
-    #[inline]
-    fn encode(item: &ChunkItem) -> Result<Vec<u8>, oxpinyin_data::chunk_write::ChunkWriteError> {
-        persistence::encode_persisted_item(item)
-    }
-
-    /// The encoded item's placement in its library's arena.
-    #[inline]
-    fn replace(
-        library: &mut crate::user_library::UserLibrary,
-        slot: u32,
-        bytes: &[u8],
-    ) -> Result<(), String> {
-        library.replace(slot, bytes)
-    }
-
-    /// `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`,
-    /// `zhuyin.cpp:341-343`), or the empty container without a user dir.
-    #[inline]
-    fn bigram(dir: Option<&Path>) -> Result<DefaultUserBigramDb, PersistenceError> {
-        match dir {
-            Some(dir) => persistence::load_user_bigram_db(dir),
-            None => Ok(DefaultUserBigramDb::empty()?),
-        }
-    }
-}
-
-/// The real [`OpenSteps`]: every production open.
-struct PinSteps;
-
-impl OpenSteps for PinSteps {}
 
 /// The totals the loaded profile seeds the session with — the seed half of
 /// the value mapping.
@@ -4744,8 +4706,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod open_faults;
 #[cfg(test)]
 mod provenance;
 #[cfg(test)]

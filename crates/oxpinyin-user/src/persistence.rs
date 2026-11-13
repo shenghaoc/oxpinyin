@@ -461,7 +461,10 @@ impl SystemOriginals {
     }
 
     /// [`Self::take_live_libraries`] of one library.
-    fn take_live_library(&mut self, nibble: u8) -> Option<crate::replay::ReplayedLibrary> {
+    pub(crate) fn take_live_library(
+        &mut self,
+        nibble: u8,
+    ) -> Option<crate::replay::ReplayedLibrary> {
         let total = self.libraries.get(&nibble)?.total;
         let content = self.mapped.take_live_content(nibble)?;
         Some(crate::replay::ReplayedLibrary::from_mapping(content, total))
@@ -469,7 +472,7 @@ impl SystemOriginals {
 
     /// Maps one default library from `system_dir` where the init loop
     /// reaches it, and records its metadata if the layout logs it.
-    fn map_library(
+    pub(crate) fn map_library(
         &mut self,
         nibble: u8,
         system_dir: &Path,
@@ -1102,13 +1105,13 @@ pub(crate) fn load_session_in_loop(
     let mut profile = begin_session_profile(dir, check)?;
     let stop = crate::library_loop::run(
         rows.steps(),
-        &mut SessionSteps {
+        rows.system_dir(),
+        originals,
+        Some(SessionProfile {
             user_dir: dir,
-            system_dir: rows.system_dir(),
-            originals,
             profile: &mut profile,
             conform: check.conform,
-        },
+        }),
     );
     Ok((profile, stop))
 }
@@ -1148,29 +1151,22 @@ pub(crate) fn begin_session_profile(
 }
 
 /// The library loop's steps over a user profile.
-pub(crate) struct SessionSteps<'a> {
+pub(crate) struct SessionProfile<'a> {
     pub(crate) user_dir: &'a Path,
-    pub(crate) system_dir: &'a Path,
-    pub(crate) originals: &'a mut SystemOriginals,
     pub(crate) profile: &'a mut LoadedProfile,
     pub(crate) conform: bool,
 }
 
-impl crate::library_loop::LoopSteps for SessionSteps<'_> {
-    fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError> {
-        self.originals.map_library(index, self.system_dir, file)?;
-        if let Some(live) = self.originals.take_live_library(index) {
-            self.profile.replayed.insert(index, live);
-        }
-        Ok(())
-    }
-
-    fn merge_log(&mut self, index: u8) -> Result<(), JournalFault> {
+impl SessionProfile<'_> {
+    pub(crate) fn merge_log(
+        &mut self,
+        originals: &SystemOriginals,
+        index: u8,
+    ) -> Result<(), JournalFault> {
         if !self.conform {
             return Ok(());
         }
-        let Some((_, file)) = self
-            .originals
+        let Some((_, file)) = originals
             .layout()
             .system_logs()
             .iter()
@@ -1180,7 +1176,7 @@ impl crate::library_loop::LoopSteps for SessionSteps<'_> {
         };
         replay_log(
             self.user_dir,
-            &*self.originals,
+            originals,
             &mut self.profile.loaded,
             index,
             file,
@@ -1191,35 +1187,17 @@ impl crate::library_loop::LoopSteps for SessionSteps<'_> {
         )
     }
 
-    fn read_user_library(&mut self, index: u8) {
+    pub(crate) fn read_user_library(&mut self, originals: &SystemOriginals, index: u8) {
         if self.conform {
             load_libraries(
                 self.user_dir,
-                self.originals.layout(),
+                originals.layout(),
                 &mut self.profile.loaded,
                 Some(index),
                 &mut self.profile.user_libraries,
             );
         }
     }
-}
-
-/// The library loop without a user profile: each row judged and mapped.
-pub(crate) struct MapSteps<'a> {
-    pub(crate) system_dir: &'a Path,
-    pub(crate) originals: &'a mut SystemOriginals,
-}
-
-impl crate::library_loop::LoopSteps for MapSteps<'_> {
-    fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError> {
-        self.originals.map_library(index, self.system_dir, file)
-    }
-
-    fn merge_log(&mut self, _index: u8) -> Result<(), JournalFault> {
-        Ok(())
-    }
-
-    fn read_user_library(&mut self, _index: u8) {}
 }
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the

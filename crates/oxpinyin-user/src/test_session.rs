@@ -119,26 +119,6 @@ fn open_over(
     UserStore::open_libpinyin_checked(user_dir, &mut loaded, &rows.rows(), versions, law, check)
 }
 
-/// [`open`] with the open's fallible steps replaced by `P`'s, for a test
-/// that injects a failure no data produces.
-pub(crate) fn open_with<P: crate::store_libpinyin::OpenSteps>(
-    user_dir: &Path,
-    originals: SystemOriginals,
-    versions: SystemVersions,
-    law: UserConfLaw,
-) -> Result<UserStore, UserStoreError> {
-    let layout = originals.layout().clone();
-    let rows = Rows::new(&originals);
-    let check = crate::persistence::check_format(user_dir, &versions, &layout, law)?;
-    let mut loaded = SystemOriginals::new(crate::LibraryTable::new(), layout);
-    UserStore::open_session::<P>(
-        Some((user_dir, check, &rows.rows())),
-        &mut loaded,
-        versions,
-        law,
-    )
-}
-
 /// What an init reads of the profile in `dir`, as values: `check_format`
 /// and the library loop, with no session made of it, so the counter the
 /// load raised stays on disk as it does when a process dies before its fini.

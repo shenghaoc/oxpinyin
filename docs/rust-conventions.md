@@ -108,7 +108,7 @@ A generic parameter, a trait, a wrapper, a macro or a configurable builder exist
 - The callers in the tree need it, for example two callers that use different types.
 - It removes duplication that is in the tree now.
 
-Test-only callers, and duplication that exists only in tests, do not by themselves justify a production abstraction. The exception is a test that is the only adequate witness of a distinct mechanism that the production path cannot exercise.
+Test-only callers, and duplication that exists only in tests, do not by themselves justify a production abstraction.
 
 A named type replaces a Boolean argument when the Boolean hides behaviour at the call site ([C-CUSTOM-TYPE](https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type)).
 A struct with named fields replaces a tuple when the tuple hides the meaning of its fields.
