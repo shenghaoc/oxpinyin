@@ -386,7 +386,6 @@ impl UserStore {
             has_system_items: Cell::new(has_system_items),
             system_items: RefCell::new(system_items),
             has_removed_system_items: Cell::new(has_removed_system_items),
-            count_cache: RefCell::new(None),
             offsets: RefCell::new(library_offsets),
             dirty: Cell::new(false),
             write_generation: Cell::new(0),
