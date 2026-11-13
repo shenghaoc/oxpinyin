@@ -78,8 +78,6 @@ NativeStatus remove(const ::tkrzw::DBM& dbm, rust::Slice<const std::uint8_t> key
 NativeStatus synchronize(const ::tkrzw::DBM& dbm, bool hard);
 // `DBM::Count(&count)`.
 NativeStatus count(const ::tkrzw::DBM& dbm, std::int64_t& count);
-// `DBM::IsHealthy()`.
-bool is_healthy(const ::tkrzw::DBM& dbm);
 // `DBM::ProcessEach(&processor, false)` with a processor that copies every
 // key into `keys` in the walk's own order (`ngram_tkrzwdb.cpp:143-171`).
 NativeStatus collect_keys(const ::tkrzw::DBM& dbm, std::vector<std::string>& keys);

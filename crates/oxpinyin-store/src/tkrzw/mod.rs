@@ -463,12 +463,6 @@ impl Db {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
-    /// `DBM::IsHealthy`: whether the open file was closed cleanly and its
-    /// size agrees with its metadata (`HashDBMImpl::OpenImpl`).
-    fn is_healthy(&self) -> bool {
-        ffi::is_healthy(&self.dbm)
-    }
-
     /// `m_db->MakeIterator()` (`tkrzwdb_utils.h:52`). The cursor borrows
     /// this database (ruling point 3): the native iterator keeps a pointer
     /// back to it, which only the database's destruction clears
@@ -716,63 +710,6 @@ impl Drop for TkrzwUnopenedHandle {
 }
 
 // ── engine-level operations ───────────────────────────────────────
-
-/// Whether the hash file open as `db` at `path` holds no record, so that
-/// the pin's iterator over it finds none: it is healthy, its header
-/// counts no records, and the file on disk ends at or before its record
-/// section. The last condition does not rely on the header's count, so
-/// a file with record bytes is walked even when its header reads healthy
-/// with 0 records. Anything that cannot be read answers no.
-fn holds_no_record(db: &Db, path: &Path) -> bool {
-    db.is_healthy() && matches!(db.count(), Ok(0)) && ends_before_records(path)
-}
-
-/// The size of a HashDBM file's metadata, its first bytes
-/// (`METADATA_SIZE`, `tkrzw_dbm_hash.cc:33` at tkrzw 9ee8416).
-const HASH_METADATA_SIZE: usize = 128;
-
-/// Whether the file at `path`, by `fstat` of its open descriptor, ends at
-/// or before the record section its own header places.
-fn ends_before_records(path: &Path) -> bool {
-    use std::io::Read as _;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return false;
-    };
-    let mut header = [0_u8; HASH_METADATA_SIZE];
-    if file.read_exact(&mut header).is_err() {
-        return false;
-    }
-    record_base(&header).is_some_and(|base| metadata.len() <= base)
-}
-
-/// The offset of a HashDBM file's record section, computed from the
-/// three header fields that place it as `HashDBMImpl::SetRecordBase`
-/// computes it (`tkrzw_dbm_hash.cc:1351-1356` at tkrzw 9ee8416): the
-/// metadata, one `offset_width`-byte slot per bucket, the 1,008-byte free
-/// block pool and the 16-byte record-base header, rounded up to a
-/// multiple of `max(4096, 1 << align_pow)` (`:50-57`, `AlignNumber`).
-/// `HashDBM::ReadMetadata` reads the fields as big-endian numbers:
-/// `offset_width` and `align_pow` one byte each at 13 and 14, and
-/// `num_buckets` eight bytes at 16 (`:39-42`, `:2676-2679`). `None` when
-/// the result does not fit in 64 bits.
-fn record_base(header: &[u8; HASH_METADATA_SIZE]) -> Option<u64> {
-    const FBP_SECTION_SIZE: u64 = 1008;
-    const RECORD_BASE_HEADER_SIZE: u64 = 16;
-    const RECORD_BASE_ALIGN: u64 = 4096;
-    let offset_width = u64::from(header[13]);
-    let align_pow = u32::from(header[14]);
-    let mut num_buckets = [0_u8; 8];
-    num_buckets.copy_from_slice(&header[16..24]);
-    let num_buckets = u64::from_be_bytes(num_buckets);
-    let align = RECORD_BASE_ALIGN.max(1_u64.checked_shl(align_pow)?);
-    num_buckets
-        .checked_mul(offset_width)?
-        .checked_add(HASH_METADATA_SIZE as u64 + FBP_SECTION_SIZE + RECORD_BASE_HEADER_SIZE)?
-        .checked_next_multiple_of(align)
-}
 
 /// A row visitor as [`drive_scan`] drives it: one borrowed key and value
 /// per record, [`Flow::Break`] to stop early.
@@ -1112,12 +1049,8 @@ impl WriteTxn for TkrzwTxn<'_> {
 /// in-memory `TinyDBM` (`ngram_tkrzwdb.cpp:48-63`) at its default bucket
 /// count, filled from the `HashDBM` file by `copy_tkrzwdb`'s
 /// iterator walk (`tkrzwdb_utils.h`), so its bucket walk is the pin's.
-/// A known-empty container defers native construction until its first store.
 pub struct TkrzwUserBigramDb {
-    // Uninitialized means known-empty, not a failed native handle. Keep the
-    // default TinyDBM once a load or the first Set constructs it. Allocation
-    // failure moving from init to the first write is maintainer-accepted.
-    db: std::cell::OnceCell<Db>,
+    db: Db,
 }
 
 /// `copy_tkrzwdb(src, destdb)` (`tkrzwdb_utils.h:48-74` at 074a2219): the
@@ -1151,10 +1084,9 @@ fn copy_tkrzwdb(
 
 impl crate::UserBigramDb for TkrzwUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
-        // Defer `new TinyDBM` (`ngram_tkrzwdb.cpp:52`): it opens no file.
-        // Empty reads and walks have no native state to preserve.
+        // `m_db = new TinyDBM` (`ngram_tkrzwdb.cpp:52` at 074a2219).
         Ok(Self {
-            db: std::cell::OnceCell::new(),
+            db: Db::new(Class::Tiny),
         })
     }
 
@@ -1169,16 +1101,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
             .open(path, false, OPEN_NO_CREATE)
             .is_ok_and(|status| status.code == STATUS_SUCCESS)
         {
-            // `copy_tkrzwdb` copies nothing from a file with no live
-            // record, but its HashDBM iterator still reads every bucket
-            // slot, and `save_db` writes 1,048,583 of them whatever the
-            // rows: about 329M instructions per init. A file that holds no
-            // record leaves the container exactly as that copy would, so
-            // it is not walked; every other file is.
-            if holds_no_record(&file, path) {
-                return Ok(this);
-            }
-            let db = this.db.get_or_init(|| Db::new(Class::Tiny));
+            let db = &this.db;
             // `copy_tkrzwdb` asserts on a failed `Set` or source walk
             // (`tkrzwdb_utils.h:65`, `:72`): the init stops there. An
             // iterator that is not made leaves the container as it is, and
@@ -1192,33 +1115,24 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        if let Some(db) = self.db.get() {
-            return db.get(key, value);
-        }
-        value.clear();
-        Ok(false)
+        self.db.get(key, value)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.get_or_init(|| Db::new(Class::Tiny)).set(key, value)
+        self.db.set(key, value)
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
         // The trait's removal of an absent record is a no-op.
-        if let Some(db) = self.db.get() {
-            db.remove(key)?;
-        }
-        Ok(())
+        self.db.remove(key).map(drop)
     }
 
     fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
         // `get_all_items`: one read-only `ProcessEach` whose processor
         // appends each key as a token (`ngram_tkrzwdb.cpp:143-172` at
         // 074a2219); a key of another length is `None` for the upper gate.
-        let Some(db) = self.db.get() else {
-            return Ok(Vec::new());
-        };
-        Ok(db
+        Ok(self
+            .db
             .keys()?
             .into_iter()
             .map(|key| <[u8; 4]>::try_from(key).ok())
@@ -1226,15 +1140,15 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {
-        self.db.get().map_or(Ok(true), |db| Ok(db.count()? == 0))
+        Ok(self.db.count()? == 0)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(self.db.get(), path)
+        save_bigram_db(&self.db, path)
     }
 }
 
-fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
+fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
     // `Bigram::save_db` (`ngram_tkrzwdb.cpp:66-87`): remove the file,
     // open a fresh `HashDBM` at its default tuning, copy this
     // container into it in iterator order, synchronize, close.
@@ -1245,9 +1159,7 @@ fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
     // the native destination sequence, including its empty file and timestamp.
     // `save_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:78`), so an
     // iterator that is not made goes on to the synchronize.
-    if let Some(db) = db
-        && let Err(StoreError::FatalCopy) = copy_tkrzwdb(db, |key, value| file.db.set(key, value))
-    {
+    if let Err(StoreError::FatalCopy) = copy_tkrzwdb(db, |key, value| file.db.set(key, value)) {
         return Err(StoreError::FatalCopy);
     }
     file.db.synchronize(false)
@@ -1274,7 +1186,7 @@ impl TkrzwStore {
     /// # Errors
     /// Returns the existing save operation's file or backend error.
     pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(Some(&self.db), path)
+        save_bigram_db(&self.db, path)
     }
 }
 
@@ -1283,9 +1195,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        Class, Db, HASH_METADATA_SIZE, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR,
-        STATUS_PRECONDITION_ERROR, STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash,
-        open_hash_create, open_system, record_base,
+        Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR, STATUS_PRECONDITION_ERROR,
+        STATUS_SUCCESS, TkrzwUserBigramDb, open_hash, open_hash_create, open_system,
     };
     use crate::{StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -1324,12 +1235,6 @@ mod tests {
         let mut keys = db.keys().unwrap();
         keys.sort();
         keys
-    }
-
-    /// The record-section offset the header of the file at `path` places.
-    fn file_record_base(path: &std::path::Path) -> Option<u64> {
-        let bytes = std::fs::read(path).unwrap();
-        record_base(bytes[..HASH_METADATA_SIZE].try_into().unwrap())
     }
 
     /// The tkrzw status code a backend error carries.
@@ -1524,8 +1429,8 @@ mod tests {
     }
 
     #[test]
-    fn known_empty_operations_do_not_construct_the_native_container() {
-        let dir = TempDir::new("lazy-empty");
+    fn empty_and_unopened_containers_read_empty_and_save_an_empty_file() {
+        let dir = TempDir::new("empty-container");
         let missing = dir.0.join("missing.db");
         for db in [
             TkrzwUserBigramDb::empty().unwrap(),
@@ -1537,62 +1442,15 @@ mod tests {
             assert!(db.keys().unwrap().is_empty());
             assert!(db.is_empty().unwrap());
             db.remove(b"absent").unwrap();
-            assert!(db.db.get().is_none());
 
-            let lazy_path = dir.0.join("lazy.db");
-            db.save_db(&lazy_path).unwrap();
-            assert!(db.db.get().is_none(), "save must not construct TinyDBM");
-            let native_path = dir.0.join("native.db");
-            let native = super::Db::new(super::Class::Tiny);
-            super::save_bigram_db(Some(&native), &native_path).unwrap();
-            let mut lazy = std::fs::read(&lazy_path).unwrap();
-            let mut eager = std::fs::read(&native_path).unwrap();
-            lazy[48..56].fill(0);
-            eager[48..56].fill(0);
-            assert_eq!(lazy, eager, "only the timestamp may differ");
-            let loaded = TkrzwUserBigramDb::load_db(&lazy_path).unwrap();
-            assert!(loaded.db.get().is_none(), "proven-empty file stays lazy");
+            let path = dir.0.join("saved.db");
+            db.save_db(&path).unwrap();
+            let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
+            assert!(loaded.keys().unwrap().is_empty());
         }
         assert!(
             !missing.exists(),
             "the missing-file open must not create it"
-        );
-    }
-
-    #[test]
-    fn first_set_constructs_once_even_for_an_empty_record() {
-        let db = TkrzwUserBigramDb::empty().unwrap();
-        let before = db.keys().unwrap();
-        db.store(b"", b"").unwrap();
-        let native = db.db.get().unwrap();
-        assert_eq!(native.count().unwrap(), 1);
-        assert!(!db.is_empty().unwrap());
-        let mut value = vec![1];
-        assert!(db.get(b"", &mut value).unwrap());
-        assert!(value.is_empty());
-        assert!(before.is_empty(), "an earlier key snapshot stays empty");
-        db.remove(b"").unwrap();
-        assert!(db.is_empty().unwrap());
-        db.store(b"next", b"value").unwrap();
-        assert!(std::ptr::eq(native, db.db.get().unwrap()));
-    }
-
-    #[test]
-    fn a_file_saved_with_no_rows_holds_no_record_and_loads_empty() {
-        // What every profile the pin saves before learning a bigram holds:
-        // 1,048,583 buckets and nothing after them, 4,198,400 bytes.
-        let dir = TempDir::new("no-rows");
-        let path = dir.0.join("user_bigram.db");
-        TkrzwUserBigramDb::empty().unwrap().save_db(&path).unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), 4_198_400);
-        assert_eq!(file_record_base(&path), Some(4_198_400));
-        assert!(holds_no_record(&open_hash(&path).unwrap().db, &path));
-        assert!(
-            TkrzwUserBigramDb::load_db(&path)
-                .unwrap()
-                .keys()
-                .unwrap()
-                .is_empty()
         );
     }
 
@@ -1605,39 +1463,6 @@ mod tests {
             db.store(&token.to_le_bytes(), b"gram").unwrap();
         }
         db.save_db(&path).unwrap();
-        assert!(!holds_no_record(&open_hash(&path).unwrap().db, &path));
-        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
-        assert_eq!(
-            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
-            expected
-        );
-    }
-
-    #[test]
-    fn a_healthy_zero_count_header_over_live_records_is_walked() {
-        // A cleanly saved file with three records whose header count alone
-        // is rewritten to 0: the closure flag is still set and the size
-        // still agrees with the metadata, so the file opens healthy with
-        // no records counted, while its record section holds all three.
-        // The pin's `copy_tkrzwdb` walks the buckets and copies them; so
-        // must `load_db`.
-        let dir = TempDir::new("stale-count");
-        let path = dir.0.join("user_bigram.db");
-        let db = TkrzwUserBigramDb::empty().unwrap();
-        for token in 1_u32..=3 {
-            db.store(&token.to_le_bytes(), b"gram").unwrap();
-        }
-        db.save_db(&path).unwrap();
-        let mut bytes = std::fs::read(&path).unwrap();
-        // `num_records`, eight big-endian bytes at 24 (`META_OFFSET_NUM_RECORDS`).
-        bytes[24..32].copy_from_slice(&0_u64.to_be_bytes());
-        std::fs::write(&path, &bytes).unwrap();
-        let file = open_hash(&path).unwrap();
-        assert!(file.db.is_healthy());
-        assert_eq!(file.db.count().unwrap(), 0);
-        assert!(std::fs::metadata(&path).unwrap().len() > file_record_base(&path).unwrap());
-        assert!(!holds_no_record(&file.db, &path));
-        drop(file);
         let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
         assert_eq!(
             sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
@@ -1684,7 +1509,7 @@ mod tests {
         let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
         let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
         let mut actual = Vec::new();
-        super::copy_tkrzwdb(loaded.db.get().unwrap(), |key, value| {
+        super::copy_tkrzwdb(&loaded.db, |key, value| {
             actual.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -1700,7 +1525,7 @@ mod tests {
         let db = TkrzwUserBigramDb::empty().unwrap();
         db.store(b"", b"").unwrap();
         db.store(b"\0k\xff!", b"\0value\xff").unwrap();
-        assert_eq!(db.db.get().unwrap().count().unwrap(), 2);
+        assert_eq!(db.db.count().unwrap(), 2);
         let mut value = Vec::new();
         assert!(db.get(b"", &mut value).unwrap());
         assert!(value.is_empty());
@@ -1711,7 +1536,7 @@ mod tests {
         db.store(b"\0k\xff!", b"").unwrap();
         assert!(db.get(b"\0k\xff!", &mut value).unwrap());
         assert!(value.is_empty());
-        assert_eq!(db.db.get().unwrap().count().unwrap(), 2);
+        assert_eq!(db.db.count().unwrap(), 2);
         assert_eq!(
             db.keys().unwrap(),
             before,
@@ -1727,7 +1552,7 @@ mod tests {
         let db = TkrzwUserBigramDb::empty().unwrap();
         db.remove(b"absent").unwrap();
         db.store(b"here", b"v").unwrap();
-        let native = db.db.get().unwrap();
+        let native = &db.db;
         assert!(!native.remove(b"absent").unwrap());
         assert!(native.remove(b"here").unwrap());
         assert!(!native.remove(b"here").unwrap());
@@ -1753,8 +1578,6 @@ mod tests {
         drop(writer);
         let file = open_hash(&path).unwrap();
         assert_eq!(file.db.count().unwrap(), 0);
-        assert!(!file.db.is_healthy());
-        assert!(!holds_no_record(&file.db, &path));
         drop(file);
         let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
         assert_eq!(

@@ -83,7 +83,6 @@ pub(super) mod ffi {
         fn remove(dbm: &DBM, key: &[u8]) -> NativeStatus;
         fn synchronize(dbm: &DBM, hard: bool) -> NativeStatus;
         fn count(dbm: &DBM, count: &mut i64) -> NativeStatus;
-        fn is_healthy(dbm: &DBM) -> bool;
         fn collect_keys(dbm: &DBM, keys: Pin<&mut CxxVector<CxxString>>) -> NativeStatus;
 
         fn make_iterator(dbm: &DBM) -> UniquePtr<DbmIterator>;
