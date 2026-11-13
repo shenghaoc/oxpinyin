@@ -420,6 +420,21 @@ impl WriteStore for BdbStore {
     /// libdb's in-memory database (`DB->open` with a null file name, the
     /// form `ngram_bdb.cpp:51-56` uses for the user bigram), as a
     /// `DB_BTREE` so the ordered raw walks hold.
+    fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.put(key, value)
+    }
+
+    fn rewrite_raw(&self, rewrite: &mut crate::RecordRewrite<'_>) -> Result<(), StoreError> {
+        let mut cursor = self.db.cursor()?;
+        let mut replacement = Vec::new();
+        while let Some(row) = cursor.get(Seek::Next)? {
+            replacement.clear();
+            rewrite(row.key, row.value, &mut replacement);
+            cursor.put_current(&replacement)?;
+        }
+        Ok(())
+    }
+
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open_in_memory_tree()?,

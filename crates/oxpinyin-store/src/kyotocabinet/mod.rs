@@ -388,6 +388,19 @@ impl WriteStore for KcStore {
     /// `chewing_large_table2_kyotodb.cpp:124-130`): no file, no WAL, no
     /// lock file. `ProtoDB` carries its own transaction log, so
     /// [`WriteStore::write`]'s begin/commit/rollback keep their meaning.
+    fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
+    fn rewrite_raw(&self, rewrite: &mut crate::RecordRewrite<'_>) -> Result<(), StoreError> {
+        self.db.rewrite(rewrite)
+    }
+
+    fn save_user_index(&self, path: &Path) -> Result<(), StoreError> {
+        crate::remove_if_present(path)?;
+        self.db.dump_snapshot(path)
+    }
+
     fn create_in_memory() -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open_proto_tree()?.with_reset_sync(),

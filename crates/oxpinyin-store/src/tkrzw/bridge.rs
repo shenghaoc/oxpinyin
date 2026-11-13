@@ -57,6 +57,11 @@ pub(super) mod ffi {
         message: UniquePtr<CxxString>,
     }
 
+    extern "Rust" {
+        type Rewriter<'a, 'f>;
+        fn replacement(self: &mut Rewriter<'_, '_>, key: &[u8], value: &[u8]) -> Vec<u8>;
+    }
+
     unsafe extern "C++" {
         include!("oxpinyin-store/src/tkrzw/adapter.h");
 
@@ -81,6 +86,7 @@ pub(super) mod ffi {
         fn check(dbm: &DBM, key: &[u8]) -> NativeStatus;
         fn set(dbm: &DBM, key: &[u8], value: &[u8]) -> NativeStatus;
         fn remove(dbm: &DBM, key: &[u8]) -> NativeStatus;
+        fn rewrite(db: &DBM, rewriter: &mut Rewriter<'_, '_>) -> NativeStatus;
         fn synchronize(dbm: &DBM, hard: bool) -> NativeStatus;
         fn count(dbm: &DBM, count: &mut i64) -> NativeStatus;
         fn is_healthy(dbm: &DBM) -> bool;
@@ -97,3 +103,5 @@ pub(super) mod ffi {
         ) -> NativeStatus;
     }
 }
+
+use crate::Rewriter;

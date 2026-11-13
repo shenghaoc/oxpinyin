@@ -392,15 +392,6 @@ fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::Chewing
 
 // ── Merged backends ─────────────────────────────────────────────────────
 
-/// One exact-text row. Its size follows the query and its matches.
-struct TextTokens {
-    generation: u64,
-    text: Box<str>,
-    tokens: Vec<u32>,
-}
-
-type TextLookupCache = RefCell<Option<TextTokens>>;
-
 /// The system dictionary with the user-phrase lookup merged in.
 ///
 /// It borrows the runtime's tables and store for one operation.
@@ -411,7 +402,6 @@ pub struct RuntimeDict<'a> {
         &'a oxpinyin_data::dict::SystemTables,
     >,
     user: &'a UserStore,
-    text_lookup_cache: &'a TextLookupCache,
     addons: &'a RefCell<AddonSet>,
     punct: &'a PunctTable,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
@@ -1274,27 +1264,11 @@ impl Dictionary for RuntimeDict<'_> {
         // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
         // Read only this text's row. A phrase write must not make this
         // query rebuild the full pronunciation and phrase indices.
-        {
-            let store = self.user;
-            let mut cache = self.text_lookup_cache.borrow_mut();
-            let generation = store.phrase_table_generation();
-            if cache
-                .as_ref()
-                .is_none_or(|row| row.generation != generation || row.text.as_ref() != text)
-            {
-                *cache = store
-                    .phrase_table_tokens_for_text(text)
-                    .ok()
-                    .map(|tokens| TextTokens {
-                        generation,
-                        text: text.into(),
-                        tokens,
-                    });
-            }
-            if let Some(row) = cache.as_ref() {
-                tokens.extend_from_slice(&row.tokens);
-            }
-        }
+        tokens.extend(
+            self.user
+                .phrase_table_tokens_for_text(text)
+                .unwrap_or_default(),
+        );
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
         // reduce_tokens groups the system and user table results by library.
         oxpinyin_core::sort_tokens_by_library(&mut tokens);
@@ -1304,8 +1278,7 @@ impl Dictionary for RuntimeDict<'_> {
     /// [`Self::tokens_for_text`] over raw UCS-4 spans, including
     /// surrogate or above-Unicode words. The system and user phrase
     /// tables compare the stored raw keys; no `char` or `str` is built
-    /// from a non-scalar. The rare non-scalar path reads the user row
-    /// directly rather than through the text cache.
+    /// from a non-scalar.
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
         let mut tokens: Vec<u32> = self.system.tokens_for_ucs4(ucs4).unwrap_or_default();
         tokens.extend(
@@ -1681,7 +1654,6 @@ pub struct Runtime {
     model: oxpinyin_data::lm::BigramTables,
     user: UserStore,
     conf: TableConf,
-    text_lookup_cache: TextLookupCache,
     addons: RefCell<AddonSet>,
     punct: PunctTable,
     library_mask: Cell<u32>,
@@ -2021,7 +1993,6 @@ impl Runtime {
             model: lm,
             user,
             conf,
-            text_lookup_cache: TextLookupCache::default(),
             addons,
             punct,
             library_mask,
@@ -2063,7 +2034,6 @@ impl Runtime {
         RuntimeDict {
             system: self.system.read(self.libraries()),
             user: &self.user,
-            text_lookup_cache: &self.text_lookup_cache,
             addons: &self.addons,
             punct: &self.punct,
             library_mask: &self.library_mask,
@@ -3247,15 +3217,6 @@ mod tests {
             runtime.dict().user_lookup().phrase_text(token).unwrap(),
             phrase
         );
-        let row_generation = runtime.user_store_mut().phrase_table_generation();
-        let row_tokens = runtime
-            .dict()
-            .text_lookup_cache
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .tokens
-            .as_ptr();
         assert_eq!(
             runtime
                 .user_store_mut()
@@ -3264,33 +3225,8 @@ mod tests {
             token
         );
         assert_eq!(
-            runtime.user_store_mut().phrase_table_generation(),
-            row_generation
-        );
-        assert_eq!(
             runtime.dict().tokens_for_text(phrase),
             [PhraseToken::new(token)]
-        );
-        assert_eq!(
-            runtime
-                .dict()
-                .text_lookup_cache
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .generation,
-            row_generation
-        );
-        assert_eq!(
-            runtime
-                .dict()
-                .text_lookup_cache
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .tokens
-                .as_ptr(),
-            row_tokens
         );
         assert!(runtime.user_store_mut().remove_user_phrase(token).unwrap());
         assert!(runtime.dict().tokens_for_text(phrase).is_empty());
@@ -3320,7 +3256,7 @@ mod tests {
     }
 
     #[test]
-    fn tokens_for_text_retains_the_row_after_a_system_reading_merge() {
+    fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
 
@@ -3332,21 +3268,15 @@ mod tests {
             .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
             .collect();
 
-        let generation = runtime.user_store_mut().phrase_table_generation();
         runtime
             .user_store_mut()
             .add_system_phrase_in(library, Some(token), &"你好".into(), &keys, Some(5))
             .unwrap();
-        assert_eq!(
-            runtime.user_store_mut().phrase_table_generation(),
-            generation
-        );
         assert_eq!(runtime.dict().tokens_for_text("你好"), tokens);
         let added = runtime
             .user_store_mut()
             .add_system_phrase_in(library, None, &"你鎄".into(), &keys, Some(5))
             .unwrap();
-        assert!(runtime.user_store_mut().phrase_table_generation() > generation);
         assert_eq!(
             runtime.dict().tokens_for_text("你鎄"),
             [PhraseToken::new(added)]

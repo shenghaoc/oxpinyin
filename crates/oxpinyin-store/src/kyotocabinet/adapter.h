@@ -98,5 +98,8 @@ bool jump_to(DbCursor& cursor, rust::Slice<const std::uint8_t> key);
 // record at the cursor into `sink`.
 bool cursor_accept(DbCursor& cursor, Sink& sink, bool step);
 
+struct Rewriter;
+bool rewrite(const ::kyotocabinet::BasicDB& db, Rewriter& rewriter);
+
 }  // namespace kyotocabinet
 }  // namespace oxpinyin

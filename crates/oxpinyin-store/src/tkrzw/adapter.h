@@ -94,5 +94,8 @@ NativeStatus iter_jump(DbmIterator& iter, rust::Slice<const std::uint8_t> key);
 NativeStatus iter_next(DbmIterator& iter);
 NativeStatus iter_get(DbmIterator& iter, std::string& key, std::string& value);
 
+struct Rewriter;
+NativeStatus rewrite(const ::tkrzw::DBM& db, Rewriter& rewriter);
+
 }  // namespace tkrzw
 }  // namespace oxpinyin
