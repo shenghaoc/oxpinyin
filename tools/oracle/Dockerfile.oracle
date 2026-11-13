@@ -163,7 +163,6 @@ RUN mkdir -p /usr/local/share/oxpinyin && \
     cp /etc/os-release /usr/local/share/oxpinyin/performance-os-release
 ENV OXPINYIN_TKRZW_LIBRARY=/usr/local/share/oxpinyin/libtkrzw.so.1
 ENV PINYIN_ORACLE_PREFIX=/performance/pinyin-oracle/tkrzw
-ENV PINYIN_EXPORT_DIR=/performance/pinyin-oracle/tkrzw/lib/libpinyin/data
 ENV SRC_CURR=/repo CTLTOOLS=/repo/tools
 RUN git config --system --add safe.directory /repo
 RUN mkdir -p /performance/tmp /performance/bin /performance/results

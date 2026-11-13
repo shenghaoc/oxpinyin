@@ -396,12 +396,7 @@ cargo run -p oxpinyin-utils \
     --bin import_interpolation -- --table-dir "$PINYIN_MODEL_DIR" < "$PINYIN_MODEL_DIR/interpolation2.text"
 cargo run -p oxpinyin-utils \
     --bin gen_unigram -- --table-dir "$PINYIN_MODEL_DIR"
-export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
-
-`crates/oxpinyin-data/examples/open_profile.rs` reads `PINYIN_EXPORT_DIR` and
-defaults to `/tmp/oxpinyin-export`. The `performance` image sets
-`PINYIN_EXPORT_DIR` to the data directory of its tkrzw cell.
 
 ## 4. Run the differentials
 
