@@ -271,7 +271,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg-overlays/**', 'triplets/**') || 'none' }}
           restore-keys: |
             ${{ steps.vcpkg-cache-key.outputs.key }}-
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
@@ -357,7 +357,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-key.outputs.key }}-manifest-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-manifest-${{ hashFiles('vcpkg-overlays/**', 'triplets/**') || 'none' }}
           restore-keys: |
             ${{ steps.vcpkg-cache-key.outputs.key }}-
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
