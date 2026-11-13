@@ -34,9 +34,8 @@ fuzz-api = []
 # oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->
 # store. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
-# because `cargo cinstall --features <peer>` names them. The generated
-# libpinyin.pc's `database_format` is oxpinyin-store's token
-# (`DEP_OXPINYIN_STORE_DATABASE_FORMAT`).
+# because `cargo cinstall --features <peer>` names them. `just packaging
+# install` writes the matching `database_format` into libpinyin.pc.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
 bdb = ["oxpinyin-facade/bdb"]
@@ -80,10 +79,6 @@ oxpinyin-engine.workspace = true
 # parse seams, cursor laws) this crate's C wrappers translate.
 oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-runtime.workspace = true
-# Direct, for its `links` metadata: build.rs reads the backend's
-# database-format token as `DEP_OXPINYIN_STORE_DATABASE_FORMAT`. The backend
-# feature still arrives through oxpinyin-facade.
-oxpinyin-store.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
@@ -143,7 +138,7 @@ version = "2.11.92"
 requires = "glib-2.0"
 # Intent: do not let cargo-c own the .pc — the complete file (with pkgdatadir,
 # database_format, libpinyinincludedir, libpinyin_binary_version) is generated
-# by build.rs and placed by `just packaging install`. cargo-c has no
+# and placed by `just packaging install`. cargo-c has no
 # such key and silently ignores this, so it still writes an incomplete
 # libpinyin.pc that the wrapper OVERWRITES; the flag is kept for intent and for
 # a future cargo-c that honours it. See docs/findings/installed-naming.md.

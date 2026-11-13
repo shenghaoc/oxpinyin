@@ -6,9 +6,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
-# Publishes the database-format token as `DEP_OXPINYIN_STORE_DATABASE_FORMAT`
-# for the two C-ABI crates' `.pc` files.
-links = "oxpinyin_store"
 
 [lints]
 workspace = true

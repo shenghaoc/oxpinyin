@@ -15,12 +15,12 @@
 # absence is a SILENT misconfiguration, not a build failure: the consumer
 # looks for system data at "" and probes an empty backend name.
 #
-# build.rs bakes the build-time fields (@VERSION@ from the pin record,
-# @LIBPINYIN_BINARY_VERSION@, @DATABASE_FORMAT@) and strips this header,
-# leaving the install-time @prefix@/@exec_prefix@/@libdir@/@includedir@ for
-# `just packaging install` to fill after cargo cinstall the way the pin's
-# configure does; see docs/findings/installed-naming.md for why a wrapper is
-# required.
+# `just packaging install` fills every field after cargo cinstall and strips
+# this header: @VERSION@ from the pin record, @LIBPINYIN_BINARY_VERSION@,
+# @DATABASE_FORMAT@ for the backend, and the install-time
+# @prefix@/@exec_prefix@/@libdir@/@includedir@ the way the pin's configure
+# does. No build script takes part; see docs/findings/installed-naming.md for
+# why a wrapper is required.
 #
 # Below the header this is the pin's libpinyin.pc.in (074a2219) line for
 # line.

@@ -34,9 +34,9 @@
 /// conformance check compares the same string (`table_info.cpp`'s
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
 /// `KyotoCabinet`, `Tkrzw` upstream). This is the one mapping from backend
-/// feature to token. The library reads it as `DEFAULT_STORE_DB_FORMAT`, and
-/// the C-ABI crates' build scripts read it as
-/// `DEP_OXPINYIN_STORE_DATABASE_FORMAT` (this package's `links`). The
+/// feature to token in Rust. The library reads it as
+/// `DEFAULT_STORE_DB_FORMAT`. The `.pc` files take the same tokens from
+/// `BACKEND_FORMATS` in `tools/dev/cell.py`. The
 /// exactly-one-backend guard in `src/lib.rs` refuses any build that enables
 /// two backend features, so the chain's order picks nothing.
 #[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
@@ -51,7 +51,6 @@ const DATABASE_FORMAT: &str = if cfg!(feature = "kyotocabinet") {
 #[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:database_format={DATABASE_FORMAT}");
     println!("cargo:rustc-env=OXPINYIN_STORE_DATABASE_FORMAT={DATABASE_FORMAT}");
     #[cfg(feature = "bdb")]
     bdb::pin_defaults();

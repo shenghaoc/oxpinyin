@@ -108,7 +108,8 @@ field of one pin move together, in one commit:
    build-nondeterministic at any pin
    ([regenerate the data](oracle.md#regenerate-the-data-after-every-pull)).
 4. Move the drop-in identity (`libpinyin-<version>` header directory, `.pc`
-   version) with the pin. The capi builds read `libpinyin_tag` from
+   version) with the pin. `just packaging install` and
+   `just packaging check-pc-version` read `libpinyin_tag` from
    `oracle-pin.txt` and refuse a `[package.metadata.capi]` table that
    disagrees, so edit both capi `Cargo.toml` files in the same commit.
    Then run `just packaging check-pc-metadata` against the rebuilt pin

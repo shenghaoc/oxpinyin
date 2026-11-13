@@ -1,5 +1,4 @@
-//! Link-time stamping of the zhuyin C ABI's identity, plus the baked
-//! `libzhuyin.pc` content.
+//! Link-time stamping of the zhuyin C ABI's identity.
 //!
 //! # SONAME
 //!
@@ -19,20 +18,14 @@
 //! (run by `just packaging install` on Linux) when it relinks the
 //! installed object from the staticlib under upstream's symbol versioning.
 
-// The pin-version reader and the build steps `oxpinyin-capi`'s build script
-// uses, so both `.pc` files and both header subdirectories follow the one
-// pin record, and both `.pc` files carry the one database-format token.
+// The link step `oxpinyin-capi`'s build script uses. `tools/dev/packaging.py`
+// computes both `.pc` files; no build script writes them.
 #[path = "../oxpinyin-capi/build_capi.rs"]
 mod build_capi;
-#[path = "../oxpinyin-capi/build_pin_version.rs"]
-mod build_pin_version;
 
 fn main() {
     build_capi::run(&build_capi::Library {
-        name: "libzhuyin",
-        template: "libzhuyin.pc.in",
         soname: "libzhuyin.so.15",
         shared_source: "../oxpinyin-capi/build_capi.rs",
-        pin_version_source: "../oxpinyin-capi/build_pin_version.rs",
     });
 }

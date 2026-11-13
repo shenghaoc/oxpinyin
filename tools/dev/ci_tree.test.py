@@ -649,7 +649,7 @@ class GateTests(unittest.TestCase):
             'crates/oxpinyin-engine/benches/new.rs': {'lint', 'test', 'ship'},
             # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
             'crates/oxpinyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-capi/build_pin_version.rs': {'lint', 'test', 'harness', 'ship'},
+            'crates/oxpinyin-capi/build_capi.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
             'crates/oxpinyin-capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},

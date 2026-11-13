@@ -48,6 +48,9 @@ if loaded != os.path.realpath(path):
     sys.exit(1)
 '''
 ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
+# The libtool current.revision of [package.metadata.capi.library].version in both C-ABI crates:
+# the .pc files' libpinyin_binary_version and libzhuyin_binary_version.
+BINARY_VERSION = '15.0'
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
          'distro-tkrzw-library', 'check-library-mode', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
          'trainer-layout')
@@ -325,23 +328,6 @@ class Layout:
                    values['libdir'] or '${exec_prefix}/lib', values['includedir'] or '${prefix}/include',
                    target_path, triple, profile, passthru)
 
-    def baked(self):
-        name = self.library + '.pc.in.baked'
-        mirror = self.qualified / name
-        if mirror.is_file():
-            return mirror
-        candidates = [path for path in (self.qualified / 'build').glob('*/out/' + name) if path.is_file()]
-        if len(candidates) == 1:
-            return candidates[0]
-        if candidates:
-            fail(f"error: multiple '{name}' pkg-config templates under {self.qualified}/build:\n" +
-                 ''.join(f'         {path}\n' for path in candidates) +
-                 "       remove the stale build dirs (or 'cargo clean') and retry.")
-        fail(f'error: baked pkg-config template not found for this build:\n'
-             f'         {mirror}\n         (nor a unique {self.qualified}/build/*/out/{name})\n'
-             f"       (target='{self.triple}' profile='{self.profile}' target-dir='{self.target}')\n"
-             "       build.rs writes it during 'cargo cinstall'; check the passthrough args match the build.")
-
     def features(self):
         result, index = '', 0
         while index < len(self.passthru):
@@ -353,6 +339,24 @@ class Layout:
         return result
 
 
+def pc_text(library, backend, root=ROOT):
+    """The .pc file of LIBRARY for BACKEND, with its install-time placeholders left in place.
+
+    The crate's .pc.in is the pin's template under a `#` header. This fills what the pin's
+    configure knows before an install: @VERSION@ from the pin record, the binary version and
+    the backend's database format. The header documents the source file, so no `#` line
+    reaches the installed file. No build script and no Cargo build directory takes part.
+    """
+    path = root / 'crates' / LIBRARIES[library] / (library + '.pc.in')
+    text = path.read_bytes().decode()
+    for name, value in [('VERSION', version(root)), ('LIBPINYIN_BINARY_VERSION', BINARY_VERSION),
+                        ('DATABASE_FORMAT', cell.BACKEND_FORMATS[backend])]:
+        text = text.replace(f'@{name}@', value)
+    lines = [line.removesuffix('\r') for line in text.removesuffix('\n').split('\n')]
+    body = '\n'.join(line for line in lines if not line.lstrip().startswith('#'))
+    return (body.lstrip('\n') + '\n').encode()
+
+
 def install(argv, tools):
     with directory(tools.root):
         return install_library(argv, tools)
@@ -361,6 +365,12 @@ def install(argv, tools):
 def install_library(argv, tools):
     layout = Layout.parse(argv, tools)
     companion_headers(root=tools.root)
+    # cargo-c reads the manifest's version declarations during the install below.
+    problems = version_problems(tools.root)
+    if problems:
+        fail('\n'.join(problems))
+    selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
+                    None) or cell.declared_default(tools.root)
     tools.run(['mkdir', '-p', layout.pcdir])
     crate = tools.root / 'crates' / LIBRARIES[layout.library]
     command = ['cargo', 'cinstall', f'--prefix={layout.prefix}', f'--libdir={layout.libdir}',
@@ -369,15 +379,13 @@ def install_library(argv, tools):
         command.append(f'--destdir={layout.destdir}')
     system = tools.text(['uname', '-s'])
     tools.heavy([*command, *layout.passthru], cwd=crate)
-    data = layout.baked().read_bytes()
+    data = pc_text(layout.library, selected, tools.root)
     for name, value in [('prefix', layout.prefix), ('exec_prefix', '${prefix}'),
                         ('libdir', layout.pc_libdir), ('includedir', layout.pc_includedir)]:
         data = data.replace(f'@{name}@'.encode(), os.fsencode(value))
     pc = layout.pcdir / (layout.library + '.pc')
     pc.write_bytes(data)
     emit(f'installed complete pkg-config file: {pc}')
-    selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
-                    None) or cell.declared_default(tools.root)
     features = ['--features', layout.features()] if layout.features() else []
     if system == 'Linux':
         with directory(tools.root):
@@ -599,18 +607,17 @@ def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
         fail(f"error: relinked SONAME is '{actual_soname or '<none>'}', expected {soname}")
 
 
-def check_version(argv, tools):
-    want, bad = version(tools.root), False
+def version_problems(root=ROOT):
+    """Each drop-in version declaration that differs from the pin record, as an error line."""
+    want, problems = version(root), []
     for crate in LIBRARIES.values():
-        path = tools.root / 'crates' / crate / 'Cargo.toml'
+        path = root / 'crates' / crate / 'Cargo.toml'
         text = '\n'.join(line for line in path.read_text().splitlines() if not re.match(r'^\s*#', line))
         for value in re.findall(r'"(libpinyin-[^"]*)"', text):
             if value != 'libpinyin-' + want:
-                emit(f'error: {path} declares "{value}", want "libpinyin-{want}"', error=True)
-                bad = True
+                problems.append(f'error: {path} declares "{value}", want "libpinyin-{want}"')
         if f'"libpinyin-{want}"' not in text:
-            emit(f'error: {path} declares no "libpinyin-{want}" include subdirectory', error=True)
-            bad = True
+            problems.append(f'error: {path} declares no "libpinyin-{want}" include subdirectory')
         section = ''
         versions = []
         for line in text.splitlines():
@@ -620,17 +627,22 @@ def check_version(argv, tools):
                 versions.append(re.sub(r'.*=\s*"|".*', '', line))
         got = '\n'.join(versions)
         if got != want:
-            emit(f'error: {path} [package.metadata.capi.pkg_config] version is "{got}", want "{want}"', error=True)
-            bad = True
+            problems.append(f'error: {path} [package.metadata.capi.pkg_config] version is "{got}", want "{want}"')
     for library, crate in LIBRARIES.items():
-        path = tools.root / 'crates' / crate / (library + '.pc.in')
+        path = root / 'crates' / crate / (library + '.pc.in')
         text = '\n'.join(line for line in path.read_text().splitlines() if not line.startswith('#'))
         if re.search(r'[0-9]+\.[0-9]+\.[0-9]+', text):
-            emit(f'error: {path} carries a literal version; it must use @VERSION@', error=True)
-            bad = True
-    if bad:
+            problems.append(f'error: {path} carries a literal version; it must use @VERSION@')
+    return problems
+
+
+def check_version(argv, tools):
+    problems = version_problems(tools.root)
+    for problem in problems:
+        emit(problem, error=True)
+    if problems:
         return 1
-    emit(f'OK: every drop-in version declaration is {want} (tools/oracle/oracle-pin.txt)')
+    emit(f'OK: every drop-in version declaration is {version(tools.root)} (tools/oracle/oracle-pin.txt)')
     return 0
 
 
@@ -933,9 +945,10 @@ def release_stage(argv, tools):
             soname = '\n'.join(names)
             if soname != library + '.so.15':
                 gate(f"{library} SONAME is '{soname}', want '{library}.so.15'")
-        db_format = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}[backend]
+        db_format = cell.BACKEND_FORMATS[backend]
         checks = [('libpinyin', 'database_format', db_format), ('libzhuyin', 'database_format', db_format),
-                  ('libpinyin', 'libpinyin_binary_version', '15.0'), ('libzhuyin', 'libzhuyin_binary_version', '15.0')]
+                  ('libpinyin', 'libpinyin_binary_version', BINARY_VERSION),
+                  ('libzhuyin', 'libzhuyin_binary_version', BINARY_VERSION)]
         for library, key, want in checks:
             got = query('--variable=' + key, library)
             if got != want:
