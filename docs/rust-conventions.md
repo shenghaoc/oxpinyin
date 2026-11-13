@@ -25,7 +25,7 @@ The [constitution](constitution.md) (§4) decides where a panic is permitted: on
 A reachable pin assert or abort uses `std::process::abort()` in the C adapters and tools, never a panic.
 These lint conventions apply the rule.
 
-Keep the non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic` and `clippy::panic_in_result_fn`.
+Keep the non-test crate-root denials of `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::panic_in_result_fn` and `clippy::unreachable`.
 For a permitted site, use the narrowest scoped `#[expect(..., reason = "...")]`.
 Cite the established invariant that makes failure unreachable.
 Account for both panic lints if both fire for `panic!` in a `Result`-returning function.
