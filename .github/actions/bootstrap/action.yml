@@ -226,19 +226,19 @@ runs:
     # on (its default) and fallback is off, so a tool the action cannot install
     # from a release fails the job. The action has no retry or timeout input;
     # its downloads retry inside the script.
-    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
       if: inputs.just == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
         tool: ${{ steps.tools.outputs.just }}
         fallback: none
 
-    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
       if: inputs.cargo-nextest == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
         tool: ${{ steps.tools.outputs.cargo-nextest }}
         fallback: none
 
-    - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
       if: inputs.cargo-deny == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
       with:
         tool: ${{ steps.tools.outputs.cargo-deny }}
