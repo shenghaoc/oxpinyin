@@ -64,6 +64,11 @@ jobs:
       # default seccomp profile blocks personality(2) and setarch -R dies
       # with EPERM before any target runs.
       options: --security-opt seccomp=unconfined
+    # Two limits. The "Soak each target" step has 30: 8 targets at 180 s
+    # each soak for 24 min, and their builds add 1 to 3 min. The job has
+    # 10 more, for the steps before the soak (up to 4 min) and the upload
+    # after it. Add 3 to both numbers for each new target.
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -144,6 +149,10 @@ jobs:
         # coverage/edge counters in the log so a soak that explored
         # nothing is visible as one, not just green.
         working-directory: fuzz
+        # Lower than the job limit: an overrun fails this step, so the
+        # crash upload below still runs. The job limit cancels the job,
+        # which skips that upload. The job's comment gives both numbers.
+        timeout-minutes: 30
         run: |
           mapfile -t targets < <(cargo fuzz list)
           if [ "${#targets[@]}" -eq 0 ]; then
@@ -184,6 +193,8 @@ jobs:
     runs-on: *ubuntu
     container:
       image: debian:testing # deliberately unpinned; see the header comment
+    # Twice a cold release build, which takes about 20 min with no Rust cache; the tests take seconds.
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -202,7 +213,10 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
           rust-cache: 'true'
-      - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
+          cargo-nextest: 'true'
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace --release --no-default-features --features kyotocabinet
+      # nextest does not run doctests; keep the same profile and feature set.
+      - run: cargo test --locked --doc --workspace --release --no-default-features --features kyotocabinet
 
   # The full Windows workspace: clippy and the tests over the workspace,
   # built with MSVC and tkrzw and GLib from vcpkg. It runs every night and on

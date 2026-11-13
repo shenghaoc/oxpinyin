@@ -143,6 +143,7 @@ jobs:
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
+          # store-features runs nextest, which reads .config/nextest.toml.
           uv run --no-project --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
@@ -162,6 +163,7 @@ jobs:
             --also tools/dev/test_runner.py \
             --also rust-toolchain.toml \
             --also fuzz/rust-toolchain.toml \
+            --also .config/nextest.toml \
             "$BASE" >> "$GITHUB_OUTPUT"
 
   store-features:
@@ -218,6 +220,8 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
           uv: 'true'
+          # Only the test step runs nextest, and a reuse run skips that step.
+          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -259,6 +263,10 @@ jobs:
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, runtime, engine, facade, both
       # C ABIs, the training package and KMM.
+      #
+      # nextest runs the suite with the `ci` profile of .config/nextest.toml,
+      # so the store-backend test group applies here. The doctests run in the
+      # next step.
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -282,11 +290,11 @@ jobs:
           # exactly-one-backend invariant is unchanged.
           bdb)
             echo "--- bdb (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features bdb
+            cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
             ;;
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features kyotocabinet
+            cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
@@ -294,6 +302,13 @@ jobs:
             ;;
           esac
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      # nextest does not run doctests; keep the same feature set.
+      - name: Doctests for this backend
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: cargo test --locked --doc --workspace --no-default-features --features "$BACKEND"
 
       - name: Report
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
