@@ -70,7 +70,7 @@ fn library_of(items: Vec<(u32, ChunkItem)>) -> SystemOriginals {
         .map(|(slot, _)| *slot)
         .max()
         .map_or(0, |last| last + 1);
-    BTreeMap::from([(
+    crate::LibraryTable::from([(
         1_u8,
         SystemLibrary {
             mapped: None,

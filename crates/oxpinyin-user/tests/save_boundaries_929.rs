@@ -52,7 +52,7 @@ fn originals() -> SystemOriginals {
             },
         )]),
     };
-    SystemOriginals::new(BTreeMap::from([(7, library)]), layout)
+    SystemOriginals::new(oxpinyin_user::LibraryTable::from([(7, library)]), layout)
 }
 
 fn open(dir: &Path, law: UserConfLaw) -> UserStore {

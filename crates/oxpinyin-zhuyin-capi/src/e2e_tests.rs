@@ -271,7 +271,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     assert!(marker.is_conform(&oxpinyin_data::user_files::SystemVersions::from_conf(&conf)));
     let loaded = oxpinyin_user::persistence::load(
         &user_dir.path,
-        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
+        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
         &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
         oxpinyin_user::persistence::UserConfLaw::Zhuyin,
     )

@@ -343,8 +343,9 @@ impl UserStore {
             for (&nibble, items) in &loaded.state.libraries {
                 for (&slot, item) in items {
                     let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
-                    P::replace(phrases.libraries.entry(nibble).or_default(), slot, &bytes)
-                        .map_err(|e| seed_fault(&e))?;
+                    if let Some(library) = phrases.libraries.get_or_default(nibble) {
+                        P::replace(library, slot, &bytes).map_err(|e| seed_fault(&e))?;
+                    }
                 }
             }
             // An item a system library with an original lacks lives in that
@@ -357,8 +358,9 @@ impl UserStore {
                 for (&slot, item) in items {
                     if let Some(item) = item {
                         let bytes = P::encode(item).map_err(|e| seed_fault(&e))?;
-                        P::replace(phrases.libraries.entry(nibble).or_default(), slot, &bytes)
-                            .map_err(|e| seed_fault(&e))?;
+                        if let Some(library) = phrases.libraries.get_or_default(nibble) {
+                            P::replace(library, slot, &bytes).map_err(|e| seed_fault(&e))?;
+                        }
                     }
                 }
             }
@@ -512,14 +514,14 @@ impl OpenSteps for PinSteps {}
 pub(crate) fn seed_totals_plain(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
-    library_totals: &BTreeMap<u8, u32>,
+    library_totals: &crate::LibraryTable<u32>,
 ) -> SeedTotals {
     seed_totals(
         state,
         originals,
         library_totals,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        &crate::LibraryTable::new(),
+        &crate::LibraryTable::new(),
     )
 }
 
@@ -545,7 +547,7 @@ impl SeedItem<'_> {
 fn system_override_mass(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
-    seeded: &mut BTreeMap<u8, u32>,
+    seeded: &mut crate::LibraryTable<u32>,
 ) {
     for (&nibble, overrides) in &state.system_overrides {
         let Some(original) = originals.get(&nibble) else {
@@ -561,8 +563,9 @@ fn system_override_mass(
             }
             // `is_readable` held, so the item exists and this is its unigram.
             let base = original.unigram(slot).unwrap_or(0);
-            let sum = seeded.entry(nibble).or_insert(0);
-            *sum = sum.wrapping_add(new_item.unigram.wrapping_sub(base));
+            if let Some(sum) = seeded.get_or_insert_with(nibble, || 0) {
+                *sum = sum.wrapping_add(new_item.unigram.wrapping_sub(base));
+            }
         }
     }
 }
@@ -573,24 +576,24 @@ fn system_override_mass(
 /// sub-index totals.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SeedTotals {
-    pub(crate) offsets: BTreeMap<u8, u32>,
-    pub(crate) totals: BTreeMap<u8, u32>,
+    pub(crate) offsets: crate::LibraryTable<u32>,
+    pub(crate) totals: crate::LibraryTable<u32>,
     pub(crate) facade_extra: u64,
 }
 
 fn seed_totals(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
-    library_totals: &BTreeMap<u8, u32>,
-    replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
-    user_libraries: &BTreeMap<u8, crate::user_library::UserLibrary>,
+    library_totals: &crate::LibraryTable<u32>,
+    replayed: &crate::LibraryTable<crate::replay::ReplayedLibrary>,
+    user_libraries: &crate::LibraryTable<crate::user_library::UserLibrary>,
 ) -> SeedTotals {
     // The unigrams seeded per library, as the facade would sum them.
-    let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
+    let mut seeded: crate::LibraryTable<u32> = crate::LibraryTable::new();
 
     // ADD records own text/index rows just like USER_FILE items. MODIFY
     // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
-    let mut libraries: BTreeMap<u8, BTreeMap<u32, &ChunkItem>> = state
+    let mut libraries: crate::LibraryTable<BTreeMap<u32, &ChunkItem>> = state
         .libraries
         .iter()
         .map(|(&nibble, items)| {
@@ -608,14 +611,16 @@ fn seed_totals(
             if !originals
                 .get(&nibble)
                 .is_some_and(|original| original.contains_item(slot))
+                && let Some(items) = libraries.get_or_default(nibble)
             {
-                libraries.entry(nibble).or_default().insert(slot, item);
+                items.insert(slot, item);
             }
         }
     }
     let mut seed = |nibble: u8, item: SeedItem<'_>| {
-        let sum = seeded.entry(nibble).or_insert(0);
-        *sum = sum.wrapping_add(item.unigram());
+        if let Some(sum) = seeded.get_or_insert_with(nibble, || 0) {
+            *sum = sum.wrapping_add(item.unigram());
+        }
     };
     for (&nibble, items) in &libraries {
         for item in items.values() {
@@ -634,8 +639,8 @@ fn seed_totals(
     // (`phrase_index.cpp:237-248`). A system library's is its own scalar; a
     // user library's is kept as the difference from its items' sum, and the
     // facade's share of it as `facade_extra`.
-    let mut offsets = BTreeMap::new();
-    let mut totals = BTreeMap::new();
+    let mut offsets = crate::LibraryTable::new();
+    let mut totals = crate::LibraryTable::new();
     let mut facade_extra = 0_u64;
     for (&nibble, &total) in library_totals {
         if originals.contains_key(&nibble) {
@@ -697,11 +702,12 @@ pub fn export_state(
     // against the file on disk (`persistence`), and only this test-facing
     // export reads them as values.
     for (token, item) in store.live_system_changes(originals) {
-        state
+        if let Some(overrides) = state
             .system_overrides
-            .entry(phrase::phrase_index_library_index(token))
-            .or_default()
-            .insert(token & crate::phrase::PHRASE_MASK, item);
+            .get_or_default(phrase::phrase_index_library_index(token))
+        {
+            overrides.insert(token & crate::phrase::PHRASE_MASK, item);
+        }
     }
     Ok(state)
 }
@@ -720,11 +726,9 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
         for (slot, view) in library.items() {
             let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
                 .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
-            state
-                .system_overrides
-                .entry(nibble)
-                .or_default()
-                .insert(slot, Some(item));
+            if let Some(overrides) = state.system_overrides.get_or_default(nibble) {
+                overrides.insert(slot, Some(item));
+            }
         }
     }
     Ok(state)
@@ -1300,7 +1304,7 @@ mod tests {
                 prons: vec![(vec![ChewingKey::new(23, 0, 1, 0).to_packed()], 100)],
             },
         );
-        BTreeMap::from([(
+        crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,
@@ -1420,15 +1424,18 @@ mod tests {
         };
         let originals = originals();
         let legacy = UserState {
-            libraries: BTreeMap::from([(5, items.clone()), (7, items.clone())]),
-            system_overrides: BTreeMap::from([(1, BTreeMap::from([(3, Some(added.clone()))]))]),
+            libraries: crate::LibraryTable::from([(5, items.clone()), (7, items.clone())]),
+            system_overrides: crate::LibraryTable::from([(
+                1,
+                BTreeMap::from([(3, Some(added.clone()))]),
+            )]),
             ..UserState::default()
         }
         .index_every_reading();
         let mut views = legacy.clone();
         views.libraries.clear();
         views.system_overrides.clear();
-        let libraries: BTreeMap<_, _> = [5, 7]
+        let libraries: crate::LibraryTable<_> = [5, 7]
             .into_iter()
             .map(|nibble| {
                 let file = build_chunk(&items.clone().into_iter().collect::<Vec<_>>()).unwrap();
@@ -1451,8 +1458,8 @@ mod tests {
             "ADD must remain a view until rows are seeded"
         );
         assert!(skipped.is_empty());
-        let replayed = BTreeMap::from([(1, retained.unwrap())]);
-        let totals = BTreeMap::from([(1, 117), (5, 1000), (7, 24)]);
+        let replayed = crate::LibraryTable::from([(1, retained.unwrap())]);
+        let totals = crate::LibraryTable::from([(1, 117), (5, 1000), (7, 24)]);
         let before_offsets = seed_totals_plain(&legacy, &originals, &totals);
         let after_offsets = seed_totals(&views, &originals, &totals, &replayed, &libraries);
         // A replayed library's total lives in its buffer, not in the map.
@@ -1484,7 +1491,7 @@ mod tests {
         std::fs::write(&path, &file).unwrap();
         let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
         let originals: SystemOriginals =
-            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+            crate::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
         let mut store =
             UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
         let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
@@ -1554,7 +1561,7 @@ mod tests {
         assert_eq!(mapped.pronunciation_count(1), Some(17));
         assert!(mapped.item(1).is_none());
         let originals: SystemOriginals =
-            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+            crate::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
         let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
         let live = LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store);
         assert_eq!(live.pronunciation_count(0x0100_0001), Lookup::Found(17));
@@ -1577,7 +1584,7 @@ mod tests {
             oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path).unwrap();
         assert!(mapped.is_layout_failed());
         let originals: SystemOriginals =
-            BTreeMap::from([(1, SystemLibrary::from_library(mapped))]).into();
+            crate::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
         let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
         let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
         let rows: Vec<_> = maps
@@ -1653,7 +1660,7 @@ mod tests {
     }
 
     fn three_item_originals() -> SystemOriginals {
-        BTreeMap::from([(
+        crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,
@@ -1678,7 +1685,7 @@ mod tests {
         assert_eq!(store.system_unigram(token), Some(50));
         let mut items = three_items();
         items[1].unigram = 57;
-        let replacement = BTreeMap::from([(
+        let replacement = crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,
@@ -1710,7 +1717,7 @@ mod tests {
         let ni3 = ChewingKey::new(23, 0, 1, 0).with_tone(3).to_packed();
         let mut items = three_items();
         items[1].prons = vec![(vec![ni3], 50)];
-        let replacement = BTreeMap::from([(
+        let replacement = crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,
@@ -1809,7 +1816,7 @@ mod tests {
         .expect("write shipped chunk");
         let library = oxpinyin_data::phrase_library::PhraseLibrary::open(&shipped_path)
             .expect("open shipped chunk");
-        let originals = BTreeMap::from([(
+        let originals = crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 total: library.total_freq(),
@@ -1855,7 +1862,7 @@ mod tests {
         let token = (1_u32 << 24) | 1;
         let saved_total = u32::MAX - 3;
         let mut items = crate::system_items::SystemItems::default()
-            .with_totals(BTreeMap::from([(1, saved_total)]), 0);
+            .with_totals(crate::LibraryTable::from([(1, saved_total)]), 0);
         assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
         assert!(items.train_live(
             Some(original),
@@ -2015,7 +2022,7 @@ mod tests {
         let originals = || -> SystemOriginals {
             let mapped =
                 oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("library");
-            BTreeMap::from([(1_u8, SystemLibrary::from_library(mapped))]).into()
+            crate::LibraryTable::from([(1_u8, SystemLibrary::from_library(mapped))]).into()
         };
         let old = encode_phrase_item(&items[0]).expect("old");
         let mut new = old.clone();
@@ -2139,7 +2146,7 @@ mod tests {
         std::fs::write(&path, build_chunk(&shipped).expect("chunk")).expect("write chunk");
         let library = PhraseLibrary::open(&path).expect("open");
         let total = library.total_freq();
-        let originals: SystemOriginals = BTreeMap::from([(
+        let originals: SystemOriginals = crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 total,
@@ -4054,7 +4061,7 @@ mod tests {
         };
         std::fs::write(&path, build_chunk(&[(1, shipped)]).expect("chunk")).expect("write");
         let originals = || {
-            SystemOriginals::from(BTreeMap::from([(
+            SystemOriginals::from(crate::LibraryTable::from([(
                 1_u8,
                 SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
             )]))
@@ -4162,7 +4169,7 @@ mod tests {
         chunk[4..8].copy_from_slice(&checksum);
         std::fs::write(&path, &chunk).expect("write");
         let originals = || {
-            SystemOriginals::from(BTreeMap::from([(
+            SystemOriginals::from(crate::LibraryTable::from([(
                 1_u8,
                 SystemLibrary::from_library(PhraseLibrary::open(&path).expect("map")),
             )]))
@@ -4493,7 +4500,7 @@ mod tests {
         let mut state = UserState::default();
         for library in [5, 6, 7] {
             for (slot, middle) in (1..).zip([0x4e01, 0, 0xd800, 0x110000]) {
-                state.libraries.entry(library).or_default().insert(
+                state.libraries.get_or_default(library).unwrap().insert(
                     slot,
                     ChunkItem {
                         phrase: vec![0x7532, middle, 0x4e59],
@@ -4553,7 +4560,7 @@ mod tests {
                     &[(0x0100_0001, 138), (0x0700_0001, 69)],
                 ),
             )],
-            libraries: BTreeMap::from([(
+            libraries: crate::LibraryTable::from([(
                 7_u8,
                 BTreeMap::from([(
                     1_u32,
@@ -4571,7 +4578,7 @@ mod tests {
                 )]),
             )]),
             phrase_table: BTreeMap::new(),
-            system_overrides: BTreeMap::new(),
+            system_overrides: crate::LibraryTable::new(),
             indexed: std::collections::BTreeSet::new(),
         }
         .index_every_reading();

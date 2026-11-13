@@ -427,7 +427,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     oxpinyin_user::persistence::save_state_reporting(
         user_dir,
         &state,
-        &oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new()),
+        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
         &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
         1,
     )
@@ -444,7 +444,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
     let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
-    let originals = oxpinyin_user::SystemOriginals::from(std::collections::BTreeMap::new());
+    let originals = oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new());
     let (mut state, open_counter) = if user_dir.join("user.conf").exists() {
         let loaded = oxpinyin_user::persistence::load(
             user_dir,

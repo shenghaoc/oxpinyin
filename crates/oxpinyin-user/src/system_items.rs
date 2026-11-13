@@ -1,31 +1,28 @@
 //! Live system items: each loaded system library's private buffer.
 
-use std::collections::BTreeMap;
-
 use oxpinyin_data::chunk_write::ChunkItem;
 
 use crate::persistence::SystemLibraryRef;
 use crate::replay::{ReplayedLibrary, UnigramAdd};
 use crate::store::Token;
 
-/// The live buffer of system library `nibble`, made from `original` the first
-/// time with the total a reload left.
+/// The live buffer of `token`'s system library, made from `original` the
+/// first time with the total a reload left. The library is the pin's
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at 074a2219).
 fn library_of<'a>(
-    replayed: &'a mut BTreeMap<u8, ReplayedLibrary>,
-    totals: &mut BTreeMap<u8, u32>,
-    nibble: u8,
+    replayed: &'a mut crate::LibraryTable<ReplayedLibrary>,
+    totals: &mut crate::LibraryTable<u32>,
+    token: Token,
     original: SystemLibraryRef<'_>,
-) -> &'a mut ReplayedLibrary {
-    match replayed.entry(nibble) {
-        std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
-        std::collections::btree_map::Entry::Vacant(vacant) => {
-            let mut library = ReplayedLibrary::pristine(original);
-            if let Some(total) = totals.remove(&nibble) {
-                library.set_total(total);
-            }
-            vacant.insert(library)
+) -> Option<&'a mut ReplayedLibrary> {
+    let nibble = crate::phrase::phrase_index_library_index(token);
+    replayed.get_or_insert_with(nibble, || {
+        let mut library = ReplayedLibrary::pristine(original);
+        if let Some(total) = totals.remove(&nibble) {
+            library.set_total(total);
         }
-    }
+        library
+    })
 }
 
 /// What the session holds of the loaded system libraries beyond the shipped
@@ -34,10 +31,10 @@ fn library_of<'a>(
 /// sub-index's. A library without one is its shipped chunk.
 #[derive(Debug, Default)]
 pub(crate) struct SystemItems {
-    replayed: BTreeMap<u8, ReplayedLibrary>,
+    replayed: crate::LibraryTable<ReplayedLibrary>,
     /// The sub-index total of a library that holds no live buffer but whose
     /// total is not its original's: what a reload's replay left.
-    totals: BTreeMap<u8, u32>,
+    totals: crate::LibraryTable<u32>,
     /// `FacadePhraseIndex::m_total_freq` beyond the sub-index totals of the
     /// system libraries: the user libraries' totals and every delta the facade
     /// took that a sub-index refused or could not take (`phrase_index.h:633`
@@ -46,17 +43,21 @@ pub(crate) struct SystemItems {
 }
 
 impl SystemItems {
-    pub(crate) fn new(replayed: BTreeMap<u8, ReplayedLibrary>) -> Self {
+    pub(crate) fn new(replayed: crate::LibraryTable<ReplayedLibrary>) -> Self {
         Self {
             replayed,
-            totals: BTreeMap::new(),
+            totals: crate::LibraryTable::new(),
             facade_extra: 0,
         }
     }
 
     /// The sub-index totals of libraries without a live buffer and the facade
     /// total's extra, as an open or a reload leaves them.
-    pub(crate) fn with_totals(mut self, totals: BTreeMap<u8, u32>, facade_extra: u64) -> Self {
+    pub(crate) fn with_totals(
+        mut self,
+        totals: crate::LibraryTable<u32>,
+        facade_extra: u64,
+    ) -> Self {
         self.totals = totals;
         self.facade_extra = facade_extra;
         self
@@ -185,13 +186,8 @@ impl SystemItems {
         token: Token,
         payload: &[u8],
     ) -> bool {
-        library_of(
-            &mut self.replayed,
-            &mut self.totals,
-            (token >> 24) as u8,
-            original,
-        )
-        .add_item(token & 0x00ff_ffff, payload)
+        library_of(&mut self.replayed, &mut self.totals, token, original)
+            .is_some_and(|library| library.add_item(token & 0x00ff_ffff, payload))
     }
 
     /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
@@ -200,13 +196,8 @@ impl SystemItems {
         original: SystemLibraryRef<'_>,
         token: Token,
     ) -> Option<Vec<u8>> {
-        library_of(
-            &mut self.replayed,
-            &mut self.totals,
-            (token >> 24) as u8,
-            original,
-        )
-        .remove_item(token & 0x00ff_ffff)
+        library_of(&mut self.replayed, &mut self.totals, token, original)?
+            .remove_item(token & 0x00ff_ffff)
     }
 
     /// Whether any live buffer holds an item its original lacks.
@@ -252,9 +243,8 @@ impl SystemItems {
         delta: u32,
     ) -> Option<UnigramAdd> {
         let original = original?;
-        let nibble = (token >> 24) as u8;
         let slot = token & 0x00ff_ffff;
-        let library = library_of(&mut self.replayed, &mut self.totals, nibble, original);
+        let library = library_of(&mut self.replayed, &mut self.totals, token, original)?;
         Some(library.add_unigram(slot, delta))
     }
 
@@ -302,22 +292,22 @@ impl SystemItems {
         readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         delta: u32,
     ) -> bool {
-        let nibble = (token >> 24) as u8;
+        // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
+        let nibble = crate::phrase::phrase_index_library_index(token);
         let slot = token & 0x00ff_ffff;
-        let library = match self.replayed.entry(nibble) {
-            std::collections::btree_map::Entry::Occupied(library) => library.into_mut(),
-            std::collections::btree_map::Entry::Vacant(vacant) => {
-                let Some(original) = original.filter(|library| library.contains_item(slot)) else {
-                    return false;
-                };
-                let mut library = ReplayedLibrary::pristine(original);
-                if let Some(total) = self.totals.remove(&nibble) {
-                    library.set_total(total);
-                }
-                vacant.insert(library)
+        if !self.replayed.contains_key(&nibble) {
+            let Some(original) = original.filter(|library| library.contains_item(slot)) else {
+                return false;
+            };
+            let mut library = ReplayedLibrary::pristine(original);
+            if let Some(total) = self.totals.remove(&nibble) {
+                library.set_total(total);
             }
-        };
-        library.train(slot, readings, delta)
+            self.replayed.insert(nibble, library);
+        }
+        self.replayed
+            .get_mut(&nibble)
+            .is_some_and(|library| library.train(slot, readings, delta))
     }
 
     /// Whether `token`'s library has a live buffer whose item under the
@@ -365,8 +355,8 @@ impl SystemItems {
     pub(crate) fn changed_items(
         &self,
         originals: &impl crate::persistence::OriginalLibraries,
-    ) -> BTreeMap<Token, Option<ChunkItem>> {
-        let mut changes = BTreeMap::new();
+    ) -> std::collections::BTreeMap<Token, Option<ChunkItem>> {
+        let mut changes = std::collections::BTreeMap::new();
         for (&nibble, buffer) in &self.replayed {
             let original = originals.get(&nibble);
             let end = buffer

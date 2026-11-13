@@ -2802,7 +2802,8 @@ mod tests {
         assert_eq!(retained.item(2), eager_items[&2]);
 
         let token = (1 << 24) | 1;
-        let live = crate::system_items::SystemItems::new(BTreeMap::from([(1, retained)]));
+        let live =
+            crate::system_items::SystemItems::new(crate::LibraryTable::from([(1, retained)]));
         assert!(live.get(&token).is_none());
         let eager_visible = eager_items
             .get(&1)
