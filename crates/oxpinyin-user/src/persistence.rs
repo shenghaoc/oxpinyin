@@ -60,10 +60,9 @@ use oxpinyin_data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
 use oxpinyin_input::path::{build_path, rename, unlink};
-use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, RawReadStore, RecordSink, StoreError, UserBigramDb,
-    WriteStore,
-};
+#[cfg(test)]
+use oxpinyin_store::WriteStore;
+use oxpinyin_store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::user_index::UserIndex;
@@ -1282,8 +1281,7 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout, law: UserConfLaw) {
     }
 }
 
-/// One walk of `user_pinyin_index.bin` into the session's owned record
-/// arena, plus the over-long readings the pin's mask `switch` refuses. An
+/// One walk of `user_pinyin_index.bin` into the session's native tree, plus the over-long readings the pin's mask `switch` refuses. An
 /// absent file or one that does not open leaves the table empty, as an
 /// empty `ChewingLargeTable2` does. A copy that fails part way on tkrzw or
 /// Berkeley DB is [`PersistenceError::FatalCopy`] ([`RawReadStore::copy_raw`]).
@@ -1311,8 +1309,9 @@ fn load_user_pinyin_index(
     // `ChewingLargeTable2::load_db`'s copy into its in-memory table: on
     // tkrzw and Berkeley DB a failed walk is fatal, as the pin's copy
     // asserts; Kyoto Cabinet's snapshot load keeps what it read.
+    let mut set_failed = false;
     match store.copy_raw(|key, value| {
-        index.push_record(key, value);
+        set_failed |= index.push_record(key, value).is_err();
         if key.len() < 2 || key.len() / 2 > crate::phrase::MAX_PHRASE_LENGTH {
             exceptional.push(key.to_vec());
         }
@@ -1324,8 +1323,9 @@ fn load_user_pinyin_index(
             format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
         ),
     }
-    // Match the arena’s raw-key order, even for an unordered DBM walk.
-    exceptional.sort_unstable();
+    if set_failed {
+        return Err(PersistenceError::FatalCopy);
+    }
     *overlong = exceptional
         .into_iter()
         .map(|key| {
@@ -1363,7 +1363,11 @@ fn load_user_phrase_index(
         }
     };
     // `PhraseLargeTable3::load_db`'s copy, as for the pinyin index.
-    let copied = store.copy_raw(|key, value| arena.push_record(key, value));
+    let mut set_failed = false;
+    let copied = store.copy_raw(|key, value| set_failed |= arena.push_record(key, value).is_err());
+    if set_failed {
+        return Err(PersistenceError::FatalCopy);
+    }
     match copied {
         Ok(()) => {}
         Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
@@ -2315,26 +2319,17 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
         }
 
         // `_write_files` saves the user pinyin index, then the user phrase
-        // index (`pinyin.cpp:996-1012`). Both stream from the session's
-        // arenas in key order.
+        // index (`pinyin.cpp:996-1012`). Save each live container.
         tolerate(stage_dbm(
             dir,
             UserDbm::PinyinIndex,
-            |sink| {
-                libraries
-                    .index
-                    .for_each_record(|key, value| sink(key, value))
-            },
+            |path| libraries.index.save(path),
             staged,
         ))?;
         tolerate(stage_dbm(
             dir,
             UserDbm::PhraseIndex,
-            |sink| {
-                libraries
-                    .phrase_table
-                    .for_each_record(|key, value| sink(key, value))
-            },
+            |path| libraries.phrase_table.save(path),
             staged,
         ))?;
 
@@ -2414,20 +2409,18 @@ pub(crate) fn diff_live_records(
 /// Writes one of the two index DBMs to its `.tmp` sibling and registers
 /// the rename. The user bigram takes a separate route in [`stage_all`],
 /// its container's own `save_db`, since the container is backend-specific. `_write_files` unlinks
-/// the `.tmp` path first (`pinyin.cpp:999`, `:1008`); the backend's
-/// `save_db` sequence then writes the records `fill` streams, in key
-/// order, with nothing buffered ([`WriteStore::write_user_index`]).
+/// the `.tmp` path first (`pinyin.cpp:999`, `:1008`), then saves the container.
 fn stage_dbm(
     dir: &Path,
     dbm: UserDbm,
-    fill: impl FnOnce(&mut RecordSink<'_>) -> Result<(), StoreError>,
+    save: impl FnOnce(&Path) -> Result<(), StoreError>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
     let final_path = build_path(dir, OsStr::new(&dbm.file_name()));
     let tmp = build_path(dir, OsStr::new(&format!("{}.tmp", dbm.file_name())));
     unlink(&tmp);
-    let written = DefaultStore::write_user_index(&tmp, fill).map_err(PersistenceError::from);
+    let written = save(&tmp).map_err(PersistenceError::from);
     staged.finish((tmp, final_path), written)
 }
 
@@ -2612,7 +2605,7 @@ mod tests {
             .collect();
         let gone_reading = vec![0x12, 0x00, 0x12, 0x00];
         let mut index = UserIndex::new();
-        index.push_record(&gone_reading, &[]);
+        index.push_record(&gone_reading, &[]).unwrap();
         let mut saved = state();
         saved.phrase_table.insert(gone.clone(), Vec::new());
         let mut store =

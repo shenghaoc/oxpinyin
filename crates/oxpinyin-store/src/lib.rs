@@ -223,8 +223,22 @@ impl std::error::Error for StoreError {
 /// visitor `Err`, which aborts the scan and propagates.
 pub type Flow = ControlFlow<()>;
 
-/// Where [`WriteStore::write_user_index`] sends each record: one call per
-/// record, in ascending key order.
+/// A visitor that fills the replacement bytes for one native record.
+pub type RecordRewrite<'a> = dyn FnMut(&[u8], &[u8], &mut Vec<u8>) + 'a;
+
+#[cfg(not(feature = "bdb"))]
+pub(crate) struct Rewriter<'a, 'f>(pub(crate) &'a mut RecordRewrite<'f>);
+
+#[cfg(not(feature = "bdb"))]
+impl Rewriter<'_, '_> {
+    fn replacement(&mut self, key: &[u8], value: &[u8]) -> Vec<u8> {
+        let mut replacement = Vec::new();
+        (self.0)(key, value, &mut replacement);
+        replacement
+    }
+}
+
+/// Where [`WriteStore::write_user_index`] sends each record in key order.
 pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 
 // ── traits ─────────────────────────────────────────────────────────
@@ -297,6 +311,31 @@ pub enum HashAttach<B> {
 /// Adds mutation on top of [`RawReadStore`], whose reads a writable backend
 /// necessarily also provides.
 pub trait WriteStore: RawReadStore {
+    /// Set one native record without a transaction or a flush.
+    ///
+    /// # Errors
+    /// Returns the backend write error.
+    fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+
+    /// Rewrite every record in the container's native walk order.
+    ///
+    /// # Errors
+    /// Returns the backend walk or write error.
+    fn rewrite_raw(&self, rewrite: &mut RecordRewrite<'_>) -> Result<(), StoreError>;
+
+    /// Save the in-memory user index to its native file format.
+    ///
+    /// # Errors
+    /// Returns the backend read or file-write error.
+    fn save_user_index(&self, path: &Path) -> Result<(), StoreError>
+    where
+        Self: Sized,
+    {
+        Self::write_user_index(path, |sink| {
+            self.range_raw(Bound::Unbounded, Bound::Unbounded, sink)
+        })
+    }
+
     /// The backend's write transaction, handed to the closure of
     /// [`WriteStore::write`] by mutable reference. Each backend names
     /// its own concrete type, so the transaction's methods are called

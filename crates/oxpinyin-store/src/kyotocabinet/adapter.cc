@@ -170,5 +170,28 @@ bool cursor_accept(DbCursor& cursor, Sink& sink, bool step) {
   return cursor.accept(&visitor, false, step);
 }
 
+bool rewrite(const kc::BasicDB& db, Rewriter& rewriter) {
+  class Visitor final : public kc::BasicDB::Visitor {
+   public:
+    explicit Visitor(Rewriter& rewriter) : rewriter_(rewriter) {}
+
+    const char* visit_full(const char* key, std::size_t key_len,
+                           const char* value, std::size_t value_len,
+                           std::size_t* size) override {
+      replacement_ = rewriter_.replacement(
+          {reinterpret_cast<const std::uint8_t*>(key), key_len},
+          {reinterpret_cast<const std::uint8_t*>(value), value_len});
+      *size = replacement_.size();
+      return replacement_.empty() ? "" : reinterpret_cast<const char*>(replacement_.data());
+    }
+
+   private:
+    Rewriter& rewriter_;
+    rust::Vec<std::uint8_t> replacement_;
+  };
+  Visitor visitor(rewriter);
+  return mutable_db(db).iterate(&visitor, true);
+}
+
 }  // namespace kyotocabinet
 }  // namespace oxpinyin

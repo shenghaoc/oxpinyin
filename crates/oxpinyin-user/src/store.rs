@@ -696,9 +696,6 @@ pub struct StoreInner {
     pub(crate) dirty: Cell<bool>,
     /// Revision observed by runtime sentence facts and n-best step rows.
     pub(crate) write_generation: Cell<u64>,
-    /// Exact text-to-token rows changed. Pronunciation-only merges leave
-    /// this stamp alone, so repeated text queries can retain their row.
-    pub(crate) phrase_table_generation: Cell<u64>,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one flag.
     /// Recomputed at `open` and maintained only
@@ -1098,27 +1095,6 @@ impl UserStore {
         self.inner
             .write_generation
             .set(self.inner.write_generation.get().wrapping_add(1));
-    }
-
-    /// A phrase-table edit invalidates exact-text rows. Count-only writes
-    /// and pronunciation merges, which keep the phrase table's
-    /// text-to-token rows (074a2219 pinyin.cpp:563-582), take
-    /// [`Self::mark_committed_write`].
-    fn mark_committed_phrase_write(&self, has_user_data: bool) {
-        self.inner
-            .phrase_table_generation
-            .set(self.inner.phrase_table_generation.get().wrapping_add(1));
-        self.mark_committed_write(has_user_data);
-    }
-
-    // Keep the import memo's publication separate from whether this write
-    // changed the exact-text row; reading-only merges retain queried rows.
-    fn mark_committed_import_write(&self, added_token: bool) {
-        if added_token {
-            self.mark_committed_phrase_write(true);
-        } else {
-            self.mark_committed_write(true);
-        }
     }
 
     /// A search of the user pinyin table for the query `keys` makes
@@ -1892,13 +1868,6 @@ impl UserStore {
         self.write_generation()
     }
 
-    /// Current exact-text row generation. New tokens, removals, masks and
-    /// library replacements move it. Pronunciation-only writes do not.
-    #[must_use]
-    pub fn phrase_table_generation(&self) -> u64 {
-        self.inner.phrase_table_generation.get()
-    }
-
     /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
@@ -2377,7 +2346,7 @@ impl UserStore {
         } || buffer_live;
         // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
-        self.mark_committed_phrase_write(has_grams || arena_live);
+        self.mark_committed_write(has_grams || arena_live);
     }
 
     /// The faults [`Self::mask_out`] reaches before it changes anything, in
@@ -2441,7 +2410,7 @@ impl UserStore {
             return Err(error);
         }
         // The pin's mask walk edits every record of the user pinyin index,
-        // arena or overlay; the next save writes the table as it stands.
+        // in its native container.
         {
             let mut phrases = target.phrases_mut();
             phrases.index.mask(mask, value);
@@ -2457,7 +2426,7 @@ impl UserStore {
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
         // `zhuyin.cpp:765`).
         let grams_left = self.mask_container_over(container_keys, mask, value)?;
-        self.mark_committed_phrase_write(grams_left || self.arena_has_items());
+        self.mark_committed_write(grams_left || self.arena_has_items());
         Ok(())
     }
 
@@ -2778,7 +2747,7 @@ impl UserStore {
         }
         drop(items);
         self.inner.has_system_items.set(true);
-        self.mark_committed_import_write(false);
+        self.mark_committed_write(true);
         Ok(token)
     }
 }
@@ -2815,7 +2784,7 @@ impl UserStore {
             )),
         );
         for (key, value) in &state.phrase_table {
-            phrases.phrase_table.push_record(key, value);
+            phrases.phrase_table.push_record(key, value).unwrap();
         }
         for (&nibble, overrides) in &state.system_overrides {
             for (&slot, item) in overrides {
@@ -3458,34 +3427,6 @@ mod tests {
             store.observe_selection(SENTENCE_START, token).unwrap();
             assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 69);
             assert_eq!(store.unigram_delta(token).unwrap(), full);
-        }
-
-        #[test]
-        fn phrase_table_generation_keeps_readings_but_tracks_shared_token_edits() {
-            let mut store = transient();
-            assert_eq!(store.phrase_table_generation(), 0);
-            let token = store
-                .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
-                .unwrap();
-            assert_eq!(store.phrase_table_generation(), 1);
-            let write_before = store.generation();
-            assert_eq!(
-                store
-                    .add_phrase(&"你好".into(), &[key("ni"), toned("hao", 3)], None)
-                    .unwrap(),
-                token
-            );
-            assert_eq!(store.generation(), write_before + 1);
-            assert_eq!(store.phrase_table_generation(), 1);
-            store.observe_selection(SENTENCE_START, token).unwrap();
-            assert_eq!(store.phrase_table_generation(), 1);
-
-            let second = store
-                .add_phrase(&"中国".into(), &[key("zhong"), key("guo")], None)
-                .unwrap();
-            assert_eq!(store.phrase_table_generation(), 2);
-            assert!(store.remove_user_phrase(second).unwrap());
-            assert_eq!(store.phrase_table_generation(), 3);
         }
 
         #[test]
