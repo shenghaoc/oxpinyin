@@ -626,7 +626,8 @@ does unload and reload USER_FILE: only TSI is refused (`src/zhuyin.cpp:378-390`)
 
 For n live items occupying B bytes, encoding visits each word/key once,
 O(B) time and output space, with at most one item's temporary encoded body;
-a sparse slot insertion costs O(log n). Saving validated views copies B bytes
+an offset lookup is O(1). For S offset words, the dense array occupies O(S)
+space and a scan takes O(S) time. Saving validated views copies B bytes
 directly, as the pin does, with no additional per-item allocation.
 
 ### Zhuyin index representation
