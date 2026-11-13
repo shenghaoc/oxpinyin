@@ -1377,6 +1377,7 @@ impl<'a, 'l> Merge<'a, 'l> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn finish(
         mut self,
         skipped: &mut Option<&mut Vec<String>>,
@@ -1824,6 +1825,7 @@ impl<'a> Merge<'a, '_> {
     /// Add every original slot whose bytes a finished over-length item
     /// changed. The eager path decodes all touched slots afterwards; the lazy
     /// path validates the added slots through its own loop.
+    #[cfg(test)]
     fn expand_overlong(&mut self) {
         let mut index = 0;
         while index < self.touched.len() {

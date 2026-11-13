@@ -66,13 +66,14 @@ fn open<P: OpenSteps>(
     dir: Option<&Path>,
     originals: SystemOriginals,
 ) -> Result<UserStore, UserStoreError> {
-    UserStore::open_session::<P>(
-        dir,
-        &mut { originals },
-        versions(),
-        UserConfLaw::Pinyin,
-        None,
-    )
+    match dir {
+        Some(dir) => {
+            crate::test_session::open_with::<P>(dir, originals, versions(), UserConfLaw::Pinyin)
+        }
+        None => {
+            UserStore::open_session::<P>(None, &mut { originals }, versions(), UserConfLaw::Pinyin)
+        }
+    }
 }
 
 fn injected() -> StoreError {
@@ -411,14 +412,9 @@ mod failed_container {
     fn a_save_replaces_the_profiles_bigram_with_an_empty_file() {
         for law in [super::UserConfLaw::Pinyin, super::UserConfLaw::Zhuyin] {
             let dir = profile("save");
-            let mut store = crate::store::UserStore::open_session::<Failed>(
-                Some(&dir),
-                &mut originals(),
-                super::versions(),
-                law,
-                None,
-            )
-            .expect("open");
+            let mut store =
+                crate::test_session::open_with::<Failed>(&dir, originals(), super::versions(), law)
+                    .expect("open");
             store.mark_modified();
             // `save_db` answers false after creating the empty hash file,
             // and both facades rename it into place (`pinyin.cpp:1121`,

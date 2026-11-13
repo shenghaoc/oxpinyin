@@ -222,6 +222,7 @@ pub(crate) struct UserIndex {
 }
 
 impl UserIndex {
+    #[cfg(test)]
     pub(crate) const fn new() -> Self {
         Self {
             records: RecordArena::new(),
@@ -231,6 +232,7 @@ impl UserIndex {
 
     /// Builds an index from the rows of `user_pinyin_index.bin` (the
     /// loaded profile's table).
+    #[cfg(test)]
     pub(crate) fn from_entries(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
         let mut index = Self::new();
         for (key, value) in &entries {
@@ -586,6 +588,7 @@ impl UserIndex {
     /// Adds records from `other` that this index does not hold. Used by a
     /// value-only save: the derived table is authoritative and the caller's
     /// index carries the retained empty keys.
+    #[cfg(test)]
     pub(crate) fn merge_missing(&mut self, other: &Self) {
         let mut missing = Vec::new();
         if let Err(infallible) =

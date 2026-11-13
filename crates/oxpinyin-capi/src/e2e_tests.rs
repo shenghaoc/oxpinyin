@@ -2903,6 +2903,45 @@ fn partial_gram(successor: u32) -> Vec<u8> {
     gram
 }
 
+/// Parsing reads no gram. With DYNAMIC_ADJUST, a guess at offset zero
+/// merges the sentence-start gram and aborts on its short total (074a2219
+/// pinyin.cpp:1497-1520,1720-1723,2200-2215; ngram.cpp:48-51,303-304;
+/// memory_chunk.h:390; register row 85).
+#[test]
+fn a_short_sentence_start_gram_aborts_the_guess_after_parsing() {
+    use std::io::Write as _;
+
+    const PARSED: &str = "row 85: full pinyin parse returned";
+    let stderr = crate::test_support::assert_aborts(
+        "e2e_tests::a_short_sentence_start_gram_aborts_the_guess_after_parsing",
+        || {
+            let user = TempUserDir::new("short-start-gram");
+            crate::test_support::plant_bigram(
+                &user.path,
+                vec![(SENTENCE_START.to_le_bytes().to_vec(), vec![7, 0, 0])],
+            );
+            let context = init_at(&user.path);
+            assert!(!context.is_null());
+            assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+            let instance = pinyin_alloc_instance(context);
+            assert!(!instance.is_null());
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()),
+                5
+            );
+            writeln!(std::io::stderr().lock(), "{PARSED}").expect("write parse marker");
+            let _ = pinyin_guess_candidates(instance, 0, DEFAULT_SORT);
+        },
+    );
+    assert!(
+        String::from_utf8_lossy(&stderr)
+            .lines()
+            .any(|line| line == PARSED),
+        "the child aborted before parsing returned: {}",
+        String::from_utf8_lossy(&stderr)
+    );
+}
+
 /// A retained prefix whose user gram has a partial item tail emits one
 /// warning after replacing the previous candidate snapshot.
 #[rstest::rstest]

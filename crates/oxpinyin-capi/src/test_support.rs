@@ -418,20 +418,18 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
+    use oxpinyin_store::WriteStore as _;
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let state = oxpinyin_user::persistence::UserState {
-        bigram: rows,
-        ..oxpinyin_user::persistence::UserState::default()
-    };
-    oxpinyin_user::persistence::save_state_reporting(
-        user_dir,
-        &state,
-        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
-        &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
-        1,
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    let mut marker = oxpinyin_data::user_files::UserTableInfo::conform_to(&versions);
+    marker.open_counter = 1;
+    std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
+    oxpinyin_store::DefaultStore::write_user_bigram(
+        &user_dir.join(oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+        &rows,
     )
-    .expect("write the profile");
+    .expect("write the user bigram");
 }
 
 /// Sets one row of the user phrase table (`user_phrase_index.bin`) to
@@ -441,36 +439,35 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 /// in the running backend's format. This is the crafted index of register
 /// row 93, whose tokens the library never wrote.
 pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
-    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
-    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
-    let originals = oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new());
-    let (mut state, open_counter) = if user_dir.join("user.conf").exists() {
-        let loaded = oxpinyin_user::persistence::load(
-            user_dir,
-            &originals,
-            &versions,
-            oxpinyin_user::persistence::UserConfLaw::Pinyin,
-        )
-        .expect("load the profile");
-        (loaded.state, loaded.open_counter)
-    } else {
-        (oxpinyin_user::persistence::UserState::default(), 1)
-    };
+    use oxpinyin_store::{RawReadStore as _, WriteStore as _};
+    if !user_dir.join("user.conf").exists() {
+        let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+            .expect("fixture table.conf");
+        let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+        let mut marker = oxpinyin_data::user_files::UserTableInfo::conform_to(&versions);
+        marker.open_counter = 1;
+        std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
+    }
+    let path = user_dir.join(oxpinyin_data::user_files::UserDbm::PhraseIndex.file_name());
+    let mut rows = std::collections::BTreeMap::new();
+    if path.exists() {
+        oxpinyin_store::DefaultStore::open_user_index(&path)
+            .expect("open the phrase table")
+            .copy_raw(|key, value| {
+                rows.insert(key.to_vec(), value.to_vec());
+            })
+            .expect("read the phrase table");
+    }
     let key = phrase
         .chars()
         .flat_map(|c| (c as u32).to_le_bytes())
         .collect();
     let value = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
-    state.phrase_table.insert(key, value);
-    oxpinyin_user::persistence::save_state_reporting(
-        user_dir,
-        &state,
-        &originals,
-        &versions,
-        open_counter,
-    )
-    .expect("write the profile");
+    rows.insert(key, value);
+    oxpinyin_store::DefaultStore::write_user_index(&path, |sink| {
+        rows.iter().try_for_each(|(key, value)| sink(key, value))
+    })
+    .expect("write the phrase table");
 }
 
 /// A private system directory under `parent`: every fixture file linked in,

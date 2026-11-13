@@ -269,17 +269,20 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         oxpinyin_data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
             .expect("saved user.conf");
     assert!(marker.is_conform(&oxpinyin_data::user_files::SystemVersions::from_conf(&conf)));
-    let loaded = oxpinyin_user::persistence::load(
-        &user_dir.path,
-        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
-        &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
-        oxpinyin_user::persistence::UserConfLaw::Zhuyin,
-    )
-    .expect("the saved profile");
-    // A conforming profile is read, not wiped, so its bigram rows are loaded.
-    // The journals are checked above; with no originals given, this read
-    // skips them.
-    assert_eq!(loaded.state.bigram, Vec::new(), "no user bigram record");
+    // The saved user bigram holds no record.
+    let mut bigram_rows = 0;
+    {
+        use oxpinyin_store::RawReadStore as _;
+        oxpinyin_store::DefaultStore::open_user_bigram(
+            &user_dir
+                .path
+                .join(oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+        )
+        .expect("the saved user bigram")
+        .copy_raw(|_, _| bigram_rows += 1)
+        .expect("walk the user bigram");
+    }
+    assert_eq!(bigram_rows, 0, "no user bigram record");
 
     // No user dir: the corpus driver's shape — training degrades to
     // refusing, never to a write.

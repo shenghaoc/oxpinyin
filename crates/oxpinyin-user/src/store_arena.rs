@@ -188,6 +188,7 @@ impl UserStore {
         Ok(token)
     }
 
+    #[cfg(test)]
     pub(crate) fn session_target(&self) -> &crate::store_libpinyin::Target {
         &self.inner.libpinyin
     }

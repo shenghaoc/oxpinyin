@@ -35,20 +35,23 @@
 //! the pin's own lifecycle (`Bigram::load_db` copies into memory,
 //! `save_db` writes a fresh file).
 
+#[cfg(test)]
+use oxpinyin_core::ChewingKey;
+#[cfg(test)]
+use oxpinyin_data::chunk_write::build_chunk;
 use oxpinyin_data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
+#[cfg(test)]
+use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use oxpinyin_core::ChewingKey;
 use oxpinyin_data::chunk_format::build_memory_chunk;
-use oxpinyin_data::chunk_write::{
-    ChunkItem, ChunkWriteError, PHRASE_MASK, build_chunk, encode_phrase_item,
-};
+use oxpinyin_data::chunk_write::{ChunkItem, ChunkWriteError, PHRASE_MASK, encode_phrase_item};
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
-use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
-use oxpinyin_data::table_entries::pinyin_index_entries;
 use oxpinyin_data::table_info::FileName;
 #[cfg(test)]
 use oxpinyin_data::user_files::read_chunk_payload;
@@ -77,7 +80,7 @@ const USER_CONF: &str = "user.conf";
 /// %s failed.` line, or a version directive did not convert
 /// (`table_info.cpp:330-348`). Upstream then runs its conformance check
 /// against the reset defaults, so the profile reads as non-conforming and is
-/// wiped — [`load`] does the same.
+/// wiped — the session load does the same.
 ///
 /// `Err` is the pin's abort site: the `database format:` directive reached
 /// `to_table_database_format_type`, which `abort()`s upstream
@@ -96,7 +99,7 @@ fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceE
 /// libzhuyin read and write the same marker through the same
 /// `UserTableInfo`, but at different points and with different counters,
 /// so the facade that opens a profile names its law and every write below
-/// follows it ([`load`], the reporting save's counter, [`fini`]).
+/// follows it (the load, the reporting save's counter, [`fini`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserConfLaw {
     /// libpinyin: every `pinyin_init` raises the open counter and writes
@@ -233,17 +236,6 @@ impl<
     I: std::borrow::Borrow<BTreeMap<u32, ChunkItem>>,
 > SystemLibrary<M, I>
 {
-    /// Slots with a resident item, inline or mapped. The diff walks the
-    /// union of these and the live state; slot 0 is outside the pin's
-    /// `get_range` (`1..range_end`) and is filtered by the caller.
-    pub(crate) fn slots(&self) -> impl Iterator<Item = u32> + '_ {
-        self.items.borrow().keys().copied().chain(
-            self.mapped
-                .iter()
-                .flat_map(|library| library.borrow().items().map(|(slot, _)| slot)),
-        )
-    }
-
     /// The wrapping item sum `FacadePhraseIndex::compact` rebuilds,
     /// independent of the stored header. Borrow fields without cloning items.
     pub(crate) fn item_total(&self) -> u32 {
@@ -646,8 +638,8 @@ fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLib
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UserState {
     /// The user bigram's rows verbatim, `(key, SingleGram value)` in the
-    /// file's walk order: what [`load`] read and what a reporting save without a
-    /// container writes. A session never fills it — its grams live in the
+    /// file's walk order: what a test reads back and seeds a session with.
+    /// A session never fills it — its grams live in the
     /// pin's own container, which its saves write instead.
     pub bigram: Vec<(Vec<u8>, Vec<u8>)>,
     /// The user phrase table's raw UCS-4 keys and token-array values.
@@ -833,7 +825,7 @@ impl From<oxpinyin_data::chunk_write::ChunkWriteError> for PersistenceError {
     }
 }
 
-/// The result of [`load`].
+/// What the library loop reads of a profile, beside the session's own structures.
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
     /// The decoded state (empty on a fresh or wiped profile).
@@ -928,6 +920,7 @@ pub(crate) struct LoadedProfile {
 /// The readings `add_index` saw, as the pinyin index's rows: those the
 /// libraries carry and `state.indexed` names, and the indexed readings of
 /// items added to a system library.
+#[cfg(test)]
 pub(crate) fn chewing_rows(
     state: &UserState,
     originals: &impl OriginalLibraries,
@@ -935,6 +928,7 @@ pub(crate) fn chewing_rows(
     chewing_rows_inner(state, originals)
 }
 
+#[cfg(test)]
 fn chewing_rows_inner(
     state: &UserState,
     originals: &impl OriginalLibraries,
@@ -1014,56 +1008,9 @@ fn chewing_rows_inner(
 }
 
 /// The full token of a system-library item.
+#[cfg(test)]
 const fn token_of(nibble: u8, slot: u32) -> u32 {
     ((nibble as u32) << 24) | slot
-}
-
-/// Reads the user dir: `check_format` first, then the profile.
-///
-/// This reproduces the facade's init-time user-dir half under `law`.
-/// libpinyin raises the open counter and writes `user.conf` at every
-/// init, conform or not (`pinyin.cpp:185-187`); libzhuyin reads the
-/// marker and writes nothing (`zhuyin.cpp:126-162`). Both wipe a
-/// non-conform profile — a counter past the limit included — and keep
-/// the marker file itself, which neither pin's wipe removes.
-///
-/// # Errors
-///
-/// Returns [`PersistenceError::UnknownDatabaseFormat`] at the
-/// `database format:` abort point, before any judgement, wipe or write
-/// (see `load_user_conf`). A marker that
-/// cannot be written is not an error, as the pin ignores it; unparsable
-/// profile files degrade per-file, as upstream's
-/// do.
-pub fn load(
-    dir: &Path,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    law: UserConfLaw,
-) -> Result<Loaded, PersistenceError> {
-    let check = check_format(dir, versions, originals.layout(), law)?;
-    let mut loaded = load_checked(dir, originals, &check)?.loaded;
-    if check.conform {
-        load_bigram_rows(dir, &mut loaded);
-    }
-    Ok(loaded)
-}
-
-/// [`load`] with the crate-private result: the judgement, the profile read
-/// and the pinyin index key metadata the session wiring needs.
-///
-/// # Errors
-///
-/// As [`load`].
-#[cfg(test)]
-pub(crate) fn load_profile(
-    dir: &Path,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    law: UserConfLaw,
-) -> Result<LoadedProfile, PersistenceError> {
-    let check = check_format(dir, versions, originals.layout(), law)?;
-    load_session_checked(dir, originals, &check)
 }
 
 /// What `check_format` decided about a profile: the open counter this
@@ -1074,7 +1021,7 @@ pub struct ProfileCheck {
     pub(crate) conform: bool,
 }
 
-/// `check_format`'s half of [`load`]: judge the `user.conf` marker, raise
+/// `check_format`, the first half of a profile load: judge the `user.conf` marker, raise
 /// the counter, write the marker and wipe a non-conform profile, in the
 /// pin's order (`pinyin.cpp:172-218`, `zhuyin.cpp:126-162`). The pin runs it
 /// first in `pinyin_init`, before any library is loaded
@@ -1128,31 +1075,6 @@ pub(crate) fn check_format(
         open_counter,
         conform,
     })
-}
-
-/// The profile half of [`load`], over a profile `check_format` judged:
-/// nothing to read when it was wiped. Returns the crate-private
-/// [`LoadedProfile`] so the pinyin index key metadata survives to the
-/// session wiring.
-///
-/// # Errors
-///
-/// [`PersistenceError::FatalCopy`] where a user index copy fails.
-pub(crate) fn load_checked(
-    dir: &Path,
-    originals: &impl OriginalLibraries,
-    check: &ProfileCheck,
-) -> Result<LoadedProfile, PersistenceError> {
-    load_checked_impl(dir, originals, check, false, crate::LibraryTable::new())
-}
-
-#[cfg(test)]
-pub(crate) fn load_session_checked(
-    dir: &Path,
-    originals: &impl OriginalLibraries,
-    check: &ProfileCheck,
-) -> Result<LoadedProfile, PersistenceError> {
-    load_checked_impl(dir, originals, check, true, crate::LibraryTable::new())
 }
 
 /// The init's profile load: the user tables first (`pinyin.cpp:350-373`),
@@ -1219,9 +1141,8 @@ pub(crate) fn begin_session_profile(
             &mut profile.loaded,
             &mut profile.overlong_index_keys,
             &mut profile.index,
-            true,
         )?;
-        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, true)?;
+        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table)?;
     }
     Ok(profile)
 }
@@ -1265,7 +1186,7 @@ impl crate::library_loop::LoopSteps for SessionSteps<'_> {
             file,
             None,
             false,
-            Some(&mut self.profile.replayed),
+            &mut self.profile.replayed,
             None,
         )
     }
@@ -1277,7 +1198,7 @@ impl crate::library_loop::LoopSteps for SessionSteps<'_> {
                 self.originals.layout(),
                 &mut self.profile.loaded,
                 Some(index),
-                Some(&mut self.profile.user_libraries),
+                &mut self.profile.user_libraries,
             );
         }
     }
@@ -1299,79 +1220,6 @@ impl crate::library_loop::LoopSteps for MapSteps<'_> {
     }
 
     fn read_user_library(&mut self, _index: u8) {}
-}
-
-pub(crate) fn load_session_checked_live(
-    dir: &Path,
-    originals: &mut SystemOriginals,
-    check: &ProfileCheck,
-) -> Result<LoadedProfile, PersistenceError> {
-    let initial = originals.take_live_libraries();
-    load_checked_impl(dir, originals, check, true, initial)
-}
-
-pub(crate) fn load_profile_live(
-    dir: &Path,
-    originals: &mut SystemOriginals,
-    versions: &SystemVersions,
-    law: UserConfLaw,
-) -> Result<LoadedProfile, PersistenceError> {
-    let check = check_format(dir, versions, originals.layout(), law)?;
-    load_session_checked_live(dir, originals, &check)
-}
-
-fn load_checked_impl(
-    dir: &Path,
-    originals: &impl OriginalLibraries,
-    check: &ProfileCheck,
-    lazy: bool,
-    initial: crate::LibraryTable<ReplayedLibrary>,
-) -> Result<LoadedProfile, PersistenceError> {
-    let mut profile = LoadedProfile {
-        loaded: Loaded {
-            open_counter: check.open_counter,
-            #[cfg(test)]
-            wiped: !check.conform,
-            ..Loaded::default()
-        },
-        replayed: initial,
-        user_libraries: crate::LibraryTable::new(),
-        overlong_index_keys: Vec::new(),
-        index: UserIndex::default(),
-        phrase_table: UserPhraseTable::default(),
-    };
-    if check.conform {
-        load_libraries(
-            dir,
-            originals.layout(),
-            &mut profile.loaded,
-            None,
-            lazy.then_some(&mut profile.user_libraries),
-        );
-        load_user_pinyin_index(
-            dir,
-            &mut profile.loaded,
-            &mut profile.overlong_index_keys,
-            &mut profile.index,
-            lazy,
-        )?;
-        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table, lazy)?;
-        if lazy {
-            profile.loaded.journal_fault = replay_logs(
-                dir,
-                originals,
-                &mut profile.loaded,
-                None,
-                false,
-                Some(&mut profile.replayed),
-                None,
-            )
-            .err();
-        } else {
-            load_logs(dir, originals, &mut profile.loaded);
-        }
-    }
-    Ok(profile)
 }
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
@@ -1457,47 +1305,6 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout, law: UserConfLaw) {
     }
 }
 
-/// The user bigram's rows for a caller with no container of its own
-/// ([`load`]): every `(key, value)` of `user_bigram.db` verbatim, in the
-/// file's walk order. The container is the backend's *user*-bigram form —
-/// a Kyoto Cabinet snapshot stream, a tkrzw hash file
-/// (`RawReadStore::open_user_bigram`); the system `bigram.db` is a
-/// different container on Kyoto Cabinet and must not share an open path.
-/// Nothing is decoded: the grams are the pin's `SingleGram` bytes, read by
-/// the pin's own operations wherever they are used. A session reads the
-/// file once, into its container ([`load_user_bigram_db`]), not here.
-fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
-    let path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
-    if !path.exists() {
-        return;
-    }
-    let store = match DefaultStore::open_user_bigram(&path) {
-        Ok(store) => store,
-        Err(error) => {
-            record_skip(
-                &mut loaded.skip_notes(),
-                format_args!("{}: {error}", UserDbm::Bigram.file_name()),
-            );
-            return;
-        }
-    };
-    let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
-        loaded.state.bigram.push((key.to_vec(), value.to_vec()));
-        Ok(())
-    };
-    let walked = store.range_raw(
-        std::ops::Bound::Unbounded,
-        std::ops::Bound::Unbounded,
-        &mut visit,
-    );
-    if let Err(error) = walked {
-        record_skip(
-            &mut loaded.skip_notes(),
-            format_args!("{}: {error}", UserDbm::Bigram.file_name()),
-        );
-    }
-}
-
 /// One walk of `user_pinyin_index.bin` into the session's owned record
 /// arena, plus the over-long readings the pin's mask `switch` refuses. An
 /// absent file or one that does not open leaves the table empty, as an
@@ -1508,7 +1315,6 @@ fn load_user_pinyin_index(
     loaded: &mut Loaded,
     overlong: &mut Vec<Vec<u16>>,
     index: &mut UserIndex,
-    lazy: bool,
 ) -> Result<(), PersistenceError> {
     let path = build_path(dir, OsStr::new(&UserDbm::PinyinIndex.file_name()));
     if !path.exists() {
@@ -1542,29 +1348,6 @@ fn load_user_pinyin_index(
         ),
     }
     index.finish_load();
-    if !lazy {
-        let decoded = index.for_each_record::<std::convert::Infallible>(|key, value| {
-            if value.is_empty() || !key.len().is_multiple_of(2) {
-                return Ok(());
-            }
-            let len = key.len() / 2;
-            if len == 0 || len > crate::phrase::MAX_PHRASE_LENGTH {
-                return Ok(());
-            }
-            if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, len) {
-                for item in items {
-                    loaded.state.indexed.insert((
-                        item.token,
-                        item.keys.iter().map(|key| key.to_packed()).collect(),
-                    ));
-                }
-            }
-            Ok(())
-        });
-        if let Err(infallible) = decoded {
-            match infallible {}
-        }
-    }
     // Match the arena’s raw-key order, even for an unordered DBM walk.
     exceptional.sort_unstable();
     *overlong = exceptional
@@ -1588,7 +1371,6 @@ fn load_user_phrase_index(
     dir: &Path,
     loaded: &mut Loaded,
     arena: &mut UserPhraseTable,
-    lazy: bool,
 ) -> Result<(), PersistenceError> {
     let path = build_path(dir, OsStr::new(&UserDbm::PhraseIndex.file_name()));
     if !path.exists() {
@@ -1605,13 +1387,7 @@ fn load_user_phrase_index(
         }
     };
     // `PhraseLargeTable3::load_db`'s copy, as for the pinyin index.
-    let phrase_table = &mut loaded.state.phrase_table;
-    let copied = store.copy_raw(|key, value| {
-        arena.push_record(key, value);
-        if !lazy {
-            phrase_table.insert(key.to_vec(), value.to_vec());
-        }
-    });
+    let copied = store.copy_raw(|key, value| arena.push_record(key, value));
     match copied {
         Ok(()) => {}
         Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
@@ -1626,7 +1402,7 @@ fn load_user_phrase_index(
 
 /// `pinyin_init`'s `m_user_bigram->load_db(user_bigram.db)`
 /// (`pinyin.cpp:399-401`): the pin's own in-memory container, filled from
-/// the file in the file's walk order. Opened after [`load`], so a profile
+/// the file in the file's walk order. Opened after the profile load, so a profile
 /// `check_format` wiped loads empty, as the pin's does.
 ///
 /// # Errors
@@ -1646,7 +1422,7 @@ fn load_libraries(
     layout: &UserFileLayout,
     loaded: &mut Loaded,
     only: Option<u8>,
-    mut libraries: Option<&mut crate::LibraryTable<UserLibrary>>,
+    libraries: &mut crate::LibraryTable<UserLibrary>,
 ) {
     for (nibble, file) in layout.user_libraries() {
         let nibble = *nibble;
@@ -1673,46 +1449,17 @@ fn load_libraries(
                 // keep the map absent so save/load are byte- and
                 // value-stable round trips.
                 if !library.is_empty() {
-                    if let Some(libraries) = libraries.as_deref_mut() {
-                        libraries.insert(nibble, library);
-                    } else {
-                        // Value-only persistence callers retain their existing
-                        // owned output; session init consumes the views directly.
-                        loaded.state.libraries.insert(
-                            nibble,
-                            library
-                                .items()
-                                .filter_map(|(slot, view)| {
-                                    oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
-                                        .ok()
-                                        .map(|item| (slot, item))
-                                })
-                                .collect(),
-                        );
-                    }
+                    libraries.insert(nibble, library);
                 }
             }
             Err(error) => {
                 record_skip(&mut loaded.skip_notes(), format_args!("{name}: {error}"));
-                if let Some(libraries) = libraries.as_deref_mut()
-                    && let Ok(headers) = UserLibrary::load_headers_payload(&bytes)
-                {
+                if let Ok(headers) = UserLibrary::load_headers_payload(&bytes) {
                     libraries.insert(nibble, headers);
                 }
             }
         }
     }
-}
-
-/// The `.dbin` logs, replayed onto the original system chunks —
-/// `FacadePhraseIndex::merge`, library by library in the init loop's order
-/// (074a2219 `pinyin.cpp:374-391`, `zhuyin.cpp:318-335`). A record whose old
-/// payload does not match the current item stops that library's replay
-/// (upstream's `merge` returns false mid-log and `_load_phrase_library`
-/// keeps the partially-merged index); an assertion is recorded in
-/// [`Loaded::journal_fault`] and ends the replay.
-fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded) {
-    loaded.journal_fault = replay_logs(dir, originals, loaded, None, false, None, None).err();
 }
 
 /// A reload's result: the live buffer each replayed library keeps, and the
@@ -1738,15 +1485,7 @@ pub(crate) fn load_library_logs(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = crate::LibraryTable::new();
-    replay_logs(
-        dir,
-        originals,
-        &mut loaded,
-        None,
-        true,
-        Some(&mut replayed),
-        None,
-    )?;
+    replay_logs(dir, originals, &mut loaded, None, true, &mut replayed, None)?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1756,15 +1495,7 @@ pub(crate) fn load_library_logs_live(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = originals.take_live_libraries();
-    replay_logs(
-        dir,
-        originals,
-        &mut loaded,
-        None,
-        true,
-        Some(&mut replayed),
-        None,
-    )?;
+    replay_logs(dir, originals, &mut loaded, None, true, &mut replayed, None)?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1780,7 +1511,7 @@ pub(crate) fn load_user_library(
 ) -> Option<UserLibrary> {
     let mut loaded = Loaded::default();
     let mut libraries = crate::LibraryTable::new();
-    load_libraries(dir, layout, &mut loaded, Some(nibble), Some(&mut libraries));
+    load_libraries(dir, layout, &mut loaded, Some(nibble), &mut libraries);
     libraries.remove(&nibble).or_else(|| {
         loaded
             .library_totals
@@ -1815,7 +1546,7 @@ pub(crate) fn load_masked_logs(
         &mut loaded,
         Some((mask, value)),
         false,
-        Some(&mut replayed),
+        &mut replayed,
         None,
     )?;
     Ok((replayed, loaded.library_totals))
@@ -1836,7 +1567,7 @@ pub(crate) fn load_masked_logs_live(
         &mut loaded,
         Some((mask, value)),
         false,
-        Some(&mut replayed),
+        &mut replayed,
         Some(preread),
     )?;
     Ok((replayed, loaded.library_totals))
@@ -1893,7 +1624,7 @@ fn replay_logs(
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
-    mut replayed: Option<&mut crate::LibraryTable<ReplayedLibrary>>,
+    replayed: &mut crate::LibraryTable<ReplayedLibrary>,
     mut preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
@@ -1905,7 +1636,7 @@ fn replay_logs(
             file,
             mask,
             only_originals,
-            replayed.as_deref_mut(),
+            replayed,
             preread.as_deref_mut(),
         )?;
     }
@@ -1927,7 +1658,7 @@ fn replay_log(
     file: &FileName,
     mask: Option<(u32, u32)>,
     only_originals: bool,
-    mut replayed: Option<&mut crate::LibraryTable<ReplayedLibrary>>,
+    replayed: &mut crate::LibraryTable<ReplayedLibrary>,
     preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     if only_originals && !originals.contains_key(&nibble) {
@@ -1964,7 +1695,7 @@ fn replay_log(
     // `SubPhraseIndex::merge` over the records, in the pin's own terms:
     // bytes compared as bytes, payloads kept whole, the first failure the
     // end (`phrase_index.cpp:439-517`). Session opens retain the byte
-    // views; value-only callers decode the final touched slots.
+    // views.
     // A masked logger with no header is empty. Decide that before
     // taking ownership so rollback remains exclusive to payload over-read.
     let masked = if let Some((mask, value)) = mask {
@@ -1975,9 +1706,7 @@ fn replay_log(
     } else {
         None
     };
-    let live = replayed
-        .as_deref_mut()
-        .and_then(|views| views.remove(&nibble));
+    let live = replayed.remove(&nibble);
     let mut merge = match live {
         Some(live) => Merge::from_live(originals.get(&nibble), live),
         None => Merge::new(originals.get(&nibble)),
@@ -2004,9 +1733,7 @@ fn replay_log(
                 );
                 // The library keeps its pre-replay content: the applied
                 // records are reversed, not dropped with the buffer.
-                if let Some(replayed) = replayed.as_deref_mut() {
-                    replayed.insert(nibble, merge.rollback());
-                }
+                replayed.insert(nibble, merge.rollback());
                 return Ok(());
             }
         }
@@ -2020,15 +1747,10 @@ fn replay_log(
             )?;
         }
     }
-    let (total, overrides) = if let Some(replayed) = replayed {
-        let (total, overrides, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
-        if let Some(retained) = retained {
-            replayed.insert(nibble, retained);
-        }
-        (total, overrides)
-    } else {
-        merge.finish(&mut loaded.skip_notes(), &name)
-    };
+    let (total, overrides, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
+    if let Some(retained) = retained {
+        replayed.insert(nibble, retained);
+    }
     if let Some(total) = total {
         loaded.library_totals.insert(nibble, total);
     }
@@ -2262,10 +1984,6 @@ pub(crate) fn encode_persisted_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWr
     encode_phrase_item(item)
 }
 
-fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
-    encode_persisted_item(item).map_err(PersistenceError::from)
-}
-
 /// The compacted library's wrapping item sum, with live overrides applied
 /// (`phrase_index.cpp:648-675` at 074a2219). The original header may differ
 /// from its items; compact does not preserve that difference.
@@ -2293,61 +2011,19 @@ pub fn system_new_total(
     total
 }
 
-/// The reporting save for a held [`UserState`], without a session's arenas:
-/// every file of the set is written, renamed and marked whatever fails on the
-/// way. Soft failures are printed to stderr. A caller that needs
-/// a profile on disk but not a session (the crate's tests and the facade
-/// fixtures) uses this.
-///
-/// # Errors
-///
-/// As the reporting save.
-pub fn save_state_reporting(
-    dir: &Path,
-    state: &UserState,
-    originals: &impl OriginalLibraries,
-    versions: &SystemVersions,
-    open_counter: i32,
-) -> Result<(), PersistenceError> {
-    let index = UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
-    let mut reporting = SaveReporting {
-        versions,
-        open_counter,
-        bigram_db: None,
-        interleaved: false,
-        baseline: None::<NoBaseline>,
-    };
-    save_reporting(
-        dir,
-        SaveSource {
-            libraries: None,
-            state,
-            index: &index,
-            phrase_table: None,
-            compacted: &[],
-            live: None,
-        },
-        originals,
-        &mut reporting,
-    )
-}
-
-/// What a save writes: the session's values and its user pinyin index
-/// records, arena and overlay merged in key order.
+/// What a save writes: the session's user libraries and its two user
+/// tables, and its loaded system libraries.
 #[derive(Clone, Copy)]
 pub(crate) struct SaveSource<'a> {
-    pub(crate) state: &'a UserState,
-    /// A libpinyin session's arenas and unloaded libraries; `None` builds from `state`.
-    pub(crate) libraries: Option<&'a crate::user_library::SessionPhrases>,
-    pub(crate) index: &'a UserIndex,
-    pub(crate) phrase_table: Option<&'a UserPhraseTable>,
+    /// The session's arenas, its user pinyin index and phrase table, and
+    /// its unloaded libraries.
+    pub(crate) libraries: &'a crate::user_library::SessionPhrases,
     /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
     /// from no items; their log header's new total is zero.
     pub(crate) compacted: &'a [u8],
-    /// A session's loaded system libraries: their live buffers and totals,
-    /// which the save diffs against the files on disk. `None` builds the
-    /// logs from `state`'s overrides.
-    pub(crate) live: Option<&'a crate::system_items::SystemItems>,
+    /// The session's loaded system libraries: their live buffers and
+    /// totals, which the save diffs against the files on disk.
+    pub(crate) live: &'a crate::system_items::SystemItems,
 }
 
 /// The save's I/O parameters and its optional current-on-disk baseline
@@ -2359,13 +2035,10 @@ pub(crate) struct SaveSource<'a> {
 pub(crate) struct SaveReporting<'a, B> {
     pub(crate) versions: &'a SystemVersions,
     pub(crate) open_counter: i32,
-    pub(crate) bigram_db: Option<&'a DefaultUserBigramDb>,
+    pub(crate) bigram_db: &'a DefaultUserBigramDb,
     pub(crate) interleaved: bool,
     pub(crate) baseline: Option<B>,
 }
-
-/// The baseline hook's type for a save that has none.
-pub(crate) type NoBaseline = fn(u8) -> SaveBaseline;
 
 /// The files of a save in the pin's rename order (`_rename_files`,
 /// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
@@ -2504,23 +2177,20 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     // where a `table.conf` gives two roles one name, the last writer's
     // contents are what the first rename moves into place.
     stage_rest(dir, source, originals, reporting, staged)?;
-    let state = source.state;
-    if let Some(db) = reporting.bigram_db {
-        let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
-        let tmp = build_path(
-            dir,
-            OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
-        );
-        // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the
-        // pin ignores its result, and the backend's `save_db` then unlinks
-        // again as the pin's does.
-        unlink(&tmp);
-        let written = db.save_db(&tmp).map_err(PersistenceError::from);
-        tolerate(staged.finish((tmp, final_path), written))?;
-        return Ok(());
-    }
-    tolerate(stage_user_bigram(dir, &state.bigram, staged))?;
-    Ok(())
+    let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
+    let tmp = build_path(
+        dir,
+        OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
+    );
+    // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the
+    // pin ignores its result, and the backend's `save_db` then unlinks
+    // again as the pin's does.
+    unlink(&tmp);
+    let written = reporting
+        .bigram_db
+        .save_db(&tmp)
+        .map_err(PersistenceError::from);
+    tolerate(staged.finish((tmp, final_path), written))
 }
 
 /// The save carries on past a file it could not write, as the pin's
@@ -2539,45 +2209,29 @@ fn tolerate<T>(result: Result<T, PersistenceError>) -> Result<(), PersistenceErr
 /// (`pinyin.cpp:944-975`): the live sub-index diffed against `baseline`'s
 /// chunk, or the open-time original where there is none.
 fn log_payload(
-    state: &UserState,
-    live: Option<&crate::system_items::SystemItems>,
+    live: &crate::system_items::SystemItems,
     nibble: u8,
     original: SystemLibraryRef<'_>,
     baseline: Option<&SaveBaseline>,
     new_total: Option<u32>,
 ) -> Result<Vec<u8>, PersistenceError> {
-    let records = match (live, baseline) {
-        // The pin's `_write_files`: the chunk on disk now is the old side,
-        // the live sub-index the new one.
-        (Some(items), baseline) => {
-            let disk = match baseline {
-                Some(SaveBaseline::Changed(disk)) => disk.view(),
-                _ => original,
-            };
-            diff_live_records(
-                items.live_library(nibble, original),
-                disk,
-                new_total
-                    .unwrap_or_else(|| items.library_total(nibble, Some(original)).unwrap_or(0)),
-            )
-        }
-        (None, Some(SaveBaseline::Changed(disk))) => {
-            let overrides = state
-                .system_overrides
-                .get(&nibble)
-                .cloned()
-                .unwrap_or_default();
-            diff_records_against(nibble, original, &overrides, disk.view(), new_total)?
-        }
-        (None, _) => {
-            let overrides = state
-                .system_overrides
-                .get(&nibble)
-                .cloned()
-                .unwrap_or_default();
-            diff_records_with_new_total(nibble, original, &overrides, new_total)?
-        }
+    // The pin's `_write_files`: the chunk on disk now is the old side, the
+    // live sub-index the new one.
+    let disk = match baseline {
+        Some(SaveBaseline::Changed(disk)) => disk.view(),
+        Some(
+            SaveBaseline::Keep
+            | SaveBaseline::Unloaded
+            | SaveBaseline::Unmappable
+            | SaveBaseline::ChunkHeaderRead,
+        )
+        | None => original,
     };
+    let records = diff_live_records(
+        live.live_library(nibble, original),
+        disk,
+        new_total.unwrap_or_else(|| live.library_total(nibble, Some(original)).unwrap_or(0)),
+    );
     encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))
 }
 
@@ -2590,26 +2244,10 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     let SaveSource {
-        state,
-        index,
-        phrase_table,
         compacted,
         libraries,
         live,
     } = source;
-    // A session's index arena is authoritative. A value-only save derives
-    // the table from the held state, as before, and keeps the caller's
-    // retained empty keys.
-    let derived;
-    let index = if libraries.is_some() {
-        index
-    } else {
-        let mut table =
-            UserIndex::from_entries(pinyin_index_entries(&chewing_rows(state, originals)));
-        table.merge_missing(index);
-        derived = table;
-        &derived
-    };
     {
         // ---- the library files, by sub-index -----------------------------
         let empty_library = SystemLibrary::default();
@@ -2619,9 +2257,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             // `zhuyin.cpp:562-565`): its file on disk stays as it is. The
             // session knows its unloaded `USER_FILE` libraries; the hook
             // answers for a system library.
-            if matches!(kind, LibraryFile::User)
-                && libraries.is_some_and(|phrases| phrases.unloaded.contains(&nibble))
-            {
+            if matches!(kind, LibraryFile::User) && libraries.unloaded.contains(&nibble) {
                 staged.unloaded.push(nibble);
                 continue;
             }
@@ -2678,27 +2314,16 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             }
             let bytes = match kind {
                 LibraryFile::User => {
-                    let pairs: Vec<(u32, ChunkItem)> =
-                        state.libraries.get(&nibble).map_or(Vec::new(), |slots| {
-                            slots
-                                .iter()
-                                .map(|(&slot, item)| (slot, item.clone()))
-                                .collect()
-                        });
-                    if let Some(phrases) = libraries {
-                        let empty = UserLibrary::default();
-                        let library = phrases.libraries.get(&nibble).unwrap_or(&empty);
-                        // `SubPhraseIndex::store` copies the compacted
-                        // content into a fresh chunk in one call (register
-                        // row 112): the save stops here, after the earlier
-                        // files, as row 76's stop does.
-                        if library.store_copy_is_unsafe() {
-                            return Err(PersistenceError::SaveTooLarge);
-                        }
-                        library.store().map_err(PersistenceError::Codec)?
-                    } else {
-                        build_chunk(&pairs)?
+                    let empty = UserLibrary::default();
+                    let library = libraries.libraries.get(&nibble).unwrap_or(&empty);
+                    // `SubPhraseIndex::store` copies the compacted content
+                    // into a fresh chunk in one call (register row 112):
+                    // the save stops here, after the earlier files, as row
+                    // 76's stop does.
+                    if library.store_copy_is_unsafe() {
+                        return Err(PersistenceError::SaveTooLarge);
                     }
+                    library.store().map_err(PersistenceError::Codec)?
                 }
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
@@ -2707,14 +2332,11 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                     // (074a2219 `pinyin.cpp:1139`, `phrase_index.cpp:648-675`),
                     // and the journal's header takes that total
                     // (`phrase_index.cpp:395-400`): the readable item sum.
-                    let new_total = compacted.contains(&nibble).then(|| {
-                        live.map_or_else(
-                            || original.item_total(),
-                            |items| items.compacted_total(nibble, original),
-                        )
-                    });
+                    let new_total = compacted
+                        .contains(&nibble)
+                        .then(|| live.compacted_total(nibble, original));
                     let payload =
-                        log_payload(state, live, nibble, original, baseline.as_ref(), new_total)?;
+                        log_payload(live, nibble, original, baseline.as_ref(), new_total)?;
                     // `PhraseIndexLogger::store` copies the whole journal
                     // into a fresh chunk in one call.
                     if payload.len() as u64 >= crate::user_library::copy_limit() {
@@ -2728,83 +2350,30 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
 
         // `_write_files` saves the user pinyin index, then the user phrase
         // index (`pinyin.cpp:996-1012`). Both stream from the session's
-        // arenas in key order; a value-only save streams the derived index
-        // and the held phrase-table map.
+        // arenas in key order.
         tolerate(stage_dbm(
             dir,
             UserDbm::PinyinIndex,
-            |sink| index.for_each_record(|key, value| sink(key, value)),
+            |sink| {
+                libraries
+                    .index
+                    .for_each_record(|key, value| sink(key, value))
+            },
             staged,
         ))?;
         tolerate(stage_dbm(
             dir,
             UserDbm::PhraseIndex,
-            |sink| match phrase_table {
-                Some(table) => table.for_each_record(|key, value| sink(key, value)),
-                None => state
+            |sink| {
+                libraries
                     .phrase_table
-                    .iter()
-                    .try_for_each(|(key, value)| sink(key, value)),
+                    .for_each_record(|key, value| sink(key, value))
             },
             staged,
         ))?;
 
         Ok(())
     }
-}
-
-/// The sub-index record diff with an explicit new header total: the pin's `compact`
-/// rebuilds a layout-failed empty sub-index and its saved log carries zero
-/// as the new total while the system chunk's old total is unchanged
-/// (`phrase_index.cpp:648-675`).
-fn diff_records_with_new_total(
-    _nibble: u8,
-    original: SystemLibraryRef<'_>,
-    overrides: &BTreeMap<u32, Option<ChunkItem>>,
-    new_total: Option<u32>,
-) -> Result<Vec<LogRecord>, PersistenceError> {
-    let mut records = vec![LogRecord::ModifyHeader {
-        old_total: original.total,
-        new_total: new_total.unwrap_or_else(|| system_new_total(original, overrides)),
-    }];
-
-    // 074a2219 phrase_index.cpp:394-442 emits local SubPhraseIndex slots.
-    // Only overridden slots can differ; walking this ordered sparse map
-    // emits the same records without scanning every immutable original.
-    for &slot in overrides.keys() {
-        // An override entry always wins — including `Some(None)`, an
-        // explicit removal: flattening it into the original item here
-        // would drop the Remove record and resurrect the phrase on
-        // reopen.
-        let old = original.item(slot);
-        let current = overrides.get(&slot).and_then(|item| item.as_ref());
-        let token = slot;
-        match (old.as_ref(), current) {
-            (Some(old), Some(new)) => {
-                if old != new {
-                    records.push(LogRecord::Modify {
-                        token,
-                        old_item: journal_record_item(old)?,
-                        new_item: journal_record_item(new)?,
-                    });
-                }
-            }
-            (Some(old), None) => {
-                records.push(LogRecord::Remove {
-                    token,
-                    old_item: journal_record_item(old)?,
-                });
-            }
-            (None, Some(new)) => {
-                records.push(LogRecord::Add {
-                    token,
-                    new_item: journal_record_item(new)?,
-                });
-            }
-            (None, None) => {}
-        }
-    }
-    Ok(records)
 }
 
 /// The live side of a save's diff: a library's live buffer, or its shipped
@@ -2876,89 +2445,9 @@ pub(crate) fn diff_live_records(
     records
 }
 
-/// The sub-index record diff against a changed on-disk sub-index: the pin's
-/// `_write_files` diffs the currently mapped chunk (`old`) against the live
-/// sub-index (`new` = loaded original + user overrides) over the union of
-/// resident slots (`SubPhraseIndex::diff`, `phrase_index.cpp:394-442`).
-fn diff_records_against(
-    _nibble: u8,
-    original: SystemLibraryRef<'_>,
-    overrides: &BTreeMap<u32, Option<ChunkItem>>,
-    baseline: SystemLibraryRef<'_>,
-    new_total: Option<u32>,
-) -> Result<Vec<LogRecord>, PersistenceError> {
-    let mut records = vec![LogRecord::ModifyHeader {
-        old_total: baseline.total,
-        new_total: new_total.unwrap_or_else(|| system_new_total(original, overrides)),
-    }];
-    let mut slots = BTreeSet::new();
-    // `SubPhraseIndex::diff` walks `1 .. max(range_begin, range_end)`; slot 0
-    // is outside `get_range` and never emitted.
-    slots.extend(baseline.slots().filter(|slot| *slot >= 1));
-    slots.extend(original.slots().filter(|slot| *slot >= 1));
-    slots.extend(overrides.keys().copied().filter(|slot| *slot >= 1));
-    for slot in slots {
-        let old = baseline.item(slot);
-        let current = match overrides.get(&slot) {
-            Some(item) => item.clone(),
-            None => original.item(slot),
-        };
-        let token = slot;
-        match (old.as_ref(), current.as_ref()) {
-            (Some(old), Some(new)) => {
-                if old != new {
-                    records.push(LogRecord::Modify {
-                        token,
-                        old_item: journal_record_item(old)?,
-                        new_item: journal_record_item(new)?,
-                    });
-                }
-            }
-            (Some(old), None) => {
-                records.push(LogRecord::Remove {
-                    token,
-                    old_item: journal_record_item(old)?,
-                });
-            }
-            (None, Some(new)) => {
-                records.push(LogRecord::Add {
-                    token,
-                    new_item: journal_record_item(new)?,
-                });
-            }
-            (None, None) => {}
-        }
-    }
-    Ok(records)
-}
-
-/// Writes the user bigram to its `.tmp` sibling and registers the rename.
-///
-/// Routed through [`WriteStore::write_user_bigram`] rather than
-/// [`stage_dbm`]'s container create, because the user bigram is not a
-/// hash file on every backend: Kyoto Cabinet writes a snapshot stream of
-/// an in-memory stash (`ngram_kyotodb.cpp:82-101`) where tkrzw
-/// write a container at the path.
-fn stage_user_bigram(
-    dir: &Path,
-    rows: &[(Vec<u8>, Vec<u8>)],
-    staged: &mut Staged,
-) -> Result<(), PersistenceError> {
-    let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
-    let tmp = build_path(
-        dir,
-        OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
-    );
-    // `unlink(USER_BIGRAM ".tmp")` before `save_db` (`pinyin.cpp:1017`,
-    // `zhuyin.cpp:683`); the result is ignored, as the pin ignores it.
-    unlink(&tmp);
-    let written = DefaultStore::write_user_bigram(&tmp, rows).map_err(PersistenceError::from);
-    staged.finish((tmp, final_path), written)
-}
-
 /// Writes one of the two index DBMs to its `.tmp` sibling and registers
-/// the rename. The user bigram takes the separate [`stage_user_bigram`]
-/// route, since its container is backend-specific. `_write_files` unlinks
+/// the rename. The user bigram takes a separate route in [`stage_all`],
+/// its container's own `save_db`, since the container is backend-specific. `_write_files` unlinks
 /// the `.tmp` path first (`pinyin.cpp:999`, `:1008`); the backend's
 /// `save_db` sequence then writes the records `fill` streams, in key
 /// order, with nothing buffered ([`WriteStore::write_user_index`]).
@@ -3007,6 +2496,9 @@ fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_session::{
+        load, load_checked, load_profile, save_state as save_state_reporting,
+    };
     use oxpinyin_data::user_files::OPEN_COUNTER_LIMIT;
 
     /// Register row 76: pinyin.cpp:944-957 reaches the current disk mapping
@@ -3015,37 +2507,26 @@ mod tests {
     fn an_unmappable_save_baseline_stops_before_the_library_write() {
         let dir = tempfile::tempdir().unwrap();
         let originals = originals();
-        let state = state();
-        let index = UserIndex::new();
-        let versions = versions();
+        let mut store =
+            crate::test_session::seeded(dir.path(), &state(), &originals, &versions()).unwrap();
+        let marker = std::fs::read(dir.path().join(USER_CONF)).unwrap();
         let mut visited = Vec::new();
-        let mut reporting = SaveReporting {
-            versions: &versions,
-            open_counter: 1,
-            bigram_db: None,
-            interleaved: false,
-            baseline: Some(|library| {
-                visited.push(library);
-                SaveBaseline::Unmappable
-            }),
-        };
-        let result = save_reporting(
-            dir.path(),
-            SaveSource {
-                libraries: None,
-                state: &state,
-                index: &index,
-                phrase_table: None,
-                compacted: &[],
-                live: None,
-            },
-            &originals,
-            &mut reporting,
-        );
-        assert!(matches!(result, Err(PersistenceError::SystemRemapFailed)));
+        let result = store.save_reporting_with_baseline(&[], |library, _| {
+            visited.push(library);
+            SaveBaseline::Unmappable
+        });
+        assert!(matches!(
+            result,
+            Err(crate::UserStoreError::SaveRemapFailed)
+        ));
         assert_eq!(visited.len(), 1);
         assert!(!dir.path().join("gb_char.dbin.tmp").exists());
-        assert!(!dir.path().join("user.conf").exists());
+        assert_eq!(
+            std::fs::read(dir.path().join(USER_CONF)).unwrap(),
+            marker,
+            "no marker is written"
+        );
+        assert!(store.is_modified());
     }
 
     #[test]
@@ -3168,22 +2649,16 @@ mod tests {
         index.push_record(&gone_reading, &[]);
         let mut saved = state();
         saved.phrase_table.insert(gone.clone(), Vec::new());
-        let source = SaveSource {
-            libraries: None,
-            state: &saved,
-            index: &index,
-            phrase_table: None,
-            compacted: &[],
-            live: None,
-        };
-        let mut reporting = SaveReporting {
-            versions: &versions(),
-            open_counter: 1,
-            bigram_db: None,
-            interleaved: false,
-            baseline: None::<NoBaseline>,
-        };
-        save_reporting(&dir, source, &originals, &mut reporting).expect("save");
+        let mut store =
+            crate::test_session::seeded(&dir, &saved, &originals, &versions()).expect("session");
+        store
+            .session_target()
+            .phrases_mut()
+            .index
+            .merge_missing(&index);
+        store.save_reporting().expect("save");
+        // No fini: the next load reads the profile as the save left it.
+        std::mem::forget(store);
 
         let rows = |dbm: UserDbm| {
             let store = DefaultStore::open_user_index(&dir.join(dbm.file_name())).expect("opens");
@@ -3213,48 +2688,9 @@ mod tests {
             load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.phrase_table.contains_key(&gone));
         assert!(loaded.index.contains_key(&gone_reading));
-        // The session's profile read leaves the user bigram to its
-        // container (`load_user_bigram_db`).
-        let saved = UserState {
-            bigram: Vec::new(),
-            ..saved
-        };
-        let mut actual = loaded.loaded.state;
-        actual.indexed = loaded.index.indexed_set();
-        actual.phrase_table.clear();
-        let collected = loaded
-            .phrase_table
-            .for_each_record::<std::convert::Infallible>(|key, value| {
-                actual.phrase_table.insert(key.to_vec(), value.to_vec());
-                Ok(())
-            });
-        if let Err(infallible) = collected {
-            match infallible {}
-        }
-        for (nibble, library) in loaded.user_libraries {
-            actual.libraries.insert(
-                nibble,
-                library
-                    .items()
-                    .map(|(slot, item)| {
-                        (
-                            slot,
-                            oxpinyin_data::chunk_write::decode_phrase_item(item.as_bytes())
-                                .unwrap(),
-                        )
-                    })
-                    .collect(),
-            );
-        }
-        for (library, replayed) in loaded.replayed {
-            for slot in replayed.slots() {
-                actual
-                    .system_overrides
-                    .get_or_default(library)
-                    .unwrap()
-                    .insert(slot, replayed.item(slot));
-            }
-        }
+        let actual = load(&dir, &originals, &versions(), UserConfLaw::Pinyin)
+            .expect("load")
+            .state;
         assert_eq!(actual, saved, "an empty key names no row");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3683,18 +3119,6 @@ mod tests {
     }
 
     #[test]
-    fn the_user_bigram_is_staged_as_a_tmp_sibling() {
-        let dir = tempdir("bigram-tmp");
-        let mut staged = Staged::default();
-        stage_user_bigram(&dir, &[(b"k".to_vec(), b"v".to_vec())], &mut staged).expect("stage");
-        let tmp = build_path(&dir, OsStr::new("user_bigram.db.tmp"));
-        let final_path = build_path(&dir, OsStr::new("user_bigram.db"));
-        assert!(tmp.exists(), "save_db wrote the staged name");
-        assert!(!final_path.exists(), "the rename has not run yet");
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
     fn the_tired_counter_wipes_on_the_next_open() {
         let dir = tempdir("tired");
         let originals = originals();
@@ -3712,7 +3136,7 @@ mod tests {
     }
 
     #[test]
-    fn check_format_then_load_checked_is_load() {
+    fn check_format_then_the_profile_read_is_load() {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
             let whole = tempdir("split-whole");
             let split = tempdir("split-parts");
@@ -3727,16 +3151,10 @@ mod tests {
                 check_format(&split, &versions(), &UserFileLayout::stock(), law).expect("check");
             assert_eq!(recorded_counter(&split), recorded_counter(&whole));
             let parts = load_checked(&split, &originals, &check).expect("load the split profile");
-            // `load` alone reads the user bigram's raw rows; the checked
-            // profile read is the session's, whose container reads them.
             assert_eq!(loaded.state.bigram, state().bigram);
-            let without_bigram = UserState {
-                bigram: Vec::new(),
-                ..loaded.state.clone()
-            };
-            assert_eq!(parts.loaded.state, without_bigram);
-            assert_eq!(parts.loaded.open_counter, loaded.open_counter);
-            assert_eq!(parts.loaded.wiped, loaded.wiped);
+            assert_eq!(parts.state, loaded.state);
+            assert_eq!(parts.open_counter, loaded.open_counter);
+            assert_eq!(parts.wiped, loaded.wiped);
             std::fs::remove_dir_all(&whole).expect("cleanup");
             std::fs::remove_dir_all(&split).expect("cleanup");
         }
@@ -4186,31 +3604,16 @@ mod tests {
         let dir = tempdir("chunk-header");
         let originals = originals();
         std::os::unix::fs::symlink("/dev/full", dir.join("user.bin.tmp")).expect("symlink");
-        let state = state();
-        let source = SaveSource {
-            libraries: None,
-            state: &state,
-            index: &UserIndex::default(),
-            phrase_table: None,
-            compacted: &[],
-            live: None,
-        };
-        let mut reporting = SaveReporting {
-            versions: &versions(),
-            open_counter: 0,
-            bigram_db: None,
-            interleaved: false,
-            baseline: None::<NoBaseline>,
-        };
-        let error = save_reporting(&dir, source, &originals, &mut reporting)
+        let mut store =
+            crate::test_session::seeded(&dir, &state(), &originals, &versions()).expect("session");
+        let error = store
+            .save_reporting()
             .expect_err("the header write must fail");
         match error {
-            PersistenceError::ChunkHeaderWrite {
-                field: ChunkHeaderField::Length,
-                ..
-            } => {}
+            crate::UserStoreError::ChunkHeaderWrite(ChunkHeaderField::Length) => {}
             other => panic!("expected the length write to fail: {other:?}"),
         }
+        drop(store);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
@@ -4311,6 +3714,86 @@ mod tests {
         assert_eq!(first, second);
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// At 074a2219, both item counts are guint8 (phrase_index.h:100-114).
+    /// The pin reads the item extent from them (phrase_index.cpp:180-205)
+    /// and copies those bytes into the diff (phrase_index.cpp:411-429).
+    /// Save diffs against the chunk mapped at save time (pinyin.cpp:949-963).
+    #[test]
+    fn save_journals_empty_and_max_count_items_from_the_changed_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let originals = originals();
+        let mut baseline = originals[&1].fixture_copy();
+        baseline.total = 81;
+        baseline.range_end = 5;
+        baseline
+            .items
+            .insert(1, item(&[], 7, &[(vec![], 5), (vec![], 6)]));
+        baseline
+            .items
+            .insert(3, item(&[7; 255], 11, &[(vec![1; 255], 2)]));
+        let readings: Vec<_> = (0..255_u16)
+            .map(|key| (vec![key], u32::from(key) + 1))
+            .collect();
+        baseline.items.insert(4, item(&[0x7532], 13, &readings));
+
+        let mut store =
+            crate::test_session::open(dir.path(), originals, versions(), UserConfLaw::Pinyin)
+                .unwrap();
+        store.mark_modified();
+        let mut baseline = Some(baseline);
+        store
+            .save_reporting_with_baseline(&[], |library, _| {
+                if library == 1 {
+                    SaveBaseline::Changed(baseline.take().expect("save remaps library 1 once"))
+                } else {
+                    SaveBaseline::Keep
+                }
+            })
+            .unwrap();
+
+        // Spell out the pin's item layout independently of the save encoder.
+        let empty = [0, 2, 7, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0];
+        let mut max_words = vec![255, 1, 11, 0, 0, 0];
+        max_words.extend([7, 0, 0, 0].repeat(255));
+        max_words.extend([1, 0].repeat(255));
+        max_words.extend([2, 0, 0, 0]);
+        let mut max_readings = vec![1, 255, 13, 0, 0, 0, 0x32, 0x75, 0, 0];
+        for key in 0..255_u16 {
+            max_readings.extend(key.to_le_bytes());
+            max_readings.extend((u32::from(key) + 1).to_le_bytes());
+        }
+        let mut live_item = vec![1, 1, 100, 0, 0, 0, 0x60, 0x4f, 0, 0];
+        live_item.extend(ChewingKey::new(23, 0, 1, 0).to_packed().to_le_bytes());
+        live_item.extend([100, 0, 0, 0]);
+
+        let journal = std::fs::read(dir.path().join("gb_char.dbin")).unwrap();
+        let records = log_records(read_chunk_payload(&journal).unwrap())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            records,
+            [
+                LogRecord::ModifyHeader {
+                    old_total: 81,
+                    new_total: 150
+                },
+                LogRecord::Modify {
+                    token: 1,
+                    old_item: empty.as_slice(),
+                    new_item: &live_item
+                },
+                LogRecord::Remove {
+                    token: 3,
+                    old_item: &max_words
+                },
+                LogRecord::Remove {
+                    token: 4,
+                    old_item: &max_readings
+                },
+            ]
+        );
     }
 
     /// A system library with one mapped item per probe slot and one inline
@@ -4559,64 +4042,6 @@ mod tests {
     }
 
     #[test]
-    fn a_journal_item_is_the_encoded_item_or_the_same_refusal_but_for_an_empty_phrase() {
-        let long_prons: Vec<(Vec<u16>, u32)> = (0..256).map(|n| (vec![n as u16], 1)).collect();
-        let cases = [
-            item(&[0x4f60], 1, &[]),
-            item(&[0x4f60], 1, &[(vec![1], 2)]),
-            item(&[0x4f60, 0x597d], 1, &[(vec![1, 2], 2), (vec![3, 4], 5)]),
-            item(&[7; 255], 1, &[(vec![1; 255], 2)]),
-            item(&[7; 256], 1, &[]),
-            item(&[0x4f60], 1, &long_prons[..255]),
-            item(&[0x4f60], 1, &long_prons),
-            item(&[0x4f60, 0x597d], 1, &[(vec![1], 2)]),
-            item(&[0x4f60], 1, &[(vec![1, 2], 2)]),
-        ];
-        for case in &cases {
-            assert_eq!(
-                journal_record_item(case).ok(),
-                encode_phrase_item(case).ok(),
-                "{case:?}"
-            );
-        }
-        // An empty phrase is an item of `6 + 4n` bytes in the pin.
-        let empty = item(&[], 7, &[(vec![], 5), (vec![], 6)]);
-        let bytes = journal_record_item(&empty).expect("empty phrase");
-        assert_eq!(bytes.len(), 6 + 4 * 2);
-        assert_eq!(
-            oxpinyin_data::chunk_write::decode_phrase_item(&bytes).expect("round trip"),
-            empty
-        );
-        assert!(journal_record_item(&item(&[], 7, &[(vec![1], 5)])).is_err());
-    }
-
-    #[test]
-    fn a_changed_baseline_writes_an_empty_phrase_item_like_the_normal_path() {
-        let originals = originals();
-        let original = originals[&1].fixture_copy();
-        let mut baseline = original.fixture_copy();
-        let empty = item(&[], 7, &[(vec![], 5), (vec![], 6)]);
-        baseline.items.insert(1, empty.clone());
-        let records =
-            diff_records_against(1, original.view(), &BTreeMap::new(), baseline.view(), None)
-                .expect("a changed baseline with an empty phrase");
-        let old_item = records
-            .iter()
-            .find_map(|record| match record {
-                LogRecord::Modify {
-                    token: 1, old_item, ..
-                } => Some(old_item),
-                _ => None,
-            })
-            .expect("modify at slot 1");
-        assert_eq!(
-            old_item,
-            &journal_record_item(&empty).expect("empty phrase"),
-            "the changed-baseline diff writes the item as the normal path does"
-        );
-    }
-
-    #[test]
     fn replay_masks_high_token_bits_like_the_subindex() {
         let dir = tempdir("local-slot-mask");
         let originals = originals();
@@ -4796,7 +4221,7 @@ mod tests {
                 &mut loaded,
                 Some((0x0f00_0000, 0x0100_0000)),
                 false,
-                None,
+                &mut crate::LibraryTable::new(),
                 Some(&mut cached)
             ),
             Ok(())
@@ -4808,7 +4233,7 @@ mod tests {
                 &mut loaded,
                 Some((0x0f00_0000, 0x0100_0000)),
                 false,
-                None,
+                &mut crate::LibraryTable::new(),
                 None
             ),
             Err(JournalFault::HeaderToken {
@@ -5185,12 +4610,12 @@ mod tests {
                 // The load decodes nothing: the row, partial bytes and
                 // all, is the raw value every later read takes apart the
                 // pin's way.
-                let mut loaded = Loaded::default();
-                load_bigram_rows(&dir, &mut loaded);
-                assert!(loaded.skipped.is_empty());
-                assert_eq!(loaded.state.bigram, [(key.to_vec(), value.clone())]);
-
                 let raw = DefaultStore::open_user_bigram(&path).expect("open raw");
+                let mut rows = Vec::new();
+                raw.copy_raw(|key, value| rows.push((key.to_vec(), value.to_vec())))
+                    .expect("walk");
+                assert_eq!(rows, [(key.to_vec(), value.clone())]);
+
                 let mut read = Vec::new();
                 assert!(raw.get_raw(&key, &mut read).expect("raw get"));
                 assert_eq!(read, value);

@@ -428,7 +428,7 @@ mod tests {
         )
         .unwrap();
         let store =
-            UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
+            crate::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
         assert!(store.live_item_past_buffer(0x0100_0001));
         store.test_forget_removal(0x0100_0001);
         let unloaded = Cell::new(0);
@@ -461,15 +461,29 @@ mod tests {
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load(6, &path).unwrap());
         let original = PhraseLibrary::open(&path).unwrap();
-        let originals = SystemOriginals::from(crate::LibraryTable::from([(
-            6,
-            SystemLibrary {
-                total: original.total_freq(),
-                range_end: original.token_range().end,
-                mapped: Some(original),
-                items: BTreeMap::new(),
-            },
-        )]));
+        // A table.conf that makes library 6 a `SYSTEM_FILE`.
+        let conf_path = dir.path().join("table.conf");
+        std::fs::write(
+            &conf_path,
+            "binary format version:7\nmodel data version:14\n\
+             lambda parameter:0.312699\n\nsource table format:pinyin\n\
+             database format:BerkeleyDB\n\n\
+             default NETWORK_DICTIONARY six.table six.bin six.dbin SYSTEM_FILE\n",
+        )
+        .unwrap();
+        let conf = oxpinyin_data::table_info::TableConf::load_path(&conf_path).unwrap();
+        let originals = SystemOriginals::new(
+            crate::LibraryTable::from([(
+                6,
+                SystemLibrary {
+                    total: original.total_freq(),
+                    range_end: original.token_range().end,
+                    mapped: Some(original),
+                    items: BTreeMap::new(),
+                },
+            )]),
+            oxpinyin_data::user_files::UserFileLayout::from_conf(&conf),
+        );
         let versions = SystemVersions::for_this_build(7, 14);
         let user = dir.path().join("user");
         std::fs::create_dir(&user).unwrap();
@@ -479,7 +493,7 @@ mod tests {
         )
         .unwrap();
         let store =
-            UserStore::open_libpinyin(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
+            crate::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
         let unloaded = Cell::new(0);
         let live = LiveSystemItems::new(&libraries, &store, &unloaded);
         assert!(live.is_system_library(6));

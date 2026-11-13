@@ -124,7 +124,7 @@ impl Profile {
     }
 
     pub(super) fn open(&self) -> UserStore {
-        UserStore::open_libpinyin(&self.dir, self.originals(), versions(), UserConfLaw::Pinyin)
+        crate::test_session::open(&self.dir, self.originals(), versions(), UserConfLaw::Pinyin)
             .expect("open")
     }
 }

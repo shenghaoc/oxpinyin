@@ -735,7 +735,7 @@ pub struct StoreInner {
     pub(crate) has_user_data: Cell<bool>,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
-    /// pin's own file shapes (`open_libpinyin`): `save()` exports the
+    /// pin's own file shapes (`open_libpinyin_checked`): `save()` exports the
     /// session and writes the file set.
     pub(crate) libpinyin: Rc<crate::store_libpinyin::Target>,
     /// The pin's own in-memory user bigram container (`Bigram::m_db`
@@ -2113,7 +2113,6 @@ impl UserStore {
         };
         self.compact_libraries();
         let originals = &self.originals;
-        let state = crate::store_libpinyin::export_for_save(self)?;
         let bigram_db = self.container();
         let phrases = target.phrases();
         let live = self.inner.system_items.borrow();
@@ -2121,7 +2120,7 @@ impl UserStore {
             let mut reporting = crate::persistence::SaveReporting {
                 versions: &target.versions,
                 open_counter: target.open_counter,
-                bigram_db: Some(bigram_db),
+                bigram_db,
                 interleaved: target.law == crate::persistence::UserConfLaw::Zhuyin,
                 baseline: baseline
                     .as_mut()
@@ -2130,12 +2129,9 @@ impl UserStore {
             crate::persistence::save_reporting(
                 dir,
                 crate::persistence::SaveSource {
-                    state: &state,
-                    libraries: Some(&phrases),
-                    index: &phrases.index,
-                    phrase_table: Some(&phrases.phrase_table),
+                    libraries: &phrases,
                     compacted,
-                    live: Some(&live),
+                    live: &live,
                 },
                 originals,
                 &mut reporting,
@@ -2910,6 +2906,74 @@ impl UserStore {
     }
 }
 
+/// Test support: a session filled from a value state.
+#[cfg(test)]
+impl UserStore {
+    /// Puts `state`'s values into this session's own structures: the user
+    /// bigram container, the user library arenas, the two user tables and
+    /// the live system buffers.
+    pub(crate) fn seed_from_state(&mut self, state: &crate::persistence::UserState) {
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_store::UserBigramDb as _;
+        for (key, value) in &state.bigram {
+            self.container().store(key, value).expect("store a gram");
+        }
+        let target = Rc::clone(&self.inner.libpinyin);
+        let mut phrases = target.phrases_mut();
+        for (&nibble, items) in &state.libraries {
+            for (&slot, item) in items {
+                let bytes = encode_phrase_item(item).expect("item");
+                phrases
+                    .libraries
+                    .get_or_default(nibble)
+                    .expect("a library slot")
+                    .replace(slot, &bytes)
+                    .expect("place an item");
+            }
+        }
+        phrases.index = crate::user_index::UserIndex::from_entries(
+            oxpinyin_data::table_entries::pinyin_index_entries(&crate::persistence::chewing_rows(
+                state,
+                &self.originals,
+            )),
+        );
+        for (key, value) in &state.phrase_table {
+            phrases.phrase_table.push_record(key, value);
+        }
+        for (&nibble, overrides) in &state.system_overrides {
+            for (&slot, item) in overrides {
+                let token = (u32::from(nibble) << 24) | slot;
+                let bytes = item
+                    .as_ref()
+                    .map(|item| encode_phrase_item(item).expect("item"));
+                match self.originals.get(&nibble) {
+                    Some(original) => {
+                        let mut items = self.inner.system_items.borrow_mut();
+                        items.remove_item(original, token);
+                        if let Some(bytes) = &bytes {
+                            items.add_item(original, token, bytes);
+                        }
+                    }
+                    None => {
+                        if let Some(bytes) = &bytes {
+                            phrases
+                                .libraries
+                                .get_or_default(nibble)
+                                .expect("a library slot")
+                                .replace(slot, bytes)
+                                .expect("place an item");
+                        }
+                    }
+                }
+            }
+        }
+        drop(phrases);
+        self.inner.has_system_items.set(true);
+        self.inner.has_removed_system_items.set(true);
+        self.mark_committed_write(true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3075,7 +3139,7 @@ mod tests {
     // ── The libpinyin session: the constructors the C libraries reach ──
 
     /// The store the shipped libraries open: `open_transient` is the pin's
-    /// NULL-user-directory session, `open_libpinyin` a session over a user
+    /// NULL-user-directory session, `test_session::open` a session over a user
     /// directory. Every value operation runs on the arena, the pin's user
     /// bigram container and the live system items; nothing here reads a
     /// DBM row. A unigram belongs to an item, as the pin's does
@@ -3116,7 +3180,7 @@ mod tests {
         fn in_dir(originals: SystemOriginals) -> (tempfile::TempDir, UserStore) {
             let dir = tempfile::tempdir().unwrap();
             let store =
-                UserStore::open_libpinyin(dir.path(), originals, versions(), UserConfLaw::Pinyin)
+                crate::test_session::open(dir.path(), originals, versions(), UserConfLaw::Pinyin)
                     .unwrap();
             (dir, store)
         }
@@ -4084,7 +4148,7 @@ mod tests {
                     let scratch = tempfile::tempdir().expect("scratch");
                     let dir = scratch.path();
                     let mut store = if has_dir {
-                        UserStore::open_libpinyin(dir, originals(), versions(), law)
+                        crate::test_session::open(dir, originals(), versions(), law)
                     } else {
                         UserStore::open_transient(originals(), versions(), law)
                     }
