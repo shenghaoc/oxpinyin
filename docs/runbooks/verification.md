@@ -73,6 +73,11 @@ The WIP-checkpoint rule and [verification scope and precedence](#verification-sc
 
 CI is the full gate. These local checks cover only the cfg arms and backend features of the host. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
 
+### Rebases and stacks
+
+Immediately before a push, the branch is fetched and rebased onto its current base: `origin/main` for independent work, the current parent for a stack member.
+When a parent changes, its descendants are restacked.
+A fix goes on the stack member that introduces or exposes the defect.
 Each stack member must pass its required verification independently.
 Successful CI on the final source tree of that member satisfies the full-gate checks for the required package, feature and platform scope.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
@@ -98,12 +103,39 @@ Use managed CPython through `uv`.
 The documented shell entry points remain supported.
 Put new repeatable orchestration in shared Python tooling.
 Expose it through `just`.
-Do not use ad-hoc drivers, private operators or out-of-tree controllers.
+Do not use ad-hoc drivers, private operators or out-of-tree controllers, or scripts and environments that exist only on one machine.
 Add only the missing capability that the task needs, with proportionate tests.
 Do not expand unrelated tooling or build reporting infrastructure.
 Report an unavailable required check as not run.
 State its blocker.
 Do not substitute a private procedure, and do not claim that an unrun check passed.
+A missing input that a caller requested explicitly is a failure, never a successful skip.
+Do not publish or install a Python package, and add no console entry point without a new ruling.
+
+### Shell placement
+
+Write orchestration in Python, in `tools.dev` or an existing harness.
+Keep a shell script only for one of these reasons:
+
+1. **Bootstrap:** it runs before managed CPython exists, to provision it.
+2. **Environment:** it runs where managed CPython is not available, such as a reference-image build or a container before provisioning.
+3. **External interface:** an outside tool requires a shell entry point, and the script is only a thin wrapper.
+
+State the reason at the top of each retained script, with its caller and boundary.
+A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: update the caller.
+Keep each `just` recipe as one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
+
+### Independent work in parallel
+
+Run independent subprocesses and builds in the bounded pool, `tools/dev/pool.py`.
+Size the pool from the allowed CPUs.
+Give each worker private writable state.
+Make output independent of completion order.
+The first failure or cancellation starts no new unit, stops the running units and reaps their children.
+Serialize dependent steps and work that needs isolation, and state the reason in the tool or its runbook.
+The backend builds in `tools/oracle/Dockerfile.oracle` stay serial: no `tools/dev` module is copied into the reference image.
+Serialise timing, residency, cache-sensitive and sampling-profile observations.
+Apply the host conditions of the [measurement procedure](benches.md).
 
 ## 7. Proportionate verification
 
@@ -133,6 +165,7 @@ Choose the checks from the changes since the last green gate:
 Stop when the applicable checks pass and concrete failures are addressed.
 An additional run requires a relevant input change, a specific unresolved failure or an explicit maintainer request.
 Do not repeat runs only to collect more evidence.
+Investigate a broken reproduction command, or a result that contradicts the claim beyond the method's expected variability, as a bug: fix the software, tooling, environment assumptions or documentation that caused it, and correct or withdraw the claim.
 
 Rules 5 and 7 describe the **completion gate**.
 
@@ -150,6 +183,7 @@ Do not use the default differential suite for iteration feedback.
 Iteration feedback is not a gate result.
 Do not report it as one.
 Report the final results and the reproduction commands.
+Raw logs, profiler captures and intermediate output stay local: they are not committed, attached, uploaded or mirrored unless the maintainer asks for specific diagnostic material. Source, functional fixtures, pins, configuration files and release packages follow their own procedures.
 Disclose failed or unrun required checks as limitations.
 A fix is ready for review when the pre-push checks in verification rule 5 and the local checks that CI does not cover pass.
 A PR is not ready to merge until CI passes on its head.
@@ -190,7 +224,14 @@ If no sound library is available, report "tkrzw: not run (no sound libtkrzw on t
 
 ## Procedure-specific rules
 
-- Run independent subprocesses and builds in the bounded pool under the [parallel-work rule](../../CONTRIBUTING.md#independent-work-in-parallel).
+- Run independent subprocesses and builds in the bounded pool under the [parallel-work rule](#independent-work-in-parallel).
+- libpinyin on Linux/amd64 is the only reference for pin comparisons.
+  Its behaviour in other environments is not ensured.
+  An arm64 host captures the pin with a native arm64 image; the [known arm64 differences](../findings/arm64-pin-portability-1137.md) are accepted.
+- oxpinyin accepts differences that come from the operating system and the CPU architecture.
+  Builds and containers match the host operating system and architecture; do not use emulation.
+- oxpinyin accepts GLib behaviour across versions.
+  Do not check which GLib version is present.
 - Use `.python-version` as the only managed Python version declaration.
   Provision Python with `just python`.
   Do not write the version anywhere else.
@@ -198,7 +239,7 @@ If no sound library is available, report "tkrzw: not run (no sound libtkrzw on t
 - Follow the [test input rule](../testing/README.md#test-inputs).
 - To train an oracle C-API session, reset, parse, check full consumption and guess the sentence before `pinyin_train` on row 0.
   See the [oracle procedure](oracle.md).
-- Report results and reproduction commands under the [reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
+- Report results and reproduction commands under [rule 7](#7-proportionate-verification).
   Use the benches procedure to interpret measurements.
   Raw captures are not submission requirements.
 

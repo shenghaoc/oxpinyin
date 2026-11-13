@@ -115,5 +115,10 @@ field of one pin move together, in one commit:
    Then run `just packaging check-pc-metadata` against the rebuilt pin
    (issue #537).
 
-After any rebase that touches engine, capi or data, run the pins again
-([rebase procedure](../../CONTRIBUTING.md#checkpoints-and-rebases)). The person who merges later runs them again.
+After any rebase that touches engine, capi or data, run the pins again. The person who merges later runs them again.
+
+A conflict-free rebase does not verify a changed generation scheme: a dependency can change
+manifest layouts, fixture formats or builder recipes while old generated artifacts survive the
+textual rebase. Record the base with `git merge-base HEAD origin/main` before rebasing.
+After rebasing, list the committed artifacts whose generators changed between the recorded base and the new base on main, regenerate them, and re-verify under
+[verification scope and precedence](verification.md#verification-scope-and-precedence).

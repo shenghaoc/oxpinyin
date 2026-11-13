@@ -16,10 +16,10 @@ The human documents hold every project rule. This file states the agent procedur
 | Derive or change a pinned behaviour | The [source policy](docs/source-policy.md), its [Stage 2 reading procedure](docs/source-policy.md#stage-2) and the [pinned-behaviour page](docs/pinned-behaviour.md) |
 | Sort or compare candidate frequencies | The [candidate-frequency comparator ruling](docs/findings/compatibility-policy.md#no-ported-external-library-internals) |
 | Accept or record a difference from the pin | The [compatibility policy](docs/findings/compatibility-policy.md) and the [improvements page](docs/oxpinyin-improvements.md) |
-| Add or change a test | The [testing ownership rule](CONTRIBUTING.md#testing) |
-| Write or rewrite a document | The [writing rules](CONTRIBUTING.md#writing) |
+| Add or change a test | [Where tests belong](docs/testing/README.md#where-tests-belong) |
+| Write or rewrite a document | The [writing rules](#writing) |
 | Push | [Verification rule 5](docs/runbooks/verification.md#5-local-test-gate): the checks for iteration, push, WIP checkpoints and Markdown-only changes |
-| Open a PR or an issue | The [PR](CONTRIBUTING.md#pull-request-descriptions) and [issue](CONTRIBUTING.md#issue-descriptions) rules and the [results rule](CONTRIBUTING.md#results-and-reproduction) |
+| Open a PR or an issue | The [workflow](CONTRIBUTING.md#workflow), the [templates](.github/) and the [reporting rules](docs/runbooks/verification.md#7-proportionate-verification) |
 
 ## Procedure
 
@@ -28,9 +28,22 @@ The human documents hold every project rule. This file states the agent procedur
    Write no code in Phase 1.
 2. Stop for confirmation before Phase 2, the implementation.
 3. For Stage 2 work, name the pin source lines, or the disassembled symbols and offsets, that establish each behaviour.
-4. Stop and ask under the [approval conditions](CONTRIBUTING.md#approval-conditions).
-5. Work in your own [worktree](CONTRIBUTING.md#worktrees).
-6. Publish under the [checkpoint and rebase](CONTRIBUTING.md#checkpoints-and-rebases) and [stack](CONTRIBUTING.md#stack-placement) procedures.
+4. Stop and ask before a change that needs approval under the [approval conditions](CONTRIBUTING.md#approval-conditions). Also stop and ask when:
+   - the task is ambiguous;
+   - a test cannot pass without breaking the [constitution](docs/constitution.md);
+   - a SPEC or a contract contradicts the pin's source and the code does not follow the pin;
+   - the pin's source and disassembly cannot settle a behaviour.
+5. Work in your own worktree; run `git branch --show-current` first, and never switch, change or prune another workstream's checkout or worktree.
+6. Push a `wip/<issue>` branch at each checkpoint.
+7. Before a push, check that `git log <base>..HEAD` contains only this workstream's commits, where `<base>` is `origin/main` for independent work and the parent branch for a stack member; then follow the [rebase and stack procedure](docs/runbooks/verification.md#rebases-and-stacks).
+
+## Writing
+
+Use Simplified Technical English as a guide, without enforcing its dictionary or claiming compliance.
+Write short, direct sentences with consistent technical terms.
+Preserve identifiers, citations, requirement strength and the stated pin behaviour.
+Keep machine-read content unchanged.
+A human document describes the project; it does not depend on this file for its authority.
 
 ## Hard prohibitions
 
@@ -47,8 +60,3 @@ In Claude Code, `.claude/settings.json` denies the usual commands for the PR and
 The guard does not cover every command form, hosted session or agent.
 
 The prohibitions apply to every agent, every session and every form of a command.
-
-Precedents:
-
-- 2026-09-05: the `__store_ext__` interface change was proposed, self-selected and implemented in one agent run with no human input; only review caught it.
-- 2026-10-22 UTC: asked whether three PRs were ready for review, an agent marked one ready and posted six review requests without authority.

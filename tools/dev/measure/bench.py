@@ -9,7 +9,7 @@ Recipes (recipes.py) compose these.
 
 Measured launches are serial. `round_robin` runs one process at a time and
 interleaves the arms, spreading host drift over all of them. The measurement
-rules in CONTRIBUTING.md define the host conditions. Standard
+rules in docs/runbooks/benches.md define the host conditions. Standard
 library only.
 """
 import contextlib

@@ -779,7 +779,7 @@ on a [provisioned remote Linux host](cloud.md). Use the reference tkrzw cell
 unless the [backend rules](verification.md#2-backend-selection) select others.
 If no matching differential is apparent, ask the maintainer.
 
-Follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction),
+Follow [reporting rules](verification.md#7-proportionate-verification),
 and stop after the required checks.
 
 ## Troubleshooting and resumption

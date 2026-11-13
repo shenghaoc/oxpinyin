@@ -8,6 +8,12 @@ For cell selection, prebuilt artifacts and the result protocol, see the
 [verification procedure](../runbooks/verification.md). The
 tooling-lane run records the three-cell table.
 
+## Where tests belong
+
+A behaviour is tested where it is implemented. A higher layer tests only the decisions and connections that it adds.
+A test exists for a failure mechanism that no other test protects; different inputs or execution layers alone do not justify one.
+A new regression uses reduced input and explains any substantial fixture or runtime cost. It extends existing cases where that keeps the test clear, and a live comparison or a compact expectation replaces bulk observations where it suffices.
+
 ## Candidate capture
 
 `fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate
