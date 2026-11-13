@@ -1,7 +1,5 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
-use std::collections::BTreeMap;
-
 use oxpinyin_data::chunk_write::{sub_phrase_index_sections, validate_phrase_item};
 use oxpinyin_data::phrase_library::PhraseItemView;
 
@@ -155,81 +153,36 @@ impl SessionPhrases {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Slots {
-    Dense(Vec<u32>),
-    Sparse(BTreeMap<u32, u32>),
-}
-
-impl Default for Slots {
-    fn default() -> Self {
-        Self::Dense(Vec::new())
-    }
-}
+/// One offset word per slot. Zero marks an empty slot
+/// (phrase_index.cpp:180–193, 208–217 and 230–232 at 074a2219).
+#[derive(Clone, Debug, Default)]
+struct Slots(Vec<u32>);
 
 impl Slots {
     fn set(&mut self, slot: u32, offset: u32) {
-        if offset != 0
-            && let Self::Dense(offsets) = self
-            && slot as usize > offsets.len().saturating_mul(4).saturating_add(256)
-        {
-            *self = Self::Sparse(
-                offsets
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .filter(|(_, offset)| *offset != 0)
-                    .map(|(slot, offset)| (slot as u32, offset))
-                    .collect(),
-            );
+        let slot = slot as usize;
+        if offset != 0 && slot >= self.0.len() {
+            self.0.resize(slot + 1, 0);
         }
-        match self {
-            Self::Dense(offsets) => {
-                if offset != 0 {
-                    offsets.resize(offsets.len().max(slot as usize + 1), 0);
-                }
-                if let Some(value) = offsets.get_mut(slot as usize) {
-                    *value = offset;
-                }
-            }
-            Self::Sparse(offsets) => {
-                if offset == 0 {
-                    offsets.remove(&slot);
-                } else {
-                    offsets.insert(slot, offset);
-                }
-            }
+        if let Some(value) = self.0.get_mut(slot) {
+            *value = offset;
         }
     }
 
     fn offset(&self, slot: u32) -> Option<u32> {
-        match self {
-            Self::Dense(offsets) => offsets.get(slot as usize).copied(),
-            Self::Sparse(offsets) => offsets.get(&slot).copied(),
-        }
-        .filter(|offset| *offset != 0)
+        self.0
+            .get(slot as usize)
+            .copied()
+            .filter(|offset| *offset != 0)
     }
 
     fn entries(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        let (dense, sparse) = match self {
-            Self::Dense(offsets) => (Some(offsets), None),
-            Self::Sparse(offsets) => (None, Some(offsets)),
-        };
-        dense
-            .into_iter()
-            .flat_map(|offsets| {
-                offsets
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .filter(|(_, offset)| *offset != 0)
-                    .map(|(slot, offset)| (slot as u32, offset))
-            })
-            .chain(
-                sparse
-                    .into_iter()
-                    .flat_map(|offsets| offsets.iter().map(|(&s, &o)| (s, o))),
-            )
+        self.0
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, offset)| *offset != 0)
+            .map(|(slot, offset)| (slot as u32, offset))
     }
 }
 
@@ -245,14 +198,11 @@ impl UserLibrary {
         if self.headers_only {
             return 1;
         }
-        match &self.slots {
-            Slots::Dense(offsets) => offsets
-                .iter()
-                .rposition(|offset| *offset != 0)
-                .map(|i| i as u32),
-            Slots::Sparse(offsets) => offsets.last_key_value().map(|(&slot, _)| slot),
-        }
-        .map_or(1, |last| last.saturating_add(1).max(1))
+        self.slots
+            .0
+            .iter()
+            .rposition(|offset| *offset != 0)
+            .map_or(1, |last| (last as u32).saturating_add(1))
     }
 
     /// Replace one body: the pin's remove and add (`pinyin.cpp:563-605`).
@@ -537,11 +487,7 @@ impl UserLibrary {
     }
 
     fn compacted(&self) -> Self {
-        let count = self.slots.entries().count();
         let mut compacted = Self::default();
-        if self.token_end() as usize > count.saturating_mul(4).saturating_add(256) {
-            compacted.slots = Slots::Sparse(BTreeMap::new());
-        }
         for (slot, item) in self.items() {
             let bytes = item.as_bytes();
             let change = compacted.placement(slot, item);
@@ -560,7 +506,6 @@ impl UserLibrary {
     pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
         let (total, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
-        let mut count = 0_usize;
         // Retain the old decoder's all-or-nothing validation, including slot
         // zero, partial trailing offset words, and arbitrary text/key values.
         for (slot, bytes) in offsets.as_chunks::<4>().0.iter().enumerate() {
@@ -574,27 +519,13 @@ impl UserLibrary {
             validate_phrase_item(bytes).map_err(|error| {
                 format!("chunk write error: sub phrase index: slot {slot}: {error}")
             })?;
-            if let Some(view) = PhraseItemView::from_bytes(bytes) {
-                let _ = view;
-                count += 1;
-            }
         }
         let entries = offsets
             .as_chunks::<4>()
             .0
             .iter()
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
-        let slots = if offsets.len() / 4 <= count.saturating_mul(4).saturating_add(256) {
-            Slots::Dense(entries.collect())
-        } else {
-            Slots::Sparse(
-                entries
-                    .enumerate()
-                    .filter(|(_, offset)| *offset != 0)
-                    .map(|(slot, offset)| (slot as u32, offset))
-                    .collect(),
-            )
-        };
+        let slots = Slots(entries.collect());
         Ok(Self {
             total,
             slots,
@@ -610,7 +541,7 @@ impl UserLibrary {
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
         Ok(Self {
             total: 0,
-            slots: Slots::Dense(
+            slots: Slots(
                 offsets
                     .as_chunks::<4>()
                     .0
@@ -846,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn user_library_store_matches_build_chunk_in_both_slot_representations() {
+    fn user_library_store_matches_build_chunk_with_offset_holes() {
         for slot in [3, 1024] {
             let mut items = items();
             items[1].0 = slot;
@@ -866,7 +797,6 @@ mod tests {
                 "the loaded item bytes"
             );
             assert_eq!(library.item(slot).unwrap().n_pronunciations(), 2);
-            assert_eq!(matches!(library.slots, Slots::Dense(_)), slot == 3);
             assert_eq!(
                 library.store().unwrap(),
                 file,
