@@ -134,7 +134,7 @@ GENERATED_TABLES = (
     "crates/oxpinyin-engine/src/session/split_tables.rs",
 )
 CI_INPUTS = {
-    # cargo fmt reads the fuzz workspace.
+    # cargo fmt and the compile-only fuzz check read the fuzz workspace.
     "lint": Inputs((*RUST, "fuzz"), PYTHON_ONLY,
                    (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),

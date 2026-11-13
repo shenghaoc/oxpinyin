@@ -51,7 +51,7 @@ concurrency:
 #   harness — the ruff F check and the Python harness tests of tools/, when
 #             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
-# The fuzz targets build and run in verify-nightly.yml only.
+# The lint job compiles every fuzz target; fuzz execution stays nightly.
 
 jobs:
   store-backends:
@@ -158,6 +158,15 @@ jobs:
         uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
+      # Run on every selected lint job, including the main cache refresh.
+      # The directory selects the nightly in fuzz/rust-toolchain.toml.
+      # No cargo-fuzz, corpus, sanitizer run or model data is needed.
+      - name: Install the fuzz toolchain
+        working-directory: fuzz
+        run: rustup toolchain install
+      - name: Compile all fuzz targets
+        working-directory: fuzz
+        run: cargo check --locked --bins
       # Complexity limit: no function may exceed CCN 40. -w prints only the
       # functions over the limit; the exit status is the same. This step is
       # the one place that pins the Lizard release: the release the limit
