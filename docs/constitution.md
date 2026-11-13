@@ -40,6 +40,23 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
 7. **Dependencies.** oxpinyin depends on no other pinyin or IME crate and uses no transpiler dumps.
    Pin-built libpinyin is a test and migration subject; shipping code does not link to it.
 8. **Uncertainty.** A doubt goes to the maintainer; it is not settled by improvisation.
+9. **Pin-derived implementation.** The core crates are plain, idiomatic Rust.
+   oxpinyin implements libpinyin's own code; it never copies another language's library implementation.
+   Where the pin calls a library, oxpinyin matches that call's contract.
+   At a boundary, it uses the real interface through the established crate: `cxx`, `bindgen`, `libc`, `glib-sys` or `cargo-c`.
+   The pin's own code decides what oxpinyin does.
+   oxpinyin code is added or removed when it differs.
+   Unreleased Rust internals create no independent compatibility obligation.
+   The pinned C interfaces, behaviour and persistent formats remain binding.
+   In Stages 1 and 2, oxpinyin code may replace what the pin's code does with an idiomatic Rust expression of it.
+   It never adds something the pin does not do.
+   Code that does something the pin does not do is unnecessary and is removed.
+   Divergence starts at Stage 3.
+   An expectation about the pin's behaviour derives from cited lines of the pin.
+   A Rust-specific safety or tooling expectation follows its own stated contract.
+   A test of behaviour that survives a removal is kept, and only its fixtures are adjusted.
+   A test that exists only to exercise removed behaviour is removed with it.
+   Existing registered exceptions remain in force until each is revisited on its own.
 
 ## External interfaces
 

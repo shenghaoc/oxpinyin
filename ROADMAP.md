@@ -17,7 +17,7 @@ The sentence-trellis residual is a frozen exception (compatibility policy row 11
 
 ## Stage 2: current
 
-Stage 2 is bug-for-bug compatibility with the pin, with compatible internal improvement.
+Stage 2 replaces what the pin's code does with idiomatic Rust, without adding to it.
 The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 
 ### Exit gate: the third bug-for-bug sweep
@@ -43,16 +43,15 @@ They do not block the sweep.
   Compare with the reference-cell oracle using a contract test.
 - Replace the `SEARCH_*` and `ERROR_*` integer codes in `oxpinyin-user/src/phrase_table.rs` with an enum or `Result`.
 
-### Compatible internal improvement
+### Internal implementation
 
-These changes keep output, files and the ABI unchanged.
-Each lands on its own when ready and does not block the sweep.
+oxpinyin code may replace what the pin's code does with an idiomatic Rust expression of it.
+It never adds something the pin does not do.
+Code that does something the pin does not do is unnecessary and is removed, along with tests that exist only to exercise the removed behaviour.
+Existing registered exceptions remain in force until each is revisited on its own.
+Each change lands independently and does not block the sweep.
 
-- Dictionary cursor walks for lattice building.
-- Incremental lattices for each keystroke.
-- Per-session arenas.
-- No ordered atomics on the steady cycle.
-- Host-independent cost derivation with identical output on every cell.
+- Remove oxpinyin-only synchronisation from the steady cycle where the pin has none.
 
 ## Stage 3: after Stage 2
 
@@ -66,3 +65,9 @@ Each candidate adds one opt-in cargo feature:
    This changes the system data files.
 3. Upgrade the model: trigram or Kneser-Ney smoothing, typo edges, or oxpinyin's own data.
    This changes output.
+4. Dictionary cursor walks for lattice building.
+   This changes how dictionary searches are performed.
+5. Incremental lattices for each keystroke.
+   This retains work between guesses instead of rebuilding it.
+6. Per-session arenas.
+   This adds allocation and retention work that the pin does not do.
