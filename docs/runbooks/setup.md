@@ -410,7 +410,7 @@ nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 ```bash
 brew install berkeley-db@5 kyoto-cabinet
 (cd fuzz && rustup toolchain install)
-just fuzz parser -- -runs=100
+just fuzz chewing-parser -- -runs=100
 just sanitize bdb address
 just sanitize bdb thread
 just sanitize kc address

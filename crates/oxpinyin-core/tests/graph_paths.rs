@@ -1,10 +1,8 @@
 //! Every path the pinned oracle selected is a path through our graph.
 //!
-//! This is the W4-T1 acceptance check, and the reason the graph exists. The
-//! 483 `path-set` divergences measured on the W2 corpus all have the
-//! same shape — an initial-only key somewhere other than the end — which the
-//! foundation parser's `Vec<Parse>` contract cannot represent and a graph
-//! represents without trying.
+//! This is the W4-T1 acceptance check. The pin admits initial-only keys
+//! at any position, including repeated and non-final keys. The graph
+//! represents those keys without enumerating every path.
 //!
 //! The fixture is the pin's own answer for 1,788 corpus records, recovered
 //! from historical W2 logs: every record with a partial segment, a consumed

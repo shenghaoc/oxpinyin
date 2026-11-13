@@ -58,9 +58,7 @@ pub use options::{
     USE_DIVIDED_TABLE, USE_RESPLIT_TABLE, USE_TONE, ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26,
     ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
 };
-pub use parser::{
-    Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
-};
+pub use parser::{Completeness, FullPinyinParser};
 pub use scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,

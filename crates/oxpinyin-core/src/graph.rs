@@ -2,7 +2,7 @@
 //!
 //! `docs/findings/segment-graph.md` specifies what this builds and why. The
 //! short version: the pin admits an initial-only key at *any* cursor position,
-//! any number of times, and enumerating that as an explicit `Vec<Parse>` is
+//! any number of times, and enumerating every path is
 //! exponential. A graph over byte positions represents the same path set in
 //! `O(n × max_syllable_len)` edges and lets the decoder's `k` bound the
 //! output instead.
@@ -1165,8 +1165,7 @@ mod tests {
 
     #[test]
     fn repeated_initials_chain_the_whole_way() {
-        // The shape the pin produces for zzzzzzzz and qqqq…, which the
-        // foundation parser could only consume one byte of.
+        // The pin admits initial-only keys repeatedly (`pinyin_parser2.cpp:266-284`).
         let graph = SegmentGraph::build(b"zzzzzzzz").expect("valid");
         assert_eq!(graph.consumed(), 8);
         assert!(graph.fully_consumed());

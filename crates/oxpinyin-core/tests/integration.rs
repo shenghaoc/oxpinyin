@@ -13,7 +13,6 @@ mod fixture_provenance;
 mod graph_paths;
 mod keyboard_tables;
 mod merged_rows;
-mod parser_acceptance;
 mod scheme_parsers;
 mod zhuyin_parse_parity;
 

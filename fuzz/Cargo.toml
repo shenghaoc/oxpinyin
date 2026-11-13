@@ -28,13 +28,6 @@ oxpinyin-user = { path = "../crates/oxpinyin-user" }
 tempfile = "3.27"
 
 [[bin]]
-name = "parser"
-path = "fuzz_targets/parser.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "dict-loader"
 path = "fuzz_targets/dict_loader.rs"
 test = false
