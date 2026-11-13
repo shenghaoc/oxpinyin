@@ -3,6 +3,8 @@
 //! GLib 2.89.4 glib/gstdio.h:60-82 maps Unix g_rename/g_fsync directly
 //! to rename/fsync. These tests cover process interruption, not power loss
 //! or C-facade execution. The missing chunk sync remains #1221.
+mod common;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -11,8 +13,8 @@ use std::process::Command;
 use oxpinyin_core::SyllableKey;
 use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::table_info::TableConf;
-use oxpinyin_data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
-use oxpinyin_user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+use oxpinyin_data::user_files::UserTableInfo;
+use oxpinyin_user::persistence::UserConfLaw;
 use oxpinyin_user::{PinyinKey, UserStore};
 
 const CHILD: &str = "OXPINYIN_929_LATE_DIR";
@@ -23,40 +25,40 @@ const INDEXES: [&str; 3] = [
     "user_bigram.db",
 ];
 
-fn originals() -> SystemOriginals {
-    // A valid late system row supplies the existing remap callback after
-    // the two user libraries. The pin walks table indices in ascending
-    // order (src/pinyin.cpp:927-938; src/zhuyin.cpp:560-571).
-    // Row names and independent file types: src/storage/table_info.cpp:145-156,266-286.
-    let conf = format!(
-        "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\
-         source table format:pinyin\ndatabase format:{}\n\
-         default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\n\
-         default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\n\
-         default USER_DICTIONARY late.table late.bin late.dbin SYSTEM_FILE\n",
-        SystemVersions::for_this_build(7, 14).database_format
-    );
-    let conf_dir = tempfile::tempdir().unwrap();
-    std::fs::write(conf_dir.path().join("table.conf"), conf).unwrap();
-    let layout = UserFileLayout::from_conf(&TableConf::load_from_dir(conf_dir.path()).unwrap());
-    let library = SystemLibrary {
-        total: 100,
-        range_end: 2,
-        mapped: None,
-        items: BTreeMap::from([(
+/// A system directory whose `table.conf` puts a valid late system row after
+/// the two user libraries, with that row's chunk. The pin walks table
+/// indices in ascending order (src/pinyin.cpp:927-938;
+/// src/zhuyin.cpp:560-571), so the late row supplies the remap callback
+/// after the two user libraries are staged.
+/// Row names and independent file types: src/storage/table_info.cpp:145-156,266-286.
+fn system() -> (std::path::PathBuf, TableConf) {
+    let dir = common::system_dir(&[(
+        "late.bin",
+        vec![(
             1,
             ChunkItem {
                 phrase: vec![0x4f60],
                 unigram: 100,
                 prons: Vec::new(),
             },
-        )]),
-    };
-    SystemOriginals::new(oxpinyin_user::LibraryTable::from([(7, library)]), layout)
+        )],
+    )]);
+    let conf = format!(
+        "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\
+         source table format:pinyin\ndatabase format:{}\n\
+         default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\n\
+         default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\n\
+         default USER_DICTIONARY late.table late.bin late.dbin SYSTEM_FILE\n",
+        common::versions().database_format
+    );
+    std::fs::write(dir.join("table.conf"), conf).unwrap();
+    let conf = TableConf::load_from_dir(&dir).unwrap();
+    (dir, conf)
 }
 
 fn open(dir: &Path, law: UserConfLaw) -> UserStore {
-    UserStore::open_libpinyin(dir, originals(), SystemVersions::for_this_build(7, 14), law).unwrap()
+    let (system, conf) = system();
+    common::open(dir, &system, &conf, law)
 }
 
 fn change(store: &mut UserStore) {

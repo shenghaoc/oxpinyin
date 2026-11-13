@@ -1,42 +1,43 @@
 //! Source-derived save laws at 074a2219: pinyin.cpp:922-1146,
 //! zhuyin.cpp:547-698 and include/memory_chunk.h:536-557.
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
 use oxpinyin_data::chunk_write::ChunkItem;
-use oxpinyin_data::user_files::SystemVersions;
+use oxpinyin_data::table_info::TableConf;
+use oxpinyin_data::user_files::UserFileLayout;
 use oxpinyin_user::UserStore;
-use oxpinyin_user::persistence::{SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw};
+use oxpinyin_user::persistence::{SaveBaseline, UserConfLaw};
 
-fn originals() -> SystemOriginals {
-    [1, 2, 3, 4]
-        .into_iter()
-        .map(|index| {
-            (
-                index,
-                SystemLibrary {
-                    total: 100,
-                    range_end: 2,
-                    mapped: None,
-                    items: BTreeMap::from([(
-                        1,
-                        ChunkItem {
-                            phrase: vec![0x4f60],
-                            unigram: 100,
-                            prons: Vec::new(),
-                        },
-                    )]),
-                },
-            )
-        })
-        .collect::<oxpinyin_user::LibraryTable<_>>()
-        .into()
+/// A system directory with the stock layout's four system libraries, one
+/// item each.
+fn system() -> (std::path::PathBuf, TableConf) {
+    let conf = TableConf::stock();
+    let item = || {
+        vec![(
+            1,
+            ChunkItem {
+                phrase: vec![0x4f60],
+                unigram: 100,
+                prons: Vec::new(),
+            },
+        )]
+    };
+    let names: Vec<String> = conf
+        .system_libraries()
+        .filter_map(|(_, row)| Some(row.system.as_ref()?.display().into_owned()))
+        .collect();
+    assert_eq!(names.len(), 4);
+    let chunks: Vec<(&str, Vec<_>)> = names.iter().map(|name| (name.as_str(), item())).collect();
+    (common::system_dir(&chunks), conf)
 }
 
 fn open(dir: &Path, law: UserConfLaw) -> UserStore {
-    UserStore::open_libpinyin(dir, originals(), SystemVersions::for_this_build(7, 14), law)
-        .expect("open profile")
+    let (system, conf) = system();
+    common::open(dir, &system, &conf, law)
 }
 
 fn seed(dir: &Path, law: UserConfLaw) -> UserStore {
@@ -47,12 +48,11 @@ fn seed(dir: &Path, law: UserConfLaw) -> UserStore {
 }
 
 fn save_destinations(dir: &Path) -> Vec<std::path::PathBuf> {
-    let layout = originals();
+    let layout = UserFileLayout::stock();
     let mut libraries: Vec<_> = layout
-        .layout()
         .system_logs()
         .iter()
-        .chain(layout.layout().user_libraries())
+        .chain(layout.user_libraries())
         .collect();
     libraries.sort_by_key(|(index, _)| *index);
     let mut names: Vec<_> = libraries
@@ -251,20 +251,31 @@ fn training_after_a_soft_rename_failure_saves_the_full_profile() {
             assert!(!session.is_modified());
         }
         let phrases = store.export_phrases_in(7).unwrap();
+        let system_unigram = store.system_unigram(SYSTEM).expect("live system item");
         let unigram = store.user_unigram_frequency(USER).unwrap();
         let gram = store.bigram_row(SYSTEM).unwrap();
         drop(store);
         drop(uninterrupted);
 
+        // What a new session reads from each profile.
         let load = |path| {
-            oxpinyin_user::persistence::load(
-                path,
-                &originals(),
-                &SystemVersions::for_this_build(7, 14),
-                law,
+            let session = open(path, law);
+            let grams: Vec<_> = session
+                .bigram_predecessors()
+                .unwrap()
+                .into_iter()
+                .map(|prev| (prev, session.bigram_row(prev).unwrap()))
+                .collect();
+            (
+                session.phrases().unwrap(),
+                [5, 6, 7].map(|library| session.export_phrases_in(library).unwrap()),
+                grams,
+                session.unigram_total().unwrap(),
+                session
+                    .system_unigram(SYSTEM)
+                    .expect("reopened system item"),
+                session.user_unigram_frequency(USER).unwrap(),
             )
-            .unwrap()
-            .state
         };
         assert_eq!(load(dir.path()), load(control.path()), "{law:?}");
         assert!(
@@ -274,6 +285,7 @@ fn training_after_a_soft_rename_failure_saves_the_full_profile() {
         );
         let reopened = open(dir.path(), law);
         assert_eq!(reopened.export_phrases_in(7).unwrap(), phrases);
+        assert_eq!(reopened.system_unigram(SYSTEM), Some(system_unigram));
         assert_eq!(reopened.user_unigram_frequency(USER).unwrap(), unigram);
         assert_eq!(reopened.bigram_row(SYSTEM).unwrap(), gram);
         assert_eq!(reopened.token_for_phrase("你").unwrap(), Some(USER));

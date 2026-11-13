@@ -618,8 +618,9 @@ Architecture — the session state behind the value engine:
   residual total by running the ported mask on a copy. A writer takes the
   database guard, then the container, and moves the write generation
   before it releases the database guard. `UserState.bigram` holds the raw
-  `(key, value)` rows in file order. `persistence::load` fills it and
-  `persistence::save_state_reporting`, which has no container, writes it.
+  `(key, value)` rows in file order. Only tests fill it: the test session
+  reads a profile's rows into it and seeds a session's container from it.
+  A session never fills it.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container.** On Kyoto Cabinet the *system* `bigram.db`
   is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`), but the *user*
@@ -633,7 +634,7 @@ Architecture — the session state behind the value engine:
   and Kyoto Cabinet overrides it with the stash-plus-snapshot form.
   Opening the user bigram through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
-* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin` reads the
+* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin_checked` reads the
   profile into the **session's state in process memory**: the user
   library arenas, the pinyin index and phrase table, the pin's user
   bigram container, the live system items and the libraries'
@@ -688,8 +689,8 @@ Semantics this preserves:
 * **Every open is a session of its own.** Upstream holds nothing per
   directory: every init reads the profile into its own context
   (`pinyin.cpp:326-444`) and every save writes that context's whole state
-  (`:1132-1147`). `open_libpinyin` reserves a fresh session per open and
-  runs `check_format` every time. Two contexts on one directory are
+  (`:1132-1147`). Every open runs `check_format` (`UserStore::check_profile`), and
+  `open_libpinyin_checked` then makes a fresh session. Two contexts on one directory are
   therefore independent, and when both save, the later save's files are
   the profile.
 * **The whole marker is the pin's `fscanf` sequence, and its abort point

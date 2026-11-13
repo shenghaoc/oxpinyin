@@ -405,20 +405,18 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
+    use oxpinyin_store::WriteStore as _;
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let state = oxpinyin_user::persistence::UserState {
-        bigram: rows,
-        ..oxpinyin_user::persistence::UserState::default()
-    };
-    oxpinyin_user::persistence::save_state_reporting(
-        user_dir,
-        &state,
-        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
-        &oxpinyin_data::user_files::SystemVersions::from_conf(&conf),
-        1,
+    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
+    let mut marker = oxpinyin_data::user_files::UserTableInfo::conform_to(&versions);
+    marker.open_counter = 1;
+    std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
+    oxpinyin_store::DefaultStore::write_user_bigram(
+        &user_dir.join(oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+        &rows,
     )
-    .expect("write the profile");
+    .expect("write the user bigram");
 }
 
 /// Writes a `user.conf` in `user_dir` that conforms to the `table.conf` of

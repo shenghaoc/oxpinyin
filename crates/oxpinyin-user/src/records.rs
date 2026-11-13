@@ -50,6 +50,7 @@ pub(crate) struct RecordArena {
 }
 
 impl RecordArena {
+    #[cfg(test)]
     pub(crate) const fn new() -> Self {
         Self {
             arena: Vec::new(),

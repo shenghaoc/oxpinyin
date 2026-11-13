@@ -23,14 +23,15 @@
 //!   `phrase` are inverse on the live rows (checked in full while the
 //!   store is small, on the freshest token once it grows).
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_core::SyllableKey;
+use oxpinyin_data::table_info::TableConf;
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_user::{
-    phrase_index_library_index, PinyinKey, SystemOriginals, UserConfLaw, UserStore, UserStoreError,
-    USER_DICTIONARY,
+    phrase_index_library_index, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw,
+    UserStore, UserStoreError, USER_DICTIONARY,
 };
 use tempfile::TempDir;
 
@@ -84,7 +85,7 @@ fn key_for(byte: u8) -> PinyinKey {
 static LAST_PATH: Mutex<Option<TempDir>> = Mutex::new(None);
 
 /// A user directory no earlier run can have written: a fresh unique
-/// name, never a reused one, so `open_libpinyin` loads no profile.
+/// name, never a reused one, so the open loads no profile.
 fn fresh_dir() -> TempDir {
     if let Ok(mut last) = LAST_PATH.lock() {
         drop(last.take());
@@ -95,15 +96,50 @@ fn fresh_dir() -> TempDir {
         .expect("a fresh user directory")
 }
 
-/// A session over `dir` with no system library: the stock layout's user,
-/// network and addon libraries. `save` writes the pin's file set there,
-/// so the dirty flag clears as the pin's does.
+/// The system directory every session opens over: a `table.conf` whose
+/// only rows are the stock layout's addon, network and user libraries, so
+/// the library loop maps no system chunk.
+fn system() -> &'static (TempDir, TableConf) {
+    static SYSTEM: OnceLock<(TempDir, TableConf)> = OnceLock::new();
+    SYSTEM.get_or_init(|| {
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-fuzz-user-store-system-")
+            .tempdir()
+            .expect("a system directory");
+        std::fs::write(
+            dir.path().join("table.conf"),
+            "binary format version:7\nmodel data version:14\n\
+             lambda parameter:0.312699\n\nsource table format:pinyin\n\
+             database format:BerkeleyDB\n\n\
+             default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\n\
+             default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\n\
+             default USER_DICTIONARY NULL NULL user.bin USER_FILE\n",
+        )
+        .expect("write table.conf");
+        let conf = TableConf::load_from_dir(dir.path()).expect("a table.conf");
+        (dir, conf)
+    })
+}
+
+/// A session over `dir` with no system library, opened as an init opens
+/// one: the profile check, then the library loop over the layout's user,
+/// network and addon rows. `save` writes the pin's file set there, so the
+/// dirty flag clears as the pin's does.
 fn open_session(dir: &std::path::Path) -> UserStore {
-    UserStore::open_libpinyin(
+    let (system, conf) = system();
+    let layout = UserFileLayout::from_conf(conf);
+    let versions = SystemVersions::for_this_build(7, 14);
+    let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin)
+        .expect("a fresh profile passes the check");
+    let rows = LibraryLoopRows::new(system.path(), conf, Some(dir));
+    let mut originals = SystemOriginals::new(Default::default(), layout);
+    UserStore::open_libpinyin_checked(
         dir,
-        SystemOriginals::new(Default::default(), UserFileLayout::stock()),
-        SystemVersions::for_this_build(7, 14),
+        &mut originals,
+        &rows,
+        versions,
         UserConfLaw::Pinyin,
+        check,
     )
     .expect("a fresh session opens")
 }

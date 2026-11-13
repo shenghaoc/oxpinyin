@@ -22,6 +22,8 @@
 //! are libpinyin 074a2219.
 //! See `docs/testing/upstream-test-coverage.md` for the ledger entries.
 
+mod common;
+
 use std::path::Path;
 
 use oxpinyin_core::SyllableKey;
@@ -45,9 +47,25 @@ fn session() -> UserStore {
     UserStore::open_transient(no_originals(), versions(), UserConfLaw::Pinyin).unwrap()
 }
 
-/// A session over the user directory `dir`, for the tests that save.
+/// A session over the user directory `dir`, for the tests that save: an
+/// init over a `table.conf` with the stock layout's three user libraries
+/// and no system library.
 fn session_in(dir: &Path) -> UserStore {
-    UserStore::open_libpinyin(dir, no_originals(), versions(), UserConfLaw::Pinyin).unwrap()
+    let system = common::system_dir(&[]);
+    std::fs::write(
+        system.join("table.conf"),
+        format!(
+            "binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\
+             source table format:pinyin\ndatabase format:{}\n\
+             default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\n\
+             default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\n\
+             default USER_DICTIONARY NULL NULL user.bin USER_FILE\n",
+            versions().database_format
+        ),
+    )
+    .unwrap();
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system).unwrap();
+    common::open(dir, &system, &conf, UserConfLaw::Pinyin)
 }
 
 /// A user item with a zero unigram and one reading of count zero: a token
