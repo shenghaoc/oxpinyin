@@ -1,18 +1,15 @@
 # Native contributor setup
 
-This procedure sets up native development on Linux, macOS or Windows and gives the contribution checks.
-Pin-comparison campaigns use the local oracle `performance` stage; see
-[where measurements run](benches.md#where-measurements-run). Native development
-and native-only measurements need no container. The oxpinyin-only nightly
-snapshot uses plain unpinned Debian testing, like every other Linux environment.
-
-Start from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
+This procedure sets up native development on Linux, macOS or Windows.
+It starts from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
 and test local files. They do not install an input method or replace your
-system libpinyin. If a command fails, stop, and keep that command and its full
-error before you continue. In Bash, `echo $?` immediately after a command
+system libpinyin. A failed command stops the setup; that command and its full
+error are kept before the work continues. In Bash, `echo $?` immediately after a command
 shows its exit status (zero means success); PowerShell uses `$LASTEXITCODE`.
-Choose your operating system below. Ordinary native work
-requires no container, oracle or model20 (upstream reference model data).
+Each operating system has its own section below. Ordinary native work and native-only
+measurements require no container, oracle or model20 (upstream reference model data).
+Pin-comparison measurements run in the oracle `performance` stage
+([where measurements run](benches.md#where-measurements-run)).
 
 ## Storage backend
 
@@ -25,12 +22,12 @@ Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
 
 The Rust **toolchain** is the compiler and its tools. rustup installs
-and selects it. `rust-toolchain.toml` is the authority for the version and components.
+and selects it. `rust-toolchain.toml` selects the version and components. The workspace `rust-version` in `Cargo.toml` declares the minimum supported Rust version.
 The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
-Linux is one native platform target. You need:
+Linux setup needs:
 
 - Git, curl and CA certificates;
 - a C/C++ compiler and linker, Make and pkg-config;
@@ -41,14 +38,12 @@ Linux is one native platform target. You need:
 Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
 non-default backends.
 A development package supplies the headers and libraries that you need to
-compile against a native library. Package names depend on your system. That
-does not change the build or create another compatibility environment.
+compile against a native library. Package names depend on your system.
 Repository Python does not use the system interpreter. Provision it with uv
 as described below.
 
 If these prerequisites are missing, install them with the package
-manager of your system. `sudo` asks for administrator permission to install system packages.
-These are common package-manager examples, not separate supported or tested
+manager of your system. These are common examples, not separately supported
 distribution targets:
 
 ```bash
@@ -80,40 +75,27 @@ pkg-config --modversion tkrzw
 ```
 
 The build discovers tkrzw through pkg-config. The Linux triplet selects shared
-libraries and release-only builds. The loader uses `LD_LIBRARY_PATH`; oxpinyin
-adds no rpath. Keep these exports when running product binaries and tests,
-including `just sanitize tkrzw address`. `tools/tkrzw/runtime.py` checks the
-resolved library against `OXPINYIN_TKRZW_PREFIX`.
-The port itself keeps vcpkg's linkage defaults. Stock `x64-linux` installs
-static debug and release libraries.
+libraries and release-only builds; the port itself keeps vcpkg's linkage
+defaults, and stock `x64-linux` installs static debug and release libraries.
+The loader uses `LD_LIBRARY_PATH`; oxpinyin adds no rpath. Product binaries
+and tests, including `just sanitize tkrzw address`, run with these exports.
+See [tkrzw runtime enforcement](cloud.md#runtime-enforcement-verification-rule-9) for how `tools/tkrzw/runtime.py` checks the resolved library.
 Linux CI uses the same overlay and a vcpkg binary cache. Release packaging,
 shipping-size measurements and oracle/reference images keep Debian's tkrzw.
-Ubuntu's packaged tkrzw is defective; development uses the overlay instead
+Ubuntu's packaged tkrzw is defective and is not used for development
 ([finding](../findings/tkrzw-distro-compat.md)).
 
 ### Comparing against another revision
 
-`just packaging sizes` builds each side with that revision's own tooling
-([shipping-library sizes](../packaging.md#shipping-library-sizes)). It extracts
-the revision and runs `just --justfile <source>/justfile packaging install`
-there. The `packaging` and `python` recipes of that revision choose its
-interpreter from its `.python-version` and `uv.toml`, install it and pass its
-startup flags. The tooling of the checkout names no interpreter or flag of
-another revision.
-
-Revisions before the change to CPython 3.14 name CPython 3.15 and a newer uv
-floor. A comparison against such a revision needs just and a uv that can
-install CPython 3.15 final. uv 0.11.32 cannot install it, although it meets the
-floor of this checkout. CI's `astral-sh/setup-uv` step installs a uv that can.
+A comparison needs a uv that can install the interpreter named in the compared revision’s `.python-version` and meets that revision’s `uv.toml` requirement.
 When the revision's recipe fails, the command names the revision and prints the
 message of just.
 
 ### Installing uv and cargo-c
 
-If `uv --version` fails, or uv refuses to run because it is older than the
-`required-version` in `uv.toml`, run uv's official
-[standalone installer](https://docs.astral.sh/uv/getting-started/installation/#standalone-installer).
-On macOS and Linux:
+Use `just doctor` to identify missing or outdated tools before installing or upgrading them.
+
+Install uv first if it is missing or falls below the requirement in `uv.toml`:
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -168,19 +150,19 @@ with `cargo install` at their pinned versions, cargo-nextest with
 `rustup component add`. It does not run the oracle setup. It needs Cargo or
 rustup only for a tool that it must install; without that program it exits 1 and
 names the tool. `--python-only` alone installs none of these tools and needs
-neither program. See [cloud.md](cloud.md#development-tools-without-the-oracle).
+neither program. See [cloud setup](cloud.md#python-only-toolsdev-hosts).
 
-Repository Python uses managed CPython 3.14 with the GIL.
+Repository Python uses the managed CPython named in `.python-version`.
 
 `just doctor` reports the tools it finds, including their paths and versions.
 On Linux, doctor also checks GNU ld, gcov and Valgrind.
 
 The native command interface needs just at or above the `minimum-version` in the
 root `justfile`. `just` enforces this itself, and `just doctor` reports it.
-Install just through the route of your host: `brew install just` on macOS, the
+just comes through the route of the host: `brew install just` on macOS, the
 distribution package on Linux, or `cargo install just --locked`.
 
-Provision the interpreter through `just python`. It runs `uv python install --quiet`,
+`just python` provisions the interpreter. It runs `uv python install --quiet`,
 which reads `.python-version` and does nothing when that interpreter is present.
 A plain version request prefers the GIL-enabled build, and the check below rejects
 a free-threaded build. Every other Python recipe depends on `just python`, so a recipe
@@ -207,28 +189,21 @@ PYTHON
 ```
 
 `.python-version` is the one place where the interpreter version is written.
+Inside the checkout, `uv run --no-project --managed-python python` and
+`uv python find --managed-python` read it. A script that changes directory
+first, or a container build, copies the file in or passes its contents on; it
+does not write the version again. `tools/dev/python-request.test.py` fails
+when a version request appears anywhere else, outside `docs/findings/`.
+A `tools.dev` module runs from the checkout with the managed interpreter and
+the invocation in the `justfile`.
 
-- Inside the
-  checkout, `uv run --no-project --managed-python python` and `uv python find
-  --managed-python` read it.
-- A script that changes directory first, or a container
-  build, copies the file in or passes its contents on. It does not write the
-  version again.
-- Run the required `tools.dev` module from the checkout with the managed interpreter
-  and the invocation in the `justfile`.
-
-The check `tools/dev/python-request.test.py` fails when a version request
-appears anywhere else, outside the dated records in `docs/findings/`.
-
-**Rule (#1230).** Provision the managed Python interpreter of the repository
-through `just python`. Do not substitute another interpreter. A later series is a deliberate change: the tooling
-runs with explicit UTF-8 mode (`-X utf8`). Do not use a system Python, a virtual
-environment, `pyproject.toml` or `uv.lock`.
+Only this interpreter is used: no system Python, virtual environment,
+`pyproject.toml` or `uv.lock`. Commands use `-X utf8`.
 
 `just build`, `just clippy` and `just fmt` pass Cargo arguments to
-Cargo unchanged. To limit parallel builds, set `CARGO_BUILD_JOBS` or `[build] jobs` in
-your own `~/.cargo/config.toml`. Select the same native packages
-and backend as the Cargo command that you would otherwise run:
+Cargo unchanged ([limit parallel builds](verification.md#8-builds) with
+`CARGO_BUILD_JOBS`). The selection of native packages and backend is the same as for the Cargo
+command that the recipe replaces:
 
 ```bash
 just build --locked -p oxpinyin-core
@@ -262,8 +237,8 @@ These rules apply to the selection:
   maps known modules to their tests.
 - Any unknown path or missing mapped test
   selects the full suite. An empty diff selects no files.
-- You cannot combine explicit files and
-  `--changed`.
+- Explicit files and `--changed` cannot be
+  combined.
 - Every mode keeps the credential filter and the
   existing exclusions.
 
@@ -273,31 +248,27 @@ With `-k` and no explicit FILE, the runner reports files with no matching tests 
 unselected. A named file with no matches stays a failure, as does a pattern
 that matches no tests across all selected files.
 
-The Windows recipes use PowerShell and keep the child status explicitly.
-Their argument transport stays TODO (no Windows host).
-
-Run `just fetch-contract-data` once before a full test run. The
-`candidate_surface` test of `oxpinyin-runtime` reads the pinned system data that it fetches, and fails without it.
+A full test run needs one `just fetch-contract-data` beforehand: the
+`candidate_surface` test of `oxpinyin-runtime` reads the pinned data that it
+fetches ([test inputs](../testing/README.md#test-inputs)).
 
 The native Rust test entry point uses cargo-nextest at or above the
 `nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
-needs it); `just doctor` reports it. Install it with
-`cargo install cargo-nextest --locked` (or the prebuilt release). `just test` runs `cargo nextest run --profile local`
-with your arguments. Pass the same crate and
-feature selection as for cargo test (see [backend selection](backends.md)). For the CI limits, pass `--profile ci`. `just test-doc` runs
+needs it); `just doctor` reports it. `cargo install
+cargo-nextest --locked` (or the prebuilt release) installs it. `just test` runs `cargo nextest run --profile local`
+with the given arguments, which take the same crate and
+feature selection as cargo test (see [backend selection](backends.md)). `--profile ci` selects the CI limits. `just test-doc` runs
 `cargo test --doc`.
 
 `just packaging install` and `just measure compare` build the shipping library
-with [cargo-c](#installing-uv-and-cargo-c) on Linux and macOS.
+with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
+reports the version found. `cargo install cargo-c --locked`, the distribution
+package or the upstream release archive installs it.
 
-If names or enabled repositories differ, use the official package documentation of your system.
-The native check below prints the tkrzw version that
-pkg-config reports.
-
-In a managed environment that already has these packages, skip their
+Where names or enabled repositories differ, the official package documentation of the system applies.
+A managed environment that already has these packages skips their
 installation. Root development environments omit `sudo`. Without installation
-rights, ask the environment owner for these packages. Ordinary native work
-does not require nested Docker or Podman.
+rights, the environment owner supplies these packages.
 
 If you already have a checkout, go to its root: the directory that contains
 `CONTRIBUTING.md` and `Cargo.toml`. Replace `/path/to/oxpinyin` below with
@@ -347,7 +318,7 @@ the selected toolchain, architecture and backend. It installs nothing.
 Success means that all test summaries have zero failures, and that the storage check ends
 with `Setup check passed`. Negative
 tests can deliberately print warnings, assertions, `failed` or `CRITICAL`.
-Use the final summaries and the process exit status to decide success.
+The final summaries and the process exit status decide success.
 
 In a fresh Bash terminal, use your checkout directory if it is different:
 
@@ -358,11 +329,11 @@ just check
 ```
 
 Cargo reuses downloaded dependencies and the `target/` outputs of that checkout.
-Keep outputs separate across worktrees (separate checkouts of branches).
+Outputs stay separate across worktrees (separate checkouts of branches).
 
 ## macOS
 
-Use Terminal, Git, Apple's
+macOS setup uses Terminal, Git, Apple's
 [Command Line Tools](https://developer.apple.com/xcode/resources/),
 [Homebrew](https://docs.brew.sh/Installation) and rustup. If the Command Line
 Tools are absent, run `xcode-select --install` and complete the system dialog.
@@ -394,8 +365,8 @@ pkg-config --modversion tkrzw
 two settings. It builds the release variant only. It also leaves the install
 name of `libtkrzw` as upstream's build records it, the absolute path in
 `$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib`, so every binary linked against
-it loads it with no rpath and no `DYLD_LIBRARY_PATH`. Do not move the vcpkg
-checkout afterwards; reinstall the port instead. The triplet makes
+it loads it with no rpath and no `DYLD_LIBRARY_PATH`. The vcpkg
+checkout therefore stays where it is; a moved checkout needs the port reinstalled. The triplet makes
 `VCPKG_ROOT` part of the package's identity, so an install from a new root
 builds from source and never restores the library of another root from
 vcpkg's binary cache.
@@ -413,21 +384,13 @@ export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
 
-`export` sets a value that the commands in this terminal inherit. pkg-config
-finds the vcpkg install of tkrzw, the selected backend, through the
-`PKG_CONFIG_PATH` export above. This is a real storage link/run check; a
-`cargo check` alone does not run the tests.
-In a fresh Bash terminal, go back to the checkout, source the Cargo environment,
-and repeat the exports and the check. Linux C-ABI packaging and Linux reference
-differentials are separate evidence, not permanent restrictions on portability.
+pkg-config finds the vcpkg install of tkrzw through the `PKG_CONFIG_PATH`
+export above. This is a real storage link/run check; a `cargo check` alone
+does not run the tests. In a fresh Bash terminal, go back to the checkout,
+source the Cargo environment, and repeat the exports and the check.
 
-The nightly macOS CI job uses this broader portable scope:
-
-```bash
-cargo test --locked --workspace
-```
-
-The macOS job of CI installs tkrzw the same way. Berkeley DB is a non-default
+The nightly macOS CI job installs tkrzw the same way and runs
+`cargo test --locked --workspace`. Berkeley DB is a non-default
 backend. To use it:
 
 1. Run `brew install berkeley-db@5`.
@@ -436,7 +399,7 @@ backend. To use it:
 3. Run `export CARGO_TARGET_DIR=target/bdb`.
 4. Run `just check bdb`.
 
-Keep the target and user-data directories of each backend separate.
+The target and user-data directories of each backend stay separate.
 
 Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
 select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
@@ -462,20 +425,21 @@ Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target. Both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
 
-### When the macOS job runs
+### Nightly macOS and Windows jobs
 
-The macOS workspace job is the `test-macos` job in `verify-nightly.yml`.
-Its schedule and merge status are in [verification rule 10](verification.md#10-ci-merge-conditions).
-Pull-request CI tests Linux only. To reproduce a macOS-only failure, dispatch
-the job on a branch with `macos_only` set:
+The macOS and Windows workspace jobs are `test-macos` and `test-windows` in
+`verify-nightly.yml`. Their schedule and merge status are in
+[verification rule 10](verification.md#10-ci-merge-conditions); pull-request CI
+tests Linux only. A failure on one platform is reproduced by dispatching the
+workflow on a branch with `macos_only` or `windows_only` set:
 
 ```bash
 gh workflow run verify-nightly.yml --ref <branch> -f macos_only=true
+gh workflow run verify-nightly.yml --ref <branch> -f windows_only=true
 ```
 
-With `macos_only` set, every other nightly job is skipped, the Windows job
-included. A dispatch without it or `windows_only` runs the whole nightly
-workflow, including the macOS job.
+Either option skips every other nightly job, the other platform's job
+included. A dispatch with neither runs the whole nightly workflow.
 
 ## Native Windows
 
@@ -488,8 +452,8 @@ MSVC does not need to be on PATH. Doctor uses the fixed
 `vswhere.exe` location of the installer and requires the VC tools component.
 If rustup is not already available, install it with the official Windows installer.
 
-Use pwsh at or above the minimum in
-[pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Call just recipes from pwsh,
+Native Windows uses pwsh at or above the minimum in
+[pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Just recipes are called from pwsh,
 also in a Developer PowerShell session. Windows PowerShell can change
 empty arguments and embedded quotes before just receives them.
 
@@ -509,15 +473,15 @@ cargo clippy --locked -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D wa
 Repository Python tooling on Windows runs through the pwsh recipes.
 The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
 Job Object lifetime, fuzz, coverage and full tooling acceptance stay unverified.
-Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, run
-`cargo install just --locked`, then run `just python`.
+Install uv with its native Windows installer, then just (`cargo install just
+--locked`), then run `just python`. The interpreter rule of the Linux section applies unchanged.
 
-All three packages link and run natively without a DBM library or container.
+These two packages link and run natively without a DBM library or container.
 Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
-Developer PowerShell, run `Set-Location "$HOME/src/oxpinyin"` and repeat the test.
-For an existing checkout, use your real directory. Rustup selects the same
-repository toolchain automatically. Editors and debuggers use this same native
-MSVC environment and toolchain; no project-specific IDE is required.
+Developer PowerShell, run `Set-Location "$HOME/src/oxpinyin"` (or your real
+checkout directory) and repeat the test. Rustup selects the repository
+toolchain automatically. Editors and debuggers use this same native MSVC
+environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
 `cargo nextest run --profile ci` and the doctests over the portable
@@ -531,7 +495,7 @@ harness (`just test-tools`).
   (`/MD`), matching oxpinyin's C++ bridge and vcpkg's `x64-windows` triplet.
 - The DLL is in `installed/x64-windows/bin`, the import library and pkg-config
   metadata in `lib` and `lib/pkgconfig`, and public headers in `include`.
-- Set `$env:VCPKG_ROOT` to your vcpkg checkout. Run the commands below from
+- `$env:VCPKG_ROOT` names the vcpkg checkout. The commands below run from
   the repository root; `--overlay-ports` selects the repository port.
 
 The job also installs the vcpkg `glib` port, which it finds through the same
@@ -540,9 +504,7 @@ the full workspace, including `oxpinyin-utils`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
 Text expectations use the newline of the host.
 The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is
-not selected. Those tests do not establish native Windows oracle behavior.
-You do not need physical Windows hardware to use
-this CI coverage.
+not selected, so those tests do not establish native Windows oracle behavior.
 
 A full local build or `just test` needs the same vcpkg ports as the
 CI job. Without GLib, `glib-sys` fails, and every crate except
@@ -560,23 +522,9 @@ $env:PATH = "$installed\bin;$env:PATH"
 
 The `bin` directories put the GLib and tkrzw DLLs on the path of the test binaries.
 
-**When the Windows job runs:** the full Windows workspace job is the
-`test-windows` job in `verify-nightly.yml`. Its schedule and merge status are in
-[verification rule 10](verification.md#10-ci-merge-conditions). Windows
-is a supported native target.
-To reproduce a Windows-only failure, dispatch the job on a branch with
-`windows_only` set:
-
-```bash
-gh workflow run verify-nightly.yml --ref <branch> -f windows_only=true
-```
-
-With `windows_only` set, every other nightly job is skipped, the macOS job
-included. A dispatch without it runs the whole nightly workflow, including
-the Windows job.
-
-The frozen oracle does not define which native operating systems oxpinyin
-can support.
+Windows is a supported native target; the frozen oracle does not define which
+native operating systems oxpinyin can support. To dispatch the nightly Windows
+job alone, see [nightly macOS and Windows jobs](#nightly-macos-and-windows-jobs).
 
 ### Native Windows and WSL containers
 
@@ -584,7 +532,7 @@ Every recipe has a Windows form, or prints why it is refused on Windows; see the
 
 The pin runs only in a Linux container. On Windows, that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-driven by `wslc`, the first runtime that `select_runtime` tries there. Run these commands from Developer
+driven by `wslc`, the first runtime that `select_runtime` tries there. These commands run from Developer
 PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
 
 | Task | Command |
@@ -620,10 +568,7 @@ commands unchanged. These `wslc` limits apply:
   launcher therefore passes the checkout and data as native Windows paths. `:ro` and a
   read-write mount nested in a read-only one both work.
 
-Host Python cannot read the symlinks that a container makes on an NTFS mount
-(`[Errno 22] Invalid argument`). On Windows, provisioning therefore never
-reads inside a provisioned prefix from the host. Each check, removal and
-summary runs in the `deps` image.
+On Windows, provisioning checks prefixes in the `deps` image ([cloud provisioning](cloud.md#what-it-does), step 3).
 
 WSL is a separate Linux development option: follow the Linux section from
 its Bash terminal. [Microsoft recommends the Linux filesystem](https://learn.microsoft.com/en-us/windows/wsl/filesystems)
@@ -638,9 +583,9 @@ The OS cache directory is `$XDG_CACHE_HOME` or `~/.cache` on Linux,
 `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows.
 `just cache-root` prints the root.
 
-Set a non-empty absolute `OXPINYIN_CACHE` on a host without a home directory
-and for direct `cargo` or `uv run` commands. `tools.dev.provision` asks
-`just cache-root` for the root after it installs or keeps `just`.
+A host without a home directory, and a direct `cargo` or `uv run` command,
+needs a non-empty absolute `OXPINYIN_CACHE`. `tools.dev.provision` asks
+`just` for the root when `just` is installed.
 
 The name of each entry carries its pin, so a new pin gets a new entry:
 
@@ -651,8 +596,8 @@ The name of each entry carries its pin, so a new pin gets a new entry:
 
 The model and contract-data fetchers allow one active fetch per pinned entry on a
 shared filesystem that supports file locking and atomic rename. An overlapping
-fetch of that entry fails as busy before touching the data. Run `fetch-model
---force` while the entry is idle, including tools that read the extraction
+fetch of that entry fails as busy before touching the data. `fetch-model
+--force` needs the entry idle, including tools that read the extraction
 directly, because it replaces the extraction at the same path.
 
 The operating system releases the lock when a fetch crashes.
@@ -686,7 +631,7 @@ prints the runtime that it chose on a `Runtime:` line. Provisioning (`just provi
 runtime. Every command is written in the docker grammar and passed through
 `runtime_command`. Docker and Podman take it as written. `wslc` drops
 `--platform` (see [native Windows](#native-windows-and-wsl-containers)).
-Apple `container` works as follows, as a macOS run with it verified:
+Apple `container` works as follows:
 
 - **Commands.** `image pull` (without `--quiet`), `image tag`, `delete` and
   `system status`; JSON inspect records, whose image `Id` is the digest of the config
@@ -697,8 +642,8 @@ Apple `container` works as follows, as a macOS run with it verified:
   --memory 6G`, and the library and data runs get `--memory 6G`.
 - **Network.** There is no `--network host`. It is dropped with a one-line
   notice that the default network is used. Its build has no `--network`, so
-  any other build value is refused. `--network none` was confirmed to block
-  traffic, so the capture run has no network.
+  any other build value is refused. `--network none` blocks traffic, so the
+  capture run has no network.
 - **Pull.** The capture build gets no valued `--pull`. Its `--pull` is an
   on/off switch, as on `wslc`.
 - **Capture.** The capture runs the capture image by its tag. After the run, it checks
@@ -711,7 +656,7 @@ Apple `container` works as follows, as a macOS run with it verified:
   copied from the published image.
 
 On every runtime, the library and data runs mount the checkout read-only at
-`/opt/oracle-recipe` and run `python3 /opt/oracle-recipe/tools/oracle/build.py`
+`/opt/oracle-recipe` and run `tools/oracle/build.py` with Debian’s Python in the image
 in the `deps` image. No run binds a single file, and no host needs Bash for them.
 
 `just provision-oracle` builds the performance image when it is absent, and runs
@@ -719,21 +664,8 @@ in the `deps` image. No run binds a single file, and no host needs Bash for them
 `/provision`. On rootful Docker, the run is the invoking user, so the cache
 stays theirs. The home and cache of uv are then in `/tmp`. `just provision` and
 `just provision-oracle` use the `pin-<commit>` entry under
-`OXPINYIN_CACHE` ([cache directory](#cache-directory)).
-
-These host steps of `just provision` run only on Linux:
-
-- the Valgrind check and apt install;
-- the apt install of the dump utilities;
-- the start of `dockerd`;
-- the ext4 report;
-- the host libtkrzw check;
-- the `.pc` rewrite;
-- the environment file.
-
-On macOS and Windows, provisioning skips these steps. It also
-does not require the dump utilities (`db5.3_dump`, `kchashmgr`) there:
-it runs neither, and its prefix checks run in the `deps` image.
+`OXPINYIN_CACHE` ([cache directory](#cache-directory)). Some host steps of
+`just provision` run only on Linux ([cloud provisioning](cloud.md#what-it-does)).
 
 ## Development debug information
 
@@ -747,16 +679,16 @@ cargo build --locked --profile dev-full -p oxpinyin-capi
 cargo test --locked --profile dev-full -p oxpinyin-engine --no-run
 ```
 
-Use the files in `target/dev-full/` with your debugger.
+The debugger reads the files in `target/dev-full/`.
 This profile includes full debug information for workspace code and dependencies.
 It keeps the normal development optimization level, debug assertions and overflow checks.
 It does not change release or profiling builds.
 
 Verification cells continue to use `dev` at optimization level 1.
 Their identity record still names that profile and level.
-Do not put a `dev-full` build in a claimed cell target directory.
-For a diagnostic runner that accepts `OXPINYIN_CAPI_SO`, build separately
-and give it the path to `target/dev-full/libpinyin_capi.so`.
+A `dev-full` build does not go in a claimed cell target directory.
+A diagnostic runner that accepts `OXPINYIN_CAPI_SO` gets a separate build
+and the path to `target/dev-full/libpinyin_capi.so`.
 
 Sanitizer gates use their existing compiler flags for symbolisation.
 Coverage uses LLVM coverage maps, which do not need type or variable information.
@@ -765,44 +697,38 @@ libraries and keep their existing debug settings.
 
 ## Contribution checks
 
-Run the local checks in [verification rule 5](verification.md#5-local-test-gate); they scale with the change and its stage.
-
-Use the containing package's `Cargo.toml` name for iteration commands.
-Select a non-default backend with `--no-default-features --features bdb`;
-keep separate target and user-data directories ([backends](backends.md)).
-For build/config changes, identify the affected packages or ask the maintainer.
-CI is the full gate.
-
-Ordinary native tests do not establish pin compatibility. Changes to parsing,
-candidates, native data, user files or the C API need the relevant differential
-on a [provisioned remote Linux host](cloud.md). Use the reference tkrzw cell
-unless the [backend rules](verification.md#2-backend-selection) select others.
-If no matching differential is apparent, ask the maintainer.
-
-Follow [reporting rules](verification.md#7-proportionate-verification),
-and stop after the required checks.
+The [verification procedure](verification.md) states the checks for each change:
+the [local test gate](verification.md#5-local-test-gate), the
+[backend selection](verification.md#2-backend-selection) and the
+[reporting rules](verification.md#7-proportionate-verification).
+Packages are named by their `Cargo.toml` name; a build or configuration change
+identifies the affected packages, or the maintainer names them.
+Ordinary native tests do not establish pin compatibility; a change to parsing,
+candidates, native data, user files or the C API also needs its differential on a
+[provisioned remote Linux host](cloud.md). When no matching differential is
+apparent, the maintainer names one.
 
 ## Troubleshooting and resumption
 
 - Missing `cargo`/`rustup`: on Linux/macOS, source `"$HOME/.cargo/env"`. On
   Windows, open a fresh Developer PowerShell after you install rustup. A
   permission panic from an installed rustup is an environment access problem:
-  keep the error and ask the environment owner. Do not reinstall over it.
+  the error goes to the environment owner, and rustup is not reinstalled over it.
 - Missing MSVC `link.exe` or Windows SDK: use Developer PowerShell and check
   the Visual Studio workload. Native Windows does not use Unix `cc` or
   `pkg-config` for the Rust-only command above.
 - Missing tkrzw headers (`pkg-config ... tkrzw` failed), `db.h`, libclang
   or native libraries: repeat the prerequisite checks of your OS.
   The error identifies the missing header or library. If package installation is restricted,
-  ordinary users need the environment owner. Send
-  that owner the exact failing command and the complete error. On Linux,
+  ordinary users need the environment owner. That
+  owner receives the exact failing command and the complete error. On Linux,
   `pkg-config --modversion glib-2.0` and `pkg-config --modversion tkrzw`
   check discovery. The setup check prints the backend version and the missing-libclang diagnostic of bindgen,
-  so keep those lines too.
+  and those lines go with the error too.
 - macOS cannot find tkrzw: repeat the `PKG_CONFIG_PATH` export
   above. For Berkeley DB, repeat the `SYSTEM_DEPS_BDB_*` exports
-  ([backends](backends.md#discovery-and-overrides)). Do not treat a
-  successful Clippy/check as a link test.
-- Missing oracle or model inputs do not block ordinary native tests. They must
-  be supplied for the selected compatibility checks, where a skipped or missing
-  prerequisite is a failed verification, not a pass.
+  ([backends](backends.md#discovery-and-overrides)). A successful
+  Clippy/check is not a link test.
+- Missing oracle or model inputs do not block ordinary native tests. For a
+  selected compatibility check, a missing input is a failure
+  ([test inputs](../testing/README.md#test-inputs)).

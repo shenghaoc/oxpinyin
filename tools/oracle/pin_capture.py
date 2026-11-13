@@ -667,7 +667,7 @@ OBSERVATIONS = {
     'zhuyin-import/initial': Api(zhuyin_import, ['你', 'ㄋ'], 'zhuyin'),
 }
 
-# docs/runbooks/goldens-and-pins.md, "The next pin capture": the utility runs no frozen case holds.
+# docs/runbooks/pin-captures.md, the `utility` family: the utility runs of the frozen utility cases.
 KMM_UNIGRAM_ONLY = (b'\\data model "k mixture model" count 3 N 1 total_freq 3\n\\1-gram\n'
                     b'\\item 1 <start> count 2 freq 0\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq 1\n'
                     b'\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 0 freq 2\n\\end\n')

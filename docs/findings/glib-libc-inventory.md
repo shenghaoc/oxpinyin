@@ -219,6 +219,14 @@ registers). The `GArray` lifecycle is held by `oxpinyin-capi`
 `oxpinyin-zhuyin-capi`
 `boundary_tests::caller_arrays_keep_their_metadata_and_clear_through_the_callback`.
 
+The version scripts `src/libpinyin.ver` and `src/libzhuyin.ver` are the ABI. At the pin,
+the macOS export list `src/libpinyin.exp` omits five exports that `libpinyin.ver` has:
+`pinyin_begin_get_bigram_phrases`, `pinyin_bigram_iterator_get_next_phrase`,
+`pinyin_bigram_iterator_has_next_phrase`, `pinyin_end_get_bigram_phrases` and
+`pinyin_guess_predicted_candidates_with_punctuations`. The
+[call-site audit](../runbooks/glib-call-sites.md#what-it-does) therefore rewrites both `.exp`
+files from the version scripts on macOS.
+
 Limits:
 
 - Earlier Rust allocations (`String`, `CString`, `Vec`) can terminate

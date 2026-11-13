@@ -1,7 +1,7 @@
 # Packaging oxpinyin as a C library (cargo-c)
 
 This document records how `oxpinyin-capi` is packaged and installed as a shared and static C library, and the decisions behind it.
-The installed tree is a drop-in for libpinyin.
+On Linux, the installed tree is a drop-in for a same-backend libpinyin build.
 Consumers such as `ibus-libpinyin` link the 79-symbol `pinyin.h` surface exactly as they link upstream (`libpinyin.pc`, `-lpinyin`, `libpinyin.so.15`) and need no source changes.
 The same applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 
@@ -9,7 +9,7 @@ The same applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 
 Peng Wu's [epico/trainer](https://github.com/epico/trainer/tree/b1927376735c0c1042d72af2eca0e25c53595724)
 at `b1927376735c0c1042d72af2eca0e25c53595724` changes into the `data/` directory of a libpinyin tree before it calls the utilities.
-Build the tools with the [native setup](runbooks/setup.md), then stage two new trees:
+The tools build with the [native setup](runbooks/setup.md), and two new trees are staged:
 
 ```sh
 just build --locked -p oxpinyin-utils --bins
@@ -28,33 +28,31 @@ It does not detect a work tree that has no `.git` entry, such as a `core.worktre
 `--bin-dir` selects another build or profile directory; its default is `$CARGO_TARGET_DIR/debug` or `target/debug`.
 The recipe installs nothing system-wide and copies no trainer code or model data.
 
-In the trainer's existing `lib/myconfig.py` configuration, set `m_tools_dir` (returned by `getToolsDir()`) to `/absolute/path/trainer-tools`.
-Set `m_evals_dir` (returned by `getEvalsDir()`) to `/absolute/path/trainer-evals`.
-Use the tree roots, not their `data/` subdirectories.
-Keep the two trees separate: evaluation replaces `interpolation2.text` and regenerates its binary data.
+In the trainer's `lib/myconfig.py`, set `m_tools_dir` (returned by `getToolsDir()`) to `/absolute/path/trainer-tools` and `m_evals_dir` (returned by `getEvalsDir()`) to `/absolute/path/trainer-evals`.
+Both name the tree roots, not their `data/` subdirectories.
+The two trees stay separate: evaluation replaces `interpolation2.text` and regenerates its binary data.
 
-Put into each `data/` the model's textual tables and `interpolation2.text`.
-From that directory, render `table.conf` for the DBM backend of the tools and run `make`.
-Use these commands for the default tkrzw build:
+Copy the model's textual tables and `interpolation2.text` into each `data/`.
+From each `data/`, render `table.conf` for the tools' DBM backend and run `make`.
+The default tkrzw build uses these commands:
 
 ```sh
 sed 's/@DATABASE_FORMAT@/Tkrzw/' table.conf.in > table.conf
 make
 ```
 
-For the peer backends, use `BerkeleyDB` or `KyotoCabinet` in place of `Tkrzw`.
-Also supply the trainer's held-out inputs: `data/estimates.db` for the tools tree, and `data/deleted_bigram.db` and `data/evals2.text` for the eval tree.
+The peer backends use `BerkeleyDB` or `KyotoCabinet` in place of `Tkrzw`.
+Supply the trainer’s held-out inputs as well: `data/estimates.db` for the tools tree, and `data/deleted_bigram.db` and `data/evals2.text` for the eval tree.
 This recipe stages a layout; it does not prepare a corpus, download model20 or run the trainer.
 
 The generated Makefile provides the trainer's default build, `clean` and `modify LAMBDA_PARAMETER=...` targets.
 Build and clean use the pin's file lists and the exact relative utility calls from
 [`data/Makefile.am:18–69` at `074a2219c90feaf962d0d24f034514033ece5f99`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/data/Makefile.am#L18-L69).
-`modify` keeps the first `table.conf` as `data/.trainer-table.conf` and applies the pin's lambda substitution again to that baseline on every call.
+`modify` keeps the first `table.conf` as `data/.trainer-table.conf` and applies the pin's lambda substitution again to that baseline on every call. When you replace `table.conf`, remove `data/.trainer-table.conf` so the next `make modify` uses the replacement.
 The generated Makefile runs no `git` command; it does not run the pin's checkout-wide `git reset --hard`.
-Remove that baseline when you deliberately replace the configuration.
 
 The trainer requires `/usr/bin/make`; the staged Makefile uses `rm`, `cp` and `sed`.
-The pin's optional model-download rule (`wget`, `tar`) is not staged: supply the data first.
+The pin's optional model-download rule (`wget`, `tar`) is not staged, so supply the data first.
 
 The table lists every utility that the trainer reaches.
 Paths are relative to `data/`, and each path maps to the **same basename** in `oxpinyin-utils`.
@@ -78,15 +76,15 @@ All 15 are ported.
 The six additional staged pin utilities are storage `gen_pinyin_table`, `gen_zhuyin_table` and `export_interpolation`, and training `gen_ngram`, `gen_deleted_ngram` and `import_k_mixture_model`.
 No utility port in this inventory is missing; the trainer's own Python scripts stay external.
 
-Run `just test-tools` for the packaging fixtures.
-After the build above, run the explicit real-tool integration test in the same Python test file:
+`just test-tools` runs the packaging fixtures.
+After the build above, the explicit real-tool integration test runs from the same Python test file:
 
 ```sh
 uv run --no-project --managed-python python -X utf8 tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
 ```
 
 It checks every reached path and runs `../utils/training/gen_unigram --help` from the created `data/`.
-Set `OXPINYIN_TRAINER_BIN_DIR` for another binary directory.
+`OXPINYIN_TRAINER_BIN_DIR` selects another binary directory.
 A missing tool fails this test; the test does not substitute fixtures.
 
 ## Why cargo-c
@@ -94,7 +92,7 @@ A missing tool fails this test; the test does not substitute fixtures.
 `oxpinyin-capi` is a `cdylib` that must be installed like any other C library: a versioned `.so`, an unversioned linker symlink, `pinyin.h` and a `pkg-config` file.
 `cargo cbuild` and `cargo cinstall` derive the install layout and SONAME from Cargo metadata.
 cargo-c cannot produce a complete libpinyin `.pc` ([Locating the model data](#locating-the-model-data-pkgdatadir)), so `just packaging install` wraps `cargo cinstall`.
-Run from the checkout with the [ordinary native setup](runbooks/setup.md); `just python` provisions its managed interpreter.
+It runs from the checkout with the [ordinary native setup](runbooks/setup.md); `just python` provisions its managed interpreter.
 The packaging commands supervise builds, relinks and package builders, with cancellation handling.
 
 ## Metadata on `oxpinyin-capi`
@@ -138,7 +136,7 @@ Those names exist only in the source tree and in the Rust artifact names under `
 ## User data across the takeover
 
 Each oxpinyin release lane is built on the same backend as the distribution's libpinyin ([lane table](#release-artifacts-release-packagesyml)).
-It keeps the user directory as that backend's native user files, exactly as the libpinyin build it replaces does (maintainer ruling 2026-09-09).
+It keeps the user directory as that backend's native user files, exactly as the libpinyin build it replaces does.
 The profile is the one that ibus-libpinyin keeps under `~/.cache/ibus/libpinyin/`.
 The [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ) tells users to reset that directory by deleting its `user.conf`:
 
@@ -148,7 +146,7 @@ The [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ) t
   The recorded evidence is the round trip against pin-built oracles in [user-store §11](findings/user-store.md#11-implementation-record--the-store-persists-in-libpinyins-own-files-2026-09-09).
 - **Different backend: fresh start, as with libpinyin.** A build on another backend cannot read the user directory and starts fresh.
   libpinyin's tkrzw build cannot read its Berkeley DB user files either (`check_format`; Debian's BerkeleyDB→Tkrzw switch carried a `debian/NEWS` warning).
-  A distribution whose users cross a backend boundary when they install a takeover package should carry the same `debian/NEWS`-style notice.
+  A distribution whose users cross a backend boundary when they install a takeover package is expected to carry the same `debian/NEWS`-style notice.
   Users who want to keep their phrases can use the dictionary export and import of their frontend (ibus-libpinyin's Import/Export).
   These use libpinyin's ordinary ABI, which carries the user phrase dictionary but not the trained bigram.
 
@@ -178,9 +176,9 @@ The four streams are independent and change for different reasons:
    A re-pin of the oracle is a deliberate event with its own re-freeze ([goldens and pins](runbooks/goldens-and-pins.md#3-the-oracle-pin)), independent of the crate version and SONAME.
    The installed identity of the drop-in (the `.pc` `Version:`, the `libpinyin-<version>/` header subdirectory and the versioned Provides of the packages) is the pin's own `configure.ac` version and changes with it.
    Its one source is `libpinyin_tag` in `tools/oracle/oracle-pin.txt`.
-   `just packaging install` reads it and checks both crates' `[package.metadata.capi]` tables against it, and `just packaging pc-version` prints it for package assembly.
-4. **Parity pins:** `10190 / 10190 / 98930` of `98930` candidate symbols, `0` absent, `0` tie-swaps ([frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers)).
-   These freeze the decode and predict output that the oracle is held to; packaging must not move them.
+   `just packaging install` reads it and checks both crates’ `[package.metadata.capi]` tables against it, and `just packaging pc-version` prints it for package assembly.
+4. **Parity pins:** the [frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers).
+   These freeze the output that the oracle is held to; packaging must not move them.
 
 Streams 1 and 2 are decoupled by construction.
 Without an explicit setting, cargo-c derives the SONAME from the crate version (`0.x` gives SONAME `libpinyin.so.0.x`, which changes on every minor bump).
@@ -222,6 +220,22 @@ override_dh_auto_install:
 	  --libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
 ```
 
+## Build and runtime dependencies
+
+A downstream Linux package built with a native-library backend
+(tkrzw, Kyoto Cabinet, Berkeley DB) needs these tools at build time only:
+
+- `pkg-config`: `system-deps` uses it to locate the library;
+- `libclang` (Berkeley DB): `bindgen` uses it to read the C headers of Berkeley DB;
+- a C++ compiler (tkrzw, Kyoto Cabinet): `cxx-build` uses it to compile the tkrzw and Kyoto
+  Cabinet bridges against their C++ headers.
+
+None of them is linked, and none of them appears in the runtime dependency set.
+Each backend splits into its own `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.3-dev` on Debian,
+`libdb` / `libdb-devel` on Fedora). The Kyoto Cabinet facades list `libstdc++.so.6` and
+`libm.so.6` in `DT_NEEDED`, as the Kyoto Cabinet build of libpinyin does. Both
+are already dependencies of libkyotocabinet.
+
 ## Kyoto Cabinet: build headers must match the installed library
 
 The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the facade, as libpinyin's Kyoto Cabinet build does.
@@ -229,8 +243,8 @@ The adapter of the cxx bridge (`crates/oxpinyin-store/src/kyotocabinet/adapter.c
 That compiled code calls the out-of-line functions of the system libkyotocabinet and shares its object layouts.
 So the headers that a package builds against must be the same Kyoto Cabinet version as the libkyotocabinet it runs with.
 
-Build against the distribution's `libkyotocabinet-dev` or `kyotocabinet-devel` for the `libkyotocabinet` it ships.
-Rebuild the facade whenever the version of that library changes, as libpinyin's package must be rebuilt.
+A package builds against the distribution's `libkyotocabinet-dev` or `kyotocabinet-devel` for the `libkyotocabinet` it ships.
+The facade must be rebuilt whenever the version of that library changes, as libpinyin's package must be.
 The backend checks only that the running library is 1.2.x (`check_runtime_version` in `crates/oxpinyin-store/src/kyotocabinet/ffi.rs`); it does not detect a header/library mismatch.
 
 ## Locating the model data (`pkgdatadir`)
@@ -356,7 +370,7 @@ On macOS, `just abi exports` runs against the relinked installed files, as the n
 
 The compiler and linker control function layout. oxpinyin does not keep function-order policies or enforce function placement.
 Source, dependency and toolchain changes need no policy regeneration.
-Do not add PGO, BOLT, linker call-graph sorting or another layout system.
+The project adds no PGO, BOLT, linker call-graph sorting or other layout system.
 
 Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.
 macOS uses the export-controlled relink described in [Export gate](#export-gate); `just packaging install` then loads the replaced file with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
@@ -364,15 +378,13 @@ On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/u
 A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.
 The load check catches a dylib that dyld refuses, such as one with a misaligned `LINKEDIT` string pool ([rust-lang/rust#157750](https://github.com/rust-lang/rust/issues/157750)).
 The release profile keeps fat LTO and one codegen unit.
-Export verification, backend identification, artifact provenance, input-digest checks and runtime compatibility checks still apply.
-This internal Stage 2 change must preserve exported symbols, symbol versions, the C ABI, outputs and data files.
+Export verification, backend identification, artifact provenance, input-digest checks and runtime compatibility checks apply.
+A layout change must preserve exported symbols, symbol versions, the C ABI, outputs and data files.
 
 ## Shipping-library sizes
 
 [Constitution §2](constitution.md) requires the stripped sizes of the shipping libraries in each change that affects them.
-The `shipping-sizes` job in `.github/workflows/ci.yml` produces them.
-Lanes take the numbers from its job summary.
-Lanes do not build release libraries locally for this purpose.
+The `shipping-sizes` job in `.github/workflows/ci.yml` produces them; [verification rule 5](runbooks/verification.md#5-local-test-gate) states how a PR reports them.
 
 **When the job runs.**
 It runs on a pull request or a push to main when a file that can change a shipping library changes.
@@ -415,24 +427,23 @@ A stale base can never match: a changed input or toolchain changes the key.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
-Run it in the Linux reference container, on committed work:
+It runs in the Linux reference container, on committed work:
 
 ```bash
 just packaging sizes run --base origin/main
 ```
 
 `run` builds the base commit and `HEAD`, then prints the same table.
-Each side runs its own revision's `just packaging install`, so the host needs just and a uv that can install each revision's interpreter ([setup](runbooks/setup.md#comparing-against-another-revision)).
-Use `--base-cache FILE` to reuse a base result and `--work DIR` and `--target DIR` to keep the build directories.
+`--base-cache FILE` reuses a base result, and `--work DIR` and `--target DIR` keep the build directories.
 `just packaging sizes build --commit REV --out FILE` writes one side as JSON.
 `just packaging sizes key --commit REV` prints the cache key.
-Use the local command to debug a CI failure, not to collect sizes for a PR.
+The local command is for debugging a CI failure, not for collecting sizes for a PR.
 
 ## Release artifacts (`release-packages.yml`)
 
 Every published GitHub release triggers `.github/workflows/release-packages.yml`.
 The workflow builds drop-in packages for the three distribution families and attaches them, with a `SHA256SUMS`, to the release with `gh release upload`.
-A pull request that changes a packaging path runs the workflow as a dry run that stops before the upload ([release runbook](runbooks/release.md#what-each-lane-gates)).
+A pull request that changes a packaging path runs the workflow as a dry run that stops before the upload ([release runbook](runbooks/release.md)).
 
 Each lane builds on the rolling branch of its distribution: Debian testing, Fedora Rawhide and Arch.
 Fedora's lane uses `fedora:rawhide`, not `fedora:latest`, which is the current stable release.

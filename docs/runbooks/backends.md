@@ -17,9 +17,8 @@ cargo test --locked --workspace --no-default-features --features bdb
 A peer requires `--no-default-features`: the default set already
 selects one backend, and the store refuses two backends at once.
 The store build script finds tkrzw only through `pkg-config tkrzw`.
-To select the repository vcpkg overlay install, set
-`PKG_CONFIG_PATH` and the runtime library path
-([discovery and overrides](#discovery-and-overrides)).
+`PKG_CONFIG_PATH` and the runtime library path select the repository
+vcpkg overlay install ([discovery and overrides](#discovery-and-overrides)).
 
 ## System libraries
 
@@ -27,11 +26,10 @@ To select the repository vcpkg overlay install, set
 | --- | --- | --- |
 | tkrzw | the repository's vcpkg overlay port in the `x64-linux-oxpinyin` triplet (see [setup](setup.md)) | the repository's vcpkg overlay port in the `arm64-osx-oxpinyin` triplet (see [setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc` and pkg-config resolves it. The backend links at link time, so bare-name dylib lookup does not apply |
-| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5`: 5.3.28 under the Sleepycat license, the surveyed version. The default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so point the [overrides](#discovery-and-overrides) at it |
+| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5`: 5.3.28 under the Sleepycat license, the surveyed version. The default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so the [overrides](#discovery-and-overrides) point at it |
 
-Berkeley DB and Kyoto Cabinet use system libraries. Development tkrzw comes
-from the vcpkg overlay; Debian release packages, shipping-size measurements
-and oracle/reference images use Debian’s tkrzw.
+Berkeley DB and Kyoto Cabinet use system libraries. The tkrzw source for each
+use is in [Linux setup](setup.md#linux) and [verification rule 9](verification.md#9-sound-tkrzw-library).
 
 - Berkeley DB is bound through its C header. No copy of it is compiled into any oxpinyin
   artifact.
@@ -39,33 +37,18 @@ and oracle/reference images use Debian’s tkrzw.
   (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the adapter
   `adapter.cc`). The bridge is compiled against the installed tkrzw headers and linked
   to the system libtkrzw.
-- Kyoto Cabinet is used as libpinyin uses it. A cxx bridge
-  (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the
-  adapter `adapter.cc`) constructs its database classes. These classes are header code, so the build compiles them
-  from the installed Kyoto Cabinet headers into the facade, as the libpinyin
-  build does. The system libkyotocabinet supplies the rest.
+- Kyoto Cabinet is bound through a cxx bridge
+  (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the adapter
+  `adapter.cc`) that compiles its header code into the facade, as the libpinyin
+  build does ([packaging](../packaging.md#kyoto-cabinet-build-headers-must-match-the-installed-library)).
+  The system libkyotocabinet supplies the rest.
 
 If the development package is missing, the build fails at `build.rs` with a message
 that names the package. It never falls back to downloading or compiling its
 own copy.
 
-### Packaging: runtime versus build dependencies
-
-For a downstream Linux package built with a native-library backend
-(tkrzw, Kyoto Cabinet, Berkeley DB), these tools are build-time only:
-
-- `pkg-config`: `system-deps` uses it to locate the library;
-- `libclang` (Berkeley DB): `bindgen` uses it to read the C headers of Berkeley DB;
-- a C++ compiler (tkrzw, Kyoto Cabinet): `cxx-build` uses it to compile the tkrzw and Kyoto
-  Cabinet bridges against their C++ headers.
-
-None of them is linked, and none of them appears in the
-runtime dependency set. Each backend splits into its own
-`lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.3-dev` on Debian,
-`libdb` / `libdb-devel` on Fedora). The Kyoto Cabinet build also needs a
-C++ compiler at build time. Its facades then list `libstdc++.so.6` and
-`libm.so.6` in `DT_NEEDED`, as the Kyoto Cabinet build of libpinyin does. Both
-are already dependencies of libkyotocabinet.
+A downstream package's build-time and runtime dependencies are in
+[packaging](../packaging.md#build-and-runtime-dependencies).
 
 ## Discovery and overrides
 
@@ -80,8 +63,8 @@ are already dependencies of libkyotocabinet.
 - A self-built tkrzw is
   selected with `PKG_CONFIG_PATH` and the runtime library path.
 
-To reach an installation outside the defaults, use these
-`system-deps` variables. `<NAME>` is `KYOTOCABINET` or `BDB`. The first
+These `system-deps` variables reach an installation outside the
+defaults. `<NAME>` is `KYOTOCABINET` or `BDB`. The first
 three replace what the `.pc` file reports, and `build.rs` tracks each of them:
 
 | variable | effect |
@@ -90,22 +73,22 @@ three replace what the `.pc` file reports, and `build.rs` tracks each of them:
 | `SYSTEM_DEPS_<NAME>_SEARCH_NATIVE` | the build-time link-search path |
 | `SYSTEM_DEPS_<NAME>_LIB` | the library name, for a name other than `db` or `kyotocabinet` (vcpkg installs `libdb48.lib`: `SYSTEM_DEPS_BDB_LIB=libdb48`) |
 | `SYSTEM_DEPS_KYOTOCABINET_NO_PKG_CONFIG` | `1` skips the `.pc` lookup; `SYSTEM_DEPS_KYOTOCABINET_LIB` must then name the library |
-| `SYSTEM_DEPS_BDB_NO_PKG_CONFIG` | `build.rs` defaults it to `1` and `SYSTEM_DEPS_BDB_LIB` to `db`; a value you set wins |
+| `SYSTEM_DEPS_BDB_NO_PKG_CONFIG` | `build.rs` defaults it to `1` and `SYSTEM_DEPS_BDB_LIB` to `db`; an explicitly set value wins |
 | `SYSTEM_DEPS_LINK`, `SYSTEM_DEPS_<NAME>_LINK` | `static` links statically |
 
 `_INCLUDE` and `_SEARCH_NATIVE` take path lists (split on `:`, or `;` on Windows), and `_LIB` takes space-separated names.
 
-If a shared library is outside the loader's default paths, make it visible
-through the system loader configuration or add its directory to
-`LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on macOS, or `PATH` on
-Windows before running tests or utilities.
+A shared library outside the loader's default paths is made visible before
+tests or utilities run: through the system loader configuration, or with its
+directory added to `LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on macOS,
+or `PATH` on Windows.
 
 Homebrew's `berkeley-db@5` is keg-only and ships no `.pc`. The macOS
 `sanitize` recipe sets these four variables from `brew --prefix berkeley-db@5`:
 `SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1`, `SYSTEM_DEPS_BDB_LIB=db`,
 `SYSTEM_DEPS_BDB_SEARCH_NATIVE=<prefix>/lib` and
-`SYSTEM_DEPS_BDB_INCLUDE=<prefix>/include`. To run
-`cargo` or `just check bdb` by hand, export the same four. The build script never calls `brew`.
+`SYSTEM_DEPS_BDB_INCLUDE=<prefix>/include`. A hand-run
+`cargo` or `just check bdb` needs the same four exported. The build script never calls `brew`.
 
 `BINDGEN_EXTRA_CLANG_ARGS` reaches bindgen as usual. A change to any of these variables
 regenerates the declarations, so no stale set stays behind.
@@ -128,18 +111,11 @@ surveyed libdb.
 No workflow or developer recipe sets it:
 Linux `libdb-dev` and Homebrew `berkeley-db@5` are the surveyed 5.3.
 
-The two C-ABI crates also need `libglib2.0-dev` and `g++`.
-
 ## Fixtures per backend
 
-`fixtures/w3/<db|kct|tkt>/` is the committed mini data set. It has one
-directory per backend, with the native file names of each backend.
-It was written from a Python subset of the model20
-text, then the pin's own program sequence from `oxpinyin-utils`, built
-for each backend (`fixtures/w3/README.md`). The commands that regenerated and
-checked it are retired (#1764). Recorded evidence: every regenerated directory
-compared equal to the committed tree, chunk files byte for
-byte and DBM files record by record ([goldens and pins](goldens-and-pins.md)).
+`fixtures/w3/<db|kct|tkt>/` is the committed mini data set, one directory per
+backend with the native file names of each backend. `fixtures/w3/README.md`
+records how it was written.
 
 ## Switching is a format transition
 

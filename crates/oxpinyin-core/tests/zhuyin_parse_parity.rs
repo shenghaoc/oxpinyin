@@ -1,5 +1,5 @@
-//! The frozen zhuyin parse pin — G1's capture fixture
-//! (`docs/testing/upstream-test-coverage.md` §2, the `test_zhuyin.cpp` battery).
+//! The frozen zhuyin parse pin and its capture fixture
+//! (`docs/testing/upstream-test-coverage.md`, "Interactive modes", the `test_zhuyin` row).
 //!
 //! `fixtures/w4/oracle-zhuyin-parse.txt` was captured from the pinned
 //! oracle (the recorded capture harness family ZH; pin ref below) by

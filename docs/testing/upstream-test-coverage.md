@@ -1,6 +1,6 @@
 # Upstream test coverage ledger
 
-Status: living document · Created: 2026-08-29
+Status: living document
 
 This ledger covers every test program in upstream
 [libpinyin](https://github.com/libpinyin/libpinyin)/`tests` and
@@ -8,12 +8,12 @@ This ledger covers every test program in upstream
 For each program, it records the behavior that the program protects and where that behavior lives in oxpinyin.
 
 **Audited upstream revisions.** Every entry below describes these
-snapshots. When either revision moves, audit the delta again:
+revisions. When either revision moves, audit the delta again:
 
-| Project | Revision | Snapshot date |
-|---|---|---|
-| libpinyin (pin) | `074a2219c90feaf962d0d24f034514033ece5f99` | 2026-09-03 |
-| libchewing (`master`) | `179a02f0629c1137050c736acddc17c9424bf1d2` | 2026-07-17 |
+| Project | Revision |
+|---|---|
+| libpinyin (pin) | `074a2219c90feaf962d0d24f034514033ece5f99` |
+| libchewing (`master`) | `179a02f0629c1137050c736acddc17c9424bf1d2` |
 
 The libchewing rows use this behavior-coverage vocabulary. The libpinyin drop-in statuses are defined below.
 
@@ -27,21 +27,20 @@ The libchewing rows use this behavior-coverage vocabulary. The libpinyin drop-in
 - **N/A** — no oxpinyin equivalent exists, or the behavior is specific to
   harness or C++ mechanics. It is deliberately not faked.
 
-The rule: **never silently omit an upstream test.** Every N/A
+The rule: **no upstream test is silently omitted.** Every N/A
 states why.
 
 ---
 
 ## libpinyin tests
 
-The maintainer's #1776 ruling (2026-11-10) supersedes the 2026-11-01
-requirement to reproduce all upstream test executables as drop-in tools.
+The upstream test programs are not drop-in tools.
 The **seven fixed programs are product tests**, and the **ten interactive programs are modes
-of one nonshipping `oxpinyin-repl` binary**. The 21 genuine utilities retain
+of one nonshipping `oxpinyin-repl` binary**. The 21 genuine utilities keep
 their drop-in interfaces. No C API, persistent format or product refusal
-is waived by this change.
+is waived by this.
 
-The inventory remains tied to `tests/Makefile.am:37-59`,
+The inventory is tied to `tests/Makefile.am:37-59`,
 `tests/storage/Makefile.am:31-46`, `tests/include/Makefile.am:25-27` and
 `tests/lookup/Makefile.am:31-32` at `074a2219`: 17 `noinst_PROGRAMS`, six
 also in Automake `TESTS`. `test_zhuyin` is conditional on libzhuyin upstream.
@@ -49,8 +48,7 @@ also in Automake `TESTS`. `test_zhuyin` is conditional on libzhuyin upstream.
 ### Fixed programs
 
 These tests call the owning Rust product code. Their pin citations are
-beside the assertions. The old executables and their output-only captures
-are removed only after these mechanisms are covered.
+beside the assertions.
 
 | Upstream program | Retained product witness |
 | --- | --- |
@@ -65,15 +63,12 @@ are removed only after these mechanisms are covered.
 The simulated C++ buffer's capacity, resize/insert/remove operations have
 no product counterpart. Fixed temporary names, progress formatting,
 ignored arguments/input, benchmark repetition counts and continuing after a
-driver-only save failure are retired harness behavior. Appended punctuation
-state, file refusal, partial writes and journal replay remain product
+driver-only save failure are harness behavior, not covered. Appended punctuation
+state, file refusal, partial writes and journal replay are product
 assertions.
 
-Punctuation removal is library code, not a driver algorithm. The deleted
-utility code ported `PunctTableEntry::remove_punctuation` and
-`PunctTable::remove_punctuation` (`punct_table.cpp:117-145`, `:169-177`).
-No oxpinyin product code removes a punctuation, so the port had no caller
-but the retired driver, and no test writes a post-removal row in its place.
+Punctuation removal (`punct_table.cpp:117-145`, `:169-177`) is library code with no
+oxpinyin caller, so no test writes a post-removal row.
 
 The REPL-only refusal of invalid text for a new phrase item is not a
 product witness: only `oxpinyin-repl` passes `refuse_invalid`, and the
@@ -82,7 +77,7 @@ product witness: only `oxpinyin-repl` passes `refuse_invalid`, and the
 
 ### Interactive modes
 
-Run `just repl <mode> [--backend bdb|kyotocabinet]` on Linux or macOS: the
+`just repl <mode> [--backend bdb|kyotocabinet]` runs on Linux or macOS: the
 REPL needs GLib, as `oxpinyin-utils` does, and is not verified on Windows.
 The launcher copies
 `fixtures/w3/<backend>` into a disposable directory and passes it explicitly.
@@ -104,30 +99,26 @@ accepts its parser/scheme options, for example
 | `test_pinyin_lookup` | `pinyin_lookup` | Real-table/model n-best results, original byte-length bound, ordered tokens and text |
 | `test_phrase_lookup` | `phrase_lookup` | Real phrase/model segmentation, invalid conversion and required chunk errors |
 
-`crates/oxpinyin-repl/tests/interactive.rs` retains the independent frozen
+`crates/oxpinyin-repl/tests/interactive.rs` holds the frozen
 product outputs and complete file-effect assertions for these modes.
-Only retired timing lines and the temporary data path spelling are
-normalized. The original frozen expected bytes remain unchanged.
+Only timing lines and the temporary data path spelling are
+normalized; the frozen expected bytes are not.
 `table_guards.rs` preserves prior successful output before a later EINVAL,
-and the two table state-machine tests remain beside their retained code.
-Old fixed-path missing-config cases and the old executable's help text
-are harness-specific; the data layer's missing-file/header tests remain.
+and the two table state-machine tests sit beside their code.
+Fixed-path missing-config cases and the upstream executable's help text
+are harness-specific; the data layer's missing-file/header tests cover the data side.
 
-A1 row 30 now has a real-model witness in
+A1 row 30 has a real-model witness in
 `runtime/tests/tool_lookup.rs::embedded_nul_lookup_keeps_the_original_terminal_column`.
 Both `ni\0hao` and `ni\0'hao` preserve their six/seven-byte bounds and ni key
 span, then return the three frozen ordered W3 tokens/texts through actual
 `SystemTables`, `BigramTables` and the existing decoder. `ni'\0hao` separates
 the key span's end (2) from the parsed length (3): each row spans the parsed
-length, and the rows need the physical separator column. This replaces the
-synthetic model previously used by the engine's consumed-bound test.
-The parser's separate two-option-word NUL-span assertion remains.
+length, and the rows need the physical separator column.
+The parser has a separate two-option-word NUL-span assertion.
 
-The safe C ownership adapters stay in the ABI crates. They call the owning
-ABI modules directly; referenced root forwarders become re-exports rather
-than new implementations. `storage_tools.rs` now contains only the three
-real utility modules: generation, interpolation import and export.
-No benchmark timer or repeated decode loop remains in the REPL.
+The safe C ownership adapters stay in the ABI crates and call the owning
+ABI modules directly. The REPL has no benchmark timer or repeated decode loop.
 
 ## libchewing tests
 
@@ -140,7 +131,7 @@ ABI behaviors are N/A by design; they are not artificially reconstructed.
 | Source | Behavior protected | Status | oxpinyin home |
 |---|---|---|---|
 | `test-bopomofo.c` | ~60 session behaviors: candidate selection (forward/rearward/mid-composition/paging), Esc/Backspace/Del semantics, mode switches, ShiftSpace full-shape, Numlock, auto-commit thresholds, interval enumeration, per-keyboard conversions (HSU/ET/ET26/CP26/GinYieh/IBM/Dvorak/Colemak), pinyin keyboards (HANYU/THL/MPS2), fuzzy search, `phone_to_bopomofo` | ADAPT (selection + keyboards), N/A (rest) | Selection: `crates/oxpinyin-engine/tests/session_lifecycle.rs` (choose/commit/mid-composition) and `crates/oxpinyin-engine/tests/decoding.rs` (choose advances composition, bigram feedback, apostrophe boundaries). Determinism: `crates/oxpinyin-engine/tests/decoding.rs` + `crates/oxpinyin-engine/tests/session_replay.rs`; Enter/Escape/Backspace are N/A (the engine has no key layer). Keyboards: `crates/oxpinyin-core/tests/scheme_parsers.rs` (8 zhuyin keyboards parse with pinned dachen expectations; HSU discreteness; CP26 exists as a distinct keyboard). N/A with reasons: rearward choice mode (not implemented), full-shape, mode-switch keys, Numlock handling, auto-commit thresholds, interval enumeration (no such surface), THL/MPS2 romanizations (not implemented), static-buffer aliasing (Rust `String`), 4-byte UTF-8 selection (covered generically by the engine's property tests) |
-| `test-keyboard.c` | set/get round-trip over 17 keyboard layouts, invalid rejection, `KBStr2Num`, enumeration | ADAPT | layout switching + rejection contracts: `crates/oxpinyin-capi/tests/abi/contract.rs` (every implemented scheme value sticks; out-of-enum and abort slots rejected without state damage — the #109 contract-lock) and `crates/oxpinyin-core/tests/scheme_parsers.rs` (`customized`/`StandardDvorak` slots). N/A: string-based keyboard names and enumeration (`KBStr2Num`, `kbtype_Enumerate`) — no string-keyboard API exists |
+| `test-keyboard.c` | set/get round-trip over 17 keyboard layouts, invalid rejection, `KBStr2Num`, enumeration | ADAPT | layout switching + rejection contracts: `crates/oxpinyin-capi/tests/abi/contract.rs` (every implemented scheme value sticks; out-of-enum and abort slots rejected without state damage) and `crates/oxpinyin-core/tests/scheme_parsers.rs` (`customized`/`StandardDvorak` slots). N/A: string-based keyboard names and enumeration (`KBStr2Num`, `kbtype_Enumerate`) — no string-keyboard API exists |
 | `test-keyboardless.c` | programmatic API: `cand_open/close/choose_by_index` incl. out-of-range and not-in-select, `cand_list_*` traversal, `commit_preedit_buf`/`clean_preedit_buf`/`clean_bopomofo_buf` | ADAPT | `crates/oxpinyin-engine/tests/session_lifecycle.rs` (choice commits the exact phrase, offset windows via `candidates_at`/`select_target`); a choose of a candidate the regenerated list no longer holds is refused without state damage: `a_stale_candidate_pointer_after_regeneration_is_refused` in `crates/oxpinyin-capi/src/e2e_tests.rs` and `crates/oxpinyin-zhuyin-capi/src/e2e_tests.rs`. The index-based not-in-select and out-of-range ports were retired with `Session::select`: a choose names a candidate pointer, not an index. N/A: list traversal (`cand_list_next/prev/first/last`) and the three explicit buffer operations — oxpinyin's composition model has no equivalent operations to bind |
 | `test-config.c` | option existence, defaults, setter validation (booleans 0/1 only, clamped ranges), syspath/userpath construction variants, version reporting | ADAPT | defaults: no current test pins the upstream keys key-for-key. Setter rejection: `crates/oxpinyin-capi/tests/abi/contract.rs`. Construction variants: `crates/oxpinyin-runtime/tests/assembly.rs` (system/user dir combinations incl. degrade-on-file, empty-path) and the capi fixture init. N/A: runtime setter clamping (config is layered files + option bits, not live setters), `chewing_version()` |
 | `test-userphrase.c` | add/remove/lookup/enumerate, persistence across contexts, same-reading coexistence, max length, error handling, auto-learn gating (only after commit, learn-excluded) | PORT (store behavior) / ADAPT (learning) | `crates/oxpinyin-user/tests/user_store_semantics.rs` (§ phrase lifecycle: roundtrip, persistence across handles, multi-reading accumulation, 15/16 length ceiling, key-count mismatch, remove-absent). Learning: `crates/oxpinyin-capi/src/e2e_tests.rs` (train entry points, counts, mask-out; `pinyin_train` refuses a selection-less instance) and the store's observe path in `user_store_semantics.rs`. N/A: Shift-Left/Right and Ctrl+Num add-phrase UI gestures (no keystroke surface binds them) |
@@ -167,6 +158,11 @@ workspace (`fuzz/Cargo.toml` lists the targets):
 - **Hostile data-file fuzzer** (libchewing `trieloader.rs`): `dict-loader`,
   `phrase-library` and `table-conf`.
 
+The other targets feed hostile bytes to the parsers below the ABI: `parser`
+(full pinyin), `double-pinyin` and `chewing-parser` (the eight parseable Zhuyin
+keyboards). `user-store-ops` drives arbitrary add, remove, train and mask-out
+interleavings over a fresh user directory.
+
 The nightly soak runs every target with cargo-fuzz 0.13.2 and its default
 `-s address` instrumentation. On Linux, this includes LeakSanitizer.
 `just fuzz <target>` runs one target locally. If an AFL++ lane is added, prefer a version-pinned tool
@@ -187,19 +183,14 @@ Double-`end` and use-after-`end` are undefined behaviour by contract. The
 harness asserts no postconditions on them. A sanitizer report is the
 finding.
 
-## Totals
-
-- **libpinyin**: seven fixed-program product-test migrations and ten modes
-  in one nonshipping REPL; all 17 upstream programs accounted for.
-- The libchewing rows retain their separately audited classifications.
-
 ## Maintenance rule
 
-Keep each program's distinct product mechanism in its owning tests before
-removing a witness. Update this ledger when a mechanism moves; a lower test
+All 17 libpinyin programs are accounted for above.
+Each program's distinct product mechanism stays in its owning tests before a
+witness is removed. This ledger is updated when a mechanism moves; a lower test
 count or an inaccessible reference alone is not evidence of redundancy.
 The 21 real utility interfaces remain governed by their frozen cases.
 
 For libchewing: a row can say N/A because a surface does not exist. If
-that surface ships later, update the behavior-coverage classification of the row and
-add the test in the same change.
+that surface ships later, the behavior-coverage classification of the row is updated and
+the test is added in the same change.

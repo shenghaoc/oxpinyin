@@ -6,58 +6,58 @@ A cell uses one DBM backend on both sides of a comparison.
 
 ## 1. Reference cell
 
-Use tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default), because upstream maintains tkrzw.
-By default, run baselines, differentials, revert-and-check and the gate on this cell.
+The reference cell is tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default), because upstream maintains tkrzw.
+By default, baselines, differentials, revert-and-check and the gate run on this cell.
 
 ## 2. Backend selection
 
-Run all three cells, tkrzw, bdb and kc, only when a backend path check selects them.
+All three cells, tkrzw, bdb and kc, run only when a backend path check selects them.
 This rule makes sure that the non-default bdb and kc cells gate every change that can reach them.
-Use these three checks:
+The three checks are:
 
 1. The diff lists a file under `crates/oxpinyin-store/`.
 2. A changed non-Markdown file contains `feature = "bdb"`, `feature = "tkrzw"` or `feature = "kyotocabinet"`.
 3. A changed line in a `Cargo.toml` names a backend.
 
 Check 2 excludes Markdown because documentation quotes these patterns.
-To apply the checks to `base...HEAD`, run `tools/bisection/cells-for-diff.py [base]`.
+`tools/bisection/cells-for-diff.py [base]` applies the checks to `base...HEAD`.
 The default base is `origin/main`.
 The command prints the selected cells, the check that selected them, and the matching paths and lines.
 Rule 7's documentation and comments case needs no backend-selection run.
-If a change seems to depend on a backend but fails these checks, report that as a finding.
+A change that seems to depend on a backend but fails these checks is reported as a finding.
 A finding of this kind does not authorize a three-cell run.
 
 For shipping builds, see the [function-layout ruling](../packaging.md#function-layout).
 
 ## 3. Sweep and release coverage
 
-Run every differential on all three cells once at the start of each sweep.
-Repeat that coverage once before a release.
+Every differential runs on all three cells once at the start of each sweep.
+That coverage is repeated once before a release.
 These runs cover bdb and kc outside the per-change gate.
 
 ## 4. Revert-and-check
 
-Run revert-and-check only on the reference cell, tkrzw.
-When there is no fix to revert, use a deliberate, named mutation of oxpinyin.
+Revert-and-check runs only on the reference cell, tkrzw.
+When there is no fix to revert, it uses a deliberate, named mutation of oxpinyin.
 This applies when the differential covers behaviour that oxpinyin already reproduces.
-Never mutate the pin.
+The pin is never mutated.
 
 ## 5. Local test gate
 
-Run the local checks in proportion to the change.
+The local checks are proportionate to the change.
 
-While you iterate, run these for each crate that you changed:
+During iteration, run these checks for each changed crate:
 
 - `cargo fmt --all --check`
 - `cargo clippy --locked -p <crate> --all-targets -- -D warnings`
 - fail-fast `cargo nextest run -p <crate>`
 
-Fix diagnostics when they appear.
+Diagnostics are fixed when they appear.
 
-Subject to [verification scope and precedence](#verification-scope-and-precedence), before a push for review or merge and after each rebase, run one `cargo clippy --locked --workspace --all-targets -- -D warnings` on the final tree. Also run these, only when the change calls for them:
+Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets -- -D warnings` runs on the final tree. These also run, only when the change calls for them:
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
-- When a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed, run:
+- When a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed:
   - `cargo deny --locked --log-level error check`
   - `cargo deny --locked --all-features --log-level error check`
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
@@ -67,75 +67,72 @@ Subject to [verification scope and precedence](#verification-scope-and-precedenc
 
 WIP checkpoint pushes: `cargo fmt --all --check` only.
 
-For documentation and source comments, follow [verification scope and precedence](#verification-scope-and-precedence).
-
-The WIP-checkpoint rule and [verification scope and precedence](#verification-scope-and-precedence) override the pre-push requirement above.
+The WIP-checkpoint rule and [verification scope and precedence](#verification-scope-and-precedence), which covers documentation and source comments, override the pre-push requirement above.
 
 CI is the full gate. These local checks cover only the cfg arms and backend features of the host. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
 
 ### Rebases and stacks
 
-Immediately before a push, the branch is fetched and rebased onto its current base: `origin/main` for independent work, the current parent for a stack member.
-When a parent changes, its descendants are restacked.
+Immediately before a push, fetch and rebase the branch onto its current base: `origin/main` for independent work, the current parent for a stack member.
+Restack the descendants when a parent changes.
 A fix goes on the stack member that introduces or exposes the defect.
 Each stack member must pass its required verification independently.
 Successful CI on the final source tree of that member satisfies the full-gate checks for the required package, feature and platform scope.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check that is skipped because it does not apply to the change is not a failure.
-Run locally the checks that CI does not cover: the differentials of the issue, revert-and-check, and any measurement that a concrete unresolved question requires for a decision ([controlling rule](../source-policy.md#controlling-rule)).
-These checks keep their current rules.
+The checks that CI does not cover run locally: the differentials of the issue, revert-and-check, and any measurement that a concrete unresolved question requires for a decision ([controlling rule](../source-policy.md#controlling-rule)).
 Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
 For each PR that can change a shipping library, the `shipping-sizes` CI job reports the base and PR sizes in its job summary.
-Copy the table into the PR body and report any increase over base.
-Do not build release libraries locally to get sizes.
-[`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table; use it to debug a failure of the job.
+The PR body carries a copy of the table and reports any increase over base.
+Release libraries are not built locally to get sizes.
+[`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table, to debug a failure of the job.
 All commands stay documented and runnable without CI.
-To reproduce a CI failure, run them locally.
+To reproduce a CI failure, run the documented commands locally.
 
 ## 6. Shared tooling
 
-When an existing driver can cover the behaviour, add case files to it.
-Do not add a bespoke driver and runner for each issue.
-If a new driver is necessary, state in the PR body why no existing driver can cover the case.
+When an existing driver can cover the behaviour, new cases are added to it as case files.
+No bespoke driver and runner is added for each issue.
+When a new driver is necessary, the PR body states why no existing driver can cover the case.
 
-Use the repository `just` recipes and in-tree Python tools for builds, gates, differentials and measurements.
-Use managed CPython through `uv`.
+Builds, gates, differentials and measurements use the repository `just` recipes and in-tree Python tools.
+CI runs every Python step on the managed CPython named in `.python-version`. Lizard and Ruff run through uv.
 The documented shell entry points remain supported.
-Put new repeatable orchestration in shared Python tooling.
-Expose it through `just`.
-Do not use ad-hoc drivers, private operators or out-of-tree controllers, or scripts and environments that exist only on one machine.
-Add only the missing capability that the task needs, with proportionate tests.
-Do not expand unrelated tooling or build reporting infrastructure.
-Report an unavailable required check as not run.
-State its blocker.
-Do not substitute a private procedure, and do not claim that an unrun check passed.
+New repeatable orchestration goes in shared Python tooling.
+`just` exposes it.
+Ad-hoc drivers, private operators or out-of-tree controllers, and scripts and environments that exist only on one machine, are not used.
+A task adds only the missing capability that it needs, with proportionate tests.
+Unrelated tooling is not expanded, and no reporting infrastructure is built.
+An unavailable required check is reported as not run.
+The report states its blocker.
+No private procedure substitutes for it, and an unrun check is never claimed to pass.
 A missing input that a caller requested explicitly is a failure, never a successful skip.
-Do not publish or install a Python package, and add no console entry point without a new ruling.
+No Python package is published or installed, and no console entry point is added without a new ruling.
 
 ### Shell placement
 
-Write orchestration in Python, in `tools.dev` or an existing harness.
-Keep a shell script only for one of these reasons:
+Orchestration is written in Python, in `tools.dev` or an existing harness.
+A shell script stays only for one of these reasons:
 
 1. **Bootstrap:** it runs before managed CPython exists, to provision it.
 2. **Environment:** it runs where managed CPython is not available, such as a reference-image build or a container before provisioning.
 3. **External interface:** an outside tool requires a shell entry point, and the script is only a thin wrapper.
 
-State the reason at the top of each retained script, with its caller and boundary.
-A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: update the caller.
-Keep each `just` recipe as one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
+Each retained script states the reason at its top, with its caller and boundary.
+A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: the caller is updated instead.
+Each `just` recipe is one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
 
 ### Independent work in parallel
 
-Run independent subprocesses and builds in the bounded pool, `tools/dev/pool.py`.
-Size the pool from the allowed CPUs.
-Give each worker private writable state.
-Make output independent of completion order.
+Independent subprocesses and builds run in the bounded pool, `tools/dev/pool.py`.
+The pool is sized from the allowed CPUs.
+Each worker has private writable state.
+Output is independent of completion order.
 The first failure or cancellation starts no new unit, stops the running units and reaps their children.
-Serialize dependent steps and work that needs isolation, and state the reason in the tool or its runbook.
+Dependent steps and work that needs isolation are serialized, and the tool or its runbook states the reason.
 The backend builds in `tools/oracle/Dockerfile.oracle` stay serial: no `tools/dev` module is copied into the reference image.
-Serialise timing, residency, cache-sensitive and sampling-profile observations.
-Apply the host conditions of the [measurement procedure](benches.md).
+Timing, residency, cache-sensitive and sampling-profile observations are serialised.
+The host conditions of the [measurement procedure](benches.md) apply.
 
 ## 7. Proportionate verification
 
@@ -143,34 +140,33 @@ Apply the host conditions of the [measurement procedure](benches.md).
 
 Re-verification is proportional to what changed since the last green gate.
 Documentation or comments only need the format check: `git diff --check`, plus `cargo fmt --all --check` for source comments; review changed text and check its links.
-Do not run builds, tests, differentials or backend-selection checks for these changes, including comments in backend files.
+Builds, tests, differentials and backend-selection checks do not run for these changes, including comments in backend files.
 A conflict-free rebase that brings in no file the change touches needs no local re-gate; CI covers it.
 These rules take precedence over the general local-gate and rebase requirements.
-For code changes and rebases that affect touched files, all applicable code-verification requirements remain: use rule 5, re-run affected pin checks when engine, capi or data changes affect the branch, and verify changed generators and their artifacts.
+For code changes and rebases that affect touched files, all applicable code-verification requirements remain: rule 5 applies, affected pin checks re-run when engine, capi or data changes affect the branch, and changed generators and their artifacts are verified.
 
-Run the local checks in [verification rule 5](#5-local-test-gate); they scale with the change and its stage.
+The local checks are those in [verification rule 5](#5-local-test-gate); they scale with the change and its stage.
 
-Choose the checks from the changes since the last green gate:
+The changes since the last green gate select the checks:
 
-- **Documentation, comments or findings only:** follow [verification scope and precedence](#verification-scope-and-precedence).
-- **A review fix in code:** use the iteration checks in verification rule 5, then its pre-push checks on the final tree.
-  Run the differentials of the issue on the reference cell.
+- **Documentation, comments or findings only, or a conflict-free rebase:** [verification scope and precedence](#verification-scope-and-precedence) applies.
+- **A review fix in code:** the iteration checks in verification rule 5 apply, then its pre-push checks on the final tree.
+  The differentials of the issue run on the reference cell.
   CI is the full gate.
-- **Revert-and-check:** repeat it only if the differential changed.
-- **A conflict-free rebase:** follow [verification scope and precedence](#verification-scope-and-precedence).
-- **A stack:** run the checks in verification rule 5 on the new head of each member.
+- **Revert-and-check:** it is repeated only if the differential changed.
+- **A stack:** the checks in verification rule 5 run on the new head of each member.
   CI is the full gate.
-  Repeat the local checks that CI does not run only for the changed commit and for higher commits that touch the same files.
+  The local checks that CI does not run are repeated only for the changed commit and for higher commits that touch the same files.
 
-Stop when the applicable checks pass and concrete failures are addressed.
+Verification ends when the applicable checks pass and concrete failures are addressed.
 An additional run requires a relevant input change, a specific unresolved failure or an explicit maintainer request.
-Do not repeat runs only to collect more evidence.
-Investigate a broken reproduction command, or a result that contradicts the claim beyond the method's expected variability, as a bug: fix the software, tooling, environment assumptions or documentation that caused it, and correct or withdraw the claim.
+Runs are not repeated only to collect more evidence.
+A broken reproduction command, or a result that contradicts the claim beyond the method's expected variability, is investigated as a bug: the software, tooling, environment assumptions or documentation that caused it is fixed, and the claim is corrected or withdrawn.
 
 Rules 5 and 7 describe the **completion gate**.
 
-When a coherent fix is ready, and before a push for review, run the local checks that CI does not cover.
-Between completion gates, use iteration feedback while the fix takes shape:
+When a coherent fix is ready, and before a push for review, the local checks that CI does not cover run.
+Between completion gates, iteration feedback guides the fix while it takes shape:
 
 1. Run named unit tests of the touched crate.
    Select the test target and the test name: `cargo test -p <crate> --lib <name>` or `cargo test -p <crate> --test <target> <name>`.
@@ -178,37 +174,34 @@ Between completion gates, use iteration feedback while the fix takes shape:
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the witness case of the defect and its neighbours by case ID.
 
-For example, run the contract test that names the changed decision with `cargo test -p <crate> --test contract <name>`.
-Do not use the default differential suite for iteration feedback.
+For example, `cargo test -p <crate> --test contract <name>` runs the contract test that names the changed decision.
+The default differential suite is not used for iteration feedback.
 Iteration feedback is not a gate result.
-Do not report it as one.
-Report the final results and the reproduction commands.
+It is not reported as one.
+A report gives the final results and the reproduction commands.
 Raw logs, profiler captures and intermediate output stay local: they are not committed, attached, uploaded or mirrored unless the maintainer asks for specific diagnostic material. Source, functional fixtures, pins, configuration files and release packages follow their own procedures.
-Disclose failed or unrun required checks as limitations.
+Failed or unrun required checks are disclosed as limitations.
 A fix is ready for review when the pre-push checks in verification rule 5 and the local checks that CI does not cover pass.
 A PR is not ready to merge until CI passes on its head.
 A `wip/` checkpoint push runs only the checkpoint check in verification rule 5.
 
 ## 8. Builds
 
-Build differentials in debug, never in release.
-Keep and reuse one target directory for each cell.
-Do not delete target directories between issues.
-Clean once when the work is finished.
+Differentials are built in debug, never in release.
+Each cell keeps and reuses one target directory.
+Target directories are not deleted between issues.
+They are cleaned once when the work is finished.
 
 No memory admission applies.
-Run cargo build, test and clippy directly.
-To limit builds, set `CARGO_BUILD_JOBS` in your own Cargo configuration.
-
-`CARGO_BUILD_JOBS` bounds only the jobs of Cargo itself.
-Cargo runs the tests directly; no aggregate runner adds a second pool.
-When the host needs it, bound Cargo with `CARGO_BUILD_JOBS`.
+Cargo build, test and clippy run directly; no aggregate runner adds a second pool.
+When the host needs a limit, `CARGO_BUILD_JOBS` goes in the contributor's own Cargo configuration.
+It bounds only the jobs of Cargo itself.
 
 Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 
 ## 9. Sound tkrzw library
 
-Run the tkrzw cell, the reference cell, only against a sound libtkrzw.
+The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
 Linux development and CI use the repository's vcpkg overlay port.
 `tools.dev.provision` installs it and writes the library path and certification
 prefix. Debian release packaging, shipping-size measurements and oracle/reference
@@ -216,31 +209,27 @@ images retain Debian's library. Ubuntu's packaged library is not a development r
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.
-Do not report or triage its DIFFERs.
-Do not open follow-up work for those differences.
-Run again with the sound library on `LD_LIBRARY_PATH`.
-Use `ldd` to make sure that both the oracle and the subject resolve `libtkrzw.so.1` to that library.
-If no sound library is available, report "tkrzw: not run (no sound libtkrzw on this host)" and continue.
+Its DIFFERs are not reported or triaged.
+No follow-up work is opened for those differences.
+The run is repeated with the sound library on `LD_LIBRARY_PATH`.
+`ldd` confirms that both the oracle and the subject resolve `libtkrzw.so.1` to that library.
+If no sound library is available, the report says "tkrzw: not run (no sound libtkrzw on this host)" and the work continues.
 
 ## Procedure-specific rules
 
-- Run independent subprocesses and builds in the bounded pool under the [parallel-work rule](#independent-work-in-parallel).
+- Independent subprocesses and builds run in the bounded pool under the [parallel-work rule](#independent-work-in-parallel).
 - libpinyin on Linux/amd64 is the only reference for pin comparisons.
   Its behaviour in other environments is not ensured.
   An arm64 host captures the pin with a native arm64 image; the [known arm64 differences](../findings/arm64-pin-portability-1137.md) are accepted.
 - oxpinyin accepts differences that come from the operating system and the CPU architecture.
-  Builds and containers match the host operating system and architecture; do not use emulation.
+  Builds and containers match the host operating system and architecture; emulation is not used.
 - oxpinyin accepts GLib behaviour across versions.
-  Do not check which GLib version is present.
-- Use `.python-version` as the only managed Python version declaration.
-  Provision Python with `just python`.
-  Do not write the version anywhere else.
-  See [setup](setup.md).
-- Follow the [test input rule](../testing/README.md#test-inputs).
-- To train an oracle C-API session, reset, parse, check full consumption and guess the sentence before `pinyin_train` on row 0.
-  See the [oracle procedure](oracle.md).
-- Report results and reproduction commands under [rule 7](#7-proportionate-verification).
-  Use the benches procedure to interpret measurements.
+  Nothing checks which GLib version is present.
+- Python is provisioned and its version declared as [setup](setup.md) states: `.python-version` is the only declaration.
+- The [test input rule](../testing/README.md#test-inputs) applies.
+- An oracle C-API session is trained as the [oracle procedure](oracle.md#training-through-the-c-api) states.
+- Results and reproduction commands are reported under [rule 7](#7-proportionate-verification).
+  The benches procedure interprets measurements.
   Raw captures are not submission requirements.
 
 ## 10. CI merge conditions
@@ -250,12 +239,12 @@ These rules govern the CI gates. This section is the only place that states them
 1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the called store-backends gate.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
    The nightly runs their Rust checks. It runs the tools Python harness on those platforms only on a manual dispatch of `verify-nightly.yml` with `tools_harness` set.
-   Dispatch it on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
+   It is dispatched on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
    A lane never dispatches a workflow.
 2. **tkrzw is the default backend.** CI alone tests Berkeley DB and Kyoto Cabinet, and only when their KV code changes.
    Rule 2 decides that by path, not by judgement.
    The full-data contract tests run on tkrzw only.
-3. **Fuzzing runs nightly, never on the PR gate.** Do not change its schedule.
+3. **Fuzzing runs nightly, never on the PR gate.** Its schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
 5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds each job's paths.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.

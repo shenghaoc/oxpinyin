@@ -8,8 +8,7 @@ The recipes are attribution tools, and none of them is a per-change gate:
 - `system-import-profile`.
 
 A plain timing is one ordinary command around the `bisect` driver. Numbers are comparable only within
-one session on one host. Native macOS source-revision commands are described
-in [Native macOS source revisions](#native-macos-source-revisions).
+one session on one host.
 `just measure compare` reports different metrics on macOS, Windows and Linux.
 Numbers from different platforms are not comparable: the measured loop, the
 counters and the memory figures differ.
@@ -24,8 +23,8 @@ A section that uses Callgrind or Massif is an attribution procedure under that r
 Pin comparisons run locally in the `performance` target of
 `tools/oracle/Dockerfile.oracle`. This target inherits the unpinned Debian testing `deps`
 stage of the oracle (`debian:testing`). It covers `callgrind-differential` and
-`system-import-profile`. Build both the pin and the subject inputs there. Never
-build or run the oracle on GitHub Actions.
+`system-import-profile`. Both the pin and the subject inputs are built there. The
+oracle is never built or run on GitHub Actions.
 
 ```sh
 just performance
@@ -37,10 +36,8 @@ These rules apply to the `performance` shell:
 
 - `just performance --build-only` builds without entering. `--skip-build` enters
   an already built matching image.
-- The architecture follows the host; there is no platform option. Conflicting platform environment overrides are refused.
-  Do not use emulation. libpinyin on Linux/amd64 is the reference. An arm64 host
-  captures the pin with a native arm64 image; the
-  [known arm64 differences](../findings/arm64-pin-portability-1137.md) are accepted.
+- The architecture follows the host; there is no platform option, and conflicting platform environment overrides are refused.
+  The [procedure-specific rules](verification.md#procedure-specific-rules) state the reference platform, the arm64 capture and the emulation ban.
 - The local Cargo/model cache uses a
   named volume (`--volume NAME` selects another). The source is mounted read-only at `/repo`.
 - Recipe outputs default to `/performance/results/<recipe>/`. Explicit
@@ -49,43 +46,32 @@ These rules apply to the `performance` shell:
 - Each `callgrind-differential` capture and each `system-import-profile` run needs a new
   output directory. Both refuse a directory that exists. A second differential capture
   must set `CG_OUT` to a new path.
-- Prepared pin prefixes also persist under `/performance`. Before reuse, preparation:
-  - validates the prefix with `tools.oracle.image.prefix_ok` (pin commits, recipe, cached libraries);
-  - requires its `versions.txt` to equal the inventory of the running image, so that the pin and the subject
-    share one base;
-  - checks every file in both recorded data manifests.
-
-  Preparation rebuilds changed or damaged inputs.
-- Rosetta Python is refused; use native Python.
+- Prepared pin prefixes also persist under `/performance`. Preparation reuses a prefix only when its
+  `versions.txt` equals the inventory of the running image, so that the pin and the subject share one base,
+  and rebuilds changed or damaged inputs.
+- Rosetta Python is refused; native Python is required.
 - `--cells` is valid only with `oracle` preparation.
 
 Preparation lives in `tools/dev/measure/prepare.py`, not in image layers.
-Select `callgrind` for the profiled and shipping Tkrzw arms, or
-`oracle --cells tkrzw` for pin data only. Model data stays local.
-Both arms load the packaged libtkrzw of Debian:
-
-- the pin links it in the `build` stage;
-- the subject finds it through pkg-config;
-- `OXPINYIN_TKRZW_LIBRARY` points the runtime check at it.
-
-The tkrzw source build of the repository stays for CI and other hosts.
-Callgrind preparation checks debug-info neutrality and collection anchors.
-Build additional base or PR revisions in this testing environment as well,
-with separate Cargo target directories. Set the existing recipe options to
+`callgrind` selects the profiled and shipping Tkrzw arms, and
+`oracle --cells tkrzw` selects pin data only. Model data stays local.
+Both arms load Debian's packaged libtkrzw ([sound tkrzw library](verification.md#9-sound-tkrzw-library)).
+Additional base or PR revisions are built in this testing environment as well,
+with separate Cargo target directories. The existing recipe options are set to
 the resulting paths. Ordinary development stays native.
 
 ## Shipping measurement inputs
 
-Use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
-For each recipe, keep the backend, artifact identity, input-digest and runtime checks.
-Use `just measure-callgrind-control`, `just measure-callgrind-differential` or
+Measurements use ordinary shipping builds. See the [function-layout ruling](../packaging.md#function-layout).
+Each recipe keeps the backend, artifact identity, input-digest and runtime checks.
+The recipes are `just measure-callgrind-control`, `just measure-callgrind-differential` and
 `just measure-system-import-profile`. Their direct `uv run` invocations are in the justfile.
 The measurement image has no `just`, so it runs the `uv run` form.
 The sampling loops are serial and interleave the arms one process at a time.
 A timed or resident-set sample belongs to its arm only if nothing runs
 beside it.
 
-A plain timing needs no recipe. Build the `bisect` driver and run its `--perf`
+A plain timing needs no recipe. It builds the `bisect` driver and runs its `--perf`
 mode once for each library. Each run prints one JSON line:
 
 ```sh
@@ -118,8 +104,8 @@ env CARGO_TARGET_DIR=target/tkrzw \
 just measure-callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
 ```
 
-Run from a shell that has no Cargo profile or RUSTFLAGS overrides already exported.
-For BDB, replace `tkrzw` with `bdb` in the feature and output paths. Both
+These commands run from a shell that has no Cargo profile or RUSTFLAGS overrides already exported.
+For BDB, `bdb` replaces `tkrzw` in the feature and output paths. Both
 comparisons must pass. These builds should be case (a), identical `.text`.
 This check needs no runtime data and no oracle build. The verbose build
 output records the order of the compiler flags. `readelf --debug-dump=info`
@@ -148,19 +134,19 @@ The output records the returns of each operation, the rank-0 sentence, and the t
 candidate in physical order. Observation, printing,
 init, instance allocation and teardown are outside collection.
 
-Supply these inputs:
+The campaign takes these inputs:
 
 - actual library files;
 - a complete backend-matched system directory;
 - separately built plain shipping files for the two debug-info neutrality
   checks.
 
-For the profiled files, use the shipping Cargo profile and only
-`RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`. For the shipping artifact, install through
+The profiled files use the shipping Cargo profile and only
+`RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`. The shipping artifact is installed through
 `just packaging install`. Before collection, the campaign
 checks `DT_NEEDED` against `--cell`, DWARF, code neutrality,
 and the sound-tkrzw runtime. It runs the harness build and
-all collections serially; do not overlap other work.
+all collections serially; no other work overlaps them.
 
 ```bash
 just measure-callgrind-differential --workload sentence --cell tkrzw \
@@ -173,8 +159,8 @@ just measure-callgrind-differential --workload typing-sequence --cell tkrzw \
   --system-dir "$DATA" --out "$WORK/typing-sequence"
 ```
 
-For BDB, use `--cell bdb` and BDB libraries and data. For the tooling smoke check,
-set main and PR to the same profiled file, and set both shipping arguments to
+For BDB, the campaign takes `--cell bdb` and BDB libraries and data. For the tooling smoke check,
+main and PR are the same profiled file, and both shipping arguments are
 the same plain file. The options are:
 
 - `--input` accepts lowercase ASCII pinyin and apostrophes;
@@ -216,7 +202,7 @@ output and profiles stay local for attribution with
 not PR attachments. Harness `elapsed_ns` is collected under Valgrind and is
 not a native timing result. These commands make no wall-time or heap claim.
 
-For a same-run native time comparison, add `--native-rounds 40
+A same-run native time comparison adds `--native-rounds 40
 --native-iterations 20`. This optional phase runs before Callgrind. It uses
 separate equal-length copies of the supplied **plain shipping** libraries,
 the same CPU pin and worker anchors. It rotates base, PR, pin and both
@@ -232,23 +218,23 @@ No warmup is discarded; all invocations of the
 native process are included. The shared paired-bootstrap statistics give
 PR/base median ratios and 95% intervals, and the existing same-bytes time
 control stability check. Unstable controls are DIAGNOSTIC. Their tolerance
-is not permission for a product regression. Report the interval and the control
-limits. Do not treat an interval that contains one as proof of exact
+is not permission for a product regression. A report states the interval and the control
+limits. An interval that contains one is not proof of exact
 time equality. This phase measures no heap usage.
 
 ## BDB guess, training, and import profiles
 
 `tools/bisection/system-import-profile.c` extends the import driver with
-three full-process workloads. Build the driver in the measurement
+three full-process workloads. The driver is built in the measurement
 environment:
 
 ```sh
 cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/system-import-profile.c -o "$HARNESS" -ldl
 ```
 
-Through a comparison, use the same BDB system data, a fresh empty user directory, the same CPU, pin SO, and
-subject SO. Identify the subject build, and use
-matched pin, main and subject conditions for each comparison.
+Through a comparison, the BDB system data, a fresh empty user directory, the CPU, pin SO and
+subject SO stay the same. Each comparison identifies the subject build and uses
+matched pin, main and subject conditions.
 
 The frozen sentence fixture is `fixtures/w4/oracle-sentence-surface.txt`
 (SHA-256 `d119f3a7f665333ef5717b1925171799c29e710d4ad1575748e0a9d3ae2c9e21`).
@@ -262,8 +248,8 @@ The frozen sentence fixture is `fixtures/w4/oracle-sentence-surface.txt`
 Both set options `0x18a`. Candidate
 sorting in the guess workload uses `0x1e`.
 
-For `--phrase-file`, generate the input from the same BDB pin SO and data
-with the **unmeasured** `--export-system` of the driver:
+For `--phrase-file`, the input comes from the same BDB pin SO and data,
+through the **unmeasured** `--export-system` of the driver:
 
 1. The export walks libraries
    1–4 in token/pronunciation order.
@@ -313,19 +299,19 @@ PY
 ```
 
 The phrase workload imports all 10,000 rows, saves once, then exports the
-touched library (library 1: 95,698 rows). Use a fresh empty `USER_DIR` for
-**every** command. Repeat each pin/subject command as often as the decision
+touched library (library 1: 95,698 rows). **Every** command uses a fresh empty
+`USER_DIR`. Each pin/subject command is repeated as often as the decision
 requires. For an instruction or heap attribution:
 
-- take the median of
+- the figures are the median of
   whole-process Callgrind `Ir` and of the maximum Massif
   `mem_heap_B`;
-- report the spread as `(max − min) / median`. The Massif value
+- the spread is reported as `(max − min) / median`. The Massif value
   excludes stacks, allocator overhead and file mappings;
-- check output
-  equivalence and operation counts before you compare costs;
-- keep profiler
-  output in streams or memory, not in archives, logs, captures or profile
+- output
+  equivalence and operation counts are checked before costs are compared;
+- profiler
+  output stays in streams or memory, not in archives, logs, captures or profile
   files.
 
 The commands below write the Valgrind output to stderr:
@@ -357,28 +343,23 @@ DHAT names the allocation *site*. An attempt to name its *caller* across the C-A
 boundary from the Valgrind stack fails, and the failure looks like a valid result.
 
 **The Valgrind unwind of the dlopened Rust cdylib is not trustworthy above
-`kcdbget`.** It resolves the libpinyin cell correctly. On the
-oxpinyin cell, it produces wrong chains that the symbol table makes look plausible. Examples are a chain with
-`Arc<T>::drop_slow` calling `dict::ucs4_walk_key`, and
-`pinyin_iterator_add_phrase` directly beneath `main`. Each address
-is inside the function that it names, so nothing looks broken. None of these options changes the result:
-`--num-callers=24`, resolving at `addr - 1`, `debug = 2` with `lto =
-false`, or `-C force-frame-pointers=yes`. All of them produce
-byte-identical stacks. Kyoto Cabinet debug symbols
-(`libkyotocabinet16v5-dbgsym`) fix the KC half and nothing else.
+`kcdbget`.** On the oxpinyin cell it produces wrong chains that the symbol table makes look
+plausible; on the libpinyin cell it is correct. `--num-callers=24`, resolving at `addr - 1`,
+`debug = 2` with `lto = false` and `-C force-frame-pointers=yes` do not change the stacks.
+Kyoto Cabinet debug symbols (`libkyotocabinet16v5-dbgsym`) fix only the KC half.
 
-**Use callgrind caller→callee edges instead.** They give exact call counts and need no
-stack walk. Follow two rules:
+**Callgrind caller→callee edges are used instead.** They give exact call counts and need no
+stack walk. Two rules apply:
 
-* **Key on the `(object, file, name)` triple of the callee, not on the demangled
+* **The key is the `(object, file, name)` triple of the callee, not the demangled
   name.** `BasicDB::get(char const*, unsigned long, char*, unsigned
   long)` is a substring of the
   `::VisitorImpl::visit_full` of that function, so a name match sums both.
 * **An inlined callee has no call edge.** `BasicDB::check` and most
   `BasicDB::get` sites inline into their caller and under-report.
-  Where inlining is possible, count something that cannot be inlined, such as a
-  virtually-dispatched visitor or a heap allocation. Confirm the count
-  against a second marker of that kind.
+  Where inlining is possible, the count is of something that cannot be inlined, such as a
+  virtually-dispatched visitor or a heap allocation. A second marker of that kind
+  confirms the count.
 
 A profiling build may stand in for the shipped artifact here: block
 counts are identical across the shipped recipe, `debug = 2` with LTO
@@ -386,7 +367,7 @@ off, and forced frame pointers.
 
 ## Writing it up
 
-Follow the [verification reporting rules](verification.md#7-proportionate-verification) and the
+A write-up follows the [verification reporting rules](verification.md#7-proportionate-verification) and the
 [controlling rule](../source-policy.md#controlling-rule).
 For a measurement, the details needed to interpret the comparison are
 the revisions, workload, backend, build recipe, host/container and controls.
@@ -396,9 +377,9 @@ The [time/space trade-off rule](../source-policy.md#performance-standard) applie
 
 ### Measure compared arms in one run
 
-When a measurement compares arms, run them in one job on one machine and report only that run's numbers and ratios.
-Do not use an absolute figure from another run, host or CPU as a baseline.
-Interleave compared arms run by run on the same CPU and data.
+When a measurement compares arms, they run in one job on one machine, and the report gives only that run's numbers and ratios.
+An absolute figure from another run, host or CPU is not used as a baseline.
+Compared arms are interleaved run by run on the same CPU and data.
 Callgrind `Ir` and wall time depend on the CPU, including runtime libc dispatch.
 
 ### State the Valgrind version when used
@@ -408,60 +389,41 @@ A report that uses Callgrind or Massif states the Valgrind version that it used,
 peaks change with the Valgrind release as well as with the CPU. A report
 without the version therefore cannot be compared with another run. Normal cloud
 provisioning (`tools.dev.provision`) installs Valgrind idempotently and prints the
-version. Ordinary native setup does not require it. On other measurement hosts, install it explicitly.
-On Debian/Ubuntu, install the distribution package with `sudo`:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y valgrind
-valgrind --version
-```
-
-In a root development container, omit `sudo`. On Fedora/RHEL, install the available
-`valgrind` package with `dnf`. Do not install measurement tools for ordinary
-contributions.
+version. Another measurement host uses the distribution package (`apt-get install valgrind`
+on Debian/Ubuntu, `dnf install valgrind` on Fedora/RHEL). Ordinary contributions install no
+measurement tools.
 
 ### State the build recipe, per artifact
 
-Identify each timed subject by revision, backend and build recipe, including
+A report identifies each timed subject by revision, backend and build recipe, including
 the profile and relevant flags. A maintained recipe and its arguments can
-supply the build command; do not repeat it for every figure.
-
-Shipping-library size reporting follows [constitution §2](../constitution.md),
-independently of any measurement.
+supply the build command; it is not repeated for every figure.
 
 The hashes and loaded-library checks that the tools need stay tool-internal
 checks. A report needs the results and the reproduction recipe. It does not need a checklist
-of their verdicts, a checksum manifest or a full `NEEDED` inventory. Include a
-specific hash or dependency only when it explains a concrete build-identity
+of their verdicts, a checksum manifest or a full `NEEDED` inventory. It includes a
+specific hash or dependency only when that explains a concrete build-identity
 or loader discrepancy.
 
 `cargo cinstall` produces the shipped library; `cargo build` produces a bisection fixture.
-Their performance differs, so identify the build command, not just the artifact filename.
-
-### Evidence: what is committed and what is not
-
-Follow the [verification reporting rules](verification.md#7-proportionate-verification).
-Keep shared readers and calculations in repository Python tooling.
-Keep all measurement controls and rejection rules, including required exact checks.
-
+Their performance differs, so a report identifies the build command, not just the artifact filename.
 
 ## Native non-Linux revision comparisons
 
-Serialise the measured arms of a native non-Linux revision comparison; normal
-background activity on the host is permitted. Run a same-binary control in the
-same session and report its variability beside the paired estimates. The
+The measured arms of a native non-Linux revision comparison are serialised; normal
+background activity on the host is permitted. A same-binary control runs in the
+same session, and the report gives its variability beside the paired estimates. The
 control is diagnostic: it invalidates no runs and sets no automatic verdict or
-acceptance threshold. Keep every completed valid run, including outliers,
+acceptance threshold. Every completed valid run, including outliers, is kept
 within the predefined work count, schedule and budget. Only incomplete work, an
 operation fingerprint mismatch, a wrong loaded image or a broken required
-capture invalidates a run. Do not rerun for significance. Linux and
+capture invalidates a run. Runs are not repeated for significance. Linux and
 pin-relative work keep the same-bytes control rules of
 [Native Linux comparisons](#native-linux-comparisons).
 
 ## Native macOS source revisions
 
-Use full Xcode on an Apple silicon Mac. The runner probes the installed tools;
+These comparisons use full Xcode on an Apple silicon Mac. The runner probes the installed tools;
 Command Line Tools alone do not provide xctrace. Native revision comparisons
 follow [Native non-Linux revision comparisons](#native-non-linux-revision-comparisons).
 They do not compare against the pin.
@@ -475,9 +437,7 @@ just measure profile --revision origin/main --template Allocations
 `just measure` builds the source of each revision with the tooling of the
 checkout, so a comparison needs only the interpreter of the checkout.
 `just packaging sizes` is different: it runs each revision's own `packaging`
-recipe. A size comparison against a revision that names CPython 3.15 needs a
-uv that can install CPython 3.15 final; uv 0.11.32 cannot, and CI's
-`astral-sh/setup-uv` step provides one. See
+recipe. Each revision’s `.python-version` and `uv.toml` determine its interpreter and uv requirement. See
 [comparing against another revision](setup.md#comparing-against-another-revision).
 
 These commands use the same typing corpus in `bisect.c`. Schedule defaults
@@ -486,22 +446,14 @@ The budget bounds the measured schedule, excluding preparation. An exhausted
 budget fails the campaign and preserves completed runs. Keystrokes are work
 items, not independent statistical observations. Estimates use process pairs.
 
-Each distinct source SHA builds once through `tools.dev.packaging`'s install
-procedure: locked release, the `shipped` feature and Cargo's default backend.
-No backend flag is passed. Cargo metadata supplies the default feature names
-for the local report. The effective symbol overrides are
-`RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none'` and `OXPINYIN_DSYM=1`.
-The latter retains the final export-controlled Darwin link's LTO object with
-`-object_path_lto` until `dsymutil` finishes. The dylib and dSYM must have
-matching arm64 UUIDs. Product code uses no profiling profile or instrumentation.
-Set `VCPKG_ROOT` to the checkout installed by the [macOS setup](setup.md#macos).
-Measurement builds put its `installed/arm64-osx-oxpinyin/lib/pkgconfig` first
-in `PKG_CONFIG_PATH` for both arms and require that triplet's `tkrzw.pc`.
-Each invocation builds into a fresh directory; no build is reused across sessions.
-Within that invocation, each distinct source SHA builds once. The local session
-records cold build time.
+Each distinct source SHA builds once, into a fresh directory for each invocation, through the
+packaging install procedure: locked release, the `shipped` feature and Cargo's default backend,
+with `RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none'` and `OXPINYIN_DSYM=1` for symbols. The dylib and
+dSYM must have matching arm64 UUIDs. Product code uses no profiling profile or instrumentation.
+`VCPKG_ROOT` names the checkout installed by the [macOS setup](setup.md#macos); measurement
+builds require that checkout's `arm64-osx-oxpinyin` triplet `tkrzw.pc`.
 
-Before accepting this build recipe, run its one-time neutrality validation:
+Before this build recipe is accepted, its one-time neutrality validation runs:
 
 ```sh
 just measure neutrality --revision origin/main
@@ -509,76 +461,49 @@ just measure neutrality --revision origin/main
 
 This compares the symbol-bearing packaged build with a plain release build.
 Executable Mach-O section bytes, addresses and arm64 disassembly must be
-identical. A difference fails; stop without measuring it. Routine comparisons
+identical. A difference fails, and nothing is measured. Routine comparisons
 reuse the symbol-bearing build and do not build a plain artifact.
 
-Builds and disposable sessions live under `just cache-root`, with a separate
-prefix for each arm even for the same SHA. The same-binary control runs arm A
-against A′, a second byte-identical copy of A's built product and driver staged
-in its own prefix exactly as B is, so the control also covers effects tied to a
-newly staged directory; it reports A′ under the label `B`. The three prefixes
-are named `A`, `B` and `C` on every platform, so the same bytes sit at paths of
-one length. A′ passes the same
-staging, loaded-image and UUID checks as any arm. One normally linked driver is
-built, its dependency is rewritten to `@rpath`, then it is ad-hoc signed with
-`com.apple.security.get-task-allow` and without hardened runtime, and verified
-before identical copies are staged. This permits the Instruments task-port
-request; the product dylib is never re-signed. Its executable-relative rpath
-selects the arm. Before measuring, `dladdr` and the loaded Mach-O UUID verify
-the resolved C function against the staged dylib. No `DYLD_*` selection is
-required. xctrace receives workload settings through `--env`.
+Builds and disposable sessions live under `just cache-root`. The same-binary control runs arm A
+against A′, a byte-identical copy of A's product and driver staged in its own prefix exactly as
+B is; the report labels A′ as `B`. A′ passes the same staging, loaded-image and UUID checks as
+any arm. Before measuring, the runner verifies that the resolved C function belongs to the staged
+dylib.
 
-The driver brackets all typing cycles with monotonic wall-clock and
-`getrusage(RUSAGE_SELF)` readings. `wall_seconds` and `cpu_seconds` cover that
-loop, excluding initialization and teardown. `operations` counts completed
-prefix steps; the return/count fingerprint must agree across runs.
-The driver also reads `proc_pid_rusage` (`rusage_info_v4`) immediately before
-and after that loop. `loop_instructions` and `loop_cpu_cycles` are the
-`ri_instructions` and `ri_cycles` deltas, as counts. `loop_runnable_seconds`
-is the `ri_runnable_time` delta converted with `mach_timebase_info`: time on a
-core or waiting for one. The kernel advances it at scheduling events only, so
-it is coarse and a loop shorter than a scheduling quantum can read 0.
+The driver brackets all typing cycles, excluding initialization and teardown:
 
-Lead a macOS report with the `loop_instructions` B/A ratio and wall time.
+- `wall_seconds` and `cpu_seconds` cover that loop;
+- `operations` counts completed prefix steps; the return/count fingerprint must agree across runs;
+- `loop_instructions` and `loop_cpu_cycles` are the `proc_pid_rusage` instruction and cycle deltas;
+- `loop_runnable_seconds` is time on a core or waiting for one. The kernel advances it only at
+  scheduling events, so a loop shorter than a scheduling quantum can read 0.
+
+A macOS report leads with the `loop_instructions` B/A ratio and wall time.
 Runnable time explains host contention: each arm reports it over its CPU time,
 and an excess is time spent waiting for a core. It has no B/A ratio.
 Instruments remains the tool for attribution.
-Lead a Windows report with the `loop_cpu_cycles` B/A ratio and wall time; its
+A Windows report leads with the `loop_cpu_cycles` B/A ratio and wall time; its
 memory figure is the `peak_private_commit_bytes` B minus A difference.
 
-`lifetime_max_phys_footprint_bytes`, read with `proc_pid_rusage` after teardown,
-is the memory headline. It is a process-lifetime peak, not live memory at a
-checkpoint. `peak_rss_bytes` is the direct child's own `wait4` diagnostic;
-Darwin reports bytes. Neither field is a Linux residency category.
-A profile launch has no direct-child RSS reading for the driver and reports
-none; xctrace's own RSS is not substituted.
-No loop-scoped peak footprint is reported. `ri_interval_max_phys_footprint`
-restarts only through `proc_reset_footprint_interval` or `proc_rlimit_control`,
-and the macOS SDK declares neither: its public headers carry the
-`RLIMIT_FOOTPRINT_INTERVAL` flag names but no prototype and no manual page.
+`lifetime_max_phys_footprint_bytes`, read after teardown, is the memory headline. It is a
+process-lifetime peak, not live memory at a checkpoint. `peak_rss_bytes` is the direct child's own
+`wait4` diagnostic; a profile launch reports none. Neither field is a Linux residency category.
+No loop-scoped peak footprint is reported: the macOS SDK declares neither
+`proc_reset_footprint_interval` nor `proc_rlimit_control`, the calls that restart the interval peak.
 
-Profiles cover the launched process lifecycle. They are not scoped-loop timing
-estimates. The runner exports table data, resolves XML references, and requires
-the driver PID, usable time/stack rows and a known C entry point or `RuntimeDict::fill_lookup` frame from the
-measured UUID. Allocations exports the TOC-listed `Allocations` → `Allocations List` table
-under `tracks/track/details/detail`. It validates the single launched driver's
-PID and exit status, then each row's address, size, category, timestamp and
-backtrace. These rows are allocations still outstanding when the process exited, not live memory
-at a lifecycle checkpoint or allocation traffic. The TOC-listed `Statistics` detail
-provides total, transient and persistent allocation counts and bytes, overall and
-per category; the runner validates those fields and their totals.
-Product-frame addresses are resolved with `atos` and the UUID-matched dSYM;
-a known product function must resolve. `xctrace show` is not used for this
-legacy detail. Missing data,
-wrong-process captures and unresolved product frames fail visibly.
+Profiles cover the launched process lifecycle. They are not scoped-loop timing estimates.
+Allocations rows are allocations still outstanding when the process exited, not live memory at a
+lifecycle checkpoint or allocation traffic. Its `Statistics` detail gives total, transient and
+persistent allocation counts and bytes. Missing data, wrong-process captures and unresolved product
+frames fail visibly.
 
 Installed xctrace exposes neither CPU Profiler deferred recording nor an
-Allocations backtrace setting. Use their defaults; there is no options file or
+Allocations backtrace setting. Their defaults apply; there is no options file or
 workaround. Allocation backtraces must still exist in the exported capture.
 `xctrace export` exposes no time-range switch. For an explicitly selected
-range, inspect the trace with `xctrace toc`, then use `xctrace show` with the
-reported track/detail and `--time-start` plus `--duration`. Do not describe a
-whole-trace export as a scoped-loop export.
+range, `xctrace toc` inspects the trace, then `xctrace show` takes the
+reported track/detail and `--time-start` plus `--duration`. A
+whole-trace export is not described as a scoped-loop export.
 
 Other installed instruments use the same profile mode:
 
@@ -591,8 +516,8 @@ just measure profile --template Allocations --instrument 'VM Tracker'
 VM Tracker is an instrument added to a named template, not a standalone
 template. Availability of a template does not prove host recording permission;
 a failed required capture fails the command. Traces, exports and JSON reports
-are disposable local output. Do not attach them or commit them. Publish only
-reproduction commands and a concise result table in the PR. The initial
+are disposable local output. They are not attached or committed. The PR publishes only
+reproduction commands and a concise result table. The initial
 main-against-main validation is not a performance claim.
 
 ### Native Windows comparisons
@@ -602,15 +527,9 @@ set as in setup.md. Both arms use that checkout's `installed/x64-windows`
 pkg-config metadata and runtime DLLs. Each distinct SHA builds once with
 `cargo build --locked --release -p oxpinyin-capi`, default features and no
 added linker or debug flags. The artifact is `pinyin_capi.dll`, not a packaged
-libpinyin DLL. The import library links one MSVC C driver; identical copies
-sit beside each arm's DLL. A′ is staged as on macOS and passes the same DLL and
-dependency checks as any arm. The driver checks the imported ABI function's
-owning module before work. Preflight and completed module inventories must
-identify the same dependency files for both arms: every loaded module outside
-the Windows system directory, such as tkrzw and GLib, plus the C runtime.
-Other system modules follow the host, not the arm, and are not compared.
-The driver verifies the product's imported GLib allocator; it never substitutes
-its own `free` on Windows.
+libpinyin DLL. A′ is staged as on macOS. A run fails unless the imported ABI function's owning
+module is the arm's DLL and both arms load the same dependency files: every module outside the
+Windows system directory, such as tkrzw and GLib, plus the C runtime.
 
 QPC elapsed seconds, the QueryProcessCycleTime delta and GetProcessTimes
 user+kernel seconds bracket the same typing loop as macOS, excluding
@@ -621,9 +540,8 @@ capture and fails. `cpu_seconds` is secondary; GetProcessTimes advances in
 1/64-second ticks. A sample whose `cpu_seconds` is zero is below that
 resolution: the session reports no `cpu_seconds` ratio and says why, and every
 other metric is reported as usual.
-`loop_cpu_cycles` is fine-grained CPU time: in the smoke its ratio matched the
-wall-time ratio, consistent with QueryProcessCycleTime counting at the fixed
-reference (TSC) rate. It moves with clock speed and contention. It is not a
+`loop_cpu_cycles` is fine-grained CPU time counted at the fixed reference (TSC) rate.
+It moves with clock speed and contention. It is not a
 frequency-independent work count like the macOS instruction count, so a small
 difference needs more pairs and longer runs on Windows.
 `peak_private_commit_bytes` (PeakPagefileUsage) is a process-lifetime peak,
@@ -643,8 +561,7 @@ just measure compare --base HEAD --head HEAD --cycles 20 --pairs 2 --control-pai
 
 This schedules eight fresh processes, including a balanced diagnostic control
 of A against A′.
-The 180-second budget excludes preparation. Windows build trees, staged DLLs
-and driver copies are removed on success or failure; local JSON reports remain.
+The 180-second budget excludes preparation. Local JSON reports remain after the run.
 
 ### Native Linux comparisons
 
@@ -692,8 +609,8 @@ is in that list. Any other variation is `INVALID`: the `Ir` comparison is
 withheld and the command returns nonzero after it writes its report.
 
 One budget covers both passes. Callgrind is far slower than a native run, so a
-comparison that uses it needs an explicit `--budget`. State the Valgrind
-version beside its figures.
+comparison that uses it needs an explicit `--budget`. The Valgrind
+version is stated beside its figures.
 
 `just measure profile --template Callgrind` and `--template Massif` run one
 process of a build that adds `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`. Callgrind

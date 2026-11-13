@@ -1,37 +1,26 @@
 # F-A and F-C capture fixture freeze
 
-Date: 2026-08-09 · Status: frozen Foundation capture
+Status: frozen capture
 
-This finding freezes the wire format of the F-A and F-C capture output.
-The Task 4 execution amendment selects line-oriented text, not JSON.
-The authored Foundation spec files stay unchanged.
+This finding freezes the wire format of the F-A and F-C capture output: line-oriented text, not JSON.
 
-## Reference and reproduction
+## Reference
 
 Every record carries this name-version-revision stamp:
 
 ```text
-libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
+libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
 ```
-
-The reproduction below is recorded evidence. Its capture recipe no longer exists:
-
-```text
-python3 tools/oracle/build.py --dbm tkrzw --work-dir target/oracle --jobs 4
-# The `the retired compatibility launcher capture` recipe was removed on 2026-11-06 UTC with the
-# compat launcher; no replacement recipe exists yet.
-sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
-```
-
-The runner validated `oracle-pin.txt`, the public header, the shared object, the data
-manifest, and every generated data file before it accepted the pin ref.
 
 Frozen outputs:
 
 | Family | Records | SHA-256 |
 |---|---:|---|
-| `fixtures/foundation/f-a.txt` | 15 | `8a82f2195b80e7596cb0d4069d096dbc5064eecea9e2dcd78b2fff144a81c858` |
-| `fixtures/foundation/f-c.txt` | 46 | `e24aa79f0beb60f99924606962eaeec0941c0335a29335806bed25533033bfb5` |
+| `fixtures/foundation/f-a.txt` | 15 | `6690f849f6361f97f6b26b11159b67d6737924534ebfb0a69d7722040ea76a40` |
+| `fixtures/foundation/f-c.txt` | 46 | `1712555f148952fbc624976b8e11703f1af93e30c9f8ab32833eab0fc6735307` |
+
+No recipe in the tree regenerates these fixtures; the regenerator belongs to
+[the next pin capture](../runbooks/goldens-and-pins.md#the-next-pin-capture).
 
 The runner creates a new empty user directory for each family. The harness
 never calls training, remembering, choosing or saving APIs. The harness rejects the
@@ -79,9 +68,7 @@ USE_RESPLIT_TABLE`, with dynamic adjustment off. It freezes:
 - a 4,096-byte junk input.
 
 F-A records only the segmentation that the pinned oracle selected. It does not define
-the path set of the portable parser. The parser SPEC must add every valid
-segmentation, including alternatives that the oracle does not select, before Rust
-implementation begins.
+the path set of the portable parser.
 
 ## F-C coverage
 
@@ -94,17 +81,3 @@ segmentation is unchanged. Zhuyin-only bits are outside this full-pinyin
 family. The capture protocol excludes `DYNAMIC_ADJUST`. The `force-tone`
 pair deliberately records no observed output change at this public API
 surface; it does not infer unobserved behavior.
-
-## Amendment — pin 074a2219 (2026-09-06 UTC)
-
-The fixtures were regenerated against the new pin. This is recorded evidence: the deleted
-[archived run capture source](https://github.com/shenghaoc/oxpinyin/blob/e79802e8bf7c393142e979eadba10a2720860799/tools/capture/run-capture.sh) ran over the git-fetch-built oracle. The `pin_ref` stamp of every record moves to
-`libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw`.
-The captured behavior is unchanged: the corpus surfaces were verified again as
-byte-identical (see `oracle-pin-074a221-verification`).
-The table above is the 2.11.91 freeze and stays unedited.
-
-| Family | Records | SHA-256 |
-|---|---:|---|
-| `fixtures/foundation/f-a.txt` | 15 | `6690f849f6361f97f6b26b11159b67d6737924534ebfb0a69d7722040ea76a40` |
-| `fixtures/foundation/f-c.txt` | 46 | `1712555f148952fbc624976b8e11703f1af93e30c9f8ab32833eab0fc6735307` |
