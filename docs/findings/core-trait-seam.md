@@ -9,15 +9,6 @@ It is not a compatibility contract; the traits and their rules change with the c
 Failure behaviour is set by the [compatibility policy](compatibility-policy.md#failure-behaviour), and candidate order by the C APIs' pin-derived behaviour.
 The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
 
-## Shared cost
-
-```rust
-pub type Cost = i64;
-```
-
-Costs are signed integers, so ordering and accumulation stay deterministic.
-The decoder and scoring SPEC owns the scale ([scoring-spec.md](scoring-spec.md)); this seam fixes only the representation.
-
 ## Growth rule
 
 The seam grows by defaulted methods only.

@@ -338,7 +338,7 @@ where
         );
         Ok(Some((
             key,
-            Candidate::new(text, CandidateKind::Phrase, 0, 0, 0, Some(token), None),
+            Candidate::new(text, CandidateKind::Phrase, 0, 0, Some(token), None),
         )))
     }
 
@@ -1163,7 +1163,6 @@ where
                 CandidateKind::Fallback,
                 0,
                 remaining.len(),
-                0,
                 None,
                 None,
             ));
@@ -1231,7 +1230,6 @@ where
                     CandidateKind::Fallback,
                     0,
                     session.input.len() - offset,
-                    0,
                     None,
                     None,
                 ));
@@ -1496,7 +1494,6 @@ where
                 CandidateKind::Sentence,
                 row.keys,
                 row.span,
-                row.cost,
                 None,
                 Some(u8::try_from(index).unwrap_or(u8::MAX)),
             )

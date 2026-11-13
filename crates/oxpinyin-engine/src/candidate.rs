@@ -7,7 +7,7 @@
 
 use core::slice;
 
-use oxpinyin_core::{Cost, PhraseText, PhraseToken};
+use oxpinyin_core::{PhraseText, PhraseToken};
 
 /// Stably rank rows by descending phrase length and pinyin span, then by
 /// libpinyin's wrapping frequency comparison (`pinyin.cpp:1678-1709` at
@@ -85,20 +85,19 @@ pub enum CandidateKind {
 
 /// One offered conversion.
 ///
-/// Sized to need (64 bytes): the three span counts are `u32`, the width of
+/// Sized to need (56 bytes): the three span counts are `u32`, the width of
 /// the segment graph's positions
 /// ([`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION)), since
 /// a key is at least one byte; the n-best rank is a byte
 /// with `NO_ROW` for "not a row", the pin's own `gint8 m_nbest_index`
 /// width (`pinyin.cpp:102` at 074a2219); and the live unigram the lookup
 /// read is an `Option<u32>`, the item field's own width plus its
-/// discriminant, which takes the row from 56 to 64 bytes. A window of a
+/// discriminant, which takes the row from 48 to 56 bytes. A window of a
 /// hundred-odd rows is retained per instance, so each byte here is a
 /// hundred-odd bytes of instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
     text: PhraseText,
-    cost: Cost,
     token: Option<PhraseToken>,
     consumed_keys: u32,
     consumed_bytes: u32,
@@ -133,7 +132,7 @@ const NO_ROW: u8 = u8::MAX;
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<Candidate>() == 64);
+const _: () = assert!(core::mem::size_of::<Candidate>() == 56);
 
 /// Narrows a byte or key count to the row's width. Every count the
 /// session produces is a position of its segment graph, at most
@@ -153,7 +152,6 @@ impl Candidate {
         kind: CandidateKind,
         consumed_keys: usize,
         consumed_bytes: usize,
-        cost: Cost,
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
@@ -161,7 +159,6 @@ impl Candidate {
         debug_assert!(nbest_index.is_none_or(|rank| rank != NO_ROW));
         Self {
             text: text.into(),
-            cost,
             token,
             consumed_keys: narrow(consumed_keys),
             consumed_bytes: narrow(consumed_bytes),
@@ -255,16 +252,6 @@ impl Candidate {
     #[must_use]
     pub const fn token(&self) -> Option<PhraseToken> {
         self.token
-    }
-
-    /// The candidate's integer cost; trellis sentence rows carry zero.
-    ///
-    /// Lower is better. The scale belongs to
-    /// `docs/findings/scoring-spec.md`; a shell should treat it as opaque and
-    /// use the list order.
-    #[must_use]
-    pub const fn cost(&self) -> Cost {
-        self.cost
     }
 
     /// The n-best tail rank when this candidate is a sentence row

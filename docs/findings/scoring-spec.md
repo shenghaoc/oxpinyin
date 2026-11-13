@@ -18,18 +18,10 @@ P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 - **`P_unigram`** is the phrase item's stored unigram field over the facade total, as every upstream reader computes it (`PinyinLookup2`, `_compute_frequency_of_items`, `train_result3`). The stored field is the corpus count plus the 1 that `gen_unigram` adds to every item, so an item that the corpus never saw has probability `1/Σ`. On the pinned model, `Σ item == Σ \1-gram count + 138,096`.
 - `crates/oxpinyin-data/src/lm/mod.rs` implements the term through the `LanguageModel` seam ([core-trait-seam.md](core-trait-seam.md)).
 
-## The integer cost scale
+## Sentence scores
 
-`oxpinyin_core::cost` defines an integer cost on a fixed-point negative-log₂ scale:
-
-- `COST_PER_BIT` is 1,000: one bit of surprisal. An event with half the mass costs 1,000; a quarter costs 2,000.
-- `UNKNOWN_COST` is 40,000 (40 bits), the finite cost of an event with no mass. It keeps a path comparable instead of infinite.
-- Lower is better, costs add along a path, and all arithmetic saturates.
-- The logarithm is Rust's `f64::log2`. A last-bit difference between hosts, or from the pin's libm, is class (a) ([compatibility policy](compatibility-policy.md#exception-classes)).
-
-No production code calls these helpers: sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin-engine/src/nbest.rs`).
-`Candidate::cost` has the `Cost` type, and every production candidate carries 0.
-A consumer uses the list order.
+Sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin-engine/src/nbest.rs`), as the pin's `gfloat m_poss` does (`src/lookup/phonetic_lookup.h:41-52,663,692-693` at `074a2219`).
+Candidate order is the list order; candidates carry no separate integer score.
 
 ## Incomplete keys
 

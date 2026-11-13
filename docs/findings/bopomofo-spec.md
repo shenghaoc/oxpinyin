@@ -185,7 +185,7 @@ The pinyin facade's chewing batch seam forwards the whole word after the `ZHUYIN
 The libzhuyin facade forwards the whole word through `ZhuyinParser::parse_with_options`.
 
 Keys that the shuffle and recovery rows produce join the documented non-gated full-candidate divergence class.
-The string-keyed dictionary has no phrases for the new spellings, so the lookup is empty, with `UNKNOWN_COST` and no panic.
+The string-keyed dictionary has no phrases for the new spellings, so the lookup is empty, with no panic.
 
 ## Keyboard scope
 

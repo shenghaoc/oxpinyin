@@ -509,12 +509,8 @@ mod tests {
                     (4, 5) => Err("first span's second predecessor"),
                     (3, 6) => Err("later span's first predecessor"),
                     _ => Ok(NbestStepCosts {
-                        blended: (Some(1)).map(|cost: i64| {
-                            (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()
-                        }),
-                        unigram: (Some(1)).map(|cost: i64| {
-                            (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()
-                        }),
+                        blended: Some(0.5),
+                        unigram: Some(0.5),
 
                         unigram_lambda: 1.0,
                     }),
@@ -614,8 +610,7 @@ mod tests {
             _: &mut oxpinyin_core::NbestStepRow,
         ) -> Result<NbestStepCosts, Self::Error> {
             Ok(NbestStepCosts {
-                blended: (item.map(|(freq, _)| i64::from(freq)))
-                    .map(|cost: i64| (-(cost as f64) * std::f64::consts::LN_2 / 1000.0).exp()),
+                blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
                 unigram: None,
 
                 unigram_lambda: 1.0,

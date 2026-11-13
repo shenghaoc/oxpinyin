@@ -399,7 +399,7 @@ holds any key.
 
 **Seam note.** The merge is in oxpinyin's language model
 (`BigramLanguageModel::score`, count addition before the λ blend), **not** in
-`UserModel::score`, which stays `Ok(0)`. A `Cost` added after the λ blend
+`UserModel::score`, which stays `Ok(0)`. A score added after the λ blend
 would be a new weighting scheme, which this section forbids. The
 count-level merge must therefore live in the language model, and the
 `UserModel` seam is observe-only.

@@ -42,7 +42,7 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`option-bits`](option-bits.md) | Option bits: where each `pinyin_option_t` bit class acts, and oxpinyin's handling | reference |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC: the inventory, input domain, result fields and apostrophe rules | reference |
 | [`phrase-union`](phrase-union.md) | Phrase-index union at lookup | reference |
-| [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, the cost scale and incomplete keys | reference |
+| [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, sentence scores and incomplete keys | reference |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC: the byte-position key graph and the incomplete-key inventory | reference |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface: the n-best sentence rows and the measured selection residuals | reference, machine-read |
 | [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin-engine` session design under the C facades | reference |
