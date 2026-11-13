@@ -15,7 +15,8 @@
 //! explicitly: the plain seam clears it before refilling, the scheme seam
 //! sets it afterwards through [`InputBuffer::set_exact`].
 
-use std::sync::{Arc, OnceLock};
+use std::cell::OnceCell;
+use std::rc::Rc;
 
 use oxpinyin_core::graph::{Edge, ExactSegment, SegmentGraph};
 
@@ -37,19 +38,19 @@ pub(super) struct InputBuffer {
     raw: String,
     /// Whole-input parser graph, shared by the matrix, window and length queries.
     /// Input/provenance mutations and option changes invalidate it.
-    pub(super) graph: OnceLock<Arc<SegmentGraph>>,
+    pub(super) graph: OnceCell<Rc<SegmentGraph>>,
     /// The selected key path of the whole-input graph and the parsed length
     /// read from it, kept with the graph so one DP answers every query
     /// ([`super::Session::selected_path`]). Invalidated with the graph.
-    pub(super) selected: OnceLock<SelectedPath>,
+    pub(super) selected: OnceCell<SelectedPath>,
     /// The retained scan matrix and its projections, built once per input,
     /// option word and collapse mode ([`super::Session::retained_parse`]).
     /// Invalidated with the graph; the collapse setter drops it alone.
-    pub(super) parse: OnceLock<super::matrix::RetainedParse>,
+    pub(super) parse: OnceCell<super::matrix::RetainedParse>,
     /// The scan-matrix keys and parsed length the cursor and key getters
     /// read ([`super::Session::matrix_keys`]), projected once per retained
     /// parse so that enumerating every offset stays linear.
-    pub(super) keys: OnceLock<(Vec<MatrixKey>, usize)>,
+    pub(super) keys: OnceCell<(Vec<MatrixKey>, usize)>,
     /// Whether apostrophes came from canonical formatting rather than typing.
     /// Used only by trellis generation, never by the ordinary scan or graph.
     formatting_separators: bool,

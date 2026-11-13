@@ -1022,21 +1022,21 @@ impl Default for GramRow {
 /// allocation it arrived in. Whether their tokens strictly increase is
 /// decided once, by the first merge with another gram that needs it.
 #[derive(Clone, Debug)]
-pub struct SharedGram(std::sync::Arc<SharedValue>);
+pub struct SharedGram(std::rc::Rc<SharedValue>);
 
 #[derive(Debug)]
 struct SharedValue {
     bytes: Vec<u8>,
-    ordered: std::sync::OnceLock<bool>,
+    ordered: std::cell::OnceCell<bool>,
 }
 
 impl SharedGram {
     /// Takes one stored value, keeping its allocation.
     #[must_use]
     pub fn new(value: Vec<u8>) -> Self {
-        Self(std::sync::Arc::new(SharedValue {
+        Self(std::rc::Rc::new(SharedValue {
             bytes: value,
-            ordered: std::sync::OnceLock::new(),
+            ordered: std::cell::OnceCell::new(),
         }))
     }
 

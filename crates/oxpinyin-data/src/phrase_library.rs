@@ -465,7 +465,7 @@ pub struct PhraseLibrary {
     /// such a library exactly as the pin re-maps it.
     layout_failed: bool,
     /// Live mapped item sum, filled at first compact.
-    item_total: std::sync::OnceLock<u32>,
+    item_total: std::cell::OnceCell<u32>,
     /// `get_range`'s end at the moment the mapping moved to its live owner.
     detached_range_end: Option<u32>,
 }
@@ -584,7 +584,7 @@ impl PhraseLibrary {
             offsets: 0..0,
             content: 0..0,
             layout_failed: true,
-            item_total: std::sync::OnceLock::new(),
+            item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
         };
 
@@ -649,7 +649,7 @@ impl PhraseLibrary {
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
             layout_failed: false,
-            item_total: std::sync::OnceLock::new(),
+            item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
         })
     }
