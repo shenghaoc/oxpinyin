@@ -513,8 +513,7 @@ coefficient, and oxpinyin reads the same value.
 `SystemTableInfo2::load` sets `LC_NUMERIC="C"` and scans `%f\n` into a
 `gfloat` (`src/storage/table_info.cpp:197,220-224`). `TableConf::load` makes
 that call on the file's stream through `oxpinyin-input`, for both facades and
-the tools; the decoder's rational routing value is the scanned `gfloat`'s
-shortest decimal (`Lambda::from_f32`).
+the tools. The decoder uses the scanned `gfloat` directly.
 
 ### oxpinyin's own values, by call path
 

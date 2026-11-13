@@ -14,7 +14,7 @@ The language-model term is the interpolation the pin uses:
 P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 ```
 
-- **λ** comes from the model's `table.conf`. `TableConf::load` scans it with the pin's `fscanf("%f")` and keeps that `f32`, whatever its value; the pinned model gives `0.312699` ([data-formats.md §3](data-formats.md)). Where the `f32` is in `[0, 1]`, `Lambda::from_f32` also gives the exact rational (`312699 / 1_000_000` for the pinned value) for the integer path. A value outside `[0, 1]` has no rational, and the decoder runs the pin's float arithmetic on the `f32` (compatibility policy row 83).
+- **λ** comes from the model's `table.conf`. `TableConf::load` scans it with the pin's `fscanf("%f")` and keeps that `f32`, whatever its value; the pinned model gives `0.312699` ([data-formats.md §3](data-formats.md)).
 - **`P_unigram`** is the phrase item's stored unigram field over the facade total, as every upstream reader computes it (`PinyinLookup2`, `_compute_frequency_of_items`, `train_result3`). The stored field is the corpus count plus the 1 that `gen_unigram` adds to every item, so an item that the corpus never saw has probability `1/Σ`. On the pinned model, `Σ item == Σ \1-gram count + 138,096`.
 - `crates/oxpinyin-data/src/lm/mod.rs` implements the term through the `LanguageModel` seam ([core-trait-seam.md](core-trait-seam.md)).
 

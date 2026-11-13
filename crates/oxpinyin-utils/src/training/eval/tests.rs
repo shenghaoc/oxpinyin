@@ -104,8 +104,7 @@ fn correction_rate_is_lambda_independent_here() {
     let counts = parse_interpolation_dump(INTERPOLATION2);
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
-    for value in ["0.000000", "0.312699", "1.000000"] {
-        let lambda = oxpinyin_data::Lambda::from_decimal(value).expect("lambda");
+    for lambda in [0.0, oxpinyin_data::PINNED_LAMBDA, 1.0] {
         let model =
             EvalLanguageModel::from_counts_with_lexicon(&counts, lambda, source.lexicon_tokens());
         // The gen_unigram floor: every lexicon token carries count + 1
@@ -114,14 +113,14 @@ fn correction_rate_is_lambda_independent_here() {
         let floored = model.unigram_poss(10);
         assert!(
             (floored - 101.0 / 163.0).abs() < 1e-12,
-            "λ={value} floored P_uni(中) {floored}"
+            "λ={lambda} floored P_uni(中) {floored}"
         );
         let report = correction_rate(&dictionary, &model, &source, &sentences()).expect("evaluate");
-        assert_eq!(report.tested, 2, "λ={value}");
-        assert_eq!(report.passed, 1, "λ={value}: 中国 passes, 钟 fails");
+        assert_eq!(report.tested, 2, "λ={lambda}");
+        assert_eq!(report.passed, 1, "λ={lambda}: 中国 passes, 钟 fails");
         assert!(
             (report.rate - 0.5).abs() < 1e-12,
-            "λ={value} rate {}",
+            "λ={lambda} rate {}",
             report.rate
         );
         // The one failure is 钟 decoded as the more frequent homophone 中.

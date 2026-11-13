@@ -35,7 +35,7 @@ use std::path::Path;
 use oxpinyin_input::config::SystemTableInfoReader;
 
 use crate::phrase_library::directory_reads_as_a_chunk;
-use crate::table_conf::{Lambda, PINNED_LAMBDA};
+use crate::table_conf::PINNED_LAMBDA;
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h:43`).
 pub const PHRASE_INDEX_LIBRARY_COUNT: usize = 16;
@@ -298,7 +298,6 @@ pub struct TableConf {
     binary_format_version: i32,
     model_data_version: i32,
     lambda: f32,
-    lambda_unit: Option<Lambda>,
     phonetic: PhoneticType,
     database_format: DatabaseFormat,
     default: Vec<TableRow>,
@@ -315,7 +314,6 @@ impl TableConf {
             binary_format_version: 7,
             model_data_version: 14,
             lambda: PINNED_LAMBDA,
-            lambda_unit: Some(Lambda::PINNED),
             phonetic: PhoneticType::Pinyin,
             database_format: DatabaseFormat::from_token(oxpinyin_store::DEFAULT_STORE_DB_FORMAT)
                 .unwrap_or(DatabaseFormat::BerkeleyDb),
@@ -406,7 +404,6 @@ impl TableConf {
             binary_format_version,
             model_data_version,
             lambda,
-            lambda_unit: Lambda::from_f32(lambda),
             phonetic,
             database_format,
             default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
@@ -501,15 +498,6 @@ impl TableConf {
     #[must_use]
     pub const fn lambda_f32(&self) -> f32 {
         self.lambda
-    }
-
-    /// `lambda parameter:` as the exact rational the scanned `gfloat`'s
-    /// shortest round-tripping decimal denotes when that is a plain decimal
-    /// in `[0, 1]` — the decoder's integer path ([`Lambda::from_f32`]);
-    /// `None` for anything else.
-    #[must_use]
-    pub const fn lambda_unit(&self) -> Option<Lambda> {
-        self.lambda_unit
     }
 
     /// `source table format:`.
@@ -703,7 +691,7 @@ mod tests {
         let conf = parse(STOCK).expect("parses");
         assert_eq!(conf.binary_format_version(), 7);
         assert_eq!(conf.model_data_version(), 14);
-        assert_eq!(conf.lambda_unit(), Some(Lambda::PINNED));
+        assert_eq!(conf.lambda_f32(), PINNED_LAMBDA);
         assert_eq!(conf.database_format(), DatabaseFormat::BerkeleyDb);
         let system: Vec<_> = conf.system_libraries().map(|(index, _)| index).collect();
         assert_eq!(system, [1]);
@@ -866,9 +854,7 @@ mod tests {
         );
     }
 
-    /// λ is the host scanner's `%f`; its rational routing value is the
-    /// shortest decimal of that `gfloat` (maintainer ruling 2026-10-28 UTC,
-    /// D1).
+    /// λ is the host scanner's `%f` result, used directly as a `gfloat`.
     #[test]
     fn lambda_is_the_scanned_float() {
         for (text, expected) in [
@@ -882,14 +868,6 @@ mod tests {
             let conf = parse(&STOCK.replace("0.312699", text)).expect(text);
             assert_eq!(conf.lambda_f32(), expected, "{text}");
         }
-        let unit = |text: &str| {
-            parse(&STOCK.replace("0.312699", text))
-                .expect(text)
-                .lambda_unit()
-        };
-        // `table_conf::tests` holds the routing of each gfloat; this is the
-        // connection from the scanned value.
-        assert_eq!(unit("5e-1"), Lambda::from_decimal("0.5"));
         assert!(
             parse(&STOCK.replace("0.312699", "nan"))
                 .expect("nan")

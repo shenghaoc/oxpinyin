@@ -31,7 +31,7 @@
 //! ```
 //!
 //! λ is read from the model's `table.conf` ([`crate::table_conf`]); it
-//! defaults to [`crate::table_conf::Lambda::PINNED`] (`0.312699`,
+//! defaults to [`crate::table_conf::PINNED_LAMBDA`] (`0.312699`,
 //! `data-formats.md` §3) when no `table.conf` is available.
 //!
 //! An unloaded library (`pinyin_unload_phrase_library`) leaves the model
@@ -202,7 +202,7 @@ pub struct BigramTables {
     bigram: BigramTable,
     /// Bigram/unigram interpolation weight λ as the pin's `gfloat`, read
     /// from the model's `table.conf` when available and
-    /// [`crate::table_conf::Lambda::PINNED`] (`0.312699`, `data-formats.md` §3) otherwise.
+    /// [`crate::table_conf::PINNED_LAMBDA`] (`0.312699`, `data-formats.md` §3) otherwise.
     /// Read from config rather than hardcoded.
     lambda_f32: f32,
 }
@@ -288,7 +288,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
     /// and tkrzw) over the facade's `libraries`, with every library
     /// visible.
     ///
-    /// λ defaults to [`crate::table_conf::Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
+    /// λ defaults to [`crate::table_conf::PINNED_LAMBDA`] (`0.312699`, `data-formats.md` §3);
     /// override it from a real install's config with
     /// `set_lambda_from_conf`.
     ///

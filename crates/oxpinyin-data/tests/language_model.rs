@@ -307,7 +307,6 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
     // bigram_poss = 3.543283700942993; λ * poss = 1.1079812049865723;
     // the f64 unigram term is 0.0035125943276022526, giving the f64 sum
     // 1.1114937993141745 and -152.49990003054108 millibits, rounded to -152.
-    // Logging the exact rational instead gives -153 (-152.50010327593435).
     let pair = lm
         .nbest_step_costs_with_user_delta(&ni, &hao, delta)
         .unwrap();

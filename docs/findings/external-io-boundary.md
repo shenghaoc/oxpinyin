@@ -152,12 +152,7 @@ keeps. An extra replay mapping is also rejected.
 ## Stage 1 rulings
 
 - **D1, λ.** The scanned `f32` is the only source of λ. Real-table
-  sentence and phrase scoring use the scanned `f32` directly. The
-  pre-frequency fallback scorer derives its rational routing value from the
-  shortest round-trippable decimal (`Lambda::from_f32`); the rational
-  calculation stays where the whole computation fits in `u128`, and the
-  raw-float calculation takes over on overflow. A finite pin score never
-  becomes `UNKNOWN_COST` or a missing step because `u128` overflowed.
+  sentence and phrase scoring use the scanned `f32` directly.
 - **D2, diagnostics.** `table_info.cpp`'s three `fprintf(stderr)` calls
   (`:201`, `:332`, `:382`) are made with their native I/O sequences: exact
   calls, bytes, channel and order. A context without a user dir makes the

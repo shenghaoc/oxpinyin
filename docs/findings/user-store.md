@@ -182,10 +182,9 @@ and wrapped facade total. Prefix rows compute `(1 - lambda) * unigram /
 with `DYNAMIC_ADJUST` and a non-null predecessor (`:1845-1866`), but the
 prediction caller initializes its predecessor to null and never changes it
 (`:2418,2438`). Thus predicted bigram rows use the same unigram law in
-both option states. Lambda is parsed directly as `gfloat` from `table.conf`
-(`table_info.cpp:220`), not through the decoder's rational-to-f64 conversion
-or a fitted constant. A decimal just below an f32 midpoint distinguishes
-these paths (`0.9999999701976776123036`).
+both option states. Lambda is scanned as `gfloat` from `table.conf`
+(`table_info.cpp:220`) and used directly. A decimal just below an f32
+midpoint (`0.9999999701976776123036`) checks this scanner rounding.
 
 The `guint32` assignment truncates. The pinned x86-64 build performs a
 64-bit signed float-to-integer conversion followed by a low-32-bit store;

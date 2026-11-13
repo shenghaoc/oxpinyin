@@ -67,8 +67,7 @@ impl CapiContext {
             oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
             oxpinyin_user::UserConfLaw::Pinyin,
         )?;
-        // `table_info.cpp:220` scans λ straight into a `gfloat`; the exact
-        // rational the decoder may hold is not that value.
+        // Use the `gfloat` scanned by `table_info.cpp:220` directly.
         let predicted_lambda = core.runtime.table_conf().lambda_f32();
         Ok(Self {
             predicted_lambda,
