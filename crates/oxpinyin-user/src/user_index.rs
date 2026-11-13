@@ -238,19 +238,12 @@ impl UserIndex {
         for (key, value) in &entries {
             index.push_record(key, value);
         }
-        index.finish_load();
         index
     }
 
-    /// Appends one DBM record.
+    /// Sets one DBM record.
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
         self.records.push_record(key, value);
-    }
-
-    /// Sorts the offset vector after a walk that did not arrive in key
-    /// order.
-    pub(crate) fn finish_load(&mut self) {
-        self.records.finish_load();
     }
 
     /// The value stored under `key`, arena or overlay.
@@ -703,7 +696,6 @@ mod tests {
         for (key, value) in rows {
             index.push_record(key, value);
         }
-        index.finish_load();
         index
     }
 

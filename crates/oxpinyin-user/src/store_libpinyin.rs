@@ -777,7 +777,6 @@ mod tests {
             phrases
                 .phrase_table
                 .push_record(&crate::phrase_table::key_ucs4(&words), &[1, 0, 0, 7, 9]);
-            phrases.phrase_table.finish_load();
         }
         let snapshot = |store: &UserStore| format!("{:?}", store.session_target().phrases());
         let before = snapshot(&store);

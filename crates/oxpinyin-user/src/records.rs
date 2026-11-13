@@ -35,8 +35,9 @@ const HEADER: usize = 8;
 
 /// The pin's rows in one owned arena.
 ///
-/// The load walks the DBM once, appends each key and value in the walk's
-/// (ascending) order, and records a sorted offset vector. A session edit
+/// The load walks the DBM once, appends each key and value, and files each
+/// record's offset in key order, as the pin's `load_db` copy sets each record
+/// into its ordered in-memory table. A session edit
 /// writes only the affected record into the overlay, which iteration
 /// merges in key order.
 #[derive(Clone, Debug, Default)]
@@ -59,22 +60,35 @@ impl RecordArena {
         }
     }
 
-    /// Appends one DBM record. Every producer appends a key at most once:
-    /// the user index files are key-unique containers and the in-memory
-    /// builders deduplicate by key. Order is not guaranteed; a build or walk
-    /// that did not arrive in key order calls [`Self::finish_load`] before
-    /// the arena is read.
+    /// Sets one record of a load, as the pin's copy loop sets each record
+    /// of the file into its ordered in-memory table (`copy_tkrzwdb`,
+    /// `tkrzwdb_utils.h:48-74`; `copy_bdb`, `bdb_utils.h:43-74` at 074a2219).
+    /// The files are ordered trees, so a walk arrives in ascending key
+    /// order and the record goes last. A key that arrives out of order is
+    /// filed at its place, and a repeated key replaces the earlier record.
     pub(crate) fn push_record(&mut self, key: &[u8], value: &[u8]) {
-        append_record(&mut self.arena, &mut self.offsets, key, value);
-    }
-
-    /// Sorts the offset vector after a walk or a builder that did not append
-    /// in key order: an in-memory builder such as `UserIndex::from_entries`
-    /// may pass rows in any order, so the repair stays.
-    pub(crate) fn finish_load(&mut self) {
+        let offset = self.arena.len();
+        append_record(&mut self.arena, key, value);
         let arena = &self.arena;
-        self.offsets
-            .sort_by(|left, right| key_at(arena, *left).cmp(key_at(arena, *right)));
+        if self
+            .offsets
+            .last()
+            .is_none_or(|last| key_at(arena, *last) < key)
+        {
+            self.offsets.push(offset);
+            return;
+        }
+        match self
+            .offsets
+            .binary_search_by(|at| key_at(arena, *at).cmp(key))
+        {
+            Ok(position) => {
+                if let Some(held) = self.offsets.get_mut(position) {
+                    *held = offset;
+                }
+            }
+            Err(position) => self.offsets.insert(position, offset),
+        }
     }
 
     /// Records a session edit of `key`, replacing any earlier one.
@@ -218,13 +232,11 @@ impl RecordArena {
 
 /// Appends one `[u32 key_len][u32 value_len][key][value]` record and its
 /// offset.
-fn append_record(arena: &mut Vec<u8>, offsets: &mut Vec<usize>, key: &[u8], value: &[u8]) {
-    let offset = arena.len();
+fn append_record(arena: &mut Vec<u8>, key: &[u8], value: &[u8]) {
     arena.extend_from_slice(&u32::try_from(key.len()).unwrap_or(u32::MAX).to_le_bytes());
     arena.extend_from_slice(&u32::try_from(value.len()).unwrap_or(u32::MAX).to_le_bytes());
     arena.extend_from_slice(key);
     arena.extend_from_slice(value);
-    offsets.push(offset);
 }
 
 fn key_at(arena: &[u8], at: usize) -> &[u8] {
@@ -238,4 +250,40 @@ fn value_at(arena: &[u8], at: usize) -> &[u8] {
     let value_len =
         u32::from_le_bytes([arena[at + 4], arena[at + 5], arena[at + 6], arena[at + 7]]) as usize;
     &arena[at + HEADER + key_len..at + HEADER + key_len + value_len]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecordArena;
+
+    /// A load walk that is not ascending still leaves the records in key
+    /// order, and a repeated key keeps the later record, as a set into the
+    /// pin's ordered table does.
+    #[test]
+    fn a_load_files_each_record_in_key_order_and_a_repeat_replaces() {
+        let mut arena = RecordArena::new();
+        for (key, value) in [
+            (&b"b"[..], &b"1"[..]),
+            (b"d", b"2"),
+            (b"a", b"3"),
+            (b"c", b"4"),
+            (b"d", b"5"),
+            (b"e", b"6"),
+        ] {
+            arena.push_record(key, value);
+        }
+        let mut walked = Vec::new();
+        let walk = arena.for_each_record::<std::convert::Infallible>(|key, value| {
+            walked.push((key.to_vec(), value.to_vec()));
+            Ok(())
+        });
+        assert!(walk.is_ok());
+        let expected: Vec<(Vec<u8>, Vec<u8>)> =
+            [("a", "3"), ("b", "1"), ("c", "4"), ("d", "5"), ("e", "6")]
+                .map(|(key, value)| (key.into(), value.into()))
+                .to_vec();
+        assert_eq!(walked, expected);
+        assert_eq!(arena.record(b"d"), Some(&b"5"[..]));
+        assert_eq!(arena.record(b"f"), None);
+    }
 }
