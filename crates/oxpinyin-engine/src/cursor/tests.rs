@@ -18,11 +18,29 @@ use crate::error::EngineError;
 /// USE_RESPLIT_TABLE` plus the harness's `0x2` bit.
 const PARITY: OptionBits = OptionBits::from_bits(0x18a);
 
+/// The setup the cursor laws' plain entry points did: the full-pinyin scan
+/// matrix of `input` as (syllable start, raw end) spans, then `law` over
+/// them with separators on.
+fn over_matrix<T>(
+    input: &[u8],
+    options: OptionBits,
+    law: impl FnOnce(&[u8], usize, &[(usize, usize)], bool) -> Result<T, EngineError>,
+) -> Result<T, EngineError> {
+    let (keys, parsed) = matrix_keys(input, options)?;
+    let spans: Vec<(usize, usize)> = keys
+        .iter()
+        .map(|key| (key.syllable_start(), key.end()))
+        .collect();
+    law(input, parsed, &spans, true)
+}
+
 /// Expected pin answer for one probe: non-negative = value, -1 = the
 /// `_check_offset` abort shape, -2 = the graceful false (right move only).
 fn off(input: &[u8], probes: &[(usize, i64)]) {
     for &(cursor, want) in probes {
-        let got = lookup_offset_for_cursor(input, PARITY, cursor);
+        let got = over_matrix(input, PARITY, |i, p, s, sep| {
+            lookup_offset_over_spans(i, p, s, sep, cursor)
+        });
         assert_eq!(
             got,
             Ok(usize::try_from(want).expect("non-negative probe")),
@@ -34,7 +52,9 @@ fn off(input: &[u8], probes: &[(usize, i64)]) {
 
 fn left(input: &[u8], probes: &[(usize, i64)]) {
     for &(offset, want) in probes {
-        let got = left_word_offset(input, PARITY, offset);
+        let got = over_matrix(input, PARITY, |i, p, s, sep| {
+            left_word_offset_over_spans(i, p, s, sep, offset)
+        });
         match want {
             v if v >= 0 => assert_eq!(
                 got,
@@ -54,7 +74,9 @@ fn left(input: &[u8], probes: &[(usize, i64)]) {
 
 fn right(input: &[u8], probes: &[(usize, i64)]) {
     for &(offset, want) in probes {
-        let got = right_word_offset(input, PARITY, offset);
+        let got = over_matrix(input, PARITY, |i, p, s, sep| {
+            right_word_offset_over_spans(i, p, s, sep, offset)
+        });
         match want {
             v if v >= 0 => assert_eq!(
                 got,
@@ -490,28 +512,42 @@ fn apostrophe_only_inputs_follow_the_zero_fill() {
     // law (#178) the graph consumed 0 for these, so the columns came from
     // the tail zero-fill instead and OFF answered the clamped 0 where the
     // pin aborts — a parse-derived divergence the old expectations
-    // recorded. The law's apostrophe propagation makes `matrix_spans`
+    // recorded. The law's apostrophe propagation makes the scan matrix
     // report the run-consumed length, so the columns are now the pin's
     // own and every law agrees with it: LEFT/RIGHT abort as before, and
     // OFF aborts for every cursor past 0 (cursor 0 clamps below the
     // zero-run walk and stays 0).
     for input in [b"'".as_slice(), b"''", b"'''"] {
         let len = input.len();
-        assert_eq!(lookup_offset_for_cursor(input, PARITY, 0), Ok(0));
+        assert_eq!(
+            over_matrix(input, PARITY, |i, p, s, sep| lookup_offset_over_spans(
+                i, p, s, sep, 0
+            )),
+            Ok(0)
+        );
         for cursor in 1..=len {
             assert!(
                 matches!(
-                    lookup_offset_for_cursor(input, PARITY, cursor),
+                    over_matrix(input, PARITY, |i, p, s, sep| lookup_offset_over_spans(
+                        i, p, s, sep, cursor
+                    )),
                     Err(EngineError::ZeroKeyOffsetCheck { .. })
                 ),
                 "{input:?} OFF c={cursor}: pin aborts"
             );
         }
-        assert_eq!(left_word_offset(input, PARITY, 0), Ok(0));
+        assert_eq!(
+            over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
+                i, p, s, sep, 0
+            )),
+            Ok(0)
+        );
         for offset in 1..=len {
             assert!(
                 matches!(
-                    left_word_offset(input, PARITY, offset),
+                    over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
+                        i, p, s, sep, offset
+                    )),
                     Err(EngineError::ZeroKeyOffsetCheck { .. })
                 ),
                 "{input:?} LEFT off={offset}: pin aborts"
@@ -520,7 +556,9 @@ fn apostrophe_only_inputs_follow_the_zero_fill() {
         for offset in 0..=len {
             assert!(
                 matches!(
-                    right_word_offset(input, PARITY, offset),
+                    over_matrix(input, PARITY, |i, p, s, sep| right_word_offset_over_spans(
+                        i, p, s, sep, offset
+                    )),
                     Err(EngineError::ZeroKeyOffsetCheck { .. })
                 ),
                 "{input:?} RIGHT off={offset}: pin aborts"
@@ -559,24 +597,45 @@ fn an_empty_buffer_is_an_empty_matrix() {
     // past the (zero) one-past-end position are the range refusal — the
     // pin asserts on its empty matrix there (the same assert as a key
     // query on an apostrophe-only parse).
-    assert_eq!(lookup_offset_for_cursor(b"", PARITY, 3), Ok(0));
-    assert_eq!(left_word_offset(b"", PARITY, 0), Ok(0));
     assert_eq!(
-        left_word_offset(b"", PARITY, 1),
+        over_matrix(b"", PARITY, |i, p, s, sep| lookup_offset_over_spans(
+            i, p, s, sep, 3
+        )),
+        Ok(0)
+    );
+    assert_eq!(
+        over_matrix(b"", PARITY, |i, p, s, sep| left_word_offset_over_spans(
+            i, p, s, sep, 0
+        )),
+        Ok(0)
+    );
+    assert_eq!(
+        over_matrix(b"", PARITY, |i, p, s, sep| left_word_offset_over_spans(
+            i, p, s, sep, 1
+        )),
         Err(EngineError::LookupOffsetOutOfRange { offset: 1, len: 0 })
     );
-    assert_eq!(right_word_offset(b"", PARITY, 0), Ok(None));
+    assert_eq!(
+        over_matrix(b"", PARITY, |i, p, s, sep| right_word_offset_over_spans(
+            i, p, s, sep, 0
+        )),
+        Ok(None)
+    );
 }
 
 #[test]
 fn offsets_past_one_past_end_are_refused() {
     let input = b"nihao";
     assert_eq!(
-        left_word_offset(input, PARITY, 6),
+        over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
+            i, p, s, sep, 6
+        )),
         Err(EngineError::LookupOffsetOutOfRange { offset: 6, len: 5 })
     );
     assert_eq!(
-        right_word_offset(input, PARITY, 9),
+        over_matrix(input, PARITY, |i, p, s, sep| right_word_offset_over_spans(
+            i, p, s, sep, 9
+        )),
         Err(EngineError::LookupOffsetOutOfRange { offset: 9, len: 5 })
     );
 }

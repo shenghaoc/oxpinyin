@@ -393,65 +393,6 @@ pub fn right_word_offset_over_spans(
     Ok(Some(end))
 }
 
-/// [`lookup_offset_over_spans`] over the plain full-pinyin scan matrix.
-///
-/// # Errors
-///
-/// Returns [`EngineError`] when the cursor cannot be resolved against the input.
-pub fn lookup_offset_for_cursor(
-    input: &[u8],
-    options: OptionBits,
-    cursor: usize,
-) -> Result<usize, EngineError> {
-    let (spans, parsed) = matrix_spans(input, options)?;
-    lookup_offset_over_spans(input, parsed, spans.as_slice(), true, cursor)
-}
-
-/// [`left_word_offset_over_spans`] over the plain full-pinyin scan matrix.
-///
-/// # Errors
-///
-/// Returns [`EngineError`] when the offset cannot be resolved against the input.
-pub fn left_word_offset(
-    input: &[u8],
-    options: OptionBits,
-    offset: usize,
-) -> Result<usize, EngineError> {
-    let (spans, parsed) = matrix_spans(input, options)?;
-    left_word_offset_over_spans(input, parsed, spans.as_slice(), true, offset)
-}
-
-/// [`right_word_offset_over_spans`] over the plain full-pinyin scan matrix.
-///
-/// # Errors
-///
-/// Returns [`EngineError`] when the offset cannot be resolved against the input.
-pub fn right_word_offset(
-    input: &[u8],
-    options: OptionBits,
-    offset: usize,
-) -> Result<Option<usize>, EngineError> {
-    let (spans, parsed) = matrix_spans(input, options)?;
-    right_word_offset_over_spans(input, parsed, spans.as_slice(), true, offset)
-}
-
-/// The scan matrix's keys as (syllable start, raw end) spans plus the
-/// graph's consumed length.
-///
-/// Columns are indexed by the key's syllable start — the position after any
-/// apostrophe a crossing key rides over — matching the pin's placement.
-fn matrix_spans(
-    input: &[u8],
-    options: OptionBits,
-) -> Result<(Vec<(usize, usize)>, usize), EngineError> {
-    let (keys, parsed) = matrix_keys(input, options)?;
-    let spans = keys
-        .iter()
-        .map(|key| (key.syllable_start(), key.end()))
-        .collect();
-    Ok((spans, parsed))
-}
-
 /// One scan-matrix key with the raw byte span it occupies.
 ///
 /// The C ABI's `ChewingKey` / `ChewingKeyRest` pair, in engine terms:
@@ -526,8 +467,7 @@ impl MatrixKey {
 /// The scan matrix's keys with their spans, plus the graph's consumed
 /// length.
 ///
-/// The same walk [`matrix_spans`] projects: keys appear in column order
-/// (by syllable start, [`in_column_order`]), and within a column in the
+/// Keys appear in column order (by syllable start, [`in_column_order`]), and within a column in the
 /// matrix's own order, so the first key of a column is the pin's
 /// `matrix.get_item(column, 0, ...)`.
 ///

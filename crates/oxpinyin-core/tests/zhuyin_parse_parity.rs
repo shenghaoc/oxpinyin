@@ -13,8 +13,8 @@
 //!
 //! The replay seam is the one the pinyin facade forwards to
 //! (`parse_chewing_more`, `ToneForwarding::PinFacade`):
-//! `ZhuyinParser::parse(input, use_tone, allow_incomplete)` with both
-//! bits read off the captured option word — `FORCE_TONE` never crosses
+//! `ZhuyinParser::parse_with_options` with the `USE_TONE` and
+//! `ZHUYIN_INCOMPLETE` bits read off the captured option word — `FORCE_TONE` never crosses
 //! that facade. Per key the fixture carries both renderings the oracle
 //! hands out: the pinyin string (`_ChewingKey::get_pinyin_string`'s law:
 //! canonical spelling plus the tone digit for a non-zero tone) and the
@@ -169,9 +169,10 @@ fn pinyin_string(key: &ZhuyinKey) -> String {
 fn zhuyin_parse_matches_the_frozen_oracle_pin() {
     for line in fixture_lines() {
         let parser = ZhuyinParser::with_scheme(scheme_for(line.scheme));
-        let use_tone = line.flags & USE_TONE != 0;
-        let allow_incomplete = line.flags & ZHUYIN_INCOMPLETE != 0;
-        let parsed = parser.parse(line.input.as_bytes(), use_tone, allow_incomplete);
+        let parsed = parser.parse_with_options(
+            line.input.as_bytes(),
+            line.flags & (USE_TONE | ZHUYIN_INCOMPLETE),
+        );
 
         assert_eq!(
             parsed.consumed(),

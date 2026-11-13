@@ -14,7 +14,7 @@
 //! or sanitizer report, or a violated invariant here.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::{ZhuyinParser, ZhuyinScheme};
+use oxpinyin_core::{ZhuyinParser, ZhuyinScheme, USE_TONE, ZHUYIN_INCOMPLETE};
 
 /// Every zhuyin keyboard except the `StandardDvorak` abort slot (upstream's
 /// setter aborts on it; `ZhuyinParser` reports `false` and keeps the current
@@ -35,8 +35,10 @@ fuzz_target!(|data: &[u8]| {
         for use_tone in [false, true] {
             for allow_incomplete in [false, true] {
                 let parser = ZhuyinParser::with_scheme(*scheme);
-                let first = parser.parse(data, use_tone, allow_incomplete);
-                let second = parser.parse(data, use_tone, allow_incomplete);
+                let options = (u32::from(use_tone) * USE_TONE)
+                    | (u32::from(allow_incomplete) * ZHUYIN_INCOMPLETE);
+                let first = parser.parse_with_options(data, options);
+                let second = parser.parse_with_options(data, options);
                 assert_eq!(first, second, "{scheme:?}: parse must be deterministic");
 
                 // The test_parser2 span law, verbatim from the curated test.

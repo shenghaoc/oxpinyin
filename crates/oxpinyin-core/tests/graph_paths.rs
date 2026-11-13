@@ -12,7 +12,7 @@
 //! behind a Linux-only feature.
 
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::{Completeness, SyllableKey};
+use oxpinyin_core::{Completeness, OptionBits, SyllableKey};
 
 use crate::common::capture_text::unescape;
 
@@ -141,7 +141,8 @@ fn every_captured_oracle_path_is_a_graph_path() {
     let mut failures: Vec<(String, String)> = Vec::new();
     let mut disagreements: Vec<(String, usize, usize)> = Vec::new();
     for record in records {
-        let graph = SegmentGraph::build(&record.input).expect("corpus inputs are short");
+        let graph = SegmentGraph::build_with_options(&record.input, OptionBits::default())
+            .expect("corpus inputs are short");
         let input = String::from_utf8_lossy(&record.input).into_owned();
         if let Err(reason) = walk(&graph, &record.segments) {
             failures.push((input.clone(), reason));

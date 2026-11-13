@@ -5,10 +5,11 @@
 //! the effective scheme unchanged.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme};
+use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme, PINYIN_INCOMPLETE};
 
 fuzz_target!(|data: &[u8]| {
     let allow_incomplete = data.first().is_some_and(|byte| byte & 1 == 1);
+    let options = u32::from(allow_incomplete) * PINYIN_INCOMPLETE;
     let schemes = [
         DoublePinyinScheme::Zrm,
         DoublePinyinScheme::Ms,
@@ -20,8 +21,8 @@ fuzz_target!(|data: &[u8]| {
     ];
     for scheme in schemes {
         let parser = DoublePinyinParser::with_scheme(scheme);
-        let first = parser.parse(data, allow_incomplete);
-        let second = parser.parse(data, allow_incomplete);
+        let first = parser.parse_with_options(data, options);
+        let second = parser.parse_with_options(data, options);
         assert_eq!(first, second, "parse must be deterministic");
         assert_eq!(
             first.consumed(),

@@ -447,7 +447,8 @@ mod tests {
 
     #[test]
     fn den_matrix_keeps_key_and_fuzzy_deng() {
-        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse(b"2p", true, false);
+        let parse =
+            ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse_with_options(b"2p", USE_TONE);
         let keys = crate::cursor::ModeKeys::Zhuyin(parse.keys())
             .iter()
             .collect::<Vec<_>>();
@@ -482,7 +483,8 @@ mod tests {
 
     #[test]
     fn exact_input_joins_keys_with_apostrophes_and_spans_each_one() {
-        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse(b"su3cl3", true, false);
+        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
+            .parse_with_options(b"su3cl3", USE_TONE);
         let (text, segments) = exact_input(parse.keys());
         assert_eq!(text, "ni'hao");
         assert_eq!(segments.len(), 2);
