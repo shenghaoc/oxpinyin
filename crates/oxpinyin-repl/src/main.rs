@@ -2,7 +2,12 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(
     not(test),
-    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+    deny(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::panic_in_result_fn
+    )
 )]
 
 use oxpinyin_data::table_info::{FileType, TableConf};

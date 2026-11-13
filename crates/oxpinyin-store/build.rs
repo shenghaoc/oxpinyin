@@ -368,10 +368,13 @@ mod bdb {
             ("SYSTEM_DEPS_BDB_LIB", "db"),
         ] {
             if std::env::var_os(name).is_none() {
+                #[expect(
+                    unsafe_code,
+                    reason = "set_var before any thread exists; see the SAFETY comment"
+                )]
                 // SAFETY: a build script's `main` is single-threaded, and
                 // this runs first, before any thread (bindgen, `cc`,
                 // `system-deps`) exists to read or write the environment.
-                #[allow(unsafe_code)]
                 unsafe {
                     std::env::set_var(name, value);
                 }

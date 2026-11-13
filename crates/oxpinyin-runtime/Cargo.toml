@@ -55,14 +55,5 @@ kyotocabinet = ["oxpinyin-user/kyotocabinet"]
 bdb = ["oxpinyin-user/bdb"]
 tkrzw = ["oxpinyin-user/tkrzw"]
 
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "warn"
-unused_must_use = "deny"
-unsafe_op_in_unsafe_fn = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-# Local table: stops workspace inheritance, so restate the
-# workspace-only additions here as well.
-must_use_candidate = "warn"
+[lints]
+workspace = true

@@ -6,6 +6,8 @@
 //! `CapiInstance` internals are deliberately *not* here: they are unit
 //! tests of the ABI layer and live in `src/` (see `src/lib.rs`).
 
+#![expect(unsafe_code, reason = "calls the C ABI and reclaims what it returns")]
+
 #[path = "abi/common.rs"]
 mod common;
 #[path = "abi/contract.rs"]

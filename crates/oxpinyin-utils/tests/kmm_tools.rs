@@ -7,7 +7,7 @@
 use oxpinyin_input::tool;
 
 /// Format independently with libc's `%f`, as the utility's printf family does.
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "libc snprintf formats the expected text")]
 fn host_f(value: f64) -> String {
     let mut buffer = [0_u8; 64];
     // SAFETY: the buffer is writable and `%f` takes one double.

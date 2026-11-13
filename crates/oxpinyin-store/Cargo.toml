@@ -10,19 +10,8 @@ description = "oxpinyin internal crate — no stability promise; use oxpinyin-en
 # for the two C-ABI crates' `.pc` files.
 links = "oxpinyin_store"
 
-[lints.rust]
-unsafe_code = "deny"
-unexpected_cfgs = "deny"
-missing_docs = "warn"
-unused_must_use = "deny"
-unsafe_op_in_unsafe_fn = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-# Mechanizes the "// SAFETY: on every block" constitution clause.
-undocumented_unsafe_blocks = "deny"
-missing_safety_doc = "deny"
-must_use_candidate = "warn"
+[lints]
+workspace = true
 
 [dependencies]
 # The tkrzw and Kyoto Cabinet backends' Rust/C++ bridges (Rust/C++
