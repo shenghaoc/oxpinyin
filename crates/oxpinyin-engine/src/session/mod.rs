@@ -1032,7 +1032,7 @@ const SORT_BY_FREQUENCY: u32 = 0x10;
 /// `sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.h:56`): set →
 /// the n-best rows are not prepended (`pinyin.cpp:2295-2296`), so the
 /// phrase-string dedup after it never sees them (`:2298-2300`).
-const SORT_WITHOUT_SENTENCE_CANDIDATE: u32 = 0x1;
+pub const SORT_WITHOUT_SENTENCE_CANDIDATE: u32 = 0x1;
 /// `sort_option_t::SORT_WITHOUT_LONGER_CANDIDATE` (`pinyin.h`): set →
 /// the LONGER row is suppressed (`pinyin.cpp:2292-2293`).
 const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;

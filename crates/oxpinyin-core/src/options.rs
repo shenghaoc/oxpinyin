@@ -2,9 +2,7 @@
 //!
 //! The bit values are the `PinyinTableFlag`, `PinyinAmbiguity2` and
 //! `PinyinCorrection2` enumerators from libpinyin `pinyin_custom2.h`. The
-//! core crate is dependency-free, so these are raw `u32` constants rather
-//! than the `#[repr(C)]` C-ABI enums in `oxpinyin-capi` (which exist for
-//! cbindgen).
+//! option word is represented by raw `u32` constants.
 
 /// `PINYIN_INCOMPLETE = 1U << 3` (`pinyin_custom2.h:34`).
 pub const PINYIN_INCOMPLETE: u32 = 1 << 3;

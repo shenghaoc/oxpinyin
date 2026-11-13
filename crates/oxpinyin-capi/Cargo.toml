@@ -108,7 +108,7 @@ oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # Fedora/Debian recipes that consume this.
 [package.metadata.capi.header]
-# The checked-in pinyin.h ships verbatim; never regenerate it with cbindgen, so
+# The checked-in pinyin.h ships verbatim; do not regenerate it, so
 # the file the fork compiles against stays byte-identical.
 generation = false
 # The real libpinyin installs its header under a version-stamped subdirectory

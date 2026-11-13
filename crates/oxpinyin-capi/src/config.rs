@@ -439,7 +439,8 @@ mod tests {
     use crate::parse::pinyin_parse_more_full_pinyins;
     use crate::sentence::pinyin_guess_candidates;
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
-    use crate::types::{GChar, PinyinTableFlag};
+    use crate::types::GChar;
+    use oxpinyin_core::{PINYIN_INCOMPLETE, USE_TONE};
 
     fn first_candidate_text(instance: *mut crate::types::PinyinInstance) -> String {
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
@@ -487,10 +488,7 @@ mod tests {
         assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
         assert_eq!(first_candidate_text(instance), "你");
 
-        assert!(pinyin_set_options(
-            context,
-            PinyinTableFlag::PINYIN_INCOMPLETE as u32
-        ));
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
         assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 3);
 
         crate::instance::pinyin_free_instance(instance);
@@ -505,20 +503,14 @@ mod tests {
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
         let zai4 = cstr("zai4");
-        assert!(pinyin_set_options(
-            context,
-            PinyinTableFlag::PINYIN_INCOMPLETE as u32
-        ));
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
             3,
             "a toneless word leaves the digit unparsed"
         );
 
-        assert!(pinyin_set_options(
-            context,
-            PinyinTableFlag::PINYIN_INCOMPLETE as u32 | PinyinTableFlag::USE_TONE as u32
-        ));
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE | USE_TONE));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
             4,
