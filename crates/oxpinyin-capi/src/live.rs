@@ -8,15 +8,15 @@
 //! the entry points that a finalised context can reach consult this set
 //! instead (register row 60, class (b)).
 
-use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use crate::types::PinyinContext;
 
-/// Addresses of the live contexts. `None` while no context is live: the set
-/// owns a heap node once it has held an entry, and a static is never dropped,
-/// so the registry gives that node back when the last context goes.
-static LIVE: Mutex<Option<BTreeSet<usize>>> = Mutex::new(None);
+/// Addresses of the live contexts, each once, in no order: a process holds
+/// few contexts, so a membership test walks them. The list owns a buffer
+/// once it has held an entry, and a static is never dropped, so the registry
+/// gives the buffer back when the last context goes.
+static LIVE: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
     match result {
@@ -25,23 +25,23 @@ fn lock_result_or_abort<T>(result: std::sync::LockResult<T>) -> T {
     }
 }
 
-fn set() -> std::sync::MutexGuard<'static, Option<BTreeSet<usize>>> {
+fn set() -> std::sync::MutexGuard<'static, Vec<usize>> {
     lock_result_or_abort(LIVE.lock())
 }
 
-fn insert(live: &mut Option<BTreeSet<usize>>, address: usize) {
-    live.get_or_insert_with(BTreeSet::new).insert(address);
+fn insert(live: &mut Vec<usize>, address: usize) {
+    if !live.contains(&address) {
+        live.push(address);
+    }
 }
 
-fn remove(live: &mut Option<BTreeSet<usize>>, address: usize) -> bool {
-    let Some(addresses) = live else {
-        return false;
-    };
-    let held = addresses.remove(&address);
-    if addresses.is_empty() {
-        *live = None;
+fn remove(live: &mut Vec<usize>, address: usize) -> bool {
+    let before = live.len();
+    live.retain(|held| *held != address);
+    if live.is_empty() {
+        *live = Vec::new();
     }
-    held
+    live.len() != before
 }
 
 /// Records a context `pinyin_init` just boxed.
@@ -58,9 +58,7 @@ pub(crate) fn unregister(context: *mut PinyinContext) -> bool {
 
 /// Whether `context` was handed out and not finalised since.
 pub(crate) fn is_live(context: *mut PinyinContext) -> bool {
-    set()
-        .as_ref()
-        .is_some_and(|addresses| addresses.contains(&(context as usize)))
+    set().contains(&(context as usize))
 }
 
 #[cfg(test)]
@@ -175,20 +173,26 @@ mod tests {
     fn the_registry_holds_no_allocation_once_it_empties() {
         // The shared static is also used by every other test, so exercise the
         // same transitions on a private value.
-        let mut live = None;
+        let mut live = Vec::new();
         insert(&mut live, 8);
         insert(&mut live, 16);
-        assert!(live.is_some());
-        remove(&mut live, 8);
-        assert!(live.is_some(), "an entry is still live");
-        remove(&mut live, 16);
-        assert!(live.is_none(), "the last entry takes the set with it");
-        remove(&mut live, 16);
-        assert!(
-            live.is_none(),
+        insert(&mut live, 8);
+        assert_eq!(live.len(), 2, "an address is held once");
+        assert!(remove(&mut live, 8));
+        assert_eq!(live, [16], "an entry is still live");
+        assert!(remove(&mut live, 16));
+        assert_eq!(
+            live.capacity(),
+            0,
+            "the last entry takes the buffer with it"
+        );
+        assert!(!remove(&mut live, 16));
+        assert_eq!(
+            live.capacity(),
+            0,
             "forgetting an unknown address allocates nothing"
         );
         insert(&mut live, 8);
-        assert!(live.is_some(), "a later context registers again");
+        assert_eq!(live, [8], "a later context registers again");
     }
 }
