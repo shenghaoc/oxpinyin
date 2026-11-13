@@ -128,8 +128,7 @@ surveyed libdb.
 No workflow or developer recipe sets it:
 Linux `libdb-dev` and Homebrew `berkeley-db@5` are the surveyed 5.3.
 
-The two C-ABI crates also need `libglib2.0-dev` and `g++`. They
-are Linux-first.
+The two C-ABI crates also need `libglib2.0-dev` and `g++`.
 
 ## Fixtures per backend
 

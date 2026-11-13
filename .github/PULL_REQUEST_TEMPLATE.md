@@ -21,8 +21,8 @@ Run the local checks in [verification rule 5](https://github.com/shenghaoc/oxpin
 State the results and the command that reproduces them.
 CI on the PR head is the full gate (verification rule 5); state the local checks you ran before the push.
 Disclose any required check that failed or could not run as a limitation.
-Omit checks that do not apply. Keep historical results clearly identified.
-Follow CONTRIBUTING.md#results-and-reproduction: no raw logs, captures,
+Omit checks that do not apply.
+Follow docs/runbooks/verification.md#7-proportionate-verification: no raw logs, captures,
 evidence archives, upload requests or separate findings document by default.
 -->
 

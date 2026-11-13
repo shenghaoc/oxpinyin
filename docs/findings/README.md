@@ -2,12 +2,12 @@
 
 This directory holds the project's decisions, registers, frozen SPECs and records: one file per finding, with its date in the file.
 Documents and tools still read every file listed here.
-New results go in pull request bodies ([results and reproduction](../../CONTRIBUTING.md#results-and-reproduction)).
+New results go in pull request bodies ([verification reporting rules](../runbooks/verification.md#7-proportionate-verification)).
 Git history holds every retired record.
 
 Statuses:
 
-- **frozen / policy / contract / template** — normative; a change to one is a STOP ([contributor procedures](../../CONTRIBUTING.md)).
+- **frozen / policy / contract / template** — normative; see [approval conditions](../../CONTRIBUTING.md#approval-conditions).
   Under the [frozen-SPEC ruling](compatibility-policy.md#frozen-specs), a frozen SPEC binds only pin-derived behaviour within the supported compatibility surfaces (the C APIs and ABIs, persistent data and drop-in utilities), plus approved compatibility decisions; frozen oracle observations stay verification evidence.
   Each frozen SPEC states at the top which part binds; the rest is current reference.
 - **register / living reference** — living lists and references.

@@ -15,19 +15,18 @@ A bare `./configure` selects Berkeley DB (`configure.ac:94`); that is libpinyin'
 
 ## Identity
 
-- Preserve SONAME `libpinyin.so.15`, from libtool `-version-info 15:0`.
-  Use `libzhuyin.so.15` for the `--enable-libzhuyin` facade.
-- Install headers under `include/libpinyin-<pin version>/`.
-  Preserve `libpinyin.pc` fields `pkgdatadir`, `database_format` and `exec_prefix`.
-  The version follows the pin (`libpinyin_tag`; ruling 2026-09-26 UTC, #592).
-- Preserve all 79 `pinyin_*` exports and all 52 Zhuyin exports.
+- The SONAME is `libpinyin.so.15`, from libtool `-version-info 15:0`, and `libzhuyin.so.15` for the `--enable-libzhuyin` facade.
+- Headers install under `include/libpinyin-<pin version>/`.
+  `libpinyin.pc` keeps the fields `pkgdatadir`, `database_format` and `exec_prefix`.
+  The version follows the pin (`libpinyin_tag`).
+- All 79 `pinyin_*` exports and all 52 Zhuyin exports are preserved.
   Consumer usage does not limit ABI scope.
 
 [Drop-in identity](packaging.md#drop-in-identity) states what `dlopen("libpinyin.so.15")` requires of the installed library.
 
 ## Behaviour
 
-For every exported symbol, reproduce the pin's result for the same inputs and state:
+For every exported symbol, oxpinyin reproduces the pin's result for the same inputs and state:
 
 - Return status, out-parameters and their pointed-to data.
 - Written lengths and handle-state transitions.
@@ -35,55 +34,48 @@ For every exported symbol, reproduce the pin's result for the same inputs and st
 - Process-wide side effects.
 
 State includes the on-disk user state of a same-backend user directory.
-Use the pin's external input and output calls in the library and tools ([external I/O](findings/compatibility-policy.md#external-io)).
+On Linux, the library and tools use the pin's external input and output calls ([external I/O](findings/compatibility-policy.md#external-io)).
 A Rust equivalent requires source proof for every input.
-Preserve the binary names, options, help, messages, inputs and outputs of the pin's utilities.
-Use backend DBMs for K-mixture working files.
+The utilities keep the pin's binary names, options, help, messages, inputs and outputs.
+K-mixture working files are backend DBMs.
 The `scripts2/` Python build generators are outside this tool scope.
 
-Do not compare `errno` left by a successful call unless the API gives it meaning (ruling 2026-10-08 UTC).
+The `errno` that a successful call leaves is not compared unless the API gives it meaning.
 
 ## Storage
 
 libpinyin selects Berkeley DB, Kyoto Cabinet or tkrzw through `--with-dbm`.
 Bare `./configure` selects Berkeley DB.
-Build oxpinyin with one of the same three backends, selected by cargo feature.
+oxpinyin builds with one of the same three backends, selected by cargo feature, and with no other.
 The [default cell](runbooks/backends.md) follows Cargo.
-Do not use another backend.
-Handle the selected backend's files natively and identically:
+oxpinyin handles the selected backend's files natively and identically:
 
 - **System data:** the directory opened by `pinyin_init`.
   It contains backend DBMs, `MemoryChunk` library files and `table.conf`.
   `table.conf` determines the libraries and their names, including valid non-stock configurations.
 - **User data:** `user.conf`, `user_bigram`, user indexes, `user.bin` and `*.dbin` logs.
   Builds on the same backend use the same user directory.
-  A different backend cannot read it and starts fresh (ruling 2026-09-09).
+  Opening the directory with a different backend wipes the nonconforming profile files in place.
   Neither libpinyin nor oxpinyin built with tkrzw can read Berkeley DB user files.
 
 ## Pin defects
 
-Reproduce observable pin defects.
-Record them as [upstream defects](findings/upstream-report-drafts.md) instead of fixing them.
-Existing examples include:
+oxpinyin reproduces observable pin defects and records them as [upstream defects](findings/upstream-report-drafts.md) instead of fixing them.
+They include:
 
-- `pinyin_init` and `zhuyin_init` leave process `LC_NUMERIC` at `"C"` (#539).
-- Raw stderr is byte-identical, including `mmap … failed!` and `open … failed!` writers (#545).
-- Behaviour on defective dependency builds is reproduced, including the tkrzw LTO sentinel (#677).
-- Predicted-candidate ranking and training follow rules derived from the pin's source.
-  Do not tune them until examples agree.
+- `pinyin_init` and `zhuyin_init` leave process `LC_NUMERIC` at `"C"`.
+- On Linux, the `mmap … failed!` and `open … failed!` writers reproduce the pin’s stderr bytes where the registered dispositions require them.
+- Behaviour on defective dependency builds is reproduced, including the tkrzw LTO sentinel.
+- Predicted-candidate ranking and training follow rules derived from the pin's source, not tuning until examples agree.
 
 Only the grounds that the compatibility policy lists permit departures ([the default is the pin](findings/compatibility-policy.md#the-default-is-the-pin)).
-External I/O still uses the pin's call.
-An undefined read follows its class (b) record.
+An undefined read follows its class (b) entry in the [register](findings/upstream-divergences.md).
 Where the pin aborts, oxpinyin aborts with `std::process::abort()` ([failure behaviour](findings/compatibility-policy.md#failure-behaviour)).
-Preserve the C ABI, ownership, on-disk formats and data ownership exactly.
+The C ABI, ownership, on-disk formats and data ownership are preserved exactly.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
 
 ## Deriving behaviour
 
-Read the pin's source first.
-Read the disassembly of the pin-built object that contains the code when source does not settle the question.
-Use the reference cell by default, the specific backend for backend-specific code, and `libzhuyin.so.15` for Zhuyin.
-Follow the [source-reading procedure](source-policy.md#stage-2).
-Never experiment against the oracle to discover behaviour.
-Cite `path:line` at the pin, or the symbol and instruction offsets, for every reproduced behaviour.
+Behaviour comes from the pin's source first, and from the disassembly of the pin-built object that contains the code when the source does not settle the question.
+The reference cell is the default; backend-specific code uses its backend, and Zhuyin uses `libzhuyin.so.15`.
+The [Stage 2 policy](source-policy.md#stage-2) defines the compatibility target.

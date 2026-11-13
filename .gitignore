@@ -50,7 +50,7 @@ __pycache__/
 /target-fp/
 
 # Measurement captures are disposable local working data. Reports give final
-# results and reproduction commands (CONTRIBUTING.md). These patterns prevent
+# results and reproduction commands (docs/runbooks/verification.md). These patterns prevent
 # accidental commits; captures are not routine attachments or upload tasks.
 /tools/bisection/*.out
 /tools/bisection/massif.*

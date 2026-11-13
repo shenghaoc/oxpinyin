@@ -38,8 +38,9 @@ These rules apply to the `performance` shell:
 - `just performance --build-only` builds without entering. `--skip-build` enters
   an already built matching image.
 - The architecture follows the host; there is no platform option. Conflicting platform environment overrides are refused.
-  Never collect timing or memory under emulation. The amd64 default of the oracle
-  stays for correctness captures only.
+  Do not use emulation. libpinyin on Linux/amd64 is the reference. An arm64 host
+  captures the pin with a native arm64 image; the
+  [known arm64 differences](../findings/arm64-pin-portability-1137.md) are accepted.
 - The local Cargo/model cache uses a
   named volume (`--volume NAME` selects another). The source is mounted read-only at `/repo`.
 - Recipe outputs default to `/performance/results/<recipe>/`. Explicit
@@ -385,8 +386,8 @@ off, and forced frame pointers.
 
 ## Writing it up
 
-Follow [results and reproduction](../../CONTRIBUTING.md#results-and-reproduction) and the
-[measurement rules](../../CONTRIBUTING.md#measurements).
+Follow the [verification reporting rules](verification.md#7-proportionate-verification) and the
+[controlling rule](../source-policy.md#controlling-rule).
 For a measurement, the details needed to interpret the comparison are
 the revisions, workload, backend, build recipe, host/container and controls.
 The [complexity argument](../source-policy.md#complexity-evidence) applies to changes that alter
@@ -395,7 +396,8 @@ The [time/space trade-off rule](../source-policy.md#performance-standard) applie
 
 ### Measure compared arms in one run
 
-Follow the [measurement rules](../../CONTRIBUTING.md#measurements).
+When a measurement compares arms, run them in one job on one machine and report only that run's numbers and ratios.
+Do not use an absolute figure from another run, host or CPU as a baseline.
 Interleave compared arms run by run on the same CPU and data.
 Callgrind `Ir` and wall time depend on the CPU, including runtime libc dispatch.
 
@@ -439,16 +441,29 @@ Their performance differs, so identify the build command, not just the artifact 
 
 ### Evidence: what is committed and what is not
 
-Follow the [reporting policy](../../CONTRIBUTING.md#results-and-reproduction).
+Follow the [verification reporting rules](verification.md#7-proportionate-verification).
 Keep shared readers and calculations in repository Python tooling.
 Keep all measurement controls and rejection rules, including required exact checks.
 
+
+## Native non-Linux revision comparisons
+
+Serialise the measured arms of a native non-Linux revision comparison; normal
+background activity on the host is permitted. Run a same-binary control in the
+same session and report its variability beside the paired estimates. The
+control is diagnostic: it invalidates no runs and sets no automatic verdict or
+acceptance threshold. Keep every completed valid run, including outliers,
+within the predefined work count, schedule and budget. Only incomplete work, an
+operation fingerprint mismatch, a wrong loaded image or a broken required
+capture invalidates a run. Do not rerun for significance. Linux and
+pin-relative work keep the same-bytes control rules of
+[Native Linux comparisons](#native-linux-comparisons).
 
 ## Native macOS source revisions
 
 Use full Xcode on an Apple silicon Mac. The runner probes the installed tools;
 Command Line Tools alone do not provide xctrace. Native revision comparisons
-follow the [measurement rules](../../CONTRIBUTING.md#measurements).
+follow [Native non-Linux revision comparisons](#native-non-linux-revision-comparisons).
 They do not compare against the pin.
 
 ```sh
@@ -666,9 +681,8 @@ fingerprint of every other run.
   `Private_Dirty` lines of `/proc/self/smaps_rollup` after the loop, compared
   as paired B minus A in KiB.
 
-The same-bytes control of A against A′ follows the Linux rules, not the dated
-rule for native non-Linux comparisons in
-[Measurements](../../CONTRIBUTING.md#measurements). Wall time, CPU time and the
+The same-bytes control of A against A′ follows the Linux rules, not the rule of
+[Native non-Linux revision comparisons](#native-non-linux-revision-comparisons). Wall time, CPU time and the
 hardware count use the 0.95 to 1.05 band. Residency uses ±max(64 KiB, 1% of the
 A median). A control outside its limits is `DIAGNOSTIC`: the estimate stays in
 the report beside the control limits. Callgrind `Ir` must be equal in every run

@@ -4,30 +4,30 @@ oxpinyin implements libpinyin and libzhuyin in native Rust.
 It preserves the pin's outward behaviour at the C API and in persistent data.
 The [roadmap](../ROADMAP.md) records the stages and their status.
 
-1. **Broad appeal.** Do not add a niche feature at a cost to all users.
-2. **Binary size (ruling 2026-10-18 UTC).** Record stripped shipping-library file sizes for changes that affect shipping libraries.
-   Report increases over the base in the PR.
+1. **Broad appeal.** A niche feature is not added at a cost to all users.
+2. **Binary size.** A change that affects the shipping libraries records their stripped file sizes.
+   The PR reports any increase over the base.
    Minor decreases need no report.
    Documentation-only changes need no size build or report.
    There is no pin +10% cap.
    CI reports the sizes for each pull request that can change them.
    See [shipping-library sizes](packaging.md#shipping-library-sizes).
-3. **No local AI.** Do not add client neural inference or LLM inference.
-4. **Failure behaviour.** Follow the pin's observable failure behaviour.
+3. **No local AI.** oxpinyin has no client neural inference or LLM inference.
+4. **Failure behaviour.** oxpinyin follows the pin's observable failure behaviour.
    Where the pin asserts or aborts, the C adapters and the drop-in tools call `std::process::abort()`, after the pin's preceding work.
    The shared Rust code returns a typed error at the pin's failure point so that they can do this.
-   Never implement a reachable pin abort with `panic!`, `assert!` or `unwrap()`.
-   Permit a panic-producing assertion only where its failure is proven unreachable.
-   Do not introduce a panic where the pin continues or returns an error.
-   Use idiomatic Rust error handling; internal Rust APIs do not all need to return `Result`.
+   A reachable pin abort is never a `panic!`, `assert!` or `unwrap()`.
+   A panic-producing assertion is permitted only where its failure is proven unreachable.
+   No panic is introduced where the pin continues or returns an error.
+   Error handling is idiomatic Rust; internal Rust APIs do not all need to return `Result`.
    Class (b) rulings stay authoritative.
    The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
-5. **Unsafe code.** Use the following target allowlist:
-   - Forbid `unsafe` in oxpinyin-core/data/user/engine/runtime.
-   - Permit scoped unsafe modules in the bidirectional `oxpinyin-input` boundary.
-   - Deny `unsafe` in `oxpinyin-store`, with scoped backend allows.
-   - Keep public C ABI marshalling in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
-   - Give every unsafe block a `// SAFETY:` comment.
+5. **Unsafe code.** The target allowlist is:
+   - oxpinyin-core/data/user/engine/runtime forbid `unsafe`.
+   - The bidirectional `oxpinyin-input` boundary permits scoped unsafe modules.
+   - `oxpinyin-store` denies `unsafe`, with scoped backend allows.
+   - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
+   - Every unsafe block has a `// SAFETY:` comment.
 
    The system/addon mapping boundary is active: data uses the input mapping API and has `#![forbid(unsafe_code)]`.
    Crate-root `#![forbid]` attributes and scoped allows enforce the implemented allowlist.
@@ -35,22 +35,17 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.
    CI enforces these lints.
 6. **Determinism.** On each host, output is a pure function of input, user state and configuration.
-   Record results that depend on the host or its libc as platform-dependent native-host behaviour.
-   See the [compatibility policy, #1303](findings/compatibility-policy.md#native-rust-implementation).
-7. **Dependencies.** Do not depend on other pinyin or IME crates.
-   Do not use transpiler dumps.
-   Pin-built libpinyin is a test and migration subject.
-   Do not link shipping code to it.
-8. **Uncertainty.** Stop when you are in doubt.
-   Do not improvise.
+   Results that depend on the host or its libc are recorded as platform-dependent native-host behaviour.
+   See the [compatibility policy](findings/compatibility-policy.md#native-rust-implementation).
+7. **Dependencies.** oxpinyin depends on no other pinyin or IME crate and uses no transpiler dumps.
+   Pin-built libpinyin is a test and migration subject; shipping code does not link to it.
+8. **Uncertainty.** A doubt goes to the maintainer; it is not settled by improvisation.
 
 ## External interfaces
 
-Maintainer ruling 2026-10-18 UTC.
-
 Rust interfaces are not a compatibility boundary.
-The 2026-10-28 UTC ruling also makes the tools drop-in replacements for the pin's utilities.
-Preserve their binary names, options, help, messages, inputs and outputs.
+The tools are also drop-in replacements for the pin's utilities within the [platform scope](source-policy.md#platform-scope-of-pinned-behaviour).
+They preserve the pin's binary names, options, help, messages, inputs and outputs.
 Their K-mixture working model uses the pin's backend DBM through `oxpinyin-store`.
 The `scripts2/` Python build generators are outside this tool scope.
 
@@ -60,20 +55,16 @@ The `scripts2/` Python build generators are outside this tool scope.
 >
 > Rust interfaces may be changed incompatibly as required by the implementation. Such changes require no deprecation period, backwards-compatible adapter, preservation of object safety, or accommodation of hypothetical downstream Rust implementations. All affected in-tree callers must be updated in the same change.
 >
-> This ruling supersedes earlier Rust-interface stability promises, interface freezes, and restrictions imposed solely for Rust source compatibility.
->
-> The C APIs and ABIs, their observable behavior, ownership and lifetime rules, required diagnostics, and compatible persistent data remain governed by the existing pinned-compatibility policy. Safety, determinism, portability, and performance requirements remain in force.
+> The C APIs and ABIs, their observable behavior, ownership and lifetime rules, required diagnostics, and compatible persistent data are governed by the pinned-compatibility policy. Safety, determinism, portability, and performance requirements apply.
 
-Update all affected in-tree callers in the same change: crates, tools, tests, benches, examples and fuzz targets.
-A change to a Rust public item is ordinary internal work and does not require an interface-change STOP.
+A Rust interface change updates all affected in-tree callers in the same change: crates, tools, tests, benches, examples and fuzz targets.
+A change to a Rust public item is ordinary internal work and needs no interface-change approval.
 This includes changes to traits, associated types, generic parameters, object safety, error types, visibility and module layout.
 
 Rust public visibility, published crate names and doc comments create no stability obligation.
-Historical promises that a Rust interface is frozen or unchanged create no obligation either.
-Do not retain a wrapper, old constructor, defaulted trait method, object-safe shape or `dyn` boundary solely for Rust signature compatibility.
+No wrapper, old constructor, defaulted trait method, object-safe shape or `dyn` boundary is retained solely for Rust signature compatibility.
 A stable native Rust API requires a separate explicit maintainer ruling.
 
-Keep frozen oracle inputs, goldens, coefficients, behavioural SPECs, data formats and the C compatibility contract frozen.
-Only freezes of Rust signatures are retired by this ruling.
-Do not use the Rust surface to justify a divergence from the pin.
-Do not skip verification that the C-facing contract requires.
+Oracle inputs, goldens, coefficients, data formats and the C compatibility contract follow the pin; a change to them goes through the [goldens and pins](runbooks/goldens-and-pins.md) procedure.
+The SPECs and fixtures bind supported external behaviour and approved compatibility decisions, not Rust signatures, implementation designs or authored test scenarios.
+The Rust surface does not justify a divergence from the pin, and it does not excuse skipping verification that the C-facing contract requires.

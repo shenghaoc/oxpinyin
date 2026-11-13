@@ -38,6 +38,7 @@ For each subsystem:
 2. Design and analyse oxpinyin's structures and algorithms.
    Explain how they preserve the pin's product behaviour, including tie orders and product quirks.
    Apply the separate rules for [internal language artefacts](findings/compatibility-policy.md#internal-language-artefacts) and [external I/O](findings/compatibility-policy.md#external-io).
+   Where the equivalence of a Rust replacement is unsettled, oxpinyin uses the pin's external call; unsettled surrounding pin behaviour still needs a maintainer decision.
    Compare time and space complexity with the pin.
 3. Implement the behaviour in natural, efficient Rust across loosely coupled crates.
 4. Verify it with the established oracle differentials.
