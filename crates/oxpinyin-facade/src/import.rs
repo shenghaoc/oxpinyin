@@ -103,6 +103,6 @@ fn phrase_table_tokens(
     let mut tokens = dict.system().tokens_for_ucs4(&words).map_err(|_| ())?;
     tokens.extend(user.phrase_table_tokens_for_ucs4(&words).map_err(|_| ())?);
     tokens.retain(|token| dict.phrase_table_token_enabled(*token));
-    tokens.sort_by_key(|token| token >> 24);
+    oxpinyin_core::sort_tokens_by_library(&mut tokens);
     Ok(tokens)
 }

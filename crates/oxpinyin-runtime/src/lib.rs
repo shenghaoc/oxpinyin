@@ -92,7 +92,7 @@ pub fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Ve
     let mut merged = Vec::with_capacity(system.len() + user.len());
     merged.extend_from_slice(system);
     merged.extend(user.into_iter().map(|(token, _)| token));
-    merged.sort_by_key(|token| token >> 24);
+    oxpinyin_core::sort_tokens_by_library(&mut merged);
     merged
 }
 
@@ -1255,13 +1255,7 @@ impl Dictionary for RuntimeDict<'_> {
     /// order — the merge order `Dictionary::lookup_into` established. The
     /// phrase-segment span DP consumes this per character span.
     fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
-        let mut tokens: Vec<PhraseToken> = self
-            .system
-            .tokens_for_text(text)
-            .unwrap_or_default()
-            .into_iter()
-            .map(PhraseToken::new)
-            .collect();
+        let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
         // The pin probes the user phrase table directly (074a2219
         // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
         // Read only this text's row. A phrase write must not make this
@@ -1284,13 +1278,13 @@ impl Dictionary for RuntimeDict<'_> {
                     });
             }
             if let Some(row) = cache.as_ref() {
-                tokens.extend(row.tokens.iter().copied().map(PhraseToken::new));
+                tokens.extend_from_slice(&row.tokens);
             }
         }
-        tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
+        tokens.retain(|token| self.phrase_table_token_enabled(*token));
         // reduce_tokens groups the system and user table results by library.
-        tokens.sort_by_key(|token| token.value() >> 24);
-        tokens
+        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        tokens.into_iter().map(PhraseToken::new).collect()
     }
 
     /// [`Self::tokens_for_text`] over raw UCS-4 spans, including
@@ -1299,23 +1293,15 @@ impl Dictionary for RuntimeDict<'_> {
     /// from a non-scalar. The rare non-scalar path reads the user row
     /// directly rather than through the text cache.
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
-        let mut tokens: Vec<PhraseToken> = self
-            .system
-            .tokens_for_ucs4(ucs4)
-            .unwrap_or_default()
-            .into_iter()
-            .map(PhraseToken::new)
-            .collect();
+        let mut tokens: Vec<u32> = self.system.tokens_for_ucs4(ucs4).unwrap_or_default();
         tokens.extend(
             self.user
                 .phrase_table_tokens_for_ucs4(ucs4)
-                .unwrap_or_default()
-                .into_iter()
-                .map(PhraseToken::new),
+                .unwrap_or_default(),
         );
-        tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
-        tokens.sort_by_key(|token| token.value() >> 24);
-        tokens
+        tokens.retain(|token| self.phrase_table_token_enabled(*token));
+        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        tokens.into_iter().map(PhraseToken::new).collect()
     }
 
     fn phrase_span_searches_are_observable(&self) -> bool {
@@ -1401,7 +1387,7 @@ impl Dictionary for RuntimeDict<'_> {
         if self.library_mask.get() != 0 {
             tokens.retain(|token| self.library_visible(*token >> 24));
         }
-        tokens.sort_by_key(|token| token >> 24);
+        oxpinyin_core::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
