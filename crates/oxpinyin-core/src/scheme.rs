@@ -524,8 +524,9 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 /// Ibm, Ginyieh, Eten, Eten26, `HsuDvorak`, `DachenCp26`); `StandardDvorak`
 /// is the one gap — upstream's setter aborts on it
 /// (`zhuyin_parser2.cpp:291-295`, recorded in
-/// `docs/findings/upstream-divergences.md`), and the oxpinyin setters
-/// report `false` there until it becomes a table-addition port.
+/// `docs/findings/compatibility-policy.md`, row 5c). The C API setters abort
+/// there as the pin does; `ZhuyinParser::set_scheme` returns `false` and
+/// keeps the current scheme.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ZhuyinScheme {
     /// Standard keyboard.
@@ -1834,7 +1835,7 @@ mod tests {
         assert_eq!(parsed.full_pinyin(), "ni'ha");
     }
 
-    /// The frozen batch law (`docs/findings/double-pinyin-spec.md`, Tone):
+    /// The batch law that `docs/findings/double-pinyin-spec.md` (Tone) states:
     /// `USE_TONE` lets a three-byte key carry its `1`..=`5` digit as the
     /// tone, and `FORCE_TONE` requires an exactly-three-byte key — so
     /// `FORCE_TONE` without `USE_TONE` consumes nothing at all.

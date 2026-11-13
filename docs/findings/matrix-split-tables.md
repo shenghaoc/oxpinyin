@@ -1,23 +1,18 @@
 # Matrix split tables SPEC
 
-Date: 2026-08-14 · Status: **frozen** (amended by #716, maintainer approval 2026-10-10)
+Status: **reference**
 
-What binds: the two split lists below and the semantics by which they add keys to the matrix, as derived from the pin and observable through the C APIs ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
-A change to them needs a maintainer ruling.
-The oxpinyin paths and constant names are current reference.
+This SPEC states the pin's two split lists and the semantics by which they add keys to the matrix.
 
-The candidate window scan ([candidate-construction.md](candidate-construction.md#8-the-frozen-construction-contract) §8) walks the key set that the pinned oracle's matrix admits at each byte position.
-That key set is the selected parse's keys plus two frozen lists of alternative splits.
-This SPEC freezes those lists and their semantics.
-It is the data half of the scan.
+The candidate window scan ([candidate-construction.md](candidate-construction.md#8-the-construction-contract) §8) walks the key set that the pinned oracle's matrix admits at each byte position.
+That key set is the selected parse's keys plus two lists of alternative splits.
+This SPEC is the data half of the scan.
 The scan itself is in `crates/oxpinyin-engine/src/session/` (`RESPLIT_TABLE` and `DIVIDED_TABLE` in `split_tables.rs`).
 
 ## Provenance
 
-The lists come from the maintainer's source-verified audit of the pinned libpinyin 2.11.91 parser and its generated ambiguity tables.
-That audit produced the scan specification.
-The lists are frozen here as project data: the scan implementation cites this SPEC, not upstream paths.
-The lists are closed: an oracle pin change re-verifies them and does not extend them.
+The lists are the pin's generated ambiguity tables: `divided_table` (`src/storage/special_table.h:9-30`) and `resplit_table` (`:32-118`).
+The scan implementation cites this SPEC, not upstream paths.
 
 ## Resplit pairs (85)
 

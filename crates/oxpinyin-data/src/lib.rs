@@ -11,9 +11,8 @@
 //! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 //!
 //! The format notes live under `docs/findings/`:
-//! `data-formats.md` (overview),
-//! `pinyin-dbm-format-2026-09-01.md`, `phrase-dbm-format-2026-09-01.md`,
-//! `bigram-punct-format-2026-09-01.md`.
+//! `data-formats.md` (the overview and, in §4-§7, the pinyin index, the
+//! phrase index, the bigram and the punctuation table).
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the

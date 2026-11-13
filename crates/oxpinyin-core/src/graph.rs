@@ -1,6 +1,6 @@
 //! The weighted segment graph.
 //!
-//! `docs/findings/segment-graph.md` freezes what this builds and why. The
+//! `docs/findings/segment-graph.md` specifies what this builds and why. The
 //! short version: the pin admits an initial-only key at *any* cursor position,
 //! any number of times, and enumerating that as an explicit `Vec<Parse>` is
 //! exponential. A graph over byte positions represents the same path set in
@@ -21,7 +21,8 @@ use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, USE_TONE};
 /// [`Edge`] keeps its positions in `u32`s, and `u32::MAX` stays free for
 /// the decoder's seed step. It is wider than the pin's own parser, whose
 /// lengths are `int`s (`pinyin_parser2.h:131` at 074a2219). No product
-/// rule bounds the input (`docs/findings/1501-gint16-input-cap.md`).
+/// rule bounds the input
+/// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
 pub const MAX_GRAPH_POSITION: usize = u32::MAX as usize - 1;
 
 /// The edge vector's starting capacity: one edge per node, at most this
@@ -1093,8 +1094,8 @@ mod tests {
     #[test]
     fn a_leading_apostrophe_run_is_consumed_like_a_separator() {
         // Upstream's DP propagates across every `'` at position zero, so
-        // `'ni` consumes all three bytes. Matches the pin (decision 3,
-        // leading half now closed).
+        // `'ni` consumes all three bytes. Matches the pin (leading-apostrophe
+        // entry of the `parser-spec.md` correction log).
         let leading = SegmentGraph::build(b"'ni").expect("valid");
         assert_eq!(
             leading.consumed(),
@@ -1133,8 +1134,8 @@ mod tests {
         // byte-for-byte from any reachable position
         // (`pinyin_parser2.cpp:237-251`) and `final_step` answers the
         // consistent-chain length, so `ni'` consumes 3 — measured on the
-        // rebuilt pin (`pinyin_parse_more_full_pinyins` returns 3, the
-        // F-E-14 table row). The propagation step now lives in
+        // rebuilt pin (`pinyin_parse_more_full_pinyins` returns 3). The
+        // propagation step now lives in
         // `build_with_options`' reachability walk.
         // The pin's recorded path for `ni'` is
         // `ni@0:2:complete,<missing-pinyin>@2`; the oracle sentinels `ni'!`
@@ -1197,7 +1198,8 @@ mod tests {
     #[test]
     fn an_input_past_the_pins_gint16_steps_is_parsed_whole() {
         // 80000 bytes: past both the pin's 32767-byte `gint16` steps and the
-        // old 65535-byte refusal (`docs/findings/1501-gint16-input-cap.md`).
+        // old 65535-byte refusal
+        // (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
         let long = b"ni".repeat(40_000);
         let graph = SegmentGraph::build(&long).expect("no length limit below the position width");
         assert_eq!(graph.consumed(), long.len());

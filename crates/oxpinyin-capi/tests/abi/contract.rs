@@ -1,6 +1,6 @@
 //! Scheme-setter contract tests: the abort / no-op / half-mutation
 //! slots of the pinned oracle
-//! (`docs/findings/upstream-divergences.md`, the #109 contract-lock).
+//! (`docs/findings/compatibility-policy.md`, rows 5a-5d).
 //!
 //! The pin-built `.so` SIGABRTs on double 30, zhuyin 7 and out-of-enum,
 //! and full-pinyin out-of-enum, and so does this facade (register rows

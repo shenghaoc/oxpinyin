@@ -72,8 +72,9 @@ mod frozen {
         )]
         // exp-missing-bigram: utils/storage/export_interpolation.cpp at 074a2219: 30-73,
         // 75-143; src/storage/tag_utility.cpp: 362-417.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::exp_missing_bigram(
             TempDir::new().unwrap(),
             &[],

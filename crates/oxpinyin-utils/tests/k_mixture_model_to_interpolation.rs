@@ -111,7 +111,8 @@ mod frozen {
         )]
         // kti-bigram-assert: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::kti_bigram_assert(
             &[],
@@ -125,7 +126,8 @@ mod frozen {
         )]
         // kti-blank-line: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#k_mixture_model_to_interpolation-undefined-lines;
         // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_blank_line(
             &[],
@@ -156,7 +158,8 @@ mod frozen {
         )]
         // kti-end-missing: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#k_mixture_model_to_interpolation-undefined-lines;
         // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_end_missing(
             &[],
@@ -211,7 +214,8 @@ mod frozen {
         )]
         // kti-last-line-reread-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         // Platform exception, macos: abort() flushes stdio on macOS, so buffered stdout
         // survives; glibc's discards it.
@@ -248,7 +252,8 @@ mod frozen {
         )]
         // kti-missing-value-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::kti_missing_value_assert(
             &[],
@@ -286,7 +291,8 @@ mod frozen {
         )]
         // kti-trailing-escape: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-kmm-to-interpolation-undefined-lines.md;
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#k_mixture_model_to_interpolation-undefined-lines;
         // the pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::kti_trailing_escape(
             &[],
@@ -300,7 +306,8 @@ mod frozen {
         )]
         // kti-unknown-line-assert: utils/training/k_mixture_model_to_interpolation.cpp at
         // 074a2219: 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::kti_unknown_line_assert(
             &[],

@@ -1,8 +1,9 @@
-# The `interpolation2.text` grammar — one taglib port
+# The `interpolation2.text` grammar: one taglib port
 
-Date: 2026-09-10 · Status: **record (implemented)** · Upstream tree read:
-libpinyin at **`074a2219c90feaf962d0d24f034514033ece5f99`** (2.11.92, the
-pin; `tools/oracle/oracle-pin.txt` is authoritative).
+Status: **reference**
+
+Pin lines are at libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`
+(2.11.92; `tools/oracle/oracle-pin.txt`).
 
 ## What this is about
 
@@ -59,16 +60,11 @@ wraps it in `check_result` (`src/include/pinyin_utils.h:26-31`), which is
 pin's `configure.ac` defines neither and `tools/oracle/build.py` passes no
 `CFLAGS` override, so **the pin-built tools abort on a refused line**.
 
-## The measurement
+## The pin's answers
 
-`tag_utility.cpp` was compiled at the pin against GLib in
-`debian:testing` and driven through exactly the tag registrations
-`parse_unigram` uses. The probe is reproducible from this document: build
-`src/storage/tag_utility.cpp` with a `config.h` defining only
-`HAVE_MMAP`, stub the two `PhraseItem`/`SubPhraseIndex` symbols
-`taglib_token_to_string` references, register `\data`/`\end`/`\1-gram`/
-`\2-gram` then `\item` with 2 values and required `count`, and call
-`taglib_read` per line. Measured, on the pin:
+`taglib_read` at the pin, under the tag registrations that
+`parse_unigram` uses (`\data`, `\end`, `\1-gram`, `\2-gram`, then
+`\item` with 2 values and the required `count`), answers:
 
 | line | `taglib_read` | result |
 | --- | --- | --- |
@@ -89,59 +85,47 @@ pin's `configure.ac` defines neither and `tools/oracle/build.py` passes no
 | `\item 10 "a b" count 5` | `true` | quoting makes one token |
 | *(blank line)* | **SIGSEGV** | `tokens[0]` is `NULL`, handed to `strcmp` |
 
-Two upstream crash paths, both null-pointer dereferences rather than
-aborts: a blank line (`tag_utility.cpp:183,190` — measured, the probe
-segfaults), and a quoted token ending in a backslash, where
+Two upstream crash paths are null-pointer dereferences, not aborts: a
+blank line (`tag_utility.cpp:183,190`), and a quoted token ending in a
+backslash, where
 `split_line`'s `g_return_val_if_fail` (`:137`) returns `NULL` for the
 whole split.
 
-Duplicate and zero counts are settled by the call site rather than the
-probe: `import_interpolation.cpp:141` calls
+Duplicate and zero counts are settled by the call site:
+`import_interpolation.cpp:141` calls
 `phrase_index->add_unigram_frequency(token, count)`, which is
 `freq += delta; m_total_freq += delta` (`phrase_index.cpp:150-175`) with
 the overflow guard written `delta > 0 && …`. So a repeated token **sums**
 and a zero count is a **no-op, not an error**.
 
-## The input the pin actually ships
+## The input the pin ships
 
-`interpolation2.text` from the pinned `model20.text.tar.gz`
-(`MODEL_SHA256=59c68e89…`), SHA-256
-`e1578307719431e1b8ef1006ae265bbc9a447250bfde4c1b6e15be80afd3a118`:
-
-| property | measured |
-| --- | --- |
-| lines | 1,913,520 |
-| structural lines | exactly 4 — `\data model interpolation`, `\1-gram`, `\2-gram`, `\end` |
-| `\1-gram` items | 63,907, **all exactly 5 fields** |
-| `\2-gram` items | 1,849,609, **all exactly 7 fields** |
-| blank lines | 0 |
-| duplicate `\1-gram` tokens | 0 |
-| duplicate `\2-gram` pairs | 0 |
-| zero counts | 0 |
-
-**None of the four divergent conditions occurs in the pinned input.** All
-four are about inputs no conforming producer emits — and no upstream
-producer can emit two of them: `export_interpolation`'s `gen_unigram`
-walks tokens ascending once each and skips zero frequencies
-(`export_interpolation.cpp:85-95`), and
+The pinned model's `interpolation2.text` (SHA-256
+`e1578307719431e1b8ef1006ae265bbc9a447250bfde4c1b6e15be80afd3a118`) has
+four structural lines, `\1-gram` items of exactly 5 fields and `\2-gram`
+items of exactly 7 fields. It has no blank line, no duplicate token or
+pair and no zero count, so none of the divergent conditions above occurs
+in it. No upstream producer emits a duplicate or a zero count:
+`export_interpolation` walks tokens ascending once each and skips zero
+frequencies (`export_interpolation.cpp:85-95`), and
 `k_mixture_model_to_interpolation` skips them too (`:132`).
 `oxpinyin-utils`' ports of both tools reproduce these filters.
 
 ## How oxpinyin's readers answer
 
-- **Accepted lines** — the port accepts exactly what `taglib_read`
+- **Accepted lines**: the port accepts exactly what `taglib_read`
   accepts, by the same parity walk. A duplicate `\1-gram` token sums
   and a zero count is a no-op in `import_interpolation`, as
   `add_unigram_frequency` does.
-- **Refused lines** — `check_result` is the pin's `assert`, and the
+- **Refused lines**: `check_result` is the pin's `assert`, and the
   utilities abort as the pin-built tools do. A phrase-text mismatch that
   `taglib_validate_token_with_string` refuses aborts the same way.
-- **The two null-pointer dereferences** — a blank line, and a quoted
-  token with a trailing backslash — and a truncated UTF-8 sequence at the
+- **The two null-pointer dereferences** (a blank line, and a quoted
+  token with a trailing backslash) and a truncated UTF-8 sequence at the
   line's end are undefined in the pin. The tagger answers them as
   `taglib::Undefined` (`NoToken`, `UnterminatedEscape`, `PastLineEnd`),
   and the utilities refuse them (class (b)).
-- **A missing or wrong `\data` header** — `import_interpolation` exits
+- **A missing or wrong `\data` header**: `import_interpolation` exits
   `ENODATA`, as the pin's `parse_headline` failure does.
 
 The `split_line` tests in `taglib.rs` cover quotes, escapes, empty tokens,

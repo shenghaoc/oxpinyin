@@ -1,6 +1,6 @@
 # Phrase-index union at lookup
 
-Date: 2026-08-17 · Status: **implemented** (W11)
+Status: **reference**
 
 This finding records what upstream unions at lookup (§3) and how oxpinyin
 reproduces it (§4–§6). User, network and addon phrases surface in
@@ -12,19 +12,33 @@ prediction (`pinyin_guess_predicted_candidates_with_punctuations`,
 
 The union covers the default facade (system, user, network and
 choose-promoted addon phrases), the addon facade, and prediction. At zero
-user data and zero loaded addons the union is the identity: the corpus
-pins do not move.
+user data and zero loaded addons the union is the identity: the addon and
+prediction paths are empty, and the empty-store candidate surface does not
+move (`oxpinyin-runtime`'s `candidate_surface` test;
+[goldens and pins](../runbooks/goldens-and-pins.md)).
+
+Decisions:
+
+1. **Network index 6 is in scope**: the same default-facade mechanism as
+   user. Default nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same
+   `USER_FILE` slot and the choose-promotion target (`pinyin.cpp:2534-2563`).
+2. **Punctuation prediction** reads `punct.bin` (§6.5).
+3. **Trait additions are defaulted methods**; other implementors compile
+   unchanged.
+
+Upstream does not union up to 16 libraries by token nibble in one facade:
+it has two facades (§3.2).
 
 ## 2. Source set
 
-- libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt` is
-  authoritative). Upstream paths below beginning `src/` are relative to its
-  root. The line citations in §3 were first read at 2.11.91.
+- libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt`). Upstream
+  paths below beginning `src/` are relative to its root, and the line
+  citations are at the pin.
 - oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
 - Related records: [`user-store.md`](user-store.md) (the user store and the
   additive merge), [`data-formats.md`](data-formats.md) (the system and
   addon data files), [`candidate-construction.md`](candidate-construction.md)
-  (the frozen window-scan construction) and
+  (the window-scan construction) and
   [`addon-choose-promotion.md`](addon-choose-promotion.md).
 
 ## 3. Upstream behaviour (pinned)
@@ -69,7 +83,7 @@ add/remove/unigram change (`phrase_index.h:615-616`, `:631-634`, `:668-671`,
   `network.bin`), and `USER_DICTIONARY` (7, `user.bin`)
   (`docs/findings/data-formats.md` §3.1). A missing/empty `*.bin` still
   creates the sub-index. Choosing an `ADDON_CANDIDATE` later *promotes*
-  that phrase into default nibble 5 (`pinyin.cpp:2532-2561`), after which
+  that phrase into default nibble 5 (`pinyin.cpp:2534-2563`), after which
   it is a `NORMAL_CANDIDATE` found through `m_pinyin_table`.
 - `context->m_addon_phrase_index` — the **addon** space. It is constructed
   empty and deliberately has no libraries loaded:
@@ -94,22 +108,22 @@ mask/remove — not by normal `pinyin_guess_candidates` and not by
 
 ### 3.3 How `pinyin_guess_candidates` enumerates candidates
 
-`pinyin_guess_candidates` (`src/pinyin.cpp:2182-2306`) runs the same
+`pinyin_guess_candidates` (`src/pinyin.cpp:2184-2308`) runs the same
 expanding-window scan oxpinyin reproduces, but against both facades:
 
 1. Prepare `ranges` for `m_phrase_index` and `addon_ranges` for
-   `m_addon_phrase_index` (`:2218-2222`). `prepare_ranges` creates one
+   `m_addon_phrase_index` (`:2220-2224`). `prepare_ranges` creates one
    `GArray` for each **loaded** sub-index only
    (`src/storage/phrase_index.h:703-727`).
 2. For each `[start,end)` window, search the default pinyin table into
-   `ranges` (`search_matrix(context->m_pinyin_table, …)`, `pinyin.cpp:2231`)
+   `ranges` (`search_matrix(context->m_pinyin_table, …)`, `pinyin.cpp:2233`)
    and the addon pinyin table into `addon_ranges`
-   (`search_matrix(context->m_addon_pinyin_table, …)`, `:2235`). The search
+   (`search_matrix(context->m_addon_pinyin_table, …)`, `:2237`). The search
    result bits are OR'd.
 3. Append default ranges as `NORMAL_CANDIDATE`
-   (`_append_items(ranges, &template_item, candidates)`, `:2245`) and addon
+   (`_append_items(ranges, &template_item, candidates)`, `:2247`) and addon
    ranges as `ADDON_CANDIDATE`
-   (`_append_items(addon_ranges, &addon_template_item, candidates)`, `:2251`).
+   (`_append_items(addon_ranges, &addon_template_item, candidates)`, `:2253`).
 
 `_append_items` (`pinyin.cpp:1769-1792`) walks the 16 range arrays in
 ascending library-nibble order, then each contiguous token range. Therefore:
@@ -130,7 +144,7 @@ The phrase table does **not** feed normal guessing. Longer candidates come
 from a pinyin-table `search_suggestion_with_matrix`
 (`pinyin.cpp:1870-1927`, `:1883-1884`); the phrase table is used by
 prediction prefixes (§3.6), user-phrase allocation, addon choose-promotion
-into nibble 5 (`:2555`), and mask/remove.
+into nibble 5 (`:2557`), and mask/remove.
 
 ### 3.4 Candidate ranking by source
 
@@ -139,23 +153,23 @@ After collection, `_compute_phrase_length` and
 that owns its type: normal/predicted tokens through `m_phrase_index`, addon
 tokens through `m_addon_phrase_index` (`pinyin.cpp:1953-2039`).
 
-`_compute_frequency_of_items` (`pinyin.cpp:1794-1870`) applies **different
+`_compute_frequency_of_items` (`pinyin.cpp:1794-1868`) applies **different
 denominators and bigram participation**:
 
 - Normal and predicted-bigram candidates:
   `freq = (λ · bigram_poss · BIGRAM_FREQUENCY_DISCOUNT +
            (1 − λ) · unigram_freq / phrase_index_total_freq) · 2^24`
-  (`:1854-1870`). `phrase_index_total_freq` is `m_phrase_index`'s total, which
+  (`:1845-1866`). `phrase_index_total_freq` is `m_phrase_index`'s total, which
   includes the user sub-index. A user phrase therefore participates in the
   same pool as system phrases: its `unigram_freq` is the numerator and it also
   increases the shared denominator. With `DYNAMIC_ADJUST` off (or no previous
   token), `bigram_poss = 0`, so ranking is pure unigram over the summed total.
 - Addon candidates:
   `freq = (1 − λ) · unigram_freq / addon_phrase_index_total_freq · 2^24`
-  (`:1823-1842`), using **the addon facade's own total** and no bigram term.
+  (`:1829-1843`), using **the addon facade's own total** and no bigram term.
 - Predicted-prefix candidates:
   `freq = (1 − λ) · unigram_freq / phrase_index_total_freq · 2^24`
-  (`:1814-1822`).
+  (`:1813-1826`).
 
 Sort keys are `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH |
 SORT_BY_FREQUENCY`, all descending, applied by
@@ -174,13 +188,13 @@ assert(DICTIONARY == table_info->m_file_type);
 return _load_phrase_library(system_dir, user_dir, phrase_index, table_info);
 ```
 
-(`src/pinyin.cpp:477-501`.) `_load_phrase_library` for `DICTIONARY`
+(`src/pinyin.cpp:477-495`.) `_load_phrase_library` for `DICTIONARY`
 (`pinyin.cpp:280-301`) loads the addon's **content file** (for example
 `art.bin`) into the addon facade's sub-index `index`. It does not load a
 separate pinyin table per call: the aggregate `m_addon_pinyin_table` and
 `m_addon_phrase_table` were already loaded once at init. Loading the same
 index twice returns `false` because `get_range` already sees it
-(`_load_phrase_library` `:243-246`).
+(`_load_phrase_library` `:242-244`).
 
 The addon index space is `4..15` in the *addon* facade, named by numeric
 config entries `addon 4 art.table art.bin NULL DICTIONARY`, … `addon 15
@@ -189,7 +203,7 @@ overloaded: `MERGED_DICTIONARY` in the default space and `art` in the addon
 space; the two facades keep them distinct.
 
 `pinyin_unload_addon_phrase_library` unloads the corresponding sub-index
-(`pinyin.cpp:503-508`).
+(`pinyin.cpp:497-504`).
 
 ### 3.6 Prediction enumeration and choose
 
@@ -201,27 +215,27 @@ Prediction has three independent inputs:
    and appends the resulting tokens to `instance->m_prefixes`. This is a
    phrase-table lookup, not a pinyin-table lookup.
 2. `_compute_predicted_bigram_candidates(instance, &merged_gram)`
-   (`pinyin.cpp:2309-2368`) walks `m_prefixes` backwards, loads **only the
+   (`pinyin.cpp:2311-2370`) walks `m_prefixes` backwards, loads **only the
    user bigram** for each prefix token into `merged_gram`, and stops at the
    first prefix that has one. It retrieves all successor `(token,count)` rows,
    keeps those with `m_count >= filter` where `const guint32 filter = 10`
-   (`pinyin.cpp:2311`, skip at `:2349-2350`), and appends successors whose
+   (`pinyin.cpp:2313`, skip at `:2351-2352`), and appends successors whose
    phrase length is 2 then 1 as `PREDICTED_BIGRAM_CANDIDATE`, resolving
    phrase length through `m_phrase_index`.
-3. `_compute_predicted_prefix_candidates(instance)` (`pinyin.cpp:2370-2409`)
+3. `_compute_predicted_prefix_candidates(instance)` (`pinyin.cpp:2372-2411`)
    calls `m_phrase_table->search_suggestion(prefix_len, prefix_ucs4, tokens)`,
    then appends each token as `PREDICTED_PREFIX_CANDIDATE`, skipping phrases
    longer than `prefix_len * 2 + 1`.
 
-`pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`) clears candidates,
+`pinyin_guess_predicted_candidates` (`pinyin.cpp:2413-2453`) clears candidates,
 recomputes prefixes, runs both, computes phrase lengths and frequencies with a
 null previous token and the (empty after prefix-walk) merged gram, sorts by
 `SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY`, computes strings, and dedups.
-`pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`) delegates
+`pinyin_guess_predicted_candidates_with_punctuations` (`:2456-2500`) delegates
 to it and prepends punctuation candidates from `m_system_punct_table` for each
 prefix token.
 
-`pinyin_choose_predicted_candidate` (`pinyin.cpp:2589-2639`) applies a **flat**
+`pinyin_choose_predicted_candidate` (`pinyin.cpp:2591-2641`) applies a **flat**
 `initial_seed = 69` to the chosen token's unigram (`+69 * 7 = 483`) and to the
 user bigram `(last → token)` plus `last`'s total (`+69`). `last` is
 `_get_previous_token(instance, 0)`, defaulting to `sentence_start`. oxpinyin
@@ -306,7 +320,7 @@ trait Dictionary {
     // existing methods ...
 
     /// Addon lookup pass, empty for every existing implementor.
-    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
@@ -325,7 +339,7 @@ unchanged.
 
 ### 6.4 Scoring/ranking
 
-- Default candidates keep the frozen ranking; the `UserCountDelta` overlay
+- Default candidates keep the system ranking; the `UserCountDelta` overlay
   adds user unigram deltas into the system LM before the λ blend.
 - Addon candidates use a separate denominator, through defaulted
   `LanguageModel` accessors:
@@ -350,7 +364,7 @@ generic `Session`, because it needs the phrase table and the user bigram:
   tables.
 - `crates/oxpinyin-capi/src/predict.rs` reproduces
   `_compute_predicted_bigram_candidates` (with the copied `filter = 10`,
-  `pinyin.cpp:2311`, `:2349-2350`) and
+  `pinyin.cpp:2313`, `:2351-2352`) and
   `_compute_predicted_prefix_candidates` (`merged_suggestions`, over
   `search_suggestion`), then sort and dedup.
 - `pinyin_guess_predicted_candidates_with_punctuations` prepends the
@@ -372,63 +386,3 @@ populated when the candidate is built, rather than inferring the type from
 `pinyin_get_candidate_type` returns that tag directly. This keeps the
 token-nibble ambiguity for addon index 4 inside the collection code and out of
 the C ABI.
-
-### 6.7 Addon data
-
-The runtime reads the shipped addon files directly (§5). The system
-directory's `table.conf` names the addon libraries; nothing is discovered
-by scanning.
-
-## 7. Complexity comparison vs upstream
-
-| Concern | Upstream | oxpinyin |
-|---|---|---|
-| Lookup | Two facades × 16 possible sub-indexes, DBM pinyin-table lookups | The same two facades over the same DBMs; default `lookup` = system + user, addon pass = the addon facade |
-| User phrase surface | User pinyin table + user sub-index inside default facade | The same tables in the user store's session state |
-| Addon surface | Aggregate addon pinyin/phrase tables + per-library content-file sub-index | The same files |
-| Candidate collection | Two `search_matrix` passes per window, range arrays per nibble | One default pass + one addon pass per window |
-| User ranking | Shared unigram total over default facade | Additive count merge; the total includes the user delta |
-| Addon ranking | Separate addon total, no bigram | `addon_unigram_*` path, separate total |
-| Prediction | Phrase-table suffix/prefix search + user bigram walk + punctuation table | The same three inputs |
-
-At zero user data and zero addons the addon and prediction paths are
-empty/false, which is the identity property the pins require.
-
-## 8. Verification
-
-### 8.1 Pin identity
-
-The empty-store profile stays bit-identical:
-
-```text
-top-1      10190
-top-5-set  10190
-prefix-10  98930 of 98930
-absent     0
-tie-swaps  0
-```
-
-Movement means a leak into existing behaviour and is a STOP. These pins
-are the Class A comparator port's; `oxpinyin-runtime`'s `candidate_surface`
-test asserts the candidate surface
-([goldens and pins](../runbooks/goldens-and-pins.md)).
-
-### 8.2 Differentials
-
-Recorded evidence: import, addon-load and train-then-predict differentials
-compared candidate lists in both engines. The train-then-predict profile
-un-blinds the training path the corpus profile skips.
-
-## 9. Decisions (Phase 0, 2026-08-17)
-
-1. **Network index 6 is in scope** — the same default-facade mechanism as
-   user. Default nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same
-   `USER_FILE` slot and the choose-promotion target (`pinyin.cpp:2532-2561`;
-   #105).
-2. **Punctuation prediction** reads `punct.bin` (§6.5).
-3. **Trait additions are defaulted methods**; other implementors compile
-   unchanged.
-
-The "unions up to 16 libraries by token nibble" claim is wrong: §3.2
-shows two facades (`m_phrase_index` vs `m_addon_phrase_index`), not one
-16-way union (`pinyin.cpp:432-435`).

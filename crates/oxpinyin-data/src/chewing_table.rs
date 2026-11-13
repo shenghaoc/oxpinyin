@@ -13,7 +13,7 @@
 //! entry — that is `SEARCH_CONTINUED`: a probe for a prefix answers "yes"
 //! when the DBM contains that key at all (empty or not).
 //!
-//! See `docs/findings/pinyin-dbm-format-2026-09-01.md` §3–§6 and
+//! See `docs/findings/data-formats.md` §4 and
 //! `chewing_large_table2_tkrzwdb.cpp:133-296`.
 
 use oxpinyin_core::ChewingKey;

@@ -488,6 +488,10 @@ mod tests {
     /// reached from `pinyin.cpp:2933-2938`). Pin capture of 2026-11-07, runs 1 and 2 identical,
     /// observations `key-abort/'`, `key-abort/''` and `key-abort/'''`: the parse and the parsed
     /// length answer the input's length, then the key query ends in SIGABRT.
+    ///
+    /// The abort is an `assert()` on user input, the same root cause as ibus-libpinyin #570.
+    /// A lowercase letter in the parsed prefix avoids the abort, so `ni'`, `'ni`, `a'a` and
+    /// `ni''hao` do not abort.
     #[rstest]
     #[case::one("'")]
     #[case::two("''")]

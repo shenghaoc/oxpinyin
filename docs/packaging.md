@@ -143,7 +143,7 @@ The [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ) t
 - **Same backend: nothing changes.** `user.conf`, `user_bigram.db`, `user_pinyin_index.bin`, `user_phrase_index.bin`, `user.bin` and the `*.dbin` logs are the backend's native files.
   The Kyoto Cabinet lanes (Fedora, Arch) keep the same files that a KC-built libpinyin keeps.
   The tkrzw lane (Debian) keeps the same files that a tkrzw-built libpinyin keeps.
-  The recorded evidence is the round trip against pin-built oracles in [user-store §11](findings/user-store.md#11-implementation-record--the-store-persists-in-libpinyins-own-files-2026-09-09).
+  The round trip against pin-built oracles is in [user-store §11](findings/user-store.md#11-the-store-persists-in-libpinyins-own-files).
 - **Different backend: fresh start, as with libpinyin.** A build on another backend cannot read the user directory and starts fresh.
   libpinyin's tkrzw build cannot read its Berkeley DB user files either (`check_format`; Debian's BerkeleyDB→Tkrzw switch carried a `debian/NEWS` warning).
   A distribution whose users cross a backend boundary when they install a takeover package is expected to carry the same `debian/NEWS`-style notice.

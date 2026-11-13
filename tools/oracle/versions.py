@@ -3,8 +3,8 @@
 
 Version drift is recorded, not rejected. The default mode fails on a missing
 package; --print records capture dependencies and marks a missing one instead.
-The images use Debian's libtkrzw, which needs no distro-probe.sh: that probe is
-for Ubuntu's packaged libtkrzw only (docs/findings/tkrzw-distro-compat.md).
+The images use Debian's libtkrzw, which is sound; Ubuntu's packaged libtkrzw
+is not (docs/findings/tkrzw-distro-compat.md).
 """
 from __future__ import annotations
 

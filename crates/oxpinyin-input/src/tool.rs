@@ -63,7 +63,7 @@ pub fn abort() -> ! {
 /// before the caller creates or writes anything, so it is never read as a
 /// missing container. A K-mixture single gram shorter than its array header
 /// takes it where the pin reads outside the record, after the pin's
-/// earlier work (class (b), `eio-flexible-bigram-malformed-records.md`).
+/// earlier work (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
 pub fn exit_on_store_error(error: &dyn std::fmt::Display) -> ! {
     print_text(c_stderr(), c"%s\n", &store_error_line(error));
     exit(1)
@@ -472,7 +472,7 @@ pub fn utf8_get_char_at(line: &CStr, offset: usize) -> Option<u32> {
 /// does work is implemented from its contract). A byte that leads no
 /// sequence of one to four bytes steps one; GLib's table steps 5 at
 /// `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, a POLICY-ACCEPTED difference
-/// (`docs/findings/eio-utf8-next-char-invalid-lead.md`).
+/// (`docs/findings/upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence`).
 #[must_use]
 pub const fn utf8_next_char_step(c: u8) -> usize {
     match c.leading_ones() {

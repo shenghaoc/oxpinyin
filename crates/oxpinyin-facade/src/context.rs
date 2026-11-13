@@ -317,7 +317,7 @@ fn null_chunk_refused(dir: &Path) {
 
 /// Bit 30 of [`LiveOptionsInner::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
-/// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`
+/// (`pinyin_parser2.cpp:580` + `:614`; `compatibility-policy.md`
 /// row 5b).  A valid-scheme store clears it implicitly (values 1–6
 /// never have bit 30), and the out-of-enum arm sets it.
 pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
@@ -507,7 +507,8 @@ impl ContextCore {
     /// A system library whose layout `SubPhraseIndex::load` refuses again at
     /// the save's remap is diffed against the pin's empty sub-index; the
     /// pin's `g_return_val_if_fail` critical there is not reproduced
-    /// (2026-10-31 UTC ruling, `docs/findings/1297-layout-criticals.md`).
+    /// (2026-10-31 UTC ruling,
+    /// `docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical`).
     pub fn save_user(&mut self) -> SaveOutcome {
         let store = self.user_store();
         if !store.has_user_directory() || !store.is_modified() {

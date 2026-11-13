@@ -119,9 +119,6 @@ Code is not refactored only for style.
 
 Fixtures come first.
 Portability acceptance uses the platform-free frozen goldens F-A–F-D.
-F-E is the evidence register shared across workstreams.
-It can cite Linux-only or advisory platform evidence.
-It is not a platform-free golden.
 
 The applicable test kinds are:
 

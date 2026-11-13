@@ -280,8 +280,7 @@ that the oracle resolves `libtkrzw.so.1` to it
 The arm64 pin orders some candidates differently from the amd64 pin, which is
 the reference ([procedure-specific rules](verification.md#procedure-specific-rules)).
 The affected cases are class (b) divergences, recorded in
-[the arm64 portability record](../findings/arm64-pin-portability-1137.md)
-and [upstream divergences](../findings/upstream-divergences.md).
+[the register's outstanding upstream defects](../findings/upstream-divergences.md#outstanding-upstream-defects-report-back).
 
 ### Regenerate the data (after every pull)
 

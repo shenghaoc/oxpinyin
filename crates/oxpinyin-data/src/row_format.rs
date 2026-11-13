@@ -25,9 +25,7 @@
 //! host-endian upstream; every target oxpinyin and the pin share is
 //! little-endian).
 //!
-//! Format notes: `docs/findings/pinyin-dbm-format-2026-09-01.md`,
-//! `docs/findings/phrase-dbm-format-2026-09-01.md`,
-//! `docs/findings/bigram-punct-format-2026-09-01.md`.
+//! Format notes: `docs/findings/data-formats.md` §4-§7.
 
 #[cfg(not(target_endian = "little"))]
 compile_error!(
@@ -63,7 +61,7 @@ fn push_ucs4(buf: &mut Vec<u8>, codes: impl Iterator<Item = u32>) {
 /// every phrase with that syllable sequence, and every proper prefix of
 /// a stored key exists as an empty-value `SEARCH_CONTINUED` marker.
 ///
-/// `docs/findings/pinyin-dbm-format-2026-09-01.md` §3–§6,
+/// `docs/findings/data-formats.md` §4,
 /// `chewing_large_table2_tkrzwdb.cpp:133-296`.
 pub mod pinyin_index {
     use oxpinyin_core::ChewingKey;
@@ -272,7 +270,7 @@ pub mod pinyin_index {
 /// values. Every proper UCS-4 prefix of every phrase exists as an
 /// empty-value continuation marker.
 ///
-/// `docs/findings/phrase-dbm-format-2026-09-01.md` §2–§5,
+/// `docs/findings/data-formats.md` §5,
 /// `phrase_large_table3_tkrzwdb.cpp`.
 pub mod phrase_index {
     use crate::dict::DictError;
@@ -345,7 +343,7 @@ pub mod phrase_index {
 /// Value: `total: u32` then `{next_token: u32, count: u32}` records,
 /// token-ascending (`SingleGram::insert_freq`).
 ///
-/// `docs/findings/bigram-punct-format-2026-09-01.md`, `ngram_tkrzwdb.cpp`.
+/// `docs/findings/data-formats.md` §6, `ngram_tkrzwdb.cpp`.
 pub mod bigram {
     use crate::dict::DictError;
     use crate::single_gram::decode_single_gram;

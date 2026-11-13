@@ -14,7 +14,7 @@
 //! contract violations.
 //!
 //! Where the pin asserts or aborts, the facade aborts the process too
-//! (`docs/findings/pin-aborts-pinyin-facade.md`), so the harness keeps
+//! (`docs/findings/upstream-divergences.md#pin-aborts-reproduced`), so the harness keeps
 //! every call off those preconditions: argument conditions are checked
 //! here (scheme 30, a predicted row passed to choose), and conditions
 //! that depend on library state ask the library (`oxpinyin_train_aborts`,

@@ -7,8 +7,8 @@
 //! the checked-in `pinyin.h` is that file. History: the W8 bootstrap set
 //! was the 50 pinned ibus-libpinyin 1.16.5 symbols plus
 //! `pinyin_get_parsed_input_length` and `pinyin_clear_constraint`; the
-//! surface closed on the full 79 on 2026-08-30 (`docs/findings/abi-reference.md`
-//! §6).
+//! surface closed on the full 79 on 2026-08-30 (`docs/findings/abi-reference.md`,
+//! Boundary notes).
 //!
 //! ## Panic discipline
 //!

@@ -2,7 +2,7 @@
 //! counterpart.
 //!
 //! Reproduces `utils/training/eval_correction_rate.cpp`
-//! (`docs/findings/trainer-parity-audit.md` §7): build the native evaluation
+//! (`docs/findings/training-algorithm.md` §9): build the native evaluation
 //! model, decode the evaluation corpus against the phrase index, and report
 //! `correction rate = passed / tested`.
 //!

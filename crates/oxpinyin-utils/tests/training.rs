@@ -221,8 +221,9 @@ mod frozen {
         // estimate_interpolation-layout-refusal-total:
         // src/storage/phrase_index.cpp:237-248,335-356;
         // utils/training/estimate_interpolation.cpp:65-71,104 at 074a2219.
-        // Policy-accepted on bdb, kc, tkrzw: docs/findings/1297-layout-criticals.md; only the pin
-        // writes GLib's layout critical.
+        // Policy-accepted on bdb, kc, tkrzw:
+        // docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical;
+        // only the pin writes GLib's layout critical.
         #[case::estimate_interpolation_layout_refusal_total(
             w3(),
             &[],
@@ -238,8 +239,9 @@ mod frozen {
         // estimate_interpolation-missing-bigram-file:
         // utils/training/estimate_interpolation.cpp at 074a2219: 107-111 (both attaches are
         // ignored) and 56-63 (a missing system row leaves the numerator zero).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::estimate_interpolation_missing_bigram_file(
             w3(),
             &[],
@@ -259,8 +261,9 @@ mod frozen {
         // estimate_interpolation-missing-deleted-bigram:
         // utils/training/estimate_interpolation.cpp at 074a2219: 113-114 (get_all_items on a
         // failed attach answers empty) and 139 (0.0/0 prints the host NaN).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         // Platform exception, aarch64, x86_64: a default NaN prints nan on aarch64 and -nan on
         // x86_64.
         #[case::estimate_interpolation_missing_deleted_bigram(
@@ -439,8 +442,9 @@ mod frozen {
         // eval_correction_rate-missing-bigram-file: utils/training/eval_correction_rate.cpp at
         // 074a2219: 154-155 (attach's answer is ignored; the decode falls back to the unigram
         // term).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::eval_correction_rate_missing_bigram_file(
             w3(),
             &[],
@@ -553,8 +557,9 @@ mod frozen {
         )]
         // gen_deleted_ngram-empty-stdin: utils/training/gen_deleted_ngram.cpp at 074a2219:
         // 80-118 (no line, then return 0).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_deleted_ngram_empty_stdin(
             w3(),
             &["--deleted-bigram-file", "absent/deleted.db"],
@@ -606,8 +611,9 @@ mod frozen {
         )]
         // gen_deleted_ngram-missing-bigram-file: utils/training/gen_deleted_ngram.cpp at
         // 074a2219: 75-76 (attach's answer is ignored) and 118 (no chunk save).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_deleted_ngram_missing_bigram_file(
             w3(),
             &["--deleted-bigram-file", "absent/deleted.db"],
@@ -622,8 +628,9 @@ mod frozen {
         )]
         // gen_deleted_ngram-ordinary: utils/training/gen_deleted_ngram.cpp at 074a2219: 80-116
         // (sentence_start after a null token, deleted bi-gram rows; no chunk save).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_deleted_ngram_ordinary(
             w3(),
             &["--deleted-bigram-file", "absent/deleted.db"],
@@ -639,8 +646,9 @@ mod frozen {
         // gen_deleted_ngram-too-many-arguments: utils/training/gen_deleted_ngram.cpp at
         // 074a2219: 54-118 (g_option_context_parse leaves extra arguments; main never reads
         // argc).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_deleted_ngram_too_many_arguments(
             w3(),
             &["--deleted-bigram-file", "absent/deleted.db", "first", "second"],
@@ -725,8 +733,9 @@ mod frozen {
         )]
         // gen_ngram-empty-stdin: utils/training/gen_ngram.cpp at 074a2219: 79-121 (no line,
         // then save_phrase_index).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_ngram_empty_stdin(
             w3(),
             &["--bigram-file", "absent/bigram.db"],
@@ -771,8 +780,9 @@ mod frozen {
         // gen_ngram-missing-bigram-file: utils/training/gen_ngram.cpp at 074a2219: 74-75
         // (attach's answer is ignored; a failed attach leaves every load and store a no-op)
         // and 120-121 (the chunks are still saved).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_ngram_missing_bigram_file(
             w3(),
             &["--bigram-file", "absent/bigram.db"],
@@ -803,8 +813,9 @@ mod frozen {
         )]
         // gen_ngram-ordinary: utils/training/gen_ngram.cpp at 074a2219: 79-121 (uni-gram +1,
         // sentence_start after a null token, bi-gram rows, chunk save).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_ngram_ordinary(
             w3(),
             &["--bigram-file", "absent/bigram.db"],
@@ -821,8 +832,9 @@ mod frozen {
         )]
         // gen_ngram-too-many-arguments: utils/training/gen_ngram.cpp at 074a2219: 53-123
         // (g_option_context_parse leaves extra arguments; main never reads argc).
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_ngram_too_many_arguments(
             w3(),
             &["--bigram-file", "absent/bigram.db", "first", "second"],
@@ -837,8 +849,9 @@ mod frozen {
         )]
         // gen_ngram-skip-pi-gram: utils/training/gen_ngram.cpp at 074a2219: 40
         // (G_OPTION_FLAG_REVERSE) and 93-98.
-        // Policy-accepted on bdb: docs/findings/bdb-failed-handle.md; only the pin writes Berkeley
-        // DB's BDB1565 lines.
+        // Policy-accepted on bdb:
+        // docs/findings/upstream-divergences.md#berkeley-db-handles-whose-open-failed-policy-row-113;
+        // only the pin writes Berkeley DB's BDB1565 lines.
         #[case::gen_ngram_skip_pi_gram(
             w3(),
             &["--skip-pi-gram-training", "--bigram-file", "absent/bigram.db"],

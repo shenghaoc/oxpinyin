@@ -557,7 +557,8 @@ fn span_law_without_separators_steps_keys_only() {
 fn an_empty_buffer_is_an_empty_matrix() {
     // No parse ever ran: every column is empty, no zero keys. Offsets
     // past the (zero) one-past-end position are the range refusal — the
-    // pin asserts on its empty matrix there (the F-E-14 shape).
+    // pin asserts on its empty matrix there (the same assert as a key
+    // query on an apostrophe-only parse).
     assert_eq!(lookup_offset_for_cursor(b"", PARITY, 3), Ok(0));
     assert_eq!(left_word_offset(b"", PARITY, 0), Ok(0));
     assert_eq!(

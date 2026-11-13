@@ -61,8 +61,9 @@ mod frozen {
             },
         )]
         // zhuyin-invalid-utf8: utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md; the pin
-        // dies with SIGSEGV where oxpinyin refuses with exit 1.
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#gen_pinyin_table-invalid-utf-8-phrase-class-b; the
+        // pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_invalid_utf8(
             &["in.txt"],
             b"",
@@ -76,8 +77,9 @@ mod frozen {
         )]
         // zhuyin-invalid-utf8-after-row: utils/storage/gen_zhuyin_table.cpp at 074a2219:
         // 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-table-generator-invalid-utf8.md; the pin
-        // dies with SIGSEGV where oxpinyin refuses with exit 1.
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#gen_pinyin_table-invalid-utf-8-phrase-class-b; the
+        // pin dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_invalid_utf8_after_row(
             &["in.txt"],
             b"",
@@ -90,7 +92,8 @@ mod frozen {
             },
         )]
         // zhuyin-missing-frequency: utils/storage/gen_zhuyin_table.cpp at 074a2219: 101-334.
-        // Policy-accepted on every cell: docs/findings/eio-zhuyin-missing-frequency.md; the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#gen_zhuyin_table-missing-frequency-class-b; the pin
         // dies with SIGSEGV where oxpinyin refuses with exit 1.
         #[case::zhuyin_missing_frequency(
             &["in.txt"],

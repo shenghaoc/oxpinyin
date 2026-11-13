@@ -1,10 +1,9 @@
 //! Candidates and checked iteration over them.
 //!
 //! A list hands out its rows by iteration only; the session selects a row
-//! it is given, never an index, so
-//! `docs/findings/robustness-evidence.md` row F-E-02, a candidate that
-//! outlived its list, is a C ABI case: a stale `lookup_candidate_t` pointer,
-//! which the snapshot resolves by address.
+//! it is given, never an index, so a candidate that outlived its list is a
+//! C ABI case: a stale `lookup_candidate_t` pointer, which the snapshot
+//! resolves by address.
 
 use core::slice;
 

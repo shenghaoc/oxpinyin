@@ -135,7 +135,7 @@ pub struct SessionState {
     /// The raw input and its pre-parsed scheme chain — the exact-mode
     /// invariants. The input has no length limit: the pin's 32767-byte
     /// `gint16` parse bound is a language artefact
-    /// (`docs/findings/1501-gint16-input-cap.md`).
+    /// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
     input: InputBuffer,
     /// What the user has chosen so far: text, cursor, token history, and
     /// the commit-branch flag, kept mutually consistent.
@@ -573,7 +573,7 @@ impl ScanKey {
 
 /// The keys the pin's matrix holds per byte position: the selected parse's
 /// keys, plus the resplit, divided and fuzzy additions. See
-/// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
+/// `docs/findings/matrix-split-tables.md` for the pair lists it states and
 /// `docs/findings/option-bits.md` for the fuzzy step.
 pub fn build_scan_matrix(
     graph: &SegmentGraph,

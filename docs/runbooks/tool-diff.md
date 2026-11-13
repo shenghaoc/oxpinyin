@@ -38,7 +38,7 @@ Each test is in its existing integration suite:
 
 Each case declares its arguments, stdin, input bytes or shared fixture, and its expected `Run`.
 The comments above each case give its original ID and its pin source citation at `074a2219`,
-any policy record, and any platform exception.
+any divergence register entry, and any platform exception.
 Shared setup uses `#[fixture]` and `assert_fs`. Commands use
 `assert_cmd::cargo::cargo_bin_cmd!`, with the existing 300-second timeout.
 The group function sets up its files, runs its utility, then calls `check`.

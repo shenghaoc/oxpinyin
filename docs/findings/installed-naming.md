@@ -1,6 +1,6 @@
 # The installed tree takes libpinyin's name; the source tree keeps ours
 
-Status: **implemented**.
+Status: **reference**
 
 The source repository keeps its own name. The installed artifacts take
 the name that the ecosystem already knows. Other projects do the same:
@@ -11,7 +11,7 @@ the name that the ecosystem already knows. Other projects do the same:
 
 ## What the real package looks like
 
-Read off Ubuntu's `libpinyin15-dev`:
+Ubuntu's `libpinyin15-dev` installs:
 
 ```
 /usr/lib/x86_64-linux-gnu/pkgconfig/libpinyin.pc     ← libpinyin.pc, not pinyin.pc
@@ -40,7 +40,7 @@ Libs: -L${libdir} -lpinyin
 Cflags: -I${libpinyinincludedir}
 ```
 
-Note two details:
+Two details matter:
 
 - The module name is **`libpinyin`**, but the link flag is **`-lpinyin`**.
 - `database_format` is one word with no space (`KyotoCabinet`).
@@ -74,7 +74,7 @@ same pattern.
 
 cargo-c **cannot produce** `pkgdatadir`, `database_format`,
 `libpinyinincludedir` or `libpinyin_binary_version`. This is a fixed limit
-of cargo-c, read from the cargo-c 0.10.24 source:
+of cargo-c (cargo-c 0.10.24):
 
 - `build.rs:358`: the `PkgConfigCApiConfig` struct has exactly seven
   fields (`name`, `filename`, `description`, `version`, `requires`,
@@ -124,8 +124,8 @@ name.
 
 The wrapper is the **supported installation path**. A plain
 `cargo capi install` leaves cargo-c's incomplete `.pc`, without the four
-variables. Use the wrapper for any install that a consumer will configure
-against. `Cargo.toml` carries `generate = false` to state intent. The
+variables. Any install that a consumer will configure against uses the
+wrapper. `Cargo.toml` carries `generate = false` to state intent. The
 current cargo-c ignores it, so the wrapper overwrites the file.
 
 **`database_format`.** `oxpinyin-store`'s build script selects the
@@ -138,8 +138,9 @@ default backend is tkrzw, so a default-feature build gives `Tkrzw`
 A `--no-default-features --features <peer>` build gives its own backend's
 token (`BerkeleyDB`, `KyotoCabinet`).
 
-**Gate.** After `just packaging install libpinyin --prefix=$P` on a
-default-feature build (with `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
+**Result.** After `just packaging install libpinyin --prefix=$P` on a
+default-feature build (with `PKG_CONFIG_PATH=$P/lib/pkgconfig`), pkg-config
+answers:
 
 ```console
 $ pkg-config --variable=pkgdatadir libpinyin       → $P/lib/libpinyin

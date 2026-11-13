@@ -98,7 +98,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
     // 65535 the positions wrap, as the pin's do (maintainer ruling
-    // 2026-11-01 UTC, `docs/findings/1501-guint16-key-positions.md`).
+    // 2026-11-01 UTC, `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
     KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
     KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     if !key_rest.is_null() {
@@ -849,7 +849,7 @@ mod preedit_key_tests {
 
     /// Past byte 65535 the key-rest positions narrow into the pin's
     /// `guint16` fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
-    /// `docs/findings/1501-guint16-key-positions.md`). `ni3` then `ni`
+    /// `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `ni3` then `ni`
     /// repeated puts a key at 65535..65537, which crosses byte 65536, and
     /// one at 65537..65539, wholly past it; both lengths stay 2.
     #[test]

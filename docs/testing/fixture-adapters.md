@@ -2,7 +2,7 @@
 
 Status: **current reference**
 
-These test doubles are internal test infrastructure, not a compatibility contract ([frozen-SPEC ruling](../findings/compatibility-policy.md#frozen-specs)).
+These test doubles are internal test infrastructure, not a compatibility contract ([external interfaces: C only](../findings/compatibility-policy.md#external-interfaces-c-only)).
 
 This page records the fixture doubles' data, provenance and limits.
 

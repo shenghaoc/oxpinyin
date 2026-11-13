@@ -36,7 +36,7 @@ impl<'a> UserLookup<'a> {
 
     /// Phrases whose stored pinyin matches `syllables` under upstream's
     /// `pinyin_compare_with_tones`
-    /// (`docs/findings/pinyin-dbm-format-2026-09-01.md`): equal length, and
+    /// (`docs/findings/data-formats.md` §4): equal length, and
     /// syllable-by-syllable, the stored pronunciation's syllable equals the
     /// query when the query syllable is complete, or shares its initial
     /// when the query syllable is incomplete.

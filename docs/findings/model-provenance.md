@@ -1,12 +1,15 @@
 # Model and table provenance
 
-## 2026-11-10 UTC ruling for issue #1764
+Status: **policy**
+
+## W3 test-subset redistribution ruling
 
 The project may commit and redistribute the minimal W3 test subset derived
 from model20 under GPL-3.0-or-later. Distributors must comply with the
 licence, including its notice and corresponding source requirements. This
-ruling replaces the 2026-08-14 redistribution prohibition only for the
-files in this scope.
+ruling lifts the redistribution prohibition
+([redistribution status](#redistribution-status)) only for the files in
+this scope.
 
 ### Scope
 
@@ -43,12 +46,12 @@ subject to the build-time fetch policy.
 No rightsholder statement covers the training corpus behind the counts.
 The provenance and licence terms of that corpus remain unresolved.
 
-## 2026-08-14 archive inspection and build-time fetch ruling
+## Archive inspection and build-time fetch ruling
 
-The original ruling prohibited redistribution and permitted a build-time
-fetch of the archive pinned by `model_archive_sha256` in
-[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt).
-The inspection record follows.
+Outside the W3 scope, redistribution is prohibited, and a build-time fetch
+of the archive pinned by `model_archive_sha256` in
+[`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt) is
+permitted.
 
 ## Examined artefacts
 
@@ -60,8 +63,8 @@ and pinned as:
 - SHA-256: `59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`
 - Source listing date: 2024-09-27
 
-A checksum-verified inspection found `interpolation2.text` and seventeen
-`.table` files. The archive contains no `COPYING`, `LICENSE`, `NOTICE`,
+The archive holds `interpolation2.text` and seventeen `.table` files. It
+contains no `COPYING`, `LICENSE`, `NOTICE`,
 README, copyright statement, provenance manifest, or source-corpus record.
 The archive inventory is:
 
@@ -105,7 +108,7 @@ grant terms for each data input.
 ## Redistribution vs build-time fetch
 
 Redistribution includes putting data in the repository, a release archive,
-a package or an installer. Apply the status table to each of those routes.
+a package or an installer. The status table applies to each of those routes.
 
 For a build-time fetch, the user obtains the archive directly from the
 upstream SourceForge models directory. The project supplies the URL and
@@ -139,10 +142,9 @@ carries an Apache-2.0
 [NOTICE](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/NOTICE)
 next to
 [`rawdict_utf16_65105_freq.txt`](https://android.googlesource.com/platform/packages/inputmethods/PinyinIME/+/refs/heads/master/jni/data/rawdict_utf16_65105_freq.txt).
-This finding did not verify whether or how that notice covers the raw
-dictionary. The dictionary is not a provenance record and does not replace
+Whether or how that notice covers the raw dictionary is not established. The dictionary is not a provenance record and does not replace
 the pinned language model. It may be evaluated later as one documented
-Branch B input. This finding does not approve a derived model or bundled
+Branch B input. This page does not approve a derived model or bundled
 table from it.
 
 ## Shipping consequence

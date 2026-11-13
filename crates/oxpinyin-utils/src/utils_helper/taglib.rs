@@ -328,7 +328,8 @@ mod tests {
         );
     }
 
-    /// POLICY-ACCEPTED (`docs/findings/eio-utf8-next-char-invalid-lead.md`):
+    /// POLICY-ACCEPTED
+    /// (`docs/findings/upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence`):
     /// a byte that leads no UTF-8 sequence steps one byte. The pin steps
     /// GLib's table, 5 at `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, so it
     /// answers `["", "e"]`, `["", "f"]`, and reads past the NUL of

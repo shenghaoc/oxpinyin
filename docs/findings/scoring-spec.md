@@ -1,6 +1,6 @@
 # Scoring
 
-Status: **current reference.**
+Status: **reference**
 
 This page defines the scoring quantities that oxpinyin's lookup and decoding use.
 The candidate ranking key is in [candidate-construction.md §8.2](candidate-construction.md#82-the-gate-and-the-frequency-key).
