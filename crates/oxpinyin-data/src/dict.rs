@@ -730,7 +730,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         }
         // `reduce_tokens`'s library grouping: tokens filed by nibble
         // ascending, cursor order within a library.
-        tokens.sort_by_key(|token| token >> 24);
+        oxpinyin_core::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens))
     }
 
