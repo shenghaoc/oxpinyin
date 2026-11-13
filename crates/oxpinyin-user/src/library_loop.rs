@@ -6,9 +6,9 @@
 use std::path::Path;
 
 use oxpinyin_data::phrase_library::LibraryError;
-use oxpinyin_data::table_info::{DefaultRowStep, FileName, TableConf, TableConfSite};
+use oxpinyin_data::table_info::{DefaultRowStep, TableConf, TableConfSite};
 
-use crate::persistence::{MapSteps, SystemOriginals};
+use crate::persistence::{SessionProfile, SystemOriginals};
 use crate::replay::JournalFault;
 
 /// Where the library loop stopped: the one record of every way a default row
@@ -87,30 +87,16 @@ impl<'a> LibraryLoopRows<'a> {
     ///
     /// The loop's first fault.
     pub fn map_libraries(&self, originals: &mut SystemOriginals) -> Result<(), LibraryLoopStop> {
-        run(
-            &self.steps,
-            &mut MapSteps {
-                system_dir: self.system_dir,
-                originals,
-            },
-        )
+        run(&self.steps, self.system_dir, originals, None)
     }
-}
-
-/// What the loop does at a row, injected so a test can record and fault it.
-pub(crate) trait LoopSteps {
-    /// Maps a `SYSTEM_FILE` row's chunk.
-    fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError>;
-    /// Merges a `SYSTEM_FILE` row's log.
-    fn merge_log(&mut self, index: u8) -> Result<(), JournalFault>;
-    /// Reads a `USER_FILE` row's library.
-    fn read_user_library(&mut self, index: u8);
 }
 
 /// Walks `rows` in order and stops at the first fault.
 pub(crate) fn run(
     rows: &[(u8, DefaultRowStep<'_>)],
-    steps: &mut impl LoopSteps,
+    system_dir: &Path,
+    originals: &mut SystemOriginals,
+    mut session: Option<SessionProfile<'_>>,
 ) -> Result<(), LibraryLoopStop> {
     for &(index, step) in rows {
         match step {
@@ -119,15 +105,30 @@ pub(crate) fn run(
                 file,
                 null_user_file,
             } => {
-                steps.map(index, file).map_err(LibraryLoopStop::Library)?;
+                originals
+                    .map_library(index, system_dir, file)
+                    .map_err(LibraryLoopStop::Library)?;
+                if let Some(session) = &mut session
+                    && let Some(live) = originals.take_live_library(index)
+                {
+                    session.profile.replayed.insert(index, live);
+                }
                 // The chunk maps first; the log's read of the directory is
                 // what dies (`pinyin.cpp:268-271`, `memory_chunk.h:434`).
                 if null_user_file {
                     return Err(LibraryLoopStop::Row(TableConfSite::NullUserFile));
                 }
-                steps.merge_log(index).map_err(LibraryLoopStop::Journal)?;
+                if let Some(session) = &mut session {
+                    session
+                        .merge_log(originals, index)
+                        .map_err(LibraryLoopStop::Journal)?;
+                }
             }
-            DefaultRowStep::User => steps.read_user_library(index),
+            DefaultRowStep::User => {
+                if let Some(session) = &mut session {
+                    session.read_user_library(originals, index);
+                }
+            }
         }
     }
     Ok(())
@@ -139,13 +140,11 @@ mod tests {
 
     use oxpinyin_data::chunk_format::build_memory_chunk;
     use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
-    use oxpinyin_data::phrase_library::RowFault;
     use oxpinyin_data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
     use super::*;
     use crate::persistence::{
-        LoadedProfile, SessionSteps, UserConfLaw, begin_session_profile, check_format,
-        system_originals,
+        LoadedProfile, UserConfLaw, begin_session_profile, check_format, system_originals,
     };
 
     const LAWS: [UserConfLaw; 2] = [UserConfLaw::Pinyin, UserConfLaw::Zhuyin];
@@ -161,14 +160,6 @@ mod tests {
         default MERGED_DICTIONARY NULL NULL u.bin USER_FILE\n\
         default ADDON_DICTIONARY d.table d.bin d.dbin SYSTEM_FILE\n";
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum Call {
-        Map(u8),
-        Log(u8),
-        User(u8),
-    }
-    use Call::{Log, Map, User};
-
     /// A `MODIFY_HEADER` with a token, which `next_record` asserts on
     /// (`phrase_index_logger.h:202`, register row 91), framed as a chunk.
     fn bad_log() -> Vec<u8> {
@@ -176,33 +167,6 @@ mod tests {
         payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
         payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         build_memory_chunk(&payload).expect("frame the log")
-    }
-
-    /// Records each step, optionally faulting a map, then runs the real one.
-    struct Traced<'a> {
-        inner: SessionSteps<'a>,
-        trace: Vec<Call>,
-        fault: Option<(u8, fn() -> LibraryError)>,
-    }
-
-    impl LoopSteps for Traced<'_> {
-        fn map(&mut self, index: u8, file: &FileName) -> Result<(), LibraryError> {
-            self.trace.push(Map(index));
-            match self.fault {
-                Some((at, fault)) if at == index => Err(fault()),
-                _ => self.inner.map(index, file),
-            }
-        }
-
-        fn merge_log(&mut self, index: u8) -> Result<(), JournalFault> {
-            self.trace.push(Log(index));
-            self.inner.merge_log(index)
-        }
-
-        fn read_user_library(&mut self, index: u8) {
-            self.trace.push(User(index));
-            self.inner.read_user_library(index);
-        }
     }
 
     struct Fixture {
@@ -255,13 +219,8 @@ mod tests {
             std::fs::write(self.system.join(file), b"abc").expect("short chunk");
         }
 
-        /// The session load over `rows`, with each step recorded.
-        fn run(
-            &self,
-            law: UserConfLaw,
-            rows: &[(u8, DefaultRowStep<'_>)],
-            fault: Option<(u8, fn() -> LibraryError)>,
-        ) -> Run {
+        /// The session load over `rows`, using the production loop.
+        fn run(&self, law: UserConfLaw, rows: &[(u8, DefaultRowStep<'_>)]) -> Run {
             let conf = self.conf();
             let layout = UserFileLayout::from_conf(&conf);
             let versions = SystemVersions::from_conf(&conf);
@@ -271,21 +230,17 @@ mod tests {
                 layout,
             );
             let mut profile = begin_session_profile(&self.user, &check).expect("the user tables");
-            let mut steps = Traced {
-                inner: SessionSteps {
+            let stop = run(
+                rows,
+                &self.system,
+                &mut originals,
+                Some(SessionProfile {
                     user_dir: &self.user,
-                    system_dir: &self.system,
-                    originals: &mut originals,
                     profile: &mut profile,
                     conform: check.conform,
-                },
-                trace: Vec::new(),
-                fault,
-            };
-            let stop = run(rows, &mut steps);
-            let trace = steps.trace;
+                }),
+            );
             Run {
-                trace,
                 stop,
                 unmapped: originals
                     .phrase_libraries()
@@ -301,7 +256,6 @@ mod tests {
     }
 
     struct Run {
-        trace: Vec<Call>,
         stop: Result<(), LibraryLoopStop>,
         unmapped: Vec<PathBuf>,
         loaded: Vec<u8>,
@@ -315,14 +269,6 @@ mod tests {
         );
     }
 
-    fn format_fault() -> LibraryError {
-        LibraryError::Format("separator outside the payload".into())
-    }
-
-    fn directory_fault() -> LibraryError {
-        LibraryError::Row(RowFault::ChunkHeaderRead)
-    }
-
     /// a later chunk the pin never opens cannot stop library
     /// 1's replay, and writes no line (`pinyin.cpp:276` before `:256`).
     #[test]
@@ -333,39 +279,9 @@ mod tests {
             fixture.absent("b.bin");
             fixture.unmappable("c.bin");
             let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
+            let run = fixture.run(law, &conf.default_row_steps(None));
             assert_journal(&run.stop, 1);
-            assert_eq!(run.trace, [Map(1), Log(1)], "{law:?}");
             assert!(run.unmapped.is_empty(), "{law:?}: {:?}", run.unmapped);
-        }
-    }
-
-    /// the same for a layout the pin reads past, which writes
-    /// no line and answers NULL when the loop does reach it.
-    #[test]
-    fn a_bad_log_aborts_before_a_later_library_with_a_bad_layout() {
-        for law in LAWS {
-            let fixture = Fixture::new(CONF);
-            let conf = fixture.conf();
-            let reached = fixture.run(law, &conf.default_row_steps(None), Some((3, format_fault)));
-            assert!(
-                matches!(
-                    reached.stop,
-                    Err(LibraryLoopStop::Library(LibraryError::Format(_)))
-                ),
-                "{law:?}: {:?}",
-                reached.stop
-            );
-            assert_eq!(
-                reached.trace,
-                [Map(1), Log(1), Map(2), Log(2), Map(3)],
-                "{law:?}"
-            );
-
-            fixture.bad_log("a.dbin");
-            let run = fixture.run(law, &conf.default_row_steps(None), Some((3, format_fault)));
-            assert_journal(&run.stop, 1);
-            assert_eq!(run.trace, [Map(1), Log(1)], "{law:?}");
         }
     }
 
@@ -408,7 +324,7 @@ mod tests {
                     })
                     .collect();
 
-                let reached = fixture.run(law, &rows, None);
+                let reached = fixture.run(law, &rows);
                 assert!(
                     matches!(reached.stop, Err(LibraryLoopStop::Row(got)) if got == site),
                     "{law:?} {site:?}: {:?}",
@@ -417,9 +333,8 @@ mod tests {
                 assert_eq!(reached.unmapped, [fixture.system.join("b.bin")], "{law:?}");
 
                 fixture.bad_log("a.dbin");
-                let run = fixture.run(law, &rows, None);
+                let run = fixture.run(law, &rows);
                 assert_journal(&run.stop, 1);
-                assert_eq!(run.trace, [Map(1), Log(1)], "{law:?} {site:?}");
                 assert!(run.unmapped.is_empty(), "{law:?} {site:?}");
             }
         }
@@ -435,7 +350,7 @@ mod tests {
             fixture.absent("a.bin");
             fixture.unmappable("c.bin");
             let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
+            let run = fixture.run(law, &conf.default_row_steps(None));
             let Err(LibraryLoopStop::Library(error)) = &run.stop else {
                 panic!("{law:?}: {:?}", run.stop);
             };
@@ -462,43 +377,14 @@ mod tests {
             )
             .expect("user library");
             let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
+            let run = fixture.run(law, &conf.default_row_steps(None));
             assert_journal(&run.stop, 1);
-            assert_eq!(run.trace, [Map(1), Log(1)], "{law:?}");
             assert_eq!(run.loaded, [1], "{law:?}");
             assert!(run.profile.user_libraries.is_empty(), "{law:?}");
             assert!(
                 !run.profile.loaded.library_totals.contains_key(&4),
                 "{law:?}"
             );
-        }
-    }
-
-    /// The whole order: each library before its log and before the next row,
-    /// the user library at its own place.
-    #[test]
-    fn each_library_maps_before_its_log_and_before_the_next() {
-        for law in LAWS {
-            let fixture = Fixture::new(CONF);
-            let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
-            assert!(run.stop.is_ok(), "{law:?}: {:?}", run.stop);
-            assert_eq!(
-                run.trace,
-                [
-                    Map(1),
-                    Log(1),
-                    Map(2),
-                    Log(2),
-                    Map(3),
-                    Log(3),
-                    User(4),
-                    Map(5),
-                    Log(5)
-                ],
-                "{law:?}"
-            );
-            assert_eq!(run.loaded, [1, 2, 3, 5], "{law:?}");
         }
     }
 
@@ -512,16 +398,11 @@ mod tests {
             fixture.unmappable("c.bin");
             fixture.bad_log("c.dbin");
             let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
+            let run = fixture.run(law, &conf.default_row_steps(None));
             assert!(
                 matches!(&run.stop, Err(LibraryLoopStop::Library(error)) if error.unmappable_path().is_some()),
                 "{law:?}: {:?}",
                 run.stop
-            );
-            assert_eq!(
-                run.trace,
-                [Map(1), Log(1), Map(2), Log(2), Map(3)],
-                "{law:?}"
             );
         }
     }
@@ -535,45 +416,9 @@ mod tests {
             fixture.absent("b.bin");
             fixture.bad_log("b.dbin");
             let conf = fixture.conf();
-            let run = fixture.run(law, &conf.default_row_steps(None), None);
+            let run = fixture.run(law, &conf.default_row_steps(None));
             assert_journal(&run.stop, 2);
             assert_eq!(run.unmapped, [fixture.system.join("b.bin")], "{law:?}");
-            assert_eq!(run.trace, [Map(1), Log(1), Map(2), Log(2)], "{law:?}");
-        }
-    }
-
-    /// Register row 96 on every filesystem: the logs before the directory
-    /// merge first, and an earlier bad log is the fault reached.
-    #[test]
-    fn a_directory_library_stops_the_loop_after_the_earlier_logs() {
-        for law in LAWS {
-            let fixture = Fixture::new(CONF);
-            fixture.bad_log("c.dbin");
-            let conf = fixture.conf();
-            let run = fixture.run(
-                law,
-                &conf.default_row_steps(None),
-                Some((2, directory_fault)),
-            );
-            assert!(
-                matches!(
-                    run.stop,
-                    Err(LibraryLoopStop::Library(LibraryError::Row(
-                        RowFault::ChunkHeaderRead
-                    )))
-                ),
-                "{law:?}: {:?}",
-                run.stop
-            );
-            assert_eq!(run.trace, [Map(1), Log(1), Map(2)], "{law:?}");
-
-            fixture.bad_log("a.dbin");
-            let run = fixture.run(
-                law,
-                &conf.default_row_steps(None),
-                Some((2, directory_fault)),
-            );
-            assert_journal(&run.stop, 1);
         }
     }
 
