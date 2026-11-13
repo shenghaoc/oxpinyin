@@ -3,8 +3,8 @@ description: |-
   Install the Linux tkrzw overlay port with a vcpkg binary cache.
 
   tools/dev/vcpkg.py holds every vcpkg step; only the package install and the
-  cache actions stay here. It runs with the image's own Python: the Debian
-  container jobs call this before any managed interpreter exists.
+  cache actions stay here. It runs on the managed CPython, so the calling job
+  must first run .github/actions/bootstrap with uv: 'true'.
 outputs:
   prefix:
     description: 'The installed triplet prefix.'
@@ -22,11 +22,11 @@ runs:
       run: apt-get install -y --no-install-recommends build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake ninja-build
     - name: Bootstrap vcpkg
       shell: bash
-      run: python3 -m tools.dev.vcpkg bootstrap
+      run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg bootstrap
     - name: Compute the vcpkg binary cache key
       id: key
       shell: bash
-      run: python3 -m tools.dev.vcpkg cache-key --triplet x64-linux-oxpinyin
+      run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet x64-linux-oxpinyin
     - name: Restore the vcpkg binary cache
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -39,7 +39,7 @@ runs:
     # certification environment and the tools directory.
     - name: Install tkrzw
       shell: bash
-      run: python3 -m tools.dev.vcpkg install --triplet x64-linux-oxpinyin
+      run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet x64-linux-oxpinyin
     - name: Save the vcpkg binary cache
       if: steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

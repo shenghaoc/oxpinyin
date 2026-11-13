@@ -1,5 +1,5 @@
 # Path gates. The workflow always starts. The `changes` job writes one flag per
-# job (`python3 -m tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
+# job (`tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
 # holds each job's paths), and a job runs only when its flag is true. A skipped
 # job still reports `skipped`, so the required `ci-aggregate` check sees it.
 # Paths that no job reads, such as docs/, reference/ and the root
@@ -76,21 +76,25 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # Every Python step in CI runs on the managed CPython, never the
+      # runner's own Python.
+      - uses: ./.github/actions/bootstrap
+        with:
+          uv: 'true'
       - name: Compute the path-gate flags
         id: gate
-        run: python3 -m tools.dev.ci_tree gate
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree gate
       # Every tracked file is an input of this rule, so it runs here on every
-      # change, under the runner's own Python. The file's other test class
-      # needs uv and runs with the harness.
+      # change. The file's other test class runs with the harness.
       - name: Python version request is written once
-        run: python3 tools/dev/python-request.test.py RequestLiteralTests
+        run: uv run --no-project --managed-python python -X utf8 tools/dev/python-request.test.py RequestLiteralTests
       # After the gate: evidence must cover every lane the gate selects.
       - name: Look up successful PR evidence for this tree
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
           GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
-        run: python3 -m tools.dev.ci_tree evidence ci
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree evidence ci
 
   lint:
     needs: changes
@@ -110,7 +114,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -120,7 +124,8 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: lint-job
-          uv: ${{ needs.changes.outputs.reuse != 'true' }}
+          # Every run: the tkrzw action and the cache refresh run on reuse too.
+          uv: 'true'
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action installs the overlay port with vcpkg and
@@ -154,19 +159,15 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
       # Complexity limit: no function may exceed CCN 40. -w prints only the
-      # functions over the limit; the exit status is the same.
-      # --break-system-packages: the container is temporary, so there is no
-      # system Python to protect. 1.24.0 is the release the limit was
-      # checked against.
-      - run: apt-get install -y --no-install-recommends python3-pip
+      # functions over the limit; the exit status is the same. This step is
+      # the one place that pins the Lizard release: the release the limit
+      # was checked against. docs/runbooks/verification.md refers here.
+      - name: Lizard complexity limit
         if: needs.changes.outputs.reuse != 'true'
-      - run: pip install --break-system-packages lizard==1.24.0
-        if: needs.changes.outputs.reuse != 'true'
-      - run: lizard crates/ -l rust -C 40 -w
-        if: needs.changes.outputs.reuse != 'true'
+        run: uv run --no-project --managed-python --with lizard==1.24.0 python -X utf8 -m lizard crates/ -l rust -C 40 -w
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 -m tools.dev.ci_tree refresh lint
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh lint
 
   test:
     needs: changes
@@ -186,7 +187,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -196,7 +197,8 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: test-job
-          uv: ${{ needs.changes.outputs.reuse != 'true' }}
+          # Every run: the tkrzw action and the cache refresh run on reuse too.
+          uv: 'true'
           just: ${{ needs.changes.outputs.reuse != 'true' }}
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
@@ -254,7 +256,7 @@ jobs:
 
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: python3 -m tools.dev.ci_tree refresh test
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh test
 
   # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
   # holds the policy. The bootstrap action installs a released binary, so
@@ -313,7 +315,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -376,7 +378,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl jq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -447,11 +449,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          uv: 'true'
       - name: Require every applicable lane to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: python3 -m tools.dev.ci_tree aggregate ci
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree aggregate ci
 
   # The marker says the aggregate passed: every lane the gate selected
   # succeeded and every other lane was skipped. A later run reads the lanes'

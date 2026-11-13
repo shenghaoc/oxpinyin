@@ -306,7 +306,8 @@ class RunFlagTests(unittest.TestCase):
         step = workflow.split('      - name: Compute the path-gate flag\n', 1)[1].split('\n\n', 1)[0]
         self.assertIn("\n          BASE: ${{ github.event_name == 'pull_request' && "
                       'github.event.pull_request.base.sha || github.event.before }}\n', step)
-        command = step.split('          python3 tools/bisection/cells-for-diff.py ', 1)[1]
+        command = step.split('          uv run --no-project --managed-python python -X utf8'
+                             ' tools/bisection/cells-for-diff.py ', 1)[1]
         *arguments, base, redirect, output = shlex.split(command.replace('\\\n', ' '))
         self.assertEqual((base, redirect, output), ('$BASE', '>>', '$GITHUB_OUTPUT'))
         return arguments

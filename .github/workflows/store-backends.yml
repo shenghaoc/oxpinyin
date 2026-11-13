@@ -115,11 +115,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: ./.github/actions/bootstrap
+        with:
+          uv: 'true'
       - name: Look up complete successful PR evidence for this tree
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -m tools.dev.ci_tree evidence store
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree evidence store
       - name: Compute the path-gate flag
         id: gate
         # The event's base: the PR base sha, or the previous pushed head. The
@@ -140,7 +143,7 @@ jobs:
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
-          python3 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
+          uv run --no-project --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
             --also crates/oxpinyin-utils/ \
@@ -195,7 +198,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -214,6 +217,7 @@ jobs:
           rustup: 'true'
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
+          uv: 'true'
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -313,7 +317,7 @@ jobs:
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         env:
           BACKEND: ${{ matrix.backend }}
-        run: python3 -m tools.dev.ci_tree refresh store-features --backend "$BACKEND"
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh store-features --backend "$BACKEND"
 
   store-backends-gate:
     # Aggregate checked by the caller's required ci-aggregate. It builds and
@@ -340,11 +344,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          uv: 'true'
       - name: Require every applicable lane to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: python3 -m tools.dev.ci_tree aggregate store
+        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree aggregate store
 
   tkrzw-sanitizers:
     needs: changes
@@ -379,7 +386,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -484,7 +491,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -566,7 +573,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

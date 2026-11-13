@@ -261,7 +261,8 @@ class Workflow(unittest.TestCase):
     def test_linux_action_delegates_to_this_module(self):
         text = (ROOT / '.github/actions/tkrzw/action.yml').read_text(encoding='utf-8')
         for command in ('bootstrap', f'cache-key --triplet {LINUX}', f'install --triplet {LINUX}'):
-            self.assertIn(f'      run: python3 -m tools.dev.vcpkg {command}\n', text)
+            self.assertIn(f'      run: uv run --no-project --managed-python python -X utf8'
+                          f' -m tools.dev.vcpkg {command}\n', text)
         for shell in ('run: |', 'set -euo', 'sha256sum', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'git -C', 'git init'):
             self.assertNotIn(shell, text)
 
