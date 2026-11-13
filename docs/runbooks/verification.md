@@ -264,7 +264,8 @@ These rules govern the CI gates. This section is the only place that states them
 2. **tkrzw is the default backend.** CI alone tests Berkeley DB and Kyoto Cabinet, and only when their KV code changes.
    Rule 2 decides that by path, not by judgement.
    The full-data contract tests run on tkrzw only.
-3. **Fuzzing runs nightly, never on the PR gate.** Its schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
+3. **Fuzz execution runs nightly.** The PR lint job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under the existing lint path gate.
+   The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
 5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds each job's paths.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
