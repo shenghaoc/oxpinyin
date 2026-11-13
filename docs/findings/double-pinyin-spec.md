@@ -95,7 +95,6 @@ The pinned full-pinyin corpus is tone-less, and the fork's double-pinyin context
 `parse` probes the longest possible input of valid key and tone bytes.
 From the current position, it then tries lengths `3`, `2`, `1` in that order (`max_double_pinyin_length = 3`, `pinyin_parser2.cpp:84`) and stops at the first success (`src/storage/pinyin_parser2.cpp:531-574`).
 This is a greedy longest match per key, not a global DP.
-It is not the full-pinyin exhaustive path set.
 
 ## Scheme tables
 

@@ -67,8 +67,7 @@ USE_RESPLIT_TABLE`, with dynamic adjustment off. It freezes:
 - empty input;
 - a 4,096-byte junk input.
 
-F-A records only the segmentation that the pinned oracle selected. It does not define
-the path set of the portable parser.
+F-A records only the segmentation that the pinned oracle selected.
 
 ## F-C coverage
 

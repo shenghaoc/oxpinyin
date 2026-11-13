@@ -5,8 +5,8 @@ Status: **reference**
 This SPEC states the graph behaviour that the pin defines and the C APIs expose: which keys it admits at each byte position, the 23-key incomplete inventory, the emission order, the consumed length and the input it refuses.
 The graph itself is an internal structure; its Rust layout and edge-kind names describe oxpinyin's implementation.
 
-The pin's selected split admits partials at any position ([partial placement](parser-spec.md#partial-placement)), but the foundation parser still does **not** enumerate mid-position incomplete keys, because explicit enumeration is exponential.
-A graph represents them as edges instead.
+The pin's selected split admits partials at any position ([partial placement](parser-spec.md#partial-placement)).
+A graph represents them as edges without enumerating every path.
 This SPEC defines that graph.
 
 ## The problem it solves
@@ -15,7 +15,7 @@ Under the parity profile `0x18a`, the pin treats an initial-only key as a first-
 It is usable at any cursor, any number of times, interleaved with complete keys.
 The pin selected `ying, ch, o, n` for `yingchon` and chained eight `z` keys across `zzzzzzzz`.
 
-An explicit `Vec<Parse>` cannot hold it.
+Enumerating every path requires exponential space.
 A graph over byte positions can: edges are `O(n × max_syllable_len)`, and no component enumerates paths.
 The decoder's `k` bounds the output at the layer where "too many" has a meaning.
 
@@ -104,15 +104,7 @@ This rule applies at every reachable node, including node 0.
 So the graph consumes a **leading** apostrophe (`'ni`) and a **doubled** apostrophe (`ni''hao`), as the pin does.
 An apostrophe run with no key after it has no edge.
 
-[parser-path-set.md](parser-path-set.md#correction-log) states both cases as consumed.
 `OPEN_APOSTROPHE_CASES` in `crates/oxpinyin-core/tests/graph_paths.rs` is empty, so the test permits no disagreement with the pin.
-
-## Relationship to the foundation parser
-
-The graph is a **superset** of the parser path set, not a replacement for it.
-`FullPinyinParser` keeps its `Vec<Parse>` contract: complete-syllable segmentations with an optional trailing partial.
-That enumeration is useful and independently tested, and `MAX_PARSE_RESULTS` still has a meaning there.
-Mid-position and repeated partials are in the graph.
 
 ## The recovered-path fixture
 

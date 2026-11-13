@@ -14,11 +14,11 @@
 //! `tests/zhuyin_parse_parity.rs`, and the alternate-romanization index
 //! parsers in `src/full_pinyin_index.rs`. Scheme-setter rejection contracts
 //! are covered black-box in `crates/oxpinyin-capi/tests/abi/contract.rs`;
-//! full-pinyin parse invariants live in `tests/parser_acceptance.rs`.
+//! full-pinyin selected splits are checked in `tests/graph_paths.rs`.
 
 use oxpinyin_core::{
-    DoublePinyinParser, DoublePinyinScheme, FullPinyinParser, FullPinyinScheme, OptionBits,
-    SyllableKey, ZhuyinParser, luoma_pinyin_index, secondary_zhuyin_index,
+    DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme, SyllableKey, ZhuyinParser,
+    luoma_pinyin_index, secondary_zhuyin_index,
 };
 
 /// All double-pinyin layouts with a compiled table (Customized has none).
@@ -31,14 +31,10 @@ const DOUBLE_SCHEMES: &[DoublePinyinScheme] = &[
     DoublePinyinScheme::Xhe,
 ];
 
-fn parser_accepts_spellings(parser: &FullPinyinParser, joined: &str) -> bool {
+fn parser_accepts_spellings(joined: &str) -> bool {
     joined
         .split('\'')
         .all(|spelling| spelling.is_empty() || SyllableKey::from_text(spelling).is_some())
-        && !parser
-            .parse_with_options(joined.as_bytes(), OptionBits::default())
-            .unwrap()
-            .is_empty()
 }
 
 /// The `test_parser2` hard invariant: ordered, contiguous, non-overlapping
@@ -83,7 +79,7 @@ fn double_pinyin_output_is_valid_full_pinyin_for_every_scheme() {
         parser.set_scheme(*scheme);
         let full = parser.parse(b"uikjkuk", false).full_pinyin();
         assert!(
-            parser_accepts_spellings(&FullPinyinParser, &full),
+            parser_accepts_spellings(&full),
             "{scheme:?}: full-pinyin projection {full:?} is not parsable"
         );
     }

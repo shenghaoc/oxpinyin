@@ -40,7 +40,6 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC: the resplit pairs and divided syllables of the scan matrix | reference |
 | [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
 | [`option-bits`](option-bits.md) | Option bits: where each `pinyin_option_t` bit class acts, and oxpinyin's handling | reference |
-| [`parser-path-set`](parser-path-set.md) | Full-pinyin parser path-set SPEC: the ordered alternatives and the result bound | reference |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC: the inventory, input domain, result fields and apostrophe rules | reference |
 | [`phrase-union`](phrase-union.md) | Phrase-index union at lookup | reference |
 | [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, the cost scale and incomplete keys | reference |
