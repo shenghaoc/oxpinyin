@@ -488,6 +488,10 @@ fn parse_two_keys(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
     };
     let yun = &tables.yunmu[key_id(input[1])];
 
+    if yun[0].is_none() {
+        return parse_fallback(input, tables);
+    }
+
     for candidate in yun.iter().flatten() {
         let spelling = format!("{sheng}{candidate}");
         if let Some(key) = lookup_pinyin(&spelling) {
@@ -1746,6 +1750,27 @@ mod tests {
         let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
         let key = parser.parse_one_key(0, b"oo").expect("oo parses");
         assert_eq!(key.pinyin_string(), "o");
+    }
+
+    #[test]
+    fn double_two_keys_use_fallback_when_the_first_yunmu_is_missing() {
+        use super::{MS_SHENG, MS_YUN, SchemeTables, YunmuTable, parse_two_keys};
+
+        const YUNMU: YunmuTable = {
+            let mut table = MS_YUN;
+            // Index 14 is `o`, counted from `a`.
+            table[14] = [None, Some("o")];
+            table
+        };
+        let tables = SchemeTables {
+            shengmu: &MS_SHENG,
+            yunmu: &YUNMU,
+            fallback: Some(&[("oo", "ou")]),
+        };
+
+        // Pin pinyin_parser2.cpp:478-479: a NULL first slot goes to fallback.
+        let key = parse_two_keys(b"oo", tables).expect("oo resolves through fallback");
+        assert_eq!(key.text(), "ou");
     }
 
     /// `ZhuyinSimpleParser2::parse_one_key` on STANDARD: `18` is ㄅㄚ
