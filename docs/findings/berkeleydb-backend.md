@@ -1,10 +1,10 @@
 # BerkeleyDB backend
 
-Status: **implemented** on libdb 5.3.28 (Debian and Fedora; macOS through
-Homebrew `berkeley-db@5`). Berkeley DB is a non-default backend with full
-drop-in compatibility.
-This record states the backend's structure, its decisions and the evidence
-for its key ordering and real files. tkrzw is the default backend and the reference
+Status: **reference**. The backend is implemented on libdb 5.3.28 (Debian
+and Fedora; macOS through Homebrew `berkeley-db@5`). Berkeley DB is a
+non-default backend with full drop-in compatibility.
+This record states the backend's structure, its decisions and its key
+ordering. tkrzw is the default backend and the reference
 cell ([compatibility policy, "Backends and user data"](compatibility-policy.md#backends-and-user-data)).
 A bare `./configure` of the pin selects Berkeley DB; oxpinyin selects it with
 `--no-default-features --features bdb`. The build and the overrides are in
@@ -33,7 +33,8 @@ backend, as with the other peers.
 - Every consumer crate forwards the `bdb` feature.
 - Tests: the shared store read and write suites,
   `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (files the pin's
-  libdb wrote, from `fixtures/w3/db/`), and the C harnesses
+  libdb wrote, from `fixtures/w3/db/`; their `table.conf` differs from the
+  other backends' sets only in `database format:BerkeleyDB`), and the C harnesses
   `tools/bdb/hash-walk.c` and `tools/bdb/btree-order.c`.
   `just sanitize bdb` runs the Rust suite under ASan, then the C harnesses
   under ASan and UBSan. The harness walks a `user_bigram.db` that the
@@ -70,70 +71,7 @@ libpinyin opens its B-trees (`phrase_large_table3_bdb.cpp`,
 comparator is byte-wise `memcmp`, shorter key first on a shared prefix.
 That is the [store key-ordering contract](store-key-ordering.md), so the
 backend sets no comparator. Setting one would reorder files libpinyin
-wrote.
-
-`tools/bdb/btree-order.c` confirms this. It opens a `DB_BTREE` as
-libpinyin does (no environment, no transaction, no comparator). It loads
-little-endian `u32` array keys that cross 256 in the first element and in
-a later element. The walk is in raw-byte order, not integer order:
-
-- The 1-element key `00000001` precedes the 2-element key
-  `0000000102010000` that extends it.
-- The decoded values run `0x01000000, 0x00010000, 0x00ff0000,
-  0x00000100, …`.
-
-The shared key-ordering suite asserts that this backend
-walks the same keys as tkrzw and Kyoto Cabinet.
-
-## Real-file evidence
-
-Against a pin-built `--with-dbm=BerkeleyDB` data directory:
-
-- The 56,359-record system `bigram.db` walks whole, ordered and free of
-  duplicates. Every key is 4 bytes and every value is `4 + 8n` bytes.
-- The index B-trees walk in strict byte order.
-- A user bigram that the backend wrote reads back byte for byte through
-  both seams and refuses a tree open.
-- The mini fixtures in `fixtures/w3/db/` hold the same chunk files as the
-  other backends' sets. Their `table.conf` differs only in
-  `database format:BerkeleyDB`.
-
-## Pin facts for a profile round trip
-
-A driver that trains a profile on the pin must respect these facts:
-
-- Candidate 0 is an `NBEST_MATCH_CANDIDATE` only once `m_nbest_results` is
-  non-empty, and only `pinyin_guess_sentence` (`pinyin.cpp:1372`) fills it
-  through `_prepend_sentence_candidates` (`:1934`). A `LONGER_CANDIDATE`
-  trains unigram only and installs no constraint (`pinyin.cpp:2523`). An
-  n-best selection at index 0 installs no `CONSTRAINT_ONESTEP`, so
-  `train_result3` stores no user-bigram gram.
-- `pinyin_parse_more_full_pinyins` (`pinyin.cpp:1497-1525`) clears neither
-  the matrix state nor `m_nbest_results` nor `m_constraints`. Only
-  `pinyin_reset` (`pinyin.cpp:2693`) does.
-- A driver follows ibus's order (`PYPPhoneticEditor.cc:341,355,494-511`):
-  parse, guess the sentence, list candidates, select `NORMAL_CANDIDATE`s
-  at the lookup cursor, train, remember and reset. ibus does not train an
-  n-best selection at index 0
-  (`PYPLibPinyinCandidates.cc:116`). ibus sorts with
-  `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`
-  (`PYPConfig.cc:151`).
-- With sort option `0`, the first `NORMAL_CANDIDATE` is an arbitrary rare
-  character (`疒` for `nihao`). Its grams crash the pin's bigram-export
-  iterator on Berkeley DB. This is the class (b) defect of
-  compatibility-policy row 1. The `phrases` export of the same profile
-  walks, and tkrzw and Kyoto Cabinet export the same rows. With ibus's sort
-  option the rows export on all three backends.
-
-With such a driver, the round trip gives the same result on all three
-backends. When the pin trains and oxpinyin loads and saves in place, the
-pin's re-render is `IDENTICAL`. When oxpinyin trains, the pin reads the
-profile (`READABLE`). [user-store.md](user-store.md) §11 holds the user-store
-record.
-
-## Not verified
-
-- **libdb other than 5.3.** The open refuses it, so nothing is measured
-  against 4.8 or 18.x.
-- **A stock distro `libpinyin-data` install.** A pin-built data directory
-  stands in for it (same generator, same pin).
+wrote. Little-endian `u32` array keys therefore walk in raw-byte order, not
+integer order, and a 1-element key precedes the 2-element key that extends it.
+`tools/bdb/btree-order.c` and the shared key-ordering suite hold this; the
+suite asserts that this backend walks the same keys as tkrzw and Kyoto Cabinet.

@@ -172,7 +172,7 @@ For valid command sequences, the contract tests in
 `crates/oxpinyin-capi/tests/abi/contract.rs` hold the postconditions:
 
 - every entry point returns; an abort is a finding, except where the pin
-  aborts (`docs/findings/pin-aborts-pinyin-facade.md`);
+  aborts (`docs/findings/upstream-divergences.md#pin-aborts-reproduced`);
 - a rejected setter returns `false` and leaves the parse behaviour unchanged;
 - candidate walks after a failed guess return the earlier list or an empty
   list;

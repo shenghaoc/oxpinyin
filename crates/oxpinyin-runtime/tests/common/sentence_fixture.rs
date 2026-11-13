@@ -1,5 +1,5 @@
-//! The frozen sentence-surface fixtures: the pin's answers and the exact
-//! ruled subject residuals (`docs/findings/sentence-surface.md` §12).
+//! The sentence-surface fixtures: the pin's answers and the exact ruled
+//! subject residuals that `docs/findings/sentence-surface.md` §12 states.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;

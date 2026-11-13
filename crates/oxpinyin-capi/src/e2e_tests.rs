@@ -1786,7 +1786,7 @@ mod parse_termination {
 
         // The inherited apostrophe class, folded in: trailing and
         // standalone runs are consumed by the pin's propagation
-        // (F-E-14 table: ni' → 3; nihao' → 6 by the same law).
+        // (the pin parses ni' → 3; nihao' → 6 by the same law).
         assert_eq!(parse_len(context, instance, PARITY, "nihao'"), 6);
         assert_eq!(parse_len(context, instance, PARITY, "ni'"), 3);
         assert_eq!(parse_len(context, instance, PARITY, "'''"), 3);
@@ -4474,8 +4474,7 @@ fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
     }
 }
 
-/// F-E-02 (`docs/findings/robustness-evidence.md`): a candidate pointer that
-/// outlived the list it came from. The guess over `nihaozhongguo` publishes
+/// A candidate pointer that outlived the list it came from. The guess over `nihaozhongguo` publishes
 /// more rows than the guess over `ni` that regenerates the list, and the
 /// snapshot keeps its buffer, so a pointer to the old last row now lies past
 /// the new list's end. `pinyin_choose_candidate` resolves a pointer by

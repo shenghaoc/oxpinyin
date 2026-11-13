@@ -540,7 +540,7 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
 
 /// Past byte 65535 the key-rest positions narrow into the pin's `guint16`
 /// fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
-/// `docs/findings/1501-guint16-key-positions.md`). `su3` then `su`
+/// `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `su3` then `su`
 /// repeated puts a key at 65535..65537, which crosses byte 65536, and one
 /// at 65537..65539, wholly past it; both lengths stay 2.
 #[test]
@@ -1409,8 +1409,7 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
     }
 }
 
-/// F-E-02 (`docs/findings/robustness-evidence.md`): a candidate pointer that
-/// outlived the list it came from. The after-cursor guess over `su3cl3`
+/// A candidate pointer that outlived the list it came from. The after-cursor guess over `su3cl3`
 /// publishes more rows than the guess over `su3` that regenerates the list,
 /// and the snapshot keeps its buffer, so a pointer to the old last row now
 /// lies past the new list's end. `zhuyin_choose_candidate` resolves a

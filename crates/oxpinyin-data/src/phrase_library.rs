@@ -62,7 +62,8 @@ use oxpinyin_core::PhraseText;
 /// chunk (`phrase_index.cpp:354-356`): the load answers `false`, which every
 /// caller ignores, and goes on with an empty sub-index. The pin's
 /// `g_return_val_if_fail` critical there is not reproduced (maintainer
-/// decision 2026-10-31 UTC, `docs/findings/1297-layout-criticals.md`). Only
+/// decision 2026-10-31 UTC,
+/// `docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical`). Only
 /// checks whose bytes are inside the chunk are represented here; a layout
 /// the pin reaches through an out-of-bounds read stays a
 /// [`LibraryError::Format`] refusal.

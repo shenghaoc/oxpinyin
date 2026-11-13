@@ -1,10 +1,10 @@
 # Framework-neutral session API SPEC
 
-Date: 2026-08-09 · Status: **current reference**.
+Status: **reference**.
 
-This page describes the design of the internal `oxpinyin-engine` session surface. It is not a compatibility contract ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
+This page describes the design of the internal `oxpinyin-engine` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 What binds is the pin's behaviour as the C APIs show it — candidate order, preedit coverage, selection and commit, and errors — under the [compatibility policy](compatibility-policy.md).
-The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces), 2026-10-18 UTC).
+The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
 The code is the reference for the current surface: `crates/oxpinyin-engine/src/lib.rs` lists the public items, and `crates/oxpinyin-engine/src/session/` defines `Session`.
 
 `docs/architecture.md` states the rules that this surface implements, under **Portability**.
@@ -45,7 +45,7 @@ pub struct CandidateList { /* ordered, deterministic */ }
 
 `CandidateList` supports `len`, `is_empty` and `iter`.
 It has no index accessor, and the session selects a row it is given (`Session::select_target`), never an index.
-F-E-02 ([robustness-evidence.md](robustness-evidence.md)), a candidate that outlived its list, is therefore a C ABI case: a stale candidate pointer, which the snapshot resolves by address.
+A candidate that outlived its list is therefore a C ABI case: a stale candidate pointer, which the snapshot resolves by address (`e2e_tests::a_stale_candidate_pointer_after_regeneration_is_refused`, both C facades).
 
 `consumed_keys` and `consumed_bytes` state how much of the composition a candidate would absorb.
 A shell can then render partial acceptance without re-deriving it.
@@ -60,7 +60,8 @@ pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
 
 A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, with `PINYIN_INCOMPLETE` taken from `incomplete_pinyin`.
 Every other option bit arrives through `Session::set_options` from the C ABI's option word.
-There is no keyed configuration source or layered configuration; see the correction log.
+There is no keyed configuration source or layered configuration: the ibus-libpinyin defaults do not belong in oxpinyin (maintainer ruling).
+The settings value does not change the session's default options, each C facade's initial option word, or the point at which an option change reaches existing instances.
 
 ## Session
 
@@ -76,7 +77,7 @@ There is no keyed configuration source or layered configuration; see the correct
 | Reset | `reset`, `reset_composition` |
 | Options | `set_options`, `set_sort_options`, `set_candidate_ranking`, `set_nbest_shape` |
 | Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
-| Deferred list | `set_defer_list_builds`, `refresh_candidates` |
+| Deferred list | `set_defer_list_builds`, `refresh_candidates` ([below](#deferred-candidate-list)) |
 | Training | `prepare_training`, then `TrainingPlan::observe` |
 
 `Selection` is `Refused`, `Continued` or `Completed`.
@@ -92,7 +93,7 @@ To replace the fixture adapters with the table-backed loaders, change the two ty
 
 - `replace_raw` replaces the raw input and passes every byte to the decoder; it does not filter characters.
 - `reset` discards the input, the selection record, the sentence rows and the constraints.
-- The session has no input length limit (#1501; [1501-gint16-input-cap](1501-gint16-input-cap.md)).
+- The session has no input length limit ([The full-pinyin parse's 16-bit steps](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps)).
 - `select_target` appends the chosen candidate to the selected prefix and advances over the bytes that it consumed.
   It returns `Completed` when nothing is left.
 - A composition with no dictionary result still offers one candidate: the remaining raw input, as `CandidateKind::Fallback`.
@@ -100,6 +101,13 @@ To replace the fixture adapters with the table-backed loaders, change the two ty
 - Every method is deterministic for the same (input, state, config).
 
 `SessionSettings::default()` serves callers that have no settings of their own: incomplete pinyin on, with the divided and resplit tables.
+
+### Deferred candidate list
+
+The default keeps the eager list, its parse length and the errors that the parse seams and sentence guesses return.
+The C facades turn on `set_defer_list_builds`, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
+The C ABI answers from the window that it re-anchors there.
+So in that mode, a sort-word change on a composing session (`set_sort_options`) also leaves the list stale: the pin takes the word as an argument of that call (`pinyin.cpp:2198`).
 
 ## Errors
 
@@ -112,33 +120,12 @@ It implements `Display` and `std::error::Error`.
 `oxpinyin-core` defines the types that the bounds above name:
 
 ```rust
-pub struct SyllableKey(u16);       // dense id over the frozen key inventory
+pub struct SyllableKey(u16);       // dense id over the fixed key inventory
 pub struct PhraseToken(u32);
 pub struct PhraseEntry { /* token, text: PhraseText, pronunciation, unigram */ }
 ```
 
-The key inventory has 440 keys in Stage 1: the 405 complete syllables of [parser-spec.md](parser-spec.md) in their frozen numeric-ID order, the 23 initial-only keys, two option-only keys (`eng`, `nun`) and ten zhuyin-only syllables.
+The key inventory has 440 keys in Stage 1: the 405 complete syllables of [parser-spec.md](parser-spec.md) in their fixed numeric-ID order, the 23 initial-only keys, two option-only keys (`eng`, `nun`) and ten zhuyin-only syllables.
 An initial-only key is a non-empty proper prefix of a complete syllable that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself a complete syllable.
-That rule gives exactly 23 keys, and a test asserts it against the frozen inventory.
-[segment-graph.md](segment-graph.md) records the oracle evidence that these 23 are the pin's incomplete-key set and makes them graph edges.
-
-## Acceptance
-
-- `oxpinyin-engine` compiles on Linux, macOS and Windows, with no `cfg(target_os)` and no platform dependency.
-- Every public item has a doc comment.
-- Unit tests cover candidate indexing.
-
-## Architect correction log
-
-**2026-10-16 — #757 deferred candidate list (human approval, 2026-10-16).**
-`Session` gained `set_defer_list_builds` and `refresh_candidates`.
-The default keeps the eager list, its parse length and the errors that the parse seams and sentence guesses return.
-The C facades turn the mode on, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
-The C ABI answers from the window that it re-anchors there.
-So in that mode, a sort-word change on a composing session (`set_sort_options`) also leaves the list stale: the pin takes the word as an argument of that call (`pinyin.cpp:2198`).
-
-**2026-11-07 UTC — configuration framework removed (maintainer ruling).**
-The ibus-libpinyin defaults do not belong in oxpinyin.
-`Config`, `ConfigValue`, `ConfigSource`, `EmptyConfigSource` and the 69 captured upstream defaults are removed.
-`Session::new` and `Runtime::new_session` take a `SessionSettings` value.
-These do not change: the session's default options, each C facade's initial option word, and the point at which an option change reaches existing instances.
+That rule gives exactly 23 keys, and a test asserts it against the fixed inventory.
+[segment-graph.md](segment-graph.md) states that these 23 are the pin's incomplete-key set and makes them graph edges.

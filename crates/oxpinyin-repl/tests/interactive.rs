@@ -337,7 +337,8 @@ mod product {
         // chewing-table-overlong-toned-first: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::chewing_table_overlong_toned_first(
             tables(),
@@ -387,7 +388,8 @@ mod product {
         // chewing-table-toned-initial: tests/storage/test_chewing_table.cpp;
         // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
         // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::chewing_table_toned_initial(
             tables(),
@@ -500,7 +502,8 @@ mod product {
         // matrix-chunk-directory: tests/storage/test_matrix.cpp:93-179;
         // src/storage/phonetic_key_matrix.cpp:29-84,226-437; tests/tests_helper.h:24-48 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::matrix_chunk_directory(
             missing_chunk(),
@@ -1002,7 +1005,8 @@ mod product {
         // phrase-lookup-chunk-directory: tests/lookup/test_phrase_lookup.cpp:41-137;
         // src/lookup/phrase_lookup.h:131-135; lookup.cpp:31-66; tests/tests_helper.h:24-48 at
         // 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::phrase_lookup_chunk_directory(
             missing_chunk(),
@@ -1495,7 +1499,8 @@ mod product {
         #[rstest]
         // pinyin-lookup-chunk-directory: tests/lookup/test_pinyin_lookup.cpp:41-153;
         // src/lookup/phonetic_lookup.h; tests/tests_helper.h:24-48 at 074a2219.
-        // Policy-accepted on every cell: docs/findings/eio-tool-check-messages.md; only the pin
+        // Policy-accepted on every cell:
+        // docs/findings/upstream-divergences.md#utility-check-macros-write-no-message; only the pin
         // writes the check macro's message.
         #[case::pinyin_lookup_chunk_directory(
             missing_chunk(),

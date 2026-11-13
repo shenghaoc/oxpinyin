@@ -135,8 +135,8 @@ fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
     // The inherited apostrophe class (ledgered on
     // fix/cursor-offset-normalization, folded into the termination
     // law): the pin's DP propagation consumes `'` bytes no key
-    // covers — `ni'` parses 3, `nihao'` parses 6, `'''` parses 3
-    // (the F-E-14 table).
+    // covers — on the pin `ni'` parses 3, `nihao'` parses 6 and `'''`
+    // parses 3.
     let mut session = session();
     session.replace_raw("ni'").expect("cannot fail");
     assert_eq!(session.full_parsed_len(), 3);
@@ -242,8 +242,8 @@ fn a_null_step_still_rebuilds_a_record_that_lost_its_runs() {
 fn input_past_the_pins_gint16_bound_is_kept_and_parsed_whole() {
     // The pin's full-pinyin parse stops at byte 32767 (`gint16` steps), a
     // language artefact the session does not reproduce
-    // (`docs/findings/1501-gint16-input-cap.md`). Apostrophes on purpose:
-    // they are consumed without building a decodable graph, so this
+    // (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`). Apostrophes on
+    // purpose: they are consumed without building a decodable graph, so this
     // measures the buffer and the parse length, not the decoder.
     let mut session = session();
     let long = "'".repeat(65_537);
@@ -263,7 +263,7 @@ fn candidates_come_from_keys_past_the_pins_gint16_bound() {
     // End to end past byte 32767: `ni` repeated to 33000 bytes parses
     // whole, and the window at a syllable start past the pin's `gint16`
     // bound (32768, and the last key at 32998) offers the vocabulary's
-    // `ni` row (`docs/findings/1501-gint16-input-cap.md`).
+    // `ni` row (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
     let mut session = train_session();
     session
         .replace_raw(&"ni".repeat(16_500))
@@ -3355,9 +3355,8 @@ fn engine_default_includes_divided_and_resplit_table_bits() {
 /// looked up BEHIND the composition offset forces its own span over the
 /// overlapped forcing and the record moves back to it — the pin's
 /// `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2578-2590`,
-/// `phonetic_lookup.cpp:61-86`), the pre-registered phase E3 shape
-/// (`probe-coverage-abi.md` E: choose 你 at 0 after 你好, cursor 2,
-/// 你@0..2 replacing 你好).
+/// `phonetic_lookup.cpp:61-86`). The test chooses 你 at 0 after 你好,
+/// with the composition offset at 2.
 #[test]
 fn choosing_behind_the_composition_moves_the_record_back() {
     use super::CandidateKind;

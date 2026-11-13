@@ -1,22 +1,20 @@
 # Upstream report drafts — the libpinyin report-back batch
 
-Date: 2026-08-22 · Status: drafts, not filed.
+Status: **open**. Drafts, not filed.
 
-This file holds twelve draft upstream reports, each with its evidence and,
-where one exists, a fix and a reproduction:
+This file holds twelve draft upstream reports. Each states the defect with
+its pin cites and, where one exists, a reproduction and a fix:
 
-| Items | Subject | Drafted (UTC) |
-| --- | --- | --- |
-| 1–4 | Four API defects, to file as one considered set | 2026-08-22 |
-| 5 | Tkrzw has no upstream CI coverage (not an API defect, not part of the four-issue set) | 2026-09-22 |
-| 6 | `pinyin_init` leaves the process `LC_NUMERIC` at `"C"` (#539), read at the pin `074a2219` | 2026-09-27 |
-| 7 | Temporary Berkeley DB handles leak on failed user-database loads (#993) | 2026-10-21 |
-| 8 | Every Berkeley DB `save_db` passes the wrong handle to `DB->sync`, with no observable effect | 2026-10-22 |
-| 9 | The `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits (#1275) | 2026-10-26 |
-| 10–12 | Reachable heap-comparator and tail-sort precondition violations, and the source-established node front-eviction inversion, at libpinyin 074a2219 | 2026-10-28 |
+- Items 1–4: four API defects, to file as one considered set.
+- Item 5: Tkrzw has no upstream CI coverage. It is not an API defect and not part of the four-issue set.
+- Item 6: `pinyin_init` leaves the process `LC_NUMERIC` at `"C"`.
+- Item 7: temporary Berkeley DB handles leak on failed user-database loads.
+- Item 8: every Berkeley DB `save_db` passes the wrong handle to `DB->sync`, with no observable effect.
+- Item 9: the `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits.
+- Items 10–12: reachable heap-comparator and tail-sort precondition violations, and the source-established node front-eviction inversion.
 
-Items 7–12 are separate reports. Filing is the maintainer's action (and
-account). Nothing here has been posted. The contributor rules give the
+Items 5–12 are separate reports. Filing is the maintainer's action (and
+account). Nothing here has been filed upstream. The contributor rules give the
 collection mandate ("collected to report back to libpinyin once the rewrite
 is complete"). Filing before the rewrite is complete is the maintainer's
 decision. The drafts keep either timing cheap.
@@ -25,11 +23,8 @@ Suggested filing shape for items 1–4: four independent issues (no coupling
 worth cross-blocking), ordered by severity below. Each links the
 memory-safety character where applicable. The first four reproductions
 are plain C against a stock libpinyin build, with no harness and no oxpinyin.
-All four are verified against libpinyin 2.11.91 (`0c5e80e`), the pin at freeze, and their line numbers are from that tree.
-A source read at the current pin, `074a2219`, finds each defect still present.
-The aux over-read was also surveyed and found still present on `main` @
-`55e9051` (2026-08-20). No existing report was found on GitHub or
-Fedora Bugzilla.
+Every line number in this file is at the pin, libpinyin 2.11.92
+`074a2219c90feaf962d0d24f034514033ece5f99`, where each defect is present.
 
 **Shared setup — the C fragments in items 1–4 and 6 assume
 this block** (declared once here, not repeated per snippet):
@@ -47,11 +42,10 @@ pinyin_free_instance(inst);
 pinyin_fini(ctx);
 ```
 
-**Build configuration of the verified oracle** (the assert findings
-depend on it): built by `tools/oracle/build.py` with no caller
-CFLAGS/CXXFLAGS, plain `./configure --disable-static --with-dbm=Tkrzw`.
-This gives autotools' default `-g -O2`, with **no `-DNDEBUG`**, so `assert()`
-is live. The aborts in findings 2 and 3 are assertion firings, not
+**Build configuration** (the assert findings depend on it): plain
+`./configure --disable-static --with-dbm=Tkrzw` with no caller
+CFLAGS/CXXFLAGS. This gives autotools' default `-g -O2`, with **no
+`-DNDEBUG`**, so `assert()` is live. The aborts in findings 2 and 3 are assertion firings, not
 crash-adjacent undefined behaviour. They degrade silently under
 `-DNDEBUG`: finding 2 then returns `true` with an unset out-param, and
 finding 3 continues past the guard into the search. State this in those
@@ -88,12 +82,12 @@ printf("aux = \"%s\"\n", aux_text);
 g_free(aux_text);
 ```
 
-LUOMA (scheme 2) reproduces the same shape on 8 of its 18 raw ≥
-canonical + 2 rows (e.g. `jhih` → `zh` at cursor 3, `rih` → `r` at
-cursor 2).
+LUOMA (scheme 2) reproduces the same shape where the raw key is at
+least two bytes longer than the canonical one (e.g. `jhih` → `zh` at
+cursor 3, `rih` → `r` at cursor 2).
 
-**Suggested fix** (verified byte-identical where in-bounds on the pin):
-clamp before slicing:
+**Suggested fix:** clamp before slicing. Where the slice is in bounds,
+the result does not change:
 
 ```c
 const size_t pinyin_len = strlen(pinyin);
@@ -101,9 +95,6 @@ const size_t clamped    = len < pinyin_len ? len : pinyin_len;
 gchar *left  = g_strndup(pinyin, clamped);
 gchar *right = g_strdup(pinyin + clamped);
 ```
-
-Full writeup with the upstream-status survey and the in-bounds boundary
-analysis: `full-pinyin-aux-overread`.
 
 ---
 
@@ -175,7 +166,7 @@ parser permits the key, and the search aborts on it.
 ## 4. Scheme setters: a valid scheme aborts, invalid inputs lie or abort
 
 **Severity: medium.** Three related contract holes in the setter
-family, all verified at `0c5e80e`, the pin at freeze. The first is a VALID input
+family. The first is a VALID input
 (STANDARD_DVORAK is a real scheme). The other two are invalid-input
 handling that aborts or lies:
 
@@ -184,8 +175,7 @@ handling that aborts or lies:
   tables and falls through into `default: abort()`
   (`zhuyin_parser2.cpp:291-295`). The wrapper also `delete`s the old
   parser before the switch (`pinyin.cpp:1163-1164`), so the context is
-  broken even if the abort were caught. Still present at libpinyin tip
-  `95e3af7`.
+  broken even if the abort were caught.
 
 ```c
 pinyin_set_zhuyin_scheme(ctx, 7);     /* SIGABRT after the tables were
@@ -218,10 +208,6 @@ pinyin_set_zhuyin_scheme(ctx, 7);     /* SIGABRT after the tables were
 autotools, cannot build it with CMake, and never exercises it. Debian
 testing and unstable currently ship that configuration.
 
-Read at upstream `main` `074a2219c90feaf962d0d24f034514033ece5f99`
-(2026-09-03 09:26:19 UTC, subject "use g_rename to replace rename
-since rename fails by replace-existing-file").
-
 `tkrzw` does not appear in `CMakeLists.txt`, under `cmake/`, or under
 `.github/`. `configure.ac` does accept it: `--with-dbm=Tkrzw` has its
 own `if`, `PKG_CHECK_MODULES`, and `AC_DEFINE([HAVE_TKRZW])`.
@@ -251,8 +237,7 @@ when `DB_FOUND`; otherwise `find_package(KyotoCabinet REQUIRED)` sets
 it to `KyotoCabinet`. Whichever of those two is installed wins, and a
 packager cannot name the other.
 
-**Reproduction, from the CMake control flow** (not executed as two
-configures in this record). Same source tree, `cmake -B build`:
+**Reproduction.** Same source tree, `cmake -B build`:
 
 - `libdb-devel` installed: `DB_FOUND` is set, `DATABASE_FORMAT` is
   `BerkeleyDB`, and Kyoto Cabinet is not searched.
@@ -264,16 +249,14 @@ configures in this record). Same source tree, `cmake -B build`:
 `cmake.yml` is the second machine: its package list has
 `kyotocabinet-devel` and no `libdb-devel`.
 
-**Debian, checked rather than assumed.** Fetched
-`debian/rules` for 2.11.91-1 from
-`https://tracker.debian.org/media/packages/libp/libpinyin/rules-2.11.91-1`:
-`dh_auto_configure -Sautoconf` with `--with-dbm=Tkrzw`, and the
-tracker lists `libtkrzw-dev` as a build dependency. That is the
-configuration with no upstream job. Stable and oldstable are
-2.8.1-1; the Debian Sources copy of that `debian/rules` passes
-`--with-dbm=BerkeleyDB`, which is what `make-check.yml` runs. Thus the
-claim "the path Debian ships has no upstream CI" is false for stable,
-whose path has CI. The claim is true for testing/unstable.
+**Debian.** The `debian/rules` for 2.11.91-1
+(`https://tracker.debian.org/media/packages/libp/libpinyin/rules-2.11.91-1`)
+runs `dh_auto_configure -Sautoconf` with `--with-dbm=Tkrzw`, and
+`libtkrzw-dev` is a build dependency. That is the configuration with no
+upstream job. Stable and oldstable ship 2.8.1-1, whose `debian/rules`
+passes `--with-dbm=BerkeleyDB`, which `make-check.yml` runs. Thus the
+configuration that Debian testing and unstable ship has no upstream CI,
+and the one that stable ships has.
 
 ---
 
@@ -282,11 +265,7 @@ whose path has CI. The claim is true for testing/unstable.
 **Severity: process state.** Not a crash. A library call changes a
 process-global locale category and does not put it back.
 
-Read at the pin `074a2219c90feaf962d0d24f034514033ece5f99`
-(`src/storage/table_info.cpp`). Unlike items 1–4, this item was not
-verified at `0c5e80e`. It is the round-2 audit's D-17 (oxpinyin #539).
-
-`SystemTableInfo2::load` (`:197`, `:291`), `UserTableInfo::load`
+In `src/storage/table_info.cpp`, `SystemTableInfo2::load` (`:197`, `:291`), `UserTableInfo::load`
 (`:328`, `:372`) and `UserTableInfo::save` (`:378`, `:394`) all use the
 same shape:
 
@@ -331,8 +310,8 @@ the three functions only need `%d`/`%f` in the C locale, so they can use a
 thread-local `uselocale(newlocale(LC_NUMERIC_MASK, "C", 0))` that is freed
 on every return and leaves the process locale alone.
 
-oxpinyin reproduces the pin's end state bug-for-bug (ruling recorded
-2026-09-27 UTC, `compatibility-policy.md` row 39) until upstream fixes
+oxpinyin reproduces the pin's end state bug-for-bug
+([ruling](compatibility-policy.md#lc_numeric-after-init-row-39)) until upstream fixes
 it.
 
 ---
@@ -343,10 +322,10 @@ it.
 empty user directory loses native allocations, even when every context
 is finalized. Both the pinyin and zhuyin facades are affected.
 
-**Affected version:** verified at libpinyin 2.11.92, pin
+**Affected version:** libpinyin 2.11.92, pin
 `074a2219c90feaf962d0d24f034514033ece5f99`, with Berkeley DB 5.3.28
-on Linux amd64. Other revisions, current upstream status, and the Kyoto
-Cabinet/Tkrzw backends have not been established by this report.
+on Linux amd64. Other revisions and the Kyoto Cabinet and Tkrzw
+backends are not established.
 
 Three `load_db` methods create `tmp_db` with `db_create`, then return
 `false` after failed `tmp_db->open` or failed `copy_bdb` without closing
@@ -357,13 +336,6 @@ release it:
 - [`ChewingLargeTable2::load_db`, `src/storage/chewing_large_table2_bdb.cpp:115–130`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L115-L130).
 - [`PhraseLargeTable3::load_db`, `src/storage/phrase_large_table3_bdb.cpp:130–145`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L130-L145).
 - [`Bigram::load_db`, `src/storage/ngram_bdb.cpp:61–76`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L61-L76).
-
-These are the same pin blobs read in #993's detached `libpinyin-pin`
-worktree, checked against the pinned tree before that worktree was
-removed. Their Git blob identities are respectively
-`469ee7d969e853ff07312b5b72b268dd47433a0e`,
-`d54c80a6031c634c91c35d6aebd9ebc2ffac7f46`, and
-`8910f9d6c7ba6f12cc234e1e02a7f99d47b6b7f2`.
 
 The [official Berkeley DB C API contract for `DB->open`](https://docs.oracle.com/cd/E17275_01/html/api_reference/C/dbopen.html)
 requires `DB->close` even when open fails. The
@@ -457,120 +429,32 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
 ```
 
-**Standalone evidence** (Memcheck 3.27.1, Linux amd64; the table is
-from a rerun of the block above on 2026-10-22 UTC, and each N=10 row
-held in 5 of 5 further runs per facade on 2026-10-22 UTC): all four
-init/fini-only runs completed against the reference pin prefix. Each
-process used a fresh empty user directory. The reference libraries were
-the pin-built `libpinyin.so.15.0.0` (SHA-256
-`754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30`)
-and `libzhuyin.so.15.0.0` (SHA-256
-`cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b`),
-with the pin's existing Berkeley DB system data. On the measurement
-host the pin prefix was a relocated copy of `/opt/pinyin-oracle/bdb`;
-`PKG_CONFIG_PATH` pointed at a copy of its two `.pc` files with
-`prefix=` set to that copy. No header or library content changed.
-
-| Facade | N | Definitely lost | Indirectly lost | Total |
-| --- | ---: | ---: | ---: | ---: |
-| pinyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
-| pinyin | 10 | 43,680 B / 30 blocks | 114,620 B / 300 blocks | 158,300 B / 330 blocks |
-| zhuyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
-| zhuyin | 10 | 43,680 B / 30 blocks | 114,620 B / 300 blocks | 158,300 B / 330 blocks |
-
-The three definitely-lost roots are the temporary handles, and the
-indirect blocks hang from them. In the N=1 runs the roots are:
+**Expected result:** Memcheck reports three definitely-lost roots per
+init/fini cycle, one for each temporary handle, with the indirect blocks
+hanging from them:
 
 - `ChewingLargeTable2::load_db` (`chewing_large_table2_bdb.cpp:115`),
-  1,456 direct + 3,816 indirect bytes. The stack runs through
-  `load` (`facade_chewing_table2.h:88`) and `pinyin_init`/`zhuyin_init`.
+  1,456 direct + 3,816 indirect bytes.
 - `PhraseLargeTable3::load_db` (`phrase_large_table3_bdb.cpp:130`),
-  1,456 + 3,823 bytes; caller `load` (`facade_phrase_table3.h:87`) and
-  `pinyin_init`/`zhuyin_init`.
-- `Bigram::load_db` (`ngram_bdb.cpp:61`), 1,456 + 3,823 bytes; caller
-  `pinyin_init`/`zhuyin_init`.
+  1,456 + 3,823 bytes.
+- `Bigram::load_db` (`ngram_bdb.cpp:61`), 1,456 + 3,823 bytes.
 
 The indirect stacks pass through `db_env_create`/`__rep_env_create`
-and the failed `tmp_db->open` at lines 121, 136 and 67. N=10 repeats
-each root ten times.
+and the failed `tmp_db->open` at lines 121, 136 and 67. Both facades
+give the same figures: 4,368 B definitely and 11,462 B indirectly lost
+at N=1, and exactly ten times that at N=10. The loss grows linearly with
+init/fini cycles, because an empty user directory takes the failed-open
+paths on each cycle. A user directory with existing user databases
+avoids those paths. With the suggested diff below applied, the same four
+commands report no definite or indirect loss.
 
-The standalone N=1 total is 15,830 B / 33 blocks per facade. #993's
-15,854 B / 33 blocks per cycle is 24 bytes higher with the same block
-count. The difference is the first-candidate work in #993's cycle:
-this loop only calls init/fini and never prepares an instance or a
-candidate. The three `load_db` roots are identical. At N=10 the direct
-root count and both facades' indirect totals are exactly ten times the
-N=1 figures (5 of 5 runs per facade). An earlier run of the previous
-command block recorded the zhuyin N=10 indirect loss as 113,884 B / 298
-blocks (total 157,564 B / 328 blocks), 736 bytes / 2 blocks below ten
-times; the rerun did not reproduce that shortfall, it did not recur in
-5 runs, and its cause was not investigated. The
-direct 30-block count and every `load_db` root remain.
-
-**Patched-pin check:** applying the suggested diff below to the same
-pinned source and rebuilding it in a separate prefix removes the loss.
-The patch SHA-256 is
-`77e0453a6830255c9fb9ce832864a9ce72e093223d4f7fc6c0214e214067dc4a`.
-This host lacks `autoreconf`, so the build used the pin's generated
-`configure` and the oracle recipe's `--libs-only` steps
-(`--disable-static --with-dbm=BerkeleyDB --enable-libzhuyin`,
-`make -C src`, `make -C src install`, `make install-pkgconfigDATA`);
-the system data stayed the reference prefix's. The same four valgrind
-commands then reported:
-
-| Facade | N | Definitely lost | Indirectly lost |
-| --- | ---: | ---: | ---: |
-| pinyin | 1 | 0 B / 0 blocks | 0 B / 0 blocks |
-| pinyin | 10 | 0 B / 0 blocks | 0 B / 0 blocks |
-| zhuyin | 1 | 0 B / 0 blocks | 0 B / 0 blocks |
-| zhuyin | 10 | 0 B / 0 blocks | 0 B / 0 blocks |
-
-**Supporting reproduction from #993.** The invocation and preparation are recorded at
-[the historical harness revision](https://github.com/shenghaoc/oxpinyin/tree/11da1d7adb324f516d1b2cf87db831096e33f486)
-and [#993](https://github.com/shenghaoc/oxpinyin/pull/993).
-The results above use its Debian Linux amd64 BDB cell, pin-built reference,
-equivalent system data and shipping facade libraries.
-
-The attribution stage includes the empty-profile Memcheck loop for
-both facades and all three subjects. The native child keeps its library
-loaded and repeats init, first-candidate preparation, instance free and
-fini 100 times; the parent restores the same fresh empty user profile
-between cycles. This is the existing lifecycle reproduction, not a
-claim that a separate init-only driver was run. Its native Memcheck
-worker uses `--leak-check=no --show-leak-kinds=all --num-callers=24
---undef-value-errors=no`, with explicit `VALGRIND_DO_LEAK_CHECK` and
-count requests at the lifecycle checkpoints. Thus automatic exit leak
-checking is disabled, but post-fini live/lost counts are still measured.
-The stage also runs the journals and other attribution controls; it is
-not an empty-only command. These remain the original #993 measurements.
-
-**Supporting evidence:** #993's Memcheck 3.27.1 results for the pin,
-after fini (not standalone init-only results):
-
-| Completed init/fini cycles | Lost bytes, each facade | Lost blocks, each facade |
-| --- | ---: | ---: |
-| 1 | 15,854 | 33 |
-| 10 | 158,540 | 330 |
-| 50 | 792,700 | 1,650 |
-| 100 | 1,585,400 | 3,300 |
-
-The allocation stacks identify the three temporary handles above. The
-empty directory takes their failed-open paths on each cycle. The
-journals profile, with existing user databases, avoids those paths and
-has no corresponding post-fini lost-allocation growth. This is live
-client-allocation evidence, not an inference from RSS or allocator arena
-retention. Raw captures were ephemeral, parsed in memory, and deleted
-with #993's private operational files; none is retained or uploaded.
-
-The `copy_bdb` failure branches have the same missing cleanup by source
-inspection. They were not fault-injected or measured; the byte/block
-figures above apply to failed open only.
+The `copy_bdb` failure branches have the same missing cleanup in the
+source. The figures above apply to failed open only.
 
 **Suggested fix:** close the successfully created temporary handle before
 each of the two early returns in all three methods, preserving the
 existing `false` result and success-path close. This proposed upstream
-diff is not applied to shipping code; it was built and measured in the
-separate patched prefix above:
+diff is not applied to shipping code:
 
 ```diff
 --- a/src/storage/chewing_large_table2_bdb.cpp
@@ -623,9 +507,7 @@ separate patched prefix above:
 +    }
 ```
 
-This separate BDB resource-leak report is ready for the maintainer to
-file. Nothing has been filed upstream; the
-proposed cleanup is not an authorization to change oxpinyin behavior.
+The proposed cleanup is not an authorization to change oxpinyin behavior.
 
 ---
 
@@ -635,24 +517,19 @@ proposed cleanup is not an authorization to change oxpinyin behavior.
 output, files or durability, because `DB->close` flushes the file anyway.
 The report is so that the call can be corrected, not because anything fails.
 
-**Affected version:** read at libpinyin 2.11.92, pin
+**Affected version:** libpinyin 2.11.92, pin
 `074a2219c90feaf962d0d24f034514033ece5f99`, against Berkeley DB 5.3.28
-(github.com/berkeleydb/libdb `e66a5e66`, `dist/RELEASE` 5.3.28; Debian's
-`5.3.28+dfsg2-11` patch series changes none of the lines cited). Other
-revisions and current upstream status have not been established.
+(github.com/berkeleydb/libdb `e66a5e66`, `dist/RELEASE` 5.3.28). Other
+revisions are not established.
 
 Each Berkeley DB `save_db` writes the in-memory table `m_db` into a new
 file `tmp_db`, then calls `tmp_db`'s `sync` member with `m_db` as its
 handle argument:
 
-- [`Bigram::save_db`, `src/storage/ngram_bdb.cpp:103`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L103)
-  (blob `8910f9d6c7ba6f12cc234e1e02a7f99d47b6b7f2`).
-- [`ChewingLargeTable2::save_db`, `src/storage/chewing_large_table2_bdb.cpp:157`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L157)
-  (blob `469ee7d969e853ff07312b5b72b268dd47433a0e`).
-- [`PhraseLargeTable3::save_db`, `src/storage/phrase_large_table3_bdb.cpp:172`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L172)
-  (blob `d54c80a6031c634c91c35d6aebd9ebc2ffac7f46`).
-- [`PunctTable::save_db`, `src/storage/punct_table_bdb.cpp:133`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/punct_table_bdb.cpp#L133)
-  (blob `bdc7b84022a61c7cb282cd0f319d7a06f3f880ba`).
+- [`Bigram::save_db`, `src/storage/ngram_bdb.cpp:103`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L103).
+- [`ChewingLargeTable2::save_db`, `src/storage/chewing_large_table2_bdb.cpp:157`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L157).
+- [`PhraseLargeTable3::save_db`, `src/storage/phrase_large_table3_bdb.cpp:172`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L172).
+- [`PunctTable::save_db`, `src/storage/punct_table_bdb.cpp:133`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/punct_table_bdb.cpp#L133).
 
 ```c
     if ( tmp_db != NULL ) {
@@ -695,8 +572,6 @@ give.
 +        tmp_db->sync(tmp_db, 0);
 ```
 
-Nothing has been filed upstream.
-
 ---
 
 ## 9. `SORT_BY_PINYIN_LENGTH` compares the span in 8 bits
@@ -729,10 +604,8 @@ pinyin_guess_candidates(inst, 0, SORT_BY_PINYIN_LENGTH);
 
 **Suggested fix:** compare the spans as `guint16` (or `gint`) values.
 
-oxpinyin reproduces the wrap (#1275; recorded evidence
-`pinyin-length-wrap/span-*`; unit test
-`session::tests::the_pinyin_length_key_wraps_at_eight_bits`). Nothing has
-been filed upstream.
+oxpinyin reproduces the wrap (unit test
+`session::tests::the_pinyin_length_key_wraps_at_eight_bits`).
 
 ---
 
@@ -745,17 +618,15 @@ the shorter one by `log(1.2f)`, while the unconditional shorter-sentence
 fallback returns true in the reverse direction
 (`src/lookup/phonetic_lookup.h:39,65–90 at 074a2219`).
 
-Captured with reference BDB data, full-pinyin scheme 1, options
-`0x1fe00198`, a fresh user directory, parse then `guess_sentence`:
+**Reproduction:** reference BDB data, full-pinyin scheme 1, options
+`0x1fe00198`, a fresh user directory, parse then `guess_sentence`. The
+predicate on these live candidates, before selection, gives:
 
 | Site and input | Step | Candidate A: position, length, `%a m_poss` | Candidate B: position, length, `%a m_poss` | Predicate results |
 | --- | ---: | --- | --- | --- |
 | Beam, `jianai` | 4 | 0, 1, `-0x1.b84bb8p+3` | 124, 2, `-0x1.85afap+3` | `less(A,B)=true`, `less(B,A)=true` |
 | Final tails, `bian` | 4 | 1, 1, `-0x1.99254p+3` | 50, 2, `-0x1.9235c4p+3` | `less(A,B)=true`, `less(B,A)=true` |
 
-The first range has 490 candidates and 4,791 violating pairs; the second
-has 221 candidates and 776 violating pairs. The predicates were evaluated
-inside the diagnostic pin using its live values, before selection.
 `get_top_results` passes this comparator to `std::make_heap` and
 `std::pop_heap` (`src/lookup/phonetic_lookup.h:143–171 at 074a2219`),
 called at `src/lookup/phonetic_lookup.h:770–771,331–335 at 074a2219`.
@@ -770,11 +641,8 @@ intent; for length gaps d≥2 it replaces unconditional shorter preference
 with a probability-ratio threshold `1.2^d`, a deliberate semantic choice.
 Keep the node admission tie rule separate from the selection tie key.
 
-Full candidate identities, the complete case set and the environment are
-in
-`docs/findings/algorithm-precondition-witnesses-2026-10-28.md`. Across the
-276 cases, 26 beam ranges and 32 final-tail ranges contain witnesses.
-Nothing is filed upstream.
+Full candidate identities are in
+`docs/findings/upstream-divergences.md#pinyin-trellis-adjusted-cost--s1s2-repair`.
 
 ---
 
@@ -787,9 +655,9 @@ with the consistent total ordering required by the qsort-style contract
 of `g_ptr_array_sort`, called at
 `src/lookup/phonetic_lookup.h:337 at 074a2219`.
 
-For `qian`, full-pinyin scheme 1, options `0x1fe00198`, reference BDB data
-and a fresh user directory, parse then `guess_sentence` reaches this
-three-element pre-sort array at step 4:
+**Reproduction:** for `qian`, full-pinyin scheme 1, options `0x1fe00198`,
+reference BDB data and a fresh user directory, parse then
+`guess_sentence` reaches this three-element pre-sort array at step 4:
 
 | Position | Length | `%a m_poss` | Current token | Slot |
 | ---: | ---: | --- | --- | ---: |
@@ -799,26 +667,24 @@ three-element pre-sort array at step 4:
 
 The pin comparator returns zero for AB, BA, BC and CB, −1 for AC, and
 +1 for CA. Thus A~B and B~C but A≁C. All three previous tokens are
-`0x00000001`. The diagnostic evaluates the actual comparator before
-sorting; this is not an arbitrary synthetic triple.
+`0x00000001`.
 
 **Suggested repair:** keep the source's "in descending order" criterion
 and use a stable descending `m_poss` comparison without truncation. Do
 not substitute the adjusted selection score. Policy for NaN from a
 λ outside `[0, 1]` is a separate question.
 
-The 276-case BDB set witnesses this defect in 37 pre-sort arrays. Full
-results are in
-`docs/findings/algorithm-precondition-witnesses-2026-10-28.md`; the
+Full results are in
+`docs/findings/upstream-divergences.md#pinyin-trellis-adjusted-cost--s1s2-repair`. The
 [GLib 2.84.4 sort contract](https://github.com/GNOME/glib/blob/2.84.4/glib/garray.c#L2240-L2295)
 and [C11 §7.22.5 paragraph 4](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf)
-state the comparator requirements. Nothing is filed upstream.
+state the comparator requirements.
 
 ---
 
 ## 12. The two-slot trellis node evicts its best resident
 
-Source-derived defect, not a captured execution witness. The comments
+The defect follows from the source. The comments
 "min heap here", "invariant: min heap", and "find minium item" describe
 a worst-at-front bounded queue, but `trellis_value_comp` uses the ordinary
 less-than direction with `std::push_heap` and `std::pop_heap`
@@ -840,25 +706,25 @@ contract, so this is an algorithm defect independent of item 10.
 the inverse valid heap order, preserving the separate admission test and
 rejecting tying newcomers. oxpinyin retains the pin's front eviction
 bug-for-bug; changing it requires a separate maintainer ruling or Stage 3.
-Nothing is filed upstream.
 
 ---
 
 ## Filing notes
 
-- Independence: no fix touches another. File items 1–4 as four issues.
+- Independence: no fix touches another. Items 1–4 are filed as four issues.
   - Item 5 is a separate report. It does not belong in that batch.
   - Item 6 does not belong in that batch either. It is a process-state
     defect to file on its own.
-  - Item 7 is a separate BDB resource-leak report, ready to file.
+  - Item 7 is a separate BDB resource-leak report.
   - Item 8 is a separate BDB report with no observable effect. It can go
     with item 7 or on its own.
   - Item 9 is a separate ranking report.
   - Items 10 and 11 report distinct comparator contracts. Item 12 reports
     a contract-valid algorithm defect and must not be conflated with them.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
+- Filing follows a search of GitHub and Fedora Bugzilla for an existing report.
 - Credit line under the historical attribution convention is the maintainer's to
   place; the reproductions above stand alone.
-- After filing, mark each entry in `upstream-divergences.md` and
-  `reference/memory-safety-bugs.md` §1.4 with the issue links, so that the
-  ledger no longer calls them unreported.
+- After filing, each entry in `upstream-divergences.md` and
+  `reference/memory-safety-bugs.md` §1.4 is marked with the issue links, so
+  that the ledger no longer calls them unreported.

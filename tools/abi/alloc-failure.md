@@ -21,7 +21,7 @@ just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
 ```
 
 Both sides allocate the returned strings and the keyboard vector with the GLib calls of the pin
-([record](../../docs/findings/returned-string-allocation.md)). The subject
+([record](../../docs/findings/abi-allocator-pairing.md#5-caller-owned-strings)). The subject
 is therefore judged by the rule of the pin. #1227 (2026-10-31 UTC) retired class (c),
 and with it the calibration, warning, tracked and outputs-unchanged checks of the retired refusal.
 
@@ -59,8 +59,8 @@ disabled must fail the audit on both facades.
 
 ## Source matrix and results
 
-The [#924 follow-through ledger](../../docs/findings/glib-libc-verification.md#924-allocation-failure-injection-follow-through--2026-10-25-utc)
-records the per-exported-caller allocation matrix, the classification and the remaining
+The [allocation-failure partitions](../../docs/findings/glib-libc-inventory.md#allocation-failure-partitions)
+record the per-exported-caller allocation matrix, the classification and the remaining
 partitions.
 
 A failed `GArray` growth has no contract case. Both facades grow the

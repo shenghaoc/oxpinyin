@@ -314,7 +314,7 @@ pub fn oxpinyin_import_aborts(
 /// The whole reading is parsed. The pin's `parse_value_t` keeps its steps
 /// in `gint16`s (`pinyin_parser2.cpp:67-70`), so its parse stops at byte
 /// 32767; that width is a language artefact
-/// (`docs/findings/1501-gint16-input-cap.md`).
+/// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
 fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
     let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;

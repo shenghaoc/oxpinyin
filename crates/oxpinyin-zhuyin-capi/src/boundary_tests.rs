@@ -1,8 +1,9 @@
 //! C-boundary decisions of the zhuyin facade on the w3 mini fixture: the
 //! return values, out-parameters, aborts and stderr lines of the pin at
 //! 074a2219 that no lower-layer test holds. An abort test asserts the abort
-//! status only (`docs/findings/pin-abort-assert-line.md`: oxpinyin writes no
-//! assertion line).
+//! status only
+//! (`docs/findings/upstream-divergences.md#reproduced-library-aborts-write-no-assertion-line`:
+//! oxpinyin writes no assertion line).
 
 use std::os::raw::c_char;
 use std::path::Path;

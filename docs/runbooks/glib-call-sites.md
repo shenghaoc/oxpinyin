@@ -1,8 +1,8 @@
 # GLib and libc call-site audit
 
 This procedure regenerates [glib-libc-call-sites.tsv](../findings/glib-libc-call-sites.tsv).
-That call-site list supports the [inventory](../findings/glib-libc-inventory.md) and the
-[verification ledger](../findings/glib-libc-verification.md). The list describes the
+That call-site list supports the [inventory](../findings/glib-libc-inventory.md) and its
+[per-family verdicts](../findings/glib-libc-inventory.md#family-notes). The list describes the
 pin, so it changes only when the pin, the generator or the family table changes.
 
 ## Tools

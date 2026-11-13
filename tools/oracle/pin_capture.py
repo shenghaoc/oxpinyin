@@ -136,7 +136,7 @@ def parse(facade, text):
 
 
 def key_abort(facade, text):
-    """F-E-14: a key query at offset 0 of an apostrophe-only parse."""
+    """A key query at offset 0 of an apostrophe-only parse, which aborts the pin."""
     parse(facade, text)
     facade.call('pinyin_get_pinyin_key', 0)
 

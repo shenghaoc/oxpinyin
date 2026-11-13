@@ -215,12 +215,32 @@ The run is repeated with the sound library on `LD_LIBRARY_PATH`.
 `ldd` confirms that both the oracle and the subject resolve `libtkrzw.so.1` to that library.
 If no sound library is available, the report says "tkrzw: not run (no sound libtkrzw on this host)" and the work continues.
 
+If `pinyin_save` returns `false` on tkrzw while the pin saves `true`, suspect a defect-1 library.
+On such a library no save fails until the context removes something (`pinyin_mask_out`, for example); then the next save with something to write fails.
+Check the build of the library, not its version:
+
+1. Find the libtkrzw that the failing process loaded.
+   It need not be the one that the build linked: the C ABI objects and the test binaries carry no RUNPATH, so each loads the `libtkrzw.so.1` that `LD_LIBRARY_PATH` or the loader cache names.
+   A store suite that passes and a C-ABI driver that fails in the same shell can use two different libraries.
+   Use `ldd`, or `LD_DEBUG=libs` on the failing command.
+2. Probe that library with the backend's own check:
+
+   ```sh
+   PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib \
+     cargo test -p oxpinyin-store tkrzw_library_honours_its_sentinel_protocol
+   ```
+
+   `readelf -rW $P/lib/libtkrzw.so.1 | grep -c KeyComparator` prints 0 for defect 2.
+3. Then read the version.
+   1.0.34 is healthy under every flag set measured.
+   1.0.33 and earlier are healthy from `./configure && make` and from Debian, Fedora and EPEL, and broken from Ubuntu and under Arch's default flags.
+
 ## Procedure-specific rules
 
 - Independent subprocesses and builds run in the bounded pool under the [parallel-work rule](#independent-work-in-parallel).
 - libpinyin on Linux/amd64 is the only reference for pin comparisons.
   Its behaviour in other environments is not ensured.
-  An arm64 host captures the pin with a native arm64 image; the [known arm64 differences](../findings/arm64-pin-portability-1137.md) are accepted.
+  An arm64 host captures the pin with a native arm64 image; the [known arm64 differences](../findings/upstream-divergences.md#outstanding-upstream-defects-report-back) are accepted.
 - oxpinyin accepts differences that come from the operating system and the CPU architecture.
   Builds and containers match the host operating system and architecture; emulation is not used.
 - oxpinyin accepts GLib behaviour across versions.

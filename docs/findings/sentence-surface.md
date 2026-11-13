@@ -1,23 +1,19 @@
 # Sentence surface (W14)
 
-Date: 2026-08-17 · Status: **machine-read**. This file records how the
-pin builds sentence rows, what oxpinyin must reproduce, and the current
-measured residual.
+Status: **reference**, machine-read. This file records how the pin builds
+sentence rows, what oxpinyin must reproduce, and the residual.
 
-- §1–§11 state the current sentence behaviour and the rules that apply
-  to it. Older measurements in them are one-line recorded evidence.
-- §12 and its subsections hold the measured residual. The current
+- §1–§11 state the sentence behaviour and the rules that apply to it.
+- §12 and its subsections hold the residual. The current
   declaration is the `#1378 current sentence-selection residuals`
-  subsection of §12 and the subsections after it. The §12 text before
-  it is dated measurement.
+  subsection of §12 and the subsections after it.
 - The 500-row gate is 496 / 492 / 491. The supplementary fixture has
   8,436 pin-equal inputs and 156 exact ruled selection residuals.
 
 The pin source citations in §1–§2 are against the libpinyin 2.11.91
-`0c5e80e` tree, the pin at freeze, at
-`target/oracle-pin-build/src/libpinyin-2.11.91/` (`$S` below). Some line
-numbers differ at the current pin, `074a2219`. With no n-best row, `pinyin_get_sentence` answers `false`
-and leaves `*sentence` untouched, as the pin does (`pinyin.cpp:1470-1471`;
+`0c5e80e` tree (`$S` below); some line numbers differ at the current pin,
+`074a2219`. With no n-best row, `pinyin_get_sentence` answers `false` and
+leaves `*sentence` untouched, as the pin does (`pinyin.cpp:1470-1471`;
 register row 53 in `compatibility-policy.md`).
 
 ## 1. Where the rows come from
@@ -51,14 +47,13 @@ AND_FREQUENCY` = 0x1e (`pinyin.h:66-69`) does **not** carry
 `SORT_WITHOUT_SENTENCE_CANDIDATE`. Rows therefore appear exactly when
 `m_nbest_results` is non-empty, that is, when `pinyin_guess_sentence` ran
 after the last reset. Only `pinyin_reset` clears it (`pinyin.cpp:2698`).
-The frozen corpus profile never calls `pinyin_guess_sentence` (the
-capture's `observe_without_reset` → `collect_candidates`). For this
-reason the W4 candidate fixture and the pin suite exclude sentence rows:
+The W4 corpus profile never calls `pinyin_guess_sentence`
+(`observe_without_reset` → `collect_candidates`), so the W4 candidate
+fixture and the pin suite exclude sentence rows:
 **a pin move when rows are correctly gated behind `guess_sentence` is a
 leak**.
 
-**Recorded evidence** (live probe over the model20 tables, empty user
-store, ibus call order `guess_sentence` → `guess_candidates(0, 0x1e)`):
+**Pin results** (model20 tables, empty user store, ibus call order `guess_sentence` → `guess_candidates(0, 0x1e)`):
 
 - `nihao` → sentences `[你好, 你好, 你好]`, candidate total 126. The three
   rows become one (the lower index wins) and the phrase `你好` becomes a
@@ -137,13 +132,12 @@ answer.
 Current scoring and selection:
 
 - **Float accumulation.** Real-table scoring uses f32 accumulation of std
-  `f64::ln` and the pin's pre-log epsilon gates (#1378 PR B, maintainer
-  approval 2026-10-29 UTC). Register row 11 of `compatibility-policy.md`
-  carries the classification.
+  `f64::ln` and the pin's pre-log epsilon gates (maintainer approval).
+  Register row 11 of `compatibility-policy.md` carries the classification.
 - **Selection.** The beam, node and tail order follow the S1/S2/S3 repairs
   of the
   [algorithm-precondition rules](compatibility-policy.md#algorithm-precondition-violations).
-  §12 "Lane D selection port" records the ported heap and merge order.
+  §12 "Selection port" records the ported heap and merge order.
   No Rust sort takes the cyclic trellis comparator.
 - **Pronunciation.** `pinyin_poss` takes the share of the looked-up
   spelling once per span: the first matrix path per token wins. It does
@@ -155,7 +149,7 @@ Current scoring and selection:
   `diff_result`) is ported: the store in `constraint.rs`, the gated
   full-matrix walk, the reset split, the constraint-aware train and
   `pinyin_clear_constraint`. The remaining-input re-seed (the W6 surface)
-  still carries every empty-store decode, which is the shape of the frozen
+  still carries every empty-store decode, which is the shape of the W4
   pins. On that path the §10 prefix context is the display rule.
 
 ## 4. Implementation record
@@ -194,43 +188,34 @@ Current scoring and selection:
   `pinyin_guess_candidates` honours `SORT_WITHOUT_SENTENCE_CANDIDATE` and
   excludes sentence candidates.
 
-## 5. Measured agreement
+## 5. The sentence-surface fixture
 
-`fixtures/w4/oracle-sentence-surface.txt` freezes the pin's surface for a
+`fixtures/w4/oracle-sentence-surface.txt` holds the pin's surface for a
 deterministic W2 sample: every 20th corpus input plus anchors such as
-`nihao`, `nihaoshijie`, `cecenihao` and `zhongguoren`. It now has 507
-rows and 500 comparable inputs (§12 "G-m1 coverage extension"). The 7
-junk-leading inputs that the pin does not parse are excluded; neither
-side has a sentence surface for them. The fixture has no regenerator
-today ([goldens and pins](../runbooks/goldens-and-pins.md)).
+`nihao`, `nihaoshijie`, `cecenihao` and `zhongguoren`. It has 507 rows and
+500 comparable inputs. The 7 junk-leading inputs that the pin does not
+parse are excluded; neither side has a sentence surface for them. The
+fixture has no regenerator ([goldens and pins](../runbooks/goldens-and-pins.md)).
 
 The gate `sentence_surface_parity` checks these rules on every
 comparable input:
 
 - NBEST rows are at the head in tail order, `n/0` first.
 - No sentence candidate appears before `guess_sentence`. This gating
-  keeps the W4 corpus pins frozen.
+  keeps the W4 corpus pins unchanged.
 - The `guess_sentence` return value agrees.
 
-§12 defines the three agreement counts and holds the current numbers.
+§12 defines the three agreement counts and holds the current numbers. The
+polyphone term of §2 is a required scoring input.
 
-Recorded evidence: the first W14 measurement gave 488 / 385 / 370 of 496
-(decoded 1-best / full sentence lists / first-6 candidate rows). §12
-defines these three counts. Before the pronunciation discount, a
-200-input probe gave 74.5% on the decoded 1-best, so the polyphone term
-is a required scoring input.
+## 6. The n-best costs a model must supply
 
-## 6. W13 scheme re-measure — the C ABI n-best wiring gap
+`pinyin_guess_sentence` can answer `true` and still produce no rows: a
+`LanguageModel` that keeps the trait default of `nbest_step_costs` gives
+the trellis no cost data (§4). Every model behind the C ABI must override
+it (§7).
 
-Recorded evidence (2026-08-19, main `489e94d`): through the C ABI,
-`pinyin_guess_sentence` returned `true` but produced no rows on every
-scheme and on full pinyin. The cause was that `SharedLm` did not override
-`nbest_step_costs`, so the trellis had no cost data. §7 closes the gap.
-
-The current behaviour is in §4: a `LanguageModel` that keeps the trait
-default of `nbest_step_costs` produces no rows.
-
-## 7. The C ABI wiring gap, closed
+## 7. The C ABI n-best wiring
 
 `SharedLm` (a re-export of `oxpinyin_runtime::RuntimeLm`) overrides
 `nbest_step_costs` and forwards to the model behind it, the same model
@@ -238,14 +223,7 @@ that the rest of the C ABI decode scores against. The trellis, the
 comparator and the candidate code did not change for this. The trait
 default stays for other implementors.
 
-Recorded evidence: a one-input C ABI probe (full-pinyin `nihao`, model20
-tables) gave `guess_sentence: true`, `get_sentence(0): 你好`, `cand[0]`
-`NBEST_MATCH` with n-best index 0 and 126 candidates, byte-identical to
-the pin. With matched unigram data and the exact scheme-key seam
-(`docs/findings/bopomofo-spec.md` § exact seam), the double-pinyin and
-STANDARD bopomofo differentials run IDENTICAL.
-
-## 8. The selection record's row mapping, fixed
+## 8. The selection record's row mapping
 
 **Rule.** The selection record finds a chosen n-best row by its tail
 rank, never by its list position. The NBEST-wins deduplication keeps the
@@ -265,18 +243,12 @@ the C ABI (`pinyin_get_candidate_nbest_index`). `Candidate::nbest_row()`
 is the origin marker that the selection record reads. A row-origin
 candidate looks up the stored row at its rank, bounded by `get`.
 
-**Evidence.**
+**Test.** `a_shifted_row_records_its_own_rank_not_its_position` builds
+rows `[好, 好, 浩]` and asserts that the 浩 row, at position 1 with rank 2,
+records the tokens of 浩. After (你→浩) × 3, the pin and oxpinyin both
+export `你浩|ni'hao|1242` and `你好|ni'hao|1242`.
 
-- Engine test `a_shifted_row_records_its_own_rank_not_its_position`
-  builds rows `[好, 好, 浩]`. It asserts that the 浩 row is at position 1
-  with rank 2 and that it records the tokens of 浩.
-- Recorded evidence (n-best training differential, matched model20
-  tables): (你→浩) × 3 exports `你浩|ni'hao|1242` + `你好|ni'hao|1242`,
-  identical to the pin. 你浩 grows 138 → 414 → 1242 across the rounds.
-  Without the §7 forward the C ABI emits no rows and the run is vacuous;
-  the runner prints a vacuity warning in that shape.
-
-## 9. User-merged n-best step costs, landed
+## 9. User-merged n-best step costs
 
 **Rule.** The n-best step costs merge user counts into **both** branches,
 with merged denominators, before the observed-successor gate. This is
@@ -301,14 +273,11 @@ overlay is `user-store.md` §5.
 - `SharedLm::nbest_step_costs` takes the same user delta that
   `score` takes and forwards it.
 
-Recorded evidence (n-best training differential over full logs, matched
-model20 tables): after (你→浩) × 3 the rows change from 你好 × 3 to
-你浩/你好/你浩 on both engines. Without the user delta, the export lines
-stay identical but the user-only probe stays 你好/你好/你好 (n=126)
-against the pin's 你浩/你好/你浩 (n=127). The full-log comparison detects
-this defect; the export lines alone do not.
+After (你→浩) × 3 the rows change from 你好 × 3 to 你浩/你好/你浩, with 127
+candidates, on the pin and on oxpinyin. Without the user delta the rows
+would stay 你好 × 3 while the export lines still agree.
 
-## 10. Offset-decode prefix context, landed
+## 10. Offset-decode prefix context
 
 **Rule.** A sentence row decoded after earlier selections displays the
 full context (你好/你浩), as the pin does. The pin's `PhoneticLookup` runs
@@ -333,7 +302,7 @@ over the full `PhoneticKeyMatrix` with `CONSTRAINT_ONESTEP` /
   replaced in the record, as its text is replaced. The selected text and
   the token record stay synchronized.
 
-## 11. Class A candidate tie law ported — sentence pins re-measured
+## 11. Candidate tie law and the sentence trellis
 
 The candidate comparator and the trellis do not share arithmetic.
 Candidates rank on the amplified frequency key
@@ -345,253 +314,118 @@ The first-6 candidate-row count can still move with the candidate
 surface, because the candidate list follows the sentence rows in those
 six rows.
 
-Recorded evidence (2026-08-22): the Class A port changed only the
-first-6 candidate-row count, from 370 to 379 of 496.
+## 12. The residual — a permanent divergence
 
-## 12. The residual, defined and measured — FROZEN as a permanent Stage-1 divergence
+The agreement counts are **three comparison strictnesses over one set of
+comparable inputs** (the 7 junk-leading inputs the oracle cannot parse are
+excluded), not one measure at three surfaces. Named the way
+candidate-construction §8.2 separates top-1 / top-5-set / order-only:
 
-Date: 2026-08-24 · branch `feat/gfloat-accumulation-parity`
+- **1-best agreement.** `pinyin_get_sentence(0)` equal: the decoded top
+  sentence.
+- **n-best distinct-set agreement.** The set of decoded sentences
+  `get_sentence(0..=proven)`, **order- and duplicate-insensitive** ("full
+  sentence lists").
+- **n-best ordered-list agreement**, which coincides with **first-6
+  candidate rows**. The full *ordered* `get_sentence` vector, and the
+  ordered `(type, nbest, text)` rows; they move together because the rows
+  are those sentences prepended.
 
-The `488 / 385 / 379` of §5/§11 are **three comparison strictnesses over one
-set of 496 comparable inputs** (the 7 junk-leading inputs the oracle cannot
-parse are excluded — no surface on either side), not one measure at three
-surfaces. Named the way candidate-construction §8.2 separates top-1 / top-5-set /
-order-only:
+The 500-row gate is **496 / 492 / 491** (1-best / distinct-set / ordered).
+The supplementary fixture has 8,436 pin-equal inputs and 156 exact ruled
+selection residuals ([current declaration](#1378-current-sentence-selection-residuals)).
+The residual is **hypothesis selection**, not display order: port and pin
+keep different survivors in the top 3. The candidate surface has no leak
+from it: the candidate surface is bit-identical on the same tables, and a
+phrase slice that shifts because a different number of NBEST rows survive
+is an intact phrase order seen through a shifted 6-row window.
 
-- **1-best agreement — 488/496.** `pinyin_get_sentence(0)` equal: the decoded
-  top sentence.
-- **n-best distinct-set agreement — 385/496.** The set of decoded sentences
-  `get_sentence(0..=proven)`, **order- and duplicate-insensitive**. This is
-  the number §5/§11 printed as "full sentence lists".
-- **n-best ordered-list agreement — 379/496**, which coincides with
-  **first-6 candidate rows — 379/496.** The full *ordered* `get_sentence`
-  vector, and the ordered `(type, nbest, text)` rows; they move together
-  because the rows are those sentences prepended.
+The fixture holds the pin's answer. The gate is the integration test
+`sentence_surface_parity` (`crates/oxpinyin-runtime/tests/`), which calls
+`sentence_tail::measure` over the pinned libpinyin-data package and asserts
+the current numbers. A move is a deliberate change of this section, not a
+silent drift.
 
-So `385` is the *distinct-set* number and `379` the *ordered* number; §5/§11
-set `385` ("full sentence lists") beside the ordered `379` without saying they
-measure differently. **This is a reinterpretation of the definitions, not just
-a clarification** — "full sentence lists" here now means the order- and
-duplicate-insensitive *distinct-set*, and the strictly-ordered list is the
-separate `379`. Text elsewhere that reads `385` as an ordered-list agreement
-is reading the old, conflated definition. The **"17" in §11 was an error**:
-the ordered / first-6 residual is **117**, and every one is trellis-side. The
-read-only `sentence-tail` binary finds **0 candidate-surface leaks** — the 83
-rows it labels "phrase-window" are the phrase slice shifting as the surviving-
-NBEST-row count differs (an intact phrase order seen through a shifted 6-row
-window; `guanyo` the exemplar), and the candidate surface is bit-identical on
-the same tables (recorded evidence: 10190/10190, absent 0, order-only 0,
-prefix-10 gap 0).
+The sentence trellis takes P_unigram from
+`PhraseItem::get_unigram_frequency` as (count + gen_unigram + 1) / total,
+with a 1/Σ floor, on libpinyin's own data.
 
-The measurement is read-only and runs no pin: the fixture holds the pin's
-answer. The gate is the integration test `sentence_surface_parity`
-(`crates/oxpinyin-runtime/tests/`), which calls
-`sentence_tail::measure` over the pinned libpinyin-data package
-(`just fetch-contract-data`) and asserts the current numbers (see
-[the current declaration](#1378-current-sentence-selection-residuals)).
-A missing package is a failure. A move is a deliberate re-freeze of this
-section, not a silent drift. At the time of this subsection the gate held
-`488 / 385 / 379` plus the residual invariants (`0` order-only, the `6`
-distinct-same).
-
-**Where the 117 live.** First divergence at row 0: 8, row 1: 83, row 2: 26 (a
-shorter list first missing a rank counts at that rank);
-**0 order-only** (no case is one list reordered); **6 distinct-same** (exactly
-the `385 − 379` gap — e.g. `tuihui`, oracle `[退回, 退回, 退会]` vs port
-`[退回, 退会]`: the same two sentences, a duplicate path at rank 1 on one side
-only). The residual is **hypothesis selection**, not display order: port and
-pin keep *different* 1st/2nd/3rd survivors in the top-3, the 8 row-0 misses
-being a different global best (`跑錶` vs `炮表`, `杂拴帕清` vs `杂树安帕清`).
-
-**`tuihui` note (2026-09-19 UTC).** The example above was measured over
-exported model20 tables against `fixtures/w4/oracle-sentence-surface.txt`.
-On the pin's own `data/` (same-dir ABI dump, `probe-coverage-abi.md` A)
-the port emits `[退回, 退回, 退会]`, matching the pin — the duplicate-
-text path is among the survivors.
-
-**Why it is not portable — the Phase-1 gate, now confirmed by the dump.** The
-selection runs on `gfloat m_poss`, accumulated `m_poss += log(...)` per step
-with a round-to-`f32` at every node (`$S/src/lookup/phonetic_lookup.h:663,
-692`), and compared throughout — node store, beam-32, tail-3 — by exact-float
-`trellis_value_less_than` (`:66-91`); the final tail sort truncates the float
-difference to `gint`, so poss within 1.0 nat ties and keeps heap-pop order
-(`trellis_value_compare`, `:174-178`). Matching any of the three strictnesses
-means reproducing those `gfloat` values, which means a floating-point natural
-`log` per step. `f64::ln` delegates to the platform libm with no
-cross-platform bit-exactness guarantee; the build forbids `-march=native` for
-exactly this reason; constitution item 6 requires output to be a pure
-function of (input, user state, config) on every OS; and
-`crates/oxpinyin-core/src/cost.rs:11-15` records this as the reason the cost
-scale is integer fixed-point at all. The float dependency reaches the
-tiebreak too — heap-pop order is seeded by the exact-float comparator — so no
-fixed-point transform recovers the order either.
+**Why it is not portable.** The selection runs on `gfloat m_poss`,
+accumulated `m_poss += log(...)` per step with a round-to-`f32` at every
+node (`$S/src/lookup/phonetic_lookup.h:663, 692`), and compared throughout
+— node store, beam-32, tail-3 — by exact-float `trellis_value_less_than`
+(`:66-91`); the final tail sort truncates the float difference to `gint`,
+so poss within 1.0 nat ties and keeps heap-pop order
+(`trellis_value_compare`, `:174-178`). Matching any of the three
+strictnesses means reproducing those `gfloat` values, which means a
+floating-point natural `log` per step. `f64::ln` delegates to the platform
+libm with no cross-platform bit-exactness guarantee; the build forbids
+`-march=native` for exactly this reason; constitution item 6 requires
+output to be a pure function of (input, user state, config) on every OS;
+and `crates/oxpinyin-core/src/cost.rs:11-15` records this as the reason the
+cost scale is integer fixed-point at all. The float dependency reaches the
+tiebreak too — heap-pop order is seeded by the exact-float comparator — so
+no fixed-point transform recovers the order either.
 
 This is **not** the Class A species. Class A's `amplified_frequency`
-(`amplified_frequency`, `crates/oxpinyin-engine/src/session/mod.rs`) is
-`(1−λ)·unigram/total·2²⁴` — multiply, divide, cast: IEEE-754 basic ops,
-correctly rounded and bit-identical on every platform, which is why it ported
-to 100%. The `gfloat` cost adds a transcendental. And the surfaces do not
-share the arithmetic: candidates rank on `amplified_frequency` → `RankKey`,
-the trellis on `nbest_step_costs` → `surprisal` — so this divergence is
-contained to the sentence tails and costs nothing on the candidate surface.
+(`crates/oxpinyin-engine/src/session/mod.rs`) is `(1−λ)·unigram/total·2²⁴`
+— multiply, divide, cast: IEEE-754 basic ops, correctly rounded and
+bit-identical on every platform. The `gfloat` cost adds a transcendental,
+and the surfaces do not share the arithmetic (§11), so this divergence is
+contained to the sentence tails.
 
-**Recommendation, pending maintainer approval.** `488 / 385 / 379` is the
-measured Stage-1 sentence-surface residual — one named, understood divergence:
-the well-defined fixed-point behaviour where upstream's is platform-dependent
-and unreproducible, the same shape as the aux over-read and `_check_offset`.
-The recommendation is to accept it as a permanent divergence and rely on the
-report-back entry in `upstream-divergences.md`; **freezing it as permanent is
-the maintainer's call, not taken here.** It would be revisited only under a
-deliberate pin re-freeze that accepts platform-locked floating point, which
-the constitution does not permit.
-
-**Ruling (maintainer, 2026-09-02): FROZEN as a permanent Stage-1
-divergence.** The recommendation above is accepted. The residual is one named,
-understood mechanism — the pin's platform-dependent `gfloat` accumulation
-against this port's defined fixed-point arithmetic — and bit-exact
-reproduction is ruled out by constitution item 6, so `488 / 385 / 379` is a
-recorded constant, not a target of zero. The disposition is the same one the
-predicted-candidate tie order took under the 2026-08-25 ruling: upstream
-deterministic but not reproducibly so. Two consequences, stated explicitly:
+**Ruling (maintainer): a permanent divergence.** The residual is
+one named, understood mechanism — the pin's platform-dependent `gfloat`
+accumulation against this port's defined fixed-point arithmetic — and
+bit-exact reproduction is ruled out by constitution item 6, so the counts
+are a recorded constant, not a target of zero. Two consequences:
 
 1. The gate `sentence_surface_matches_the_declared_residual` asserts a
-   **defined-residual**, not a parity target: it holds the frozen numbers and
-   the mechanism invariants (`0` order-only, the `6` distinct-same), and any
-   move remains a deliberate re-freeze of this section, never a silent drift.
+   **defined residual**, not a parity target: it holds the declared numbers,
+   the nine exact residual bindings and the mechanism invariants (`0`
+   order-only, `1` distinct-same: the 492 − 491 duplicate-path rank of
+   `rongkan…`), and any move remains a deliberate change of this
+   section, never a silent drift.
 2. Row 11 of `compatibility-policy.md` carries the classification.
 
-**Re-opening condition:** a deliberate pin re-freeze that itself accepts
-platform-locked floating point — which the constitution does not permit for
-this project — or a measured leak of the residual onto the candidate surface
-(today's measurement shows 0 leaks; the candidate surface is bit-identical).
+### Selection port
 
-### §12 re-freeze — 2026-09-04
-
-Re-measured at tip `4eb72efd` by `sentence_tail::measure`
-(backend-independent, reproduced at the freeze ref and P6 bracket). The
-entire move is `345af16` (P6 — run the production engine on libpinyin's
-own data): the sentence trellis's P_unigram switched from the
-interpolation2.text-derived construction (UNKNOWN_COST floor) to
-PhraseItem::get_unigram_frequency (count + gen_unigram + 1) / total,
-1/Σ floor. The two constructions differ by ~1 part in 5×10⁷ on the
-pinned model — sufficient to flip exact-comparator near-tie resolution
-for three inputs (`paobiao`, `lisuancengmenlutingmouchangdielvejin`,
-`ran'hua'zhui'hu'guo'zhan'zhen'hei`). P2–P5 affirmatively ruled out by
-bracket; freeze ref `181bd7a` reproduced exactly. Ordered-miss residual:
-117 → 106 (breakdown 8→5 / 83→81 / 26→20); 11 inputs fixed, 0
-regressed (the inputs missing at the tip are a strict subset of those
-missing at the freeze).
-Mechanism invariants held: guessed_disagree 0, list_order_only 0,
-list_distinct_extra 6. New frozen numbers: **491 / 396 / 390**.
-Maintainer ruling: 2026-09-04.
-
-### Lane D selection port — 2026-10-04 UTC (#535, #594, #574)
-
-Seven selection differences are ported together against libpinyin 2.11.92
-`074a2219`: retention and physical heap slot order
-(`src/lookup/phonetic_lookup_heap.h:25–29,56–81`), unreduced library/range/item
-stream, nstore-gated comparator (`phonetic_lookup.h:66–91`), heap-pop beam
-and tails (`:272–297,329–339`), fixed-final-step tails (`:825–837`), and
-final `trellis_value_compare` gint truncation (`:174–178`).
-`g_ptr_array_sort` calls GLib's stable `g_sort_array` merge
-(`gqsort.c:msort_with_tmp`, split n/2, left on <= 0).
+These selection rules are ported against libpinyin 2.11.92 `074a2219`:
+retention and physical heap slot order
+(`src/lookup/phonetic_lookup_heap.h:25–29,56–81`), unreduced
+library/range/item stream, nstore-gated comparator
+(`phonetic_lookup.h:66–91`), heap-pop beam and tails (`:272–297,329–339`),
+fixed-final-step tails (`:825–837`), and final `trellis_value_compare` gint
+truncation (`:174–178`). `g_ptr_array_sort` calls GLib's stable
+`g_sort_array` merge (`gqsort.c:msort_with_tmp`, split n/2, left on <= 0).
 The Rust port uses hand-written libstdc++ push/pop/make-heap assignments
-and that merge; no Rust sort takes the cyclic trellis comparator.
-The remaining generation sort orders integer library identifiers only.
-See `crates/oxpinyin-engine/src/nbest.rs` (`loses_to`, `heap_push`,
+and that merge; no Rust sort takes the cyclic trellis comparator. The
+remaining generation sort orders integer library identifiers only. See
+`crates/oxpinyin-engine/src/nbest.rs` (`loses_to`, `heap_push`,
 `heap_adjust`, `heap_pop`, `heap_make`, `tail_compare`, `tail_merge`,
 `GenerationView`) and `session/guess.rs` (private separator provenance).
+Canonical formatting carries its separator provenance through
+`Session::replace_raw_with_physical_separators`; ordinary lookup, matrix
+construction, ScanKey and the exact graph are unchanged.
 
-The fixture has **503 data rows**, despite sample=504, and 496 comparable
-inputs. The approved port gate is **495 / 495 / 495**, one fixture
-surface difference. The full corpus residual is **14 / 10,465**, versus
-main's 2,185 differences, with zero regressions among main-matching inputs.
-All 14 declared #594 cases and 36 Luoma/secondary-zhuyin cases close:
-**129 / 129** assembly cases matched at the port (the suite has since grown; register row 11 carries the current count). Canonical formatting carries its
-separator provenance through the temporary
-`Session::replace_raw_with_physical_separators` intake; ordinary lookup,
-matrix construction, ScanKey and the exact graph are unchanged.
-The intake is expected to disappear with #585/#626.
+The companion test `sentence_surface_detects_per_step_score_shift` asserts
+the f32 bits of the first-sentence log possibility of four fixture anchors
+(`yaomeichong`, `xiehenshuaitong`, `nuanmanqianzhaofang`, `nic`). Adding
+one cost unit per phrase expansion must fail it, even where the visible
+sentence surface does not move. No mutable test hook ships.
 
-Only the following six shared-comparison rows are class (a), as ruled.
-These are the Phase-1 captures at the deciding comparison, not attributions
-inferred merely from a float call graph. Pin costs differ in float bits;
-the subject retains its native fixed-point costs.
+### Resplit after a separator
 
-| Input | Pin deciding f32 bits | Subject native costs |
-|---|---|---|
-| bo | c110d58e / c110d429 | 13059 / 13059 |
-| quguan | c171e63c / c171e5cd | 21812 / 21812 |
-| kaliantai | c1c7778d / c1c7769d | 35970 / 35970 |
-| huilianpei | c13f886e / c13f8796 | 17270 / 17270 |
-| yunhoulvlvlunqianaonaoruoqubeiji | c2a2cba9 / c2a2cba1 | 117432 / 117433 |
-| nou'y | c193a149 / c193a09f | 26623 / 26623 |
-
-The other eight remain **unattributed**, by name:
-`pang'rao'xiane'qing'lo'sheiting'suanzhi`,
-`nvchi'chui'lianai'baobeng'fang`, `bu'qing'na'wanou'panyao'you`,
-`bianrang'lianai'seng'sunguo`, `'`, `''`, `'''`, and `'ni`.
-The first four had different generation counts (pin/subject:
-3534/1462, 2583/1165, 2510/2062, 2307/882); the cause is attributed
-below (#639) and they now match. The four separator rows pre-exist the
-port. No arithmetic attribution is claimed for these.
-
-Recorded evidence: `sentence_surface_parity`, the full 10,465-input C-ABI
-corpus enumeration and the candidate-assembly differential over pin-built
-data, plus ZIGUANG and the 卧 selection replay. The per-cell PR tables
-record the results. Bulk comparison captures were not retained.
-The #574 coverage member corrects the sample header and adds four inputs
-with native-cost assertions, detecting a +1 per-step mutation even when
-the visible sentence surface does not move.
-
-### G-m1 coverage extension — 2026-10-04 UTC (#574)
-
-The historical sample=504 header described 503 data rows. Four pin-generated
-rows (yaomeichong, xiehenshuaitong, nuanmanqianzhaofang, nic), identical on
-bdb/kc/tkrzw, extend the fixture to **507 rows / 500 comparable inputs**.
-The surface gate is **499 / 499 / 499**. A companion ignored integration
-test in sentence_surface_parity.rs asserts native first-sentence costs
-32746, 46792, 59752 and 17763, respectively. Adding one cost unit per
-phrase expansion must fail; reverting it must pass. These assertions
-cover the four recovered G-m1 inputs even if the port's retention changes
-which visible rows the mutation alters. This extension changes coverage,
-not scoring or selection. The companion test is
-`sentence_surface_detects_per_step_score_shift`, which now asserts the
-f32 bits of each first-sentence log possibility. No mutable test hook ships.
-
-These four inputs are anchors of the fixture. The old header count included
-`#yaguai`, whose rendered capture is a comment to the reader; the corrected
-header counts readable data rows and retains capture order. The fixture has
-no regenerator today ([goldens and pins](../runbooks/goldens-and-pins.md)).
-
-### Resplit after a separator — 2026-10-07 UTC (#639)
-
-`resplit_additions` (`session/mod.rs`) rejected a pair whose first key
-followed a separator, and would have measured the split from the key's
-`from`, the apostrophe. The pin keys that first key at its own
-`m_raw_begin`, after the apostrophe, and measures from there
+The pin keys the first key after a separator at its own `m_raw_begin`,
+after the apostrophe, and measures a resplit from there
 (`phonetic_key_matrix.cpp:113-150`, pin 074a2219; `pinyin_parser2.cpp:282`).
-`lia` in `chui'lianai` therefore never became `lian` + `ai`, and the four
-rows above decoded 俩乃 / 下呢 / 纳瓦耨 instead of 恋爱 / 限额 / 那玩偶. The
-guard is dropped and the split is measured from `syllable_start`; the
-left half keeps the separator-riding span. Not a class (a), (b) or (c)
-divergence: it was a defect and is repaired.
+`resplit_additions` (`session/mod.rs`) measures the split from
+`syllable_start`, and the left half keeps the separator-riding span. So
+`lia` in `chui'lianai` becomes `lian` + `ai` (恋爱 / 限额 / 那玩偶 on both
+sides).
 
-Measured on bdb with `sentence-tail` (debug): 1-best **500 / 500**, n-best
-distinct-set **500 / 500**, ordered **500 / 500**, first-6 rows **500 / 500**,
-guessed disagreements 0. The `sentence_surface_parity` expectations move
-from 499 to 500 with this repair. The full 10,465-input corpus residual
-(14 before) is not re-measured here. The `'`, `''`, `'''` and `'ni` rows
-are unchanged.
+### Fixed-final-step tails
 
-
-### Fixed-final-step coverage — 2026-10-10 UTC (#594)
-
-The fixed-final-step rule already landed in `55d861de`; this lane adds
-regression coverage, with no selection or scoring change. Read from the
-retained bdb oracle source checkout at the pin;
-`src/lookup/phonetic_lookup.h` hashes to Git blob
-`c092e7610cb0e3bdcc29394e6f7f1ba3515d3214`, equal to the committed blob.
 The source law is
 [`get_tails`:330–340](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/lookup/phonetic_lookup.h#L330):
 `size() - 1` → `get_candidates` (:272–297) → `get_top_results` (:143–171).
@@ -602,15 +436,13 @@ list, and the extraction loop (:825–841) adds no results and returns true.
 There is no earlier-step fallback. A zero-sized input matrix instead
 returns false before clearing existing results (:743–748).
 
-On the retained bdb oracle under Fedora 44, both facades match in **50/50**
-`final-step-*` cases (recorded evidence): `ba'kua`, `li'shi`, `xi'an`,
-`ni'hao`, `ba'ku`, `ni'h`, `nihao'`, `n`, `nih`, `ni`, `nihao`, `zhongguo`
-at explicit `USE_TONE` (0x20) and `USE_TONE | PINYIN_INCOMPLETE` (0x28),
-plus a fresh `罢跨/ba'kua/5` import on each facade. Complete ordered
-sentence vectors retain duplicate texts; complete candidate lists retain
-type/text and, for pinyin NBEST rows, their tail indices. Pinyin covers
-sort words 0, 1, 0x1c, 0x1d, 0x1e, 0x1f. Zhuyin exposes one sentence and
-no sort-word argument; its after-cursor candidate list is compared whole.
+Both facades follow this law. The 50 `final-step-*` contract cases hold it
+for `ba'kua`, `li'shi`, `xi'an`, `ni'hao`, `ba'ku`, `ni'h`, `nihao'`, `n`,
+`nih`, `ni`, `nihao`, `zhongguo` at explicit `USE_TONE` (0x20) and
+`USE_TONE | PINYIN_INCOMPLETE` (0x28), plus a fresh `罢跨/ba'kua/5` import
+on each facade, under pinyin sort words 0, 1, 0x1c, 0x1d, 0x1e, 0x1f.
+Zhuyin exposes one sentence and no sort-word argument; its after-cursor
+candidate list is compared whole.
 
 | `ba'kua`, explicit 0x20 | Indexed sentences, pin = subject | Displayed NBEST rows | Candidate count |
 |---|---|---|---|
@@ -619,56 +451,27 @@ no sort-word argument; its after-cursor candidate list is compared whole.
 | zhuyin, fresh | 把跨 | 把跨 | 106 |
 | zhuyin, imported | 罢跨 | 罢跨 | 106 |
 
-The retained oracle binary and stable/unstable data manifests verify
-against `oracle-pin.txt` and both SHA-256 manifests. This capture has
-three indexed pinyin results (including a duplicate), unlike the issue's
-historical two indexed results; two displayed NBEST rows alone do not
-establish an indexed count. No explanation for the historical count change
-is inferred from this capture. There is no pin/subject difference here,
-including no extra 把垮. These are controls against current main, which
-already implements the rule, not claims of a new production repair.
-The frozen fixture expectations are not re-measured by this scoped lane.
-
-The 50 cases are recorded evidence from the contract differential of
-that date. The engine guards cover an empty final step after three earlier
-values on both shapes and a two-value final step after three earlier
-values on the pinyin shape.
-
-A revert-and-check that reinstated the earlier-populated-step selection
-failed the empty-final-step assertion in `nbest::tests::tails_*`; both
-guards passed after byte-for-byte source restoration. The 50 facade
-cases also match under this single-rule mutation and again after restoration:
-these current-model controls confirm parity; the direct engine guard supplies
-the fallback-rule sensitivity. No wider differential was run.
+Two displayed NBEST rows alone do not establish an indexed count. The
+engine guards in `nbest::tests::tails_*` cover an empty final step after
+three earlier values on both shapes and a two-value final step after three
+earlier values on the pinyin shape; they fail if the earlier-populated-step
+selection is reinstated.
 
 ### #1378 current sentence-selection residuals
 
-Maintainer approval of 2026-10-29 UTC permits this re-measurement and the
-corresponding frozen fixture/test updates. Recorded 2026-10-29T09:07:22Z (`date -u`).
-The old six-row math declaration above is historical. Five now match the
-pin (`bo`, `quguan`, `huilianpei`, `yunhoulvlvlunqianaonaoruoqubeiji`,
-`nou'y`). `kaliantai` remains a selection residual, not class (a): both
-current main and PR B choose `卡利安胎` at rank 2 where the pin chooses
-`卡连太`, with ranks 0–1 identical. It is unchanged by the float scale.
+`kaliantai` is a selection residual, not class (a): oxpinyin chooses
+`卡利安胎` at rank 2 where the pin chooses `卡连太`, with ranks 0–1
+identical. It is unchanged by the float scale.
 
 The supplementary fixture contains 8,592 distinct inputs (8,744 corpus
-occurrences). Current main `9015a178` has 163 actual pin differences;
-PR B has 156, all byte-for-byte identical to main. Exactly seven surfaces
-move, all to pin equality. The five legacy math-row closures include
-`quguan` and `nou'y`, which already matched on current main. The seven
-PR B movements are recorded in `float-scoring-1378`.
-
-The remaining cases pass only against their complete exact subject surfaces
-in `oracle-sentence-tie-order.txt`, with POLICY-ACCEPTED under the registered
-S1/S2/S3 repairs. This does not create another precondition-violation site.
-The source is the same beam, node and tail path described by the
-2026-10-28 amendment: adjusted S and earlier batch ties in S1/S2, followed
-by S3's stable descending raw score. The pin uses its pairwise length
-predicate and truncated tail comparison. These current-main selection
-residuals are not attributed to libm or silently called MATCH. Pin captures,
-selected inputs, native selection metadata and existing pool entries are
-preserved; only measured subject vectors change. No new PR B regression
-is accepted by this table.
+occurrences); 156 differ from the pin. Each of them passes only against its
+complete exact subject surface in `oracle-sentence-tie-order.txt`, with
+POLICY-ACCEPTED under the registered S1/S2/S3 repairs. This does not create
+another precondition-violation site. The source is the same beam, node and
+tail path of the S1/S2/S3 amendment: adjusted S and earlier batch ties in
+S1/S2, followed by S3's stable descending raw score. The pin uses its
+pairwise length predicate and truncated tail comparison. These selection
+residuals are not attributed to libm or called MATCH.
 
 | Input | Disposition |
 | --- | --- |
@@ -829,13 +632,10 @@ is accepted by this table.
 | `seng)` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
 | `shenzuanjiao%` | POLICY-ACCEPTED, unchanged S1/S2/S3 selection |
 
+### 500-input reconciliation
 
-### 500-input reconciliation (2026-11-01 UTC)
-
-Recorded 2026-11-01T12:11:06Z (`date -u`), against main `bf41d2c0`.
-The existing #1378 `sentence-tail` report supplies these nine complete
-ordered-list differences; no new pin execution was used to discover them.
-The first-best / distinct-set / ordered-list counts remain **496 / 492 / 491**.
+The 500-input gate has nine complete ordered-list differences, and its
+first-best / distinct-set / ordered-list counts are **496 / 492 / 491**.
 Four first differ at rank 0, three at rank 1 and two at rank 2. None is a
 permutation; `rongkan…` changes duplicate multiplicity while keeping the
 distinct set.
@@ -865,16 +665,14 @@ pin observation, including the six candidate rows.
 format to bind all nine complete subject observations. `sentence_tail::measure`
 compares every comparable input to that binding, or to the pin where no
 residual is declared. The gate checks guessed status, the entire indexed
-list and all six candidate rows before checking aggregate counts. A fixed
-residual and a new regression therefore cannot cancel. No pin vector,
-supplementary selection metadata, or aggregate expectation changes.
+list and all six candidate rows before checking aggregate counts, so a fixed
+residual and a new regression cannot cancel.
 
 #### Source disposition of the two previously unbound cases
 
-Read the `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs from the
-libpinyin clone at `/home/sheng/repos/libpinyin`; the clone's working-tree
-revision was not used. Read oxpinyin at `bf41d2c0`. Model inputs are the
-pinned model20 text tables and the provisioned tkrzw chunk headers.
+Pin source: the `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs.
+Model inputs are the pinned model20 text tables and the provisioned tkrzw
+chunk headers.
 
 **`fupie`: S2's earlier batch-position tie.** The first differing candidate
 is rank 2, `副暼` versus `副氕`. `氕` is token 16783062 in `gb_char.table`;
@@ -896,8 +694,7 @@ creation order and physical slots (`:278–296`). `氕` precedes `暼`.
 Oxpinyin's `nbest::expand_entries`, `Trellis::candidates` and
 `selection_compare` preserve that batch and apply the already approved
 earlier-position tie, selecting `氕`. S3 cannot change the selected set.
-The captured pin choice is retained as evidence; its incidental heap tie
-order is not reconstructed.
+The pin's incidental heap tie order is not reconstructed.
 
 **`liangmudianse`: S1/S2 node admission, then S3 raw-score ordering.**
 The first differing output is rank 1: `两亩电色` versus `两目的安瑟`.
@@ -941,48 +738,24 @@ possibility stably without truncation, giving the recorded rank 1.
 No epsilon, extra tie-break, math exception or heap reconstruction is
 needed for either case.
 
-#### Verification
+### Phrases-profile S2 tail ties: `neng` and `nou`
 
-`cells-for-diff.py origin/main` selected tkrzw alone. The focused gate
-passed with nine exact residual bindings, zero unexpected surfaces and
-496 / 492 / 491 agreement. Fmt and `git diff --check` passed. The named
-`FUPIE_SAME_COUNTS_SURFACE` harness mutation replaced observed rank 2
-`副氕` with `副鐅` in both indexed sentences and candidate rows: all
-aggregate counts stayed unchanged, but the exact binding rejected it.
-The mutation was removed, restoring the tested source exactly.
+Pin source: the `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs; model
+inputs: the pinned model20 text tables. On tkrzw, the pinyin facade, the
+`phrases` profile, options `0x18a` and sort word `0x1e`, two complete
+observations differ. Each is the third n-best sentence, the
+`NBEST_MATCH_CANDIDATE` row with n-best index 2.
 
-Run the gate over the pinned libpinyin-data package (`just fetch-contract-data`, tkrzw):
-
-```sh
-cargo test --locked -p oxpinyin-runtime --test sentence_surface_parity \
-  sentence_surface_matches_the_declared_residual -- --exact --nocapture
-```
-
-CI supplies the Rust tests, Clippy and rustdoc gate. No shipping scoring,
-pruning, admission or tie rule changes, and no performance measurement.
-
-### Phrases-profile S2 tail ties: `neng` and `nou` (2026-11-04 UTC)
-
-Recorded 2026-11-04T23:43:12Z (`date -u`). The pin was read from the
-`074a2219c90feaf962d0d24f034514033ece5f99` Git blobs and oxpinyin at
-`fedf2451`. Model inputs are the pinned model20 text tables.
-
-The teardown startup preflight (recorded evidence; tkrzw, pinyin facade,
-`phrases` profile, options `0x18a`, sort word `0x1e`) showed two complete-observation differences, identical on every oxpinyin
-arm. Each is the third n-best sentence, the `NBEST_MATCH_CANDIDATE` row
-with n-best index 2.
-
-| Input | Preflight document | Pin ordered sentences | Subject ordered sentences | Covering record |
-| --- | --- | --- | --- | --- |
-| `neng` | 33 | 能 → 能 → 䏻 | 能 → 能 → 㴰 | S2 earlier batch tie |
-| `nou` | 35 | 耨 → 耨 → 鐞 | 耨 → 耨 → 鎒 | S2 earlier batch tie |
+| Input | Pin ordered sentences | Subject ordered sentences | Covering record |
+| --- | --- | --- | --- |
+| `neng` | 能 → 能 → 䏻 | 能 → 能 → 㴰 | S2 earlier batch tie |
+| `nou` | 耨 → 耨 → 鐞 | 耨 → 耨 → 鎒 | S2 earlier batch tie |
 
 Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
 disposition as `fupie` above. They exist only on the `phrases` profile,
 so the fresh-profile fixtures do not hold them and
-`crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt` is unchanged. The preflight
-compared complete observations and had no policy verdict, so its
-`phrases` witness left both inputs out.
+`crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt`
+does not bind them.
 
 **Profile.** The profile imports 10,000 library-1 rows at count 20000.
 An import of a phrase already in that library adds the count to the
@@ -1054,4 +827,9 @@ deduplication (`src/pinyin.cpp:1934–1947,2116–2125`) remove the selected
 character's NORMAL row on each side. The remaining NORMAL rows keep one
 relative order on both sides; no other row moves.
 
-No shipping code changes.
+## Open
+
+- The §12 ruling reopens only on a pin change that itself accepts
+  platform-locked floating point (which the constitution does not permit
+  for this project), or on a leak of the residual onto the candidate
+  surface.

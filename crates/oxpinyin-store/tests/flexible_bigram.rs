@@ -646,7 +646,7 @@ fn seen_once(token: u32) -> ArrayItemWithToken<Item> {
 /// `import_k_mixture_model` output (`fixtures/w3/README.md`); the Kyoto
 /// Cabinet file is built record by record and keeps the text's unsorted
 /// sentence-start row
-/// (`docs/findings/eio-flexible-bigram-unsorted-records.md`).
+/// (`docs/findings/upstream-divergences.md#flexiblebigram-unsorted-record-search`).
 ///
 /// The tokens, headers and items are the frozen utility case
 /// `export_k_mixture_model::kmm-export-good`, the pin's

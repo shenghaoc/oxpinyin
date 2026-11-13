@@ -89,7 +89,7 @@ and `gen` cases use them as read-only inputs:
   The sentence-start row of `k_mixture_model.db` keeps the text input
   order `16817937, 16802309`, unlike the sorted insertion of the pin importer.
   This is malformed stored input, kept unchanged; see
-  [the unsorted-record finding](../../docs/findings/eio-flexible-bigram-unsorted-records.md).
+  [the unsorted-record finding](../../docs/findings/upstream-divergences.md#flexiblebigram-unsorted-record-search).
 
 The layout is the layout of the pin:
 

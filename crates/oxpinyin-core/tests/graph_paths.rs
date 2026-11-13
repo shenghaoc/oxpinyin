@@ -29,11 +29,9 @@ const EXPECTED_PIN_REF: &str = concat!(
 
 /// Inputs whose oracle path the graph deliberately does not admit.
 ///
-/// Maintainer decision 3 in
-/// Both halves of maintainer decision 3 on apostrophes are now closed. The doubled
-/// half (`ni''hao`) closed 2026-08-21; the leading half (`'ni`) closed
-/// 2026-08-21 by the same zero-width step-propagation law. No open
-/// apostrophe cases remain.
+/// The `docs/findings/parser-spec.md` correction log aligns the doubled
+/// (`ni''hao`) and leading (`'ni`) apostrophe cases with the pin's
+/// zero-width step-propagation law. No open apostrophe cases remain.
 const OPEN_APOSTROPHE_CASES: [&str; 0] = [];
 
 /// One record: the input, what the oracle consumed, and the path it chose.

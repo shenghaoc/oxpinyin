@@ -75,7 +75,7 @@
 //! `std::process::abort()` on it. [`FlexibleBigram::load`] returns the same
 //! error for such a value. The pin loads that value and later reads outside
 //! it, and the tools report it as a store error (class (b),
-//! `eio-flexible-bigram-malformed-records.md`). A failing cursor walk in
+//! `upstream-divergences.md#flexiblebigram-malformed-record-lengths`). A failing cursor walk in
 //! `get_all_items` prints the pin's
 //! `training db error, exit!` (no newline) to stderr and exits with the
 //! `EIO` status (`flexible_ngram_bdb.h:279-286`) — the error cannot be
@@ -222,7 +222,7 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
     /// (`flexible_single_gram.h:118-139` at 074a2219).
     ///
     /// Unsorted records share the existing lower-bound precondition and
-    /// disposition in `eio-flexible-bigram-unsorted-records.md`.
+    /// disposition in `upstream-divergences.md#flexiblebigram-unsorted-record-search`.
     pub fn search(
         &self,
         range_begin: u32,
@@ -244,7 +244,7 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
     /// the pin's own scan (`flexible_single_gram.h:63-65,232-257`). Results
     /// agree on token-ascending records. Unsorted stored records violate
     /// the search precondition; their result is not a compatibility promise.
-    /// See `eio-flexible-bigram-unsorted-records.md`.
+    /// See `upstream-divergences.md#flexiblebigram-unsorted-record-search`.
     #[must_use]
     pub fn get_array_item(&self, token: u32) -> Option<I> {
         let mut index = self.lower_bound(token);

@@ -1,24 +1,22 @@
 # Double-pinyin scheme SPEC
 
-Date: 2026-08-17 · Status: **frozen** (maintainer, 2026-09-02; see the [Freeze record](#freeze-record-2026-09-02-maintainer))
+Status: **reference**
 
-What binds: the C API behaviour of the three double-pinyin functions in [Scope](#scope), as derived from the pin — the scheme ABI, the parser laws, the tone law on both seams, the scheme tables, the downstream key shape and the auxiliary text ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
-A change to that behaviour needs a maintainer ruling.
-The description of how oxpinyin routes the keys (the oxpinyin function and file names under [Downstream lattice](#downstream-lattice)) is current reference.
+This SPEC states the pin's C API behaviour of the three double-pinyin functions in [Scope](#scope): the scheme ABI, the parser laws, the tone law on both seams, the scheme tables, the downstream key shape and the auxiliary text.
+The oxpinyin function and file names under [Downstream lattice](#downstream-lattice) describe how oxpinyin routes the keys.
 
 ## Scope
 
-This SPEC freezes the behaviour that oxpinyin must reproduce from the pinned libpinyin oracle for these functions:
+This SPEC states the pin's behaviour of these functions, which oxpinyin reproduces:
 
 - `pinyin_parse_more_double_pinyins`
 - `pinyin_set_double_pinyin_scheme`
 - `pinyin_get_double_pinyin_auxiliary_text`
 
 The full-pinyin corpus never reaches this parser.
-A moved corpus pin is a leak and must STOP the workstream.
+A moved corpus pin is a leak: the workstream halts, and continuing needs the maintainer's approval ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 
-Source identity: libpinyin `2.11.91`, commit `0c5e80e1200f84fab185d1c5bde458b770a0636c`.
-This is the pin at the freeze; the current pin is in `tools/oracle/oracle-pin.txt`.
+The source citations hold at the current pin, libpinyin `2.11.92`, commit `074a2219` (`tools/oracle/oracle-pin.txt`).
 
 ## Scheme ABI
 
@@ -33,12 +31,17 @@ This is the pin at the freeze; the current pin is in `tools/oracle/oracle-pin.tx
 - `DOUBLE_PINYIN_CUSTOMIZED` = 30
 - `DOUBLE_PINYIN_DEFAULT` = `DOUBLE_PINYIN_MS`
 
-`pinyin_set_double_pinyin_scheme` calls `context->m_double_pinyin_parser->set_scheme(scheme)` (`src/pinyin.cpp:1155-1159`).
+`pinyin_set_double_pinyin_scheme` calls `context->m_double_pinyin_parser->set_scheme(scheme)`, ignores its result and returns `true` (`src/pinyin.cpp:1155-1159`).
 The parser object is on the context, and instances dereference the context parser on every parse (`src/pinyin.cpp:1540-1552`).
 So instances that already exist observe a setter call on their next parse.
 
-`DOUBLE_PINYIN_CUSTOMIZED` is not a compiled table, and upstream `set_scheme` aborts on it (`src/storage/pinyin_parser2.cpp:610-612`).
-oxpinyin must not abort: it reports `false` for that value and keeps the previous scheme.
+`set_scheme` first clears the fallback table (`src/storage/pinyin_parser2.cpp:580`), then switches on the scheme:
+
+- `DOUBLE_PINYIN_CUSTOMIZED` is not a compiled table, and `set_scheme` aborts on it (`:610-611`).
+- Any other value outside the enum returns `false` (`:614`) with the shengmu and yunmu tables unchanged and the fallback table cleared.
+  The wrapper ignores that `false`, so `pinyin_set_double_pinyin_scheme` returns `true`.
+
+oxpinyin does the same: `pinyin_set_double_pinyin_scheme` (`crates/oxpinyin-capi/src/config.rs`) aborts on 30, and for an out-of-enum value it clears the live scheme's fallback table and returns `true`.
 
 ## Parser class
 
@@ -69,32 +72,28 @@ The parser returns it only when the mapped initial is non-null and is not the ze
 ### Tone
 
 For double pinyin, tone is a third input byte.
-The parser accepts it only when `USE_TONE` is set and the third byte is `1`..`5`.
-`FORCE_TONE` requires a three-byte key (`:411-450`).
+The parser accepts it only when `USE_TONE` is set and the third byte is `1`..`5` (`:439-445`).
+`FORCE_TONE` requires a three-byte key (`:412`).
 The inner `FORCE_TONE` zero-tone check at `:448` is dead code: the digit parse above it already refuses every non-tone byte.
 So the live law is exactly the length-3 gate plus the `USE_TONE` tone acceptance.
 
-**Frozen law, both seams.**
+**One law, both seams.**
 The batch seam passes the context option word into the parser (`src/pinyin.cpp:1543`).
 So `pinyin_parse_more_double_pinyins` must follow the same law as the one-key seam:
 
-- under `FORCE_TONE`, a key that is not exactly three bytes refuses;
+- under `FORCE_TONE`, a key that is not exactly three bytes refuses (`pinyin_parser2.cpp:412`);
 - a three-byte key carries its `1`..`5` digit as the tone only under `USE_TONE`.
 
-Implementation status:
-
-- The one-key seam (`pinyin_parse_double_pinyin`) implements this law in full ([compatibility policy](compatibility-policy.md#classification-table) row 16).
-  Recorded evidence: IDENTICAL against the pin over 2,131 probe lines (double schemes 1–6).
-- The batch seam also implements it (5ec782ea).
-  The caller's option word crosses the seam, and the greedy walk follows the length-3 gate and the tone carriage.
-  Row 16 of the compatibility policy is CLOSED.
+Both seams implement this law ([compatibility policy](compatibility-policy.md#classification-table) row 16).
+The one-key seam is `pinyin_parse_double_pinyin`.
+On the batch seam, the caller's option word crosses the seam, and the greedy walk follows the length-3 gate and the tone carriage.
 
 The pinned full-pinyin corpus is tone-less, and the fork's double-pinyin context does not set `USE_TONE`.
 
 ### Maximum forward match
 
 `parse` probes the longest possible input of valid key and tone bytes.
-From the current position, it then tries lengths `3`, `2`, `1` in that order (`max_double_pinyin_length = 3`) and stops at the first success (`src/storage/pinyin_parser2.cpp:531-574`).
+From the current position, it then tries lengths `3`, `2`, `1` in that order (`max_double_pinyin_length = 3`, `pinyin_parser2.cpp:84`) and stops at the first success (`src/storage/pinyin_parser2.cpp:531-574`).
 This is a greedy longest match per key, not a global DP.
 It is not the full-pinyin exhaustive path set.
 
@@ -141,7 +140,7 @@ It is not specific to a scheme.
 
 ## Auxiliary text
 
-`pinyin_get_double_pinyin_auxiliary_text` is the same prefix/middle/postfix walk as full pinyin, with two differences (`src/pinyin.cpp:3438-3514`):
+`pinyin_get_double_pinyin_auxiliary_text` is the same prefix/middle/postfix walk as full pinyin, with two differences (`src/pinyin.cpp:3440-3516`):
 
 - there is no apostrophe handling;
 - the middle key is split into shengmu + `|` + yunmu, not raw bytes.
@@ -149,32 +148,3 @@ It is not specific to a scheme.
 The shengmu and yunmu strings are the `ChewingKey` components, not the original two keystrokes.
 With no tone, the cursor-at-boundary form is `|`.
 Inside a two-byte key, cursor 1 renders `shengmu|yunmu ` and cursor 2 renders `shengmuyunmu| `.
-
-## Verification input set
-
-The scheme differential uses, at minimum:
-
-- cross-scheme collisions: `ni`, `wo`, `sh`, `zh`, `a`, `;`, `jv`, `lv`, `nv`, `er`;
-- two-key pairs whose first key is zero-initial (`o`-key in MS/ZRM/XHE);
-- fallback rows for ZRM/PYJJ/XHE;
-- incomplete one-key forms under `PINYIN_INCOMPLETE`;
-- invalid bytes and trailing digits, to pin the consumed-length boundary.
-
-## Freeze record (2026-09-02, maintainer)
-
-The maintainer froze this SPEC after reviewing the draft against the pinned source and the implementation (20e6b3a).
-
-- Every source citation was re-verified against the pin `0c5e80e1`, and all hold at the pin:
-  - scheme enum `pinyin_custom2.h:108-117`;
-  - setter and parse path `pinyin.cpp:1155-1159/:1540-1563`;
-  - `parse_one_key` laws at `pinyin_parser2.cpp:409/:412/:415-432/:434-436/:448/:452-499/:501-524`;
-  - greedy `parse` `:531-574`, with `max_double_pinyin_length = 3` at `:84`;
-  - `set_scheme` `:578-614`, with the CUSTOMIZED abort at `:610-612`;
-  - the six scheme tables at the line numbers above;
-  - aux text `pinyin.cpp:3438-3514`.
-- The freeze included three amendments:
-  - the Tone section states the frozen law for both seams;
-  - the Downstream lattice section records the exact-segment routing (`replace_raw_exact`);
-  - the Xiaohe yunmu and fallback table rows carry their exact line numbers (`:369`/`:399`).
-- The recorded evidence for this surface is the scheme differential (parse, aux and full-candidate comparisons over the six schemes) and the one-key seam differential (2,131 probe lines).
-- The one open implementation item at the freeze, the batch seam's `FORCE_TONE` length-3 gate, is closed by 5ec782ea ([Tone](#tone); compatibility policy row 16).

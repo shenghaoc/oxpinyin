@@ -42,7 +42,8 @@ pub(crate) const SENTENCE_START: u32 = 1;
 pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
 
 /// The pin's `assert(cond)` failure: `abort()` without the macro's message
-/// (maintainer ruling 2026-10-31 UTC, `docs/findings/eio-tool-check-messages.md`).
+/// (maintainer ruling 2026-10-31 UTC,
+/// `docs/findings/upstream-divergences.md#utility-check-macros-write-no-message`).
 pub(crate) fn abort_on_pin_assert() -> ! {
     tool::abort()
 }

@@ -572,7 +572,8 @@ fn journal_walk(data: &[u8]) -> (Option<(u32, u32)>, [u32; 4]) {
 
 /// A save over a library replaced by a chunk whose layout fails diffs against
 /// an empty sub-index: true, no GLib critical, and every original item is
-/// journalled as added (docs/findings/1297-layout-criticals.md).
+/// journalled as added
+/// (docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical).
 #[test]
 fn a_save_over_a_failed_layout_journals_against_an_empty_index() {
     let run = crate::test_support::run_in_child(
@@ -964,7 +965,7 @@ fn a_journal_removed_item_adds_no_candidate() {
 }
 
 /// The segmenter reads an unsorted sentence-start user gram as stored
-/// (docs/findings/1297-gram-partition-segmentation.md).
+/// (docs/findings/upstream-divergences.md#stored-gram-partitions-phrase-segmentation).
 #[test]
 fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
     let user = TempUserDir::new("unsorted-segment");

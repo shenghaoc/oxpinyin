@@ -52,11 +52,11 @@ For that reason, it forwards the complete backend feature matrix and is not gene
 
 ## Backend selection
 
-Select exactly one backend per binary at compile time.
+Exactly one backend per binary is selected at compile time.
 `DefaultStore` is a `#[cfg]` alias for the enabled backend feature.
-Select a peer with `--no-default-features --features {bdb|kyotocabinet}`.
+A peer is selected with `--no-default-features --features {bdb|kyotocabinet}`.
 This follows libpinyin's `--with-dbm` model.
-Do not add runtime dispatch or fallback.
+Runtime dispatch and fallback are not added.
 `oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.
 
 A save makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`).
@@ -66,16 +66,16 @@ Durability is therefore the backend's durability for that call; oxpinyin promise
 
 The [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) governs native bindings.
 
-Use a Rust library as Rust.
+A Rust library is used as Rust.
 The tree has no pure-Rust database backend.
 `glib-sys` binds a C library.
-Link Kyoto Cabinet, tkrzw and Berkeley DB to the distribution's libraries.
-Use Berkeley DB through its official C API, `db.h`, with bindgen over system headers.
+Kyoto Cabinet, tkrzw and Berkeley DB link to the distribution's libraries.
+Berkeley DB is used through its official C API, `db.h`, with bindgen over system headers.
 tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
 `oxpinyin-store` finds the backends with `system-deps`: tkrzw and Kyoto Cabinet through their `.pc` files, and Berkeley DB without pkg-config, because the distributions and Homebrew install no `.pc` file for it.
 The `SYSTEM_DEPS_BDB_*` overrides reach a Berkeley DB outside the defaults ([discovery and overrides](runbooks/backends.md#discovery-and-overrides)).
 
-Use Kyoto Cabinet as libpinyin does.
+Kyoto Cabinet is used as libpinyin uses it.
 Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
@@ -92,16 +92,17 @@ Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' line
 
 `oxpinyin-input` owns bidirectional external calls in scoped unsafe modules.
 Stage 1 covers library configuration read/write and locale.
-The [boundary plan](findings/external-io-boundary.md) lists later stages.
+The [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) lists stages 2 to 5: chunks, save and rename, diagnostics, and tools.
+All five stages are implemented.
 C facades retain ABI marshalling.
 `oxpinyin-store` retains DBM backends.
 
 ## Centralized assembly
 
-Construct decodable engines in exactly one place, `oxpinyin-runtime`.
+Decodable engines are constructed in exactly one place, `oxpinyin-runtime`.
 It assembles system tables, unigram model, λ, a persistent or transient user store, addons and punctuation.
 Facades through `oxpinyin-facade`, capi and future adapters consume that assembly.
-Do not assemble equivalents independently.
+Nothing else assembles equivalents independently.
 This prevents native and C-ABI paths from silently diverging.
 
 Runtime connects the public Rust APIs of data, user and engine.
@@ -117,26 +118,26 @@ Each algorithm's source cites the pin.
 
 ## Data path
 
-Use one native reader set per backend.
+There is one native reader set per backend.
 Data lazily reads the pinyin and phrase DBMs, per-library `MemoryChunk` files, `bigram.db`, `punct.bin` and the addon DBM pair.
 Each reader opens a handle and performs a point read.
 Chunk files use mmap and checksums.
 Nothing is scanned at open.
 
-Read `table.conf` once through data's `table_info`, the input scanner and `SystemTableInfo2::load`'s own calls.
+`table.conf` is read once through data's `table_info`, the input scanner and `SystemTableInfo2::load`'s own calls.
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 Runtime opens the same system directory as `pinyin_init` for that backend.
 libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets came from that sequence over the mini subset of the model (recorded evidence).
 The caller supplies directories to `Runtime`, which retains `StoragePaths`.
-Do not auto-detect a distribution layout.
+A distribution layout is not auto-detected.
 
 ## Portability
 
-Keep the engine session API independent of frameworks.
+The engine session API stays independent of frameworks.
 It exposes parsing, candidate iteration, selection, training and reset operations.
-Inject configuration and backend handles as data; runtime owns storage paths.
-Do not add platform services or `cfg(target_os)` to portable crates.
+Configuration and backend handles are injected as data; runtime owns storage paths.
+Platform services and `cfg(target_os)` are not added to portable crates.
 Frontends handle key dispatch and preedit display through the C API.
 Sessions are instance-per-context and suitable for the TSF, IMK and ArkTS main-thread models.
 See the [native Rust policy](findings/compatibility-policy.md#native-rust-implementation).
@@ -156,9 +157,9 @@ Engine weights and language-model order are never user configuration.
 
 ## Decoder
 
-Use a weighted SegmentGraph with index-based arenas, not references.
+The decoder uses a weighted SegmentGraph with index-based arenas, not references.
 Current EdgeKind variants are Exact and Segmentation.
 Fuzzy, Typo and Abbrev change output and are Stage 3 candidates behind an opt-in compile flag.
 Its Rust API is internal and can change under the [interface ruling](constitution.md#external-interfaces).
-In parity mode, mirror the path-set SPEC's upstream path-enumeration policy.
-Produce neither more paths nor fewer.
+In parity mode, the decoder mirrors the path-set SPEC's upstream path-enumeration policy.
+It produces neither more paths nor fewer.

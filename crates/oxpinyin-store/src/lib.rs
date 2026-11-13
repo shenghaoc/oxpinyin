@@ -35,10 +35,9 @@
 //! byte order, shorter key first on a shared prefix; and the Berkeley DB
 //! backend opens `DB_BTREE` with no `set_bt_compare`, exactly as libpinyin
 //! does, so BDB's default bytewise comparator applies.  Any further backend
-//! must match that default lexicographic comparator.  The encodings each
-//! layer chooses on top of this rule (data little-endian = byte order,
-//! intentionally not integer order; user big-endian = integer order) are
-//! documented in one place in `docs/findings/store-key-ordering.md`.
+//! must match that default lexicographic comparator.  The rule and that
+//! obligation are the contract in `docs/findings/store-key-ordering.md`; the
+//! key encodings each layer chooses on top of the rule are the layer's own.
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
@@ -119,8 +118,8 @@ pub enum StoreError {
     /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371` and
     /// `flexible_ngram_tkrzwdb.h:388` at the pin), and the K-mixture tools
     /// abort. From `load` it is a value the pin later reads outside of
-    /// (class (b), `eio-flexible-bigram-malformed-records.md`), and the tools
-    /// report it as a store error.
+    /// (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`), and the
+    /// tools report it as a store error.
     ShortArrayHeader,
     /// A tkrzw or Berkeley DB record copy failed a destination write, or
     /// its source walk did not end normally. The pin's `copy_tkrzwdb` and

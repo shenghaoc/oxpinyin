@@ -1,17 +1,16 @@
-# Candidate-construction SPEC (Discrepancy 2)
+# Candidate-construction SPEC
 
-Status: **frozen (§8).**
+Status: **reference**
 
-What binds: the phrase candidate list that §8 states, as derived from the pin and observable through the C APIs — which candidates appear, their order, the dedup and the frequency key ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
-A change to that behaviour needs a maintainer ruling.
-The names of oxpinyin functions, tests, constants and files, and the description of how the code produces the list, are current reference.
+§8 states the pin's phrase candidate list as the C APIs expose it: which candidates appear, their order, the dedup and the frequency key.
+The oxpinyin function, test, constant and file names describe how the code produces the list.
 
 This SPEC states how `Session` builds the phrase candidate list at a composition offset.
 It covers the expanding-window scan, the three-key order, the frequency key and the dedup.
 It also names the two tie classes that this construction closes.
 Related documents: [matrix-split-tables.md](matrix-split-tables.md) (the scan's key set), [sentence-surface.md](sentence-surface.md) (the n-best sentence rows), [session-api.md](session-api.md) and [scoring-spec.md](scoring-spec.md).
 
-## 8. The frozen construction contract
+## 8. The construction contract
 
 The contract reproduces the pin's candidate collection, read from the pinned libpinyin sources (`tools/oracle/oracle-pin.txt`).
 The pin pools phrases from every segmentation into one list.
@@ -23,7 +22,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
 1. **Candidate construction is the expanding-window scan.**
    - `Session::refresh` fixes the start at the composition offset and walks the window end outward over every byte position.
      For each window, it enumerates every key-path through the scan matrix and searches the phrase table on each complete path.
-   - The scan matrix is the selected parse plus the frozen resplit and divided additions ([matrix-split-tables.md](matrix-split-tables.md)).
+   - The scan matrix is the selected parse plus the resplit and divided additions ([matrix-split-tables.md](matrix-split-tables.md)).
      The selected parse has the fewest keys, then the smaller total correction distance, then is the first found (`pinyin_parser2.cpp:294-309` at 074a2219).
    - The scan starts from the input as typed.
      `Session::replace_raw` keeps every character, and the parse stops at the first byte that no key matches, as the pin's parse does ([parser-spec.md](parser-spec.md)).
@@ -67,16 +66,15 @@ The gate is the `candidate_surface` test, `crates/oxpinyin-runtime/tests/candida
 - It requires every one of the 750 captured inputs to match the capture row for row at depth 10: text, candidate type and n-best index.
 - It also requires the header totals and the fixed counts: 750 inputs and 4,572 rows.
 
-Run `just fetch-contract-data` first; a missing package fails the test.
+The test needs `just fetch-contract-data` to have run first; a missing package fails it.
 `docs/testing/README.md` describes the capture.
 
 **The frequency key is the pin's amplified scale, not the raw count.**
 RankKey-3 is `trunc(((1−λ)·(unigram+1)/total)·2²⁴)`, computed in `f32` with C evaluation order (λ = 0.312699).
 In it, `unigram` is the interpolation2 count and `+1` is the model20 item-unigram identity.
-`total` is the interpolation2 sum + 138,096 phrase-index items = 51,051,831 (`pinyin.cpp:1855-1866`; probe-verified over the whole index).
+`total` is the interpolation2 sum + 138,096 phrase-index items = 51,051,831 (`pinyin.cpp:1855-1866`).
 
 The truncation collapses near-ties into equal keys.
-On the amplified scale that the comparator compares, the capture before the #1764 reduction had 1,030,385 adjacent fully-tied pairs across 10,027 inputs (recorded evidence).
 The stable sort resolves them by the scan's per-window token-ascending flush (system facade before addon).
 That is the array order that `_append_items` (`pinyin.cpp:1769-1791`) lays down and that GLib's stable merge sort keeps.
 
@@ -85,10 +83,10 @@ That is the array order that `_append_items` (`pinyin.cpp:1769-1791`) lays down 
 These invariants hold in the current code:
 
 1. **The key set is the pin's matrix.**
-   The scan enumerates exactly the keys that the pinned matrix admits: the selected parse plus the frozen split tables.
-   A doubled (`ni''hao`) or leading (`'ni`) apostrophe run is not an exception: the parser and graph consume it as the pin does ([parser-spec.md](parser-spec.md#architect-correction-log), correction log 2026-08-21).
+   The scan enumerates exactly the keys that the pinned matrix admits: the selected parse plus the split tables.
+   A doubled (`ni''hao`) or leading (`'ni`) apostrophe run is not an exception: the parser and graph consume it as the pin does ([parser-spec.md correction log](parser-spec.md#correction-log)).
    Apostrophe-only input (`'`, `''`, `'''`) places no key.
-   The capture holds no candidates for it, and a key query on it aborts as the pin's does ([F-E-14](robustness-evidence.md#f-e-14--pinned-oracle-aborts-on-apostrophe-only-input)).
+   The capture holds no candidates for it, and a key query on it aborts as the pin's does (`a_key_query_on_an_apostrophe_only_parse_aborts` in `crates/oxpinyin-capi/src/parse.rs`).
 2. **One `f32` frequency key.**
    The amplified key of §8.2 is the one `f32` computation in the construction.
    `amplified_frequency` evaluates the C `float` chain in C order, and the unit test `amplified_frequency_pins_the_class_a_probe_values` holds its values.
@@ -115,7 +113,7 @@ Recorded cases include `liangbi` (两笔 before 量比) and `goug` (沟谷 befor
 
 **Class B — doubled apostrophe.**
 A run of consecutive apostrophes after a fully consumed group is one separator when the group after it consumes at least one byte (`pinyin_parser2.cpp:237-250`).
-So `ni''hao` reaches `你好` at rank 1, as the capture records.
+So `ni''hao` parses as `ni@0:2`, `hao@4:7` (`fixtures/w4/oracle-paths.txt:1781`) and reaches `你好` at rank 1.
 
 ### 8.5 What this contract does not cover
 
@@ -127,4 +125,4 @@ So `ni''hao` reaches `你好` at rank 1, as the capture records.
 - **Sentence rows** are the facade's prepend (item 3 of §8.1).
   Their contract is [sentence-surface.md](sentence-surface.md).
 
-STOP and report rather than inventing evidence.
+Evidence for a case outside this contract is never invented: the case is reported, and work on it needs the maintainer's approval ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).

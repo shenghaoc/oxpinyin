@@ -8,7 +8,7 @@
 //! The buffer has no length limit. The pin's full-pinyin parser stops at
 //! byte 32767 only because it keeps its steps in `gint16`s, a language
 //! artefact oxpinyin does not reproduce
-//! (`docs/findings/1501-gint16-input-cap.md`).
+//! (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
 //!
 //! Interactive typing exits exact mode — every accepted character
 //! mutation clears the chain — while the two replace seams manage it

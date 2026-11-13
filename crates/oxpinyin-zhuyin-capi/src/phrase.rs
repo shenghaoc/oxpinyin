@@ -53,7 +53,7 @@ pub extern "C" fn zhuyin_phrase_segment(
         // 074a2219 zhuyin.cpp:973: `g_return_val_if_fail(num_of_chars ==
         // ucs4_len, FALSE)` answers false and leaves the result as it was. Its
         // critical is not reproduced (2026-10-31 UTC ruling,
-        // docs/findings/1297-segment-critical.md).
+        // docs/findings/upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical).
         return false;
     };
     // SAFETY: `instance` is non-null and was produced by

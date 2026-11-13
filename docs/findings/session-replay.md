@@ -1,22 +1,18 @@
 # Session replay SPEC
 
-Date: 2026-08-09 · Status: **current reference**
+Status: **reference**
 
-The replay scenarios are authored, not captured, so they are not a compatibility contract ([frozen-SPEC ruling](compatibility-policy.md#frozen-specs)).
+The replay scenarios are authored, not captured, so they are not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 What binds is the pin behaviour that they check: every expected candidate is one that the pin emitted.
-The scenarios, the harness, the test names and the CI jobs are current reference and change with the code.
+The scenarios, the harness, the test names and the CI jobs are reference and change with the code.
 
 Session replay asserts the results of recorded input sequences through the session API.
 
 ## What this stands in for
 
-The foundation fixture plan reserved family **F-D** for "guess → choose → re-guess remainder", which feeds the engine API and the capi templates (recorded evidence; the plan is not in the repository).
-F-D has no capture; Phase 0 produced F-A and F-C only.
-
-So these scenarios are **authored**.
+Fixture family **F-D** ("guess → choose → re-guess remainder") has no capture, so these scenarios are **authored**.
 Their expectations are not authored.
 Every candidate asserted here is one that the pinned oracle emitted, taken from the candidate lists in `fixtures/foundation/f-a.txt` and limited to what the mini vocabulary can reach.
-The scenarios are oxpinyin's, and the expectations are the pin's.
 
 ## Harness
 
@@ -45,17 +41,15 @@ The test `recorded_candidate_scenarios_use_direct_operations` runs seven scenari
 | `xian` | offers `西安` first and `西岸` second |
 | `nih` | reaches `你好` through an initial-only key |
 | `chang'an` | the apostrophe boundary: `长安` |
-| `zhuan` | the registered F-E-12 trigger: `传` |
+| `zhuan` | the F-E-12 trigger: `传` |
 | `qqq` | offers itself back and does not offer `你好` |
 
-## Registered robustness evidence made executable
+## Robustness tests
 
-[robustness-evidence.md](robustness-evidence.md) registers F-E-12 against this lane, with the artifact that the register names.
-F-E-02 was registered here too, as the engine replay `f_e_02_candidate_replay`; it was retired with `Session::select`, and the register points F-E-02 at the C ABI choose.
+The test doc comments state each upstream defect.
 
 - **F-E-12**, `f_e_12_zhuan_session_replay`.
-  The register requires the full frontend-equivalent sequence, not a parse in isolation, before any session-level claim.
-  The test parses `zhuan`, takes a candidate, reads the retained text, resets, and continues on the same session.
+  The test runs the full frontend-equivalent sequence, not a parse in isolation: it parses `zhuan`, takes a candidate, reads the retained text, resets, and continues on the same session.
 
 A third test, `arbitrary_characters_never_panic`, appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
 It requires no panic and no error: the totality property at session level.
@@ -68,12 +62,3 @@ CI runs it on Linux, macOS and Windows:
 
 - the PR `test` job runs the workspace tests, this harness and the graph differential on Linux;
 - the nightly `test-windows` and `test-macos` jobs (`verify-nightly.yml`) run them on Windows and macOS.
-
-The CI extension is a recorded maintainer decision.
-The contributor rules list a CI policy edit among the changes that need an explicit ask.
-
-## Acceptance
-
-- Every scenario passes.
-- F-E-12 passes.
-- All of it passes on Linux, macOS and Windows.

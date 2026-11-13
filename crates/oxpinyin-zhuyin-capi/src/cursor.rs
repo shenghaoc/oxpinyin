@@ -118,7 +118,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
     // 65535 the positions wrap, as the pin's do (maintainer ruling
-    // 2026-11-01 UTC, `docs/findings/1501-guint16-key-positions.md`).
+    // 2026-11-01 UTC, `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
     KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
     KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     if !key_rest.is_null() {

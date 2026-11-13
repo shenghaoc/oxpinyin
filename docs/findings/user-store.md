@@ -1,9 +1,8 @@
 # libpinyin user store — behaviour characterization
 
-Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin and
-ibus-libpinyin 1.16.5 source** · Store: **oxpinyin reads and writes each
-backend's native libpinyin user files** (§11). The user-data values and
-semantics are libpinyin's, and so is the on-disk format.
+Status: **reference**. oxpinyin reads and writes each backend's native
+libpinyin user files (§11). The user-data values and semantics are
+libpinyin's, and so is the on-disk format.
 
 This finding records, with source file and line citations, the behaviour
 oxpinyin's user store reproduces. A user directory written by oxpinyin or
@@ -18,8 +17,6 @@ cited line).
 
 - libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt` is
   authoritative). Paths below beginning `src/` are relative to its root.
-  The line citations in §1–§10 were first read at 2.11.91 (`0c5e80e1`);
-  §2.3 and §11 cite `074a2219` directly.
 - Frontend: ibus-libpinyin pinned tag `1.16.5` (commit `2d2cdac0…`). Paths
   beginning `src/PY…` are relative to its root.
 - oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
@@ -178,7 +175,6 @@ unigram add and the facade-total increment on overflow, touches no bigram,
 and leaves the save gate unchanged. `observe_predicted(last, cur)` remains
 the bigram-row arm.
 
-
 Prediction ranking at the same pin reads the live `guint32` item counter
 and wrapped facade total. Prefix rows compute `(1 - lambda) * unigram /
 (float)total * 256 * 256 * 256` in `gfloat`
@@ -217,11 +213,6 @@ rows bypass this assert. A prediction containing a bigram row with zero
 total is the existing policy row 61 class (c): both plain and punctuation
 entry points answer `false`, keep the list empty, and emit exactly one
 `libpinyin` warning. It is an `assert`, live in the reference build.
-
-Source read from a clean tree at full pin
-`074a2219c90feaf962d0d24f034514033ece5f99`; cited source contents were
-verified against the pin's Git blobs (pinyin.cpp `f27f7cf776724ead8d55e14b4af390e790054a91`),
-and matched against the bdb oracle's source. Captured 2026-10-09 UTC.
 
 ---
 
@@ -348,7 +339,7 @@ the same files:
 - (d) the system-token unigram deltas, as the `.dbin` diff log of each
   `SYSTEM_FILE` library.
 
-**No format version (ruling, 2026-09-08).** libpinyin's user files carry
+**No format version (ruling).** libpinyin's user files carry
 no version. The drop-in contract is to match them, not to add guarantees
 that they lack. The backend's own file header stays the only stamp.
 
@@ -361,19 +352,15 @@ that they lack. The backend's own file header stays the only stamp.
   written. `pinyin_init` and `zhuyin_init` abort on it (register row 44).
 - Every other file error degrades that file alone.
 
-Do not reintroduce a version row without a fresh ask.
+A version row is not reintroduced without a fresh ask.
 
 ---
 
 ## 5. Merge / precedence with system data at decode time
 
-> **Source note.** The user/system bigram merge lives inside the decode lookup
-> path (`src/lookup/pinyin_lookup2.cpp`), which is decode-library internals.
-> Characterizing the user store's *merge and precedence* required reading it;
-> The source policy permits reading upstream C++ as the reproduction
-> target. The facts below are limited to *where and how user data combines
-> with system data*; the λ scoring formula is defined in
-> [`scoring-spec.md`](scoring-spec.md).
+The facts below are limited to *where and how user data combines with
+system data*; the λ scoring formula and its value are defined in
+[`scoring-spec.md`](scoring-spec.md).
 
 **SHOWN** (`src/lookup/pinyin_lookup2.cpp`, `src/storage/ngram.cpp`):
 
@@ -514,8 +501,8 @@ export iterators all reach the store.
 
 `import_interpolation` /
 `export_interpolation` live in `utils/storage/` (build/training tools) and
-touch the **system** interpolation model, not the user store — confirmed by
-grep: no reference in `src/pinyin.cpp` or the runtime library. They are
+touch the **system** interpolation model, not the user store: neither
+`src/pinyin.cpp` nor the runtime library references them. They are
 characterized under [`training-algorithm.md`](training-algorithm.md) and
 are not part of the user store.
 
@@ -539,13 +526,9 @@ Each yields `(phrase, pinyin, count)` triples. The frontend's
 `exportUserPhrase` / `exportBigramPhrase` (`src/PYLibPinyin.cc:280-321`)
 demonstrate the intended use.
 
-**Comparison.** Drive the pin and oxpinyin through an identical C-ABI
-sequence — `pinyin_init` → parse → `pinyin_choose_candidate` /
-`pinyin_train` / `pinyin_remember_user_input` → `pinyin_save` — then compare
-the two exported `(phrase, pinyin, count)` **sets**. Because the §2
-arithmetic is exact integer counting, this is an **exact-equality**
-comparison, not a tolerance. Unit golden vectors derived by hand from §2
-cover the update arithmetic. Because oxpinyin writes the pin's own files,
+The §2 arithmetic is exact integer counting, so after an identical C-ABI
+sequence the pin's and oxpinyin's exported `(phrase, pinyin, count)` sets
+are equal, with no tolerance. Because oxpinyin writes the pin's own files,
 the files themselves are a second comparison surface (§11).
 
 ---
@@ -575,20 +558,7 @@ the files themselves are a second comparison surface (§11).
 
 ---
 
-## Appendix — settled INFERRED items
-
-- System-token unigram increments persist as each `SYSTEM_FILE` library's
-  `.dbin` diff log, as upstream's do (§4, §11).
-- Upstream has no flush-on-shutdown (§6); oxpinyin reproduces the call
-  pattern and the loss window.
-- The exact numeric value of `lambda` is intentionally not restated here; it is
-  defined in [`scoring-spec.md`](scoring-spec.md).
-  §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system
-  is an additive pre-merge), which is SHOWN.
-
----
-
-## 11. Implementation record — the store persists in libpinyin's own files (2026-09-09)
+## 11. The store persists in libpinyin's own files
 
 The user directory holds the pin's own file set on every backend. A
 same-backend pair (oxpinyin and libpinyin on Berkeley DB, Kyoto Cabinet or
@@ -764,33 +734,47 @@ Semantics this preserves:
   keeps it relative, and the DBM sidecar cleanup unlinks its two names by
   path instead of walking the directory, which an empty path cannot open.
 
-Verification: unit goldens and round-trips at every layer (codecs,
-persistence, bridge, end-to-end), and the handoff tests over the
-pin-written profiles in each C crate's `testdata/pin-profiles.txt`
-([contract references](../runbooks/contract-references.md)). Recorded
-evidence (2026-09-13) for the round-trip claim: the pin trained a profile
-on the inputs `nihao nisha`, oxpinyin opened it through the production
-`Runtime` and saved it back in place, and the pin then rendered the
-original and the rewritten profile.
+The handoff tests read the pin-written profiles in each C crate's
+`testdata/pin-profiles.txt`
+([contract references](../runbooks/contract-references.md)).
 
-| pair | Phase C — the pin re-renders | Phase D — the pin reads |
-|---|---|---|
-| oxpinyin ↔ libpinyin, **tkrzw** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
-| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
-| oxpinyin ↔ libpinyin, **Berkeley DB** | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+### Pin facts for a profile round trip
 
-The three rows the pin renders are `P 你好 ni'hao 5`, `P 你沙 ni'sha 5`
-and `B 你好 ni'hao 138`. The driver ran ibus's `remember-every-input`
-path (`pinyin_get_sentence` → `pinyin_remember_user_input`) after each
-train, so `user.bin` and the two index trees carried real content.
+A driver that trains a profile on the pin must respect these facts:
 
-Rule for harnesses on this surface: diff one renderer over one dataset,
-or diff the raw containers. Never assert render-against-render across two
-trainers or two renderers that carry registered divergences (the bigram
+- Candidate 0 is an `NBEST_MATCH_CANDIDATE` only once `m_nbest_results` is
+  non-empty, and only `pinyin_guess_sentence` (`pinyin.cpp:1372`) fills it
+  through `_prepend_sentence_candidates` (`:1934`). A `LONGER_CANDIDATE`
+  trains unigram only and installs no constraint (`pinyin.cpp:2523`). An
+  n-best selection at index 0 installs no `CONSTRAINT_ONESTEP`, so
+  `train_result3` stores no user-bigram gram.
+- `pinyin_parse_more_full_pinyins` (`pinyin.cpp:1497-1525`) clears neither
+  the matrix state nor `m_nbest_results` nor `m_constraints`. Only
+  `pinyin_reset` (`pinyin.cpp:2693`) does.
+- A driver follows ibus's order (`PYPPhoneticEditor.cc:341,355,494-511`):
+  parse, guess the sentence, list candidates, select `NORMAL_CANDIDATE`s
+  at the lookup cursor, train, remember and reset. ibus does not train an
+  n-best selection at index 0
+  (`PYPLibPinyinCandidates.cc:116`). ibus sorts with
+  `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`
+  (`PYPConfig.cc:151`).
+- With sort option `0`, the first `NORMAL_CANDIDATE` is an arbitrary rare
+  character (`疒` for `nihao`). Its grams crash the pin's bigram-export
+  iterator on Berkeley DB. This is the class (b) defect of
+  compatibility-policy row 1. The `phrases` export of the same profile
+  walks, and tkrzw and Kyoto Cabinet export the same rows. With ibus's sort
+  option the rows export on all three backends.
+- To give `user.bin` and the two index trees real content, a harness runs
+  ibus's `remember-every-input` path (`pinyin_get_sentence` →
+  `pinyin_remember_user_input`) after each train.
+
+Rule for harnesses on this surface: a harness diffs one renderer over one
+dataset, or diffs the raw containers. It never asserts render-against-render
+across two trainers or two renderers that carry registered divergences (the bigram
 export's stale pinyin buffer, policy row 1; n-best training, row 11).
-Never verify a per-backend claim on one backend.
+A per-backend claim is never verified on one backend.
 
-### NULL directory sessions (2026-10-08 UTC, #642)
+### NULL directory sessions
 
 NULL retains an independent in-memory user index and native bigram store.
 It has no directory, unlike the non-NULL empty path (cwd at each operation).

@@ -113,9 +113,11 @@ fn recorded_candidate_scenarios_use_direct_operations() {
 
 /// F-E-12 — the `zhuan` assertion, at session level.
 ///
-/// `robustness-evidence.md` asks for `f_e_12_zhuan_session_replay`: the full
-/// frontend-equivalent sequence rather than a parse in isolation. Parse it,
-/// take a candidate, read the retained text, reset, and keep going.
+/// The upstream defect is an `assert()` on the user input `zhuan`
+/// (ibus-libpinyin #542). Parser totality alone does not cover the
+/// frontend/session path, so this runs the full frontend-equivalent sequence
+/// rather than a parse in isolation: parse it, take a candidate, read the
+/// retained text, reset, and keep going.
 #[test]
 fn f_e_12_zhuan_session_replay() {
     let mut session = session();

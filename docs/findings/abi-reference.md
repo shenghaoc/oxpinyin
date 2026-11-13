@@ -1,6 +1,6 @@
 # Reference — the exported libpinyin ABI
 
-Status: living reference.
+Status: **register**
 
 ## Scope
 
@@ -9,14 +9,10 @@ This reference covers every symbol that the drop-in library exports:
 - the **79 `pinyin_*` symbols of `libpinyin.ver`**;
 - for the libzhuyin drop-in, the 52 `zhuyin_*` symbols of `libzhuyin.ver`.
 
-Each set is the same set that the pinned libpinyin exports (verified
-identical 2026-09-17 against pin `074a2219`, `src/libpinyin.ver` blob
-`964d96e0`). Which consumer calls what does not scope, count or bound
+Each set is the same set that the pinned libpinyin exports (pin
+`074a2219`, `src/libpinyin.ver` blob `964d96e0`). Which consumer calls what does not scope, count or bound
 anything here. Named consumers' call sites appear only as reachability
-evidence for specific behaviours. The E2E probe obligation over this set is
-`docs/findings/probe-coverage-abi.md`. The compatibility rule is the E2E
-I/O compatibility rule in
-[`compatibility-policy.md`](compatibility-policy.md#the-e2e-io-compatibility-rule).
+evidence for specific behaviours. The [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule) applies to this entire set.
 
 ## Source identity
 
@@ -34,7 +30,7 @@ The signatures come from `libpinyin/src/pinyin.h`. This section is the
 prose form. The machine-readable form is
 `crates/oxpinyin-capi/libpinyin.alloc` (and
 `crates/oxpinyin-zhuyin-capi/libzhuyin.alloc`). `just abi alloc-pairing`
-checks it against the frozen header and against the library's actual
+checks it against the pinned header and against the library's actual
 behaviour under LeakSanitizer (see `abi-allocator-pairing.md`). The
 vocabulary below is the register's, one class per line there. The
 ownership classes are:
@@ -633,17 +629,19 @@ incomplete-pinyin flag.
 - Bopomofo path (`setChewingOptions`): `USE_TONE` (the resplit/divided-table
   flags are pinyin-only)
 
-**Dynamic adjustment (configurable):**
-- `DYNAMIC_ADJUST`: on by default. The user can toggle it with the
-  GSettings key `dynamic-adjust`. Because it defaults on,
-  `readDefaultValues` sets it, so it is part of both default words below.
+**Dynamic adjustment (masked out):**
+- `DYNAMIC_ADJUST`: the GSettings key `dynamic-adjust` defaults to true, and
+  `readDefaultValues` sets the bit in `m_option` (`src/PYPConfig.cc:346-353`).
+  `option()` returns `m_option & m_option_mask` (`src/PYConfig.h:56`), and the mask
+  holds only `PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL` plus the
+  fuzzy and correction bits (`src/PYPConfig.cc:145`), so the bit never reaches
+  libpinyin ([dynamic-adjust](dynamic-adjust.md)).
 
-Consumer default formula (pinyin):
+Consumer default formula (pinyin), at ibus-libpinyin `2d2cdac0`:
 ```
 PINYIN_DEFAULT_OPTION =
     PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL
-    | DYNAMIC_ADJUST | USE_RESPLIT_TABLE | USE_DIVIDED_TABLE
-final_options = user_toggled_flags | PINYIN_DEFAULT_OPTION
+final_options = (m_option & m_option_mask) | USE_RESPLIT_TABLE | USE_DIVIDED_TABLE
 ```
 
 (Bopomofo substitutes `USE_TONE` for the resplit/divided-table flags and
@@ -671,9 +669,22 @@ Consumer presets via GSettings `sort-candidate-option` (default `1`):
 | 1 (default) | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` (0x1c) |
 | 2 | preset 1 plus `SORT_WITHOUT_SENTENCE_CANDIDATE \| SORT_WITHOUT_LONGER_CANDIDATE` (0x1f) |
 
-Note that the consumer preset 1 (`0x1c`) and the header composite
+The consumer preset 1 (`0x1c`) and the header composite
 `SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY` (`0x1e`) are
 different words. The composite includes `SORT_WITHOUT_LONGER_CANDIDATE`.
+
+Consumer reachability of the sort word, in the pinned consumers:
+
+- ibus-libpinyin 1.16.5's presets are 0x14, 0x1c and 0x1f
+  (`PYPConfig.cc:225-230`), with 0x1c the default (`:151`). Presets 0 and
+  1 both leave `0x2` clear, so default-settings ibus users see LONGER rows,
+  and ibus maps them (`CANDIDATE_LONGER`/`CANDIDATE_LONGER_USER`,
+  `PYPLibPinyinCandidates.cc:56-62`).
+- fcitx-libpinyin 0.5.4 passes 0x16/0x1e (`enummap.cpp:159-166`). Both
+  words suppress longer rows.
+- fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate
+  repository). Against libpinyin that word yields an unsorted list with
+  sentence and longer rows.
 
 ### Double-pinyin schemes
 
@@ -711,9 +722,7 @@ not change which libpinyin symbols are called.
 
 ## 4. Sentence / n-best path
 
-**Finding: YES, ibus-libpinyin fully exercises the sentence/n-best path.**
-
-The live n-best path is `PYPLibPinyinCandidates.cc:108–125`
+ibus-libpinyin exercises the whole sentence/n-best path. The live n-best path is `PYPLibPinyinCandidates.cc:108–125`
 (`selectCandidate`). The `PYPPhoneticEditor.cc:467–514`
 `selectCandidate`/`selectCandidateInPage` block is inside `#if 0` and is
 not a live caller.
@@ -776,19 +785,20 @@ The consumer uses `assert()` in a few places:
 
 ### Implications for oxpinyin-capi
 
-A Rust implementation should:
-1. Use idiomatic Rust error handling. Internal APIs need not all return
-   `Result` (constitution §4, 2026-10-29 UTC).
-2. Follow the pin's observable failure behaviour. Permit a panic only for
-   a corresponding pin assertion or abort, subject to existing class (b)
-   rulings. Where the pin continues or returns an error, introduce no
-   panic. Where the pin asserts or aborts, abort with
+A Rust implementation is expected to follow four rules:
+1. It uses idiomatic Rust error handling. Internal APIs need not all return
+   `Result` (constitution §4).
+2. It follows the pin's observable failure behaviour. A panic is permitted
+   only for a corresponding pin assertion or abort, subject to existing
+   class (b) rulings. Where the pin continues or returns an error, no panic
+   is introduced. Where the pin asserts or aborts, the implementation aborts
+   with
    `std::process::abort()` ([source policy](../source-policy.md#compatibility-decision-order)).
-3. Treat the consumer's unchecked calls as implicit contracts. These
+3. It treats the consumer's unchecked calls as implicit contracts. These
    functions must succeed for in-range inputs with valid state. An
    implementation that returns errors in these cases breaks the consumer's
    expectations.
-4. Treat the consumer's `assert()` sites as the most important behavioural
+4. It treats the consumer's `assert()` sites as the most important behavioural
    contracts to keep. They are the places where unexpected state would
    surface as crashes.
 
@@ -800,9 +810,8 @@ The fork includes `<pinyin.h>` from C++ translation units. The generated
 header therefore carries `#ifdef __cplusplus` / `extern "C"` guards
 (cbindgen `cpp_compat`). It also carries exactly the aliases and constants
 that the fork's live TUs reference. The values are identical to the
-values in the headers of the pin, `074a2219`. The upstream citations below
-were recorded against the pin at freeze, libpinyin 2.11.91 (`0c5e80e1`).
-Each cited path and line number is the same at `074a2219`.
+values in the headers of the pin, `074a2219`, and the upstream citations
+below are paths and lines at `074a2219`.
 
 ### Compatibility aliases
 
@@ -871,9 +880,8 @@ Every exported `pinyin_*` symbol is in scope and implemented live, with
 no placeholder bodies. The shipped build (`--features shipped`) compiles
 out the `fuzz-api` helpers only; no build exports a test hook.
 
-Before freeze, every C-ABI symbol requires:
+Every C-ABI symbol requires:
 
-- a dedicated task;
 - a `// SAFETY:` argument for each unsafe block;
 - NULL/invalid-input coverage;
-- an oracle-backed behavioural test.
+- an oracle-backed behavioural test under the [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule).

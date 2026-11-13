@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 # The tkrzw and Kyoto Cabinet backends' Rust/C++ bridges (Rust/C++
-# interoperability ruling, 2026-11-02): generated glue over the pin's
-# concrete classes.
+# interoperability ruling, docs/findings/compatibility-policy.md#rust-cpp-interoperability):
+# generated glue over the pin's concrete classes.
 cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
 # The frozen rows digest of the pin-written Berkeley DB tests (tests/bdb_libpinyin_files.rs),

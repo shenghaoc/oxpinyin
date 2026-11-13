@@ -2,7 +2,8 @@
 //! out-parameters and the files a call writes. Each test asserts only the
 //! deciding values. An abort test asserts the abort status alone: the child's
 //! only stderr is the first init's `open …/user.conf failed.` line
-//! (docs/findings/pin-abort-assert-line.md: oxpinyin writes no assertion line).
+//! (docs/findings/upstream-divergences.md#reproduced-library-aborts-write-no-assertion-line:
+//! oxpinyin writes no assertion line).
 
 use std::ffi::c_char;
 use std::path::Path;
@@ -1585,7 +1586,7 @@ fn an_absolute_user_file_lands_under_the_user_directory() {
 
 /// Training over an unpartitioned sentence-start gram whose items are not
 /// sorted answers true where the pin aborts
-/// (docs/findings/1297-gram-partition-training.md).
+/// (docs/findings/upstream-divergences.md#stored-gram-partitions-training).
 #[test]
 fn training_over_an_unsorted_start_gram_answers_true() {
     let user = TempUserDir::new("train-unsorted-gram");

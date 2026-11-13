@@ -25,7 +25,7 @@ package. `just fetch-contract-data` runs before a full test run; a missing packa
 fails the test. The capture has no regenerator yet
 ([next pin capture](../runbooks/goldens-and-pins.md#the-next-pin-capture)).
 The construction that it checks is
-[candidate-construction §8](../findings/candidate-construction.md#8-the-frozen-construction-contract).
+[candidate-construction §8](../findings/candidate-construction.md#8-the-construction-contract).
 
 A change to the capture's inputs is a deliberate, reviewed act. It moves the `candidate_surface`
 counts and needs a new pin capture, so it goes in its own commit with the edited capture and
