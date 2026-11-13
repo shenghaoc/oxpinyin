@@ -1,10 +1,9 @@
-# Fixtures in this repository are frozen artefacts, and three separate gates
-# depend on their exact bytes: the parity corpus is compared with its digests
-# byte for byte, capture records are stamped with a SHA-256, and a golden line
-# is scanned for stray control bytes.
+# Fixtures in this repository are byte-exact artefacts, and two gates depend
+# on their exact bytes: capture records are stamped with a SHA-256, and a
+# golden line is scanned for stray control bytes.
 #
-# Git on Windows rewrites LF to CRLF on checkout by default, which breaks all
-# three — a committed "a" arrives as "a\r". Normalise to LF everywhere, and
+# Git on Windows rewrites LF to CRLF on checkout by default, which breaks
+# both — a committed "a" arrives as "a\r". Normalise to LF everywhere, and
 # mark the byte-exact data as not text at all so nothing can translate it.
 * text=auto eol=lf
 

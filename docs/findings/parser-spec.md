@@ -199,7 +199,7 @@ The constitution permits an edit to a frozen SPEC only with an explicit ask; the
 
 **Corrected invariant.** Partial segments may appear at any position, more than once, interleaved with complete segments.
 
-**Evidence.** W2-T3 live run over the 10,465-input parity corpus against the pin-built oracle at flags `0x18a`.
+**Evidence.** W2-T3 live run over 10,465 inputs against the pin-built oracle at flags `0x18a`.
 Of 491 divergences, **483 (98.4%)** share this single root cause.
 Worked example, input `yingchon`:
 

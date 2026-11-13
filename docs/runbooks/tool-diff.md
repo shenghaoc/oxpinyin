@@ -12,7 +12,7 @@ cargo test --locked -p oxpinyin-utils
 cargo nextest list --locked -p oxpinyin-utils
 ```
 
-The default cell is tkrzw. To select a peer, use `--no-default-features --features bdb` or `--no-default-features --features kyotocabinet`.
+The default cell is tkrzw. `--no-default-features --features bdb` or `--no-default-features --features kyotocabinet` selects a peer.
 These tests need neither the pin nor downloaded model data. They reuse the committed `fixtures/w3/<backend>` and other shared inputs.
 The frozen cases run on Unix; the portable utility tests also run on Windows.
 
@@ -21,7 +21,7 @@ The frozen cases run on Unix; the portable utility tests also run on Windows.
 Each original case ID is one test. Its name is the ID with hyphens replaced by underscores.
 Cases with the same shape are `#[case::<name>]` arguments of one `#[rstest]` function.
 Their nextest names are `frozen::<utility>::captured_cases::case_<number>_<name>`.
-Accept the numeric prefixes of rstest, including zero padding for larger groups.
+The numeric prefixes of rstest, including zero padding for larger groups, are accepted.
 The four unique save-refusal scenarios stay plain `#[test]` functions,
 named `frozen::<utility>::<name>`.
 Each test is in its existing integration suite:
@@ -106,6 +106,5 @@ Policy-accepted cases cite their records, which state the pin's result and its s
 
 ## Pin bumps and recapture
 
-Recapture is a separate, explicit maintenance step outside the test binaries.
-No recapture tooling exists yet. A pin bump must provide and document that external step. The step must include repeat-run stability checks and a review of architecture, OS and policy variants.
-Do not regenerate expected values from oxpinyin test output.
+Recapture is a separate step outside the test binaries; [the oracle pin](goldens-and-pins.md#3-the-oracle-pin) gives its conditions.
+Expected values are never regenerated from oxpinyin test output.

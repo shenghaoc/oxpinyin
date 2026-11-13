@@ -1,7 +1,6 @@
 #![no_main]
-//! Arbitrary mutation interleavings over the user store — the second
-//! half of the G5 gap in the testing-strategy assessment
-//! (`docs/testing/upstream-test-coverage.md` §2): no target mutated `UserStore`, so the
+//! Arbitrary mutation interleavings over the user store
+//! (`docs/testing/upstream-test-coverage.md`, "Fuzz harnesses"): no target mutated `UserStore`, so the
 //! add/remove/train/mask algebra had no hostile-sequence evidence.
 //!
 //! Each input drives a fresh libpinyin session over a fresh user

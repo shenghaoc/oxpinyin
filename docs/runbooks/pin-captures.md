@@ -4,11 +4,11 @@ This procedure stages proposed pin observations for review.
 `tools/oracle/pin_capture.py` does the staging. One capture session
 takes every observation in its `OBSERVATIONS`. The first segment of an observation ID is its family.
 
-| families | what they hold | become |
+| families | what they hold | frozen in |
 | --- | --- | --- |
-| `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | the waiting C-API tests in the two capi crates |
-| `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import` | the behaviours that only the removed live C drivers checked (recorded evidence: surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites) | C-API tests with literal expectations in the existing suites of the two capi crates |
-| `utility` | the utility runs that [the next pin capture](goldens-and-pins.md#the-next-pin-capture) lists, on the bdb, kc and tkrzw cells; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen cases that table names; for C1, frozen-literal versions of the two pin-written Berkeley DB tests that 3ff93c6 removed from `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
+| `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | C-API tests in the two capi crates |
+| `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
+| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; for C1, the two pin-written Berkeley DB tests in `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
 
 The crates that own the behaviour test the apostrophe inputs natively.
 `crates/oxpinyin-capi/src/parse.rs` and `crates/oxpinyin-zhuyin-capi/src/parse.rs` hold the
@@ -19,8 +19,15 @@ parse and parsed length of `'`, `''` and `'''`:
 - the tests need no pin, no container, no Python and no environment variable, and read no file;
 - they read no database, so they run on every cell.
 
-Two groups of those tests wait for the capture: the abort of a key query on an apostrophe-only
+Two groups of those tests hold observations of the capture: the abort of a key query on an apostrophe-only
 parse, and the key walk of `ni'`, `ni'!` and `ni'i`.
+
+`fixtures/w4/oracle-paths.txt` excludes all six inputs. The `graph_paths` tests of
+`oxpinyin-core` hold native regressions for them:
+
+- apostrophe-only inputs consume every byte without key edges;
+- the other three inputs consume three bytes and admit `ni@0:2:complete` (the pin segments are
+  `ni@0:2:complete,<missing-pinyin>@2`).
 
 ## Observation kinds
 
@@ -49,7 +56,7 @@ record:
 - for each new or changed DBM file, instead of a SHA-256, its sorted `[key hex, value hex]` rows
   and their `rows_digest`, unmasked, as `common::rows` reads them (a tree first, then a hash; BDB
   through `db5.3_dump`). The container bytes are not the same on two runs: tkrzw keeps a clock in
-  bytes 48–56, and Berkeley DB containers are not byte-stable (#358). No frozen case that this capture
+  bytes 48–56, and Berkeley DB containers are not byte-stable. No frozen case that this capture
   feeds records a DBM file by its bytes;
 - for the bigram runs, the `SingleGram` row of each named token decoded as its total and successor
   counts, or `null` when the file has no row for it.
@@ -67,25 +74,20 @@ The data sequence stages the end, stdout and stderr of each program,
 with the temporary directory of the subset written as `<table-dir>`. It also stages the rows and `rows_digest`
 of `bigram.db`, `phrase_index.bin` and `pinyin_index.bin`, never their container bytes.
 `fixtures/w3/db/` holds what the ports of `oxpinyin-utils` wrote (`fixtures/w3/README.md`), so these
-rows are the pin-written evidence for it. After the import, compare them with
-`fixtures/w3/db/` through the same reader:
-
-- If they match, the two tests return as frozen-literal
-  tests on the committed files, citing the pin lines, without `#[ignore]`.
-- If they do not match, stop and report the first rows that differ.
+rows are the pin-written evidence for it. The two tests in `bdb_libpinyin_files.rs` hold them as
+literals and compare them with `fixtures/w3/db/` through the same reader.
+If a recapture gives other rows, the work stops and the report gives the first rows that differ.
 
 ## Capture
 
-The capture runs on the pin only. It is a STOP under the
-[approval conditions](../../CONTRIBUTING.md#approval-conditions): do it only when the maintainer
+The capture runs on the pin only. It needs the maintainer's approval under the
+[approval conditions](../../CONTRIBUTING.md#approval-conditions): it runs only when the maintainer
 asks for it.
 
 1. Provision the three cells with their build trees under a fresh cache root `ROOT` with
-   `just provision-oracle`. (`provision oracle` builds a tree only when it regenerates the data.)
-   The recipe runs `provision oracle` in the performance image through the selected runtime
-   ([container runtimes](setup.md#container-runtimes)). It writes into the provisioning cache that
-   `just provision` also uses: `CACHE`, the `pin-<commit>` entry of `ROOT`. The cells are
-   `oracle/<cell>` there, and model20 is `model20`:
+   [`just provision-oracle`](oracle.md#from-any-host). The cache root must be fresh because
+   `provision oracle` builds a tree only when it regenerates the data. `CACHE` below is the
+   `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`:
 
    ```bash
    OXPINYIN_CACHE=ROOT just provision-oracle
@@ -117,12 +119,10 @@ asks for it.
    OXPINYIN_CACHE=ROOT just capture-pin 2
    ```
 
-   The runtime is the first installed runtime of the platform ([container runtimes](setup.md#container-runtimes)).
-   The run prints it on its `Runtime:` line. To name another runtime, set `OXPINYIN_CAPTURE_RUNTIME`, else
-   `OXPINYIN_CONTAINER`. On Windows, run the commands from Developer PowerShell and set
-   the variables first (`$env:OXPINYIN_CACHE = 'ROOT'`, then `just capture-pin 1`).
-   `wslc` is the default there, and the [WSL container limits](setup.md#native-windows-and-wsl-containers)
-   apply.
+   [Container runtimes](setup.md#container-runtimes) gives the runtime choice and
+   `OXPINYIN_CAPTURE_RUNTIME`. On Windows, run the commands from Developer PowerShell and set
+   the variables first (`$env:OXPINYIN_CACHE = 'ROOT'`, then `just capture-pin 1`);
+   the [WSL container limits](setup.md#native-windows-and-wsl-containers) apply.
 
    Each run refuses the capture unless all these conditions hold:
 
@@ -150,26 +150,15 @@ asks for it.
    diff target/pin-observations/1/observations.json target/pin-observations/2/observations.json
    ```
 
-4. These are proposed observations. Before any test uses them, show them next to the pin source lines, as a STOP
+4. These are proposed observations. Before any test uses them, show them next to the pin source lines for the maintainer's approval
    ([goldens and pins](goldens-and-pins.md)). The approved values then go
    into the Rust tests as literals, and each value cites its run and source line. No test reads the
    staging directory.
 
 The capture is done when the approved values are in the Rust tests.
 
-`tools/oracle/pin_capture.test.py` holds the refusals:
-
-- a prefix that `prefix_ok` rejects;
-- a loaded libpinyin or libzhuyin that differs from the record of the prefix;
-- other data;
-- a capture without a provision cache;
-- a data sequence without a verified model20 extraction;
-- a utility cell whose prefix `prefix_ok` rejects;
-- a build tree of another commit, or a build tree whose library differs from the record of the prefix;
-- a utility that is not a built executable;
-- a capture that would write outside its staging directory.
-
-It also checks what a utility run
+`tools/oracle/pin_capture.test.py` tests each refusal of step 2, a capture without a provision
+cache and a capture that would write outside its staging directory. It also checks what a utility run
 stages, and that the run writes only inside its private copy.
 
-To add an observation, add it to `OBSERVATIONS` in `pin_capture.py`.
+A new observation goes in `OBSERVATIONS` in `pin_capture.py`.

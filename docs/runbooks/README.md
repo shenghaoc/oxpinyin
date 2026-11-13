@@ -18,6 +18,3 @@ The findings that each page links give the reasons for the procedure.
 | [`goldens-and-pins.md`](goldens-and-pins.md) | refresh a committed golden, move the oracle pin, or re-freeze a pinned number |
 | [`release.md`](release.md) | cut a release, and see what the packaging pipeline gates |
 | [`tool-diff.md`](tool-diff.md) | run and extend the frozen compatibility cases of the pin's standalone utilities |
-
-The [contributor procedures](../../CONTRIBUTING.md) give the approval conditions, frozen SPECs and rebases.
-The [compatibility policy](../findings/compatibility-policy.md) defines the permitted divergences.

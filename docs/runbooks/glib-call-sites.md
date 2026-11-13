@@ -8,24 +8,24 @@ pin, so it changes only when the pin, the generator or the family table changes.
 ## Tools
 
 The audit runs natively on macOS. The shebang of the script pins the clang bindings, and
-`--print-llvm-major` prints the matching LLVM major. Install these tools from Homebrew:
+`--print-llvm-major` prints the matching LLVM major. These tools come from Homebrew:
 
 ```bash
 llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
 brew install "llvm@${llvm_major}" bear glib gettext autoconf automake libtool tkrzw kyoto-cabinet berkeley-db@5
 ```
 
-Use the `llvm@<major>` libclang that matches the script's pinned bindings. `berkeley-db@5` is the major
+The libclang is the `llvm@<major>` one that matches the script's pinned bindings. `berkeley-db@5` is the major
 version that the configure of libpinyin asks for. The recipe checks for each tool and names any
 tool that is missing. It installs nothing itself.
 
 On Linux, the same recipe needs `autoconf automake libtool bear g++ make pkg-config`,
 `libclang-<major>-dev`, and the development packages of GLib, Berkeley DB, Kyoto Cabinet
-and Tkrzw. Use the Debian testing package for the major that the command above prints.
+and Tkrzw. The libclang package is the Debian testing package for the major that the command above prints.
 
 ## Run
 
-You need a clean checkout of the pin. Then run:
+The run needs a clean checkout of the pin:
 
 ```bash
 just audit-glib-call-sites <pin-checkout>
@@ -76,22 +76,17 @@ instantiated. A member of a template therefore matches on its qualified name and
 without template arguments.
 
 On macOS, the second build rewrites `src/libpinyin.exp` and `src/libzhuyin.exp` from the
-`.ver` version scripts. At the pin, `libpinyin.exp` omits five exports that `libpinyin.ver` has:
-`pinyin_begin_get_bigram_phrases`, `pinyin_bigram_iterator_get_next_phrase`,
-`pinyin_bigram_iterator_has_next_phrase`, `pinyin_end_get_bigram_phrases` and
-`pinyin_guess_predicted_candidates_with_punctuations`. The version script is the ABI, so the links of both
-platforms start from the same exports.
+`.ver` version scripts, so the links of both platforms start from the same exports
+([the pin's `.exp` files](../findings/glib-libc-inventory.md#g4-and-g9--containers-allocation-and-the-abi)).
 
 ## Result to check
 
 The run prints the sites that the linker cannot place. These are functions in the map of no link, kept or
-removed, usually an inline function that nothing calls. They render as `none`. Compare the
-list with the [inventory](../findings/glib-libc-inventory.md#reachability-and-negative-coverage).
+removed, usually an inline function that nothing calls. They render as `none`. The
+list is compared with the [inventory](../findings/glib-libc-inventory.md#reachability-and-negative-coverage).
 
-After a generator or table change, also run the recipe once on Linux and compare the two
-lists row by row. A difference is a finding to record, not a reason to require Linux.
+After a generator or table change, the recipe also runs once on Linux and the two
+lists are compared row by row. A difference is a finding to record, not a reason to require Linux.
 
-`just test-tools` runs the merge and render tests. The end-to-end test is
-defined on Linux and macOS. The Linux harness job installs Clang, libclang and
-GNU ld. The macOS nightly job installs the Homebrew LLVM and GLib. Both jobs require
-the test.
+`just test-tools` runs the merge and render tests. The end-to-end test runs on Linux and macOS,
+and both the Linux harness job and the macOS nightly job require it.

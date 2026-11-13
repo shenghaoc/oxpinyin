@@ -1,6 +1,6 @@
 # Contract references
 
-This page describes the frozen expectations of the C-boundary tests, the pin-bump rule and the local cross-open check.
+This page describes the frozen expectations of the C-boundary tests and the local cross-open check.
 
 The C-boundary tests are ordinary Rust tests in the `src` test modules of
 `crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`:
@@ -10,13 +10,11 @@ The C-boundary tests are ordinary Rust tests in the `src` test modules of
 
 Their expected values are the frozen observations of the pin, inline in each test. The tests never run the pin.
 `just fetch-contract-data` supplies the pinned system data for the tkrzw tests.
+`cargo test -p oxpinyin-capi --lib` and `cargo test -p oxpinyin-zhuyin-capi --lib` run them.
 In each crate, `testdata/pin-profiles.txt` holds the two pin-written profiles that the
 handoff tests of that crate read.
 
-At a pin bump, derive a changed contract expectation from the source diff of the pin.
-Use a `pin_capture.py` observation only where the source does not settle
-the result. `pin_capture.py` is the only capture tool; its procedure is
-[pin-captures.md](pin-captures.md).
+An expectation changes at a pin bump under [the oracle pin](goldens-and-pins.md#3-the-oracle-pin).
 
 ## Reverse cross-open (local only)
 
@@ -43,5 +41,5 @@ bytes outside the timestamp.
 The issue1114 handoff cases also read tkrzw HashDBM bytes, so they run only on
 the tkrzw cell. The save-929 cases run on every supported cell.
 
-Run the handoff check after a change to a persistence writer, to serialisation or
+The handoff check runs after a change to a persistence writer, to serialisation or
 to a database format. No workflow and no just recipe calls the command.
