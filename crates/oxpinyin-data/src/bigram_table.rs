@@ -15,10 +15,8 @@
 //! See `docs/findings/data-formats.md` §6
 //! and `ngram_tkrzwdb.cpp`.
 
-use std::cell::OnceCell;
 use std::path::Path;
 
-use oxpinyin_core::SharedGram;
 use oxpinyin_store::{DefaultStore, RawReadStore};
 
 use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
@@ -34,42 +32,12 @@ use crate::table::TableError;
 
 // ── BigramTable ──────────────────────────────────────────────────
 
-/// `sentence_start` (`novel_types.h:122` at the pin `074a2219`): the
-/// predecessor every guess starts from (`pinyin.cpp:1376-1377`).
-const SENTENCE_START: u32 = 1;
-
 /// A lazy, read-only view over a bigram DBM.
 ///
 /// Does not materialize the entire database at open time. Each
-/// `load_successors` call is a single DBM `get_raw`, except for
-/// `sentence_start`, whose value is read once ([`Self::load_gram`]).
+/// `load_successors` call reads the attached DBM, including sentence start.
 pub struct BigramTable<D = DefaultDbm> {
     dbm: D,
-    /// `sentence_start`'s stored value, taken by the first read that finds
-    /// and validates it and kept until the table drops. The file is
-    /// attached read-only for the table's lifetime (`pinyin.cpp:394-396`,
-    /// `:1208`; [`Self::attach`], [`Self::open`]) and nothing here writes
-    /// it. The slot is this attachment's alone ([`Self::load_gram`]).
-    sentence_start: OnceCell<SharedGram>,
-}
-
-/// One validated system gram value.
-pub enum SystemGram {
-    /// The caller's own copy of the stored value.
-    Owned(Vec<u8>),
-    /// The table's one copy of `sentence_start`'s stored value.
-    Shared(SharedGram),
-}
-
-impl SystemGram {
-    /// The stored value's bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Owned(value) => value,
-            Self::Shared(value) => value.as_bytes(),
-        }
-    }
 }
 
 impl BigramTable {
@@ -92,10 +60,7 @@ impl BigramTable {
 
 impl<D: ChewingDbm> BigramTable<D> {
     pub(crate) const fn new(dbm: D) -> Self {
-        Self {
-            dbm,
-            sentence_start: OnceCell::new(),
-        }
+        Self { dbm }
     }
 
     pub(crate) fn attachment_failed(&self) -> bool {
@@ -120,63 +85,16 @@ impl<D: ChewingDbm> BigramTable<D> {
     /// stored value is malformed (an empty value is corruption, reported
     /// rather than masked as a clean miss).
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
-        self.load_gram(prev_token)?
-            .map(|value| parse_bigram_value(value.as_bytes()))
+        self.load_raw_successors(prev_token)?
+            .map(|value| parse_bigram_value(&value))
             .transpose()
-    }
-
-    /// Loads one encoded successor value: `sentence_start`'s from the
-    /// table's one copy, any other predecessor's from the DBM.
-    ///
-    /// The first read that finds and validates `sentence_start`'s value
-    /// keeps it; a miss or an error keeps nothing and the next call reads
-    /// again. The value is the largest in the file and every guess reads
-    /// it (`phonetic_lookup.h:588-596` over the initial step,
-    /// `pinyin.cpp:2210-2213` at offset zero).
-    ///
-    /// Maintainer ruling, 2026-11-06, "sentence-start system bigram
-    /// caching" (`docs/findings/compatibility-policy.md`): for one
-    /// attachment of the system `bigram.db`, the successfully read and
-    /// validated `sentence_start` value may be kept and reused without
-    /// repeating the native DBM read. A failure that only an omitted later
-    /// read would have met is therefore not observed on a hit. Attachment
-    /// failures, misses, read failures and validation failures before a
-    /// value is kept behave as before. External in-place modification of
-    /// the attached file is outside the supported contract for the kept
-    /// value. The slot belongs to this table, which owns the attached
-    /// handle: a fresh attachment builds a fresh table and inherits
-    /// nothing. No other system file and no user data is covered.
-    ///
-    /// The pin reads the file through the one handle `Bigram::attach`
-    /// opened, on every backend: `m_db->get` (`ngram_bdb.cpp:110-125`,
-    /// `:140`), `m_db->check` then `m_db->get` (`ngram_kyotodb.cpp:110-120`,
-    /// `:131`, `:138`) and `m_db->Get` (`ngram_tkrzwdb.cpp:86-99`, `:111`)
-    /// at `074a2219`. It attaches once per context (`pinyin.cpp:394-396`,
-    /// `zhuyin.cpp:336-338`) and closes the handle only when the context is
-    /// freed (`pinyin.cpp:1208`, `zhuyin.cpp:747`). A package upgrade that
-    /// replaces the file by rename is therefore invisible to the pin too:
-    /// it keeps reading the file it opened.
-    ///
-    /// # Errors
-    /// Returns the same read and schema errors as
-    /// [`Self::load_raw_successors`].
-    pub fn load_gram(&self, prev_token: u32) -> Result<Option<SystemGram>, DictError> {
-        if prev_token != SENTENCE_START {
-            return Ok(self.load_raw_successors(prev_token)?.map(SystemGram::Owned));
-        }
-        if let Some(shared) = self.sentence_start.get() {
-            return Ok(Some(SystemGram::Shared(shared.clone())));
-        }
-        let Some(value) = self.load_raw_successors(prev_token)? else {
-            return Ok(None);
-        };
-        let shared = self.sentence_start.get_or_init(|| SharedGram::new(value));
-        Ok(Some(SystemGram::Shared(shared.clone())))
     }
 
     /// Reads one encoded successor value from the DBM without building a
     /// decoded record array. N-best retains these bytes for only its
-    /// current step.
+    /// current step. Every load reads the attached handle, including
+    /// sentence start: `ngram_bdb.cpp:140`, `ngram_kyotodb.cpp:131,138-139`
+    /// and `ngram_tkrzwdb.cpp:111` at `074a2219`.
     ///
     /// # Errors
     /// Returns the same read and schema errors as [`Self::load_successors`],
@@ -313,79 +231,32 @@ mod tests {
         encode_single_gram(total, records)
     }
 
+    /// Every `Bigram::load` calls the attached DBM, including key 1
+    /// (`ngram_bdb.cpp:127-145`, `ngram_kyotodb.cpp:124-142`,
+    /// `ngram_tkrzwdb.cpp:102-121` at `074a2219`).
     #[test]
-    fn sentence_start_is_read_once_and_returns_the_stored_bytes() {
-        let value = stored(9, &[(0x0100_0001, 4), (0x0100_0007, 5)]);
-        let dbm = ScriptedDbm::new(vec![Ok(Some(value.clone()))]);
-        let table = BigramTable::new(&dbm);
-        for _ in 0..3 {
-            let gram = table.load_gram(SENTENCE_START).unwrap().unwrap();
-            assert!(matches!(gram, SystemGram::Shared(_)));
-            assert_eq!(gram.as_bytes(), value);
+    fn every_predecessor_is_read_on_each_load() {
+        for token in [1, 0x0100_0010] {
+            let first = stored(3, &[(0x0100_0002, 3)]);
+            let second = stored(5, &[(0x0100_0002, 5)]);
+            let dbm = ScriptedDbm::new(vec![
+                Ok(Some(first.clone())),
+                Ok(Some(second.clone())),
+                Ok(None),
+                Err(()),
+            ]);
+            let table = BigramTable::new(&dbm);
+            assert_eq!(table.load_raw_successors(token).unwrap(), Some(first));
+            assert_eq!(table.load_raw_successors(token).unwrap(), Some(second));
+            assert!(table.load_raw_successors(token).unwrap().is_none());
+            assert!(matches!(
+                table.load_raw_successors(token),
+                Err(DictError::Table(crate::TableError::Store(
+                    oxpinyin_store::StoreError::ReadAfterCheck
+                )))
+            ));
+            assert_eq!(*dbm.reads.lock().unwrap(), vec![encode_token_key(token); 4]);
         }
-        assert_eq!(
-            table
-                .load_successors(SENTENCE_START)
-                .unwrap()
-                .unwrap()
-                .total,
-            9
-        );
-        assert_eq!(
-            *dbm.reads.lock().unwrap(),
-            [encode_token_key(SENTENCE_START)]
-        );
-    }
-
-    #[test]
-    fn other_predecessors_are_read_every_time() {
-        let value = stored(3, &[(0x0100_0002, 3)]);
-        let dbm = ScriptedDbm::new(vec![Ok(Some(value.clone())), Ok(Some(value.clone()))]);
-        let table = BigramTable::new(&dbm);
-        for _ in 0..2 {
-            let gram = table.load_gram(0x0100_0010).unwrap().unwrap();
-            assert!(matches!(gram, SystemGram::Owned(_)));
-            assert_eq!(gram.as_bytes(), value);
-        }
-        assert_eq!(dbm.reads.lock().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn a_miss_or_an_error_for_sentence_start_is_not_kept() {
-        let value = stored(1, &[(0x0100_0003, 1)]);
-        let dbm = ScriptedDbm::new(vec![
-            Ok(None),
-            Err(()),
-            Ok(Some(Vec::new())),
-            Ok(Some(vec![0xFF; 5])),
-            Ok(Some(value.clone())),
-        ]);
-        let table = BigramTable::new(&dbm);
-        assert!(table.load_gram(SENTENCE_START).unwrap().is_none());
-        assert!(matches!(
-            table.load_gram(SENTENCE_START),
-            Err(DictError::Table(crate::TableError::Store(
-                oxpinyin_store::StoreError::ReadAfterCheck
-            )))
-        ));
-        // A present empty value, then one off the item grid.
-        assert!(matches!(
-            table.load_gram(SENTENCE_START),
-            Err(DictError::Parse(_))
-        ));
-        assert!(matches!(
-            table.load_gram(SENTENCE_START),
-            Err(DictError::Parse(_))
-        ));
-        assert_eq!(
-            table.load_gram(SENTENCE_START).unwrap().unwrap().as_bytes(),
-            value
-        );
-        assert_eq!(
-            table.load_gram(SENTENCE_START).unwrap().unwrap().as_bytes(),
-            value
-        );
-        assert_eq!(dbm.reads.lock().unwrap().len(), 5);
     }
 
     /// A system store whose raw reads fail for chosen predecessors, with
@@ -464,7 +335,7 @@ mod tests {
         let mut value = b"left over".to_vec();
         assert!(!ChewingDbm::get_bigram(dbm, &encode_token_key(0x0100_0010), &mut value).unwrap());
         assert!(value.is_empty());
-        assert!(table.load_gram(0x0100_0010).unwrap().is_none());
+        assert!(table.load_raw_successors(0x0100_0010).unwrap().is_none());
     }
 
     /// Kyoto Cabinet's body read after a good size check is the pin's

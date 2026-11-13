@@ -514,25 +514,16 @@ Both cases are `POLICY-ACCEPTED`, never `MATCH`.
 
 <a id="sentence-start-bigram-caching"></a>
 
-### Sentence-start system bigram caching
+### Sentence-start system bigram reads
 
-For one attachment of the system `bigram.db`, oxpinyin may keep and reuse the successfully read and validated `sentence_start` value without repeating native DBM reads of that value.
-External in-place modification of that attached database is outside the supported contract for the cached value.
-After a successful load, a failure that would come only from an omitted later native read is not observed on a cache hit; this is a consequence of the approved caching, not a general relaxation of I/O-error handling.
+Read the system bigram through its attached DBM handle on every load, including `sentence_start`.
+Do not keep a sentence-start value between loads.
+This supersedes the permission to omit later native reads after the first successful load.
 
-- Attachment failures, misses, read failures and validation failures before successful caching keep their existing behaviour.
-- Mutable user data is not covered.
-- The cache belongs to that database attachment; a fresh attachment does not inherit it.
-- The ruling does not apply to other system files and does not remove any required reopen, remap, reload or save-baseline read.
-
-At the pin, the system bigram is read through the one handle that `Bigram::attach` opened, on every backend: `m_db->get` (`ngram_bdb.cpp:110-125`, `:140`), `m_db->check` then `m_db->get` (`ngram_kyotodb.cpp:110-120`, `:131`, `:138`), and `m_db->Get` (`ngram_tkrzwdb.cpp:86-99`, `:111`).
-It attaches once per context, `ATTACH_READONLY` (`pinyin.cpp:394-396`, `zhuyin.cpp:336-338`), and closes the handle only when the context is freed (`pinyin.cpp:1208`, `zhuyin.cpp:747`).
-A package upgrade that replaces the file by rename is therefore invisible to the pin too.
-The pin still performs the native read on every load, which the ruling lets oxpinyin omit for this one value.
-
-The cache is the `sentence_start` slot of `BigramTable` (`crates/oxpinyin-data/src/bigram_table.rs`), the object that owns the attached handle.
-`BigramTable::load_gram` fills it from the first read that finds and validates the value, and it is dropped with the table.
-Each attachment builds a new table with an empty slot.
+The pin loads the system and user grams before merging them (`src/lookup/phonetic_lookup.h:588-599`, `src/pinyin.cpp:2210-2215`, `src/zhuyin.cpp:1483-1487` at `074a2219`).
+Each system load calls the selected DBM: BDB `get` (`src/storage/ngram_bdb.cpp:140`), Kyoto Cabinet `check` then `get` (`src/storage/ngram_kyotodb.cpp:131,138-139`), or tkrzw `Get` (`src/storage/ngram_tkrzwdb.cpp:111`).
+Keep the same attachment until context destruction (`src/pinyin.cpp:394-396,1208`; `src/zhuyin.cpp:336-338,747`).
+Follow each read's result; a previous successful read does not suppress a later miss or failure.
 
 ### Fresh `UserTableInfo` with zero versions
 

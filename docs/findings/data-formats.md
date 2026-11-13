@@ -395,8 +395,8 @@ index and `punct.bin` are tree containers.
   (`crates/oxpinyin-data/src/single_gram.rs`).
 
 `RawReadStore::open_hash_read_only` opens the hash container class on each
-backend. `BigramTable` reads lazily: each `load_successors(prev_token)` is
-one point read, except `sentence_start`, whose value is read once and kept.
+backend. `BigramTable` reads lazily: each load performs one point lookup
+through the attached DBM, including `sentence_start`.
 The bigram term reaches candidate frequency only under `DYNAMIC_ADJUST`
 ([`dynamic-adjust.md`](dynamic-adjust.md)).
 
