@@ -235,7 +235,7 @@ storage; suffix search runs at most 16 times and suggestion walks use the same
 raw-key merge and stable downstream ordering. Standalone refresh retains the
 previous derived-index algorithm, traverses phrase rows once instead of twice,
 and shares the result between store clones. Its bounds do not grow. The trade
-is on-demand text decoding plus a short phrase mutex guard instead of cached
+is on-demand text decoding plus a short phrase borrow instead of cached
 text clones. Standalone derived data stays on the store until refresh or
 until its last handle drops. No performance question requires a measurement.
 

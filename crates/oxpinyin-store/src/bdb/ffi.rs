@@ -24,16 +24,13 @@
 //! [`Db`] and [`Cursor`] `Drop` impls close their handles on an unwind
 //! just as on a normal return.
 //!
-//! **`Send`/`Sync`.** [`Db`] is `Send`, but not `Sync`: its standalone
-//! handle is used by one thread at a time. [`SharedDb`] owns it behind
-//! a Rust `Mutex`, including every cursor operation and cursor close.
-//! Shared readers therefore get `Sync` without native threaded opens.
-//! Cursors borrow that owner and never cross threads. The lock is
-//! released before a row reaches a visitor, so visitors can read the
-//! same store. `DB_DBT_USERMEM` keeps cursor output in caller-owned
-//! buffers that remain valid across those intervening reads. A point read
-//! uses the handle's own return buffer and copies the value out before
-//! the lock is released.
+//! **One caller at a time.** [`Db`] is neither `Send` nor `Sync`: its raw
+//! handle keeps it on one thread, and the C contract serializes the calls
+//! that reach it. Cursors borrow the database. Nothing of the handle's is
+//! borrowed while a visitor reads a row, so visitors can read the same
+//! store. `DB_DBT_USERMEM` keeps cursor output in caller-owned buffers that
+//! remain valid across those intervening reads. A point read uses the
+//! handle's own return buffer and copies the value out before it returns.
 //!
 //! **Cursor lifetimes.** [`Cursor::get`] takes `&mut self` and returns
 //! a [`Row`] borrowing `&self` (the cursor's own buffers), so a second
@@ -53,12 +50,12 @@
     reason = "FFI over the system libdb; every block carries a SAFETY comment"
 )]
 
+use std::cell::Cell;
 use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 use std::ptr;
-use std::sync::{Mutex, MutexGuard};
 
-use crate::{StoreError, lock_result_or_abort};
+use crate::StoreError;
 
 /// The generated Berkeley DB declarations.
 ///
@@ -212,136 +209,6 @@ fn c_path(path: &Path) -> Result<CString, StoreError> {
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))
 }
 
-/// A shareable owner that serializes all use of its standalone handle.
-pub(crate) struct SharedDb {
-    inner: Mutex<Db>,
-    read_only: bool,
-    hash: bool,
-}
-
-impl SharedDb {
-    pub(crate) fn new(db: Db) -> Self {
-        Self {
-            read_only: db.is_read_only(),
-            hash: db.is_hash(),
-            inner: Mutex::new(db),
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, Db> {
-        // See docs/rust-conventions.md#poisoned-locks.
-        lock_result_or_abort(self.inner.lock())
-    }
-
-    /// Opens a whole-file database with the pin's flags and file mode.
-    pub(crate) fn open(
-        path: &Path,
-        db_type: DBTYPE,
-        read_only: bool,
-        create: bool,
-        mode: c_int,
-    ) -> Result<Self, StoreError> {
-        Db::open(path, db_type, read_only, create, mode).map(Self::new)
-    }
-
-    /// [`Db::open_attach`] on a shared handle.
-    pub(crate) fn open_attach(
-        path: &Path,
-        db_type: DBTYPE,
-        read_only: bool,
-        create: bool,
-        mode: c_int,
-    ) -> Result<Option<Self>, StoreError> {
-        Ok(Db::open_attach(path, db_type, read_only, create, mode)?.map(Self::new))
-    }
-
-    /// [`Db::close_unsynced`] on the owned handle.
-    pub(crate) fn close_unsynced(self) {
-        lock_result_or_abort(self.inner.into_inner()).close_unsynced();
-    }
-
-    /// [`Db::open_in_memory_hash_attach`] on a shared handle: the user
-    /// bigram's unnamed hash database.
-    pub(crate) fn open_in_memory_hash_attach() -> Result<Option<Self>, StoreError> {
-        Ok(Db::open_in_memory_hash_attach()?.map(Self::new))
-    }
-
-    /// [`Self::open_in_memory_hash_attach`]'s answer when the open fails at
-    /// `step`, for the user bigram's injected-failure tests: the outcome
-    /// goes through [`attach_outcome`], as a real failure does.
-    #[cfg(test)]
-    pub(crate) fn failed_in_memory_hash_attach(
-        step: FailedStep,
-    ) -> Result<Option<Self>, StoreError> {
-        let error = StoreError::Backend("injected".into());
-        Ok(attach_outcome::<Db>(Err(match step {
-            FailedStep::Create => OpenFailure::Create(error),
-            FailedStep::Open => OpenFailure::Open(error),
-        }))?
-        .map(Self::new))
-    }
-
-    /// Opens the session's unnamed ordered database.
-    pub(crate) fn open_in_memory_tree() -> Result<Self, StoreError> {
-        Db::open_in_memory_tree().map(Self::new)
-    }
-
-    pub(crate) const fn is_read_only(&self) -> bool {
-        self.read_only
-    }
-
-    pub(crate) const fn is_hash(&self) -> bool {
-        self.hash
-    }
-
-    pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        self.lock().get(key, value)
-    }
-
-    pub(crate) fn get_partial(
-        &self,
-        key: &[u8],
-        offset: u32,
-        length: u32,
-        value: &mut Vec<u8>,
-    ) -> Result<bool, StoreError> {
-        self.lock().get_partial(key, offset, length, value)
-    }
-
-    pub(crate) fn exists(&self, key: &[u8]) -> Result<bool, StoreError> {
-        self.lock().exists(key)
-    }
-
-    pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.lock().put(key, value)
-    }
-
-    pub(crate) fn del(&self, key: &[u8]) -> Result<bool, StoreError> {
-        self.lock().del(key)
-    }
-
-    pub(crate) fn sync(&self) -> Result<(), StoreError> {
-        self.lock().sync()
-    }
-
-    /// The cursor borrows the owner, rather than holding its lock across
-    /// visitor callbacks. Each native cursor call acquires the same lock.
-    pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
-        let mut db = self.lock();
-        let handle = db.cursor_handle()?;
-        let (key_buf, value_buf) = db
-            .cursor_buffers
-            .take()
-            .unwrap_or_else(|| (vec![0_u8; INITIAL_BUFFER], vec![0_u8; INITIAL_BUFFER]));
-        Ok(Cursor {
-            handle,
-            key_buf,
-            value_buf,
-            db: self,
-        })
-    }
-}
-
 /// An owned, exclusively used `DB` handle, closed on drop.
 pub(crate) struct Db {
     handle: *mut sys::DB,
@@ -361,7 +228,7 @@ pub(crate) struct Db {
     /// their buffers, so a visitor can open another cursor without aliasing.
     /// Retain only page-sized buffers; a large record must not permanently
     /// enlarge the handle's scratch space.
-    cursor_buffers: Option<(Vec<u8>, Vec<u8>)>,
+    cursor_buffers: Cell<Option<(Vec<u8>, Vec<u8>)>>,
 }
 
 /// The mode libpinyin's `attach` passes to `DB->open` — the system
@@ -500,7 +367,7 @@ impl Db {
             hash: db_type == DB_HASH,
             opened: false,
             sync_on_drop: true,
-            cursor_buffers: None,
+            cursor_buffers: Cell::new(None),
         };
 
         let mut flags = 0;
@@ -596,7 +463,7 @@ impl Db {
         // SAFETY: a successful DB->get with a zeroed DBT points `data` at
         // `size` initialized bytes of the handle's return buffer. Nothing
         // else can use the handle before the copy: `Db` is not `Sync`, and
-        // `SharedDb::get` holds the owner lock across this whole call.
+        // this call returns only after the copy.
         let value = unsafe { std::slice::from_raw_parts(value_dbt.data.cast::<u8>(), size) };
         buf.reserve_exact(size);
         buf.extend_from_slice(value);
@@ -730,13 +597,53 @@ impl Db {
         self.sync_on_drop = false;
     }
 
-    /// Opens a native cursor while the shareable owner's lock is held.
-    pub(crate) fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
+    /// [`Self::open_in_memory_hash_attach`]'s answer when the open fails at
+    /// `step`, for the user bigram's injected-failure tests: the outcome
+    /// goes through [`attach_outcome`], as a real failure does.
+    #[cfg(test)]
+    pub(crate) fn failed_in_memory_hash_attach(
+        step: FailedStep,
+    ) -> Result<Option<Self>, StoreError> {
+        let error = StoreError::Backend("injected".into());
+        attach_outcome::<Self>(Err(match step {
+            FailedStep::Create => OpenFailure::Create(error),
+            FailedStep::Open => OpenFailure::Open(error),
+        }))
+    }
+
+    /// Whether a spare cursor buffer pair is waiting for the next cursor.
+    #[cfg(test)]
+    fn has_spare_cursor_buffers(&self) -> bool {
+        let spare = self.cursor_buffers.take();
+        let has = spare.is_some();
+        self.cursor_buffers.set(spare);
+        has
+    }
+
+    /// Opens a cursor that borrows this database. It takes the spare buffer
+    /// pair when one is free, so no buffer is borrowed from the handle while
+    /// a visitor runs.
+    pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
+        let handle = self.cursor_handle()?;
+        let (key_buf, value_buf) = self
+            .cursor_buffers
+            .take()
+            .unwrap_or_else(|| (vec![0_u8; INITIAL_BUFFER], vec![0_u8; INITIAL_BUFFER]));
+        Ok(Cursor {
+            handle,
+            key_buf,
+            value_buf,
+            db: self,
+        })
+    }
+
+    /// Opens a native cursor.
+    fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
         let cursor = method!(self.handle, cursor, "DB->cursor")?;
         let mut handle: *mut sys::DBC = ptr::null_mut();
         // SAFETY: the database handle is live; the transaction is null;
-        // the out-parameter is a live local, and the owner serializes
-        // this call with every other use of the database and its cursors.
+        // the out-parameter is a live local, and `Db` is not `Sync`, so no
+        // other call uses the database or its cursors during this one.
         let code = unsafe { cursor(self.handle, ptr::null_mut(), &raw mut handle, 0) };
         check(code, "DB->cursor")?;
         // Hazard (d) again: a null out-parameter on success.
@@ -748,50 +655,6 @@ impl Db {
         Ok(handle)
     }
 }
-
-// SAFETY: ownership may move between threads, but native use is exclusive.
-// SharedDb's Mutex covers every DB/DBC call; its release/acquire establishes
-// happens-before for the handle and its implicit private environment. Db is
-// not Sync. The following audit is of Berkeley DB 5.3.28 at libdb commit
-// e66a5e66d5a8db89d13532012f28d17d375e8564 (paths relative to that tree):
-//
-// - src/db/db.c:472-498 opens only DB_INIT_MPOOL | DB_PRIVATE (plus CREATE),
-//   not locking/transactions; src/env/env_open.c:1182-1191 gates their opens.
-//   Thus src/db/db_am.c:106-125,237-282 cannot create thread-affine lockers.
-//   db_create's zero flags also exclude XA (src/db/db_method.c:94-134).
-// - Without thread tracking, src/env/env_failchk.c:214-222 leaves thr_hashtab
-//   null and src/dbinc/db_int.in:615-639 makes ENV_ENTER/GET_THREAD_INFO yield
-//   null, so no caller entry is created or retained by a cursor. The cached
-//   PID is process-wide on these platforms, not a thread ID
-//   (src/os/os_pid.c:29-55); the DB/ENV have no current-caller pointer
-//   (src/dbinc/db.in:1433-1517; src/dbinc/db_int.in:772-886).
-// - DB_CONFIG can enable tracking, as in the pin. Every ENV_ENTER starts
-//   with a null local and looks up the current caller afresh: the callback,
-//   PID/TID comparison and returned entry are in src/env/env_failchk.c:
-//   404-440,458-511. Neither DB nor ENV retains that local for another call;
-//   environment close also resolves the current caller
-//   (src/env/env_open.c:858-860).
-// - Only DBC retains a caller pointer on these paths. Cursor checkout,
-//   including reuse from the free queue, resets it before use
-//   (src/db/db_am.c:87-103,395-409). Rust Cursor's raw pointer makes it
-//   neither Send nor Sync; get and Drop stay on its creating thread, and its
-//   owner borrow prevents database close while it is live. Native internal
-//   get/put/del cursors close in their current call (src/db/db_iface.c:
-//   783-813; src/db/db_am.c:465,585-589,622,781-785). Duplicates inherit that
-//   same pointer (src/db/db_cam.c:613-616,720-722). DB close destroys closed
-//   cached cursors without using their old thread_info (src/db/db.c:897-901;
-//   src/db/db_cam.c:180-216; src/btree/bt_cursor.c:662-688;
-//   src/hash/hash.c:255-265).
-// - Cursor output DBTs use DB_DBT_USERMEM: src/db/db_ret.c:141-158 copies
-//   into caller-owned buffers, so a cursor row borrows those buffers, not
-//   BDB pages, and stays valid after an intervening call. A point read's
-//   zeroed DBT lands in the handle's return buffer (src/db/db_ret.c:144-158,
-//   src/db/db_iface.c:800); it is copied out before Db::get returns, so no
-//   native return buffer escapes the lock. Close/cleanup is serialized too.
-//   Debian's 5.3.28+dfsg2-11 patch series changes none of the lines cited
-//   here; 001-checkpoint-opd-deadlock adds five lines to __dbc_iget's
-//   off-page-duplicate branch (src/db/db_cam.c:868), past those cited.
-unsafe impl Send for Db {}
 
 /// The open step an injected failure stops at.
 #[cfg(test)]
@@ -882,7 +745,7 @@ pub(crate) struct Cursor<'db> {
     key_buf: Vec<u8>,
     /// Reusable value buffer: same policy.
     value_buf: Vec<u8>,
-    db: &'db SharedDb,
+    db: &'db Db,
 }
 
 /// Where to move the cursor before reading.
@@ -933,7 +796,6 @@ impl Cursor<'_> {
     /// The body of [`Self::get`] and [`Self::key`]: `value` says whether
     /// the value is copied.
     fn read(&mut self, seek: Seek<'_>, value: bool) -> Result<Option<Row<'_>>, StoreError> {
-        let _guard = self.db.lock();
         let get = method!(self.handle, get, "DBC->get")?;
         let flags = match seek {
             Seek::First => sys::DB_FIRST,
@@ -967,8 +829,8 @@ impl Cursor<'_> {
             // SAFETY: the cursor handle is live; both `DBT`s point at
             // this cursor's own buffers, which outlive the call, and any
             // seek slice `AtOrAfter` carries was re-copied into
-            // `key_buf` at the top of this iteration. The owner lock
-            // excludes every other database or cursor call until return.
+            // `key_buf` at the top of this iteration. `Db` is not
+            // `Sync`, so no other database or cursor call runs until return.
             let code = unsafe { get(self.handle, &raw mut key_dbt, &raw mut value_dbt, flags) };
             if code == sys::DB_NOTFOUND {
                 return Ok(None);
@@ -1010,11 +872,9 @@ impl Cursor<'_> {
 
 impl Drop for Cursor<'_> {
     fn drop(&mut self) {
-        let mut db = self.db.lock();
         if let Ok(close) = method!(self.handle, close, "DBC->close") {
             // SAFETY: the cursor handle is live and owned, its database
             // outlives it by the `'db` bound, and this is its last use.
-            // The owner lock also serializes close with all other calls.
             unsafe {
                 close(self.handle);
             }
@@ -1023,15 +883,17 @@ impl Drop for Cursor<'_> {
         // (074a2219 ngram_bdb.cpp:178-212). Our USERMEM buffers stay owned
         // by that cursor until this point, then serve the next walk. Every
         // byte remains initialized, including the input/output seek buffer.
-        if db.cursor_buffers.is_none()
+        let mut spare = self.db.cursor_buffers.take();
+        if spare.is_none()
             && self.key_buf.capacity() <= INITIAL_BUFFER
             && self.value_buf.capacity() <= INITIAL_BUFFER
         {
-            db.cursor_buffers = Some((
+            spare = Some((
                 std::mem::take(&mut self.key_buf),
                 std::mem::take(&mut self.value_buf),
             ));
         }
+        self.db.cursor_buffers.set(spare);
     }
 }
 
@@ -1126,8 +988,6 @@ mod tests {
         );
         assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
     }
-    use std::sync::{Arc, mpsc};
-    use std::time::Duration;
 
     #[test]
     fn point_reads_own_exact_values_across_buffer_growth_and_misses() {
@@ -1142,7 +1002,7 @@ mod tests {
         let path = TempPath(
             std::env::temp_dir().join(format!("oxpinyin-point-read-{}.db", std::process::id())),
         );
-        let db = SharedDb::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
+        let db = Db::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
         // One buffer for every read, as a decode loop passes it.
         let mut value = Vec::new();
         for len in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899] {
@@ -1166,7 +1026,7 @@ mod tests {
 
     #[test]
     fn cursor_buffers_are_reused_across_walks_without_aliasing_nested_cursors() {
-        let db = SharedDb::open_in_memory_tree().unwrap();
+        let db = Db::open_in_memory_tree().unwrap();
         db.put(b"a", b"first").unwrap();
         db.put(b"b", b"second").unwrap();
         let mut outer = db.cursor().unwrap();
@@ -1212,23 +1072,20 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_threads_keep_cursor_rows_owned() {
-        let db = Arc::new(SharedDb::open_in_memory_tree().unwrap());
+    fn cursor_rows_stay_owned_across_another_cursor_and_a_put() {
+        let db = Db::open_in_memory_tree().unwrap();
         db.put(b"a", b"original").unwrap();
         db.put(b"b", b"second").unwrap();
         let mut cursor = db.cursor().unwrap();
         let row = cursor.get(Seek::First).unwrap().unwrap();
-        let other = Arc::clone(&db);
-        std::thread::spawn(move || {
-            let mut cursor = other.cursor().unwrap();
+        {
+            let mut other = db.cursor().unwrap();
             assert_eq!(
-                cursor.get(Seek::AtOrAfter(b"b")).unwrap().unwrap().value,
+                other.get(Seek::AtOrAfter(b"b")).unwrap().unwrap().value,
                 b"second"
             );
-            other.put(b"a", b"changed").unwrap();
-        })
-        .join()
-        .unwrap();
+            db.put(b"a", b"changed").unwrap();
+        }
         assert_eq!(
             (row.key, row.value),
             (b"a".as_slice(), b"original".as_slice())
@@ -1249,7 +1106,7 @@ mod tests {
         let path = TempPath(
             std::env::temp_dir().join(format!("oxpinyin-cursor-values-{}.db", std::process::id())),
         );
-        let db = SharedDb::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
+        let db = Db::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
         db.put(b"a", b"first").unwrap();
         db.put(b"z", b"last").unwrap();
         for len in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899] {
@@ -1269,7 +1126,7 @@ mod tests {
                 assert!(cursor.get(Seek::Next).unwrap().is_none());
                 assert!(cursor.get(Seek::AtOrAfter(b"zz")).unwrap().is_none());
                 drop(cursor);
-                assert_eq!(db.lock().cursor_buffers.is_some(), len <= INITIAL_BUFFER);
+                assert_eq!(db.has_spare_cursor_buffers(), len <= INITIAL_BUFFER);
             }
         }
     }
@@ -1286,7 +1143,7 @@ mod tests {
         let path = TempPath(
             std::env::temp_dir().join(format!("oxpinyin-key-walk-{}.db", std::process::id())),
         );
-        let db = SharedDb::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
+        let db = Db::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
         for (index, len) in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899]
             .into_iter()
             .enumerate()
@@ -1316,7 +1173,7 @@ mod tests {
         // and go back to the handle.
         assert!(cursor.value_buf.len() <= INITIAL_BUFFER);
         drop(cursor);
-        assert!(db.lock().cursor_buffers.is_some());
+        assert!(db.has_spare_cursor_buffers());
     }
 
     #[test]
@@ -1324,7 +1181,7 @@ mod tests {
         // Test key-buffer growth independently from large-value disk I/O
         // in the file-backed test above. Both DB_SET_RANGE input/output
         // and DB_NEXT output must survive key and value buffer retries.
-        let db = SharedDb::open_in_memory_tree().unwrap();
+        let db = Db::open_in_memory_tree().unwrap();
         let long_key = vec![b'm'; INITIAL_BUFFER + 1];
         db.put(b"a", b"first").unwrap();
         db.put(b"z", b"last").unwrap();
@@ -1348,7 +1205,7 @@ mod tests {
                 );
             }
             assert!(
-                db.lock().cursor_buffers.is_none(),
+                !db.has_spare_cursor_buffers(),
                 "oversized buffers must not be retained"
             );
         }
@@ -1404,10 +1261,10 @@ mod tests {
         let path = TempPath(
             std::env::temp_dir().join(format!("oxpinyin-read-only-{}.db", std::process::id())),
         );
-        let db = SharedDb::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
+        let db = Db::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
         db.put(b"key", b"value").unwrap();
         drop(db);
-        let db = SharedDb::open(&path.0, DB_HASH, true, false, USER_FILE_MODE).unwrap();
+        let db = Db::open(&path.0, DB_HASH, true, false, USER_FILE_MODE).unwrap();
         assert!(matches!(
             db.put(b"key", b"other"),
             Err(StoreError::ReadOnly)
@@ -1421,51 +1278,15 @@ mod tests {
     #[test]
     fn unnamed_opens_use_the_pins_unthreaded_create_flags() {
         for db in [
-            SharedDb::open_in_memory_tree().unwrap(),
-            SharedDb::open_in_memory_hash_attach().unwrap().unwrap(),
+            Db::open_in_memory_tree().unwrap(),
+            Db::open_in_memory_hash_attach().unwrap().unwrap(),
         ] {
-            let guard = db.lock();
-            let get_flags = method!(guard.handle, get_open_flags, "DB->get_open_flags").unwrap();
+            let get_flags = method!(db.handle, get_open_flags, "DB->get_open_flags").unwrap();
             let mut flags = 0;
-            // SAFETY: the handle and output local are live, and the
-            // guard excludes every other use of this database.
-            check(
-                unsafe { get_flags(guard.handle, &raw mut flags) },
-                "get flags",
-            )
-            .unwrap();
+            // SAFETY: the handle and output local are live, and nothing
+            // else uses this database.
+            check(unsafe { get_flags(db.handle, &raw mut flags) }, "get flags").unwrap();
             assert_eq!(flags, sys::DB_CREATE);
         }
-    }
-
-    #[test]
-    fn shared_point_reads_wait_for_exclusive_native_access() {
-        let db = Arc::new(SharedDb::open_in_memory_tree().unwrap());
-        db.put(b"key", b"value").unwrap();
-        let guard = db.lock();
-        let (started_tx, started_rx) = mpsc::channel();
-        let (finished_tx, finished_rx) = mpsc::channel();
-        let reader = Arc::clone(&db);
-        let thread = std::thread::spawn(move || {
-            assert!(matches!(
-                reader.inner.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            ));
-            started_tx.send(()).unwrap();
-            let mut value = Vec::new();
-            let found = reader.get(b"key", &mut value).unwrap();
-            finished_tx.send(found.then_some(value)).unwrap();
-        });
-        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(matches!(
-            finished_rx.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
-        drop(guard);
-        assert_eq!(
-            finished_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
-            Some(b"value".to_vec())
-        );
-        thread.join().unwrap();
     }
 }

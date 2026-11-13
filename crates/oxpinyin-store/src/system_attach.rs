@@ -5,10 +5,10 @@
 //! `Bigram::attach` keeps its failed object the same way
 //! ([`SystemAttachment::attach_bigram`]).
 
+use std::cell::RefCell;
 use std::path::Path;
-use std::sync::Mutex;
 
-use crate::{DefaultStore, StoreError, lock_result_or_abort};
+use crate::{DefaultStore, StoreError};
 
 #[cfg(feature = "bdb")]
 type FailedHandle = crate::BdbUnopenedHandle;
@@ -64,7 +64,7 @@ impl SystemAttachment {
         Ok(match result {
             Ok(store) => Self::Open(store),
             Err(db) => Self::Unopened(UnopenedSystemDbm {
-                db: Mutex::new(Some(db)),
+                db: RefCell::new(Some(db)),
             }),
         })
     }
@@ -73,7 +73,7 @@ impl SystemAttachment {
 /// The actual failed BDB, KC or tkrzw object, closed once at facade
 /// finalization.
 pub struct UnopenedSystemDbm {
-    db: Mutex<Option<FailedHandle>>,
+    db: RefCell<Option<FailedHandle>>,
 }
 
 impl UnopenedSystemDbm {
@@ -82,7 +82,7 @@ impl UnopenedSystemDbm {
     /// closed (`BdbUnopenedHandle`), so the pin's `DB->get` has
     /// no counterpart.
     pub fn read(&self, key: &[u8]) {
-        let db = lock_result_or_abort(self.db.lock());
+        let db = self.db.borrow();
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
             let _ = (db, key);
@@ -98,7 +98,7 @@ impl UnopenedSystemDbm {
     /// cursor (chewing_large_table2_bdb.cpp:567) has no counterpart, as in
     /// [`Self::read`].
     pub fn suggest(&self, key: &[u8]) {
-        let db = lock_result_or_abort(self.db.lock());
+        let db = self.db.borrow();
         if let Some(db) = db.as_ref() {
             #[cfg(feature = "bdb")]
             let _ = (db, key);
@@ -122,7 +122,7 @@ impl UnopenedSystemDbm {
     ///
     /// Always: the native refusal, or the Berkeley DB and finished answers.
     pub fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let db = lock_result_or_abort(self.db.lock());
+        let db = self.db.borrow();
         let Some(db) = db.as_ref() else {
             return Err(StoreError::Backend(
                 "the failed attachment is finished".into(),
@@ -145,7 +145,7 @@ impl UnopenedSystemDbm {
     /// The pin's false answer: the tkrzw refusal, Berkeley DB, or a finished
     /// attachment.
     pub fn walk(&self) -> Result<(), StoreError> {
-        let db = lock_result_or_abort(self.db.lock());
+        let db = self.db.borrow();
         let Some(db) = db.as_ref() else {
             return Err(StoreError::Backend(
                 "the failed attachment is finished".into(),
@@ -158,7 +158,7 @@ impl UnopenedSystemDbm {
     /// every later call is inert. For the facades' finalization tests.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        lock_result_or_abort(self.db.lock()).is_none()
+        self.db.borrow().is_none()
     }
 
     /// Synchronizes, closes and destroys the failed object once (on
@@ -166,6 +166,6 @@ impl UnopenedSystemDbm {
     /// finalization is inert; surviving safe facade instances cannot call
     /// a freed native object.
     pub fn finish(&self) {
-        lock_result_or_abort(self.db.lock()).take();
+        self.db.borrow_mut().take();
     }
 }

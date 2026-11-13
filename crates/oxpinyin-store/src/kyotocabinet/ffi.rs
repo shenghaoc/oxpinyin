@@ -2,8 +2,7 @@
 //!
 //! This is the one module that calls the bridge. Everything above it is
 //! safe Rust. The `expect` below is scoped to this module: it carries the
-//! `unsafe impl Send`/`Sync` on [`Db`] and the calls to the bridge's five
-//! `unsafe fn`s, each with its SAFETY note.
+//! calls to the bridge's five `unsafe fn`s, each with its SAFETY note.
 //!
 //! # Safety claims (ruling point 1)
 //!
@@ -21,7 +20,7 @@
 //! - `open` and `close` take `Pin<&mut BasicDB>`: they run with exclusive
 //!   access, before the object is shared and in `Drop`. The record
 //!   operations take `&BasicDB` and mutate the database behind it under its
-//!   own lock (see the `Send`/`Sync` note).
+//!   own lock. [`Db`] is neither `Send` nor `Sync`.
 //! - Paths cross as `std::string`s copied from bytes in which [`cxx_path`]
 //!   has refused NUL, at which the library would truncate them
 //!   (`kchashdb.h:799` opens `path.c_str()`). `synchronize`, `iterate` and
@@ -53,7 +52,7 @@
 //! `reserve_exact`, never a fallible reservation turned into an error.
 #![expect(
     unsafe_code,
-    reason = "Send/Sync for the native object and calls to the bridge's region functions; every block carries a SAFETY comment"
+    reason = "calls to the bridge's region functions; every block carries a SAFETY comment"
 )]
 
 use std::os::unix::ffi::OsStrExt;
@@ -331,28 +330,6 @@ pub(crate) struct Db {
     /// Whether teardown calls `synchronize(false)` before `close()`.
     sync_before_close: bool,
 }
-
-// SAFETY: (ruling point 2) every record operation of the four classes takes
-// the object's own reader-writer lock before it reads or writes anything
-// (`RWLock mlock_`: `kchashdb.h:3753`, `kcplantdb.h:3879`, `kcprotodb.h:1255`,
-// `kcstashdb.h:1438`; taken at `kchashdb.h:558`, `kcplantdb.h:1044-1048`,
-// `kcprotodb.h:376`, `kcstashdb.h:348`, and in every cursor method, e.g.
-// `kcplantdb.h:224`), and the class documents each operation as atomic with
-// other threads blocked (`kcdb.h:268-271`). `begin_transaction` takes the
-// writer lock and spins while another transaction is live
-// (`kchashdb.h:1010-1032`). The error slot is per thread (`TSD<Error>`,
-// `kchashdb.h:3761`, `kcprotodb.h:1257`, `kcstashdb.h:1444`; `TreeDB`
-// forwards to its inner `HashDB`, `kcplantdb.h:1455-1458`), so the error
-// this module reads after a call is that call's, whatever other threads do.
-// `open` and `close` run with exclusive access (`&mut self`, `Drop`), and
-// destruction follows the close. `BasicDB`'s own note forbids two objects
-// on one file in one process and sharing an object with a child process,
-// not sharing one between threads (`kcdb.h:466-479`). The owner holds no
-// Rust-side state that the native calls touch.
-unsafe impl Send for Db {}
-// SAFETY: as `Send` — every operation reachable through `&Db` takes the
-// object's own lock, and the error state each thread reads is its own.
-unsafe impl Sync for Db {}
 
 impl Db {
     /// The object's address, which the test recorder keys on.

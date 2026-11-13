@@ -155,19 +155,14 @@
 //!
 //! # Unsafe waiver
 //!
-//! This module and `bridge` each carry an explicit `expect(unsafe_code)`.
-//! `bridge` declares the adapter's functions safe to call in an
-//! `unsafe extern "C++"` block; this module holds the `unsafe impl Send`
-//! and `Sync` for [`Db`] and states, at [`Db`], the claim every safe
-//! declaration rests on. No raw pointer is dereferenced anywhere in the
-//! backend. That waiver is scoped to the tkrzw backend by decision — the
-//! workspace outside it stays `deny` — and it waives safety ceremony, not
-//! correctness: the shared read and write suites gate this backend like
-//! any other.
-#![expect(
-    unsafe_code,
-    reason = "cxx bridge over libtkrzw; the Send/Sync impls carry their proof"
-)]
+//! `bridge` carries an explicit `expect(unsafe_code)`; this module carries
+//! none. `bridge` declares the adapter's functions safe to call in an
+//! `unsafe extern "C++"` block; this module states, at [`Db`], the claim
+//! every safe declaration rests on. [`Db`] is neither `Send` nor `Sync`.
+//! No raw pointer is dereferenced anywhere in the backend. That waiver is
+//! scoped to the tkrzw backend by decision — the workspace outside it
+//! stays `deny` — and it waives safety ceremony, not correctness: the
+//! shared read and write suites gate this backend like any other.
 
 mod bridge;
 
@@ -525,21 +520,6 @@ impl Drop for Db {
         }
     }
 }
-
-// SAFETY: (ruling point 2) the four concrete classes document that every
-// operation is thread-safe and that multiple threads can access the same
-// database concurrently (`tkrzw_dbm_tree.h:36-40`, `tkrzw_dbm_hash.h:35-39`,
-// `tkrzw_dbm_baby.h:35-39`, `tkrzw_dbm_tiny.h:34-38`); each implementation
-// takes its own mutex per call (`tkrzw_dbm_hash.cc:399`,
-// `tkrzw_dbm_tree.cc:562`, `tkrzw_dbm_baby.cc:395`, `tkrzw_dbm_tiny.cc:257`).
-// `open` and `close` run with exclusive access (`&mut self`, `Drop`), so
-// they cannot race a shared call. The object holds no Rust-side state
-// beyond the owning pointer.
-unsafe impl Send for Db {}
-// SAFETY: as `Send` — the database carries its own locking, so shared
-// references from several threads are the concurrent access the classes
-// document.
-unsafe impl Sync for Db {}
 
 /// An iterator over one [`Db`], the pin's `unique_ptr<DBM::Iterator>`:
 /// created, positioned, walked and destroyed before the database it
@@ -1136,7 +1116,7 @@ pub struct TkrzwUserBigramDb {
     // Uninitialized means known-empty, not a failed native handle. Keep the
     // default TinyDBM once a load or the first Set constructs it. Allocation
     // failure moving from init to the first write is maintainer-accepted.
-    db: std::sync::OnceLock<Db>,
+    db: std::cell::OnceCell<Db>,
 }
 
 /// `copy_tkrzwdb(src, destdb)` (`tkrzwdb_utils.h:48-74` at 074a2219): the
@@ -1173,7 +1153,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // Defer `new TinyDBM` (`ngram_tkrzwdb.cpp:52`): it opens no file.
         // Empty reads and walks have no native state to preserve.
         Ok(Self {
-            db: std::sync::OnceLock::new(),
+            db: std::cell::OnceCell::new(),
         })
     }
 

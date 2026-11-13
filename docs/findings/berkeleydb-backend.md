@@ -44,15 +44,14 @@ backend, as with the other peers.
 
 ## Decisions
 
-**`Send` and `Sync` through a Rust `Mutex`.** libpinyin opens its
-handles without `DB_THREAD`. `oxpinyin-user`'s registry holds the store in
-a `static` (`Send`), and `oxpinyin-data`'s readers share one store
-(`Sync`). `ffi.rs` keeps the pin's open flags and puts the standalone
-handle behind a `Mutex`. Every database and cursor call has exclusive
-access. Cursor reads go into caller-owned (`DB_DBT_USERMEM`) buffers, so
-the lock is released before a visitor reads a row. A point read copies the
-value out of the handle's buffer while the lock is held. The module
-documentation in `bdb/mod.rs` and `bdb/ffi.rs` states the full contract.
+**No `Send`, no `Sync`, no lock.** libpinyin opens its handles without
+`DB_THREAD`, and `ffi.rs` keeps the pin's open flags. The C contract
+serializes the calls that reach a handle: one call at a time on a context
+and all its handles. The handle's owner is neither `Send` nor `Sync`.
+Cursor reads go into caller-owned (`DB_DBT_USERMEM`) buffers, so a visitor
+can read a row and call the store again. A point read copies the value out
+of the handle's buffer before the call returns. The module documentation
+in `bdb/mod.rs` and `bdb/ffi.rs` states the full contract.
 
 **libdb 5.3 only.** The runtime `db_version` check refuses any other
 major.minor at open (`check_runtime_version` in `bdb/ffi.rs`). Debian

@@ -33,9 +33,9 @@ pub(crate) fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
     assert_aborts_after_setup(name, || (), |()| body())
 }
 
-/// [`assert_aborts`] for an operation that needs setup which panics on
-/// purpose (a poisoned mutex): `setup` runs before the strict check is
-/// armed, then `operation` runs on its value and must abort.
+/// [`assert_aborts`] for an operation that needs setup which may panic:
+/// `setup` runs before the strict check is armed, then `operation` runs on
+/// its value and must abort.
 ///
 /// # Panics
 ///

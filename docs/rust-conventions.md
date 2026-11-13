@@ -49,6 +49,11 @@ the process with `std::process::abort()`. Never recover poisoned state, use
 Rust's lock state. The pin has no lock poisoning. Test code keeps its
 existing lock handling.
 
+Production code holds a lock in one place only: the registry of live
+contexts in `live.rs` of each C library. Every context in the process
+shares it, so the contract that serializes one context's calls does not
+cover it.
+
 ### Double borrows
 
 A `RefCell` holds state that the C contract already serializes: one call at a time on a context and all its handles.
