@@ -580,19 +580,6 @@ pub extern "C" fn pinyin_guess_candidates(
     if facade_total_is_zero(&inst.read()) && !sentence_rows_only && window.ranked_phrase_row() {
         std::process::abort();
     }
-    // Class (b), `pinyin.cpp:1635-1637` / `:2053`: a token of a loaded
-    // library whose item cannot be read leaves `m_phrase_string` unset, and
-    // the pin's duplicate removal compares it (a NULL or wild read, SIGSEGV).
-    // Only a `table.conf` that points a library at another file (or at
-    // none) gets here. The call fails, once.
-    if window.had_unreadable_item() {
-        inst.core.session.recycle_candidates(window);
-        inst.state.candidates.clear();
-        crate::ffi::log_warning(
-            "pinyin_guess_candidates: a candidate's phrase item cannot be read",
-        );
-        return false;
-    }
     let candidates = &window;
     // One row vector and one text buffer, each sized once for the window
     // (rows the loop skips leave a little slack, never a second growth).

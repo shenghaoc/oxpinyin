@@ -213,26 +213,11 @@ impl SystemItems {
         self.replayed.values().any(ReplayedLibrary::has_removed)
     }
 
-    /// Whether a journal REMOVE took `token`'s item out of its sub-index: the
-    /// library's buffer answers no item where the chunk holds one
-    /// (`get_phrase_item` fails, 074a2219 `phrase_index.cpp:180-206`).
-    pub(crate) fn is_removed(&self, token: Token, original: Option<SystemLibraryRef<'_>>) -> bool {
+    pub(crate) fn is_removed(&self, token: Token) -> bool {
         let slot = token & 0x00ff_ffff;
         self.replayed
             .get(&crate::phrase::phrase_index_library_index(token))
-            .is_some_and(|library| {
-                // A mapped original's bytes are the buffer's own: what the
-                // chunk held is the buffer's record of its slots' first
-                // writes. A fixture's inline items answer for themselves.
-                let original_held = original.map_or_else(
-                    || library.slot_has_offset(slot),
-                    |original| match original.mapped {
-                        Some(_) => library.originally_held(slot),
-                        None => original.contains_item(slot),
-                    },
-                );
-                original_held && library.item_bytes(slot).is_none()
-            })
+            .is_some_and(|library| library.item_bytes(slot).is_none())
     }
 
     /// `FacadePhraseIndex::add_unigram_frequency`'s sub-index half
@@ -336,23 +321,6 @@ impl SystemItems {
         }
         let bytes = library.item_bytes(slot)?;
         Some(read(&bytes))
-    }
-
-    /// Exclusive token end of the items one library's buffer added, for the
-    /// export's range probe: `None` where it added none.
-    pub(crate) fn end(&self, library: u8) -> Option<Token> {
-        let buffer = self.replayed.get(&library)?;
-        buffer
-            .has_added()
-            .then(|| (u32::from(library) << 24) | buffer.range_end())
-    }
-
-    /// Whether library `nibble`'s live buffer records any slot's provenance.
-    #[cfg(test)]
-    pub(crate) fn has_provenance(&self, nibble: u8) -> bool {
-        self.replayed
-            .get(&nibble)
-            .is_some_and(ReplayedLibrary::has_provenance)
     }
 
     /// The items each live buffer holds that differ from its original's, as

@@ -260,8 +260,7 @@ impl<
 
     /// Whether the baseline holds an item under `slot`: an inline item, or a
     /// mapped one. A library whose mapping moved to its live buffer holds
-    /// none here; that buffer answers for what the chunk held
-    /// (`ReplayedLibrary::originally_held`).
+    /// none here.
     pub(crate) fn contains_item(&self, slot: u32) -> bool {
         self.items.borrow().contains_key(&slot)
             || self
@@ -1768,7 +1767,7 @@ fn merge_log<'a, I>(
 where
     I: Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
 {
-    for (applied, record) in records().enumerate() {
+    for record in records() {
         let record = match record {
             Ok(record) => record,
             Err(LogFault::HeaderToken(token)) => {
@@ -1778,16 +1777,7 @@ where
             // unmasked replay reaches this.
             Err(LogFault::OverRead) => return Ok(MergeEnd::OverRead),
         };
-        // Replay earlier successful MODIFY observations in record order before
-        // the first exceptional record classifies its slot. Ordinary logs
-        // never invoke this callback or allocate provenance sets.
-        let outcome = merge.apply_backfilling(record, &mut |merge| {
-            for prior in records().take(applied) {
-                if let Ok(LogRecord::Modify { token, .. }) = prior {
-                    merge.backfill(token);
-                }
-            }
-        });
+        let outcome = merge.apply(record);
         if let Err(stop) = outcome {
             match stop {
                 Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),

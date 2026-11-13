@@ -3292,7 +3292,17 @@ fn table_conf_919_short_row_merged() {
                 let mut sentence: *mut std::ffi::c_char = ptr::null_mut();
                 pinyin_get_sentence(inst, 0, &raw mut sentence);
                 free_exported(sentence);
-                pinyin_guess_candidates(inst, 0, 0);
+                assert!(pinyin_guess_candidates(inst, 0, 0), "{text}");
+                // The original GB table still points to 你 at slot 4645.
+                // GB_DICTIONARY now reads that slot from gbk_char.bin.
+                // SAFETY: inst is live and the guess just populated its snapshot.
+                let snapshot = unsafe { instance_ref(inst) };
+                assert!(
+                    snapshot.state.candidates.iter().all(|candidate| {
+                        candidate.token.get().map(|token| token.value()) != Some(0x0100_1225)
+                    }),
+                    "{text}"
+                );
             }
             let inst = pinyin_alloc_instance(context);
             pinyin_parse_more_full_pinyins(inst, cstr("nihao").as_ptr());
@@ -3361,16 +3371,8 @@ fn table_conf_919_short_row_merged() {
                 )) && marker.ends_with(&format!("{newline}open counter:0{newline}")),
                 "{marker}"
             );
-            // Two lookups, two warnings: the merged row's library and table
-            // disagree, and the pin's NULL item read becomes one warning per
-            // candidate-list fill.
-            let records = GLIB_LOG.lock().expect("log lock").clone();
-            let warning = (
-                "libpinyin".to_owned(),
-                glib_sys::G_LOG_LEVEL_WARNING,
-                "pinyin_guess_candidates: a candidate's phrase item cannot be read".to_owned(),
-            );
-            assert_eq!(records, [warning.clone(), warning]);
+            // Row 106 applies to a live item lookup failure here too.
+            assert!(GLIB_LOG.lock().expect("log lock").is_empty());
         });
     let user = run.user_dir.display();
     // `g_build_filename` joins with the host's separator, and the UCRT's

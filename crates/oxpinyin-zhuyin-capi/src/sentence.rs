@@ -320,7 +320,6 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 enum CandidateGuessRefusal {
     InvalidOffset,
     Lookup(oxpinyin_engine::EngineError),
-    UnreadableItem,
 }
 
 /// Emit a refused lookup's diagnostic after its instance view is gone.
@@ -333,12 +332,6 @@ fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
         }
         Err(CandidateGuessRefusal::Lookup(error)) => {
             refuse_lookup_gram("zhuyin_guess_candidates", &error);
-            false
-        }
-        Err(CandidateGuessRefusal::UnreadableItem) => {
-            crate::ffi::log_warning(
-                "zhuyin_guess_candidates: a candidate's phrase item cannot be read",
-            );
             false
         }
     }
@@ -553,14 +546,6 @@ fn guess_candidates_result(
             }));
     if facade_total_is_zero(&inst.read()) && searched_here && window_owned.ranked_phrase_row() {
         std::process::abort();
-    }
-    // Class (b), `zhuyin.cpp:1096`: a token of a loaded library whose item
-    // cannot be read leaves `m_phrase_string` unset, and the pin's duplicate
-    // removal compares it (SIGSEGV). Only a `table.conf` that points a
-    // library at another file (or at none) gets here. The call fails, once.
-    if window_owned.had_unreadable_item() {
-        inst.state.candidates.clear();
-        return Err(CandidateGuessRefusal::UnreadableItem);
     }
     let before_end = if before_cursor {
         Some(normalized)
