@@ -79,12 +79,6 @@ pub(crate) fn append_offset(content_len: usize) -> u32 {
     }
 }
 
-/// A checked replacement, kept separate from publication of database metadata.
-pub(crate) struct PreparedReplacement {
-    bytes: Vec<u8>,
-    change: Replacement,
-}
-
 struct Replacement {
     slot: u32,
     offset: u32,
@@ -94,13 +88,6 @@ struct Replacement {
     /// `remove_phrase_item` then `add_phrase_item`, or `add_phrase_item`
     /// alone, which only moves the offset word.
     removes_old: bool,
-}
-
-impl PreparedReplacement {
-    /// The caller holds the session's phrase borrow from preparation to apply.
-    pub(crate) fn apply(self, library: &mut UserLibrary) {
-        library.apply_replacement(self.change, &self.bytes);
-    }
 }
 
 /// The session owns item bodies once and keeps pinyin-index membership
@@ -282,18 +269,15 @@ impl UserLibrary {
     /// (`phrase_index.cpp:208-217`). A full library wraps its allocation
     /// onto a live slot this way (register row 119).
     ///
-    /// Finish every fallible check before the caller commits its tables.
-    /// Those pin sites publish indexes then append unconditionally. Only a
-    /// malformed body or a slot past `PHRASE_MASK` can refuse; the offset
-    /// wraps. Applying the prepared bytes has no recoverable failure.
-    pub(crate) fn prepare_add(
-        &self,
-        slot: u32,
-        bytes: Vec<u8>,
-    ) -> Result<PreparedReplacement, String> {
-        let mut change = self.replacement(slot, &bytes)?;
+    /// Only a malformed body or a slot past `PHRASE_MASK` refuses, before
+    /// anything changes; the offset wraps. Both callers pass a slot masked
+    /// by `PHRASE_MASK` and the bytes `encode_phrase_item` made, which
+    /// `validate_phrase_item` accepts, so neither refusal reaches them.
+    pub(crate) fn add(&mut self, slot: u32, bytes: &[u8]) -> Result<(), String> {
+        let mut change = self.replacement(slot, bytes)?;
         change.removes_old = false;
-        Ok(PreparedReplacement { bytes, change })
+        self.apply_replacement(change, bytes);
+        Ok(())
     }
 
     fn replacement(&self, slot: u32, bytes: &[u8]) -> Result<Replacement, String> {
@@ -974,10 +958,7 @@ mod tests {
         let mut library = UserLibrary::default();
         fill(&mut library, &[1, 2, 3]);
         assert_eq!(library.total(), 6);
-        library
-            .prepare_add(2, small(20))
-            .unwrap()
-            .apply(&mut library);
+        library.add(2, &small(20)).unwrap();
         assert_eq!(library.item(2).unwrap().unigram(), 20);
         assert_eq!(library.total(), 26, "slot 2's old unigram stays");
         assert_eq!(library.items().count(), 3);
