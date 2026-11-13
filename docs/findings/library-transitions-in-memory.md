@@ -103,7 +103,7 @@ These paths add no abort. The fuzz harnesses need no filter:
 - `capi_commands.rs` walks the export iterator, which has no refusal arm.
   Its alphabet has no library load or unload.
 - `user_store_ops.rs` opens a libpinyin user-store session
-  (`UserStore::open_libpinyin`) over a fresh user directory with no system
+  (`UserStore::check_profile`, then `UserStore::open_libpinyin_checked`) over a fresh user directory with no system
   library. Its operations include no library transition.
 
 ## Tests and cases

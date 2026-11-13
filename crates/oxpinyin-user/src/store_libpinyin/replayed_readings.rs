@@ -106,7 +106,7 @@ fn raw_modify(slot: u32, old: &[u8], new: &[u8]) -> LogRecord {
 }
 
 fn open(dir: &std::path::Path, base: &SystemOriginals) -> UserStore {
-    UserStore::open_libpinyin(dir, base.fixture_copy(), versions(), UserConfLaw::Pinyin)
+    crate::test_session::open(dir, base.fixture_copy(), versions(), UserConfLaw::Pinyin)
         .expect("open")
 }
 
@@ -448,7 +448,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     // production load: the user libraries' items, the pinyin index entries
     // and the raw phrase table, which the replayed item has no part in.
     let user_view = |dir: &Path| {
-        let state = crate::persistence::load(dir, &base, &versions(), UserConfLaw::Pinyin)
+        let state = crate::test_session::load(dir, &base, &versions(), UserConfLaw::Pinyin)
             .expect("load the saved profile")
             .state;
         let libraries: BTreeMap<_, _> = state

@@ -63,6 +63,15 @@ impl<'a> LibraryLoopRows<'a> {
         }
     }
 
+    /// Rows a test states step by step.
+    #[cfg(test)]
+    pub(crate) const fn from_steps(
+        system_dir: &'a Path,
+        steps: Vec<(u8, DefaultRowStep<'a>)>,
+    ) -> Self {
+        Self { system_dir, steps }
+    }
+
     pub(crate) const fn system_dir(&self) -> &'a Path {
         self.system_dir
     }

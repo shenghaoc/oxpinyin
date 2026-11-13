@@ -16,7 +16,7 @@ use oxpinyin_facade::SaveOutcome;
 use oxpinyin_facade::{
     ContextCore, InitRefusal, MaskOutOutcome, OpenFailure, PINYIN_DEFAULT_OPTION_WORD,
 };
-use oxpinyin_user::{SystemVersions, UserConfLaw, persistence};
+use oxpinyin_user::{SystemVersions, UserConfLaw};
 
 /// The committed fixture set the compiled backend opens.
 fn fixture_dir() -> PathBuf {
@@ -113,18 +113,14 @@ fn plant_header_token_log(user: &Path, file: &str) {
     std::fs::write(user.join(file), chunk).expect("write the log");
 }
 
-/// A conforming profile for `system` in `user`, written as a save writes it
-/// (the marker included), so neither law's `check_format` wipes it.
+/// A conforming profile for `system` in `user`: the marker a save writes,
+/// so neither law's `check_format` wipes it.
 fn conforming_profile(system: &Path, user: &Path) {
     let conf = oxpinyin_runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
-    persistence::save_state_reporting(
-        user,
-        &persistence::UserState::default(),
-        &oxpinyin_user::SystemOriginals::from(oxpinyin_user::LibraryTable::new()),
-        &SystemVersions::from_conf(&conf),
-        1,
-    )
-    .expect("write the profile");
+    let mut marker =
+        oxpinyin_data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
+    marker.open_counter = 1;
+    std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
 }
 
 /// Init's library loop maps each default library and merges its log in

@@ -51,6 +51,8 @@ mod replay;
 mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
+#[cfg(test)]
+mod test_session;
 mod user_index;
 mod user_library;
 mod user_phrase_table;
