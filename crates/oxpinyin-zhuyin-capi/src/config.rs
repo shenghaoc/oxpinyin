@@ -1,7 +1,6 @@
 //! Configuration symbols: options, schemes, phrase library loading.
 
 use std::os::raw::c_int;
-use std::sync::atomic::Ordering;
 
 use crate::state::context_mut;
 use crate::types::{PinyinOptionT, ZhuyinContext};
@@ -40,7 +39,7 @@ pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme:
         // deleted in memory (`:710-711`).
         std::process::abort();
     }
-    ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
+    ctx.core.live.zhuyin_scheme.set(scheme);
     true
 }
 
@@ -72,7 +71,7 @@ pub extern "C" fn zhuyin_set_full_pinyin_scheme(
         // scheme in memory.
         std::process::abort();
     }
-    ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
+    ctx.core.live.full_scheme.set(scheme);
     true
 }
 
