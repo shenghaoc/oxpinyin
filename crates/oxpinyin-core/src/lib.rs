@@ -980,11 +980,6 @@ pub trait UserModel {
 /// side's own buffer in place, which is the pin's byte copy without the
 /// copy.
 ///
-/// Over a [`SharedGram`] the chunk is not built when it need not be
-/// ([`Self::merge_shared`]): every reader asks for the total, one token's
-/// frequency or a token range, and on two whole, strictly ordered values
-/// each of those is determined by the two values themselves.
-///
 /// Loaded once per predecessor and read per candidate, which is the pin's
 /// structure: `pinyin_guess_candidates` merges one gram outside its
 /// candidate loop and `_compute_frequency_of_items` calls
@@ -994,65 +989,8 @@ pub trait UserModel {
 /// every read with its [`GramFault`]; the caller refuses the call.
 #[derive(Clone, Debug, Default)]
 pub struct MergedGram {
-    row: GramRow,
+    chunk: Vec<u8>,
     fault: Option<GramFault>,
-}
-
-/// Where a [`MergedGram`]'s items live.
-#[derive(Clone, Debug)]
-enum GramRow {
-    /// One owned buffer: the merged chunk, or the only present side's own
-    /// bytes.
-    Chunk(Vec<u8>),
-    /// A shared system value alone: the user gram is absent.
-    Shared(SharedGram),
-    /// A shared system value and a user value, both whole and strictly
-    /// ordered, read as their merge without building it.
-    Layered { system: SharedGram, user: Vec<u8> },
-}
-
-impl Default for GramRow {
-    fn default() -> Self {
-        Self::Chunk(Vec::new())
-    }
-}
-
-/// One stored gram value kept for its owner's lifetime and shared by the
-/// rows read from it. The bytes are the stored value, unchanged and in the
-/// allocation it arrived in. Whether their tokens strictly increase is
-/// decided once, by the first merge with another gram that needs it.
-#[derive(Clone, Debug)]
-pub struct SharedGram(std::rc::Rc<SharedValue>);
-
-#[derive(Debug)]
-struct SharedValue {
-    bytes: Vec<u8>,
-    ordered: std::cell::OnceCell<bool>,
-}
-
-impl SharedGram {
-    /// Takes one stored value, keeping its allocation.
-    #[must_use]
-    pub fn new(value: Vec<u8>) -> Self {
-        Self(std::rc::Rc::new(SharedValue {
-            bytes: value,
-            ordered: std::cell::OnceCell::new(),
-        }))
-    }
-
-    /// The stored value's bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0.bytes
-    }
-
-    /// Whether the value's tokens strictly increase, scanned on first use.
-    fn is_strictly_ordered(&self) -> bool {
-        *self
-            .0
-            .ordered
-            .get_or_init(|| single_gram::is_strictly_ordered(&self.0.bytes))
-    }
 }
 
 pub use single_gram::GramFault;
@@ -1087,10 +1025,7 @@ fn merged_chunk(system: &[u8], user: &[u8]) -> Vec<u8> {
 
 impl MergedGram {
     const fn chunk(chunk: Vec<u8>) -> Self {
-        Self {
-            row: GramRow::Chunk(chunk),
-            fault: None,
-        }
+        Self { chunk, fault: None }
     }
 
     /// A row from its total and `(token, count)` items, kept in the order
@@ -1121,49 +1056,12 @@ impl MergedGram {
             (Some(chunk), None) | (None, Some(chunk)) => Some(Self::chunk(chunk)),
             (Some(system), Some(user)) => Some(match merge_fault(&system, &user) {
                 Some(fault) => Self {
-                    row: GramRow::default(),
+                    chunk: Vec::new(),
                     fault: Some(fault),
                 },
                 None => Self::chunk(merged_chunk(&system, &user)),
             }),
         }
-    }
-
-    /// [`Self::merge`] of a present, shared system value and `user`, with
-    /// the same answers and no copy of the system value.
-    ///
-    /// Without a user gram the row is the shared bytes. With one, the same
-    /// faults are met first. Two whole, strictly ordered values are then
-    /// kept side by side: their merge holds each token once, in token
-    /// order, with the wrapped sum of the two frequencies
-    /// (`ngram.cpp:308-349`), so its total, `get_freq` and `search` are
-    /// read from the two values directly. Any other pair is merged into a
-    /// chunk as [`Self::merge`] does, since the pin's loop and walks then
-    /// depend on stored order.
-    #[must_use]
-    pub fn merge_shared(system: &SharedGram, user: Option<Vec<u8>>) -> Self {
-        let Some(user) = user else {
-            return Self {
-                row: GramRow::Shared(system.clone()),
-                fault: None,
-            };
-        };
-        if let Some(fault) = merge_fault(system.as_bytes(), &user) {
-            return Self {
-                row: GramRow::default(),
-                fault: Some(fault),
-            };
-        }
-        if single_gram::is_strictly_ordered(&user) && system.is_strictly_ordered() {
-            return Self {
-                row: GramRow::Layered {
-                    system: system.clone(),
-                    user,
-                },
-                fault: None,
-            };
-        }
-        Self::chunk(merged_chunk(system.as_bytes(), &user))
     }
 
     /// The fault the merge met, if any.
@@ -1181,14 +1079,7 @@ impl MergedGram {
         if let Some(fault) = self.fault {
             return Err(fault);
         }
-        let total = |gram: &[u8]| single_gram::get_total_freq(gram).ok_or(GramFault::Short);
-        match &self.row {
-            GramRow::Chunk(chunk) => total(chunk),
-            GramRow::Shared(system) => total(system.as_bytes()),
-            GramRow::Layered { system, user } => {
-                Ok(total(system.as_bytes())?.wrapping_add(total(user)?))
-            }
-        }
+        single_gram::get_total_freq(&self.chunk).ok_or(GramFault::Short)
     }
 
     /// `get_freq(token)`: the first match walking from `lower_bound`, or
@@ -1201,13 +1092,7 @@ impl MergedGram {
         if let Some(fault) = self.fault {
             return Err(fault);
         }
-        match &self.row {
-            GramRow::Chunk(chunk) => single_gram::checked_get_freq(chunk, token),
-            GramRow::Shared(system) => single_gram::checked_get_freq(system.as_bytes(), token),
-            GramRow::Layered { system, user } => {
-                Ok(single_gram::get_freq_merged(system.as_bytes(), user, token))
-            }
-        }
+        single_gram::checked_get_freq(&self.chunk, token)
     }
 
     /// `search(range)` over `first..=last` into `out`: every item from
@@ -1230,27 +1115,13 @@ impl MergedGram {
             return Err(fault);
         }
         let end = last.wrapping_add(1);
-        match &self.row {
-            GramRow::Chunk(chunk) => single_gram::checked_search(chunk, first, end, out),
-            GramRow::Shared(system) => {
-                single_gram::checked_search(system.as_bytes(), first, end, out)
-            }
-            GramRow::Layered { system, user } => {
-                single_gram::search_merged(system.as_bytes(), user, first, end, out);
-                Ok(())
-            }
-        }
+        single_gram::checked_search(&self.chunk, first, end, out)
     }
 
-    /// The merged chunk's bytes, built for a row that keeps its two values
-    /// side by side.
+    /// A copy of the merged chunk's bytes.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        match &self.row {
-            GramRow::Chunk(chunk) => chunk.clone(),
-            GramRow::Shared(system) => system.as_bytes().to_vec(),
-            GramRow::Layered { system, user } => merged_chunk(system.as_bytes(), user),
-        }
+        self.chunk.clone()
     }
 }
 
@@ -1645,227 +1516,5 @@ mod tests {
         assert_eq!(ranges.entry(range, 5), Some(&50));
         assert_eq!(ranges.entry(range, 6), None);
         assert_eq!(ranges.walk().copied().collect::<Vec<_>>(), [30, 50]);
-    }
-}
-
-#[cfg(test)]
-mod shared_gram_tests {
-    use proptest::prelude::*;
-
-    use super::{GramFault, GramRow, MergedGram, SharedGram};
-
-    fn gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
-        let mut bytes = total.to_le_bytes().to_vec();
-        for (token, freq) in items {
-            bytes.extend_from_slice(&token.to_le_bytes());
-            bytes.extend_from_slice(&freq.to_le_bytes());
-        }
-        bytes
-    }
-
-    type Search = (Result<(), GramFault>, Vec<(u32, u32)>);
-
-    /// Every read a consumer makes of a merged row: the fault, the total,
-    /// one token's frequency and a token range.
-    #[derive(Debug, Eq, PartialEq)]
-    struct Reads {
-        fault: Option<GramFault>,
-        total: Result<u32, GramFault>,
-        freqs: Vec<Result<Option<u32>, GramFault>>,
-        searches: Vec<Search>,
-    }
-
-    fn reads(row: &MergedGram, probes: &[u32], ranges: &[(u32, u32)]) -> Reads {
-        Reads {
-            fault: row.fault(),
-            total: row.total(),
-            freqs: probes.iter().map(|&token| row.get_freq(token)).collect(),
-            searches: ranges
-                .iter()
-                .map(|&(first, last)| {
-                    let mut out = vec![(u32::MAX, u32::MAX)];
-                    (row.search_into(first, last, &mut out), out)
-                })
-                .collect(),
-        }
-    }
-
-    /// The shared path against the merge it replaces.
-    fn shared_and_merged(system: &[u8], user: Option<&[u8]>) -> (MergedGram, MergedGram) {
-        let user = || user.map(<[u8]>::to_vec);
-        let merged = MergedGram::merge(Some(system.to_vec()), user()).expect("a system gram");
-        let shared = MergedGram::merge_shared(&SharedGram::new(system.to_vec()), user());
-        (shared, merged)
-    }
-
-    const PROBES: [u32; 8] = [0, 1, 2, 3, 5, 7, 9, u32::MAX];
-    const RANGES: [(u32, u32); 7] = [
-        (0, u32::MAX),
-        (0, 9),
-        (2, 5),
-        (3, 3),
-        (6, 2),
-        (8, u32::MAX - 1),
-        (u32::MAX, u32::MAX),
-    ];
-
-    #[test]
-    fn a_shared_gram_keeps_the_stored_bytes_in_their_allocation() {
-        let stored = gram(7, &[(2, 3), (1, 4)]);
-        let (expected, allocation) = (stored.clone(), stored.as_ptr());
-        let shared = SharedGram::new(stored);
-        assert_eq!(shared.as_bytes(), expected);
-        assert_eq!(shared.as_bytes().as_ptr(), allocation);
-        assert_eq!(shared.clone().as_bytes().as_ptr(), allocation);
-    }
-
-    #[test]
-    fn the_order_is_scanned_by_the_first_two_gram_merge_only() {
-        let shared = SharedGram::new(gram(10, &[(1, 4), (3, 6)]));
-        let scanned = |shared: &SharedGram| shared.0.ordered.get().copied();
-        assert_eq!(scanned(&shared), None);
-        // Alone, with a user gram the pin cannot read, or with an
-        // unordered one, the system value's order is never asked for.
-        let alone = MergedGram::merge_shared(&shared, None);
-        assert!(matches!(alone.row, GramRow::Shared(_)));
-        let short = MergedGram::merge_shared(&shared, Some(vec![0, 0]));
-        assert_eq!(short.fault(), Some(GramFault::Short));
-        let unordered = MergedGram::merge_shared(&shared, Some(gram(2, &[(5, 1), (2, 1)])));
-        assert!(matches!(unordered.row, GramRow::Chunk(_)));
-        assert_eq!(scanned(&shared), None);
-        let layered = MergedGram::merge_shared(&shared, Some(gram(2, &[(2, 2)])));
-        assert!(matches!(layered.row, GramRow::Layered { .. }));
-        assert_eq!(scanned(&shared), Some(true));
-        // Every clone shares the one answer.
-        assert_eq!(scanned(&shared.clone()), Some(true));
-    }
-
-    #[test]
-    fn without_a_user_gram_the_row_is_the_shared_bytes() {
-        let system = gram(10, &[(1, 4), (3, 6)]);
-        let (shared, merged) = shared_and_merged(&system, None);
-        assert!(matches!(shared.row, GramRow::Shared(_)));
-        assert_eq!(shared.to_bytes(), system);
-        assert_eq!(
-            reads(&shared, &PROBES, &RANGES),
-            reads(&merged, &PROBES, &RANGES)
-        );
-        assert_eq!(shared.get_freq(3), Ok(Some(6)));
-        assert_eq!(shared.get_freq(2), Ok(None));
-    }
-
-    #[test]
-    fn two_ordered_grams_are_read_side_by_side() {
-        let system = gram(10, &[(1, 4), (3, 6), (7, 0)]);
-        let user = gram(5, &[(2, 1), (3, 2), (9, 2)]);
-        let (shared, merged) = shared_and_merged(&system, Some(&user));
-        assert!(matches!(shared.row, GramRow::Layered { .. }));
-        assert_eq!(
-            reads(&shared, &PROBES, &RANGES),
-            reads(&merged, &PROBES, &RANGES)
-        );
-        assert_eq!(shared.to_bytes(), merged.to_bytes());
-        assert_eq!(shared.total(), Ok(15));
-        // Only in the system gram, only in the user gram, and in both: the
-        // user count adds to the system count.
-        assert_eq!(shared.get_freq(1), Ok(Some(4)));
-        assert_eq!(shared.get_freq(2), Ok(Some(1)));
-        assert_eq!(shared.get_freq(3), Ok(Some(8)));
-        // A stored zero count is still a hit; an absent token is a miss.
-        assert_eq!(shared.get_freq(7), Ok(Some(0)));
-        assert_eq!(shared.get_freq(5), Ok(None));
-        let mut out = Vec::new();
-        assert_eq!(shared.search_into(2, 8, &mut out), Ok(()));
-        assert_eq!(out, [(2, 1), (3, 8), (7, 0)]);
-    }
-
-    #[test]
-    fn the_sum_and_the_total_wrap_as_the_merge_does() {
-        let system = gram(u32::MAX, &[(4, u32::MAX)]);
-        let user = gram(3, &[(4, 2)]);
-        let (shared, merged) = shared_and_merged(&system, Some(&user));
-        assert!(matches!(shared.row, GramRow::Layered { .. }));
-        assert_eq!(shared.total(), Ok(2));
-        assert_eq!(shared.get_freq(4), Ok(Some(1)));
-        assert_eq!(
-            reads(&shared, &PROBES, &RANGES),
-            reads(&merged, &PROBES, &RANGES)
-        );
-    }
-
-    #[test]
-    fn an_unordered_or_duplicated_gram_is_merged_into_a_chunk() {
-        let ordered = gram(4, &[(1, 1), (3, 3)]);
-        for other in [gram(6, &[(3, 1), (1, 5)]), gram(6, &[(2, 1), (2, 5)])] {
-            for (system, user) in [(&ordered, &other), (&other, &ordered)] {
-                let (shared, merged) = shared_and_merged(system, Some(user));
-                assert!(matches!(shared.row, GramRow::Chunk(_)));
-                assert_eq!(shared.to_bytes(), merged.to_bytes());
-                assert_eq!(
-                    reads(&shared, &PROBES, &RANGES),
-                    reads(&merged, &PROBES, &RANGES)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_user_gram_the_pin_cannot_read_is_the_same_fault() {
-        let system = gram(4, &[(1, 1), (3, 3)]);
-        let mut tailed = gram(2, &[(2, 2)]);
-        tailed.push(9);
-        for (user, fault) in [
-            (vec![0, 0], GramFault::Short),
-            (tailed, GramFault::OverRead),
-        ] {
-            let (shared, merged) = shared_and_merged(&system, Some(&user));
-            assert_eq!(shared.fault(), Some(fault));
-            assert_eq!(shared.to_bytes(), merged.to_bytes());
-            assert_eq!(
-                reads(&shared, &PROBES, &RANGES),
-                reads(&merged, &PROBES, &RANGES)
-            );
-        }
-    }
-
-    /// A gram over a small token alphabet, so the two sides collide: left
-    /// as generated (unordered, duplicated) or made strictly ordered, and
-    /// cut short by up to one item to leave a partial tail or no total.
-    fn any_gram() -> impl Strategy<Value = Vec<u8>> {
-        let token = prop_oneof![8 => 0_u32..12, 1 => Just(u32::MAX)];
-        (
-            any::<u32>(),
-            proptest::collection::vec((token, any::<u32>()), 0..10),
-            any::<bool>(),
-            prop_oneof![6 => Just(0_usize), 1 => 1_usize..9],
-        )
-            .prop_map(|(total, mut items, ordered, cut)| {
-                if ordered {
-                    items.sort_by_key(|&(token, _)| token);
-                    items.dedup_by_key(|&mut (token, _)| token);
-                }
-                let mut bytes = gram(total, &items);
-                bytes.truncate(bytes.len().saturating_sub(cut));
-                bytes
-            })
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(2048))]
-
-        #[test]
-        fn the_shared_path_answers_as_the_merge_does(
-            system in any_gram(),
-            user in proptest::option::of(any_gram()),
-            probes in proptest::collection::vec(prop_oneof![0_u32..13, Just(u32::MAX)], 0..8),
-            ranges in proptest::collection::vec(
-                (prop_oneof![0_u32..13, Just(u32::MAX)], prop_oneof![0_u32..13, Just(u32::MAX)]),
-                0..6,
-            ),
-        ) {
-            let (shared, merged) = shared_and_merged(&system, user.as_deref());
-            prop_assert_eq!(reads(&shared, &probes, &ranges), reads(&merged, &probes, &ranges));
-            prop_assert_eq!(shared.to_bytes(), merged.to_bytes());
-        }
     }
 }
