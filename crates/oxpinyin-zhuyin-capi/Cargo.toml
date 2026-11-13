@@ -78,7 +78,7 @@ oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # upstream libzhuyin.pc.in this mirrors.
 [package.metadata.capi.header]
-# The checked-in zhuyin.h ships verbatim; never regenerate it with cbindgen.
+# The checked-in zhuyin.h ships verbatim; do not regenerate it.
 generation = false
 # The real libzhuyin installs its header under the same version-stamped
 # subdirectory as libpinyin (/usr/include/libpinyin-2.11.92/zhuyin.h).

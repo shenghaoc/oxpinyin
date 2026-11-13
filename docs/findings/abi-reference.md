@@ -806,9 +806,10 @@ A Rust implementation is expected to follow four rules:
 
 ## 6. Header-completeness additions
 
-The fork includes `<pinyin.h>` from C++ translation units. The generated
-header therefore carries `#ifdef __cplusplus` / `extern "C"` guards
-(cbindgen `cpp_compat`). It also carries exactly the aliases and constants
+The fork includes `<pinyin.h>` from C++ translation units.
+The checked-in `pinyin.h` and `zhuyin.h` use GLib's `G_BEGIN_DECLS` and
+`G_END_DECLS` for C linkage.
+The pinyin header also carries exactly the aliases and constants
 that the fork's live TUs reference. The values are identical to the
 values in the headers of the pin, `074a2219`, and the upstream citations
 below are paths and lines at `074a2219`.

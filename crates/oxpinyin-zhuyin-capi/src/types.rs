@@ -1,9 +1,6 @@
 //! Opaque handle types and C-ABI enums matching `zhuyin.h`.
-//!
-//! Many items here are not yet referenced from Rust code but exist to
-//! match the C ABI surface and appear in the generated header.
 
-use std::os::raw::{c_char, c_int, c_uint};
+use std::os::raw::{c_char, c_uint};
 
 // ── Opaque handle types ──────────────────────────────────────────────
 //
@@ -13,8 +10,7 @@ use std::os::raw::{c_char, c_int, c_uint};
 // `Box::into_raw` those and cast to these marker types; the matching
 // destructor casts back and `Box::from_raw`s.
 //
-// These are declared as unit structs (no `#[repr(C)]`, no fields) so cbindgen
-// emits `zhuyin.h`-style *incomplete* handles.
+// Unit structs mark incomplete C handles; only their pointers cross the ABI.
 
 /// Opaque zhuyin context (one per input mode).
 pub struct ZhuyinContext;
@@ -118,57 +114,6 @@ pub enum lookup_candidate_type_t {
     ZOMBIE_CANDIDATE = 4,
 }
 
-/// `ZhuyinScheme` from `pinyin_custom2.h:122-133`.
-///
-/// FFI parameters carrying a scheme take `c_int`, not this enum: callers
-/// may pass any `int`, and forming a `#[repr(C)]` enum from a discriminant
-/// that is not a variant is UB.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(non_camel_case_types, reason = "upstream C identifier")]
-#[expect(
-    dead_code,
-    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
-)]
-pub enum ZhuyinScheme {
-    /// Standard layout.
-    ZHUYIN_STANDARD = 1,
-    /// Hsu layout.
-    ZHUYIN_HSU = 2,
-    /// IBM layout.
-    ZHUYIN_IBM = 3,
-    /// `GinYieh` layout.
-    ZHUYIN_GINYIEH = 4,
-    /// Eten layout.
-    ZHUYIN_ETEN = 5,
-    /// Eten26 layout.
-    ZHUYIN_ETEN26 = 6,
-    /// Standard Dvorak layout.
-    ZHUYIN_STANDARD_DVORAK = 7,
-    /// Hsu Dvorak layout.
-    ZHUYIN_HSU_DVORAK = 8,
-    /// Dachen CP26 layout.
-    ZHUYIN_DACHEN_CP26 = 9,
-}
-
-/// `FullPinyinScheme` discriminants the zhuyin facade's
-/// `zhuyin_get_pinyin_string` dispatches on (`zhuyin.cpp:1743-1766`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(non_camel_case_types, reason = "upstream C identifier")]
-#[expect(
-    dead_code,
-    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
-)]
-pub enum FullPinyinScheme {
-    /// `FULL_PINYIN_HANYU = 1`.
-    FULL_PINYIN_HANYU = 1,
-    /// `FULL_PINYIN_LUOMA = 2`.
-    FULL_PINYIN_LUOMA = 2,
-    /// `FULL_PINYIN_SECONDARY_ZHUYIN = 3`.
-    FULL_PINYIN_SECONDARY_ZHUYIN = 3,
-}
-
 // ── Type aliases matching glib/zhuyin.h scalar types ─────────────────
 
 /// `pinyin_option_t` — bitmask of pinyin table flags (also `zhuyin_option_t`,
@@ -180,13 +125,6 @@ pub type PhraseTokenT = u32;
 
 /// `guint` — `GLib` unsigned int (= `c_uint`).
 pub type GUint = c_uint;
-
-/// `gint` — `GLib` signed int (= `c_int`).
-#[expect(
-    dead_code,
-    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
-)]
-pub type GInt = c_int;
 
 /// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;

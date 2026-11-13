@@ -3,12 +3,11 @@
 use std::os::raw::c_int;
 
 use oxpinyin_core::PhraseToken;
+use oxpinyin_engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
 use oxpinyin_user::{UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
-use crate::types::{
-    GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t, sort_option_t,
-};
+use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 
 /// Get the number of candidates.
 ///
@@ -446,8 +445,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // falls through to it: only the unigram trains, by the LONGER
     // branch's `69 * 7 = 483`, into the same overlay, with the same
     // answer.
-    if inst.core.session.sort_options() & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as u32 != 0
-    {
+    if inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0 {
         if offset != 0 {
             // Register row 45: the pin's `assert(0 == offset)` (`:2566`),
             // after the addon promotion above, which is in memory.
