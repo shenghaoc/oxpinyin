@@ -1279,8 +1279,6 @@ impl NbestStepRow {
     }
 
     /// Loads once per user-store generation, including a missing row.
-    /// The caller must validate the generation after reading the candidate's
-    /// unigram deltas and retry if a committed write changed it.
     ///
     /// # Errors
     /// Returns the loader's error unchanged, without caching it.
@@ -1299,7 +1297,7 @@ impl NbestStepRow {
         Ok(self.loaded.as_ref())
     }
 
-    /// The merged row just loaded and validated by the caller.
+    /// The merged row just loaded.
     #[must_use]
     pub fn cached_merged(&self) -> Option<&MergedGram> {
         self.loaded.as_ref()

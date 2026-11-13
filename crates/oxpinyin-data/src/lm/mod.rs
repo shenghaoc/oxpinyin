@@ -38,9 +38,9 @@
 //! through the shared library mask: its items answer no unigram and its
 //! total leaves the denominator, as freeing the sub-index does upstream.
 
+use std::cell::Cell;
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta, single_gram};
 
@@ -188,7 +188,7 @@ const fn is_user_file_library(nibble: u8) -> bool {
 
 /// Bigram language model over `bigram.db` and the phrase libraries.
 #[derive(Clone, Copy)]
-pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = AtomicU32> {
+pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = Cell<u32>> {
     tables: T,
     /// The facade's chunk items — the unigram source.
     libraries: L,
@@ -262,7 +262,7 @@ impl BigramTables {
         BigramLanguageModel {
             tables: self,
             libraries,
-            library_mask: AtomicU32::new(0),
+            library_mask: Cell::new(0),
         }
     }
 
@@ -270,8 +270,8 @@ impl BigramTables {
     pub fn read<'a>(
         &'a self,
         libraries: &'a PhraseLibraries,
-        library_mask: &'a AtomicU32,
-    ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self, &'a AtomicU32> {
+        library_mask: &'a Cell<u32>,
+    ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self, &'a Cell<u32>> {
         BigramLanguageModel {
             tables: self,
             libraries,
@@ -280,7 +280,7 @@ impl BigramTables {
     }
 }
 
-impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
+impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
     BigramLanguageModel<L, BigramTables, M>
 {
     /// Opens the bigram model: a lazy handle on `bigram_path` (the
@@ -311,7 +311,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<AtomicU32>>
 impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
     /// Open a model with every library visible.
     pub fn open(bigram_path: &Path, libraries: L) -> Result<Self, LmError> {
-        Self::open_with_mask(bigram_path, libraries, AtomicU32::new(0))
+        Self::open_with_mask(bigram_path, libraries, Cell::new(0))
     }
 }
 
@@ -331,7 +331,7 @@ impl<L, M> std::ops::DerefMut for BigramLanguageModel<L, BigramTables, M> {
 impl<
     L: std::borrow::Borrow<PhraseLibraries>,
     T: std::borrow::Borrow<BigramTables>,
-    M: std::borrow::Borrow<AtomicU32>,
+    M: std::borrow::Borrow<Cell<u32>>,
 > BigramLanguageModel<L, T, M>
 {
     /// The facade's phrase libraries this model reads unigrams from.
@@ -347,7 +347,7 @@ impl<
     }
 
     fn visible(&self, nibble: u8) -> bool {
-        library_visible(self.library_mask.borrow().load(Ordering::SeqCst), nibble)
+        library_visible(self.library_mask.borrow().get(), nibble)
     }
 
     /// Whether unigram counts are available for interpolation: some
@@ -356,7 +356,7 @@ impl<
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
         self.libraries()
-            .has_items_unloaded(self.library_mask.borrow().load(Ordering::SeqCst))
+            .has_items_unloaded(self.library_mask.borrow().get())
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
@@ -379,7 +379,7 @@ impl<
     #[must_use]
     pub fn unigram_total(&self) -> u32 {
         self.libraries()
-            .unigram_total_unloaded(self.library_mask.borrow().load(Ordering::SeqCst))
+            .unigram_total_unloaded(self.library_mask.borrow().get())
     }
 
     /// The facade total the n-best step divides by
@@ -643,7 +643,7 @@ impl<
 impl<
     L: std::borrow::Borrow<PhraseLibraries>,
     T: std::borrow::Borrow<BigramTables>,
-    M: std::borrow::Borrow<AtomicU32>,
+    M: std::borrow::Borrow<Cell<u32>>,
 > LanguageModel for BigramLanguageModel<L, T, M>
 {
     type Token = PhraseToken;
