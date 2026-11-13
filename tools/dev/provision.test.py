@@ -111,7 +111,8 @@ class CargoToolTests(unittest.TestCase):
         test_support.python_tool(self.bin, 'cargo', (
             f'import sys\nsys.path.insert(0, {str(ROOT)!r})\nfrom tools.dev import test_support\n'
             f'with open({str(self.calls)!r}, "a") as calls: calls.write(" ".join(sys.argv[1:]) + "\\n")\n'
-            'if len(sys.argv) != 7 or sys.argv[1] != "install" or sys.argv[3] != "--version" or sys.argv[5:] != ["--locked", "--quiet"]: sys.exit(97)\n'
+            'pinned = sys.argv[3:4] == ["--version"]\n'
+            'if sys.argv[1:2] != ["install"] or len(sys.argv) != (7 if pinned else 5) or sys.argv[-2:] != ["--locked", "--quiet"]: sys.exit(97)\n'
             f'test_support.python_tool({str(self.bin)!r}, *{sources!r}[sys.argv[2]])\n'))
 
     def provision(self):
@@ -147,13 +148,14 @@ class CargoToolTests(unittest.TestCase):
         self.assertEqual(self.provision()[:2], (0, ''))
         self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
 
-    def test_missing_nextest_and_cargo_c_install_the_pinned_fallbacks(self):
+    def test_missing_nextest_installs_the_newest_release_and_cargo_c_its_pinned_fallback(self):
         floor_tool(self.bin, 'just', ROOT)
         self.fake_cargo()
         status, error, _ = self.provision()
         self.assertEqual(status, 0, error)
+        self.assertIn('installing cargo-nextest with cargo (requires the nextest-version in .config/nextest.toml)', error)
         self.assertEqual(self.recorded(), [
-            'install cargo-nextest --version 0.9.150 --locked --quiet',
+            'install cargo-nextest --locked --quiet',
             'install cargo-c --version 0.10.25 --locked --quiet',
         ])
 

@@ -48,8 +48,9 @@ It also requires:
   Provisioning does not install uv: it starts through `uv run`, so a uv below the
   floor refuses before provisioning runs.
   [Installing uv and cargo-c](setup.md#installing-uv-and-cargo-c) has the details.
-  Setup keeps just, cargo-nextest and cargo-c when they meet their floors and
-  installs the pinned fallbacks otherwise. It needs
+  Setup keeps just, cargo-nextest and cargo-c when they meet their floors.
+  Otherwise it installs just and cargo-c at their pinned fallback versions and
+  the newest release of cargo-nextest. It needs
   writable managed-Python and cache locations. Cargo tool provisioning needs
   `index.crates.io` and `static.crates.io`.
   Setup adds the toolchain's `rust-analyzer` component with `rustup component add`

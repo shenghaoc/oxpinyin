@@ -507,8 +507,8 @@ def collect(environ=None):
     return lines, status
 
 
-# The fallback can be newer than the oldest supported installed tool.
-CARGO_TOOL_PINS = {'just': '1.59.0', 'cargo-nextest': '0.9.150', 'cargo-c': '0.10.25'}
+# The fallback can be newer than the oldest supported installed tool. None is the newest release.
+CARGO_TOOL_PINS = {'just': '1.59.0', 'cargo-nextest': None, 'cargo-c': '0.10.25'}
 
 
 def cargo_tool(name, root=ROOT):

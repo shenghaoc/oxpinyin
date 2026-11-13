@@ -322,15 +322,16 @@ class Provision:
         return True
 
     def cargo_tools(self):
-        """Keep tools at their floors or install their pinned crates.io fallbacks."""
+        """Keep tools at their floors or install their crates.io fallbacks: a pinned version, or the newest release."""
         for crate, pin in doctor.CARGO_TOOL_PINS.items():
             tool = doctor.cargo_tool(crate, self.root)
             if self.accepted(tool):
                 continue
             if not self.which('cargo'):
                 self.die(f'installing {crate} needs cargo; follow docs/runbooks/setup.md')
-            self.log(f'installing {crate} {pin} with cargo (requires {doctor.requirement(tool)})')
-            if run([self.which('cargo'), 'install', crate, '--version', pin, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
+            version = ['--version', pin] if pin else []
+            self.log(f'installing {" ".join([crate, *version[1:]])} with cargo (requires {doctor.requirement(tool)})')
+            if run([self.which('cargo'), 'install', crate, *version, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
                 self.die(f'cargo install {crate} failed; allow index.crates.io and static.crates.io '
                          '(docs/runbooks/cloud.md)')
             if not self.accepted(tool):

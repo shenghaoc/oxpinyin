@@ -162,8 +162,9 @@ uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --dev
 ```
 
 `--dev-tools` keeps each of just, cargo-nextest, cargo-c and the rust-analyzer
-component that meets its requirement. It installs the others: the three Cargo
-tools with `cargo install` at their pinned versions, and rust-analyzer with
+component that meets its requirement. It installs the others: just and cargo-c
+with `cargo install` at their pinned versions, cargo-nextest with
+`cargo install` at its newest release, and rust-analyzer with
 `rustup component add`. It does not run the oracle setup. It needs Cargo or
 rustup only for a tool that it must install; without that program it exits 1 and
 names the tool. `--python-only` alone installs none of these tools and needs
