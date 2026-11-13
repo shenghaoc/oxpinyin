@@ -176,6 +176,8 @@ where
     /// path pronouncing `phrase`'s first `n` characters reaches `offset`,
     /// `Ok(None)` for the pin's graceful `false` (empty matrix, empty
     /// phrase, a character with no dictionary token, no satisfying path).
+    /// Paired with whether its recursive walk ran, so a facade need not
+    /// repeat phrase-table reads to decide whether to write its output.
     ///
     /// # Errors
     ///
@@ -184,20 +186,6 @@ where
     /// [`EngineError::ZeroKeyOffsetCheck`] and
     /// [`EngineError::MatrixColumnAssert`] where the pin asserts; the
     /// dictionary's backend failure.
-    pub fn character_offset(
-        &self,
-        phrase: &oxpinyin_core::PhraseText,
-        offset: usize,
-    ) -> Result<Option<usize>, EngineError> {
-        self.character_offset_with_walk(phrase, offset)
-            .map(|(count, _)| count)
-    }
-
-    /// The offset and whether its recursive walk ran, so a facade need
-    /// not repeat phrase-table reads to decide whether to write its output.
-    ///
-    /// # Errors
-    /// As [`Self::character_offset`].
     pub fn character_offset_with_walk(
         &self,
         phrase: &oxpinyin_core::PhraseText,

@@ -30,19 +30,6 @@ pub enum SystemDbm {
 }
 
 impl SystemDbm {
-    /// The file's base name without any extension.
-    #[must_use]
-    pub const fn stem(self) -> &'static str {
-        match self {
-            Self::PinyinIndex => "pinyin_index",
-            Self::PhraseIndex => "phrase_index",
-            Self::Bigram => "bigram",
-            Self::Punct => "punct",
-            Self::AddonPinyinIndex => "addon_pinyin_index",
-            Self::AddonPhraseIndex => "addon_phrase_index",
-        }
-    }
-
     /// The name libpinyin gives the file (`pinyin_internal.h:57-66`).
     #[must_use]
     pub const fn libpinyin_name(self) -> &'static str {
@@ -61,13 +48,6 @@ impl SystemDbm {
     #[must_use]
     pub fn file_name(self) -> String {
         self.libpinyin_name().to_owned()
-    }
-
-    /// Whether the file is a hash container (`bigram.db` is a KC `HashDB` /
-    /// tkrzw `HashDBM`; every other DBM is a tree).
-    #[must_use]
-    pub const fn is_hash(self) -> bool {
-        matches!(self, Self::Bigram)
     }
 }
 
@@ -139,15 +119,6 @@ pub const ADDON_LIBRARY_FILES: &[(u8, &str)] = &[
     (15, "technology.bin"),
 ];
 
-/// The chunk file of addon library `index`, if `table.conf` names one.
-#[must_use]
-pub fn addon_library_file(index: u8) -> Option<&'static str> {
-    ADDON_LIBRARY_FILES
-        .iter()
-        .find(|(nibble, _)| *nibble == index)
-        .map(|(_, file)| *file)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,11 +127,6 @@ mod tests {
     fn names_are_libpinyins_own() {
         assert_eq!(SystemDbm::Bigram.file_name(), "bigram.db");
         assert_eq!(SystemDbm::PinyinIndex.file_name(), "pinyin_index.bin");
-        assert!(SystemDbm::Bigram.is_hash());
-        assert!(!SystemDbm::Punct.is_hash());
-        assert_eq!(addon_library_file(4), Some("art.bin"));
-        assert_eq!(addon_library_file(15), Some("technology.bin"));
-        assert_eq!(addon_library_file(3), None);
     }
 
     /// The chunk-file tables are the name tables with `.bin` appended.

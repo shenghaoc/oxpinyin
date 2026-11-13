@@ -67,8 +67,7 @@ pub use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
 pub use system_files::{
-    ADDON_LIBRARY_FILES, ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES, SYSTEM_LIBRARY_NAMES,
-    SystemDbm, addon_library_file,
+    ADDON_LIBRARY_FILES, ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES, SYSTEM_LIBRARY_NAMES, SystemDbm,
 };
 pub use table::TableError;
 pub use table_conf::PINNED_LAMBDA;

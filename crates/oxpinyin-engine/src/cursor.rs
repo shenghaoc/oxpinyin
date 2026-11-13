@@ -521,21 +521,6 @@ impl MatrixKey {
     pub const fn end(self) -> usize {
         self.end
     }
-
-    /// Raw byte length — the pin's `ChewingKeyRest::length()`.
-    #[must_use]
-    pub const fn len(self) -> usize {
-        self.end - self.syllable_start
-    }
-
-    /// Whether the key covers no bytes.
-    ///
-    /// The scan matrix never holds one; the accessor exists so callers can
-    /// check spans they build themselves.
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.syllable_start == self.end
-    }
 }
 
 /// The scan matrix's keys with their spans, plus the graph's consumed

@@ -143,15 +143,6 @@ impl OptionBits {
         self.contains(DYNAMIC_ADJUST)
     }
 
-    /// Whether `FORCE_TONE` is set. Dead without `USE_TONE` — the pin
-    /// nests the force-tone rejection inside the tone scan
-    /// (`pinyin_parser2.cpp:176-190`), so a word like `0x1ca` (the parity
-    /// word plus `FORCE_TONE`, no `USE_TONE`) is inert.
-    #[must_use]
-    pub const fn has_force_tone(self) -> bool {
-        self.contains(FORCE_TONE)
-    }
-
     /// Sets or clears `bit` and returns the updated set.
     #[must_use]
     pub const fn with(self, bit: u32, enabled: bool) -> Self {
