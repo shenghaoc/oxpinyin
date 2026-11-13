@@ -733,11 +733,6 @@ pub struct StoreInner {
     /// Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: Cell<bool>,
-    /// Whether any library still carries its own share of that difference
-    /// in [`Self::offsets`]: from the load until the next
-    /// `compact` (a save, the end of an import, a mask_out), which
-    /// rebuilds each library's total from its items.
-    pub(crate) has_library_offsets: Cell<bool>,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin`): `save()` exports the
@@ -1452,19 +1447,6 @@ impl UserStore {
             .map_or(offset, crate::user_library::UserLibrary::total))
     }
 
-    /// How far `library`'s stored total lies from the sum of its items
-    /// (a wrapping `guint32`), until the next [`Self::compact_libraries`];
-    /// `0` once compacted or when the two agree.
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn library_offset(&self, library: u8) -> Result<u32, UserStoreError> {
-        if !self.inner.has_library_offsets.get() {
-            return Ok(0);
-        }
-        Ok(self.offsets().get(&library).copied().unwrap_or(0))
-    }
-
     /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
     /// every library's total is rebuilt from its items, so none carries a
     /// stored total's difference any more. The facade's total keeps it.
@@ -1473,9 +1455,6 @@ impl UserStore {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&mut self) {
-        // Flag invariant: `has_library_offsets` is never false while an
-        // offset entry exists (true with no entries is harmless: the read
-        // gives 0).
         let target = Rc::clone(&self.inner.libpinyin);
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
@@ -1525,7 +1504,6 @@ impl UserStore {
         for library in target.phrases_mut().libraries.values_mut() {
             library.compact();
         }
-        self.inner.has_library_offsets.set(false);
     }
 
     /// The §5 overlay for scoring `token` after `prev`, read between two commits.
@@ -2411,15 +2389,11 @@ impl UserStore {
     ) {
         let target = Rc::clone(&self.inner.libpinyin);
         let mut offsets = self.offsets_mut();
-        // Flag invariant (see `compact_libraries`): set before the entries
-        // can exist, and cleared below only once none is left.
-        self.inner.has_library_offsets.set(true);
         // A reloaded library has no stored total difference any more: its
         // total is the one its replay left, held in the live scalar below.
         for nibble in originals.keys() {
             offsets.remove(nibble);
         }
-        let offsets_left = !offsets.is_empty();
         {
             // A library with an original keeps its items in its live buffer;
             // the arenas of the reloaded libraries hold nothing.
@@ -2428,7 +2402,6 @@ impl UserStore {
                 .libraries
                 .retain(|nibble, _| !originals.contains_key(nibble));
         }
-        self.inner.has_library_offsets.set(offsets_left);
         let buffer_live;
         {
             let phrases = target.phrases();

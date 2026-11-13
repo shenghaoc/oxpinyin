@@ -85,7 +85,6 @@ impl UserStore {
         let offset = library
             .as_ref()
             .map_or(0, |library| library.total().wrapping_sub(after as u32));
-        self.inner.has_library_offsets.set(true);
         let old_offset = if offset == 0 {
             offsets.remove(&nibble)
         } else {
@@ -93,7 +92,6 @@ impl UserStore {
         }
         .unwrap_or(0);
         let moved = offset.wrapping_sub(old_offset);
-        let offsets_left = !offsets.is_empty();
         // The facade total takes the library's new total in and the old one
         // out (`phrase_index.cpp:237-248`).
         self.inner
@@ -112,7 +110,6 @@ impl UserStore {
             .values()
             .any(|library| !library.is_empty());
         drop(phrases);
-        self.inner.has_library_offsets.set(offsets_left);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
         self.mark_committed_phrase_write(arena_live || grams_live);
     }
@@ -167,16 +164,13 @@ impl UserStore {
         // library wraps to slot 0, whose offset word `add_phrase_item`
         // overwrites (`phrase_index.cpp:208-217`; register row 119).
         let token = phrase::phrase_index_make_token(ADDON_DICTIONARY, slot);
-        let replacement = library
-            .prepare_add(token & PHRASE_MASK, bytes)
+        let retained = offsets.get(&ADDON_DICTIONARY).copied().unwrap_or(0);
+        phrases
+            .arena(ADDON_DICTIONARY, retained)
+            .ok_or(UserStoreError::InvalidPhrase)?
+            .add(token & PHRASE_MASK, &bytes)
             .map_err(UserStoreError::Persistence)?;
         self.take_item_in(ADDON_DICTIONARY, unigram, false);
-        let retained = offsets.get(&ADDON_DICTIONARY).copied().unwrap_or(0);
-        replacement.apply(
-            phrases
-                .arena(ADDON_DICTIONARY, retained)
-                .ok_or(UserStoreError::InvalidPhrase)?,
-        );
         phrases
             .phrase_table
             .add(&item.phrase, token)
@@ -361,21 +355,14 @@ impl UserStore {
             unigram: if accepted { increment } else { 0 },
             prons: vec![(packed.clone(), delta)],
         })?;
-        let empty = UserLibrary::default();
-        let replacement = phrases
-            .libraries
-            .get(&library)
-            .unwrap_or(&empty)
-            .prepare_add(token & PHRASE_MASK, bytes)
+        let retained = offsets.get(&library).copied().unwrap_or(0);
+        phrases
+            .arena(library, retained)
+            .ok_or(UserStoreError::InvalidPhrase)?
+            .add(token & PHRASE_MASK, &bytes)
             .map_err(UserStoreError::Persistence)?;
         self.take_item_in(library, increment, accepted);
         {
-            let retained = offsets.get(&library).copied().unwrap_or(0);
-            replacement.apply(
-                phrases
-                    .arena(library, retained)
-                    .ok_or(UserStoreError::InvalidPhrase)?,
-            );
             phrases
                 .phrase_table
                 .add(words, token)
