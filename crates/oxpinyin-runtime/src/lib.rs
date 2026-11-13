@@ -469,7 +469,7 @@ impl<'a> RuntimeDict<'a> {
         self.user.note_pinyin_search_keys(&query);
         let user_start = out.len();
         self.user_lookup().lookup_into(&query, out);
-        // Price after releasing the user phrase guard, as before.
+        // Price after the user phrase borrow has ended, as before.
         if price && self.live_items().has_overlay() {
             for entry in &mut out[user_start..] {
                 if let Some((matched, total)) =

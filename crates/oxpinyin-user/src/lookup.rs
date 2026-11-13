@@ -3,36 +3,35 @@
 //! Session queries borrow the canonical tables for the duration of each
 //! operation.
 
-use std::sync::{Mutex, MutexGuard};
+use std::cell::RefCell;
 
 use oxpinyin_core::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
-use crate::lock_result_or_abort;
 use crate::user_index::UserIndex;
 use crate::user_library::SessionPhrases;
 
 /// A query handle over the user store. Session handles borrow the canonical
 /// owner; they never hold a second index, phrase table or copy of item text.
-/// Each method releases the phrase guard before returning to its caller.
+/// Each method ends its phrase borrow before returning to its caller.
 #[derive(Clone, Debug)]
 pub struct UserLookup<'a> {
     /// The session's arenas.
-    phrases: &'a Mutex<SessionPhrases>,
+    phrases: &'a RefCell<SessionPhrases>,
     /// For system libraries with an original, the live buffers that hold
     /// their appended items.
-    items: &'a Mutex<crate::system_items::SystemItems>,
+    items: &'a RefCell<crate::system_items::SystemItems>,
 }
 
 impl<'a> UserLookup<'a> {
     pub(crate) fn session(
-        phrases: &'a Mutex<SessionPhrases>,
-        items: &'a Mutex<crate::system_items::SystemItems>,
+        phrases: &'a RefCell<SessionPhrases>,
+        items: &'a RefCell<crate::system_items::SystemItems>,
     ) -> Self {
         Self { phrases, items }
     }
 
     fn with_index<R>(&self, read: impl FnOnce(&UserIndex) -> R) -> R {
-        read(&lock_result_or_abort(self.phrases.lock()).index)
+        read(&self.phrases.borrow().index)
     }
 
     /// Phrases whose stored pinyin matches `syllables` under upstream's
@@ -66,7 +65,7 @@ impl<'a> UserLookup<'a> {
 
     /// Append the matching live entries in stored token order.
     pub fn lookup_into(&self, keys: &[oxpinyin_core::ChewingKey], out: &mut Vec<PhraseEntry>) {
-        let phrases = lock_result_or_abort(self.phrases.lock());
+        let phrases = self.phrases.borrow();
         phrases.index.visit_matches(keys, |token| {
             if let Some(text) = session_text(&phrases, self.items, token) {
                 out.push(PhraseEntry::new(PhraseToken::new(token), text));
@@ -83,18 +82,15 @@ impl<'a> UserLookup<'a> {
     /// Phrase text from the current item, without decoding its readings.
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
-        session_text(
-            &lock_result_or_abort::<MutexGuard<'_, SessionPhrases>>(self.phrases.lock()),
-            self.items,
-            token,
-        )
+        session_text(&self.phrases.borrow(), self.items, token)
     }
 
     /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
     /// included.
     #[must_use]
     pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
-        lock_result_or_abort(self.phrases.lock())
+        self.phrases
+            .borrow()
             .phrase_table
             .tokens(&crate::phrase_table::key_ucs4(words))
             .unwrap_or_default()
@@ -136,10 +132,7 @@ impl<'a> UserLookup<'a> {
     #[must_use]
     pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
         let prefix = crate::phrase_table::key_ucs4(prefix);
-        let Ok(rows) = lock_result_or_abort(self.phrases.lock())
-            .phrase_table
-            .suggest_after(&prefix)
-        else {
+        let Ok(rows) = self.phrases.borrow().phrase_table.suggest_after(&prefix) else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -159,7 +152,7 @@ impl<'a> UserLookup<'a> {
 // alias a foreign index token's high bits to an otherwise valid arena item.
 fn session_text(
     phrases: &SessionPhrases,
-    items: &Mutex<crate::system_items::SystemItems>,
+    items: &RefCell<crate::system_items::SystemItems>,
     token: u32,
 ) -> Option<PhraseText> {
     if let Some(item) = phrases
@@ -170,7 +163,8 @@ fn session_text(
         return item.phrase_text();
     }
     // An item a system library's live buffer holds and its chunk lacks.
-    lock_result_or_abort(items.lock())
+    items
+        .borrow()
         .with_live(token, |bytes| {
             oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })
@@ -232,8 +226,8 @@ mod tests {
         let keys = [oxpinyin_core::ChewingKey::from_pinyin("ni").unwrap()];
         phrases.index.add(&keys, token);
         phrases.index.add(&keys, token | 0x8000_0000);
-        let phrases = Mutex::new(phrases);
-        let items = Mutex::new(crate::system_items::SystemItems::default());
+        let phrases = RefCell::new(phrases);
+        let items = RefCell::new(crate::system_items::SystemItems::default());
         let lookup = UserLookup::session(&phrases, &items);
         assert_eq!(lookup.search_toned(&keys), [token, token | 0x8000_0000]);
         let entries = lookup.lookup(&[key("ni")]);

@@ -42,7 +42,7 @@ use crate::ContextCore;
 /// a `USER_FILE` library's token end, the token the probe found without a
 /// replacement, and the `USER_FILE` item under the cursor. The pin re-reads
 /// its range and its item on every call because both are offset reads; the
-/// session store's are a lock, a map probe or a range scan, and no write
+/// session store's are a borrow, a map probe or a range scan, and no write
 /// can change their answer without moving the generation.
 #[derive(Default)]
 pub struct PhraseExportCursor {
