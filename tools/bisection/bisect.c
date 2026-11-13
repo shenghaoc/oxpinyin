@@ -84,7 +84,7 @@ typedef int32_t  gint;
 typedef char     gchar;
 typedef uint32_t phrase_token_t;
 
-/* ── Frontend call profile (matches tools/capture/capture.c) ──────────── */
+/* ── Frontend call profile ─────────────────────────────────────────────── */
 
 #define IS_PINYIN         (1u << 1)
 #define PINYIN_INCOMPLETE (1u << 3)

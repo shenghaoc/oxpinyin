@@ -103,10 +103,9 @@ RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
 PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
-               "tools/capture", "tools/oracle", "tools/scripts2")
+               "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
-              "tools/bisection/startup_profile.py",
               "tools/oracle/build.py", "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
 # The shipping-size job's path gate. `crates` over-selects the three crates
