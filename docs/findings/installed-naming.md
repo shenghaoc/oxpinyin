@@ -51,9 +51,9 @@ data lives (`@libdir@/libpinyin/data`).
 ## What the install produces
 
 The version is `libpinyin_tag` in `tools/oracle/oracle-pin.txt`
-(2.11.92). Both capi build scripts read it.
-`crates/oxpinyin-capi/build_pin_version.rs` also rejects a
-`[package.metadata.capi]` table that disagrees.
+(2.11.92). `just packaging install` reads it. It also rejects a
+`[package.metadata.capi]` table that disagrees, as
+`just packaging check-pc-version` does.
 `just packaging pc-version` prints the version for package assembly.
 
 ```
@@ -70,7 +70,7 @@ The version is `libpinyin_tag` in `tools/oracle/oracle-pin.txt`
 `find <prefix> -name '*oxpinyin*'` finds nothing. `libzhuyin` follows the
 same pattern.
 
-## The mechanism — build.rs generates the `.pc`, a wrapper installs it
+## The mechanism — a wrapper generates and installs the `.pc`
 
 cargo-c **cannot produce** `pkgdatadir`, `database_format`,
 `libpinyinincludedir` or `libpinyin_binary_version`. This is a fixed limit
@@ -105,18 +105,16 @@ name.
 
 **The mechanism.** The work splits in two:
 
-- **`build.rs` owns the content.** It bakes the build-time fields of
-  `crates/oxpinyin-capi/libpinyin.pc.in` into `libpinyin.pc.in.baked`.
-  These fields are `@VERSION@`, `@LIBPINYIN_BINARY_VERSION@` (15.0) and
-  `@DATABASE_FORMAT@`. It drops the template's `#` header. It leaves the
-  install-time `@prefix@`, `@exec_prefix@`, `@libdir@` and `@includedir@`
-  for the wrapper. It writes to `$OUT_DIR` and mirrors the file to
-  `<target>/<profile>/`, so the wrapper does not have to find the
-  build-hash directory. Below its header, `libpinyin.pc.in` is the pin's
+- **`tools/dev/packaging.py` owns the content.** It fills the build-time
+  fields of `crates/oxpinyin-capi/libpinyin.pc.in`. These fields are
+  `@VERSION@`, `@LIBPINYIN_BINARY_VERSION@` (15.0) and
+  `@DATABASE_FORMAT@`. It drops the template's `#` header. No build
+  script writes the file, and nothing is read from Cargo's build
+  directory. Below its header, `libpinyin.pc.in` is the pin's
   template line for line.
 - **`just packaging install` owns placement** (`tools/dev/packaging.py`).
   For the one library named on its command line (`libpinyin` or
-  `libzhuyin`) it runs `cargo cinstall`, then fills that crate's baked
+  `libzhuyin`) it runs `cargo cinstall`, then fills that crate's
   template and **overwrites** the incomplete `.pc` that cargo-c installed.
   It fills `@prefix@`, `@exec_prefix@`, `@libdir@` and `@includedir@` as
   the pin's configure does: `--libdir`/`--includedir` verbatim when given,
@@ -130,10 +128,11 @@ variables. Use the wrapper for any install that a consumer will configure
 against. `Cargo.toml` carries `generate = false` to state intent. The
 current cargo-c ignores it, so the wrapper overwrites the file.
 
-**`database_format`.** `oxpinyin-store`'s build script selects the token
-once from its backend feature, as the pin's `configure.ac:134-135` sets
-one `DATABASE_FORMAT`. Both `.pc` files read it through
-`DEP_OXPINYIN_STORE_DATABASE_FORMAT`. There is no build-time override. The
+**`database_format`.** `oxpinyin-store`'s build script selects the
+library's token once from its backend feature, as the pin's
+`configure.ac:134-135` sets one `DATABASE_FORMAT`. Both `.pc` files take
+the token of the installed backend from `BACKEND_FORMATS` in
+`tools/dev/cell.py`. There is no build-time override. The
 default backend is tkrzw, so a default-feature build gives `Tkrzw`
 ([compatibility policy, "Backends and user data"](compatibility-policy.md#backends-and-user-data)).
 A `--no-default-features --features <peer>` build gives its own backend's

@@ -115,7 +115,7 @@ In short:
   `pinyin.h` and its two companion headers ship **verbatim** under libpinyin's version-stamped include subdirectory and are never regenerated.
 - `[package.metadata.capi.pkg_config] name = "libpinyin"`, `version = "2.11.92"`.
   The `.pc` answers to libpinyin's own name and a libpinyin version, so the `>=` constraints of consumers resolve.
-  cargo-c's own `.pc` is incomplete (a closed seven-key field set); `just packaging install` overwrites it from the template that build.rs bakes.
+  cargo-c's own `.pc` is incomplete (a closed seven-key field set); `just packaging install` overwrites it with the file that it computes from the crate's `.pc.in` template.
 - `[package.metadata.capi.library] name = "pinyin"`, `version = "15.0.0"`, `versioning = true`.
   The INSTALLED artifact is the drop-in `libpinyin.so.15`.
   The Rust `[lib] name` stays `pinyin_capi`, so in-tree gates keep finding `target/debug/libpinyin_capi.so`.
@@ -178,7 +178,7 @@ The four streams are independent and change for different reasons:
    A re-pin of the oracle is a deliberate event with its own re-freeze ([goldens and pins](runbooks/goldens-and-pins.md#3-the-oracle-pin)), independent of the crate version and SONAME.
    The installed identity of the drop-in (the `.pc` `Version:`, the `libpinyin-<version>/` header subdirectory and the versioned Provides of the packages) is the pin's own `configure.ac` version and changes with it.
    Its one source is `libpinyin_tag` in `tools/oracle/oracle-pin.txt`.
-   Both capi build scripts read it and check their `[package.metadata.capi]` tables against it, and `just packaging pc-version` prints it for package assembly.
+   `just packaging install` reads it and checks both crates' `[package.metadata.capi]` tables against it, and `just packaging pc-version` prints it for package assembly.
 4. **Parity pins:** `10190 / 10190 / 98930` of `98930` candidate symbols, `0` absent, `0` tie-swaps ([frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers)).
    These freeze the decode and predict output that the oracle is held to; packaging must not move them.
 
@@ -241,8 +241,8 @@ cargo-c cannot emit custom pkg-config variables: its `[package.metadata.capi.pkg
 It also cannot skip writing its own incomplete `libpinyin.pc`.
 
 The contract is therefore carried outside cargo-c.
-Each crate's build.rs bakes a complete `.pc` template (`libpinyin.pc.in.baked`) with the build-time fields.
-`just packaging install` fills the install-time placeholders and **overwrites** the file that cargo-c installed.
+`just packaging install` computes the complete `.pc` file from each crate's `.pc.in` template: no build script writes it, and it reads nothing from Cargo's build directory.
+It fills the version, binary version, database format and install-time placeholders and **overwrites** the file that cargo-c installed.
 Both templates are the pin's own `.pc.in`, and the wrapper substitutes what the pin's configure substitutes:
 
 - `exec_prefix=${prefix}`;

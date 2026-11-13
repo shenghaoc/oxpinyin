@@ -1,5 +1,4 @@
-//! Link-time stamping of the C ABI's identity, plus the drop-in
-//! `libpinyin.pc` content the packaging wrapper installs.
+//! Link-time stamping of the C ABI's identity.
 //!
 //! # SONAME
 //!
@@ -50,29 +49,20 @@
 //! cargo-c generates a `libpinyin.pc` from
 //! `[package.metadata.capi.pkg_config]`, but its field set is closed and it
 //! cannot emit the four variables real consumers read (`pkgdatadir`,
-//! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`); it
-//! also exposes no install prefix to build scripts and installs only its own
-//! `.pc` into the pkg-config dir. So this script bakes the build-time-known
-//! fields of `libpinyin.pc.in` into `$OUT_DIR/libpinyin.pc.in.baked`, leaving
-//! the install-time `@prefix@` / `@libdir@` placeholders for the packaging
-//! wrapper (`just packaging install`) to fill after `cargo cinstall`. See
-//! `docs/findings/installed-naming.md` for the full rationale and the
-//! verified cargo-c limits. `database_format` is the token `oxpinyin-store`'s
-//! build script selects from the backend, the value `libzhuyin.pc` carries
-//! too.
+//! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`).
+//! This script writes no `.pc` content. `just packaging install`
+//! (`tools/dev/packaging.py`) computes the complete file from
+//! `libpinyin.pc.in` after `cargo cinstall` and reads nothing from Cargo's
+//! build directory. See `docs/findings/installed-naming.md` for the
+//! rationale and the verified cargo-c limits.
 //!
-//! The steps themselves are shared with `oxpinyin-zhuyin-capi` in
-//! `build_capi.rs`.
+//! The link step is shared with `oxpinyin-zhuyin-capi` in `build_capi.rs`.
 
 mod build_capi;
-mod build_pin_version;
 
 fn main() {
     build_capi::run(&build_capi::Library {
-        name: "libpinyin",
-        template: "libpinyin.pc.in",
         soname: "libpinyin.so.15",
         shared_source: "build_capi.rs",
-        pin_version_source: "build_pin_version.rs",
     });
 }

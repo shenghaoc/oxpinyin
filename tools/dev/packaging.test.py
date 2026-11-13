@@ -5,6 +5,7 @@ Assert statuses, payloads and outputs using explicit fake Tools adapters.
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -53,20 +54,6 @@ if '--release' in args:profile='release'
 qualified=Path(value('--target-dir'))/triple/profile
 qualified.mkdir(parents=True, exist_ok=True)
 (qualified/(library+'.a')).write_bytes(b'static archive')
-if not os.environ.get('MISSING_BAKED'):
-    baked=qualified/(library+'.pc.in.baked')
-    if os.environ.get('FALLBACK_BAKED'):
-        baked=qualified/'build/pkg-hash/out'/baked.name
-        baked.parent.mkdir(parents=True)
-    text=(Path.cwd()/(library+'.pc.in')).read_text()
-    text=text[text.index('prefix=@prefix@'):]
-    for key,val in [('VERSION','2.11.92'),('LIBPINYIN_BINARY_VERSION','15.0'),('LIBZHUYIN_BINARY_VERSION','15.0'),('DATABASE_FORMAT','BerkeleyDB')]:
-        text=text.replace('@'+key+'@', val)
-    baked.write_text(text)
-if os.environ.get('AMBIGUOUS_BAKED'):
-    for name in ['one','two']:
-        other=qualified/'build'/name/'out'/(library+'.pc.in.baked')
-        other.parent.mkdir(parents=True,exist_ok=True);other.write_text('stale')
 lib=Path(value('--destdir')+value('--libdir'))
 lib.mkdir(parents=True,exist_ok=True)
 (lib/(library+'.so.15.0.0')).write_bytes(b'installed library')
@@ -96,6 +83,74 @@ def tree(path):
 
 # The packaging fixtures run extensionless '#!python' stubs, chmod bits, make, relinks and
 # POSIX signals; packaging and trainer-layout are refused on Windows, tested below.
+# Each library's .pc file as packaging computes it before an install: the pin's template with
+# its version, binary version and database format, and with the install-time placeholders.
+PC_FILES = {
+    'libpinyin': """prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+pkgdatadir=@libdir@/libpinyin
+database_format={database_format}
+
+libpinyinincludedir=${{includedir}}/libpinyin-2.11.92
+libpinyin_binary_version=15.0
+
+Name: libpinyin
+Description: Library to deal with pinyin
+Version: 2.11.92
+Requires: glib-2.0
+Libs: -L${{libdir}} -lpinyin
+Cflags: -I${{libpinyinincludedir}}
+""",
+    'libzhuyin': """prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+database_format={database_format}
+
+libzhuyinincludedir=${{includedir}}/libpinyin-2.11.92
+libzhuyin_binary_version=15.0
+
+Name: libzhuyin
+Description: Library to deal with zhuyin
+Version: 2.11.92
+Requires: glib-2.0
+Libs: -L${{libdir}} -lzhuyin
+Cflags: -I${{libzhuyinincludedir}}
+""",
+}
+
+
+class PcTextTests(unittest.TestCase):
+    """packaging computes the whole .pc file; no build script and no build directory takes part."""
+
+    def test_each_library_and_backend_gives_the_whole_file(self):
+        for library in packaging.LIBRARIES:
+            for backend, database_format in packaging.cell.BACKEND_FORMATS.items():
+                with self.subTest(library=library, backend=backend):
+                    text = packaging.pc_text(library, backend).decode()
+                    self.assertEqual(text, PC_FILES[library].format(database_format=database_format))
+                    self.assertFalse([line for line in text.splitlines() if line.lstrip().startswith('#')])
+                    self.assertEqual(set(re.findall(r'@[A-Za-z_]+@', text)),
+                                     {'@prefix@', '@exec_prefix@', '@libdir@', '@includedir@'})
+                    self.assertIn('\nVersion: 2.11.92\n', text)
+                    self.assertIn(f'\n{library}_binary_version=15.0\n', text)
+                    self.assertIn(f'\ndatabase_format={database_format}\n', text)
+
+    def test_a_template_with_crlf_and_indented_comments_gives_the_same_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            crate = root / 'crates' / packaging.LIBRARIES['libzhuyin']
+            crate.mkdir(parents=True)
+            (root / 'tools/oracle').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', root / 'tools/oracle/oracle-pin.txt')
+            template = (ROOT / 'crates' / packaging.LIBRARIES['libzhuyin'] / 'libzhuyin.pc.in').read_bytes().decode()
+            (crate / 'libzhuyin.pc.in').write_bytes(('# header\n  # indented\n\n' + template).replace('\n', '\r\n').encode())
+            self.assertEqual(packaging.pc_text('libzhuyin', 'bdb', root).decode(),
+                             PC_FILES['libzhuyin'].format(database_format='BerkeleyDB'))
+
+
 if sys.platform != 'win32':
     class TrainerLayoutTests(unittest.TestCase):
         # Independent source inventory: trainer b1927376's subprocess calls plus
@@ -412,8 +467,6 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
                 self.assertIn(b'no well-formed', result.stderr)
 
         def test_missing_pin_and_command_execution_statuses(self):
-            (self.root / 'tools/oracle/oracle-pin.txt').unlink()
-            self.assertEqual(self.invoke('pc-version').returncode, 2)
             self.env['PATH'] = str(self.bin) + ':/usr/bin:/bin'
             (self.bin / 'cargo').chmod(0o644)
             args = ['libpinyin','--prefix=/usr','--destdir='+str(self.work/'stage')]
@@ -421,6 +474,10 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             (self.bin / 'cargo').unlink()
             args = ['libpinyin','--prefix=/usr','--destdir='+str(self.work/'stage')]
             self.assertEqual(self.invoke('install',args).returncode,127)
+            # install checks the version declarations before cargo, so a missing pin record stops it first.
+            (self.root / 'tools/oracle/oracle-pin.txt').unlink()
+            self.assertEqual(self.invoke('pc-version').returncode, 2)
+            self.assertEqual(self.invoke('install',args).returncode,2)
 
         def test_each_facade_installs_separately_and_metadata_is_relocatable(self):
             for library in packaging.LIBRARIES:
@@ -433,6 +490,11 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
                     self.assertNotIn('usr/lib/' + other + '.a', files)
                     pc = (stage / 'usr/lib/pkgconfig' / (library + '.pc')).read_bytes()
                     self.assertIn(b'exec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n', pc)
+                    self.assertEqual(pc, PC_FILES[library].format(database_format='Tkrzw').encode()
+                                     .replace(b'@prefix@', b'/usr').replace(b'@exec_prefix@', b'${prefix}')
+                                     .replace(b'@libdir@', b'${exec_prefix}/lib').replace(b'@includedir@', b'${prefix}/include'))
+                    self.assertNotRegex(pc, rb'@[A-Za-z_]+@')
+                    self.assertNotRegex(pc, rb'(?m)^\s*#')
                     shutil.rmtree(stage)
 
         def darwin_fakes(self):
@@ -596,7 +658,6 @@ Path(args[args.index('-o')+1]).mkdir()
             self.assertEqual(sum(word.startswith('--target-dir=') for word in args), 1)
             self.assertIn('--target-dir=' + str(target), args)
             self.assertEqual(args[-1], '')
-            self.assertTrue((target / 'fake/debug/libpinyin.pc.in.baked').is_file())
 
         def test_relative_staging_roots_are_refused_before_removal(self):
             # Relative paths resolve from the repository root, so 'target' would name Cargo's target directory.
@@ -612,16 +673,14 @@ Path(args[args.index('-o')+1]).mkdir()
                     self.assertIn(b"'target' must be an absolute path", result.stderr)
                     self.assertTrue(sentinel.is_file())
 
-        def test_baked_fallback_and_ambiguity(self):
-            result, _ = self.install(env={'FALLBACK_BAKED': '1'})
-            self.assertEqual(result.returncode, 0, result.stderr)
-            shutil.rmtree(self.root / 'target')
-            for env, message in [({'MISSING_BAKED':'1'}, b'not found for this build'),
-                                 ({'MISSING_BAKED':'1', 'AMBIGUOUS_BAKED':'1'}, b'multiple')]:
-                result, _ = self.install(env=env)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn(message, result.stderr)
-                shutil.rmtree(self.root / 'target')
+        def test_a_stale_version_declaration_stops_the_install_before_cargo(self):
+            manifest = self.root / 'crates/oxpinyin-capi/Cargo.toml'
+            manifest.write_text(manifest.read_text().replace('"libpinyin-2.11.92"', '"libpinyin-2.11.91"'))
+            result, stage = self.install()
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b'declares "libpinyin-2.11.91", want "libpinyin-2.11.92"', result.stderr)
+            self.assertFalse((self.work / 'calls').exists())
+            self.assertFalse((stage / 'usr/lib/pkgconfig/libpinyin.pc').exists())
 
         def test_cargo_failure_status_and_no_complete_pc(self):
             result, stage = self.install(env={'FAIL_CARGO':'37'})
@@ -655,7 +714,7 @@ Path(args[args.index('-o')+1]).mkdir()
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(b'OK: packaging metadata matches', result.stdout)
             path = stage / 'usr/lib/pkgconfig/libpinyin.pc'
-            path.write_bytes(path.read_bytes().replace(b'BerkeleyDB', b'Tkrzw'))
+            path.write_bytes(path.read_bytes().replace(b'database_format=', b'database_format=Other'))
             result = self.invoke('check-pc-metadata', arguments)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn(b'FAIL:', result.stderr)

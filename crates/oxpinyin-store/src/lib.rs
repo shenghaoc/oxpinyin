@@ -1055,7 +1055,8 @@ pub const DEFAULT_STORE_EXT: &str = "db";
 /// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
 /// conform and every cross-backend pair answers non-conform. The build
 /// script selects it once from the backend feature, the pin's
-/// `DATABASE_FORMAT`, and hands the same value to both `.pc` files.
+/// `DATABASE_FORMAT`. Both `.pc` files carry the same token, from
+/// `tools/dev/cell.py`.
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_DB_FORMAT: &str = env!("OXPINYIN_STORE_DATABASE_FORMAT");
 
