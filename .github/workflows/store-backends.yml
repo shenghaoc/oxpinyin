@@ -295,17 +295,19 @@ jobs:
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
         env:
           BACKEND: ${{ matrix.backend }}
+          JOB_STATUS: ${{ job.status }}
+          ELAPSED: ${{ steps.backend-test.outputs.elapsed }}
         run: |
           {
             echo "## store backend (${BACKEND})"
             echo ""
-            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
+            echo "Result: **$([ "$JOB_STATUS" = 'success' ] && echo 'passed' || echo 'FAILED')**"
             echo ""
             echo "Backend-relevant workspace sweep under the ${BACKEND} backend only."
             echo ""
             echo "| Backend | Wall clock |"
             echo "|---|---:|"
-            echo "| ${BACKEND} | ${{ steps.backend-test.outputs.elapsed || '—' }}s |"
+            echo "| ${BACKEND} | ${ELAPSED:-—}s |"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
@@ -437,15 +439,18 @@ jobs:
 
       - name: Report
         if: always()
+        env:
+          OUTCOME: ${{ steps.sanitize-tests.outcome }}
+          ELAPSED: ${{ steps.sanitize-tests.outputs.elapsed }}
         run: |
           {
             echo "## tkrzw-sanitizers (address)"
             echo ""
-            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo "Result: **$([ "$OUTCOME" = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+            echo "| instrumented suite | ${ELAPSED:-—}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   bdb-sanitizers:
@@ -521,15 +526,18 @@ jobs:
 
       - name: Report
         if: always()
+        env:
+          OUTCOME: ${{ steps.sanitize-tests.outcome }}
+          ELAPSED: ${{ steps.sanitize-tests.outputs.elapsed }}
         run: |
           {
             echo "## bdb-sanitizers"
             echo ""
-            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo "Result: **$([ "$OUTCOME" = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| instrumented suite + C harnesses | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+            echo "| instrumented suite + C harnesses | ${ELAPSED:-—}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   kc-sanitizers:
@@ -600,15 +608,18 @@ jobs:
 
       - name: Report
         if: always()
+        env:
+          OUTCOME: ${{ steps.sanitize-tests.outcome }}
+          ELAPSED: ${{ steps.sanitize-tests.outputs.elapsed }}
         run: |
           {
             echo "## kc-sanitizers"
             echo ""
-            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo "Result: **$([ "$OUTCOME" = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+            echo "| instrumented suite | ${ELAPSED:-—}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   tree-evidence:
