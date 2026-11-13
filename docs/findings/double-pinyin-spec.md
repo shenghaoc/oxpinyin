@@ -122,7 +122,7 @@ So a two-key double-pinyin spelling is one atomic decoder key, and nothing re-se
 
 **oxpinyin routing.**
 The oxpinyin analogue is the `SegmentGraph`, k-best and scoring code.
-Full-pinyin `SegmentGraph::build` emits segmentation edges inside a spelling on purpose, so the scheme path uses the exact seam:
+Full-pinyin `SegmentGraph::build_with_options` emits segmentation edges inside a spelling on purpose, so the scheme path uses the exact seam:
 
 - `exact_input` joins the parser-produced keys as `'`-separated full-pinyin text, with one `ExactSegment` per key (`crates/oxpinyin-capi/src/parse.rs`).
 - `Session::replace_raw_exact` drives the session with that text and those segments.

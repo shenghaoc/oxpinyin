@@ -217,14 +217,8 @@ impl ChewingKey {
 
     /// `_ChewingKey::get_luoma_pinyin_string` (`chewing_key.cpp:91-105`):
     /// the luoma spelling, tone digit appended for a non-zero tone —
-    /// including the first tone, unlike zhuyin.
-    #[must_use]
-    pub fn luoma_pinyin_string(self) -> String {
-        self.luoma_pinyin_text().to_string()
-    }
-
-    /// How `_ChewingKey::get_luoma_pinyin_string` builds its result
-    /// (`chewing_key.cpp:97-101`).
+    /// including the first tone, unlike zhuyin — built as the pin builds
+    /// it (`chewing_key.cpp:97-101`).
     #[must_use]
     pub fn luoma_pinyin_text(self) -> KeyText {
         digit_text(self.content_string(4), self.tone)
@@ -232,14 +226,8 @@ impl ChewingKey {
 
     /// `_ChewingKey::get_secondary_zhuyin_string`
     /// (`chewing_key.cpp:107-121`): the secondary zhuyin spelling, tone
-    /// digit appended for a non-zero tone — including the first tone.
-    #[must_use]
-    pub fn secondary_zhuyin_string(self) -> String {
-        self.secondary_zhuyin_text().to_string()
-    }
-
-    /// How `_ChewingKey::get_secondary_zhuyin_string` builds its result
-    /// (`chewing_key.cpp:110-114`).
+    /// digit appended for a non-zero tone — including the first tone —
+    /// built as the pin builds it (`chewing_key.cpp:110-114`).
     #[must_use]
     pub fn secondary_zhuyin_text(self) -> KeyText {
         digit_text(self.content_string(5), self.tone)
@@ -388,8 +376,8 @@ mod chewing_key_data_tests {
         assert_eq!(key.shengmu_string(), "");
         assert_eq!(key.yunmu_string(), "");
         assert_eq!(key.zhuyin_string(), "");
-        assert_eq!(key.luoma_pinyin_string(), "");
-        assert_eq!(key.secondary_zhuyin_string(), "");
+        assert_eq!(key.luoma_pinyin_text().to_string(), "");
+        assert_eq!(key.secondary_zhuyin_text().to_string(), "");
         assert_eq!(key.to_packed(), 0);
     }
 
@@ -402,25 +390,25 @@ mod chewing_key_data_tests {
         assert_eq!(zhang.shengmu_string(), "zh");
         assert_eq!(zhang.yunmu_string(), "ang");
         assert_eq!(zhang.zhuyin_string(), "ㄓㄤ");
-        assert_eq!(zhang.luoma_pinyin_string(), "jhang");
-        assert_eq!(zhang.secondary_zhuyin_string(), "jang");
+        assert_eq!(zhang.luoma_pinyin_text().to_string(), "jhang");
+        assert_eq!(zhang.secondary_zhuyin_text().to_string(), "jang");
 
         let zhang3 = zhang.with_tone(3);
         assert_eq!(zhang3.pinyin_string(), "zhang3");
         assert_eq!(zhang3.zhuyin_string(), "ㄓㄤˇ");
-        assert_eq!(zhang3.luoma_pinyin_string(), "jhang3");
-        assert_eq!(zhang3.secondary_zhuyin_string(), "jang3");
+        assert_eq!(zhang3.luoma_pinyin_text().to_string(), "jhang3");
+        assert_eq!(zhang3.secondary_zhuyin_text().to_string(), "jang3");
 
         let jong = ChewingKey::from_pinyin("zhong").expect("row");
-        assert_eq!(jong.luoma_pinyin_string(), "jhong");
-        assert_eq!(jong.secondary_zhuyin_string(), "jung");
+        assert_eq!(jong.luoma_pinyin_text().to_string(), "jhong");
+        assert_eq!(jong.secondary_zhuyin_text().to_string(), "jung");
         assert_eq!(
-            jong.with_tone(1).luoma_pinyin_string(),
+            jong.with_tone(1).luoma_pinyin_text().to_string(),
             "jhong1",
             "luoma appends the first-tone digit"
         );
         assert_eq!(
-            jong.with_tone(1).secondary_zhuyin_string(),
+            jong.with_tone(1).secondary_zhuyin_text().to_string(),
             "jung1",
             "secondary zhuyin appends the first-tone digit"
         );
@@ -434,7 +422,7 @@ mod chewing_key_data_tests {
         assert_eq!(b.shengmu_string(), "b");
         assert_eq!(b.yunmu_string(), "");
         assert_eq!(b.zhuyin_string(), "ㄅ");
-        assert_eq!(b.luoma_pinyin_string(), "None");
-        assert_eq!(b.secondary_zhuyin_string(), "None");
+        assert_eq!(b.luoma_pinyin_text().to_string(), "None");
+        assert_eq!(b.secondary_zhuyin_text().to_string(), "None");
     }
 }

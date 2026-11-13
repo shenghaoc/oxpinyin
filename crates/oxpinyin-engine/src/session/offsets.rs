@@ -58,7 +58,7 @@ where
 
     /// Normalizes a user cursor position to a lookup offset over the
     /// session's own buffer and options — the `pinyin_get_pinyin_offset`
-    /// law ([`crate::lookup_offset_for_cursor`]).
+    /// law ([`crate::lookup_offset_over_spans`]).
     ///
     /// # Errors
     ///
@@ -74,7 +74,7 @@ where
 
     /// The word-level left move over the session's own buffer and options
     /// — the `pinyin_get_left_pinyin_offset` law
-    /// ([`crate::left_word_offset`]).
+    /// ([`crate::left_word_offset_over_spans`]).
     ///
     /// # Errors
     ///
@@ -98,7 +98,7 @@ where
 
     /// The word-level right move over the session's own buffer and options
     /// — the `pinyin_get_right_pinyin_offset` law
-    /// ([`crate::right_word_offset`]). `Ok(None)` is the pin's graceful
+    /// ([`crate::right_word_offset_over_spans`]). `Ok(None)` is the pin's graceful
     /// false: no key starts at the position.
     ///
     /// # Errors
@@ -123,8 +123,8 @@ where
 
     /// The composition's scan-matrix keys with their raw byte spans.
     ///
-    /// The same walk the cursor laws above run — `matrix_spans` is a
-    /// projection of this — so a key answered here and an offset answered
+    /// The cursor laws above walk these same keys through the
+    /// `*_over_spans` laws, so a key answered here and an offset answered
     /// by [`Session::right_word_offset`] agree by construction. The C ABI's
     /// `pinyin_get_pinyin_key` family reads this.
     ///

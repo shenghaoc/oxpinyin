@@ -45,7 +45,7 @@ fn every_double_pinyin_scheme_produces_aligned_key_spans() {
     for scheme in DOUBLE_SCHEMES {
         let mut parser = DoublePinyinParser::new();
         assert!(parser.set_scheme(*scheme), "{scheme:?} has a table");
-        let parse = parser.parse(input, false);
+        let parse = parser.parse_with_options(input, 0);
         let mut cursor = 0;
         for key in parse.keys() {
             assert!(
@@ -77,7 +77,7 @@ fn double_pinyin_output_is_valid_full_pinyin_for_every_scheme() {
     for scheme in DOUBLE_SCHEMES {
         let mut parser = DoublePinyinParser::new();
         parser.set_scheme(*scheme);
-        let full = parser.parse(b"uikjkuk", false).full_pinyin();
+        let full = parser.parse_with_options(b"uikjkuk", 0).full_pinyin();
         assert!(
             parser_accepts_spellings(&full),
             "{scheme:?}: full-pinyin projection {full:?} is not parsable"

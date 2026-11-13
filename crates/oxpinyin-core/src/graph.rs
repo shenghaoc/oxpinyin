@@ -234,7 +234,12 @@ pub struct SegmentGraph {
 }
 
 impl SegmentGraph {
-    /// Builds the graph for `input`.
+    /// Builds the graph for `input` under parser option bits.
+    ///
+    /// With [`OptionBits::default`] the all-off path stays bit-identical to
+    /// the frozen parser. The option bits only admit correction/ambiguity
+    /// *spellings*; matrix-level fuzzy alternates are added later by the
+    /// engine scan matrix.
     ///
     /// # Errors
     ///
@@ -242,21 +247,6 @@ impl SegmentGraph {
     /// [`MAX_GRAPH_POSITION`]. Every other byte sequence — junk, malformed UTF-8,
     /// stray apostrophes, the empty input — builds a graph, possibly one with
     /// no edges at all.
-    pub fn build(input: &[u8]) -> Result<Self, GraphError> {
-        Self::build_with_options(input, OptionBits::default())
-    }
-
-    /// Builds the graph for `input` under parser option bits.
-    ///
-    /// [`Self::build`] is this method with [`OptionBits::default`], so the
-    /// all-off path stays bit-identical to the frozen parser. The option bits
-    /// only admit correction/ambiguity *spellings*; matrix-level fuzzy
-    /// alternates are added later by the engine scan matrix.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::InputTooLong`] for an input beyond
-    /// [`MAX_GRAPH_POSITION`].
     pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
         if input.len() > MAX_GRAPH_POSITION {
             return Err(GraphError::InputTooLong {
@@ -682,7 +672,7 @@ mod tests {
 
     /// Renders the graph as `from-to:key:kind`, one edge per entry.
     fn rendered(input: &str) -> Vec<String> {
-        SegmentGraph::build(input.as_bytes())
+        SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
             .expect("the test inputs are short")
             .edges()
             .iter()
@@ -1001,7 +991,8 @@ mod tests {
         // same edges the toneless parser always did — no digit spans, no
         // tone fields, no window growth.
         for input in ["zai4", "zhuang4", "n4", "a4", "zai4'an", "ni3hao3"] {
-            let frozen = SegmentGraph::build(input.as_bytes()).expect("valid");
+            let frozen = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
+                .expect("valid");
             let cleared = SegmentGraph::build_with_options(
                 input.as_bytes(),
                 OptionBits::from_bits(crate::PINYIN_INCOMPLETE),
@@ -1014,7 +1005,8 @@ mod tests {
 
     #[test]
     fn the_empty_input_is_one_node_and_no_edges() {
-        let graph = SegmentGraph::build(b"").expect("empty is valid");
+        let graph =
+            SegmentGraph::build_with_options(b"", OptionBits::default()).expect("empty is valid");
         assert_eq!(graph.node_count(), 1);
         assert_eq!(graph.edges().len(), 0);
         assert_eq!(graph.consumed(), 0);
@@ -1058,7 +1050,8 @@ mod tests {
 
     #[test]
     fn an_apostrophe_rides_on_the_edge_that_follows_it() {
-        let graph = SegmentGraph::build(b"chang'an").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"chang'an", OptionBits::default()).expect("valid");
         let crossing: Vec<_> = graph
             .edges()
             .iter()
@@ -1081,7 +1074,8 @@ mod tests {
         // Upstream's DP propagates across every `'` at position zero, so
         // `'ni` consumes all three bytes. Matches the pin (leading-apostrophe
         // entry of the `parser-spec.md` correction log).
-        let leading = SegmentGraph::build(b"'ni").expect("valid");
+        let leading =
+            SegmentGraph::build_with_options(b"'ni", OptionBits::default()).expect("valid");
         assert_eq!(
             leading.consumed(),
             3,
@@ -1096,7 +1090,8 @@ mod tests {
             "'ni has an edge from 0 with syllable_start past the apostrophe"
         );
 
-        let double_leading = SegmentGraph::build(b"''ni").expect("valid");
+        let double_leading =
+            SegmentGraph::build_with_options(b"''ni", OptionBits::default()).expect("valid");
         assert_eq!(
             double_leading.consumed(),
             4,
@@ -1106,7 +1101,8 @@ mod tests {
 
         // The doubled-separator half (after a consumed group) was already
         // resolved; unchanged.
-        let doubled = SegmentGraph::build(b"ni''hao").expect("valid");
+        let doubled =
+            SegmentGraph::build_with_options(b"ni''hao", OptionBits::default()).expect("valid");
         assert_eq!(
             doubled.consumed(),
             7,
@@ -1125,13 +1121,15 @@ mod tests {
         // The pin's recorded path for `ni'` is
         // `ni@0:2:complete,<missing-pinyin>@2`; the oracle sentinels `ni'!`
         // and `ni'i` record the same path.
-        let trailing = SegmentGraph::build(b"ni'").expect("valid");
+        let trailing =
+            SegmentGraph::build_with_options(b"ni'", OptionBits::default()).expect("valid");
         assert_eq!(trailing.consumed(), 3);
         assert!(trailing.fully_consumed());
 
         // Standalone apostrophe runs: no key covers them, propagation
         // alone consumes every byte (pin parses `'''` to 3).
-        let standalone = SegmentGraph::build(b"'''").expect("valid");
+        let standalone =
+            SegmentGraph::build_with_options(b"'''", OptionBits::default()).expect("valid");
         assert_eq!(standalone.consumed(), 3);
         assert!(standalone.edges().is_empty());
         assert!(standalone.fully_consumed());
@@ -1139,11 +1137,13 @@ mod tests {
 
     #[test]
     fn junk_stops_the_reachable_prefix_without_stopping_the_build() {
-        let graph = SegmentGraph::build(b"ni!hao").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"ni!hao", OptionBits::default()).expect("valid");
         assert_eq!(graph.consumed(), 2);
         assert!(!graph.fully_consumed());
 
-        let leading = SegmentGraph::build(b"!ni").expect("valid");
+        let leading =
+            SegmentGraph::build_with_options(b"!ni", OptionBits::default()).expect("valid");
         assert_eq!(leading.consumed(), 0);
         assert!(leading.edges().iter().all(|edge| edge.from() > 0));
     }
@@ -1151,7 +1151,8 @@ mod tests {
     #[test]
     fn repeated_initials_chain_the_whole_way() {
         // The pin admits initial-only keys repeatedly (`pinyin_parser2.cpp:266-284`).
-        let graph = SegmentGraph::build(b"zzzzzzzz").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"zzzzzzzz", OptionBits::default()).expect("valid");
         assert_eq!(graph.consumed(), 8);
         assert!(graph.fully_consumed());
         assert!(
@@ -1165,7 +1166,8 @@ mod tests {
     #[test]
     fn a_mid_position_initial_is_an_ordinary_edge() {
         // yingchon: the pin selects ying, ch, o, n — two non-final partials.
-        let graph = SegmentGraph::build(b"yingchon").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"yingchon", OptionBits::default()).expect("valid");
         for (from, key, start) in [(0, "ying", 0), (4, "ch", 4), (6, "o", 6), (7, "n", 7)] {
             let key = SyllableKey::from_text(key).expect("frozen key");
             assert!(
@@ -1185,7 +1187,8 @@ mod tests {
         // old 65535-byte refusal
         // (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
         let long = b"ni".repeat(40_000);
-        let graph = SegmentGraph::build(&long).expect("no length limit below the position width");
+        let graph = SegmentGraph::build_with_options(&long, OptionBits::default())
+            .expect("no length limit below the position width");
         assert_eq!(graph.consumed(), long.len());
         let path = graph.fewest_keys(false);
         assert_eq!(path.len(), 40_000);
@@ -1197,7 +1200,8 @@ mod tests {
         // Megabyte inputs that emit no edge: the starting reservation is
         // capped, so capacity does not follow the input length.
         for input in [vec![b'\''; 1 << 20], vec![b'!'; 1 << 20]] {
-            let graph = SegmentGraph::build(&input).expect("within the position width");
+            let graph = SegmentGraph::build_with_options(&input, OptionBits::default())
+                .expect("within the position width");
             assert!(graph.edges.is_empty());
             assert!(
                 graph.edges.capacity() <= super::INITIAL_EDGE_CAPACITY,
@@ -1242,7 +1246,8 @@ mod tests {
                     super::emit_edges(input, node, start, OptionBits::default(), &mut per_node);
                 }
             }
-            let graph = SegmentGraph::build(input).expect("short input");
+            let graph = SegmentGraph::build_with_options(input, OptionBits::default())
+                .expect("short input");
             assert_eq!(
                 graph.edges(),
                 per_node.as_slice(),
@@ -1254,7 +1259,8 @@ mod tests {
 
     #[test]
     fn fewest_keys_picks_the_shortest_complete_path() {
-        let graph = SegmentGraph::build(b"nihao").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"nihao", OptionBits::default()).expect("valid");
         let path = graph.fewest_keys(false);
         assert_eq!(
             path.iter()
@@ -1263,7 +1269,8 @@ mod tests {
             ["ni", "hao"]
         );
 
-        let with_incomplete = SegmentGraph::build(b"n").expect("valid");
+        let with_incomplete =
+            SegmentGraph::build_with_options(b"n", OptionBits::default()).expect("valid");
         assert!(with_incomplete.fewest_keys(false).is_empty());
         assert_eq!(
             with_incomplete
@@ -1274,7 +1281,7 @@ mod tests {
             ["n"]
         );
 
-        let tail = SegmentGraph::build(b"nih").expect("valid");
+        let tail = SegmentGraph::build_with_options(b"nih", OptionBits::default()).expect("valid");
         assert_eq!(
             tail.fewest_keys(false)
                 .iter()
@@ -1290,7 +1297,8 @@ mod tests {
             ["ni", "h"]
         );
 
-        let graph = SegmentGraph::build(b"xian").expect("valid");
+        let graph =
+            SegmentGraph::build_with_options(b"xian", OptionBits::default()).expect("valid");
         assert_eq!(
             graph
                 .fewest_keys(false)
@@ -1373,7 +1381,8 @@ mod tests {
             ("nih", &["ni"]),
             ("", &[]),
         ] {
-            let graph = SegmentGraph::build(input.as_bytes()).expect("valid");
+            let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
+                .expect("valid");
             let path = graph.fewest_keys(false);
             assert!(
                 path.iter()

@@ -37,8 +37,8 @@ fn every_packed_pattern_renders_totally() {
         let _ = key.shengmu_string();
         let _ = key.yunmu_string();
         let _ = key.zhuyin_string();
-        let _ = key.luoma_pinyin_string();
-        let _ = key.secondary_zhuyin_string();
+        let _ = key.luoma_pinyin_text().to_string();
+        let _ = key.secondary_zhuyin_text().to_string();
     }
 }
 
@@ -72,8 +72,8 @@ fn arbitrary_element_quadruples_render_totally() {
         let _ = key.shengmu_string();
         let _ = key.yunmu_string();
         let _ = key.zhuyin_string();
-        let _ = key.luoma_pinyin_string();
-        let _ = key.secondary_zhuyin_string();
+        let _ = key.luoma_pinyin_text().to_string();
+        let _ = key.secondary_zhuyin_text().to_string();
 
         // Masking law: the packed form truncates each element to its
         // bitfield width (initial 5 bits, middle 2, final 5, tone 3) and
