@@ -105,8 +105,10 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
 # against the pinned checksum for that arch
 # (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
 # Exact on purpose (#1074): rustup-init installs from a checksum, and a checksum
-# is only known for a known version; the stable toolchain's output depends on its
-# version (keep it equal to the channel in rust-toolchain.toml).
+# is only known for a known version. rustup-init installs no toolchain:
+# `rustup toolchain install` reads the channel and the components from the
+# repository's rust-toolchain.toml, which performance_tag() hashes.
+COPY rust-toolchain.toml /opt/rust-pin/rust-toolchain.toml
 RUN set -eu; \
     case "$(uname -m)" in \
         x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
@@ -121,9 +123,10 @@ RUN set -eu; \
     && echo "$rustup_sha  /tmp/rustup-init" \
     | sha256sum -c - \
     && chmod +x /tmp/rustup-init \
-    && /tmp/rustup-init -y --default-toolchain 1.99.1 --profile minimal \
-       --component clippy,rustfmt \
-    && rm /tmp/rustup-init
+    && /tmp/rustup-init -y --default-toolchain none --profile minimal \
+    && rm /tmp/rustup-init \
+    && cd /opt/rust-pin \
+    && /root/.cargo/bin/rustup toolchain install
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Cargo parallelism, capped for small build VMs. This image's target hosts
@@ -137,8 +140,9 @@ ENV CARGO_BUILD_JOBS=${cargo_jobs}
 # Exact on purpose (#1074): a fresh image, and cargo-c's rust-version rises with
 # each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
 # install would break once it passes the pinned Rust. `just doctor` reports
-# the minimum cargo-c (docs/runbooks/setup.md).
-RUN cargo install cargo-c@0.10.25 --locked
+# the minimum cargo-c (docs/runbooks/setup.md). There is no default
+# toolchain, so cargo runs where rust-toolchain.toml selects one.
+RUN cd /opt/rust-pin && cargo install cargo-c@0.10.25 --locked
 
 # uv and the managed interpreter come from the deps stage. The entry point below is
 # `python -m tools.dev measure ...`; this checks the interpreter it runs. The libtkrzw

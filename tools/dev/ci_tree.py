@@ -135,7 +135,7 @@ GENERATED_TABLES = (
 )
 CI_INPUTS = {
     # cargo fmt reads the fuzz workspace.
-    "lint": Inputs((*RUST, "fuzz", "clippy.toml"), PYTHON_ONLY,
+    "lint": Inputs((*RUST, "fuzz"), PYTHON_ONLY,
                    (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
     # cargo deny reads the manifests and lockfiles only.
