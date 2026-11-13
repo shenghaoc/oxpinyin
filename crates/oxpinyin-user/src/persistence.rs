@@ -337,7 +337,7 @@ impl<
 /// load and save need to know about the system side.
 #[derive(Debug)]
 pub struct SystemOriginals {
-    libraries: BTreeMap<u8, SystemLibrary>,
+    libraries: crate::LibraryTable<SystemLibrary>,
     mapped: PhraseLibraries,
     layout: UserFileLayout,
 }
@@ -398,7 +398,7 @@ impl OriginalLibraries for SelectedOriginals<'_> {
 impl SystemOriginals {
     /// `libraries` under `layout`.
     #[must_use]
-    pub fn new(mut libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
+    pub fn new(mut libraries: crate::LibraryTable<SystemLibrary>, layout: UserFileLayout) -> Self {
         let mut mapped = PhraseLibraries::empty();
         for (&nibble, library) in &mut libraries {
             if let Some(mapping) = library.mapped.take() {
@@ -458,7 +458,9 @@ impl SystemOriginals {
 
     /// Transfer each mapped system library's sole byte owner into its live
     /// sub-index; the library entries retain only load-time metadata.
-    pub(crate) fn take_live_libraries(&mut self) -> BTreeMap<u8, crate::replay::ReplayedLibrary> {
+    pub(crate) fn take_live_libraries(
+        &mut self,
+    ) -> crate::LibraryTable<crate::replay::ReplayedLibrary> {
         let nibbles: Vec<u8> = self.libraries.keys().copied().collect();
         nibbles
             .into_iter()
@@ -586,7 +588,7 @@ impl SystemOriginals {
 }
 
 impl std::ops::Deref for SystemOriginals {
-    type Target = BTreeMap<u8, SystemLibrary>;
+    type Target = crate::LibraryTable<SystemLibrary>;
 
     fn deref(&self) -> &Self::Target {
         &self.libraries
@@ -600,8 +602,8 @@ impl std::ops::DerefMut for SystemOriginals {
 }
 
 /// The libraries under the stock layout.
-impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
-    fn from(libraries: BTreeMap<u8, SystemLibrary>) -> Self {
+impl From<crate::LibraryTable<SystemLibrary>> for SystemOriginals {
+    fn from(libraries: crate::LibraryTable<SystemLibrary>) -> Self {
         Self::new(libraries, UserFileLayout::stock())
     }
 }
@@ -656,11 +658,11 @@ pub struct UserState {
     /// not reconstruct their contents.
     pub phrase_table: BTreeMap<Vec<u8>, Vec<u8>>,
     /// The `USER_FILE` sub-indexes (5, 6, 7) by nibble, items by slot.
-    pub libraries: BTreeMap<u8, BTreeMap<u32, ChunkItem>>,
+    pub libraries: crate::LibraryTable<BTreeMap<u32, ChunkItem>>,
     /// The `SYSTEM_FILE` libraries' touched items by nibble and slot:
     /// `Some(item)` modifies the original, `None` removes it. A slot
     /// absent here still answers its original item.
-    pub system_overrides: BTreeMap<u8, BTreeMap<u32, Option<ChunkItem>>>,
+    pub system_overrides: crate::LibraryTable<BTreeMap<u32, Option<ChunkItem>>>,
     /// The `USER_FILE` readings the user pinyin index carries, as
     /// `(token, packed ChewingKey words)`. `_add_phrase` indexes the
     /// reading a phrase is created with and never one merged into an
@@ -868,7 +870,7 @@ pub struct Loaded {
     /// or removed (`phrase_index.cpp:439-520`). The facade adds each to its
     /// own total (`phrase_index.cpp:237-248`), so the session prices with
     /// these and not with the items' sum.
-    pub(crate) library_totals: BTreeMap<u8, u32>,
+    pub(crate) library_totals: crate::LibraryTable<u32>,
 }
 
 impl Loaded {
@@ -896,9 +898,9 @@ pub(crate) fn record_skip(
 #[derive(Debug, Default)]
 pub(crate) struct LoadedProfile {
     /// USER_FILE arenas moved into the session after profile parsing.
-    pub(crate) user_libraries: BTreeMap<u8, UserLibrary>,
+    pub(crate) user_libraries: crate::LibraryTable<UserLibrary>,
     /// Completed private views retained by session opens.
-    pub(crate) replayed: BTreeMap<u8, ReplayedLibrary>,
+    pub(crate) replayed: crate::LibraryTable<ReplayedLibrary>,
     /// The public load result.
     pub(crate) loaded: Loaded,
     /// The user pinyin index's readings longer than `MAX_PHRASE_LENGTH`
@@ -1141,7 +1143,7 @@ pub(crate) fn load_checked(
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> Result<LoadedProfile, PersistenceError> {
-    load_checked_impl(dir, originals, check, false, BTreeMap::new())
+    load_checked_impl(dir, originals, check, false, crate::LibraryTable::new())
 }
 
 #[cfg(test)]
@@ -1150,7 +1152,7 @@ pub(crate) fn load_session_checked(
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
 ) -> Result<LoadedProfile, PersistenceError> {
-    load_checked_impl(dir, originals, check, true, BTreeMap::new())
+    load_checked_impl(dir, originals, check, true, crate::LibraryTable::new())
 }
 
 /// The init's profile load: the user tables first (`pinyin.cpp:350-373`),
@@ -1205,8 +1207,8 @@ pub(crate) fn begin_session_profile(
             wiped: !check.conform,
             ..Loaded::default()
         },
-        replayed: BTreeMap::new(),
-        user_libraries: BTreeMap::new(),
+        replayed: crate::LibraryTable::new(),
+        user_libraries: crate::LibraryTable::new(),
         overlong_index_keys: Vec::new(),
         index: UserIndex::default(),
         phrase_table: UserPhraseTable::default(),
@@ -1323,7 +1325,7 @@ fn load_checked_impl(
     originals: &impl OriginalLibraries,
     check: &ProfileCheck,
     lazy: bool,
-    initial: BTreeMap<u8, ReplayedLibrary>,
+    initial: crate::LibraryTable<ReplayedLibrary>,
 ) -> Result<LoadedProfile, PersistenceError> {
     let mut profile = LoadedProfile {
         loaded: Loaded {
@@ -1333,7 +1335,7 @@ fn load_checked_impl(
             ..Loaded::default()
         },
         replayed: initial,
-        user_libraries: BTreeMap::new(),
+        user_libraries: crate::LibraryTable::new(),
         overlong_index_keys: Vec::new(),
         index: UserIndex::default(),
         phrase_table: UserPhraseTable::default(),
@@ -1644,7 +1646,7 @@ fn load_libraries(
     layout: &UserFileLayout,
     loaded: &mut Loaded,
     only: Option<u8>,
-    mut libraries: Option<&mut BTreeMap<u8, UserLibrary>>,
+    mut libraries: Option<&mut crate::LibraryTable<UserLibrary>>,
 ) {
     for (nibble, file) in layout.user_libraries() {
         let nibble = *nibble;
@@ -1715,7 +1717,10 @@ fn load_logs(dir: &Path, originals: &impl OriginalLibraries, loaded: &mut Loaded
 
 /// A reload's result: the live buffer each replayed library keeps, and the
 /// total each library the profile filled holds.
-pub(crate) type Reloaded = (BTreeMap<u8, ReplayedLibrary>, BTreeMap<u8, u32>);
+pub(crate) type Reloaded = (
+    crate::LibraryTable<ReplayedLibrary>,
+    crate::LibraryTable<u32>,
+);
 
 /// One reloaded library's saved state: the `.dbin` log in the user
 /// directory replayed onto the freshly mapped system original —
@@ -1732,7 +1737,7 @@ pub(crate) fn load_library_logs(
     originals: &impl OriginalLibraries,
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
-    let mut replayed = BTreeMap::new();
+    let mut replayed = crate::LibraryTable::new();
     replay_logs(
         dir,
         originals,
@@ -1774,7 +1779,7 @@ pub(crate) fn load_user_library(
     nibble: u8,
 ) -> Option<UserLibrary> {
     let mut loaded = Loaded::default();
-    let mut libraries = BTreeMap::new();
+    let mut libraries = crate::LibraryTable::new();
     load_libraries(dir, layout, &mut loaded, Some(nibble), Some(&mut libraries));
     libraries.remove(&nibble).or_else(|| {
         loaded
@@ -1803,7 +1808,7 @@ pub(crate) fn load_masked_logs(
     value: u32,
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
-    let mut replayed = BTreeMap::new();
+    let mut replayed = crate::LibraryTable::new();
     replay_logs(
         dir,
         originals,
@@ -1846,7 +1851,7 @@ pub(crate) fn load_masked_logs_live(
 /// library slots (sub-index 0 is never remapped), one `Vec` each. The pin
 /// holds the same bytes, one library at a time, in `MemoryChunk::load`.
 #[derive(Default)]
-pub struct MaskLogs(BTreeMap<u8, std::io::Result<Vec<u8>>>);
+pub struct MaskLogs(crate::LibraryTable<std::io::Result<Vec<u8>>>);
 
 /// Read library `nibble`'s saved log once into `logs` and return the header
 /// fault `merge_with_mask` reaches in it, without touching any state:
@@ -1888,7 +1893,7 @@ fn replay_logs(
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
-    mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
+    mut replayed: Option<&mut crate::LibraryTable<ReplayedLibrary>>,
     mut preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     for (nibble, file) in originals.layout().system_logs() {
@@ -1922,7 +1927,7 @@ fn replay_log(
     file: &FileName,
     mask: Option<(u32, u32)>,
     only_originals: bool,
-    mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
+    mut replayed: Option<&mut crate::LibraryTable<ReplayedLibrary>>,
     preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
     if only_originals && !originals.contains_key(&nibble) {
@@ -3080,7 +3085,7 @@ mod tests {
                 &[(vec![ChewingKey::new(7, 0, 13, 0).to_packed()], 50)],
             ),
         );
-        BTreeMap::from([(
+        crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,
@@ -3115,9 +3120,9 @@ mod tests {
 
         UserState {
             bigram,
-            libraries: BTreeMap::from([(7_u8, BTreeMap::from([(1_u32, user_item)]))]),
+            libraries: crate::LibraryTable::from([(7_u8, BTreeMap::from([(1_u32, user_item)]))]),
             // 你 trained twice: 100 → 100 + 69*7
-            system_overrides: BTreeMap::from([(
+            system_overrides: crate::LibraryTable::from([(
                 1_u8,
                 BTreeMap::from([(
                     1_u32,
@@ -3245,8 +3250,8 @@ mod tests {
             for slot in replayed.slots() {
                 actual
                     .system_overrides
-                    .entry(library)
-                    .or_default()
+                    .get_or_default(library)
+                    .unwrap()
                     .insert(slot, replayed.item(slot));
             }
         }
@@ -4416,7 +4421,7 @@ mod tests {
                     oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open")
                 }),
             };
-            BTreeMap::from([(1_u8, library)]).into()
+            crate::LibraryTable::from([(1_u8, library)]).into()
         };
         let grown = |base: &ChunkItem, extra: u32| {
             let mut next = base.clone();
@@ -4922,8 +4927,8 @@ mod tests {
             {
                 state
                     .system_overrides
-                    .entry(crate::phrase::phrase_index_library_index(token))
-                    .or_default()
+                    .get_or_default(crate::phrase::phrase_index_library_index(token))
+                    .unwrap()
                     .insert(token & crate::phrase::PHRASE_MASK, item);
             }
             Loaded {
@@ -5287,7 +5292,7 @@ mod tests {
     /// grams. Every table the file set carries is non-empty.
     fn cross_backend_state() -> (UserState, SystemOriginals) {
         let k = |i: u8, m: u8, f: u8| ChewingKey::new(i, m, f, 0).to_packed();
-        let mut libraries = BTreeMap::new();
+        let mut libraries = crate::LibraryTable::new();
         libraries.insert(
             7_u8,
             BTreeMap::from([
@@ -5331,7 +5336,7 @@ mod tests {
                 gram(69, &[(0x0500_0001, 69)]),
             ),
         ];
-        let mut system_overrides = BTreeMap::new();
+        let mut system_overrides = crate::LibraryTable::new();
         system_overrides.insert(
             1_u8,
             BTreeMap::from([(
@@ -5343,7 +5348,7 @@ mod tests {
                 }),
             )]),
         );
-        let originals = BTreeMap::from([(
+        let originals = crate::LibraryTable::from([(
             1_u8,
             SystemLibrary {
                 mapped: None,

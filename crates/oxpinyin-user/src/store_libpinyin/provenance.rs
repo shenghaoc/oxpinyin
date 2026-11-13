@@ -11,7 +11,6 @@
 //! Each test opens a mapped chunk through the session's own load, so the
 //! chunk's mapping is the live buffer, and reads the answers the lookups use.
 
-use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -117,7 +116,7 @@ impl Profile {
     }
 
     fn originals(&self) -> SystemOriginals {
-        BTreeMap::from([(
+        crate::LibraryTable::from([(
             1_u8,
             SystemLibrary::from_library(PhraseLibrary::open(&self.chunk).expect("map")),
         )])

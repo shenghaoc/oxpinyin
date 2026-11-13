@@ -172,7 +172,11 @@ impl UserStore {
             .map_err(UserStoreError::Persistence)?;
         self.take_item_in(ADDON_DICTIONARY, unigram, false);
         let retained = offsets.get(&ADDON_DICTIONARY).copied().unwrap_or(0);
-        replacement.apply(phrases.arena(ADDON_DICTIONARY, retained));
+        replacement.apply(
+            phrases
+                .arena(ADDON_DICTIONARY, retained)
+                .ok_or(UserStoreError::InvalidPhrase)?,
+        );
         phrases
             .phrase_table
             .add(&item.phrase, token)
@@ -329,8 +333,8 @@ impl UserStore {
             }
             phrases
                 .libraries
-                .entry(library)
-                .or_default()
+                .get_or_default(library)
+                .ok_or(UserStoreError::InvalidPhrase)?
                 .add_reading(token & PHRASE_MASK, &packed, delta)
                 .map_err(UserStoreError::Persistence)?;
             drop(phrases);
@@ -367,7 +371,11 @@ impl UserStore {
         self.take_item_in(library, increment, accepted);
         {
             let retained = offsets.get(&library).copied().unwrap_or(0);
-            replacement.apply(phrases.arena(library, retained));
+            replacement.apply(
+                phrases
+                    .arena(library, retained)
+                    .ok_or(UserStoreError::InvalidPhrase)?,
+            );
             phrases
                 .phrase_table
                 .add(words, token)

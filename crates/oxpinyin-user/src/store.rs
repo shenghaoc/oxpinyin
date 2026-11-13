@@ -14,7 +14,7 @@
 //! gate and the persistence point behind `pinyin_save`.
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -697,7 +697,7 @@ pub struct CountCache {
 /// difference a stored header or a `.dbin` replay left, until the next
 /// `compact` rebuilds the library's total from its items. An entry exists
 /// only for a non-zero difference.
-pub(crate) type Offsets = BTreeMap<u8, u32>;
+pub(crate) type Offsets = crate::LibraryTable<u32>;
 
 /// One session's state, owned by its [`UserStore`].
 pub struct StoreInner {
@@ -2311,8 +2311,8 @@ impl UserStore {
         let unloaded: Vec<_> = originals.keys().copied().collect();
         self.replace_system_libraries(
             originals,
-            std::collections::BTreeMap::new(),
-            &std::collections::BTreeMap::new(),
+            crate::LibraryTable::new(),
+            &crate::LibraryTable::new(),
         );
         self.inner.libpinyin.phrases_mut().unloaded.extend(unloaded);
     }
@@ -2362,8 +2362,8 @@ impl UserStore {
     fn replace_system_libraries(
         &mut self,
         originals: crate::persistence::SystemOriginals,
-        replayed: std::collections::BTreeMap<u8, crate::replay::ReplayedLibrary>,
-        library_totals: &std::collections::BTreeMap<u8, u32>,
+        replayed: crate::LibraryTable<crate::replay::ReplayedLibrary>,
+        library_totals: &crate::LibraryTable<u32>,
     ) {
         self.apply_system_libraries(&originals, replayed, library_totals);
         {
@@ -2397,7 +2397,7 @@ impl UserStore {
         }
         self.apply_system_libraries(
             &self.originals.selected(1 << nibble),
-            std::collections::BTreeMap::new(),
+            crate::LibraryTable::new(),
             &Default::default(),
         );
         self.inner.libpinyin.phrases_mut().unloaded.insert(nibble);
@@ -2406,8 +2406,8 @@ impl UserStore {
     fn apply_system_libraries(
         &self,
         originals: &impl crate::persistence::OriginalLibraries,
-        mut replayed: std::collections::BTreeMap<u8, crate::replay::ReplayedLibrary>,
-        library_totals: &std::collections::BTreeMap<u8, u32>,
+        mut replayed: crate::LibraryTable<crate::replay::ReplayedLibrary>,
+        library_totals: &crate::LibraryTable<u32>,
     ) {
         let target = Rc::clone(&self.inner.libpinyin);
         let mut offsets = self.offsets_mut();
@@ -3041,7 +3041,7 @@ mod tests {
     fn reload_preserves_the_delta_no_subindex_accepted() {
         use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
         let originals = || {
-            SystemOriginals::from(BTreeMap::from([(
+            SystemOriginals::from(crate::LibraryTable::from([(
                 1,
                 SystemLibrary {
                     mapped: None,
@@ -3182,8 +3182,8 @@ mod tests {
                 .session_target()
                 .phrases_mut()
                 .libraries
-                .entry(library)
-                .or_default()
+                .get_or_default(library)
+                .unwrap()
                 .replace(slot, &bytes)
                 .unwrap();
         }
@@ -3710,7 +3710,7 @@ mod tests {
                 )]),
             };
             SystemOriginals::new(
-                BTreeMap::from([(1, library(0x4f60)), (2, library(0x597d))]),
+                crate::LibraryTable::from([(1, library(0x4f60)), (2, library(0x597d))]),
                 UserFileLayout::stock(),
             )
         }
@@ -4084,7 +4084,7 @@ mod tests {
         use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
         use oxpinyin_data::user_files::SystemVersions;
         fn originals() -> SystemOriginals {
-            BTreeMap::from([(
+            crate::LibraryTable::from([(
                 1,
                 SystemLibrary {
                     total: 100,
@@ -4182,7 +4182,7 @@ mod tests {
             prons: Vec::new(),
         };
         let originals = || -> SystemOriginals {
-            BTreeMap::from([(
+            crate::LibraryTable::from([(
                 1,
                 SystemLibrary {
                     total: 0,
