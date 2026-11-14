@@ -60,8 +60,6 @@ use oxpinyin_data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
 use oxpinyin_input::path::{build_path, rename, unlink};
-#[cfg(test)]
-use oxpinyin_store::WriteStore;
 use oxpinyin_store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
@@ -4544,39 +4542,6 @@ mod tests {
             .expect("walk");
         assert_eq!(seen, vec![1], "the profile holds one gram");
 
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
-    fn partial_user_bigram_items_keep_defined_reads_and_raw_bytes() {
-        let dir = tempdir("partial-bigram-items");
-        let path = dir.join(UserDbm::Bigram.file_name());
-        let key = 0x0700_0001_u32.to_le_bytes();
-        let record = [9_u32.to_le_bytes(), 7_u32.to_le_bytes()].concat();
-        for tail_len in 1..8 {
-            for complete_items in 0..=1 {
-                let mut value = 7_u32.to_le_bytes().to_vec();
-                if complete_items == 1 {
-                    value.extend_from_slice(&record);
-                }
-                value.extend(std::iter::repeat_n(0xa5, tail_len));
-                DefaultStore::write_user_bigram(&path, &[(key.to_vec(), value.clone())])
-                    .expect("write user bigram");
-
-                // The load decodes nothing: the row, partial bytes and
-                // all, is the raw value every later read takes apart the
-                // pin's way.
-                let raw = DefaultStore::open_user_bigram(&path).expect("open raw");
-                let mut rows = Vec::new();
-                raw.copy_raw(|key, value| rows.push((key.to_vec(), value.to_vec())))
-                    .expect("walk");
-                assert_eq!(rows, [(key.to_vec(), value.clone())]);
-
-                let mut read = Vec::new();
-                assert!(raw.get_raw(&key, &mut read).expect("raw get"));
-                assert_eq!(read, value);
-            }
-        }
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

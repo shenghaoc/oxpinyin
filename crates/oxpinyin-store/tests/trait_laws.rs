@@ -1,6 +1,7 @@
 //! Black-box trait laws over the public `Store` surface that no backend
 //! unit test holds: the literal `#` in a store path, the 511/512-byte key
-//! boundary, and the removal of an absent key.
+//! boundary, the removal of an absent key, and the raw bytes of a user
+//! bigram row that ends in a partial item.
 //!
 //! Exactly one backend is compiled per build (the crate's
 //! `compile_error!` guards), so `DefaultStore` resolves this file's
@@ -118,4 +119,35 @@ fn removing_an_absent_key_succeeds() {
         .write(|txn| txn.remove_raw(b"never-there"))
         .expect("removing an absent key must succeed");
     assert_eq!(read(&store, b"kept"), Some(b"1".to_vec()));
+}
+
+/// A user bigram row whose items end in a partial record loads as raw
+/// bytes: the load decodes nothing, so the row, partial bytes and all, is
+/// the value every later read takes apart the pin's way.
+#[test]
+fn partial_user_bigram_items_keep_defined_reads_and_raw_bytes() {
+    let root = temp_path("partial-bigram-items");
+    std::fs::create_dir(&*root).unwrap();
+    let path = root.join("user_bigram.db");
+    let key = 0x0700_0001_u32.to_le_bytes();
+    let record = [9_u32.to_le_bytes(), 7_u32.to_le_bytes()].concat();
+    for tail_len in 1..8 {
+        for complete_items in 0..=1 {
+            let mut value = 7_u32.to_le_bytes().to_vec();
+            if complete_items == 1 {
+                value.extend_from_slice(&record);
+            }
+            value.extend(std::iter::repeat_n(0xa5, tail_len));
+            DefaultStore::write_user_bigram(&path, &[(key.to_vec(), value.clone())])
+                .expect("write user bigram");
+
+            let raw = DefaultStore::open_user_bigram(&path).expect("open raw");
+            let mut rows = Vec::new();
+            raw.copy_raw(|key, value| rows.push((key.to_vec(), value.to_vec())))
+                .expect("walk");
+            assert_eq!(rows, [(key.to_vec(), value.clone())]);
+
+            assert_eq!(read(&raw, &key), Some(value));
+        }
+    }
 }

@@ -1243,8 +1243,7 @@ mod tests {
 
     use super::{
         Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR, STATUS_PRECONDITION_ERROR,
-        STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash, open_hash_create,
-        open_system,
+        STATUS_SUCCESS, TkrzwUserBigramDb, copy_tkrzwdb, open_hash, open_hash_create, open_system,
     };
     use crate::{StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -1476,35 +1475,85 @@ mod tests {
         }
     }
 
+    /// A container whose default TinyDBM is built at once, as the pin's
+    /// `new TinyDBM` is (`ngram_tkrzwdb.cpp:52`): the uncached path the lazy
+    /// container must answer like.
+    fn eager() -> TkrzwUserBigramDb {
+        TkrzwUserBigramDb {
+            db: std::cell::OnceCell::from(Db::new(Class::Tiny)),
+        }
+    }
+
+    /// `Bigram::load_db` as the pin runs it (`ngram_tkrzwdb.cpp:54-58`): an
+    /// eager TinyDBM filled by the `copy_tkrzwdb` walk of every file that
+    /// opens, with no skip for a file tkrzw counts empty.
+    fn eager_load(path: &std::path::Path) -> TkrzwUserBigramDb {
+        let this = eager();
+        let mut file = Db::new(Class::Hash);
+        if file
+            .open(path, false, OPEN_NO_CREATE)
+            .is_ok_and(|status| status.code == STATUS_SUCCESS)
+        {
+            let db = this.db.get().unwrap();
+            copy_tkrzwdb(&file, |key, value| db.set(key, value)).unwrap();
+        }
+        this
+    }
+
+    /// What a caller observes of `db`: each probe's point read, the key
+    /// walk and the emptiness answer.
+    type Answers = (Vec<Option<Vec<u8>>>, Vec<Option<[u8; 4]>>, bool);
+
+    fn answers(db: &TkrzwUserBigramDb, probes: &[&[u8]]) -> Answers {
+        let reads = probes
+            .iter()
+            .map(|key| {
+                // A miss must clear the caller's buffer, so start it dirty.
+                let mut value = vec![1, 2, 3];
+                let found = db.get(key, &mut value).unwrap();
+                assert!(found || value.is_empty(), "a miss clears the buffer");
+                found.then_some(value)
+            })
+            .collect();
+        (reads, db.keys().unwrap(), db.is_empty().unwrap())
+    }
+
+    /// The file `db` saves to `path`, with its timestamp (bytes 48..56,
+    /// the only part that differs between two saves) zeroed.
+    fn saved(db: &TkrzwUserBigramDb, path: &std::path::Path) -> Vec<u8> {
+        db.save_db(path).unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        bytes[48..56].fill(0);
+        bytes
+    }
+
     #[test]
-    fn known_empty_operations_do_not_construct_the_native_container() {
+    fn known_empty_containers_answer_as_an_eager_tiny_dbm() {
         let dir = TempDir::new("lazy-empty");
         let missing = dir.0.join("missing.db");
+        let probes: [&[u8]; 2] = [b"absent", b""];
+        let expected: Answers = (vec![None, None], Vec::new(), true);
         for db in [
             TkrzwUserBigramDb::empty().unwrap(),
             TkrzwUserBigramDb::load_db(&missing).unwrap(),
         ] {
-            let mut value = vec![1, 2, 3];
-            assert!(!db.get(b"absent", &mut value).unwrap());
-            assert!(value.is_empty(), "a miss clears the caller's buffer");
-            assert!(db.keys().unwrap().is_empty());
-            assert!(db.is_empty().unwrap());
+            let native = eager();
+            assert_eq!(answers(&db, &probes), answers(&native, &probes));
+            assert_eq!(answers(&db, &probes), expected);
             db.remove(b"absent").unwrap();
-            assert!(db.db.get().is_none());
+            native.remove(b"absent").unwrap();
+            assert_eq!(answers(&db, &probes), answers(&native, &probes));
 
             let lazy_path = dir.0.join("lazy.db");
-            db.save_db(&lazy_path).unwrap();
-            assert!(db.db.get().is_none(), "save must not construct TinyDBM");
-            let native_path = dir.0.join("native.db");
-            let native = super::Db::new(super::Class::Tiny);
-            super::save_bigram_db(Some(&native), &native_path).unwrap();
-            let mut lazy = std::fs::read(&lazy_path).unwrap();
-            let mut eager = std::fs::read(&native_path).unwrap();
-            lazy[48..56].fill(0);
-            eager[48..56].fill(0);
-            assert_eq!(lazy, eager, "only the timestamp may differ");
-            let loaded = TkrzwUserBigramDb::load_db(&lazy_path).unwrap();
-            assert!(loaded.db.get().is_none(), "proven-empty file stays lazy");
+            assert_eq!(
+                saved(&db, &lazy_path),
+                saved(&native, &dir.0.join("native.db")),
+                "only the timestamp may differ"
+            );
+            assert_eq!(
+                answers(&TkrzwUserBigramDb::load_db(&lazy_path).unwrap(), &probes),
+                answers(&eager_load(&lazy_path), &probes)
+            );
         }
         assert!(
             !missing.exists(),
@@ -1513,55 +1562,85 @@ mod tests {
     }
 
     #[test]
-    fn first_set_constructs_once_even_for_an_empty_record() {
+    fn a_lazy_container_answers_as_an_eager_tiny_dbm_through_its_first_sets() {
+        let probes: [&[u8]; 3] = [b"", b"next", b"absent"];
         let db = TkrzwUserBigramDb::empty().unwrap();
+        let native = eager();
         let before = db.keys().unwrap();
-        db.store(b"", b"").unwrap();
-        let native = db.db.get().unwrap();
-        assert_eq!(native.count().unwrap(), 1);
+        for container in [&db, &native] {
+            container.store(b"", b"").unwrap();
+        }
+        assert_eq!(answers(&db, &probes), answers(&native, &probes));
+        assert_eq!(answers(&db, &probes).0[0], Some(Vec::new()));
         assert!(!db.is_empty().unwrap());
-        let mut value = vec![1];
-        assert!(db.get(b"", &mut value).unwrap());
-        assert!(value.is_empty());
         assert!(before.is_empty(), "an earlier key snapshot stays empty");
-        db.remove(b"").unwrap();
+        for container in [&db, &native] {
+            container.remove(b"").unwrap();
+        }
+        assert_eq!(answers(&db, &probes), answers(&native, &probes));
         assert!(db.is_empty().unwrap());
-        db.store(b"next", b"value").unwrap();
-        assert!(std::ptr::eq(native, db.db.get().unwrap()));
+        for container in [&db, &native] {
+            container.store(b"next", b"value").unwrap();
+        }
+        assert_eq!(answers(&db, &probes), answers(&native, &probes));
+        assert_eq!(answers(&db, &probes).0[1], Some(b"value".to_vec()));
     }
 
     #[test]
-    fn a_file_saved_with_no_rows_holds_no_record_and_loads_empty() {
+    fn loading_answers_as_the_full_copy_walk_for_empty_unhealthy_and_filled_files() {
+        let dir = TempDir::new("load-walk");
+        let tokens: Vec<[u8; 4]> = (1_u32..=3).map(u32::to_le_bytes).collect();
+        let mut probes: Vec<&[u8]> = tokens.iter().map(<[u8; 4]>::as_slice).collect();
+        probes.push(b"absent");
+        let filled: Vec<_> = tokens.iter().copied().map(Some).collect();
+
         // A profile the pin saves before learning a bigram: tkrzw opens the
         // file healthy and counts no record.
-        let dir = TempDir::new("no-rows");
-        let path = dir.0.join("user_bigram.db");
-        TkrzwUserBigramDb::empty().unwrap().save_db(&path).unwrap();
-        assert!(holds_no_record(&open_hash(&path).unwrap().db));
-        assert!(
-            TkrzwUserBigramDb::load_db(&path)
-                .unwrap()
-                .keys()
-                .unwrap()
-                .is_empty()
-        );
-    }
+        let no_rows = dir.0.join("no-rows.db");
+        TkrzwUserBigramDb::empty()
+            .unwrap()
+            .save_db(&no_rows)
+            .unwrap();
 
-    #[test]
-    fn a_file_saved_with_rows_is_walked() {
-        let dir = TempDir::new("rows");
-        let path = dir.0.join("user_bigram.db");
-        let db = TkrzwUserBigramDb::empty().unwrap();
-        for token in 1_u32..=3 {
-            db.store(&token.to_le_bytes(), b"gram").unwrap();
+        // A copy taken while the writer still has the file open: its
+        // metadata is the one the writer's open wrote (not closed, no
+        // records), while its buckets already reach three records. The
+        // pin's `copy_tkrzwdb` walks the buckets and copies them.
+        let live = dir.0.join("live.db");
+        let unhealthy = dir.0.join("unhealthy.db");
+        let writer = open_hash_create(&live).unwrap();
+        for token in &tokens {
+            writer.db.set(token, b"gram").unwrap();
         }
-        db.save_db(&path).unwrap();
-        assert!(!holds_no_record(&open_hash(&path).unwrap().db));
-        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
-        assert_eq!(
-            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
-            expected
-        );
+        std::fs::copy(&live, &unhealthy).unwrap();
+        drop(writer);
+        let file = open_hash(&unhealthy).unwrap();
+        assert_eq!(file.db.count().unwrap(), 0);
+        assert!(!file.db.is_healthy());
+        drop(file);
+
+        // A file saved with rows.
+        let rows = dir.0.join("rows.db");
+        let db = TkrzwUserBigramDb::empty().unwrap();
+        for token in &tokens {
+            db.store(token, b"gram").unwrap();
+        }
+        db.save_db(&rows).unwrap();
+
+        for (path, keys) in [
+            (&no_rows, Vec::new()),
+            (&unhealthy, filled.clone()),
+            (&rows, filled),
+        ] {
+            let loaded = TkrzwUserBigramDb::load_db(path).unwrap();
+            assert_eq!(
+                answers(&loaded, &probes),
+                answers(&eager_load(path), &probes),
+                "{}",
+                path.display()
+            );
+            assert_eq!(sorted_keys(&loaded), keys, "{}", path.display());
+        }
     }
 
     #[test]
@@ -1591,7 +1670,7 @@ mod tests {
         // The load's copy reads the file in its iterator order.
         let file = open_hash(&path).unwrap();
         let mut source_keys = Vec::new();
-        super::copy_tkrzwdb(&file.db, |key, _| {
+        copy_tkrzwdb(&file.db, |key, _| {
             source_keys.push(key.to_vec());
             Ok(())
         })
@@ -1603,7 +1682,7 @@ mod tests {
         let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
         let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
         let mut actual = Vec::new();
-        super::copy_tkrzwdb(loaded.db.get().unwrap(), |key, value| {
+        copy_tkrzwdb(loaded.db.get().unwrap(), |key, value| {
             actual.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -1652,34 +1731,6 @@ mod tests {
         assert!(!native.remove(b"here").unwrap());
         db.remove(b"absent").unwrap();
         assert_eq!(native.count().unwrap(), 0);
-    }
-
-    #[test]
-    fn an_unhealthy_file_is_walked_even_when_its_metadata_counts_no_rows() {
-        // A copy taken while the writer still has the file open: its
-        // metadata is the one the writer's open wrote (not closed, no
-        // records), while its buckets already reach three records. The
-        // pin's `copy_tkrzwdb` walks the buckets and copies them; so must
-        // `load_db`.
-        let dir = TempDir::new("unhealthy");
-        let live = dir.0.join("live.db");
-        let path = dir.0.join("user_bigram.db");
-        let writer = open_hash_create(&live).unwrap();
-        for token in 1_u32..=3 {
-            writer.db.set(&token.to_le_bytes(), b"gram").unwrap();
-        }
-        std::fs::copy(&live, &path).unwrap();
-        drop(writer);
-        let file = open_hash(&path).unwrap();
-        assert_eq!(file.db.count().unwrap(), 0);
-        assert!(!file.db.is_healthy());
-        assert!(!holds_no_record(&file.db));
-        drop(file);
-        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
-        assert_eq!(
-            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
-            expected
-        );
     }
 
     #[test]

@@ -70,8 +70,8 @@ contract.
   process can compare peers. The store-backends CI matrix runs every peer
   build, and so turns those independent results into **Kyoto Cabinet ==
   tkrzw == Berkeley DB**.
-- `tkrzw_orders_keys_as_unsigned_bytes` probes `0x80..=0xff`, the high
-  half that a *signed*-char comparison would misplace.
+- The same module's key sets hold both `0x00` and `0xFF` lead bytes, so a
+  *signed*-char comparison, which sorts `0xFF` before `0x00`, fails them.
 
 ## 256-boundary blind spot
 

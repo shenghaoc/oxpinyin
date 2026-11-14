@@ -259,64 +259,7 @@ fn every_operation_round_trips() {
             Some(SingleGram::from_parts(header.clone(), Vec::new()))
         );
 
-        // The in-memory single gram: ascending tokens, unique inserts.
-        let mut gram: SingleGram<Header, Item> = SingleGram::new();
-        gram.set_header(Header { wc: 2, freq: 2 });
-        assert!(gram.insert_array_item(
-            9,
-            Item {
-                wc: 1,
-                n_n_0: 1,
-                n_1: 1,
-                mr: 1,
-            }
-        ));
-        assert!(gram.insert_array_item(
-            3,
-            Item {
-                wc: 7,
-                n_n_0: 2,
-                n_1: 1,
-                mr: 3,
-            }
-        ));
-        assert_eq!(
-            gram.items()
-                .iter()
-                .map(|entry| entry.token)
-                .collect::<Vec<_>>(),
-            vec![3, 9]
-        );
-        assert!(!gram.insert_array_item(3, Item::zeroed()));
-        assert_eq!(
-            gram.get_array_item(3),
-            Some(Item {
-                wc: 7,
-                n_n_0: 2,
-                n_1: 1,
-                mr: 3,
-            })
-        );
-        assert!(gram.set_array_item(
-            3,
-            Item {
-                wc: 8,
-                n_n_0: 2,
-                n_1: 1,
-                mr: 3,
-            }
-        ));
-        assert!(!gram.set_array_item(4, Item::zeroed()));
-        assert_eq!(
-            gram.remove_array_item(9),
-            Some(Item {
-                wc: 1,
-                n_n_0: 1,
-                n_1: 1,
-                mr: 1,
-            })
-        );
-        assert_eq!(gram.remove_array_item(9), None);
+        let gram = gram_with_header();
 
         assert!(bigram.store(7, &gram).expect("gram write"));
         assert_eq!(
@@ -371,7 +314,7 @@ fn every_operation_round_trips() {
     );
 }
 
-/// The single gram `every_operation_round_trips` stores under token 11.
+/// The single gram `every_operation_round_trips` stores under tokens 7 and 11.
 fn gram_with_header() -> SingleGram<Header, Item> {
     let mut gram = SingleGram::new();
     gram.set_header(Header { wc: 2, freq: 2 });
