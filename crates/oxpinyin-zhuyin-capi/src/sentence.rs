@@ -480,10 +480,20 @@ fn guess_candidates_result(
     // anchor is the buffer start rather than the lookup offset because the
     // ending-at window is END-anchored; see
     // `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
+    let searched_here = !sentence_rows_only
+        && (!before_cursor
+            || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
+                oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
+            }));
+    let abort_on_unreadable = searched_here && facade_total_is_zero(&inst.read());
     let looked_up = if before_cursor {
-        inst.core.session.candidates_ending_at(session_offset)
+        inst.core
+            .session
+            .candidates_ending_at_for_abi(session_offset, abort_on_unreadable)
     } else {
-        inst.core.session.candidates_at(session_offset)
+        inst.core
+            .session
+            .candidates_at_for_abi(session_offset, abort_on_unreadable)
     };
     let window_owned: oxpinyin_engine::CandidateList = match looked_up {
         Ok(window) => window,
@@ -539,12 +549,7 @@ fn guess_candidates_result(
     // whose rows all end at `session_offset`, answers the spans ending
     // elsewhere. The process aborts there, before the phrase strings are
     // read (`:1535`, `:1628`).
-    let searched_here = !sentence_rows_only
-        && (!before_cursor
-            || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
-                oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
-            }));
-    if facade_total_is_zero(&inst.read()) && searched_here && window_owned.ranked_phrase_row() {
+    if abort_on_unreadable && window_owned.ranked_phrase_row() {
         std::process::abort();
     }
     let before_end = if before_cursor {

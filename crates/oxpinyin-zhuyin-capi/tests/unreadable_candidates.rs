@@ -117,10 +117,15 @@ mod fixture {
         Pair,
         Mixed,
         Fallback,
+        #[cfg(unix)]
+        Zero,
     }
 
     pub(super) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         let user = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
+        let total = u32::from(!matches!(case, Case::Zero));
+        #[cfg(not(unix))]
         let total = 1_u32;
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -182,4 +187,38 @@ mod fixture {
         }
         (dir, user)
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn zero_total_aborts_after_cursor() {
+    use std::os::unix::process::ExitStatusExt;
+    const CHILD: &str = "OXPINYIN_UNREADABLE_ZERO_TOTAL_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        check_row(fixture::Case::Zero, false);
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "zero_total_aborts_after_cursor"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn zero_total_aborts_before_cursor() {
+    use std::os::unix::process::ExitStatusExt;
+    const CHILD: &str = "OXPINYIN_UNREADABLE_ZERO_TOTAL_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        check_row(fixture::Case::Zero, true);
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "zero_total_aborts_before_cursor"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
 }
