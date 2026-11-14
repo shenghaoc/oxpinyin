@@ -825,3 +825,18 @@ relative order on both sides; no other row moves.
   platform-locked floating point (which the constitution does not permit
   for this project), or on a leak of the residual onto the candidate
   surface.
+
+### N-best choose after a reparse
+
+The only production path to `ConstraintStore::diff_result` is the NBEST
+branch of `pinyin_choose_candidate`, through `select_published` and
+`select_target`. Zhuyin publishes no n-best rank to that path.
+The n-best branch does not validate or resize constraints at choose time
+(`pinyin.cpp:2515-2520`). Guess-time validation sizes the store
+(`phonetic_lookup.cpp:120-138`), including the unconstrained guess path.
+`diff_result` marks a differing phrase before its write and takes the last
+span's end from the decoded result (`:189-203`). If `add_constraint` returns
+zero, `check_result` aborts there. A shorter reparse without a guess keeps
+the old store, so the write can land. An empty-matrix guess shrinks the
+store to zero but keeps decoded rows (`phonetic_lookup.h:746-754`); choosing
+a retained differing row then aborts.

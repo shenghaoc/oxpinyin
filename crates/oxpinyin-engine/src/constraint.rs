@@ -265,7 +265,8 @@ impl ConstraintStore {
     /// phrase where the chosen n-best row (`other`) differs from the
     /// 1-best (`best`) at the same position. A differing phrase is forced
     /// over `[its start, the next phrase's start)` — the tail node span
-    /// when no phrase follows. Returns whether anything was constrained.
+    /// when no phrase follows. Returns whether a phrase differs. A refused
+    /// write aborts, as check_result does (`:203`).
     pub(crate) fn diff_result(
         &mut self,
         best: &[PhraseSpan],
@@ -282,10 +283,12 @@ impl ConstraintStore {
                 continue;
             }
             let next_pos = other.get(index + 1).map_or(tail, |next| next.start);
-            // Only a written run counts: `add` refuses an overrunning
-            // span, and a refused write must not be reported as a
-            // constraint.
-            changed = self.add(span.start, next_pos, span.token, span.text.clone()) > 0 || changed;
+            changed = true;
+            // check_result is an assert at the n-best choose's write
+            // (phonetic_lookup.cpp:189-203 at 074a2219).
+            if self.add(span.start, next_pos, span.token, span.text.clone()) == 0 {
+                std::process::abort();
+            }
         }
         changed
     }
@@ -552,17 +555,5 @@ mod tests {
         let dropped = store.validate(4, |_, _, _| Ok(true)).expect("probe ok");
         assert!(dropped);
         assert!(!store.is_active());
-    }
-
-    #[test]
-    fn a_refused_diff_write_is_not_reported_as_a_constraint() {
-        // An unsized store: every add is refused, so diff_result must
-        // answer that nothing changed rather than claim a forcing that
-        // never landed.
-        let mut store = ConstraintStore::default();
-        let best = [span(0, 10, "你好")];
-        let other = [span(0, 11, "你浩")];
-        assert!(!store.diff_result(&best, &other, 5));
-        assert!(store.runs().is_empty());
     }
 }

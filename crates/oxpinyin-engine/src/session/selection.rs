@@ -392,6 +392,11 @@ where
             self.validate_selection_constraints()?;
             return Ok(Selection::Refused);
         }
+        // Only NORMAL choose validates before its write; NBEST dispatches
+        // directly to diff_result (pinyin.cpp:2515-2520,2577-2587).
+        if target.nbest_row.is_none() {
+            self.validate_selection_constraints()?;
+        }
         // The chosen phrase's own text, stored words included: the pin's
         // choose reads no text (`add_constraint(m_begin, m_end, token)`,
         // `pinyin.cpp:2577-2587`, `zhuyin.cpp:1646-1666` at 074a2219), and
@@ -483,18 +488,14 @@ where
                 return Ok(self.selection_outcome());
             };
             if let Some(best) = best {
-                // Upstream validates the store at choose time
-                // (`pinyin.cpp:2576-2580`); the engine sizes it here so a
-                // fresh composition's row choose — whose store was never
-                // resized, `add` refusing every span past an empty cell
-                // count — cannot silently write nothing.
-                state.constraints.resize(state.input.len() + 1);
+                // NBEST choose does not validate or resize the store
+                // (pinyin.cpp:2515-2520). diff_result takes its tail from
+                // the decoded result, not the current parse (:192).
                 state
                     .constraints
-                    .diff_result(best, &chosen.spans, state.input.len());
+                    .diff_result(best, &chosen.spans, chosen.span);
             }
         } else if let Some(token) = token {
-            state.constraints.resize(state.input.len() + 1);
             state
                 .constraints
                 .add(constraint_start, constraint_end, token, text);
