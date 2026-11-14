@@ -849,7 +849,7 @@ where
         // A failed scan leaves the emptied list, as it always has; it is
         // not stale, so the next reader indexes it rather than rescanning.
         self.lookup.stale = false;
-        self.scan_window(anchor, &mut items, false)?;
+        self.scan_window(anchor, &mut items, false, false)?;
         self.lookup.candidates.swap_items(&mut items);
         Ok(())
     }
@@ -895,6 +895,7 @@ where
         anchor: usize,
         out: &mut Vec<Candidate>,
         gate: bool,
+        abort_on_unreadable: bool,
     ) -> Result<(), EngineError> {
         out.clear();
         if anchor >= self.input.len() {
@@ -911,7 +912,7 @@ where
         }
 
         self.with_scan_scratch(|session, scratch| {
-            session.scan_window_with_scratch(anchor, out, gate, scratch)
+            session.scan_window_with_scratch(anchor, out, gate, abort_on_unreadable, scratch)
         })
     }
 
@@ -940,6 +941,7 @@ where
         anchor: usize,
         out: &mut Vec<Candidate>,
         gate: bool,
+        abort_on_unreadable: bool,
         scratch: &mut Scratch,
     ) -> Result<(), EngineError> {
         let Scratch {
@@ -975,6 +977,17 @@ where
                 explicit: gate,
             };
             self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
+            // Aborting here, right after collection, is the pin's ranking
+            // assert (`pinyin.cpp:1845-1859`, `zhuyin.cpp:1247-1261`) with
+            // nothing observable skipped. Before the assert, each row's
+            // dynamic-adjust reads are `get_total_freq`/`get_freq` on the
+            // in-memory merged SingleGram: no I/O, and no observable
+            // failure. The merged-gram load, the only I/O, ran before the
+            // loop and ran above, before this abort. The only other
+            // writes are each row's `m_freq`, which the abort discards.
+            if abort_on_unreadable && unreadable.count != 0 {
+                std::process::abort();
+            }
             self.scan_unreadable = unreadable;
         }
         // The rows the pin's `_compute_frequency_of_items` runs on: the
@@ -1097,6 +1110,20 @@ where
     /// one-past-end is valid: `scan_window` answers the terminal sentence
     /// rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        self.candidates_at_for_abi(offset, false)
+    }
+
+    /// Builds the explicit ABI window. If the pin ranks at this offset
+    /// and the facade total is zero, `abort_on_unreadable` is true.
+    ///
+    /// # Errors
+    ///
+    /// As [Self::candidates_at].
+    pub fn candidates_at_for_abi(
+        &mut self,
+        offset: usize,
+        abort_on_unreadable: bool,
+    ) -> Result<CandidateList, EngineError> {
         if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset,
@@ -1125,7 +1152,7 @@ where
                 session.prepend_nbest_rows(items);
                 return Ok(());
             }
-            session.scan_window(offset, items, true)?;
+            session.scan_window(offset, items, true, abort_on_unreadable)?;
             Ok(())
         })
     }
@@ -1180,6 +1207,20 @@ where
     /// multi-byte character — the same refusals as
     /// [`Session::candidates_at`] — plus backend failures during the scan.
     pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        self.candidates_ending_at_for_abi(offset, false)
+    }
+
+    /// Builds the explicit ABI window. If the pin ranks at this offset
+    /// and the facade total is zero, `abort_on_unreadable` is true.
+    ///
+    /// # Errors
+    ///
+    /// As [Self::candidates_ending_at].
+    pub fn candidates_ending_at_for_abi(
+        &mut self,
+        offset: usize,
+        abort_on_unreadable: bool,
+    ) -> Result<CandidateList, EngineError> {
         if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset,
@@ -1198,7 +1239,7 @@ where
                 session.prepend_nbest_rows(items);
                 return Ok(());
             }
-            session.scan_window_ending(offset, items)?;
+            session.scan_window_ending(offset, items, abort_on_unreadable)?;
             Ok(())
         })
     }
@@ -1217,10 +1258,11 @@ where
         &mut self,
         offset: usize,
         out: &mut Vec<Candidate>,
+        abort_on_unreadable: bool,
     ) -> Result<usize, EngineError> {
         out.clear();
         self.with_scan_scratch(|session, scratch| {
-            session.scan_window_ending_with_scratch(offset, out, scratch)
+            session.scan_window_ending_with_scratch(offset, out, abort_on_unreadable, scratch)
         })
     }
 
@@ -1228,6 +1270,7 @@ where
         &mut self,
         offset: usize,
         out: &mut Vec<Candidate>,
+        abort_on_unreadable: bool,
         scratch: &mut Scratch,
     ) -> Result<usize, EngineError> {
         let rank_word = self.rank_word();
@@ -1268,6 +1311,7 @@ where
                 continue;
             }
             let mut continued = false;
+            let prior_unreadable = unreadable.count;
             group.clear();
             {
                 let mut buf = ScanBuf {
@@ -1285,6 +1329,9 @@ where
                     explicit: true,
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
+            }
+            if abort_on_unreadable && unreadable.count != prior_unreadable {
+                std::process::abort();
             }
             order_window_tail(&mut group, 0);
             flush_window_batch(window_addon, &mut group);
