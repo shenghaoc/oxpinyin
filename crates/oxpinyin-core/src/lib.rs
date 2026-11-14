@@ -355,22 +355,6 @@ pub trait Dictionary {
         Ok(false)
     }
 
-    /// Candidate-window lookup: preserves tokens, text, order and the
-    /// unreadable-item flag, but need not compute pronunciation prices.
-    /// Only candidate collection may use this; scoring and pronunciation
-    /// validation use the priced lookup/trellis operations.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::lookup_into_flagged`].
-    fn lookup_candidates_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, Self::Error> {
-        self.lookup_into_flagged(syllables, out)
-    }
-
     /// Optional single-search candidate path, including tones and the
     /// continuation bit. `Some((unreadable, continued))` replaces the
     /// separate lookup, tone filtering and prefix probe. Implementations
@@ -386,19 +370,6 @@ pub trait Dictionary {
         _out: &mut Vec<PhraseEntry>,
     ) -> Result<Option<(bool, bool)>, Self::Error> {
         Ok(None)
-    }
-
-    /// Addon candidate-window lookup, with the same pricing distinction.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::lookup_addon_into`].
-    fn lookup_addon_candidates_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
-        self.lookup_addon_into(syllables, out)
     }
 
     /// Whether a stored phrase's pinyin can extend `syllables`.

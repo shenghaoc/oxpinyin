@@ -71,10 +71,12 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         .iter()
         .find(|entry| entry.text() == "你好")
         .expect("你好");
+    let item = dict
+        .trellis_item(&syllables("ni'hao"), &[], entry.token().value())
+        .expect("trellis item")
+        .expect("你好 is ranged on ni'hao");
     assert!(
-        entry
-            .pronunciation_possibility()
-            .is_some_and(|(m, t)| m > 0 && m <= t),
+        item.pronunciation.is_some_and(|(m, t)| m > 0 && m <= t),
         "possibility from the chunk pronunciations"
     );
     assert!(

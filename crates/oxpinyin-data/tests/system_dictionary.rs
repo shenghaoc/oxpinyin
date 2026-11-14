@@ -184,16 +184,32 @@ fn single_syllable_lookup_resolves_only_loaded_libraries() {
 }
 
 #[test]
-fn lookup_carries_the_pronunciation_possibility() {
+fn a_step_prices_the_pronunciation_possibility_of_its_token() {
     let fix = Fixture::new();
     let dict = fix.dict();
+    // The search carries tokens only; the step reads the price.
     // A tone-less query matches both toned readings: (5 + 3) / 8.
     let entries = dict.lookup(&syls("ni")).unwrap();
-    assert_eq!(entries[0].pronunciation_possibility(), Some((8, 8)));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.pronunciation_possibility().is_none())
+    );
+    let ni = entries[0].token().value();
+    assert_eq!(
+        dict.trellis_item(&syls("ni"), ni).unwrap().pronunciation,
+        Some((8, 8))
+    );
     let entries = dict.lookup(&syls("ni,hao")).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].text(), "你好");
-    assert_eq!(entries[0].pronunciation_possibility(), Some((5, 5)));
+    let nihao = entries[0].token().value();
+    assert_eq!(
+        dict.trellis_item(&syls("ni,hao"), nihao)
+            .unwrap()
+            .pronunciation,
+        Some((5, 5))
+    );
 }
 
 #[test]
@@ -346,6 +362,21 @@ fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>)
     (spans, texts)
 }
 
+/// The lookup drops a token whose library is loaded but whose item cannot
+/// be read, and answers that it met one: the pin's candidate listing dies
+/// there (`pinyin.cpp:1635-1637`, `:2053` at 074a2219). A token of an
+/// unloaded library is dropped without that answer.
+#[test]
+fn the_lookup_answers_that_it_met_an_unreadable_item() {
+    let fix = convert_fixture();
+    let dict = fix.dict();
+    let mut entries = Vec::new();
+    assert!(dict.lookup_into_flagged(&syls("ni"), &mut entries).unwrap());
+    let tokens: Vec<u32> = entries.iter().map(|entry| entry.token().value()).collect();
+    assert_eq!(tokens, [0x0100_0010, 0x0100_0011, 0x0100_0014, 0x0100_0012]);
+    assert_eq!(dict.lookup(&syls("ni")).unwrap(), entries);
+}
+
 /// `convert` over the stored items with a toned query: the ni2 item is
 /// filtered by the search, so 0x10..=0x13 form one run — the unloaded
 /// library-2 item between 0x10 and 0x11 is skipped without closing it,
@@ -421,37 +452,4 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     }
     // Ranged rows, markers that range nothing, and absent keys all occur.
     assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "{seen:?}");
-}
-
-#[test]
-fn candidate_lookup_preserves_rows_and_unreadable_flag_without_prices() {
-    let fix = convert_fixture();
-    let dict = fix.dict();
-    let mut priced = Vec::new();
-    let priced_flag = dict.lookup_into_flagged(&syls("ni"), &mut priced).unwrap();
-    assert!(priced_flag, "fixture includes a loaded but unreadable item");
-    assert!(
-        priced
-            .iter()
-            .all(|entry| entry.pronunciation_possibility().is_some())
-    );
-    let mut candidates = Vec::new();
-    assert_eq!(
-        dict.lookup_candidates_into(&syls("ni"), &mut candidates)
-            .unwrap(),
-        priced_flag
-    );
-    let rows = |entries: &[oxpinyin_core::PhraseEntry]| {
-        entries
-            .iter()
-            .map(|entry| (entry.token(), entry.text().to_owned()))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(rows(&candidates), rows(&priced));
-    assert!(
-        candidates
-            .iter()
-            .all(|entry| entry.pronunciation_possibility().is_none())
-    );
-    assert_eq!(dict.lookup(&syls("ni")).unwrap(), priced);
 }

@@ -257,6 +257,19 @@ where
                 // Library-then-token order (`prepare_ranges` walk): token
                 // ascending, so ties resolve as the pin's do.
                 entries.sort_by_key(|entry| entry.token().value());
+                // The search carries tokens only; each step prices its item
+                // (`compute_pronunciation_possibility`,
+                // `phonetic_lookup.h:646-656`).
+                for entry in &mut entries {
+                    let item = dictionary
+                        .trellis_item(span, &[], entry.token().value())
+                        .map_err(|error| EvalError::Backend {
+                            detail: error.to_string(),
+                        })?;
+                    if let Some((matched, total)) = item.and_then(|item| item.pronunciation) {
+                        entry.set_pronunciation_possibility(matched, total);
+                    }
+                }
                 search_bigram2(&mut steps, i, m, &topresults, &entries, &ctx);
                 search_unigram2(&mut steps, i, m, &topresults[0], &entries, &ctx);
             }
