@@ -121,14 +121,17 @@ mod fixture {
         #[cfg_attr(not(unix), allow(dead_code))]
         ChooseToZero,
         Fallback,
+        #[cfg(unix)]
+        Zero,
     }
 
     pub(super) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         let user = tempfile::tempdir().unwrap();
-        let total = if matches!(case, Case::ChooseToZero) {
-            u32::MAX - 482
-        } else {
-            1
+        let total = match case {
+            Case::ChooseToZero => u32::MAX - 482,
+            #[cfg(unix)]
+            Case::Zero => 0,
+            _ => 1,
         };
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -224,6 +227,23 @@ fn choosing_the_unreadable_row_adds_483_to_the_facade_total() {
             "--exact",
             "choosing_the_unreadable_row_adds_483_to_the_facade_total",
         ])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn zero_total_aborts_after_cursor() {
+    use std::os::unix::process::ExitStatusExt;
+    const CHILD: &str = "OXPINYIN_UNREADABLE_ZERO_TOTAL_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        check_row(fixture::Case::Zero, 0x1f);
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "zero_total_aborts_after_cursor"])
         .env(CHILD, "1")
         .output()
         .unwrap();

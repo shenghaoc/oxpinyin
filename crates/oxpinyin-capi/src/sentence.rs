@@ -487,13 +487,34 @@ pub extern "C" fn pinyin_guess_candidates(
     } else {
         normalized
     };
+    // A lookup strictly inside a key of the active transformed parse: the
+    // pin's matrix column there is empty (keys sit on their key rests'
+    // `m_raw_begin` only), so the search finds nothing and the list is the
+    // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
+    // The rows keep their spans at the containing key for a later choose,
+    // as in the zhuyin facade (issue #577); only its sentence rows are
+    // snapshot.
+    let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
+        oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
+    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        oxpinyin_facade::full_offset_is_mid_key(parse, normalized)
+    } else {
+        false
+    };
+    let abort_on_unreadable = !sentence_rows_only && facade_total_is_zero(&inst.read());
     // Publish each row of the re-anchored window with its own span: a
     // session's selection records against the cached (composition-anchored)
     // list, but the row the caller saw came from the offset-anchored window
     // — an index into the cached list would select a different row whenever
     // the two differ. A later `pinyin_choose_candidate` selects the row's
     // span, as the pin's reads `m_begin` and `m_end` off the row.
-    let window = match inst.core.session.candidates_at(session_offset) {
+    let window = match inst
+        .core
+        .session
+        .candidates_at_for_abi(session_offset, abort_on_unreadable)
+    {
         Ok(window) => window,
         // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
         // `:269`, tkrzw `:252`): the suggestion walk reached an index key
@@ -550,22 +571,6 @@ pub extern "C" fn pinyin_guess_candidates(
             return false;
         }
     };
-    // A lookup strictly inside a key of the active transformed parse: the
-    // pin's matrix column there is empty (keys sit on their key rests'
-    // `m_raw_begin` only), so the search finds nothing and the list is the
-    // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
-    // The rows keep their spans at the containing key for a later choose,
-    // as in the zhuyin facade (issue #577); only its sentence rows are
-    // snapshot.
-    let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
-    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_offset_is_mid_key(parse, normalized)
-    } else {
-        false
-    };
     // Register row 61, `pinyin.cpp:1859`: `assert (0 < total_freq)` while
     // ranking a searched row, with the facade total wrapped to zero by
     // `pinyin_token_add_unigram_frequency`. `_compute_frequency_of_items`
@@ -576,7 +581,7 @@ pub extern "C" fn pinyin_guess_candidates(
     // so a row the dedup removes still counts. A lookup strictly inside a
     // key searches nothing at the pin. The process aborts there, before the
     // phrase strings are read.
-    if facade_total_is_zero(&inst.read()) && !sentence_rows_only && window.ranked_phrase_row() {
+    if abort_on_unreadable && window.ranked_phrase_row() {
         std::process::abort();
     }
     let candidates = &window;
@@ -596,7 +601,7 @@ pub extern "C" fn pinyin_guess_candidates(
             && candidates
                 .iter()
                 .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
-            && !facade_total_is_zero(&inst.read())
+            && !abort_on_unreadable
     });
     for (cand, missing) in candidates
         .iter()
