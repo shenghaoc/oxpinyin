@@ -277,20 +277,6 @@ impl UserPhrase {
     }
 }
 
-/// Phrase length in Unicode scalar values — libpinyin's `ucs4_t` count.
-#[must_use]
-pub(crate) fn phrase_len(phrase: &str) -> usize {
-    phrase.chars().count()
-}
-
-/// `true` when `phrase` and `keys` are a valid `_add_phrase` input: non-empty,
-/// shorter than [`MAX_PHRASE_LENGTH`], and the same length.
-#[must_use]
-pub(crate) fn phrase_and_keys_valid(phrase: &str, keys: &[PinyinKey]) -> bool {
-    let len = phrase_len(phrase);
-    len > 0 && len < MAX_PHRASE_LENGTH && len == keys.len()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,16 +341,5 @@ mod tests {
             phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK + 1),
             phrase_index_make_token(ADDON_DICTIONARY, 0)
         );
-    }
-
-    #[test]
-    fn phrase_length_is_unicode_scalars() {
-        assert_eq!(phrase_len("你好"), 2);
-        assert_eq!(phrase_len(""), 0);
-        assert!(phrase_and_keys_valid("你好", &[1, 2]));
-        assert!(!phrase_and_keys_valid("", &[]));
-        assert!(!phrase_and_keys_valid("你好", &[1]));
-        assert!(!phrase_and_keys_valid(&"啊".repeat(16), &[0; 16]));
-        assert!(phrase_and_keys_valid(&"啊".repeat(15), &[0; 15]));
     }
 }

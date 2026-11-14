@@ -1039,17 +1039,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
 // ── the addon facade ─────────────────────────────────────────────
 
-/// One addon phrase item, the `get_phrase_item` half of the
-/// choose-promotion path (`pinyin.cpp:2534-2549`).
-pub struct AddonPhraseItem {
-    /// Phrase text.
-    pub text: PhraseText,
-    /// Pronunciations as `(spelling, count)` pairs, in stored order.
-    pub pronunciations: Vec<(String, u64)>,
-    /// The item's stored unigram frequency.
-    pub unigram: u64,
-}
-
 /// The addon dictionary: the addon facade's DBM pair plus the addon
 /// libraries loaded so far.
 ///
@@ -1266,22 +1255,19 @@ impl AddonDictionary {
         Some(u64::from(self.libraries.unigram_total()))
     }
 
-    /// The addon item behind `token`.
+    /// The addon item behind `token` as the pin's `get_phrase_item` hands
+    /// it out: the item's stored bytes, copied verbatim (`phrase_index.cpp:
+    /// 33-43`, the choose-promotion read at `pinyin.cpp:2534-2549`). The
+    /// words, packed keys with their tones and frequencies stay as stored.
     #[must_use]
-    pub fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let text = self.libraries.phrase_text(token)?;
-        let pronunciations = self
-            .libraries
-            .pronunciations(token)?
-            .into_iter()
-            .map(|pron| (pron.spelling, pron.freq))
-            .collect();
-        let unigram = self.libraries.unigram_count(token).unwrap_or(0);
-        Some(AddonPhraseItem {
-            text,
-            pronunciations,
-            unigram,
-        })
+    pub fn phrase_item(&self, token: u32) -> Option<Vec<u8>> {
+        Some(
+            self.libraries
+                .library(token)?
+                .item(token)?
+                .as_bytes()
+                .to_vec(),
+        )
     }
 
     /// The addon lookup pass: every addon-index record for `syllables`

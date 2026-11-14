@@ -290,18 +290,46 @@ pub(crate) fn library_total(store: &UserStore, library: u8) -> u32 {
     store.library_total_for_test(library)
 }
 
+/// An addon item's wire bytes: the phrase, its unigram, and each reading's
+/// keys and count, the keys packed as stored.
+pub(crate) fn addon_item(
+    phrase: &str,
+    readings: &[(Vec<crate::PinyinKey>, u64)],
+    unigram: u64,
+) -> Vec<u8> {
+    oxpinyin_data::chunk_write::encode_phrase_item(&oxpinyin_data::chunk_write::ChunkItem {
+        phrase: phrase.chars().map(u32::from).collect(),
+        unigram: unigram as u32,
+        prons: readings
+            .iter()
+            .map(|(keys, count)| {
+                (
+                    crate::store_libpinyin::pinyin_keys_to_packed(keys).expect("packed keys"),
+                    *count as u32,
+                )
+            })
+            .collect(),
+    })
+    .expect("item bytes")
+}
+
 /// The addon promotion as `pinyin_choose_candidate` runs it where library 5
 /// has a sub-index (`pinyin.cpp:2541-2558` at 074a2219): the token is the
 /// range's end, and the writes take it.
+pub(crate) fn promote_item(store: &mut UserStore, item: &[u8]) -> Result<u32, UserStoreError> {
+    let token = store
+        .addon_promotion_range_end()
+        .expect("library 5 has a sub-index");
+    store.promote_addon_phrase(token, item)?;
+    Ok(token)
+}
+
+/// [`promote_item`] over the item [`addon_item`] builds.
 pub(crate) fn promote(
     store: &mut UserStore,
     phrase: &str,
     readings: &[(Vec<crate::PinyinKey>, u64)],
     unigram: u64,
 ) -> Result<u32, UserStoreError> {
-    let token = store
-        .addon_promotion_range_end()
-        .expect("library 5 has a sub-index");
-    store.promote_addon_phrase(token, phrase, readings, unigram)?;
-    Ok(token)
+    promote_item(store, &addon_item(phrase, readings, unigram))
 }

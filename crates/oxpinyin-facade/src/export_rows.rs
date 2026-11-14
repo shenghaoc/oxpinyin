@@ -1344,9 +1344,25 @@ mod phrase_cursor_tests {
         ctx.user_store_mut()
             .promote_addon_phrase(
                 0x0500_0001,
-                "二簧",
-                &[(user_keys(&["er", "huang"], 0), 7)],
-                9,
+                &oxpinyin_data::chunk_write::encode_phrase_item(
+                    &oxpinyin_data::chunk_write::ChunkItem {
+                        phrase: "二簧".chars().map(u32::from).collect(),
+                        unigram: 9,
+                        prons: vec![(
+                            ["er", "huang"]
+                                .iter()
+                                .map(|spelling| {
+                                    SyllableKey::from_text(spelling)
+                                        .expect("syllable")
+                                        .chewing_key()
+                                        .to_packed()
+                                })
+                                .collect(),
+                            7,
+                        )],
+                    },
+                )
+                .unwrap(),
             )
             .unwrap();
         assert_eq!(

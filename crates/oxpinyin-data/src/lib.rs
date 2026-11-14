@@ -50,10 +50,7 @@ pub mod table_info;
 pub mod user_files;
 
 pub use bigram_table::BigramTable;
-pub use dict::{
-    AddonDictionary, AddonPhraseItem, DictError, PhraseIndexTable, PinyinIndexTable,
-    SystemDictionary,
-};
+pub use dict::{AddonDictionary, DictError, PhraseIndexTable, PinyinIndexTable, SystemDictionary};
 pub use lm::{
     BigramLanguageModel, BigramRow, LmError, library_visible, merge_bigram, merge_counts,
 };

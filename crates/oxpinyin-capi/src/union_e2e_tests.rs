@@ -666,11 +666,18 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .dict
             .addon_phrase_item(token.value())
             .expect("addon item");
-        let keys: Vec<_> = item.readings[0]
+        let view = oxpinyin_data::phrase_library::PhraseItemView::from_bytes(&item)
+            .expect("addon item bytes");
+        let keys: Vec<_> = view
+            .pronunciation(0)
+            .expect("first reading")
+            .keys
+            .as_chunks::<2>()
             .0
             .iter()
-            .map(|&key| {
-                oxpinyin_core::SyllableKey::from_index(usize::from(key)).expect("stored key")
+            .map(|pair| {
+                let packed = oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes(*pair));
+                oxpinyin_core::SyllableKey::from_text(packed.pinyin_spelling()).expect("stored key")
             })
             .collect();
         (
@@ -717,4 +724,238 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert_eq!(files, [std::ffi::OsString::from("user.conf")]);
+}
+
+/// The packed key of `spelling` at `tone`, as an addon item stores it.
+fn packed_key(spelling: &str, tone: u8) -> u16 {
+    oxpinyin_core::ChewingKey::from_pinyin(spelling)
+        .expect("frozen syllable")
+        .with_tone(tone)
+        .to_packed()
+}
+
+/// A private system whose addon library 4 holds 二簧 with two toned
+/// readings, an item whose first word is the surrogate 0xD800, and 三次 indexed under `san ci` with no reading in its body.
+fn promotion_system(parent: &std::path::Path) -> std::path::PathBuf {
+    use crate::test_support::{AddonItem, addon_system, system_dir};
+    let readings: [(&[u16], u32); 2] = [
+        (&[packed_key("er", 2), packed_key("huang", 2)], 7),
+        (&[packed_key("er", 4), packed_key("huang", 1)], 3),
+    ];
+    let system = addon_system(
+        &system_dir(),
+        parent,
+        &[
+            AddonItem {
+                text: &[0x4e8c, 0x7c27],
+                readings: &readings,
+                indexed_as: &[packed_key("er", 0), packed_key("huang", 0)],
+                unigram: 11,
+            },
+            AddonItem {
+                text: &[0xD800, 0x4e8c],
+                readings: &[(&[packed_key("ba", 1), packed_key("ma", 3)], 5)],
+                indexed_as: &[packed_key("ba", 0), packed_key("ma", 0)],
+                unigram: 5,
+            },
+            AddonItem {
+                text: &[0x4e09, 0x6b21],
+                readings: &[],
+                indexed_as: &[packed_key("san", 0), packed_key("ci", 0)],
+                unigram: 9,
+            },
+        ],
+    );
+    std::fs::write(
+        system.join("interpolation2.text"),
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    )
+    .expect("interpolation2.text");
+    system
+}
+
+/// Chooses the only addon row of `input` and answers the context, the
+/// instance and the promoted token.
+fn choose_addon_row(
+    system: &std::path::Path,
+    user: &std::path::Path,
+    input: &str,
+) -> (
+    *mut crate::types::PinyinContext,
+    *mut crate::types::PinyinInstance,
+    u32,
+) {
+    let context = pinyin_init(
+        cstr(system.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let text = cstr(input);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+        input.len()
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let index = {
+        // SAFETY: live instance; the snapshot is valid until the next guess.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates
+            .iter()
+            .position(|c| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
+            .expect("the crafted addon offers an ADDON candidate")
+    };
+    let mut cand: *mut crate::types::LookupCandidate = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small candidate index"),
+        &raw mut cand
+    ));
+    assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+    let mut kind = lookup_candidate_type_t::ADDON_CANDIDATE;
+    assert!(pinyin_get_candidate_type(instance, cand, &raw mut kind));
+    assert_eq!(kind, lookup_candidate_type_t::NORMAL_CANDIDATE);
+    // `pinyin.cpp:2561-2562`: the promoted token is the new default token.
+    let promoted = {
+        // SAFETY: no guess since the choose.
+        let inst = unsafe { instance_ref(instance) };
+        inst.state.candidates[index]
+            .token
+            .get()
+            .expect("the rewritten candidate has a token")
+            .value()
+    };
+    (context, instance, promoted)
+}
+
+/// The tokens `pinyin_lookup_tokens` finds for `phrase`.
+fn looked_up_tokens(instance: *mut crate::types::PinyinInstance, phrase: &str) -> Vec<u32> {
+    // SAFETY: a fresh GArray of four-byte elements, freed below.
+    let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
+    let text = cstr(phrase);
+    let found = crate::dict::pinyin_lookup_tokens(instance, text.as_ptr(), array.cast());
+    // SAFETY: a live GArray of four-byte elements.
+    let tokens = unsafe {
+        let view = &*array;
+        std::slice::from_raw_parts(view.data.cast::<u32>(), view.len as usize).to_vec()
+    };
+    assert_eq!(found, !tokens.is_empty());
+    // SAFETY: allocated above, freed once.
+    unsafe { glib_sys::g_array_free(array, 1) };
+    tokens
+}
+
+/// Promotion copies each stored reading with its tones
+/// (074a2219 `pinyin.cpp:2547-2558`): the promoted token answers the same
+/// packed words the addon item stores.
+#[test]
+fn a_promoted_addon_item_keeps_every_toned_reading() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = promotion_system(scratch.path());
+    let user = TempUserDir::new("addon-promote-toned");
+    let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
+    assert_eq!(
+        oxpinyin_user::phrase_index_library_index(promoted),
+        oxpinyin_user::ADDON_DICTIONARY
+    );
+    assert_eq!(looked_up_tokens(instance, "二簧"), [promoted]);
+
+    let mut count = 0;
+    assert!(crate::dict::pinyin_token_get_n_pronunciation(
+        instance,
+        promoted,
+        &raw mut count
+    ));
+    assert_eq!(count, 2);
+    let stored = [
+        [packed_key("er", 2), packed_key("huang", 2)],
+        [packed_key("er", 4), packed_key("huang", 1)],
+    ];
+    for (nth, keys) in stored.iter().enumerate() {
+        // SAFETY: a fresh GArray of two-byte elements, freed below.
+        let array = unsafe { glib_sys::g_array_new(0, 0, 2) };
+        assert!(crate::dict::pinyin_token_get_nth_pronunciation(
+            instance,
+            promoted,
+            u32::try_from(nth).expect("small index"),
+            array.cast()
+        ));
+        // SAFETY: a live GArray of two-byte elements.
+        let words = unsafe {
+            let view = &*array;
+            std::slice::from_raw_parts(view.data.cast::<u16>(), view.len as usize).to_vec()
+        };
+        // SAFETY: allocated above, freed once.
+        unsafe { glib_sys::g_array_free(array, 1) };
+        assert_eq!(words, keys, "reading {nth} keeps its tones");
+    }
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// An indexed addon item whose body holds no reading skips the pinyin-index
+/// loop and is still copied and rewritten (`pinyin.cpp:2548-2562`).
+#[test]
+fn an_addon_item_with_no_reading_is_still_promoted() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = promotion_system(scratch.path());
+    let user = TempUserDir::new("addon-promote-bare");
+    let (context, instance, promoted) = choose_addon_row(&system, &user.path, "sanci");
+    assert_eq!(
+        oxpinyin_user::phrase_index_library_index(promoted),
+        oxpinyin_user::ADDON_DICTIONARY
+    );
+    assert_eq!(looked_up_tokens(instance, "三次"), [promoted]);
+    let mut text = std::ptr::null_mut();
+    let mut length = 0;
+    assert!(crate::dict::pinyin_token_get_phrase(
+        instance,
+        promoted,
+        &raw mut length,
+        &raw mut text
+    ));
+    assert_eq!(length, 2);
+    // SAFETY: a NUL-terminated GLib string the caller owns.
+    let rendered = unsafe { std::ffi::CStr::from_ptr(text) }
+        .to_bytes()
+        .to_vec();
+    assert_eq!(rendered, "三次".as_bytes());
+    // SAFETY: freed once.
+    unsafe { glib_sys::g_free(text.cast()) };
+    let mut count = 7;
+    assert!(crate::dict::pinyin_token_get_n_pronunciation(
+        instance,
+        promoted,
+        &raw mut count
+    ));
+    assert_eq!(count, 0);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// The pin copies an item's words as stored (`pinyin.cpp:2555-2558`), a
+/// word that is no Unicode scalar among them.
+#[test]
+fn an_addon_item_with_a_non_scalar_word_is_promoted_as_stored() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = promotion_system(scratch.path());
+    let user = TempUserDir::new("addon-promote-non-scalar");
+    let (context, instance, promoted) = choose_addon_row(&system, &user.path, "bama");
+    assert_eq!(
+        oxpinyin_user::phrase_index_library_index(promoted),
+        oxpinyin_user::ADDON_DICTIONARY
+    );
+    {
+        // SAFETY: live instance; no guess since the choose.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(
+            inst.core.user.phrase_text(promoted).expect("store read"),
+            Some(vec![0xD800, 0x4e8c]),
+            "the stored words, exactly"
+        );
+    }
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }

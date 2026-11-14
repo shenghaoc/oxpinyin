@@ -1655,32 +1655,35 @@ impl UserStore {
         Some(phrase::phrase_index_make_token(ADDON_DICTIONARY, end))
     }
 
-    /// Copy a chosen addon phrase into the default facade under `token`
-    /// (`pinyin.cpp:2547-2558` at 074a2219): the pinyin index and the phrase
-    /// table take the token, and `add_phrase_item` puts the item in the
-    /// sub-index the token's own library bits name, which it makes when it
-    /// is missing (`phrase_index.h:663-671`). The caller read `token` from
-    /// the range, [`Self::addon_promotion_range_end`].
+    /// Copy a chosen addon phrase item into the default facade under `token`
+    /// (`pinyin.cpp:2547-2558` at 074a2219): the pinyin index gets one record
+    /// per stored reading with its packed keys as stored, tones included, the
+    /// phrase table gets the stored words, and `add_phrase_item` puts the
+    /// item's bytes in the sub-index the token's own library bits name, which
+    /// it makes when it is missing (`phrase_index.h:663-671`). The caller
+    /// read `token` from the range, [`Self::addon_promotion_range_end`].
+    ///
+    /// `item` is the addon item's wire bytes (`phrase_index.cpp:33-43`). An
+    /// item with no reading skips the index loop and is still written.
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the promotion cannot be written.
+    /// Returns [`UserStoreError::InvalidPhrase`] when `item` is not a whole
+    /// item or its length is past `MAX_PHRASE_LENGTH`: the pin copies words
+    /// and readings into arrays of that size (`pinyin.cpp:2548`, `:2555`),
+    /// so a longer item is undefined there. Returns another
+    /// [`UserStoreError`] when the promotion cannot be written.
     pub fn promote_addon_phrase(
         &mut self,
         token: Token,
-        phrase: &str,
-        readings: &[(Vec<PinyinKey>, u64)],
-        unigram: u64,
+        item: &[u8],
     ) -> Result<(), UserStoreError> {
-        let valid: Vec<&(Vec<PinyinKey>, u64)> = readings
-            .iter()
-            .filter(|(keys, _)| phrase::phrase_and_keys_valid(phrase, keys))
-            .collect();
-        if valid.is_empty() {
+        let view = oxpinyin_data::phrase_library::PhraseItemView::from_bytes(item)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        if view.phrase_length() > crate::MAX_PHRASE_LENGTH {
             return Err(UserStoreError::InvalidPhrase);
         }
-
-        self.arena_promote(token, phrase, &valid, unigram as u32)
+        self.arena_promote(token, &view)
     }
 
     /// Read the stored count without decoding text or keys.
@@ -3872,7 +3875,7 @@ mod tests {
         #[test]
         fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
             let mut store = transient();
-            let keys = [key("er"), key("huang")];
+            let keys = [toned("er", 2), toned("huang", 2)];
 
             let token =
                 crate::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100)
@@ -3916,12 +3919,107 @@ mod tests {
             );
         }
 
+        /// The item bytes the store holds under `token`.
+        fn stored_item(store: &UserStore, token: Token) -> Vec<u8> {
+            store
+                .with_user_item(token, |item| item.as_bytes().to_vec())
+                .expect("promoted item")
+        }
+
         #[test]
-        fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
+        fn promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading() {
             let mut store = transient();
-            let err =
-                crate::test_session::promote(&mut store, "二簧", &[(vec![key("er")], 100)], 100)
-                    .unwrap_err();
+            let first = vec![toned("er", 2), toned("huang", 2)];
+            let second = vec![toned("er", 4), toned("huang", 1)];
+            let item = crate::test_session::addon_item(
+                "二簧",
+                &[(first.clone(), 7), (second.clone(), 3)],
+                11,
+            );
+
+            let token = crate::test_session::promote_item(&mut store, &item).unwrap();
+            assert_eq!(stored_item(&store, token), item, "the bytes as stored");
+            assert_eq!(store.unigram_delta(token).unwrap(), 11);
+            let lookup = store.lookup();
+            for keys in [&first, &second] {
+                let syllables: Vec<SyllableKey> = keys
+                    .iter()
+                    .map(|key| SyllableKey::from_index(crate::key_syllable(*key)).unwrap())
+                    .collect();
+                assert!(
+                    lookup
+                        .lookup(&syllables)
+                        .iter()
+                        .any(|row| row.token().value() == token),
+                    "each stored reading is indexed"
+                );
+            }
+        }
+
+        #[test]
+        fn promote_addon_phrase_copies_an_item_with_no_reading() {
+            let mut store = transient();
+            let item = crate::test_session::addon_item("二簧", &[], 9);
+            let token = crate::test_session::promote_item(&mut store, &item).unwrap();
+            assert_eq!(stored_item(&store, token), item);
+            assert_eq!(store.user_pronunciation_count(token), Some(0));
+            assert_eq!(
+                store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
+                Some(token)
+            );
+            assert_eq!(store.unigram_delta(token).unwrap(), 9);
+            assert_eq!(store.unigram_total().unwrap(), 9);
+        }
+
+        #[test]
+        fn promote_addon_phrase_copies_a_word_that_is_not_a_scalar() {
+            let mut store = transient();
+            let item = oxpinyin_data::chunk_write::encode_phrase_item(
+                &oxpinyin_data::chunk_write::ChunkItem {
+                    phrase: vec![0xD800, 0x4e8c],
+                    unigram: 4,
+                    prons: vec![(vec![0x0001, 0x0002], 4)],
+                },
+            )
+            .unwrap();
+            let token = crate::test_session::promote_item(&mut store, &item).unwrap();
+            assert_eq!(stored_item(&store, token), item);
+        }
+
+        /// The pin copies words and readings into arrays of
+        /// `MAX_PHRASE_LENGTH` (16) (`pinyin.cpp:2548`, `:2555`): 16
+        /// promotes, 17 is undefined there and is refused.
+        #[test]
+        fn promote_addon_phrase_takes_length_16_and_refuses_17() {
+            let item = |length: usize| {
+                crate::test_session::addon_item(
+                    &"啊".repeat(length),
+                    &[(vec![toned("a", 1); length], 5)],
+                    5,
+                )
+            };
+            let mut store = transient();
+            let item16 = item(16);
+            let token = crate::test_session::promote_item(&mut store, &item16).unwrap();
+            assert_eq!(stored_item(&store, token), item16);
+
+            let mut store = transient();
+            let err = crate::test_session::promote_item(&mut store, &item(17)).unwrap_err();
+            assert!(matches!(err, UserStoreError::InvalidPhrase));
+            assert!(!store.has_user_data());
+        }
+
+        #[test]
+        fn promote_addon_phrase_refuses_a_truncated_item() {
+            let mut store = transient();
+            let item =
+                crate::test_session::addon_item("二簧", &[(vec![key("er"), key("huang")], 1)], 1);
+            let err = store
+                .promote_addon_phrase(
+                    store.addon_promotion_range_end().unwrap(),
+                    &item[..item.len() - 1],
+                )
+                .unwrap_err();
             assert!(matches!(err, UserStoreError::InvalidPhrase));
             assert!(!store.has_user_data());
         }

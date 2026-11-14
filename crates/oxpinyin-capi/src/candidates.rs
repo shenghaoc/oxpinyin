@@ -590,9 +590,6 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         let addon_token = inst.state.candidates[index].token.get()?;
         inst.core.dict.addon_phrase_item(addon_token.value())?
     };
-    // The user store's phrase text is UTF-8; a non-scalar addon item has no
-    // representable text there, so the promotion is skipped.
-    let text = item.text.as_str()?;
     let promoted = {
         // SAFETY: the read view above has ended; the caller serializes this
         // context mutation with every other operation on its instances.
@@ -601,9 +598,7 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         let range_end = store.addon_promotion_range_end()?;
         // `pinyin.cpp:2547-2558`: both index adds and `add_phrase_item`
         // take this one token.
-        store
-            .promote_addon_phrase(range_end, text, &item.readings, item.unigram)
-            .ok()?;
+        store.promote_addon_phrase(range_end, &item).ok()?;
         range_end
     };
     let promoted = PhraseToken::new(promoted);

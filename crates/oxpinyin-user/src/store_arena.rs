@@ -152,20 +152,15 @@ impl UserStore {
     pub(super) fn arena_promote(
         &mut self,
         token: Token,
-        phrase: &str,
-        readings: &[&(Vec<PinyinKey>, u64)],
-        unigram: u32,
+        view: &PhraseItemView<'_>,
     ) -> Result<(), UserStoreError> {
         let target = &self.inner.libpinyin;
-        let item = ChunkItem {
-            phrase: phrase.chars().map(u32::from).collect(),
-            unigram,
-            prons: readings
-                .iter()
-                .map(|(keys, count)| Ok((packed(keys)?, *count as u32)))
-                .collect::<Result<_, UserStoreError>>()?,
-        };
-        let bytes = encoded(&item)?;
+        let bytes = view.as_bytes().to_vec();
+        let unigram = view.unigram();
+        let words: Vec<u32> = view
+            .phrase_codes()
+            .collect::<Option<_>>()
+            .ok_or(UserStoreError::InvalidPhrase)?;
         let offsets = self.offsets();
         let mut phrases = target.phrases_mut();
         // The pin's promote reaches `phrase_table->add_index`
@@ -174,7 +169,7 @@ impl UserStore {
         // here, before any commit.
         phrases
             .phrase_table
-            .check_add(&item.phrase)
+            .check_add(&words)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         // `add_phrase_item` selects the sub-index with
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`phrase_index.h:664`).
@@ -208,13 +203,17 @@ impl UserStore {
         }
         phrases
             .phrase_table
-            .add(&item.phrase, token)
+            .add(&words, token)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        for (packed, _) in &item.prons {
-            let keys: Vec<oxpinyin_core::ChewingKey> = packed
+        for reading in view.pronunciations() {
+            let keys: Vec<oxpinyin_core::ChewingKey> = reading
+                .keys
+                .as_chunks::<2>()
+                .0
                 .iter()
-                .copied()
-                .map(oxpinyin_core::ChewingKey::from_packed)
+                .map(|pair| {
+                    oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]]))
+                })
                 .collect();
             phrases.index.add(&keys, token);
         }

@@ -60,8 +60,8 @@ use oxpinyin_data::{
 };
 use oxpinyin_engine::{EngineError, Session, SessionSettings, StoragePaths};
 use oxpinyin_user::{
-    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, PinyinKey, SaveBaseline,
-    SystemLibrary, UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
+    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
+    UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -310,60 +310,19 @@ impl AddonSet {
         self.dict.is_empty()
     }
 
-    /// The addon phrase item behind `token`: its text, its pronunciations as
-    /// `(key sequence, count)` pairs, and its copied unigram frequency — the
+    /// The addon phrase item behind `token` as stored bytes, the
     /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
     ///
-    /// `None` when no loaded addon library owns `token`. A pronunciation
-    /// whose spelling does not map back to syllable keys is dropped, the same
-    /// rule the reverse rendering applies.
-    fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let item = self.dict.phrase_item(token)?;
-        let readings = item
-            .pronunciations
-            .into_iter()
-            .filter_map(|(pinyin, freq)| Some((pinyin_to_keys(&pinyin)?, freq)))
-            .collect();
-        Some(AddonPhraseItem {
-            text: item.text,
-            readings,
-            unigram: item.unigram,
-        })
+    /// `None` when no loaded addon library owns `token`.
+    fn phrase_item(&self, token: u32) -> Option<Vec<u8>> {
+        self.dict.phrase_item(token)
     }
-}
-
-/// A chosen addon phrase item, ready to promote into default nibble 5.
-pub struct AddonPhraseItem {
-    /// Phrase text.
-    pub text: PhraseText,
-    /// Pronunciations as `(key sequence, count)` pairs.
-    pub readings: Vec<(Vec<PinyinKey>, u64)>,
-    /// The item's copied unigram frequency (`add_phrase_item`).
-    pub unigram: u64,
 }
 
 /// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at the pin
 /// `074a2219`): the library a token names. The high four bits are masked.
 const fn library_of(token: u32) -> u8 {
     oxpinyin_user::phrase_index_library_index(token)
-}
-
-/// Splits a `'`-joined pinyin spelling into [`SyllableKey`] ids, or `None`
-/// when any syllable is not a frozen key. The canonical lookup is used, so the
-/// zhuyin-only syllables a stored reading can carry (`fe`, `den`, ...) resolve
-/// as the pin's `content_table` does.
-fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
-    pinyin
-        .split('\'')
-        .map(|syllable| {
-            let (spelling, tone) = match syllable.as_bytes().last().copied() {
-                Some(digit @ b'1'..=b'5') => (&syllable[..syllable.len() - 1], digit - b'0'),
-                _ => (syllable, 0),
-            };
-            SyllableKey::from_canonical_text(spelling)
-                .and_then(|key| oxpinyin_user::toned_key(key.index(), tone))
-        })
-        .collect()
 }
 
 /// One token reading, without the text or any other reading's keys.
@@ -947,7 +906,7 @@ impl<'a> RuntimeDict<'a> {
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
-    pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
+    pub fn addon_phrase_item(&self, token: u32) -> Option<Vec<u8>> {
         let addons = self.addons.borrow();
         addons.phrase_item(token)
     }
@@ -2437,6 +2396,7 @@ mod tests {
     //! seam is covered by `tests/assembly.rs`.
 
     use super::*;
+    use oxpinyin_user::PinyinKey;
 
     fn w3_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
