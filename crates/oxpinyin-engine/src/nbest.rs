@@ -24,9 +24,8 @@
 //! [`oxpinyin_core::LanguageModel::nbest_step_costs`]. The bigram branch
 //! expands every beam value; the unigram branch expands only the beam's
 //! head, as upstream's `search_bigram2` / `search_unigram2` do.
-//! Pronunciation uses the first matched matrix path; see
-//! `docs/findings/sentence-surface.md` §3 for the recorded divergences
-//! (first-path-only pronunciation).
+//! Pronunciation sums every matrix path of the span before the epsilon
+//! check (`phonetic_key_matrix.cpp:534-600`, `phonetic_lookup.h:643-697`).
 
 use oxpinyin_core::sentence_facts::{SentenceFacts, TokenMap};
 use std::cell::{OnceCell, RefCell};
@@ -525,7 +524,7 @@ struct SpanEntry {
     path: u32,
     keys: u32,
     chars: u32,
-    pronunciation: Option<(u64, u64)>,
+    pronunciation: f32,
 }
 
 /// A ranged token, priced on first use (`phonetic_lookup.h:646-684`: the
@@ -627,6 +626,8 @@ struct Pricing<'a, D: Dictionary> {
     /// The dictionary's memo of each path, indexed like `paths`.
     memos: &'a [D::PathMemo],
     facts: &'a RefCell<SentenceFacts>,
+    generation: &'a GenerationView<'a>,
+    span: std::ops::Range<usize>,
 }
 
 impl<'a, D> Pricing<'a, D>
@@ -656,13 +657,54 @@ where
             None => self.dictionary.trellis_item(keys, tones, token),
         }
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        let entry = item.map(|item| SpanEntry {
-            token,
-            path: slot.path,
-            keys: keys.len().try_into().unwrap_or(u32::MAX),
-            chars: item.chars,
-            pronunciation: item.pronunciation,
-        });
+        let entry = if let Some(item) = item {
+            let mut path = 0_u32;
+            let pronunciation =
+                self.generation
+                    .sum_paths(self.span.start, self.span.end, 0, &mut || {
+                        let id = path;
+                        path += 1;
+                        let (keys, tones) = self.paths.path(id);
+                        if keys.len() != item.chars as usize {
+                            return Ok(0.0);
+                        }
+                        let priced = if id == slot.path {
+                            Some(item)
+                        } else {
+                            match self.memos.get(id as usize) {
+                                Some(memo) => self.dictionary.trellis_item_with_facts(
+                                    keys,
+                                    tones,
+                                    token,
+                                    memo,
+                                    &mut self.facts.borrow_mut(),
+                                ),
+                                None => self.dictionary.trellis_item(keys, tones, token),
+                            }
+                            .map_err(|error| {
+                                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                            })?
+                        };
+                        Ok(priced.map_or(0.0, |priced| {
+                            priced.pronunciation.map_or(1.0, |(matched, total)| {
+                                if total == 0 {
+                                    0.0
+                                } else {
+                                    matched as f32 / total as f32
+                                }
+                            })
+                        }))
+                    })?;
+            Some(SpanEntry {
+                token,
+                path: slot.path,
+                keys: keys.len().try_into().unwrap_or(u32::MAX),
+                chars: item.chars,
+                pronunciation,
+            })
+        } else {
+            None
+        };
         Ok(slot.priced.get_or_init(|| entry).as_ref())
     }
 
@@ -839,6 +881,8 @@ where
                     paths: &found.paths,
                     memos: &found.memos,
                     facts: &facts,
+                    generation: &generation,
+                    span: position..end,
                 };
                 let mut forced = PhraseIndexRanges::new();
                 forced.convert(pricing.first_priced(token.value())?.map(|entry| {
@@ -954,6 +998,37 @@ struct GenerationView<'a> {
 }
 
 impl GenerationView<'_> {
+    /// Sum at each recursion frame, as the pin does, rather than flattening
+    /// the leaves into a differently rounded sum (074a2219
+    /// `phonetic_key_matrix.cpp:534-585`). Leaves and their indices are in
+    /// the same order as `walk`; no path is gated on its own probability.
+    fn sum_paths(
+        &self,
+        start: usize,
+        end: usize,
+        depth: usize,
+        leaf: &mut impl FnMut() -> Result<f32, EngineError>,
+    ) -> Result<f32, EngineError> {
+        if start > end || depth > MAX_PHRASE_LENGTH {
+            return Ok(0.0);
+        }
+        if start == end {
+            return if depth == 0 { Ok(0.0) } else { leaf() };
+        }
+        if self.zeros.get(start).copied().unwrap_or(false) {
+            return self.sum_paths(start + 1, end, depth, leaf);
+        }
+        let mut sum = 0.0_f32;
+        if let Some(column) = self.columns.get(start) {
+            for key in column {
+                if key.to > start && key.to <= end {
+                    sum += self.sum_paths(key.to, end, depth + 1, leaf)?;
+                }
+            }
+        }
+        Ok(sum)
+    }
+
     fn search<D>(
         &self,
         start: usize,
@@ -1108,6 +1183,8 @@ where
             paths: &found.paths,
             memos: &found.memos,
             facts: env.facts,
+            generation: env.generation,
+            span: position..end,
         };
         expand_entries(
             &pricing,
@@ -1355,7 +1432,7 @@ where
     L::Error: core::fmt::Display,
 {
     let entries = pricing.ranges;
-    let eligible = |entry: &SpanEntry| !matches!(entry.pronunciation, Some((0, _)));
+    let eligible = |entry: &SpanEntry| entry.pronunciation >= f32::EPSILON;
     // Entered on `SEARCH_OK` only; the predecessors' rows are loaded and
     // merged then even when no ranged item can step.
     if one_step.is_none() && entries.iter().next().is_none() {
@@ -1550,16 +1627,7 @@ where
             &mut facts.borrow_mut(),
         )
         .map_err(|error| EngineError::row_read(model, prev, &error))?;
-    let pronunciation = entry.pronunciation.map_or(1.0, |(matched, total)| {
-        if total == 0 {
-            0.0
-        } else {
-            matched as f32 / total as f32
-        }
-    });
-    if pronunciation < f32::EPSILON {
-        return Ok(());
-    }
+    let pronunciation = entry.pronunciation;
     let probability = match branch {
         Branch::Bigram(_) => step.blended.map(|s| s * f64::from(pronunciation)),
         Branch::Unigram => step
@@ -1667,7 +1735,7 @@ mod tests {
                 path: 0,
                 keys: 1,
                 chars: 1,
-                pronunciation: None,
+                pronunciation: 1.0,
             }))
             .ok();
         slot
@@ -1684,6 +1752,11 @@ mod tests {
             dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
             paths: Box::leak(Box::default()),
             memos: &[],
+            generation: Box::leak(Box::new(super::GenerationView {
+                columns: &[],
+                zeros: &[],
+            })),
+            span: 0..0,
         }
     }
 
@@ -2133,7 +2206,7 @@ mod tests {
                 path: 0,
                 keys: 1,
                 chars: 1,
-                pronunciation: None,
+                pronunciation: 1.0,
             },
             super::StepCtx {
                 paths: &paths,
@@ -2183,6 +2256,63 @@ mod tests {
         let matrix = build_scan_matrix(&graph, OptionBits::default(), true);
         let bound = graph.consumed();
         (matrix, bound)
+    }
+
+    /// The pin sums all paths in `phonetic_key_matrix.cpp:534-600` at
+    /// 074a2219, then both step branches compare the sum with FLT_EPSILON
+    /// (`phonetic_lookup.h:654-658,683-688`). Two shares of 1/2^24
+    /// reach that boundary even though neither path reaches it alone.
+    #[test]
+    fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
+        struct TinyReadings;
+        impl Dictionary for TinyReadings {
+            type Syllable = SyllableKey;
+            type Error = TextError;
+            type PathMemo = ();
+
+            fn lookup(&self, keys: &[SyllableKey]) -> Result<Vec<PhraseEntry>, TextError> {
+                Ok(if keys.len() == 1 {
+                    vec![
+                        PhraseEntry::new(PhraseToken::new(1), "你")
+                            .with_pronunciation_possibility(1, 1 << 24),
+                    ]
+                } else {
+                    vec![]
+                })
+            }
+        }
+        let edge = |text| ScanKey {
+            key: SyllableKey::from_text(text).unwrap(),
+            from: 0,
+            to: 1,
+            syllable_start: 0,
+            crosses_separator: false,
+            tone: 0,
+        };
+        for (blended, unigram) in [(Some(1.0), None), (None, Some(1.0))] {
+            for count in [1, 2] {
+                let matrix = vec![vec![edge("ni"), edge("mi")][..count].to_vec(), vec![]];
+                let rows = nbest_sentences(
+                    &matrix,
+                    1,
+                    &TinyReadings,
+                    &Fixed { blended, unigram },
+                    &[],
+                    None,
+                    NbestShape::PINYIN,
+                )
+                .unwrap();
+                if count == 1 {
+                    assert!(rows.is_empty(), "the whole-span sum is below epsilon");
+                } else {
+                    assert!(!rows.is_empty(), "the whole-span sum equals epsilon");
+                    for row in rows {
+                        assert_eq!(row.text.as_str(), Some("你"));
+                        assert_eq!(row.poss, Some(f64::from(f32::EPSILON).ln() as f32));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

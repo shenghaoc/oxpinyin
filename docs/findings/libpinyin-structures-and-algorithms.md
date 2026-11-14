@@ -355,7 +355,18 @@ and disables it for the rest of the guess; existing prices and trellis nodes
 are not rebuilt.
 
 For U eligible distinct tokens, item resolution is O(U) with expected O(1)
-probes; pronunciation matching stays per path and scoring per occurrence. The
+probes; pronunciation matching stays per path and scoring per occurrence.
+Each priced range occurrence now sums all P paths of its span before the
+epsilon check (`phonetic_key_matrix.cpp:534-600`,
+`phonetic_lookup.h:643-697`). For R priced occurrences, the sum requires
+O(R(V + PC)) work, instead of O(RC), for V visited matrix prefixes
+and path-price cost C (including dictionary pronunciation matching).
+The pin also walks the span for each transition. The existing path memos
+remain span-local; more of them can now be populated. Recursive summation
+adds O(d) stack space for matrix-walk depth d, including separator hops,
+with d bounded by the span byte length and at most 16 nonzero keys.
+No additional path collection is retained.
+Actual time and peak-memory effects are unknown. The
 memo adds O(T + B) temporary space for T distinct tokens entered (including
 `None` fallbacks) and B copied item-body bytes, and survives no sentence
 invocation. The facade total adjustment is computed lazily once per stable
