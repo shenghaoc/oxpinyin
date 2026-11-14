@@ -44,9 +44,7 @@ use smallvec::SmallVec;
 use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
 use crate::session::matrix::ParsedMatrix;
-use crate::session::{
-    MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty, training_readings,
-};
+use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty};
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -659,42 +657,46 @@ where
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         let entry = if let Some(item) = item {
             let mut path = 0_u32;
-            let pronunciation =
-                self.generation
-                    .sum_paths(self.span.start, self.span.end, 0, &mut || {
-                        let id = path;
-                        path += 1;
-                        let (keys, tones) = self.paths.path(id);
-                        if keys.len() != item.chars as usize {
-                            return Ok(0.0);
+            let pronunciation = self.generation.sum_paths(
+                self.span.start,
+                self.span.end,
+                MAX_PHRASE_LENGTH,
+                &mut SmallVec::new(),
+                &mut |_| {
+                    let id = path;
+                    path += 1;
+                    let (keys, tones) = self.paths.path(id);
+                    if keys.len() != item.chars as usize {
+                        return Ok(0.0);
+                    }
+                    let priced = if id == slot.path {
+                        Some(item)
+                    } else {
+                        match self.memos.get(id as usize) {
+                            Some(memo) => self.dictionary.trellis_item_with_facts(
+                                keys,
+                                tones,
+                                token,
+                                memo,
+                                &mut self.facts.borrow_mut(),
+                            ),
+                            None => self.dictionary.trellis_item(keys, tones, token),
                         }
-                        let priced = if id == slot.path {
-                            Some(item)
-                        } else {
-                            match self.memos.get(id as usize) {
-                                Some(memo) => self.dictionary.trellis_item_with_facts(
-                                    keys,
-                                    tones,
-                                    token,
-                                    memo,
-                                    &mut self.facts.borrow_mut(),
-                                ),
-                                None => self.dictionary.trellis_item(keys, tones, token),
+                        .map_err(|error| {
+                            EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                        })?
+                    };
+                    Ok(priced.map_or(0.0, |priced| {
+                        priced.pronunciation.map_or(1.0, |(matched, total)| {
+                            if total == 0 {
+                                0.0
+                            } else {
+                                matched as f32 / total as f32
                             }
-                            .map_err(|error| {
-                                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                            })?
-                        };
-                        Ok(priced.map_or(0.0, |priced| {
-                            priced.pronunciation.map_or(1.0, |(matched, total)| {
-                                if total == 0 {
-                                    0.0
-                                } else {
-                                    matched as f32 / total as f32
-                                }
-                            })
-                        }))
-                    })?;
+                        })
+                    }))
+                },
+            )?;
             Some(SpanEntry {
                 token,
                 path: slot.path,
@@ -1006,23 +1008,26 @@ impl GenerationView<'_> {
         &self,
         start: usize,
         end: usize,
-        depth: usize,
-        leaf: &mut impl FnMut() -> Result<f32, EngineError>,
+        length: usize,
+        keys: &mut SmallVec<[ChewingKey; 16]>,
+        leaf: &mut impl FnMut(&[ChewingKey]) -> Result<f32, EngineError>,
     ) -> Result<f32, EngineError> {
-        if start > end || depth > MAX_PHRASE_LENGTH {
+        if start > end || keys.len() > length {
             return Ok(0.0);
         }
         if start == end {
-            return if depth == 0 { Ok(0.0) } else { leaf() };
+            return if keys.is_empty() { Ok(0.0) } else { leaf(keys) };
         }
         if self.zeros.get(start).copied().unwrap_or(false) {
-            return self.sum_paths(start + 1, end, depth, leaf);
+            return self.sum_paths(start + 1, end, length, keys, leaf);
         }
         let mut sum = 0.0_f32;
         if let Some(column) = self.columns.get(start) {
             for key in column {
                 if key.to > start && key.to <= end {
-                    sum += self.sum_paths(key.to, end, depth + 1, leaf)?;
+                    keys.push(key.key.chewing_key().with_tone(key.tone));
+                    sum += self.sum_paths(key.to, end, length, keys, leaf)?;
+                    keys.pop();
                 }
             }
         }
@@ -1206,30 +1211,16 @@ where
 /// of the current parse, with the separator zero keys the pin's
 /// `fill_matrix` writes.
 pub(crate) struct ConstraintSpelling<'a> {
-    scan: &'a [Vec<ScanKey>],
-    bound: usize,
-    physical: bool,
-    input: &'a [u8],
-    parsed: OnceCell<ParsedMatrix>,
+    parsed: &'a ParsedMatrix,
     /// The last item a read returned: the pin's one `PhraseItem item`.
     last_item: RefCell<Option<PronunciationRows>>,
 }
 
 impl<'a> ConstraintSpelling<'a> {
-    /// `scan` is the parse's scan matrix, `bound` its parsed length and
-    /// `input` the raw bytes it was built over.
-    pub(crate) const fn new(
-        scan: &'a [Vec<ScanKey>],
-        bound: usize,
-        physical: bool,
-        input: &'a [u8],
-    ) -> Self {
+    /// Borrow the parse's already placed matrix. No second matrix is built.
+    pub(crate) const fn new(parsed: &'a ParsedMatrix) -> Self {
         Self {
-            scan,
-            bound,
-            physical,
-            input,
-            parsed: OnceCell::new(),
+            parsed,
             last_item: RefCell::new(None),
         }
     }
@@ -1249,11 +1240,8 @@ impl<'a> ConstraintSpelling<'a> {
     /// abbreviation stands for. An empty start or end column answers zero
     /// (`:593-596`).
     ///
-    /// The drop test is the integer zero test: a path counts when some
-    /// stored pronunciation matches it with a nonzero frequency
-    /// (`matched > 0` over a nonzero total). It decides what the `f32`
-    /// `< FLT_EPSILON` test does on the pinned data, where no per-token
-    /// total reaches 2^23 (`docs/findings/compatibility-policy.md`, row 7).
+    /// Add each path's f32 ratio in recursive matrix order and clear only
+    /// below f32::EPSILON (phonetic_lookup.cpp:159-163).
     ///
     /// `length` is the forced phrase's stored length
     /// ([`PhraseText::phrase_length`]); it only bounds
@@ -1293,9 +1281,7 @@ impl<'a> ConstraintSpelling<'a> {
         if let PhraseItemRead::Item(rows) = read {
             *last = Some(rows);
         }
-        let parsed = self
-            .parsed
-            .get_or_init(|| ParsedMatrix::from_scan(self.scan, self.bound, self.physical));
+        let parsed = self.parsed;
         let columns = &parsed.columns;
         if end >= columns.len()
             || column_is_empty(columns, &parsed.zeros, start)
@@ -1303,13 +1289,19 @@ impl<'a> ConstraintSpelling<'a> {
         {
             return Ok(false);
         }
+        let generation = GenerationView {
+            columns,
+            zeros: &parsed.zeros,
+        };
         if item_less {
-            for reading in training_readings(columns, self.input, start, end, length) {
-                if lookup_finds_token(dictionary, &reading, token)? {
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
+            let sum =
+                generation.sum_paths(start, end, length, &mut SmallVec::new(), &mut |reading| {
+                    if reading.len() != length {
+                        return Ok(0.0);
+                    }
+                    lookup_pronunciation(dictionary, reading, token)
+                })?;
+            return Ok(sum >= f32::EPSILON);
         }
         let Some(rows) = last.as_ref() else {
             return Ok(false);
@@ -1326,18 +1318,20 @@ impl<'a> ConstraintSpelling<'a> {
         if total == 0 {
             return Ok(false);
         }
-        for reading in training_readings(columns, self.input, start, end, length) {
-            let matched = rows
-                .iter()
-                .filter(|(stored, _)| reading_matches(&reading, stored))
-                .fold(0_u32, |matched, (_, frequency)| {
-                    matched.wrapping_add(*frequency)
-                });
-            if matched != 0 {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        let sum =
+            generation.sum_paths(start, end, length, &mut SmallVec::new(), &mut |reading| {
+                if reading.len() != length {
+                    return Ok(0.0);
+                }
+                let matched = rows
+                    .iter()
+                    .filter(|(stored, _)| reading_matches(reading, stored))
+                    .fold(0_u32, |matched, (_, frequency)| {
+                        matched.wrapping_add(*frequency)
+                    });
+                Ok(matched as f32 / total as f32)
+            })?;
+        Ok(sum >= f32::EPSILON)
     }
 }
 
@@ -1360,35 +1354,40 @@ pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bo
 
 /// [`ConstraintSpelling::spells`] for a dictionary that keeps no phrase
 /// items: the token is searched under `reading`, an incomplete key standing
-/// for its bounded completions, and kept unless its possibility is the
-/// zero count. Every shipping dictionary reads its items instead.
-fn lookup_finds_token<D>(
+/// for its bounded completions, returning the path's f32 possibility.
+/// Every shipping dictionary reads its stored items instead.
+fn lookup_pronunciation<D>(
     dictionary: &D,
     reading: &[ChewingKey],
     token: PhraseToken,
-) -> Result<bool, EngineError>
+) -> Result<f32, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
-    let Some(path) = reading
+    let path: SmallVec<[SyllableKey; 16]> = reading
         .iter()
-        .map(|key| SyllableKey::from_canonical_text(key.pinyin_spelling()))
-        .collect::<Option<SmallVec<[SyllableKey; 16]>>>()
-    else {
-        return Ok(false);
-    };
+        .map(|key| SyllableKey::from_matrix_key(*key))
+        .collect();
     let has_incomplete = path
         .iter()
         .any(|key| key.completeness() == Completeness::Partial);
-    let mut found = false;
+    let mut sum = 0.0_f32;
     let mut look = |sequence: &[SyllableKey]| -> Result<(), EngineError> {
         let entries = dictionary
             .lookup(sequence)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        found |= entries.iter().any(|entry| {
-            entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
-        });
+        if let Some(entry) = entries.iter().rev().find(|entry| entry.token() == token) {
+            sum += entry
+                .pronunciation_possibility()
+                .map_or(1.0, |(matched, total)| {
+                    if total == 0 {
+                        0.0
+                    } else {
+                        matched as f32 / total as f32
+                    }
+                });
+        }
         Ok(())
     };
     if has_incomplete && !dictionary.handles_partial_keys() {
@@ -1398,7 +1397,7 @@ where
     } else {
         look(&path)?;
     }
-    Ok(found)
+    Ok(sum)
 }
 
 #[derive(Default)]

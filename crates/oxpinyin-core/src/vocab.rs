@@ -25,7 +25,8 @@ use crate::{
     option_alias_canonical,
 };
 
-/// Number of keys addressable by a [`SyllableKey`].
+/// Number of table keys addressable by a [`SyllableKey`].
+/// Packed matrix alternates outside the table are not included.
 ///
 /// **Not constant across stages.** This is 440 for Stage 1 — the 405 complete
 /// syllables, the 23 initial-only keys, the two option-only correction
@@ -44,7 +45,8 @@ include!(concat!(env!("OUT_DIR"), "/chewing_keys.rs"));
 
 const _: () = assert!(CHEWING_KEYS.len() == SYLLABLE_KEY_COUNT);
 
-/// One decoder-visible pinyin key: a complete syllable or an initial-only key.
+/// One decoder-visible key: a table syllable, an initial-only key, or a
+/// packed matrix alternate without a syllable-table row.
 ///
 /// Ids are dense and frozen: `0..405` are [`crate::full_pinyin_syllables`] in their
 /// pinned upstream numeric-ID order, `405..428` are
@@ -109,13 +111,21 @@ impl SyllableKey {
     /// every row has a key here, so no pin-written key is left out,
     /// including the option-only `eng`/`nun` and the zhuyin-only `den`.
     /// `None` for the zero key and for fields the table marks invalid,
-    /// which only a file the pin did not write can carry.
+    /// including final alternates the pin appends to the matrix.
     #[must_use]
     pub fn from_chewing_key(key: ChewingKey) -> Option<Self> {
         if key.table_index() == 0 {
             return None;
         }
         Self::from_canonical_text(key.pinyin_spelling())
+    }
+
+    /// Keeps a matrix key even when the pin's final swap produces no
+    /// syllable-table row (phonetic_key_matrix.cpp:287-306). The high bit
+    /// tags a tone-zero packed key; canonical keys keep their dense ids.
+    #[must_use]
+    pub fn from_matrix_key(key: ChewingKey) -> Self {
+        Self::from_chewing_key(key).unwrap_or_else(|| Self(0x8000 | key.with_tone(0).to_packed()))
     }
 
     /// Returns the key for `text` under parser option bits.
@@ -155,7 +165,7 @@ impl SyllableKey {
     pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
         fuzzy_chewing_alternatives(self.chewing_key(), options)
             .into_iter()
-            .filter_map(Self::from_chewing_key)
+            .map(Self::from_matrix_key)
             .collect()
     }
 
@@ -168,7 +178,7 @@ impl SyllableKey {
         u16::try_from(index).ok().map(Self)
     }
 
-    /// The dense id of this key.
+    /// The dense table id, or a tagged packed value for a matrix alternate.
     #[must_use]
     pub const fn index(self) -> usize {
         self.0 as usize
@@ -177,6 +187,9 @@ impl SyllableKey {
     /// The key's lowercase ASCII spelling.
     #[must_use]
     pub fn text(self) -> &'static str {
+        if self.0 & 0x8000 != 0 {
+            return self.chewing_key().text();
+        }
         let index = self.index();
         if let Some(syllable) = full_pinyin_syllable(index) {
             return syllable;
@@ -200,12 +213,19 @@ impl SyllableKey {
     /// row, by index, equal to `ChewingKey::from_pinyin(self.text())`.
     #[must_use]
     pub fn chewing_key(self) -> ChewingKey {
-        CHEWING_KEYS[self.index()]
+        if self.0 & 0x8000 != 0 {
+            ChewingKey::from_packed(self.0)
+        } else {
+            CHEWING_KEYS[self.index()]
+        }
     }
 
     /// Whether this key is a complete syllable or an initial-only key.
     #[must_use]
     pub const fn completeness(self) -> Completeness {
+        if self.0 & 0x8000 != 0 {
+            return Completeness::Complete;
+        }
         if self.index() < FULL_PINYIN_SYLLABLE_COUNT
             || self.index() >= FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT
         {
@@ -220,6 +240,17 @@ impl SyllableKey {
 /// final combinations, which the pin appends without a table check.
 #[must_use]
 pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+    let initials = fuzzy_chewing_initials(key, options);
+    let mut out = initials.clone();
+    for source in std::iter::once(key).chain(initials) {
+        out.extend(fuzzy_chewing_finals(source, options));
+    }
+    out
+}
+
+/// Initial swaps only; the matrix applies these to its column snapshot.
+#[must_use]
+pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut initials = Vec::new();
     for (bit, a, b) in [
         (PINYIN_AMB_C_CH, "c", "ch"),
@@ -245,18 +276,22 @@ pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<C
             }
         }
     }
-    let mut out = initials.clone();
-    for source in std::iter::once(key).chain(initials) {
-        for (bit, a, b) in FUZZY_FINALS {
-            if !options.contains(bit) {
-                continue;
-            }
-            for (from, to) in [(a, b), (b, a)] {
-                if source.final_ == from {
-                    let mut alternate = source;
-                    alternate.final_ = to;
-                    out.push(alternate);
-                }
+    initials
+}
+
+/// Final swaps only, including combinations with no syllable-table row.
+#[must_use]
+pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+    let mut out = Vec::new();
+    for (bit, a, b) in FUZZY_FINALS {
+        if !options.contains(bit) {
+            continue;
+        }
+        for (from, to) in [(a, b), (b, a)] {
+            if source.final_ == from {
+                let mut alternate = source;
+                alternate.final_ = to;
+                out.push(alternate);
             }
         }
     }

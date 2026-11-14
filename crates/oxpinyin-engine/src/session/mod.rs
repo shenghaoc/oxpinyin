@@ -325,8 +325,8 @@ mod guess;
 mod lookup;
 mod offsets;
 mod selection;
+pub(crate) use selection::column_is_empty;
 pub use selection::{SelectionTarget, TrainingPlan};
-pub(crate) use selection::{column_is_empty, training_readings};
 mod state;
 
 #[cfg(test)]
@@ -621,7 +621,7 @@ pub(crate) fn build_scan_matrix_over(
 
 /// Steps 2 to 4 of [`build_scan_matrix`] over a matrix whose selected keys
 /// are already placed: the resplit and divided passes when `divided`, then
-/// the fuzzy additions, then the identical-path collapse.
+/// the fuzzy additions. Every append keeps its place and multiplicity.
 fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: bool) {
     // 2. Resplit every key in each column, including right halves that an
     // earlier column appended during this pass. A pair only resplits when
@@ -652,17 +652,24 @@ fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: boo
         inner_split_step(columns);
     }
 
-    // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
-    // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
-    // (`chewing_key.h:97-104`). Same key, different `m_raw_end`, coexist.
-    // After fuzzy, keep `(key, to)` so those edges survive; key-only
-    // collapse here is #103. The tone rides the alternate — upstream
-    // copies the whole key before swapping the initial or final
-    // (`phonetic_key_matrix.cpp:250-259`).
-    for addition in &fuzzy_additions(columns, options) {
-        columns[addition.from].push(*addition);
+    // Per column, initial swaps read the original snapshot; final swaps
+    // read the grown column (phonetic_key_matrix.cpp:226-310).
+    for column in columns {
+        for swap in [
+            oxpinyin_core::fuzzy_chewing_initials,
+            oxpinyin_core::fuzzy_chewing_finals,
+        ] {
+            for slot in 0..column.len() {
+                let source = column[slot];
+                for alternate in swap(source.key.chewing_key().with_tone(source.tone), options) {
+                    column.push(ScanKey {
+                        key: SyllableKey::from_matrix_key(alternate),
+                        ..source
+                    });
+                }
+            }
+        }
     }
-    keep_first_in_column(columns);
 }
 
 /// The pin's parse-time matrix for keys a parser placed outside the
@@ -730,23 +737,21 @@ pub fn parse_time_keys(
         }
     }
     for column in &mut columns {
-        for slot in 0..column.len() {
-            let key = column[slot];
-            for alternate in oxpinyin_core::fuzzy_chewing_alternatives(key.key(), options) {
-                column.push(crate::cursor::MatrixKey::from_chewing(
-                    alternate,
-                    key.syllable_start(),
-                    key.end(),
-                ));
+        for swap in [
+            oxpinyin_core::fuzzy_chewing_initials,
+            oxpinyin_core::fuzzy_chewing_finals,
+        ] {
+            for slot in 0..column.len() {
+                let key = column[slot];
+                for alternate in swap(key.key(), options) {
+                    column.push(crate::cursor::MatrixKey::from_chewing(
+                        alternate,
+                        key.syllable_start(),
+                        key.end(),
+                    ));
+                }
             }
         }
-        let mut unique = Vec::new();
-        for &key in column.iter() {
-            if !unique.contains(&key) {
-                unique.push(key);
-            }
-        }
-        *column = unique;
     }
     columns.into_iter().flatten().collect()
 }
@@ -854,50 +859,6 @@ fn append_split(columns: &mut [Vec<ScanKey>], key: ScanKey, end: usize, left: &s
         crosses_separator: false,
         tone: 0,
     });
-}
-
-/// Phase 4 of [`build_scan_matrix`]: the fuzzy alternates of every key in
-/// the matrix, each riding its source span with the swapped tone.
-fn fuzzy_additions(columns: &[Vec<ScanKey>], options: OptionBits) -> Vec<ScanKey> {
-    let snapshot: Vec<(usize, ScanKey)> = columns
-        .iter()
-        .enumerate()
-        .flat_map(|(position, keys)| keys.iter().map(move |key| (position, *key)))
-        .collect();
-    let mut additions: Vec<ScanKey> = Vec::new();
-    for (position, scan_key) in snapshot {
-        for alternate in scan_key.key.fuzzy_alternatives(options) {
-            additions.push(ScanKey {
-                key: alternate,
-                from: position,
-                to: scan_key.to,
-                syllable_start: scan_key.syllable_start,
-                crosses_separator: scan_key.crosses_separator,
-                tone: scan_key.tone,
-            });
-        }
-    }
-    additions
-}
-
-/// Collapse only identical key/span/tone paths after all mutation passes.
-/// The pin appends a bag: the same key with a different end must survive.
-fn keep_first_in_column(columns: &mut [Vec<ScanKey>]) {
-    for column in columns {
-        let mut kept = 0_usize;
-        for index in 0..column.len() {
-            let duplicate = column[..kept].iter().any(|earlier| {
-                earlier.key == column[index].key
-                    && earlier.to == column[index].to
-                    && earlier.tone == column[index].tone
-            });
-            if !duplicate {
-                column.swap(kept, index);
-                kept += 1;
-            }
-        }
-        column.truncate(kept);
-    }
 }
 
 /// The lookup-offset law over one coordinate buffer whose `'` bytes are

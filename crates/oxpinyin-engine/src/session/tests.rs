@@ -1,5 +1,9 @@
 //! The session's unit tests, moved verbatim from `session.rs` (2026-09-08).
 
+use super::ScanKey;
+use super::selection::training_readings;
+use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
+
 #[test]
 fn full_parsed_len_reflects_the_exact_chain() {
     let mut session = session();
@@ -962,6 +966,12 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     assert_eq!((text.phrase_length(), text.outward_words().count()), (2, 1));
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("parse");
+    // Each complete path writes its pronunciation, even if identical
+    // (phonetic_key_matrix.cpp:603-668). Duplicate the first placed edge.
+    session.ensure_matrix().unwrap();
+    let parse = session.input.parse.get_mut().unwrap();
+    let first = parse.matrix.columns[0][0];
+    parse.matrix.columns[0].push(first);
     session.constraints.resize(6);
     session
         .constraints
@@ -981,6 +991,8 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     }];
     let mut model = Readings(Vec::new());
     assert!(train_prepared(&session, 0, &mut model).expect("the forced span trains"));
+    assert_eq!(model.0.len(), 2, "each complete matrix path is observed");
+    assert_eq!(model.0[0], model.0[1], "identical paths both write");
     assert!(!model.0.is_empty(), "the two-key reading of nihao trains");
     assert!(
         model.0.iter().all(|reading| reading.len() == 2),
@@ -4434,4 +4446,162 @@ where
         .expect("the row is listed");
     let anchor = session.composition_offset();
     session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
+}
+
+#[test]
+fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
+    use oxpinyin_core::{
+        ChewingKey, OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_L_N, PINYIN_AMB_L_R,
+    };
+    // phonetic_key_matrix.h:92-100 appends without collapse. Initials
+    // read the original column; finals read the grown column (:226-310).
+    let options = OptionBits::from_bits(PINYIN_AMB_L_N | PINYIN_AMB_L_R | PINYIN_AMB_AN_ANG);
+    let lan = SyllableKey::from_text("lan").unwrap();
+    let key = ScanKey {
+        key: lan,
+        from: 0,
+        to: 3,
+        syllable_start: 0,
+        crosses_separator: false,
+        tone: 2,
+    };
+    let mut scan = vec![vec![key, key], vec![], vec![], vec![]];
+    super::extend_matrix(&mut scan, options, false);
+    let expected = [
+        "lan", "lan", "ran", "nan", "ran", "nan", "lang", "lang", "rang", "nang", "rang", "nang",
+    ];
+    assert_eq!(
+        scan[0].iter().map(|k| k.key.text()).collect::<Vec<_>>(),
+        expected
+    );
+    assert!(scan[0].iter().all(|k| k.tone == 2));
+    let keys = [crate::cursor::MatrixKey::new(lan, 2, 0, 3); 2];
+    let parsed = super::parse_time_keys(&keys, 3, options, false);
+    assert_eq!(
+        parsed.iter().map(|k| k.key().text()).collect::<Vec<_>>(),
+        expected
+    );
+    assert!(parsed.iter().all(|k| k.tone() == 2));
+    let placed = super::matrix::ParsedMatrix::from_scan(&scan, 3, true);
+    assert_eq!(placed.columns[0].len(), expected.len());
+    assert!(placed.columns[3].is_empty() && placed.zeros[3]);
+    assert!(!placed.zeros[0]);
+    assert_eq!(
+        parsed[0].key(),
+        ChewingKey::from_pinyin("lan").unwrap().with_tone(2)
+    );
+}
+
+#[test]
+fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
+    use oxpinyin_core::{ChewingKey, OptionBits, PINYIN_AMB_EN_ENG};
+    // Finals append without get_table_index (:287-306). shun -> shung has
+    // no syllable row, but its packed key and source span still exist.
+    let shun = SyllableKey::from_text("shun").unwrap();
+    let options = OptionBits::from_bits(PINYIN_AMB_EN_ENG);
+    let graph = SegmentGraph::build_exact(b"shun", &[ExactSegment::new(0, 4, shun, 3)]).unwrap();
+    let scan = super::build_scan_matrix(&graph, options, false);
+    let alternate = ChewingKey {
+        final_: 10,
+        ..shun.chewing_key().with_tone(3)
+    };
+    assert!(SyllableKey::from_chewing_key(alternate).is_none());
+    assert_eq!(scan[0].len(), 2);
+    assert_eq!(
+        scan[0][1].key.chewing_key().with_tone(scan[0][1].tone),
+        alternate
+    );
+    let keys = super::parse_time_keys(
+        &[crate::cursor::MatrixKey::new(shun, 3, 0, 4)],
+        4,
+        options,
+        false,
+    );
+    assert_eq!(keys[1].key(), alternate);
+    assert_eq!((keys[0].end(), keys[1].end()), (4, 4));
+    assert_eq!(
+        training_readings(&scan, b"shun", 0, 4, 1).collect::<Vec<_>>(),
+        [vec![shun.chewing_key().with_tone(3)], vec![alternate]]
+    );
+}
+
+#[test]
+fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
+    use oxpinyin_core::ChewingKey;
+    // compute_pronunciation_possibility (:534-600) sums every path's
+    // matched/total ratio (phrase_index.h:136-163), then validate clears
+    // only strictly below FLT_EPSILON (phonetic_lookup.cpp:159-163).
+    let ni = SyllableKey::from_text("ni").unwrap();
+    let edge = ScanKey {
+        key: ni,
+        from: 0,
+        to: 2,
+        syllable_start: 0,
+        crosses_separator: false,
+        tone: 0,
+    };
+    for (paths, total, kept) in [
+        (1, 1 << 24, false),
+        (2, 1 << 24, true),
+        (3, 1 << 24, true),
+        (1, 1 << 23, true),
+        (1, (1 << 23) + 1, false),
+    ] {
+        let scan = vec![vec![edge; paths], vec![], vec![]];
+        let matrix = super::matrix::ParsedMatrix::from_scan(&scan, 2, true);
+        let dictionary = ItemDictionary {
+            inner: FixtureDictionary::parse(TRAIN_VOCAB).unwrap(),
+            items: [(
+                1,
+                vec![
+                    (vec![ni.chewing_key()], 1),
+                    (vec![ChewingKey::from_pinyin("hao").unwrap()], total - 1),
+                ],
+            )]
+            .into(),
+            failing: false,
+        };
+        let spelling = crate::nbest::ConstraintSpelling::new(&matrix);
+        let mut constraints = crate::constraint::ConstraintStore::default();
+        constraints.resize(3);
+        constraints.add(0, 2, PhraseToken::new(1), "你".into());
+        constraints
+            .validate(3, |start, end, token, length| {
+                spelling.spells(&dictionary, start, end, token, length)
+            })
+            .unwrap();
+        assert_eq!(
+            constraints.is_one_step_at(0),
+            kept,
+            "{paths} paths / {total}"
+        );
+    }
+}
+
+#[test]
+fn duplicated_matrix_paths_change_sentence_prices_but_not_ordinary_rows() {
+    // The sentence uses the whole-span sum (:534-600); ordinary rows
+    // dedup tokens and use unigram/bigram frequency (pinyin.cpp:1772-1864).
+    let mut session = trellis_session();
+    session.replace_raw("ni").unwrap();
+    session.guess_sentence().unwrap();
+    let before = session.sentence.rows[0].poss.unwrap();
+    let ordinary = |session: &mut Session<FixtureDictionary, TrellisModel>| {
+        session
+            .candidates_at(0)
+            .unwrap()
+            .iter()
+            .filter(|c| c.nbest_row().is_none())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let rows = ordinary(&mut session);
+    let parse = session.input.parse.get_mut().unwrap();
+    let key = parse.scan[0][0];
+    parse.scan[0].push(key);
+    let key = parse.matrix.columns[0][0];
+    parse.matrix.columns[0].push(key);
+    session.guess_sentence().unwrap();
+    assert!((session.sentence.rows[0].poss.unwrap() - before - 2.0_f32.ln()).abs() < 1e-6);
+    assert_eq!(ordinary(&mut session), rows);
 }

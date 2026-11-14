@@ -113,12 +113,7 @@ where
                 return Err(error);
             }
         };
-        let spelling = crate::nbest::ConstraintSpelling::new(
-            &retained.scan,
-            bound,
-            self.input.physical_separators(),
-            self.input.as_bytes(),
-        );
+        let spelling = crate::nbest::ConstraintSpelling::new(&retained.matrix);
         let dropped = store.validate(bound + 1, |start, end, token, text_len| {
             spelling.spells(&self.dictionary, start, end, token, text_len)
         });
@@ -200,12 +195,7 @@ where
                 return Err(error);
             }
         };
-        let spelling = crate::nbest::ConstraintSpelling::new(
-            &retained.scan,
-            bound,
-            self.input.physical_separators(),
-            self.input.as_bytes(),
-        );
+        let spelling = crate::nbest::ConstraintSpelling::new(&retained.matrix);
         let dropped = store.validate(bound + 1, |start, end, token, text_len| {
             spelling.spells(&self.dictionary, start, end, token, text_len)
         });
