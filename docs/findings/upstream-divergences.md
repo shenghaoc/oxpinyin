@@ -158,8 +158,8 @@ An entry holds nothing else.
 
 ### `table.conf` follows its rows; malformed ones fail the triggering call (policy rows 78, 79, 80 and 83)
 
-- **Pin:** a missing `source table format:` line leaves `str` unwritten and compares it (`src/storage/table_info.cpp:209-229`): undefined. A `table.conf` that points a loaded library at another file leaves tokens with no item, and `_remove_duplicated_items_by_phrase_string` compares the unset string and dies of SIGSEGV in `strcmp` (`src/pinyin.cpp:1635-1637`, `:2001-2007`, `:2053`).
-- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. Candidate guesses omit tokens whose live item cannot be read and return true without a warning, as in register row 106.
+- **Pin:** a missing `source table format:` line leaves `str` unwritten and compares it (`src/storage/table_info.cpp:209-229`): undefined. A `table.conf` that points a loaded library at another file leaves tokens with no item, and the formatter leaves the string NULL (`src/pinyin.cpp:1635-1637`, `:2010-2016`). The string comparison is undefined if it reaches that NULL (`:2053`, `:2082`). A sole ordinary row survives when the facade total is positive and the prepends add no row. At zero the ranking assertion fires before formatting (`:1855-1865`, row 61).
+- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. Candidate guesses omit the unreadable item and return true without a warning on the recorded comparison paths. Row 106 records the sole-row and zero-total boundaries.
 - **Decision:** accepted, class (b) (row 80); rows 78 and 83 read the rows and λ as the pin does, and row 79 reproduces the pin.
 - **Tests:** `table_info::tests::header_misses_are_the_ordinary_false_or_the_uninitialised_read` (header parsing), `e2e_tests::table_conf_919_short_row_merged` (row handling).
 
@@ -187,7 +187,7 @@ An entry holds nothing else.
 ### A partial phrase-table token tail cannot terminate the entry walk (policy row 101, class (b))
 
 - **Pin:** `PhraseTableEntry` walks four-byte tokens with `iter != end` over the raw byte end (`src/storage/phrase_large_table3.cpp:32-39`, `:57-65`, `:74-81`, `:103-117`), so a value of `4k + r` bytes, `1 <= r <= 3`, is read past the record.
-- **oxpinyin:** `PhraseTableEntry::from_bytes` refuses the whole record with `StoreError::InvalidInput`; the lookup cache holds an empty entry for its key, and the raw bytes are saved unchanged.
+- **oxpinyin:** The native tree keeps the raw record across load and save. `UserPhraseTable::tokens` reads it on demand, and `phrase_table::search_bytes` refuses it with `StoreError::InvalidInput`.
 - **Decision:** accepted, class (b): an out-of-bounds read.
 - **Tests:** `a_partial_phrase_table_record_is_refused_before_any_change` (`crates/oxpinyin-user/src/store_libpinyin.rs`).
 
@@ -215,7 +215,7 @@ An entry holds nothing else.
 ### A negative `MemoryChunk::load` payload read (policy row 114)
 
 - **Pin:** `MemoryChunk::load` converts a negative `read` result, `EINTR` included, to `guint32` and checksums that length past the allocation (`src/include/memory_chunk.h:452-453`).
-- **oxpinyin:** takes the checksum-failure path: it frees the buffer, closes the descriptor and answers `false`, with no retry.
+- **oxpinyin:** returns the I/O error before checksumming, releases the buffer and descriptor, and does not retry.
 - **Decision:** accepted, class (b), by maintainer ruling: an out-of-bounds read.
 - **Tests:** `chunk::tests::interrupted_payload_read_is_not_retried` (`crates/oxpinyin-input/src/chunk.rs`).
 
@@ -362,16 +362,16 @@ An entry holds nothing else.
 
 ### Stored gram partitions: phrase segmentation
 
-- **Pin:** `SingleGram` searches stored records with the standard lower bound before its walks (`src/storage/ngram.cpp:153-271`), and `merge_single_gram` interleaves without sorting (`:308-349`), so a foreign unsorted value breaks the partition precondition; segmentation reads it (`src/lookup/phrase_lookup.cpp:268-290`).
-- **oxpinyin:** `single_gram::lower_bound_records` uses `slice::partition_point` on the stored order; on unpartitioned input its result is std's.
-- **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): the lower-bound result is unspecified when the stored records do not satisfy the partition precondition.
+- **Pin:** `SingleGram` searches stored records with the standard lower bound before its walks (`src/storage/ngram.cpp:153-271`), and `merge_single_gram` interleaves without sorting (`:308-349`), so a foreign value can violate the partition precondition for the searched token. Segmentation reads that gram (`src/lookup/phrase_lookup.cpp:268-290`).
+- **oxpinyin:** `single_gram::lower_bound_records` uses `slice::partition_point` on the stored order.
+- **Decision:** accepted under the [algorithm-precondition ruling](compatibility-policy.md#algorithm-precondition-violations). `std::lower_bound` requires the records to be partitioned for the searched token. A call outside that precondition has undefined behaviour. Segmentation reads the separate facade total for the unigram term and does not change it (`phrase_lookup.cpp:307-345`). [C++ partition precondition](https://timsong-cpp.github.io/cppwp/n4950/lower.bound), [effect of a violated precondition](https://timsong-cpp.github.io/cppwp/n4950/structure.specifications).
 - **Tests:** `pinned_data_tests::the_segmenter_reads_an_unsorted_user_gram_as_stored`, `e2e_tests::user_gram_unsorted_export_follows_the_stored_order`, `e2e_tests::user_gram_duplicate_export_lists_every_stored_item`.
 
 ### Stored gram partitions: training
 
-- **Pin:** on an unsorted user gram `get_freq` misses, `insert_freq` appends and the next search misses again (`src/storage/ngram.cpp:178-205`, `:231-271`), so `check_result(user->set_freq(...))` aborts (`src/lookup/phonetic_lookup.h:888-903`).
-- **oxpinyin:** the `partition_point` search finds the inserted item, and training answers `true` with no warning.
-- **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): oxpinyin does not force a successful std search to reproduce another implementation's miss.
+- **Pin:** in the recorded unpartitioned-gram case, `get_freq` misses, `insert_freq` appends and the next search misses again (`src/storage/ngram.cpp:178-205`, `:231-271`), so `check_result(user->set_freq(...))` aborts (`src/lookup/phonetic_lookup.h:888-903`).
+- **oxpinyin:** in that case `partition_point` finds the inserted item, and training answers `true` with no warning.
+- **Decision:** accepted under the [algorithm-precondition ruling](compatibility-policy.md#algorithm-precondition-violations) and row 85. The unpartitioned search has undefined behaviour. The pin’s own code adds to the facade total only when training reaches the unigram leg and the token’s sub-index is loaded (`phonetic_lookup.h:888-929`, `phrase_index.h:628-635`).
 - **Tests:** `boundary_tests::training_over_an_unsorted_start_gram_answers_true`, `store_libpinyin::tests::training_preserves_a_partitioned_unsorted_gram_and_its_duplicates`.
 
 ### The full-pinyin parse's 16-bit steps
@@ -468,8 +468,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 
 ## Open
 
-- Stored gram partitions, phrase segmentation: the facade total awaits a ruling.
-- Stored gram partitions, training: the facade total awaits a ruling.
-- Upstream addon promotion with custom `table.conf` row 5 `NOT_USED` reads an undefined token. The output of `get_range` is unwritten on this path (`phrase_index.cpp:610-613`, `pinyin.cpp:2541-2545`). oxpinyin skips promotion under [register row 121](compatibility-policy.md#dispositions-and-register-entries).
 - `pinyin_choose_candidate` with a candidate pointer outside the current list (oxpinyin returns `-1` before row 45's check): reading has not settled it.
-- A system library's user `.dbin` that is a directory: reading has not settled it.
+## Resolved by source reading
+
+A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-input/src/{native,chunk}.rs`, `crates/oxpinyin-data/src/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.
