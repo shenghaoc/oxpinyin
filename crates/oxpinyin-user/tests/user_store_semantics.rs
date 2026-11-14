@@ -534,8 +534,15 @@ fn learning_grows_unigrams_and_bigrams_differently() {
     let a = bare_token(&mut store, "甲", "jia");
     let b = bare_token(&mut store, "乙", "yi");
 
+    // The bare item is readable with a zero unigram, and nothing else moved.
     let before = store.count_delta(Some(a), b).unwrap();
-    assert_eq!(before, oxpinyin_core::UserCountDelta::ZERO);
+    assert_eq!(
+        before,
+        oxpinyin_core::UserCountDelta {
+            unigram_live: Some(0),
+            ..oxpinyin_core::UserCountDelta::ZERO
+        }
+    );
 
     store.observe_selection(a, b).unwrap();
 
