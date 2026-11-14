@@ -72,6 +72,7 @@ pub use syllables::{
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{
     PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey, fuzzy_chewing_alternatives,
+    fuzzy_chewing_finals, fuzzy_chewing_initials,
 };
 
 /// User-side count overlay for the decode-time additive merge

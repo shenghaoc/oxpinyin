@@ -190,17 +190,12 @@ where
     /// `validation_size` is the store size the pin validates against.
     fn validate_guess_constraints(
         &mut self,
-        bound: usize,
+        _bound: usize,
         validation_size: usize,
     ) -> Result<(), EngineError> {
         let mut store = core::mem::take(&mut self.constraints);
         let retained = self.retained_parse();
-        let spelling = crate::nbest::ConstraintSpelling::new(
-            &retained.scan,
-            bound,
-            self.input.physical_separators(),
-            self.input.as_bytes(),
-        );
+        let spelling = crate::nbest::ConstraintSpelling::new(&retained.matrix);
         let dropped = store.validate(validation_size, |start, end, token| {
             spelling.spells(&self.dictionary, start, end, token)
         });

@@ -537,12 +537,7 @@ where
         let mut store = core::mem::take(&mut self.constraints);
         let result = {
             let retained = self.retained_parse();
-            let spelling = crate::nbest::ConstraintSpelling::new(
-                &retained.scan,
-                retained.matrix.bound,
-                self.input.physical_separators(),
-                self.input.as_bytes(),
-            );
+            let spelling = crate::nbest::ConstraintSpelling::new(&retained.matrix);
             store.validate(size, |start, end, token| {
                 spelling.spells(&self.dictionary, start, end, token)
             })

@@ -393,12 +393,7 @@ where
         let bound = parse.matrix.bound;
         let mut retained = self.constraints.clone();
         if bound > 0 {
-            let spelling = crate::nbest::ConstraintSpelling::new(
-                &parse.scan,
-                bound,
-                self.input.physical_separators(),
-                self.input.as_bytes(),
-            );
+            let spelling = crate::nbest::ConstraintSpelling::new(&parse.matrix);
             retained.validate(bound + 1, |start, end, token| {
                 spelling.spells(&self.dictionary, start, end, token)
             })?;
