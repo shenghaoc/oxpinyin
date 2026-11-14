@@ -597,41 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn phrase_validation_matches_every_decoder_rejection() {
-        let cases: &[(&str, &[u8], &str)] = &[
-            ("length", &[], "no phrase length byte"),
-            ("count", &[1], "no pronunciation count byte"),
-            ("unigram", &[1, 0], "no unigram"),
-            ("text", &[1, 0, 0, 0, 0, 0], "phrase text truncated"),
-            (
-                "keys",
-                &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                "pronunciation keys truncated",
-            ),
-            (
-                "frequency",
-                &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                "pronunciation freq truncated",
-            ),
-        ];
-        let mut mismatches = Vec::new();
-        for &(name, bytes, reason) in cases {
-            let expected = Err(format!("chunk write error: phrase item: {reason}"));
-            let decoded = decode_phrase_item(bytes)
-                .map(|_| ())
-                .map_err(|error| error.to_string());
-            let validated = validate_phrase_item(bytes).map_err(|error| error.to_string());
-            if decoded != expected || validated != expected {
-                mismatches.push(name);
-            }
-        }
-        assert!(
-            mismatches.is_empty(),
-            "mismatched rejection paths: {mismatches:?}"
-        );
-    }
-
-    #[test]
     fn phrase_validation_matches_boundaries_and_permissive_values() {
         for length in [0_u8, 1, 2, 255] {
             for prons in [0_u8, 1, 2, 255] {

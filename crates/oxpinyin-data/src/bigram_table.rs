@@ -121,23 +121,6 @@ impl<D: ChewingDbm> BigramTable<D> {
         }
         Ok(Some(value))
     }
-
-    /// Returns `(count, total)` for the `prev → next` transition.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`DictError`] from [`Self::load_successors`].
-    pub fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, DictError> {
-        let Some(row) = self.load_successors(prev)? else {
-            return Ok(None);
-        };
-        let count = row
-            .records
-            .iter()
-            .find(|(next_token, _)| *next_token == next)
-            .map_or(0, |(_, count)| *count);
-        Ok(Some((count, row.total)))
-    }
 }
 
 #[cfg(test)]
@@ -153,32 +136,6 @@ mod tests {
         let dbm = MemoryDbm::new();
         let table = BigramTable::new(dbm);
         assert!(table.load_successors(0x0100_0010).unwrap().is_none());
-    }
-
-    #[test]
-    fn transition_finds_count() {
-        let dbm = MemoryDbm::new();
-        dbm.put(
-            0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_single_gram(100, &[(0x0100_0099, 60), (0x0100_00A0, 40)]),
-        );
-        let table = BigramTable::new(dbm);
-        let (count, total) = table.transition(0x0100_0010, 0x0100_0099).unwrap().unwrap();
-        assert_eq!(count, 60);
-        assert_eq!(total, 100);
-    }
-
-    #[test]
-    fn transition_absent_next_returns_zero_count() {
-        let dbm = MemoryDbm::new();
-        dbm.put(
-            0x0100_0010_u32.to_le_bytes().to_vec(),
-            encode_single_gram(100, &[(0x0100_0099, 100)]),
-        );
-        let table = BigramTable::new(dbm);
-        let (count, total) = table.transition(0x0100_0010, 0xFFFF_FFFF).unwrap().unwrap();
-        assert_eq!(count, 0);
-        assert_eq!(total, 100);
     }
 
     /// A DBM that answers each read from a script and counts the reads.

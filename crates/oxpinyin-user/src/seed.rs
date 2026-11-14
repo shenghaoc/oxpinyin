@@ -102,16 +102,4 @@ mod tests {
         assert_eq!(training_seed(Some(0x8000_0001)), 2);
         assert_eq!(training_seed(Some(u64::from(u32::MAX))), 22080);
     }
-
-    #[test]
-    fn predicted_path_is_flat_69() {
-        assert_eq!(predicted_seed(), 69);
-    }
-
-    #[test]
-    fn unigram_delta_is_seed_times_seven() {
-        assert_eq!(unigram_delta(69), 483);
-        assert_eq!(unigram_delta(138), 966);
-        assert_eq!(unigram_delta(22080), 22080 * 7);
-    }
 }

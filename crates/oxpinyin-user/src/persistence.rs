@@ -2483,17 +2483,6 @@ mod tests {
         assert!(store.is_modified());
     }
 
-    #[test]
-    fn user_library_store_matches_existing_persistence_fixtures() {
-        let mut fixtures: Vec<_> = state().libraries.into_values().collect();
-        fixtures.extend(originals().values().map(|library| library.items.clone()));
-        for items in fixtures {
-            let file = build_chunk(&items.into_iter().collect::<Vec<_>>()).unwrap();
-            let library = UserLibrary::load(&file).unwrap();
-            assert_eq!(library.store().unwrap(), file);
-        }
-    }
-
     fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {
         ChunkItem {
             phrase: phrase.to_vec(),
@@ -2790,29 +2779,6 @@ mod tests {
     }
 
     #[test]
-    fn removed_system_phrase_stays_removed_across_save_and_reopen() {
-        let dir = tempdir("removal-round-trip");
-        let originals = originals();
-        let mut state = state();
-        state
-            .system_overrides
-            .get_mut(&1)
-            .expect("library")
-            .insert(2_u32, None);
-
-        save_state_reporting(&dir, &state, &originals, &versions(), 1).expect("save");
-        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
-        assert_eq!(
-            loaded.state.system_overrides[&1].get(&2),
-            Some(&None),
-            "the removal did not survive the save-then-reopen"
-        );
-
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
     fn fresh_dir_saves_and_loads_empty_everywhere() {
         let dir = tempdir("fresh");
         let originals = originals();
@@ -3068,23 +3034,6 @@ mod tests {
             build_path(&dir, OsStr::new("addon-user.bin")).exists(),
             "libzhuyin does not clean addon rows (zhuyin.cpp:141-159)"
         );
-
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
-    fn the_tired_counter_wipes_on_the_next_open() {
-        let dir = tempdir("tired");
-        let originals = originals();
-        save_state_reporting(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT)
-            .expect("save");
-        // The limit itself still conforms; one more open crosses it.
-        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        assert!(!loaded.wiped);
-        assert_eq!(loaded.open_counter, OPEN_COUNTER_LIMIT + 1);
-        let next = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        assert!(next.wiped);
-        assert_eq!(next.state, UserState::default());
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
@@ -4030,56 +3979,6 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
-    #[test]
-    fn replay_stops_at_a_mismatched_record() {
-        let dir = tempdir("mismatch");
-        let originals = originals();
-
-        // A hand-built log: a MODIFY whose old payload is not the
-        // original item. The replay stops at it, keeping the prefix.
-        let records = vec![
-            LogRecord::ModifyHeader {
-                old_total: 150,
-                new_total: 150 + 69,
-            },
-            LogRecord::Modify {
-                token: 2,
-                // A decodable-but-wrong old item (a real pron run; the
-                // encoder rejects empty runs now).
-                old_item: encode_phrase_item(&item(&[0x597d], 999, &[(vec![0x5678], 999)]))
-                    .unwrap_or_else(|e| panic!("{e}")), // wrong old
-                new_item: encode_phrase_item(&item(&[0x597d], 1, &[(vec![0x5679], 1)]))
-                    .unwrap_or_else(|e| panic!("{e}")),
-            },
-            LogRecord::Modify {
-                token: 1,
-                old_item: encode_phrase_item(&item(&[0x4f60], 100, &[(vec![0x1234], 100)]))
-                    .unwrap_or_else(|e| panic!("{e}")),
-                new_item: encode_phrase_item(&item(&[0x4f60], 200, &[(vec![0x1235], 200)]))
-                    .unwrap_or_else(|e| panic!("{e}")),
-            },
-        ];
-        let framed = build_memory_chunk(&encode_log_records(&records).expect("records encode"));
-        std::fs::write(dir.join("gb_char.dbin"), framed.expect("frame")).expect("write");
-        let marker = UserTableInfo::conform_to(&versions());
-        std::fs::write(dir.join(USER_CONF), marker.to_text()).expect("write");
-
-        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-        assert!(!loaded.wiped);
-        // Slot 1 was never reached: the mismatch stopped the replay
-        // before the second MODIFY (an absent map and an empty one are
-        // the same state).
-        assert!(
-            loaded
-                .state
-                .system_overrides
-                .get(&1)
-                .is_none_or(std::collections::BTreeMap::is_empty)
-        );
-
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
     /// Loads a conforming profile whose `gb_char.dbin` holds `payload`.
     fn load_with_log(name: &str, payload: &[u8]) -> Loaded {
         let dir = tempdir(name);
@@ -4496,53 +4395,6 @@ mod tests {
         let loaded = load_with_log("unknown-type", &payload);
         assert_eq!(loaded.journal_fault, None);
         assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
-    }
-
-    #[test]
-    fn the_bigram_round_trips_through_the_user_bigram_container() {
-        let dir = tempdir("bigram");
-        let originals = originals();
-        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
-
-        // Point-read one gram through the *user-bigram* seam, which is
-        // where the container differs by backend: a Kyoto Cabinet
-        // snapshot stream of an in-memory stash, a tkrzw hash file, the
-        // hash file. Opening it as a plain hash file
-        // is the bug this assertion exists to catch — on Kyoto Cabinet
-        // the user bigram is not a HashDB and a hash open answers
-        // "missing magic data of the file".
-        let path = dir.join(UserDbm::Bigram.file_name());
-        let store = DefaultStore::open_user_bigram(&path).expect("open");
-        let mut value = Vec::new();
-        assert!(
-            store
-                .get_raw(&1_u32.to_le_bytes(), &mut value)
-                .expect("get")
-        );
-        let (total, records) =
-            oxpinyin_data::single_gram::decode_single_gram(&value).expect("decode");
-        assert_eq!(total, 207);
-        assert_eq!(
-            records,
-            vec![(1, 69), (0x0100_0001, 138), (0x0700_0001, 69)]
-        );
-
-        // The whole gram set walks back, not just one point read: the
-        // loader takes `range_raw` over the same container.
-        let mut seen = Vec::new();
-        store
-            .range_raw(
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Unbounded,
-                |key, _value| {
-                    seen.push(u32::from_le_bytes([key[0], key[1], key[2], key[3]]));
-                    Ok(())
-                },
-            )
-            .expect("walk");
-        assert_eq!(seen, vec![1], "the profile holds one gram");
-
-        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

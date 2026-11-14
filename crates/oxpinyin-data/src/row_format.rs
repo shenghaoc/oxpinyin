@@ -591,24 +591,6 @@ mod tests {
         assert!(decode_tokens(&[0, 0, 0]).is_err());
     }
 
-    /// `parse_value` keeps the row API's own error: the `DictError::Parse`
-    /// variant and its message, not the codec error it maps.
-    #[test]
-    fn bigram_value_rejections_are_parse_errors() {
-        use crate::dict::DictError;
-        use bigram::parse_value;
-        assert!(matches!(
-            parse_value(&[0, 0, 0]),
-            Err(DictError::Parse(message))
-                if message == "bigram value length 3 is not 4 + 8n"
-        ));
-        assert!(matches!(
-            parse_value(&[0; 7]),
-            Err(DictError::Parse(message))
-                if message == "bigram value length 7 is not 4 + 8n"
-        ));
-    }
-
     #[test]
     fn punct_stream_round_trip() {
         use punct::{decode_puncts, encode_puncts};

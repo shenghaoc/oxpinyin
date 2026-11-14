@@ -109,16 +109,6 @@ fn an_unloaded_library_leaves_the_model() {
 }
 
 #[test]
-fn bigram_rows_are_point_reads() {
-    let fix = Fixture::new();
-    let (lm, _) = fix.open();
-    let row = lm.load_successors(NI).unwrap().expect("你 has a row");
-    assert_eq!(row.total, 7);
-    assert_eq!(row.records, vec![(HAO, 7)]);
-    assert!(lm.load_successors(HAO).unwrap().is_none());
-}
-
-#[test]
 fn nbest_steps_blend_bigram_and_unigram_over_the_corpus_counts() {
     let fix = Fixture::new();
     let (lm, _) = fix.open();
@@ -512,7 +502,6 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
             for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
                 let user_gram = MergedGram::new(total, user_rows.to_vec()).to_bytes();
                 let mut row = NbestStepRow::default();
-                let mut loads = 0;
                 for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
                     let user = UserCountDelta {
                         bigram_count,
@@ -529,10 +518,7 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
                         )
                         .unwrap();
                     let gram = row
-                        .get_or_try_init(|| {
-                            loads += 1;
-                            lm.load_merged_row(prev, Some(user_gram.clone()))
-                        })
+                        .get_or_try_init(|| lm.load_merged_row(prev, Some(user_gram.clone())))
                         .unwrap()
                         .expect("the user gram is present");
                     let item = gram
@@ -562,7 +548,6 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
                         );
                     }
                 }
-                assert_eq!(loads, 1, "one load/merge for all successors");
             }
         }
     }

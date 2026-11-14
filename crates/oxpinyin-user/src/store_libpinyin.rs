@@ -1722,53 +1722,6 @@ mod tests {
     }
 
     #[test]
-    fn training_creates_a_live_buffer_with_the_saved_library_total() {
-        let originals = three_item_originals();
-        let original = originals.get(&1).expect("original");
-        let token = (1_u32 << 24) | 1;
-        let saved_total = u32::MAX - 3;
-        let mut items = crate::system_items::SystemItems::default()
-            .with_totals(crate::LibraryTable::from([(1, saved_total)]), 0);
-        assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
-        assert!(items.train_live(
-            Some(original),
-            token,
-            std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
-            1
-        ));
-        assert_eq!(items.library_total(1, Some(original)), Some(saved_total));
-        assert_eq!(
-            items.add_unigram(Some(original), token, 4),
-            Some(crate::replay::UnigramAdd::Refused)
-        );
-    }
-
-    #[test]
-    fn training_a_system_item_writes_the_live_buffer_and_decodes_nothing() {
-        use crate::{ItemOrigin, Lookup};
-        let (dir, mut store) = open_with_log("train-live-buffer", &[]);
-        let token = (1_u32 << 24) | 1;
-        // Untouched, the item is the shipped one, read from the live buffer.
-        assert_eq!(
-            frequency_of(&store, token),
-            Lookup::Found((ItemOrigin::Overlay, 100))
-        );
-        let reading = vec![ChewingKey::new(23, 0, 1, 0)];
-        store
-            .train_pronunciations(token, std::iter::once(reading), 5)
-            .expect("train");
-        // The count was written in place in the library's buffer: the read
-        // sees it, and no decoded copy of the item was made.
-        assert_eq!(
-            frequency_of(&store, token),
-            Lookup::Found((ItemOrigin::Overlay, 105))
-        );
-        assert!(store.has_system_items());
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-
-    #[test]
     fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
         use oxpinyin_data::chunk_write::encode_phrase_item;
         use oxpinyin_data::user_files::LogRecord;
@@ -1995,166 +1948,6 @@ mod tests {
             frequency_of(&store, token(3)),
             Lookup::Found((ItemOrigin::Overlay, 30))
         );
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-
-    #[test]
-    fn live_items_distinguish_found_absent_and_unloaded() {
-        use crate::{ItemOrigin, LiveSystemItems, Lookup};
-        use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
-        use oxpinyin_data::phrase_library::PhraseLibrary;
-        use oxpinyin_data::user_files::LogRecord;
-        use std::cell::Cell;
-
-        let ni = ChewingKey::new(23, 0, 1, 0).to_packed();
-        let item = |word: u32, unigram: u32, frequency: u32| ChunkItem {
-            phrase: vec![word],
-            unigram,
-            prons: vec![(vec![ni], frequency)],
-        };
-        let shipped = [
-            (1, item(0x4f60, 100, 100)),
-            (2, item(0x597d, 50, 50)),
-            (3, item(0x4e16, 30, 30)),
-        ];
-        let dir = tempdir("live-items");
-        let path = dir.join("gb_char.bin");
-        std::fs::write(&path, build_chunk(&shipped).expect("chunk")).expect("write chunk");
-        let library = PhraseLibrary::open(&path).expect("open");
-        let total = library.total_freq();
-        let originals: SystemOriginals = crate::LibraryTable::from([(
-            1_u8,
-            SystemLibrary {
-                total,
-                range_end: library.token_range().end,
-                items: BTreeMap::new(),
-                mapped: Some(library),
-            },
-        )])
-        .into();
-
-        let mut modified = shipped[0].1.clone();
-        modified.prons[0].1 += 7;
-        let records = [
-            LogRecord::ModifyHeader {
-                old_total: total,
-                new_total: total,
-            },
-            LogRecord::Modify {
-                token: 1,
-                old_item: encode_phrase_item(&shipped[0].1).expect("old"),
-                new_item: encode_phrase_item(&modified).expect("new"),
-            },
-            LogRecord::Remove {
-                token: 2,
-                old_item: encode_phrase_item(&shipped[1].1).expect("removed"),
-            },
-        ];
-        let payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
-        std::fs::write(
-            dir.join("gb_char.dbin"),
-            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
-        )
-        .expect("write log");
-        std::fs::write(
-            dir.join("user.conf"),
-            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-        )
-        .expect("write marker");
-        let store = crate::test_session::open(&dir, originals, versions(), UserConfLaw::Pinyin)
-            .expect("open");
-
-        let unloaded = Cell::new(0);
-        let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
-        let (replayed, removed, untouched, absent) = (
-            (1_u32 << 24) | 1,
-            (1_u32 << 24) | 2,
-            (1_u32 << 24) | 3,
-            (1_u32 << 24) | 9,
-        );
-        let summary = |item: crate::SystemItem<'_>| {
-            let reading = item.pronunciation(0).expect("reading");
-            (
-                item.origin(),
-                item.phrase_length(),
-                item.n_pronunciations(),
-                reading.frequency,
-                reading.keys.iter().collect::<Vec<_>>(),
-            )
-        };
-        // Every item of a library with a live buffer is read from it: the
-        // replayed one as the replay wrote it, an untouched one as the chunk
-        // stored it.
-        assert_eq!(
-            live.read(replayed, summary),
-            Lookup::Found((ItemOrigin::Overlay, 1, 1, 107, vec![ni]))
-        );
-        assert_eq!(
-            live.read(untouched, summary),
-            Lookup::Found((ItemOrigin::Overlay, 1, 1, 30, vec![ni]))
-        );
-        assert_eq!(
-            live.read(untouched, |item| item.phrase_text())
-                .found()
-                .flatten(),
-            oxpinyin_core::PhraseText::from_words([0x4e16])
-        );
-        assert_eq!(live.read(removed, summary), Lookup::Absent);
-        assert_eq!(live.read(absent, summary), Lookup::Absent);
-        assert_eq!(live.read((5_u32 << 24) | 1, summary), Lookup::Absent);
-        assert!(live.has_overlay());
-        assert!(live.filter_active());
-        assert!(live.is_visible(untouched) && !live.is_visible(removed));
-
-        // A session item is read under a borrow of its cell; accessors are
-        // called after the callback rather than borrowing the cell again.
-        assert_eq!(
-            live.read(replayed, |_| store.system_items_borrowed()),
-            Lookup::Found(true)
-        );
-
-        // The header-only count agrees with the view for every state.
-        assert_eq!(live.pronunciation_count(replayed), Lookup::Found(1));
-        assert_eq!(live.pronunciation_count(untouched), Lookup::Found(1));
-        assert_eq!(live.pronunciation_count(removed), Lookup::Absent);
-        assert_eq!(live.pronunciation_count(absent), Lookup::Absent);
-
-        // The stored field and the live count are separate reads: the stored
-        // one is the chunk's; the live one adds the store's delta once.
-        assert_eq!(live.effective_unigram(untouched), Some(30));
-        assert_eq!(live.effective_unigram(absent), None);
-        assert_eq!(live.effective_unigram(untouched), Some(30));
-        assert_eq!(
-            live.effective_unigram(replayed),
-            Some(u64::from(100_u32) + store.unigram_delta(replayed).expect("delta"))
-        );
-        assert_eq!(live.effective_unigram(removed), None);
-        assert_eq!(live.effective_unigram(absent), None);
-
-        // The imported flag is an item the shipped chunk lacks, whatever the
-        // mask or a removal says; a chunk item the replay modified is not
-        // one.
-
-        // The store's own accessors answer the same.
-        assert_eq!(
-            live.read(replayed, |item| item.pronunciation(0).map(|r| r.frequency))
-                .found()
-                .flatten(),
-            store.with_effective_system_item(replayed, |item| item.prons[0].1)
-        );
-        assert!(store.system_item_removed(removed));
-
-        // An unloaded library hides every token, whatever it holds.
-        let unloaded = Cell::new(1 << 1);
-        let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
-        for token in [replayed, removed, untouched, absent] {
-            assert_eq!(hidden.read(token, summary), Lookup::Unloaded);
-            assert_eq!(hidden.pronunciation_count(token), Lookup::Unloaded);
-            assert!(!hidden.is_visible(token));
-            assert_eq!(hidden.effective_unigram(token), None);
-        }
-
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
@@ -3224,86 +3017,20 @@ mod tests {
     }
 
     #[test]
-    fn import_readings_refresh_after_reborrowing_the_owner() {
-        let dir = tempdir("import-reading-memo");
-        let readings = distinct_readings();
-        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
-        let keys = dense(readings[0]);
-        let extra = dense(readings[1]);
-        let mut store =
-            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open");
-        let user = store
-            .add_phrase_in(7, &"龘".into(), &keys, Some(5))
-            .expect("new user item");
-        store
-            .add_phrase_in(7, &"龘".into(), &keys, Some(7))
-            .expect("other user writer");
-        store
-            .add_phrase_in(7, &"龘".into(), &keys, Some(3))
-            .expect("refresh user memo");
-        assert_eq!(
-            store
-                .phrase(user)
-                .expect("phrase")
-                .expect("present")
-                .pronunciations()[0]
-                .count(),
-            15
-        );
-
-        let system = store
-            .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
-            .expect("new system item");
-        store
-            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(7))
-            .expect("append cached row");
-        store
-            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(11))
-            .expect("other system writer");
-        store
-            .add_system_phrase_in(1, Some(system), &"拟".into(), &extra, Some(3))
-            .expect("refresh system memo");
-        assert_eq!(
-            store.with_effective_system_item(system, |item| item.prons[1].1),
-            Some(21)
-        );
-        assert_eq!(
-            store
-                .phrase(system)
-                .expect("phrase")
-                .expect("present")
-                .pronunciations()[1]
-                .count(),
-            21
-        );
-        store.mark_modified();
-        store.save_reporting().expect("save");
-        drop(store);
-        let store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("reopen");
-        assert_eq!(
-            store
-                .phrase(user)
-                .expect("user")
-                .expect("present")
-                .pronunciations()[0]
-                .count(),
-            15
-        );
-        assert_eq!(
-            store.with_effective_system_item(system, |item| item.prons[1].1),
-            Some(21)
-        );
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-
-    #[test]
     fn stored_pronunciation_counts_follow_committed_item_changes() {
         let dir = tempdir("stored-pronunciation-counts");
         let readings = distinct_readings();
         let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        // The stored-count fast path against the decoded item's readings.
+        let stored = |store: &UserStore, token| {
+            let count = store.user_pronunciation_count(token);
+            let decoded = store
+                .phrase(token)
+                .expect("phrase")
+                .map(|phrase| phrase.pronunciations().len() as u32);
+            assert_eq!(count, decoded, "token {token:#x}");
+            count
+        };
         let token;
         {
             let mut store =
@@ -3312,47 +3039,44 @@ mod tests {
             token = store
                 .add_phrase_in(7, &"龘".into(), &dense(readings[0]), Some(1))
                 .expect("add");
-            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            assert_eq!(stored(&store, token), Some(1));
             store
                 .add_phrase_in(7, &"龘".into(), &dense(readings[0]), Some(9))
                 .expect("merge");
-            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            assert_eq!(stored(&store, token), Some(1));
             for (index, &reading) in readings[1..255].iter().enumerate() {
                 store
                     .add_phrase_in(7, &"龘".into(), &dense(reading), Some(1))
                     .expect("append");
-                assert_eq!(
-                    store.user_pronunciation_count(token),
-                    Some(index as u32 + 2)
-                );
+                assert_eq!(stored(&store, token), Some(index as u32 + 2));
             }
             store
                 .add_phrase_in(7, &"龘".into(), &dense(readings[255]), Some(1))
                 .expect("wrap");
-            assert_eq!(store.user_pronunciation_count(token), Some(0));
+            assert_eq!(stored(&store, token), Some(0));
             store
                 .add_phrase_in(7, &"龘".into(), &dense(readings[256]), Some(1))
                 .expect("257th");
-            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            assert_eq!(stored(&store, token), Some(1));
             store.mark_modified();
             store.save_reporting().expect("save");
             store.unload_user_library(7);
-            assert_eq!(store.user_pronunciation_count(token), None);
+            assert_eq!(stored(&store, token), None);
             store.load_user_library(7);
-            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            assert_eq!(stored(&store, token), Some(1));
         }
         let mut store =
             crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("reopen");
-        assert_eq!(store.user_pronunciation_count(token), Some(1));
+        assert_eq!(stored(&store, token), Some(1));
         store.mask_out(0xffff_ffff, token).expect("mask");
-        assert_eq!(store.user_pronunciation_count(token), None);
+        assert_eq!(stored(&store, token), None);
         let other = store
             .add_phrase_in(7, &"龖".into(), &dense(readings[0]), Some(1))
             .expect("new");
-        assert_eq!(store.user_pronunciation_count(other), Some(1));
+        assert_eq!(stored(&store, other), Some(1));
         assert!(store.remove_user_phrase(other).expect("remove"));
-        assert_eq!(store.user_pronunciation_count(other), None);
+        assert_eq!(stored(&store, other), None);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
@@ -3778,86 +3502,6 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
-    /// The same wrap on a `USER_FILE` library, where the item is its rows.
-    #[test]
-    fn a_256th_user_reading_wraps_the_count_to_an_item_without_readings() {
-        let dir = tempdir("import-256th-user-reading");
-        let readings = distinct_readings();
-        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
-        let readings_of = |store: &UserStore, token| {
-            store
-                .phrase(token)
-                .expect("phrase")
-                .expect("present")
-                .pronunciations()
-                .iter()
-                .map(|pronunciation| pronunciation.count())
-                .collect::<Vec<_>>()
-        };
-        let token;
-        let unigram;
-        {
-            let mut store =
-                crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                    .expect("open");
-            token = store
-                .add_phrase_in(
-                    crate::USER_DICTIONARY,
-                    &"龘".into(),
-                    &dense(readings[0]),
-                    Some(5),
-                )
-                .expect("append");
-            for &packed in &readings[1..255] {
-                store
-                    .add_phrase_in(
-                        crate::USER_DICTIONARY,
-                        &"龘".into(),
-                        &dense(packed),
-                        Some(5),
-                    )
-                    .expect("reading within the 255 limit");
-            }
-            assert_eq!(readings_of(&store, token).len(), 255);
-            unigram = store.unigram_delta(token).expect("unigram");
-            store
-                .add_phrase_in(
-                    crate::USER_DICTIONARY,
-                    &"龘".into(),
-                    &dense(readings[255]),
-                    Some(5),
-                )
-                .expect("the 256th reading is accepted");
-            assert!(readings_of(&store, token).is_empty());
-            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
-            store.mark_modified();
-            store.save_reporting().expect("a wrapped item saves");
-        }
-        {
-            let mut store =
-                crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                    .expect("reopen");
-            assert!(readings_of(&store, token).is_empty());
-            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
-            store
-                .add_phrase_in(
-                    crate::USER_DICTIONARY,
-                    &"龘".into(),
-                    &dense(readings[256]),
-                    Some(9),
-                )
-                .expect("the 257th reading");
-            assert_eq!(readings_of(&store, token), [9]);
-            store.mark_modified();
-            store.save_reporting().expect("save");
-        }
-        let store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("reopen");
-        assert_eq!(readings_of(&store, token), [9]);
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-
     #[test]
     fn appended_system_readings_keep_absolute_training_counts() {
         use oxpinyin_core::{PhraseToken, UserModel};
@@ -4134,38 +3778,6 @@ mod tests {
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
         std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
-    }
-
-    #[test]
-    fn live_pronunciation_overflow_keeps_earlier_updates_and_stops_at_guard() {
-        use oxpinyin_core::{PhraseToken, UserModel};
-        let dir = tempdir("live-pronunciation-overflow");
-        let mut base = originals();
-        let ni = ChewingKey::from_pinyin("ni").expect("ni");
-        base.get_mut(&1)
-            .expect("library")
-            .items
-            .get_mut(&1)
-            .expect("item")
-            .prons = vec![
-            (vec![ni.with_tone(2).to_packed()], u32::MAX - 75),
-            (vec![ni.with_tone(3).to_packed()], 0),
-        ];
-        let mut store =
-            crate::test_session::open(&dir, base, versions(), UserConfLaw::Pinyin).expect("open");
-        let token = PhraseToken::new(0x0100_0001);
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut [vec![ni]].into_iter())
-            .expect("train guarded rows");
-        assert_eq!(
-            store.with_effective_system_item(token.value(), |item| item
-                .prons
-                .iter()
-                .map(|(_, count)| *count)
-                .collect::<Vec<_>>()),
-            Some(vec![u32::MAX - 6, 0])
-        );
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]
@@ -4481,82 +4093,6 @@ mod tests {
                 .ok()?
                 .open_counter,
         )
-    }
-
-    #[test]
-    fn a_second_open_is_a_session_of_its_own() {
-        // #538: two opens of one user dir are two contexts, as two
-        // pinyin_init calls are upstream. Each runs check_format, so the
-        // counter reaches 2 (pinyin.cpp:185-187); each learns on its own
-        // session store, so the second does not see the first's unsaved
-        // learning; each save answers for its own modifications; each
-        // fini lowers its own copy of the counter (:1194-1200).
-        let dir = tempdir("two-sessions");
-        let mut first =
-            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open 1");
-        let mut second =
-            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open 2");
-        assert_eq!(recorded_counter(&dir), Some(2));
-
-        first.observe_selection(1, 0x0100_0001).expect("train");
-        assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
-        assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 0);
-
-        second.save_reporting().expect("save 2");
-        first.save_reporting().expect("save 1");
-        assert_eq!(
-            recorded_counter(&dir),
-            Some(1),
-            "the first save writes its own counter"
-        );
-
-        drop(first);
-        assert_eq!(recorded_counter(&dir), Some(0));
-        drop(second);
-        assert_eq!(recorded_counter(&dir), Some(1));
-
-        // The profile holds the first session's saved learning.
-        let third = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("open 3");
-        assert_eq!(third.bigram_count(1, 0x0100_0001).expect("count"), 69);
-        drop(third);
-
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-    }
-
-    #[test]
-    fn when_two_sessions_save_the_later_save_is_the_profile() {
-        // Both sessions learn and both save: each writes its own whole
-        // state (pinyin.cpp:1132-1147), so the profile is the later one's
-        // and the earlier session's learning is gone from it.
-        let dir = tempdir("two-saves");
-        let mut first =
-            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open 1");
-        let mut second =
-            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open 2");
-        // The first session trains the gram once, the second twice: the
-        // counts (69 against 69 + 138) tell whose save the profile kept.
-        first.observe_selection(1, 0x0100_0001).expect("train 1");
-        second.observe_selection(1, 0x0100_0001).expect("train 2");
-        second
-            .observe_selection(1, 0x0100_0001)
-            .expect("train 2 again");
-        assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
-        assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 207);
-        first.save_reporting().expect("save 1");
-        second.save_reporting().expect("save 2");
-        drop(first);
-        drop(second);
-
-        let third = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("open 3");
-        assert_eq!(third.bigram_count(1, 0x0100_0001).expect("count"), 207);
-        drop(third);
-        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]

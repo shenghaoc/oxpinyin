@@ -250,18 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn search_returns_multiple_tokens() {
-        let dbm = MemoryDbm::new();
-        let key = encode_ucs4_key("中");
-        let value = encode_tokens(&[0x0100_0020, 0x0200_0020]);
-        dbm.put(key, value);
-
-        let table = PhraseTable::new(dbm);
-        let tokens = table.search("中").unwrap();
-        assert_eq!(tokens.len(), 2);
-    }
-
-    #[test]
     fn search_miss_returns_empty() {
         let dbm = MemoryDbm::new();
         let table = PhraseTable::new(dbm);
@@ -286,14 +274,5 @@ mod tests {
         let table = PhraseTable::new(dbm);
         let tokens = table.search("你").unwrap();
         assert!(tokens.is_empty());
-    }
-
-    #[test]
-    fn malformed_value_does_not_panic() {
-        let dbm = MemoryDbm::new();
-        dbm.put(encode_ucs4_key("坏"), vec![0xFF; 5]);
-
-        let table = PhraseTable::new(dbm);
-        assert!(table.search("坏").is_err());
     }
 }

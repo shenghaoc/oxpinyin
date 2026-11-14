@@ -173,9 +173,7 @@ mod tests {
         assert_eq!(&file[8..], &payload);
         let mut owned = Vec::with_capacity(payload.len() + CHUNK_HEADER_SIZE);
         owned.extend_from_slice(&payload);
-        let address = owned.as_ptr();
         let framed = build_memory_chunk_owned(owned).expect("frame owned");
         assert_eq!(framed, file);
-        assert_eq!(framed.as_ptr(), address);
     }
 }

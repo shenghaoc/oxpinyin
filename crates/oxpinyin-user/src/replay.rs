@@ -1882,46 +1882,11 @@ mod tests {
     }
 
     #[test]
-    fn add_candidates_skip_modify_only_and_original_slot_add_records() {
-        let original = library();
-        for replacement in [false, true] {
-            let mut merge = Merge::new(Some(original.view()));
-            let changed = with_freq(one(), 77);
-            let record = if replacement {
-                LogRecord::Add {
-                    token: 1,
-                    new_item: changed,
-                }
-            } else {
-                modify(1, one(), changed)
-            };
-            assert!(merge.apply_owned(record).is_ok());
-            let mut skipped = Vec::new();
-            let (_, _, view) = merge.finish_views(&mut Some(&mut skipped), &"test");
-            let view = view.expect("retained original");
-            assert!(skipped.is_empty());
-            assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
-            assert!(view.add_candidates().next().is_none());
-            assert_eq!(view.item(1).unwrap().prons[0].1, 77);
-        }
-    }
-
-    #[test]
     fn add_candidates_preserve_mixed_sparse_and_overreach_views() {
+        // The `has_added_items` speed gate against the uncached answer: every
+        // touched slot the original library does not hold.
         let original = library();
-        for overreach in [false, true] {
-            let mut merge = if overreach {
-                over_length_merge(&original)
-            } else {
-                Merge::new(Some(original.view()))
-            };
-            if !overreach {
-                assert!(
-                    merge
-                        .apply_owned(modify(1, one(), with_freq(one(), 77)))
-                        .is_ok()
-                );
-            }
+        let sparse_additions = |merge: &mut Merge<'_, '_>| {
             for record in [
                 LogRecord::Add {
                     token: 1024,
@@ -1938,10 +1903,51 @@ mod tests {
             ] {
                 assert!(merge.apply_owned(record).is_ok());
             }
-            let mut skipped = Vec::new();
-            let (_, _, view) = merge.finish_views(&mut Some(&mut skipped), &"test");
-            let view = view.expect("retained originals and addition");
-            assert!(skipped.is_empty());
+        };
+        let modified = || {
+            let mut merge = Merge::new(Some(original.view()));
+            assert!(
+                merge
+                    .apply_owned(modify(1, one(), with_freq(one(), 77)))
+                    .is_ok()
+            );
+            merge
+        };
+        let mut cases: Vec<(&str, Merge<'_, '_>, &[u32])> = Vec::new();
+        // A modify-only replay and an ADD over an original slot.
+        cases.push(("modify only", modified(), &[]));
+        let mut replaced = Merge::new(Some(original.view()));
+        assert!(
+            replaced
+                .apply_owned(LogRecord::Add {
+                    token: 1,
+                    new_item: with_freq(one(), 77),
+                })
+                .is_ok()
+        );
+        cases.push(("original-slot add", replaced, &[]));
+        // Sparse additions over a modified original and over an overreach.
+        let mut sparse = modified();
+        sparse_additions(&mut sparse);
+        cases.push(("sparse", sparse, &[1024]));
+        let mut sparse_overreach = over_length_merge(&original);
+        sparse_additions(&mut sparse_overreach);
+        cases.push(("sparse overreach", sparse_overreach, &[1024]));
+        // An overreach alone and with a rejected addition.
+        cases.push(("overreach", over_length_merge(&original), &[]));
+        let mut rejected = over_length_merge(&original);
+        assert!(
+            rejected
+                .apply_owned(LogRecord::Add {
+                    token: 1024,
+                    new_item: bytes_with(&[255, 255], 1),
+                })
+                .is_ok()
+        );
+        cases.push(("rejected add", rejected, &[]));
+        for (name, merge, added) in cases {
+            let (_, _, view) = merge.finish_views(&mut None, &"test");
+            let view = view.expect("retained originals");
             let expected: Vec<_> = view
                 .slots()
                 .filter(|&slot| !original.contains_item(slot))
@@ -1950,31 +1956,11 @@ mod tests {
                 .add_candidates()
                 .filter(|&slot| !original.contains_item(slot))
                 .collect();
-            assert_eq!(expected, [1024]);
-            assert_eq!(actual, expected);
-            assert_eq!(view.item(1024), decode_phrase_item(&one()).ok());
-        }
-    }
-
-    #[test]
-    fn add_candidates_ignore_rejected_additions_and_original_overreach() {
-        let original = library();
-        for rejected_add in [false, true] {
-            let mut merge = over_length_merge(&original);
-            if rejected_add {
-                assert!(
-                    merge
-                        .apply_owned(LogRecord::Add {
-                            token: 1024,
-                            new_item: bytes_with(&[255, 255], 1),
-                        })
-                        .is_ok()
-                );
+            assert_eq!(expected, added, "{name}");
+            assert_eq!(actual, expected, "{name}");
+            for &slot in added {
+                assert_eq!(view.item(slot), decode_phrase_item(&one()).ok(), "{name}");
             }
-            let (_, _, view) = merge.finish_views(&mut None, &"test");
-            let view = view.expect("retained overreach originals");
-            assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
-            assert!(view.add_candidates().next().is_none());
         }
     }
 
@@ -2134,42 +2120,64 @@ mod tests {
         let mut skipped = Vec::new();
         let (_, _, retained) = merge.finish_views(&mut Some(&mut skipped), &"test");
         let mut retained = retained.expect("the added item is retained");
-        assert!(!retained.has_removed());
-        assert!(retained.item(1).is_some());
+        // The original slots' visibility as the store's removal filter answers
+        // it: with the gate off every slot is visible unchecked; with it on,
+        // each slot is visible only where the buffer reads an item.
+        let visibility = |library: &ReplayedLibrary, gate: bool| {
+            original
+                .items
+                .keys()
+                .map(|&slot| !gate || library.item_bytes(slot).is_some())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            visibility(&retained, retained.has_removed()),
+            visibility(&retained, true)
+        );
         // 8 + 16 + 22 + 16 = 62 bytes of content: the next import wraps to 8,
         // over slot 1's item, whose header becomes 255 characters.
         let _limits = crate::user_library::TestLimits::set(62, 1 << 31);
         let mut corrupting = bytes_with(&[255, 255], 4);
         corrupting.resize(16, 0);
         assert!(retained.add_item(4, &corrupting));
-        assert!(retained.has_removed(), "the removal check is on");
+        assert_eq!(
+            visibility(&retained, retained.has_removed()),
+            visibility(&retained, true)
+        );
         assert!(
-            retained.item(1).is_none(),
+            !visibility(&retained, true)[0],
             "slot 1 no longer reads as an item"
         );
     }
 
     #[test]
-    fn overreach_tracks_only_a_growing_header() {
+    fn overreach_fast_path_matches_the_forced_overreach_finish() {
+        // The `overreach` fast path against `finish_overreach` forced on:
+        // the finished total, overrides, items and skips agree.
         let original = library();
-
-        let mut merge = Merge::new(Some(original.view()));
-        let same = with_last(one(), 0x7f);
-        let old = one();
-        assert!(merge.modify(1, &old, &same).is_ok());
-        assert!(!merge.overreach);
-
-        let mut merge = Merge::new(Some(original.view()));
-        let grown = bytes_with(&[3, 1], 200);
-        let old = one();
-        assert!(merge.modify(1, &old, &grown).is_ok());
-        assert!(merge.overreach);
-
-        let mut merge = Merge::new(Some(original.view()));
-        let shorter = bytes_with(&[0, 0], 0);
-        let old = one();
-        assert!(merge.modify(1, &old, &shorter).is_ok());
-        assert!(!merge.overreach);
+        let finished = |new: &[u8], forced: bool| {
+            let mut merge = Merge::new(Some(original.view()));
+            let old = one();
+            assert!(merge.modify(1, &old, new).is_ok());
+            if forced {
+                merge.overreach = true;
+            }
+            let mut skipped = Vec::new();
+            let (total, overrides, view) = merge.finish_views(&mut Some(&mut skipped), &"test");
+            let items = view.map(|view| {
+                (1..view.range_end())
+                    .map(|slot| view.item(slot))
+                    .collect::<Vec<_>>()
+            });
+            (total, overrides, items, skipped)
+        };
+        for (name, new) in [
+            ("same", with_last(one(), 0x7f)),
+            ("grown", bytes_with(&[3, 1], 200)),
+            ("shorter", bytes_with(&[0, 0], 0)),
+        ] {
+            assert_eq!(finished(&new, false), finished(&new, true), "{name}");
+        }
     }
 
     fn with_freq(mut item: Vec<u8>, frequency: u32) -> Vec<u8> {

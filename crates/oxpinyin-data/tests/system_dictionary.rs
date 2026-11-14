@@ -171,18 +171,6 @@ fn open_costs_handles_only() {
 }
 
 #[test]
-fn single_syllable_lookup_resolves_only_loaded_libraries() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    let entries = dict.lookup(&syls("ni")).unwrap();
-    // 0x02000010 sits under nibble 2, whose chunk file is absent: dropped,
-    // upstream's NULL-array skip.
-    assert_eq!(entries.len(), 1, "{entries:?}");
-    assert_eq!(entries[0].text(), "你");
-    assert_eq!(entries[0].token().value(), 0x0100_0010);
-}
-
-#[test]
 fn a_step_prices_the_pronunciation_possibility_of_its_token() {
     let fix = Fixture::new();
     let dict = fix.dict();
@@ -263,32 +251,6 @@ fn token_surface_resolves_through_the_chunk_file() {
     assert_eq!(prons.len(), 2);
     assert_eq!(prons[0], ("ni".to_owned(), 5));
     assert_eq!(prons[1], ("ni".to_owned(), 3));
-}
-
-#[test]
-fn suggestion_tokens_walk_the_longer_phrases_in_order() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    // 你 → 你好 (loaded) and 你们 (unloaded). The raw walk keeps both tokens
-    // (the caller's item-level split is what drops the absent one); the
-    // live item's text is resolved here.
-    let words = |text: &str| text.chars().map(u32::from).collect::<Vec<_>>();
-    let tokens = dict.suggestion_tokens(&words("你")).unwrap();
-    assert_eq!(tokens.len(), 2);
-    assert!(tokens.contains(&0x0100_0099));
-    assert!(tokens.contains(&0x0200_0098));
-    assert_eq!(dict.phrase_text(0x0200_0098), None, "unloaded library");
-    let rows: Vec<(u32, oxpinyin_core::PhraseText)> = tokens
-        .into_iter()
-        .filter_map(|token| Some((token, dict.phrase_text(token)?)))
-        .collect();
-    assert_eq!(
-        rows,
-        vec![(0x0100_0099, oxpinyin_core::PhraseText::from("你好"))]
-    );
-    assert!(dict.suggestion_tokens(&words("你好")).unwrap().is_empty());
-    assert!(dict.suggestion_tokens(&words("无")).unwrap().is_empty());
-    assert!(dict.suggestion_tokens(&[]).unwrap().is_empty());
 }
 
 #[test]

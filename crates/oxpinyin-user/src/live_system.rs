@@ -527,4 +527,155 @@ mod tests {
             "the chunk's own item stays"
         );
     }
+
+    #[test]
+    fn live_items_distinguish_found_absent_and_unloaded() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use crate::{ItemOrigin, SystemItem};
+        use oxpinyin_core::ChewingKey;
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::phrase_library::PhraseLibrary;
+        use oxpinyin_data::user_files::{
+            LogRecord, SystemVersions, UserTableInfo, encode_log_records,
+        };
+        use std::collections::BTreeMap;
+
+        let ni = ChewingKey::new(23, 0, 1, 0).to_packed();
+        let item = |word: u32, unigram: u32, frequency: u32| ChunkItem {
+            phrase: vec![word],
+            unigram,
+            prons: vec![(vec![ni], frequency)],
+        };
+        let shipped = [
+            (1, item(0x4f60, 100, 100)),
+            (2, item(0x597d, 50, 50)),
+            (3, item(0x4e16, 30, 30)),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gb_char.bin");
+        std::fs::write(&path, build_chunk(&shipped).expect("chunk")).expect("write chunk");
+        let library = PhraseLibrary::open(&path).expect("open");
+        let total = library.total_freq();
+        let originals: SystemOriginals = crate::LibraryTable::from([(
+            1_u8,
+            SystemLibrary {
+                total,
+                range_end: library.token_range().end,
+                items: BTreeMap::new(),
+                mapped: Some(library),
+            },
+        )])
+        .into();
+
+        let mut modified = shipped[0].1.clone();
+        modified.prons[0].1 += 7;
+        let records = [
+            LogRecord::ModifyHeader {
+                old_total: total,
+                new_total: total,
+            },
+            LogRecord::Modify {
+                token: 1,
+                old_item: encode_phrase_item(&shipped[0].1).expect("old"),
+                new_item: encode_phrase_item(&modified).expect("new"),
+            },
+            LogRecord::Remove {
+                token: 2,
+                old_item: encode_phrase_item(&shipped[1].1).expect("removed"),
+            },
+        ];
+        let payload = encode_log_records(&records).expect("log");
+        let versions = SystemVersions::for_this_build(7, 14);
+        let user = dir.path().join("user");
+        std::fs::create_dir(&user).expect("user dir");
+        std::fs::write(
+            user.join("gb_char.dbin"),
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+        )
+        .expect("write log");
+        std::fs::write(
+            user.join("user.conf"),
+            UserTableInfo::conform_to(&versions).to_text(),
+        )
+        .expect("write marker");
+        let store = crate::test_session::open(&user, originals, versions, UserConfLaw::Pinyin)
+            .expect("open");
+
+        let unloaded = Cell::new(0);
+        let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
+        let (replayed, removed, untouched, absent) = (
+            (1_u32 << 24) | 1,
+            (1_u32 << 24) | 2,
+            (1_u32 << 24) | 3,
+            (1_u32 << 24) | 9,
+        );
+        let summary = |item: SystemItem<'_>| {
+            let reading = item.pronunciation(0).expect("reading");
+            (
+                item.origin(),
+                item.phrase_length(),
+                item.n_pronunciations(),
+                reading.frequency,
+                reading.keys.iter().collect::<Vec<_>>(),
+            )
+        };
+        // Every item of a library with a live buffer is read from it: the
+        // replayed one as the replay wrote it, an untouched one as the chunk
+        // stored it.
+        assert_eq!(
+            live.read(replayed, summary),
+            Lookup::Found((ItemOrigin::Overlay, 1, 1, 107, vec![ni]))
+        );
+        assert_eq!(
+            live.read(untouched, summary),
+            Lookup::Found((ItemOrigin::Overlay, 1, 1, 30, vec![ni]))
+        );
+        assert_eq!(
+            live.read(untouched, |item| item.phrase_text())
+                .found()
+                .flatten(),
+            PhraseText::from_words([0x4e16])
+        );
+        assert_eq!(live.read(removed, summary), Lookup::Absent);
+        assert_eq!(live.read(absent, summary), Lookup::Absent);
+        assert_eq!(live.read((5_u32 << 24) | 1, summary), Lookup::Absent);
+        assert!(live.is_visible(untouched) && !live.is_visible(removed));
+
+        // The header-only count agrees with the view for every state.
+        assert_eq!(live.pronunciation_count(replayed), Lookup::Found(1));
+        assert_eq!(live.pronunciation_count(untouched), Lookup::Found(1));
+        assert_eq!(live.pronunciation_count(removed), Lookup::Absent);
+        assert_eq!(live.pronunciation_count(absent), Lookup::Absent);
+
+        // The stored field and the live count are separate reads: the stored
+        // one is the chunk's; the live one adds the store's delta once.
+        assert_eq!(live.effective_unigram(untouched), Some(30));
+        assert_eq!(live.effective_unigram(absent), None);
+        assert_eq!(live.effective_unigram(untouched), Some(30));
+        assert_eq!(
+            live.effective_unigram(replayed),
+            Some(u64::from(100_u32) + store.unigram_delta(replayed).expect("delta"))
+        );
+        assert_eq!(live.effective_unigram(removed), None);
+        assert_eq!(live.effective_unigram(absent), None);
+
+        // The store's own accessors answer the same.
+        assert_eq!(
+            live.read(replayed, |item| item.pronunciation(0).map(|r| r.frequency))
+                .found()
+                .flatten(),
+            store.with_effective_system_item(replayed, |item| item.prons[0].1)
+        );
+        assert!(store.system_item_removed(removed));
+
+        // An unloaded library hides every token, whatever it holds.
+        let unloaded = Cell::new(1 << 1);
+        let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
+        for token in [replayed, removed, untouched, absent] {
+            assert_eq!(hidden.read(token, summary), Lookup::Unloaded);
+            assert_eq!(hidden.pronunciation_count(token), Lookup::Unloaded);
+            assert!(!hidden.is_visible(token));
+            assert_eq!(hidden.effective_unigram(token), None);
+        }
+    }
 }
