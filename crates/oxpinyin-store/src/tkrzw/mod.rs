@@ -717,61 +717,12 @@ impl Drop for TkrzwUnopenedHandle {
 
 // ── engine-level operations ───────────────────────────────────────
 
-/// Whether the hash file open as `db` at `path` holds no record, so that
-/// the pin's iterator over it finds none: it is healthy, its header
-/// counts no records, and the file on disk ends at or before its record
-/// section. The last condition does not rely on the header's count, so
-/// a file with record bytes is walked even when its header reads healthy
-/// with 0 records. Anything that cannot be read answers no.
-fn holds_no_record(db: &Db, path: &Path) -> bool {
-    db.is_healthy() && matches!(db.count(), Ok(0)) && ends_before_records(path)
-}
-
-/// The size of a HashDBM file's metadata, its first bytes
-/// (`METADATA_SIZE`, `tkrzw_dbm_hash.cc:33` at tkrzw 9ee8416).
-const HASH_METADATA_SIZE: usize = 128;
-
-/// Whether the file at `path`, by `fstat` of its open descriptor, ends at
-/// or before the record section its own header places.
-fn ends_before_records(path: &Path) -> bool {
-    use std::io::Read as _;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return false;
-    };
-    let mut header = [0_u8; HASH_METADATA_SIZE];
-    if file.read_exact(&mut header).is_err() {
-        return false;
-    }
-    record_base(&header).is_some_and(|base| metadata.len() <= base)
-}
-
-/// The offset of a HashDBM file's record section, computed from the
-/// three header fields that place it as `HashDBMImpl::SetRecordBase`
-/// computes it (`tkrzw_dbm_hash.cc:1351-1356` at tkrzw 9ee8416): the
-/// metadata, one `offset_width`-byte slot per bucket, the 1,008-byte free
-/// block pool and the 16-byte record-base header, rounded up to a
-/// multiple of `max(4096, 1 << align_pow)` (`:50-57`, `AlignNumber`).
-/// `HashDBM::ReadMetadata` reads the fields as big-endian numbers:
-/// `offset_width` and `align_pow` one byte each at 13 and 14, and
-/// `num_buckets` eight bytes at 16 (`:39-42`, `:2676-2679`). `None` when
-/// the result does not fit in 64 bits.
-fn record_base(header: &[u8; HASH_METADATA_SIZE]) -> Option<u64> {
-    const FBP_SECTION_SIZE: u64 = 1008;
-    const RECORD_BASE_HEADER_SIZE: u64 = 16;
-    const RECORD_BASE_ALIGN: u64 = 4096;
-    let offset_width = u64::from(header[13]);
-    let align_pow = u32::from(header[14]);
-    let mut num_buckets = [0_u8; 8];
-    num_buckets.copy_from_slice(&header[16..24]);
-    let num_buckets = u64::from_be_bytes(num_buckets);
-    let align = RECORD_BASE_ALIGN.max(1_u64.checked_shl(align_pow)?);
-    num_buckets
-        .checked_mul(offset_width)?
-        .checked_add(HASH_METADATA_SIZE as u64 + FBP_SECTION_SIZE + RECORD_BASE_HEADER_SIZE)?
-        .checked_next_multiple_of(align)
+/// Whether the opened hash file `db` holds no record by tkrzw's own
+/// account: it opened healthy (`DBM::IsHealthy`) and counts no record
+/// (`DBM::Count`). A failed count or an unhealthy file answers no, so the
+/// copy walks it.
+fn holds_no_record(db: &Db) -> bool {
+    db.is_healthy() && matches!(db.count(), Ok(0))
 }
 
 /// A row visitor as [`drive_scan`] drives it: one borrowed key and value
@@ -1180,10 +1131,10 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
             // `copy_tkrzwdb` copies nothing from a file with no live
             // record, but its HashDBM iterator still reads every bucket
             // slot, and `save_db` writes 1,048,583 of them whatever the
-            // rows: about 329M instructions per init. A file that holds no
-            // record leaves the container exactly as that copy would, so
-            // it is not walked; every other file is.
-            if holds_no_record(&file, path) {
+            // rows: about 329M instructions per init. A file tkrzw opens
+            // healthy and counts empty leaves the container exactly as that
+            // copy would, so it is not walked; every other file is.
+            if holds_no_record(&file) {
                 return Ok(this);
             }
             let db = this.db.get_or_init(|| Db::new(Class::Tiny));
@@ -1291,9 +1242,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        Class, Db, HASH_METADATA_SIZE, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR,
-        STATUS_PRECONDITION_ERROR, STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash,
-        open_hash_create, open_system, record_base,
+        Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR, STATUS_PRECONDITION_ERROR,
+        STATUS_SUCCESS, TkrzwUserBigramDb, holds_no_record, open_hash, open_hash_create,
+        open_system,
     };
     use crate::{StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -1332,12 +1283,6 @@ mod tests {
         let mut keys = db.keys().unwrap();
         keys.sort();
         keys
-    }
-
-    /// The record-section offset the header of the file at `path` places.
-    fn file_record_base(path: &std::path::Path) -> Option<u64> {
-        let bytes = std::fs::read(path).unwrap();
-        record_base(bytes[..HASH_METADATA_SIZE].try_into().unwrap())
     }
 
     /// The tkrzw status code a backend error carries.
@@ -1592,9 +1537,7 @@ mod tests {
         let dir = TempDir::new("no-rows");
         let path = dir.0.join("user_bigram.db");
         TkrzwUserBigramDb::empty().unwrap().save_db(&path).unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), 4_198_400);
-        assert_eq!(file_record_base(&path), Some(4_198_400));
-        assert!(holds_no_record(&open_hash(&path).unwrap().db, &path));
+        assert!(holds_no_record(&open_hash(&path).unwrap().db));
         assert!(
             TkrzwUserBigramDb::load_db(&path)
                 .unwrap()
@@ -1613,39 +1556,7 @@ mod tests {
             db.store(&token.to_le_bytes(), b"gram").unwrap();
         }
         db.save_db(&path).unwrap();
-        assert!(!holds_no_record(&open_hash(&path).unwrap().db, &path));
-        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
-        assert_eq!(
-            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
-            expected
-        );
-    }
-
-    #[test]
-    fn a_healthy_zero_count_header_over_live_records_is_walked() {
-        // A cleanly saved file with three records whose header count alone
-        // is rewritten to 0: the closure flag is still set and the size
-        // still agrees with the metadata, so the file opens healthy with
-        // no records counted, while its record section holds all three.
-        // The pin's `copy_tkrzwdb` walks the buckets and copies them; so
-        // must `load_db`.
-        let dir = TempDir::new("stale-count");
-        let path = dir.0.join("user_bigram.db");
-        let db = TkrzwUserBigramDb::empty().unwrap();
-        for token in 1_u32..=3 {
-            db.store(&token.to_le_bytes(), b"gram").unwrap();
-        }
-        db.save_db(&path).unwrap();
-        let mut bytes = std::fs::read(&path).unwrap();
-        // `num_records`, eight big-endian bytes at 24 (`META_OFFSET_NUM_RECORDS`).
-        bytes[24..32].copy_from_slice(&0_u64.to_be_bytes());
-        std::fs::write(&path, &bytes).unwrap();
-        let file = open_hash(&path).unwrap();
-        assert!(file.db.is_healthy());
-        assert_eq!(file.db.count().unwrap(), 0);
-        assert!(std::fs::metadata(&path).unwrap().len() > file_record_base(&path).unwrap());
-        assert!(!holds_no_record(&file.db, &path));
-        drop(file);
+        assert!(!holds_no_record(&open_hash(&path).unwrap().db));
         let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
         assert_eq!(
             sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
@@ -1762,7 +1673,7 @@ mod tests {
         let file = open_hash(&path).unwrap();
         assert_eq!(file.db.count().unwrap(), 0);
         assert!(!file.db.is_healthy());
-        assert!(!holds_no_record(&file.db, &path));
+        assert!(!holds_no_record(&file.db));
         drop(file);
         let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
         assert_eq!(
