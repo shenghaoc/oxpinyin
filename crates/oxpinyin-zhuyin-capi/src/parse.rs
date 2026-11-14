@@ -20,7 +20,7 @@ fn parse_full_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    inst.core.parse_full_more(text)
+    inst.core.parse_full_more_zhuyin(text)
 }
 
 /// Parse multiple full pinyins.
