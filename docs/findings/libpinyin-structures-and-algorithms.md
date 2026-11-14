@@ -368,7 +368,7 @@ guess.
 | Window scan | `:2224` onward | `collect_window_scan`, `scan_parsed_paths` (`oxpinyin-engine/src/session/lookup.rs`) | same / follows |
 | Frequency | `_compute_frequency_of_items` (`:1810`), `BIGRAM_FREQUENCY_DISCOUNT 0.1f` (`:33`), f32 expression truncated to `guint32` (`:1862`) | `candidate_frequencies` (`session/lookup.rs`), `amplified_frequency_with_bigram` (`session/mod.rs`) | same / follows, bit for bit |
 | Sort | `compare_item_with_sort_option` (`:1678`) under GLib's stable sort | `rank_candidates` (`session/mod.rs`) over `rank_by_frequency`, under the [candidate-frequency comparator ruling](compatibility-policy.md#no-ported-external-library-internals) | same / follows |
-| Longer candidate | `_prepend_longer_candidates` (`:1870`) | `longer_candidate` (`session/lookup.rs`) | same / follows |
+| Longer candidate | `_prepend_longer_candidates` (`pinyin.cpp:1870-1928`), library-first reduction (`phrase_large_table3.h:77-97`) | `longer_candidate` (`session/lookup.rs`) keeps the maximum unigram; ties keep the earlier library, then the earlier path/token within that library | same / follows |
 | Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text ([argument](addon-choose-promotion.md), section 5); malformed text is [open](#open) |
 | Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
 

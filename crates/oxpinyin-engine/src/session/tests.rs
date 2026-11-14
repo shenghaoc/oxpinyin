@@ -4194,3 +4194,33 @@ where
     let anchor = session.composition_offset();
     session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }
+
+#[test]
+fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
+    // The pin accumulates suggestions by library: reduce_tokens,
+    // phrase_large_table3.h:77-97. pinyin.cpp:1870-1928 keeps the first
+    // eligible token, replacing it only for a strictly higher unigram.
+    // `xian` is visited before its divided `xi an` path. Library 1's
+    // later-path token must beat library 2's earlier-path token on a tie.
+    for (first_token, first_frequency, expected) in [
+        (33554433, 100, "西安好"),
+        (33554433, 101, "先好"),
+        (16777218, 100, "先好"),
+    ] {
+        let vocab = format!(
+            "token={first_token}\tkeys=xian,hao\ttext=先好\tunigram={first_frequency}\n\
+             token=16777217\tkeys=xi,an,hao\ttext=西安好\tunigram=100\n"
+        );
+        let mut session = Session::new(
+            SessionSettings::default(),
+            FixtureDictionary::parse(&vocab).expect("fixture"),
+            FrequencyFixtureModel::parse(&vocab, "").expect("fixture"),
+        );
+        session.replace_raw("xian").expect("parse");
+        let (_, candidate) = session
+            .longer_candidate(false)
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(candidate.text(), expected);
+    }
+}
