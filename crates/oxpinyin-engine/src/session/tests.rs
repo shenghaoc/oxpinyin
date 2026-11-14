@@ -2608,15 +2608,14 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
     );
 }
 
-/// Review regression: a rank-greater-than-zero row choose on a FRESH
-/// composition records its forcing. The row branch once called
-/// `diff_result` on a store that was never sized — `add` refused every
-/// span past an empty cell count, and the forcing silently never
-/// landed.
+/// A guess sizes the constraint store; a shorter reparse leaves it alone.
+/// A retained differing row writes its decoded span (phonetic_lookup.cpp:192).
 #[test]
-fn a_fresh_composition_row_choose_records_its_forcing() {
+fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
+    // validate_constraint sizes the store at guess time (:120-138).
+    session.guess_sentence().expect("guess");
     // Hand-crafted rows whose rank-1 phrase differs from row 0's —
     // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
@@ -2651,10 +2650,20 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
         .iter()
         .position(|candidate| candidate.nbest_row() == Some(1))
         .expect("the rank-1 row is offered");
-    select_row(&mut session, index).expect("the row is choosable");
+    let chosen = session.candidates().iter().nth(index).expect("row").clone();
+    // pinyin.cpp:2515-2520 does no validate before diff_result. Its
+    // tail is the decoded result's (:192), not the shortened input.
+    session.replace_raw("ni").expect("shorter parse");
+    session
+        .select_target(&SelectionTarget::of_candidate(&chosen, 0, None))
+        .expect("the retained row is choosable");
+    assert!(matches!(
+        session.constraints.cell(0),
+        Some(crate::constraint::Cell::OneStep { end: 3, .. })
+    ));
     assert!(
         session.clear_constraint(0),
-        "the differing phrase's forcing landed on the fresh composition"
+        "the differing phrase's write lands after a shorter reparse"
     );
 }
 

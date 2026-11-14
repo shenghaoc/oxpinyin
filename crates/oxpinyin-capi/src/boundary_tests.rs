@@ -3748,3 +3748,44 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
     );
     close(context, instance);
 }
+
+/// NBEST choose reaches diff_result without validation (pinyin.cpp:2515-2520).
+/// An empty-matrix guess shrinks the store but keeps the decoded results
+/// (phonetic_lookup.cpp:120-138; phonetic_lookup.h:746-754). The differing
+/// write then returns zero and check_result aborts (phonetic_lookup.cpp:203).
+#[test]
+fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
+    assert_aborts(
+        "boundary_tests::a_kept_differing_sentence_aborts_after_an_empty_matrix_guess",
+        || {
+            let user = TempUserDir::new("empty-matrix-diff-write");
+            let (context, instance) = open_at(&user.path);
+            assert_eq!(parse(instance, "nihao"), 5);
+            assert!(pinyin_guess_sentence(instance));
+            assert!(pinyin_guess_candidates(instance, 0, 0));
+            let rows = capture_rows(instance);
+            let index = rows
+                .iter()
+                .enumerate()
+                .find_map(|(index, (kind, _, _))| {
+                    if *kind != NBEST {
+                        return None;
+                    }
+                    let row = candidate_at(instance, index);
+                    let mut rank = 0;
+                    assert!(pinyin_get_candidate_nbest_index(
+                        instance,
+                        row,
+                        &raw mut rank
+                    ));
+                    (rank > 0).then_some(index)
+                })
+                .expect("a differing n-best row");
+            let row = candidate_at(instance, index);
+            assert_eq!(parse(instance, ""), 0);
+            assert!(!pinyin_guess_sentence(instance));
+            pinyin_choose_candidate(instance, 0, row);
+            close(context, instance);
+        },
+    );
+}

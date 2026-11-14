@@ -881,3 +881,8 @@ matrix and search costs. The pin also validates twice.
 - Equivalence not argued: `compact_libraries` against `FacadePhraseIndex::compact`, and the export iterators' per-pronunciation order.
 - Equivalence not argued: the table-text pinyin parser (`crates/oxpinyin-utils/src/storage/pinyin.rs`) against `PinyinDirectParser2::parse` with `USE_TONE`.
 - Equivalence not argued: double pinyin with a table whose first yunmu slot is empty and second is not (no shipped table has one).
+
+N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
+result supplies the tail; `changed` is set before each differing write;
+a zero return from `add_constraint` aborts at `:203`. The store is sized
+by guess-time validation (`:120-138`), not by the NBEST choose.
