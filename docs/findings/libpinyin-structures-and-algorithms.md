@@ -323,8 +323,8 @@ consumed bytes.
 | Layout | `PhoneticKeyMatrix`: two parallel tables of columns (keys and key rests) | one `Vec<Vec<ScanKey>>` from `build_scan_matrix` (`oxpinyin-engine/src/session/mod.rs`); apostrophe zero keys as a side array in `ParsedMatrix` | different / unverified |
 | Fill | `fill_matrix` (`storage/phonetic_key_matrix.cpp:30`) | `ParsedMatrix::from_scan` (`oxpinyin-engine/src/session/matrix.rs`) | different / unverified |
 | Resplit and inner split | `resplit_step` (`:87`), `inner_split_step` (`:169`); linear scans of the `special_table.h` tables | `resplit_step`, `inner_split_step` (`session/mod.rs`), same tables (`matrix-split-tables.md`) | same / follows |
-| Fuzzy | `fuzzy_syllable_step` (`:226`): an initials pass, then a finals pass over the grown column | `SyllableKey::fuzzy_alternatives` (`vocab.rs`) composes both swaps, keeping only keys that exist | different / argued — the pin's extra non-existent finals match nothing downstream |
-| Column dedup | none — a column is a bag | `keep_first_in_column` (`session/mod.rs`), O(k²) per column | different / unverified ([Open](#open)) |
+| Fuzzy | `fuzzy_syllable_step` (`:226-310`): an initials pass, then a finals pass over the grown column | `extend_matrix` and `parse_time_keys` run the two column passes; packed final alternates survive without a syllable-table row | same / follows |
+| Column multiplicity | `PhoneticTable::append` (`phonetic_key_matrix.h:92-100`): a column is a bag | both matrix builders append every entry in pass order, without collapse | same / follows |
 
 ## 4. Sentence decoding
 
@@ -338,7 +338,7 @@ consumed bytes.
 | Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same / follows |
 | Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` selects with `select_top`, then `tail_merge` stably sorts by raw `f32` possibility (`ordered_poss_compare`); `Trellis::extract` backtracks | different / S3 of the [algorithm-precondition ruling](compatibility-policy.md#algorithm-precondition-violations); raw possibility descending, equal possibilities stable, NaN last |
 | Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | `f32` running sum of natural logs: `(f64::from(poss) + probability.ln()) as f32` (`expand_one`, `nbest.rs`); pre-log pieces (`NbestStepCosts`) from `nbest_step_costs_using` (`oxpinyin-data/src/lm/mod.rs`) | same / class (a) — Rust std `ln` (`compatibility-policy.md`, row 11); see [sentence scoring types](#sentence-scoring-types); the artifact checks are [open](#open) |
-| Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` ([constraint revalidation](#constraint-revalidation)); its integer drop test is argued for model20 data only ([Open](#open)) |
+| Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` ([constraint revalidation](#constraint-revalidation)); its recursive f32 path sum clears only below f32::EPSILON (`phonetic_lookup.cpp:159-163`) |
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — `f32` scores with Rust std `ln` |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
 
@@ -600,8 +600,23 @@ no cap. An incomplete key matches any final
 `ConstraintSpelling::spells` (`nbest.rs`) ports `validate_constraint` and
 `compute_pronunciation_possibility` through
 `Dictionary::phrase_item_pronunciations`. It carries the last item read
-across a pass, as the single `PhraseItem` of the pin does. Revalidation
-enumerates no key paths, so `SCAN_EXPANSION_LIMIT` does not apply to it.
+across a pass, as the single `PhraseItem` of the pin does. It borrows the
+parse's placed matrix and shares `GenerationView::sum_paths` with sentence
+pricing. Each leaf sums matching stored frequencies and the total with u32
+wrap, divides in f32 (`phrase_index.h:136-163`), and each recursion frame adds
+its children in matrix order (`phonetic_key_matrix.cpp:534-600`). The final
+sum is kept at or above f32::EPSILON, including equality. No integer-zero
+substitute or model20-only boundary assumption remains.
+
+For P complete paths, V visited prefixes, and C pronunciation-match work per
+leaf, revalidation costs O(V + PC), like the pin's walk. It uses O(d) walk
+stack and one key scratch for maximum depth d, rather than short-circuiting
+on a positive match. No second placed matrix is allocated. Duplicated entries
+increase path multiplicity and therefore work and pronunciation writes
+(`phonetic_key_matrix.cpp:603-668`; `pinyin.cpp:3594-3606`). Fuzzy passes take
+O(k) work for k original column entries and a constant number of swaps; the
+removed collapse took O(k²). The split passes and dictionary-call costs are
+unchanged. Net wall time, peak RSS and allocation effects are unknown.
 
 ### Persisted empty items through arena reconstruction
 
@@ -884,9 +899,7 @@ matrix and search costs. The pin also validates twice.
 
 - Sentence scoring artifacts: whether the compiler contracted any multiply-add in the pin's `libpinyin.so` (GCC may on aarch64; x86-64's baseline has no FMA), and whether `f64::ln` in oxpinyin's shipping build resolves to the same libm `log` rather than being folded, inlined or replaced. Rust documents `f64::ln` precision as unspecified, so this is settled per artifact. Both are open.
 - Constraint revalidation over a phrase of the pinned model whose abbreviation passes the expansion cap.
-- The constraint drop test: oxpinyin's integer zero test against the pin's `< FLT_EPSILON` is argued for model20 data only (row 7 of `compatibility-policy.md`: no per-token total there reaches 2^23); the general case is not argued.
 - The [§9](#9-constants) value inventory is not proven complete: limits written inline (a literal in an expression, a loop bound) are not covered.
-- Equivalence not argued: matrix column dedup (`keep_first_in_column`) against the pin's bag.
 - Equivalence not argued: candidate dedup for malformed phrase text.
 - Equivalence not argued: the node store with `nstore = 1` against the `<1>` specialisation's empty check.
 - Equivalence not argued: `compact_libraries` against `FacadePhraseIndex::compact`, and the export iterators' per-pronunciation order.

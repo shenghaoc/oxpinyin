@@ -112,10 +112,12 @@ finals, so the two compose: `can` under `AMB_C_CH|AMB_AN_ANG` yields `chan`,
 `PhoneticTable::append` is an unconditional push
 (`phonetic_key_matrix.h:92-100`). A column holds `(ChewingKey,
 ChewingKeyRest)` items, and the rest is the span (`chewing_key.h:97-104`),
-so one key with different `m_raw_end` values can coexist. oxpinyin's
-key-only dedup applies **before** the fuzzy step only (the selected,
-resplit and divided keys). After `fuzzy_syllable_step` the dedup key is
-`(key, to)`.
+so identical entries and entries with different `m_raw_end` values coexist.
+Both oxpinyin matrix builders keep all appends in order. Per column, all
+initial swaps precede all final swaps of the grown column. A final swap is
+kept even when no syllable-table row names its packed key; the internal
+key representation carries that packed value without inventing a spelling.
+Singleton zero-key columns and readers of the first slot are unchanged.
 
 ## GSettings → bit mapping in the fork
 
