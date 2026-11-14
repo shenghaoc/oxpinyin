@@ -3748,3 +3748,91 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
     );
     close(context, instance);
 }
+
+// ── A USER_FILE token whose phrase item is absent ────────────────────────
+
+/// Whether the phrase segmenter matched the one-character `龘`, and the
+/// token it stored (`null_token` after a failed match).
+fn segmented_token(instance: *mut PinyinInstance) -> (bool, u32) {
+    let matched = crate::phrase::pinyin_phrase_segment(instance, c"龘".as_ptr());
+    let mut count = UNTOUCHED;
+    assert!(crate::phrase::pinyin_get_n_phrase(instance, &raw mut count));
+    assert_eq!(count, 1);
+    let mut token = UNTOUCHED;
+    assert!(crate::phrase::pinyin_get_phrase_token(
+        instance,
+        0,
+        &raw mut token
+    ));
+    (matched, token)
+}
+
+/// Every pin scoring step reads the token's phrase item first and skips the
+/// token when the read fails (`phrase_lookup.cpp:310,329`,
+/// `phonetic_lookup.h:646,674`). A phrase-table token of library 7 whose item
+/// is gone is skipped by the segmenter and the sentence guess however strong
+/// its sentence-start bigram; the same bigram admits the readable item with a
+/// zero unigram. The stale phase has no sentence witness: the n-best result
+/// is the same with and without the gate, so the segmenter is the C-visible
+/// one and the model layer covers the n-best costs.
+#[test]
+fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
+    let user = TempUserDir::new("stale-user-file-token");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(import_batch(context, 7, &[("龘", "ni", 0)]), [true]);
+    let token = lookup(instance, "龘")
+        .into_iter()
+        .find(|token| token >> 24 == 7)
+        .expect("a user token");
+    assert!(pinyin_save(context));
+    close(context, instance);
+    let item_file = std::fs::read(user.path.join("user.bin")).expect("user.bin");
+    // The sentence-start gram admits the token with all of its mass.
+    let gram = gram_bytes(100, &[(token, 100)]);
+    let plant = || {
+        plant_bigram(
+            &user.path,
+            vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
+        )
+    };
+    let guess = |instance| {
+        assert_eq!(parse(instance, "ni"), 2);
+        sentence_after_guess(instance)
+    };
+
+    // The item is gone: the phrase table and the pinyin index still name it.
+    let empty = oxpinyin_data::chunk_write::build_chunk(&[]).expect("an empty library");
+    std::fs::write(
+        user.path.join("user.bin"),
+        oxpinyin_data::chunk_format::build_memory_chunk(
+            &empty[oxpinyin_data::chunk_format::CHUNK_HEADER_SIZE..],
+        )
+        .expect("frame"),
+    )
+    .expect("write user.bin");
+    plant();
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(lookup(instance, "龘")[..], [token], "the stale phrase row");
+    assert_eq!(
+        guess(instance).as_deref(),
+        Some("你"),
+        "the system sentence"
+    );
+    assert_eq!(segmented_token(instance), (false, crate::types::null_token));
+    close(context, instance);
+
+    // The item is back with a zero unigram: the bigram branch admits it.
+    std::fs::write(user.path.join("user.bin"), &item_file).expect("restore user.bin");
+    plant();
+    let (context, instance) = open_at(&user.path);
+    let mut unigram = UNTOUCHED;
+    assert!(pinyin_token_get_unigram_frequency(
+        instance,
+        token,
+        &raw mut unigram
+    ));
+    assert_eq!(unigram, 0);
+    assert_eq!(guess(instance).as_deref(), Some("龘"));
+    assert_eq!(segmented_token(instance), (true, token));
+    close(context, instance);
+}

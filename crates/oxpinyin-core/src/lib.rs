@@ -93,10 +93,12 @@ pub struct UserCountDelta {
     /// facade's unigram total. The facade total is a `guint32`, so the
     /// model adds this to it wrapping.
     pub unigram_total_delta: u64,
-    /// The live `guint32` unigram field of a system item the user side holds
-    /// (`PhraseItem::get_unigram_frequency`). `Some` is the item's frequency:
-    /// the model takes it instead of the library's stored value plus
-    /// `unigram_delta`.
+    /// The live `guint32` unigram field of the item the pin reads for the
+    /// token (`get_phrase_item`, then `PhraseItem::get_unigram_frequency`):
+    /// a system item the user side holds, or a `USER_FILE` library's user
+    /// item. `Some` is the item's frequency, zero included: the model takes
+    /// it instead of the library's stored value plus `unigram_delta`.
+    /// A `USER_FILE` token with `None` has no item, and the model skips it.
     pub unigram_live: Option<u32>,
 }
 

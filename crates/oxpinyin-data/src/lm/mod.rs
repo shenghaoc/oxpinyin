@@ -175,17 +175,6 @@ pub const fn library_visible(mask: u32, nibble: u8) -> bool {
     mask == 0 || nibble >= 32 || mask & (1_u32 << nibble) == 0
 }
 
-/// Whether `nibble` is one of the default facade's three `USER_FILE`
-/// sub-indexes (`novel_types.h:159-161`): the promoted addon library (5),
-/// the network library (6) and the user library (7), whose items live in
-/// the user directory (`addon.bin` / `network.bin` / `user.bin`,
-/// [`crate::user_files::USER_LIBRARY_FILES`]) rather than a system chunk
-/// — so no [`PhraseLibraries`] item backs their tokens, and the counts
-/// that price them live in the §5 user overlay.
-const fn is_user_file_library(nibble: u8) -> bool {
-    matches!(nibble, 5..=7)
-}
-
 /// Bigram language model over `bigram.db` and the phrase libraries.
 #[derive(Clone, Copy)]
 pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = Cell<u32>> {
@@ -507,15 +496,17 @@ impl<
     /// system count — including a prev that has a system row but not this
     /// next token — takes the blended branch over the merged denominator.
     /// The presence gate itself is the pin's `get_phrase_item` over the
-    /// token's *loaded* sub-index (`unigram_gen_next_step`,
-    /// `phonetic_lookup.h:643-668`): a token of one of the default
-    /// facade's three `USER_FILE` sub-indexes — imports, learnings and
-    /// choose-promoted addon phrases, whose items live in the user
-    /// directory, not a system chunk — is priced from its user delta
-    /// alone, the loaded user sub-index's own frequency field, while a
-    /// masked (unloaded) library's token and a loaded library's missing
-    /// item answer the default, exactly as the pin's failing
-    /// `get_phrase_item` does. `UserCountDelta::ZERO` is bit-identical to
+    /// token's *loaded* sub-index, read first by every scoring step
+    /// (`phonetic_lookup.h:646`, `:674`; `phrase_lookup.cpp:310`, `:329`).
+    /// A token of one of the default facade's three `USER_FILE`
+    /// sub-indexes — imports, learnings and choose-promoted addon
+    /// phrases, whose items live in the user directory, not a system
+    /// chunk — is priced only when its item is readable in the user
+    /// store: its own frequency field (`unigram_live`, `Some(0)`
+    /// included) prices it. An absent item, a masked (unloaded) library's
+    /// token and a loaded library's missing item answer the default,
+    /// exactly as the pin's failing `get_phrase_item` does.
+    /// `UserCountDelta::ZERO` is bit-identical to
     /// the trait method.
     ///
     /// # Errors
@@ -557,23 +548,22 @@ impl<
         transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
-        // loaded sub-index; `unigram_count` reads the system chunk
-        // libraries only, so its `None` folds three cases the gate must
-        // tell apart: a `USER_FILE` sub-index's token (priced from the
-        // user delta — `0 + delta` — the frequency field the import or
-        // promotion wrote, `pinyin.cpp:604-605`), a masked (unloaded)
-        // library's token (`ERROR_NO_SUB_PHRASE_INDEX` on the freed
-        // sub-index), and a loaded system library's missing item
-        // (`ERROR_NO_ITEM`). Only the first may pass; the other two keep
-        // the seam's default answer — no n-best cost data, no rows — as
-        // does no installed unigram table at all.
+        // loaded sub-index, and every transition reads it first
+        // (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`).
+        // `unigram_live` is the item's own field where the user side
+        // holds it: a system item's, or a `USER_FILE` library's user item
+        // (zero included). `unigram_count` reads the system chunk
+        // libraries only, so its `None` covers an unloaded library's
+        // token (`ERROR_NO_SUB_PHRASE_INDEX`) and a missing item
+        // (`ERROR_NO_ITEM`, a `USER_FILE` item the store lacks included).
+        // Those keep the seam's default answer — no n-best cost data, no
+        // rows — as does no installed unigram table at all.
         let nibble = oxpinyin_core::phrase_index_library(token.value()) as u8;
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {
                 let count = match self.unigram_count(token.value()) {
                     Some(count) => count,
-                    None if self.visible(nibble) && is_user_file_library(nibble) => 0,
                     None => return Ok(oxpinyin_core::NbestStepCosts::default()),
                 };
                 merge_unigram_counts(count, user.unigram_delta)

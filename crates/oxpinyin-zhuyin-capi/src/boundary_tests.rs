@@ -1549,3 +1549,71 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
         assert_eq!(after.get(saved), before.get(saved), "{saved} was replaced");
     }
 }
+
+/// Whether the phrase segmenter matched the one-character `龘`, and the token
+/// it stored (`null_token` after a failed match).
+fn segmented_token(instance: *mut ZhuyinInstance) -> (bool, u32) {
+    let matched = zhuyin_phrase_segment(instance, c"龘".as_ptr());
+    let mut count = UNTOUCHED;
+    assert!(zhuyin_get_n_phrase(instance, &raw mut count));
+    assert_eq!(count, 1);
+    let mut token = UNTOUCHED;
+    assert!(zhuyin_get_phrase_token(instance, 0, &raw mut token));
+    (matched, token)
+}
+
+/// Every pin scoring step reads the token's phrase item first and skips the
+/// token when the read fails (`phrase_lookup.cpp:310,329`,
+/// `phonetic_lookup.h:646,674`). A phrase-table token of library 7 whose item
+/// is gone is skipped by the segmenter however strong its sentence-start
+/// bigram; the same bigram admits the readable item with a zero unigram. The
+/// stale phase has no sentence witness: the n-best result is the same with
+/// and without the gate, so the model layer covers the n-best costs.
+#[test]
+fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
+    let user = TempUserDir::new("stale-user-file-token");
+    let (context, instance) = open_with_user(&user.path);
+    assert!(import(context, 7, "龘", "ㄋㄧˇ".as_bytes(), 0));
+    let [token] = user_tokens(instance, "龘")[..] else {
+        panic!("one user token for 龘");
+    };
+    assert!(zhuyin_save(context));
+    close(context, instance);
+    let item_file = std::fs::read(user.path.join("user.bin")).expect("user.bin");
+    // The sentence-start gram admits the token with all of its mass.
+    let gram = [
+        100_u32.to_le_bytes(),
+        token.to_le_bytes(),
+        100_u32.to_le_bytes(),
+    ]
+    .concat();
+    let plant = || {
+        plant_bigram(
+            &user.path,
+            vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
+        )
+    };
+
+    // The item is gone: the phrase table and the pinyin index still name it.
+    let empty = oxpinyin_data::chunk_write::build_chunk(&[]).expect("an empty library");
+    std::fs::write(
+        user.path.join("user.bin"),
+        oxpinyin_data::chunk_format::build_memory_chunk(
+            &empty[oxpinyin_data::chunk_format::CHUNK_HEADER_SIZE..],
+        )
+        .expect("frame"),
+    )
+    .expect("write user.bin");
+    plant();
+    let (context, instance) = open_with_user(&user.path);
+    assert_eq!(user_tokens(instance, "龘"), [token], "the stale phrase row");
+    assert_eq!(segmented_token(instance), (false, crate::types::null_token));
+    close(context, instance);
+
+    // The item is back with a zero unigram: the bigram branch admits it.
+    std::fs::write(user.path.join("user.bin"), &item_file).expect("restore user.bin");
+    plant();
+    let (context, instance) = open_with_user(&user.path);
+    assert_eq!(segmented_token(instance), (true, token));
+    close(context, instance);
+}

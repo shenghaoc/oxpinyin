@@ -368,93 +368,105 @@ fn unigram_availability_survives_a_total_that_wraps_to_zero() {
     assert!(!lm.has_unigrams(), "no visible library holds an item");
 }
 
-/// The §12 presence gate (register #35): the pin's
-/// `unigram_gen_next_step` prices any *loaded* sub-index's item
-/// (`get_phrase_item`), and the three `USER_FILE` sub-indexes (nibbles
-/// 5/6/7 — promoted addon, network, user) live in the default facade
-/// with their counts in the user directory, so their tokens are priced
-/// from the user delta alone — while a masked library's token, a loaded
-/// library's missing item and a non-existent library keep the default
-/// answer (`ERROR_NO_SUB_PHRASE_INDEX` / `ERROR_NO_ITEM`).
+/// The §12 presence gate (register #35): every pin scoring step reads the
+/// token's phrase item first and skips the token when the read fails
+/// (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`). The three
+/// `USER_FILE` sub-indexes (nibbles 5/6/7) keep their items in the user
+/// directory, so the user side reports the item's own unigram as
+/// `unigram_live` — a present item prices, a zero one included, while an
+/// absent item, a masked library's token, a loaded library's missing item
+/// and a non-existent library keep the default answer
+/// (`ERROR_NO_SUB_PHRASE_INDEX` / `ERROR_NO_ITEM`).
 #[test]
-fn user_file_tokens_are_priced_from_their_user_delta_alone() {
+fn user_file_tokens_price_only_when_their_item_is_present() {
     let fix = Fixture::new();
     let (lm, _) = fix.open();
     let start = PhraseToken::new(1);
-
-    // A zero delta answers the default: no phantom rows for a user-file
-    // token the store does not carry.
-    let zero = lm
-        .nbest_step_costs_with_user_delta(
-            &start,
-            &PhraseToken::new(0x0700_0002),
-            UserCountDelta::ZERO,
-        )
-        .unwrap();
-    assert_eq!(zero, oxpinyin_core::NbestStepCosts::default());
-
-    // A carried delta prices the step — the same additive merge a system
-    // item takes, over `0 + delta`.
-    let delta = UserCountDelta {
-        unigram_delta: 27,
-        unigram_total_delta: 27,
+    let item = |unigram: u32| UserCountDelta {
+        unigram_delta: u64::from(unigram),
+        unigram_total_delta: u64::from(unigram),
+        unigram_live: Some(unigram),
         ..UserCountDelta::ZERO
     };
+
+    // An absent item answers the default, delta or not.
+    for absent in [
+        UserCountDelta::ZERO,
+        UserCountDelta {
+            unigram_delta: 27,
+            unigram_total_delta: 27,
+            ..UserCountDelta::ZERO
+        },
+    ] {
+        let step = lm
+            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), absent)
+            .unwrap();
+        assert_eq!(step, oxpinyin_core::NbestStepCosts::default());
+    }
+
+    // A present item prices from its own field, and the three user-file
+    // libraries price identically.
     let priced = lm
-        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), delta)
+        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(27))
         .unwrap();
-    assert!(priced.unigram.is_some(), "a carried delta must price");
+    assert!(priced.unigram.is_some(), "a present item must price");
     assert!(priced.blended.is_none(), "no bigram row involves it");
-    // A larger delta is cheaper (more frequent), and the three user-file
-    // libraries price identically — the promoted addon nibble is not
-    // special.
     let bigger = lm
-        .nbest_step_costs_with_user_delta(
-            &start,
-            &PhraseToken::new(0x0700_0002),
-            UserCountDelta {
-                unigram_delta: 270,
-                unigram_total_delta: 270,
-                ..UserCountDelta::ZERO
-            },
-        )
+        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(270))
         .unwrap();
     assert!(bigger.unigram.unwrap() > priced.unigram.unwrap());
     for token in [0x0500_0001_u32, 0x0600_0001, 0x0700_0002] {
         let step = lm
-            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
+            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), item(27))
             .unwrap();
         assert_eq!(step, priced, "nibble {} prices like nibble 7", token >> 24);
     }
 
-    // A user bigram takes the blended branch over the merged counts — the
-    // merge-before-gate invariant extended to user-file tokens.
-    let with_bigram = lm
+    // A readable item with a zero unigram still takes the bigram branch.
+    let zero_with_bigram = lm
         .nbest_step_costs_with_user_delta(
             &PhraseToken::new(NI),
             &PhraseToken::new(0x0700_0002),
             UserCountDelta {
                 bigram_count: 5,
                 bigram_total: 5,
-                unigram_delta: 27,
-                unigram_total_delta: 27,
-                unigram_live: None,
+                unigram_live: Some(0),
+                ..UserCountDelta::ZERO
             },
         )
         .unwrap();
-    assert!(with_bigram.blended.is_some());
+    assert!(zero_with_bigram.blended.is_some());
+    assert!(zero_with_bigram.unigram.is_none());
+
+    // The same bigram cannot admit a token whose item is absent.
+    let stale_with_bigram = lm
+        .nbest_step_costs_with_user_delta(
+            &PhraseToken::new(NI),
+            &PhraseToken::new(0x0700_0002),
+            UserCountDelta {
+                bigram_count: 5,
+                bigram_total: 5,
+                ..UserCountDelta::ZERO
+            },
+        )
+        .unwrap();
+    assert_eq!(stale_with_bigram, oxpinyin_core::NbestStepCosts::default());
 
     // The gate keeps its refusals: a masked user library, a loaded
     // library's missing item and a non-existent library answer the
-    // default however large the delta — the counterfactual's
-    // `unwrap_or(0)` would have priced all three (register #35).
+    // default however large the delta.
     let (lm2, mask) = fix.open();
     mask.set(1 << 7);
     let masked = lm2
-        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), delta)
+        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(27))
         .unwrap();
     assert_eq!(masked, oxpinyin_core::NbestStepCosts::default());
     let (lm3, _) = fix.open();
+    let delta = UserCountDelta {
+        unigram_delta: 27,
+        unigram_total_delta: 27,
+        ..UserCountDelta::ZERO
+    };
     for token in [0x0100_0050_u32, 0x0300_0001, 0x0400_0001, 0x0800_0001] {
         let step = lm3
             .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
@@ -662,17 +674,22 @@ fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
         }
     }
     lm.set_lambda_from_conf(&conf_with_lambda("0.5"));
+    // A readable user item whose unigram is zero.
     let zero = PhraseToken::new(0x0700_0002);
+    let zero_item = UserCountDelta {
+        unigram_live: Some(0),
+        ..UserCountDelta::ZERO
+    };
     for (total, present) in [(1 << 24, false), (1 << 23, true)] {
         let step = lm
-            .nbest_item_costs(&zero, UserCountDelta::ZERO, Some((1, total)))
+            .nbest_item_costs(&zero, zero_item, Some((1, total)))
             .unwrap();
         assert!(step.unigram.is_none());
         assert_eq!(step.blended.is_some(), present);
     }
     // A zero-total stored gram is present; IEEE 0/0 passes the `<` gate.
     assert!(
-        lm.nbest_item_costs(&zero, UserCountDelta::ZERO, Some((0, 0)))
+        lm.nbest_item_costs(&zero, zero_item, Some((0, 0)))
             .unwrap()
             .blended
             .unwrap()

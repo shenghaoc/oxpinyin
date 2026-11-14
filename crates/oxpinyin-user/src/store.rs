@@ -1249,6 +1249,18 @@ impl UserStore {
             .unigram(token, Some(original))
     }
 
+    /// The unigram field of the item the pin's `get_phrase_item` reads for
+    /// `token`: the live system item's, or a `USER_FILE` library's own user
+    /// item (`Some(0)` for a readable zero), and `None` when the read fails
+    /// (`ERROR_NO_ITEM`).
+    fn item_unigram(&self, token: Token) -> Option<u32> {
+        self.system_unigram(token).or_else(|| {
+            is_user_file_library(phrase_index_library_index(token))
+                .then(|| self.with_user_item(token, |item| item.unigram()))
+                .flatten()
+        })
+    }
+
     /// Whether the session layout names a library as a system chunk.
     #[must_use]
     pub fn is_system_library(&self, library: u8) -> bool {
@@ -1425,7 +1437,7 @@ impl UserStore {
             bigram_total,
             unigram_delta: self.unigram_delta(token)?,
             unigram_total_delta: self.unigram_total()?,
-            unigram_live: self.system_unigram(token),
+            unigram_live: self.item_unigram(token),
         })
     }
 
@@ -3093,10 +3105,13 @@ mod tests {
         fn count_delta_reads_committed_writes() {
             let mut store = transient();
             let cur = bare_token(&mut store, "你", &[key("ni")]);
-            assert_eq!(
-                store.count_delta(Some(1), cur).unwrap(),
-                UserCountDelta::ZERO
-            );
+            // The bare item is present with a zero unigram: the item read
+            // succeeds, so the delta carries its field.
+            let present = UserCountDelta {
+                unigram_live: Some(0),
+                ..UserCountDelta::ZERO
+            };
+            assert_eq!(store.count_delta(Some(1), cur).unwrap(), present);
 
             store.observe_selection(1, cur).unwrap();
             assert!(store.has_user_data());
@@ -3107,7 +3122,7 @@ mod tests {
                     bigram_total: 69,
                     unigram_delta: 483,
                     unigram_total_delta: 483,
-                    unigram_live: None,
+                    unigram_live: Some(483),
                 }
             );
 
@@ -3119,7 +3134,7 @@ mod tests {
                     bigram_total: 207,
                     unigram_delta: 483 + 966,
                     unigram_total_delta: 483 + 966,
-                    unigram_live: None,
+                    unigram_live: Some(483 + 966),
                 }
             );
         }
@@ -3207,7 +3222,7 @@ mod tests {
                     bigram_total: 207,
                     unigram_delta: 483 + 966,
                     unigram_total_delta: 483 + 966,
-                    unigram_live: None,
+                    unigram_live: Some(483 + 966),
                 }
             );
             assert_eq!(
@@ -3217,7 +3232,7 @@ mod tests {
                     bigram_total: 0,
                     unigram_delta: 483 + 966,
                     unigram_total_delta: 483 + 966,
-                    unigram_live: None,
+                    unigram_live: Some(483 + 966),
                 }
             );
         }
