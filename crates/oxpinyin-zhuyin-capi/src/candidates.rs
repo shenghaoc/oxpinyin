@@ -197,16 +197,25 @@ pub extern "C" fn zhuyin_choose_candidate(
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
     let row = &inst.state.candidates[index];
-    let text = inst.state.candidates.phrase_text(index, row.text);
-    // Only a BEST_MATCH row is a sentence row, and it answered above.
-    let published = oxpinyin_facade::PublishedRow {
-        span: row.selection,
-        token: row.token,
-        nbest_row: None,
-        text: &text,
-    };
-    if inst.core.select_published(&published).is_err() {
-        return -1;
+    if row.text == oxpinyin_facade::TextSpan::NULL
+        && let Some(token) = row.token
+    {
+        let span = row.selection;
+        if inst.core.choose_unreadable_step(span, token).is_err() {
+            return -1;
+        }
+    } else {
+        let text = inst.state.candidates.phrase_text(index, row.text);
+        // Only a BEST_MATCH row is a sentence row, and it answered above.
+        let published = oxpinyin_facade::PublishedRow {
+            span: row.selection,
+            token: row.token,
+            nbest_row: None,
+            text: &text,
+        };
+        if inst.core.select_published(&published).is_err() {
+            return -1;
+        }
     }
     // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1649-1666` at the
     // pin): an after-cursor row answers its own `m_end`, a before-cursor row
@@ -329,7 +338,18 @@ pub fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    for cand in window.iter() {
+    let unreadable = window.sole_unreadable_candidate().filter(|_| {
+        !sentence_rows_only
+            && window
+                .iter()
+                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+            && !crate::sentence::facade_total_is_zero(&inst.read())
+    });
+    for (cand, missing) in window
+        .iter()
+        .map(|row| (row, false))
+        .chain(unreadable.iter().map(|row| (row, true)))
+    {
         if cand.kind() == CandidateKind::Sentence && !before_cursor {
             // BEST_MATCH row stays at the head.
         }
@@ -361,9 +381,14 @@ pub fn snapshot_candidates(
             span_begin_session
         };
         let span_end = original_end(anchor.saturating_add(cand.consumed_bytes()));
-        let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.state.candidates.intern(&bytes) else {
-            continue;
+        let text = if missing {
+            oxpinyin_facade::TextSpan::NULL
+        } else {
+            let bytes = phrase_text_bytes(cand.text());
+            let Some(text) = inst.state.candidates.intern(&bytes) else {
+                continue;
+            };
+            text
         };
         if cand.text().outward_bytes().is_none() {
             inst.state.candidates.keep_stored_text(cand.text().clone());

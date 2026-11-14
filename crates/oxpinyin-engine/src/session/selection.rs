@@ -535,6 +535,26 @@ where
         self.validate_selection_constraints()
     }
 
+    /// Choose a searched row whose display string is null. Preserve the
+    /// pin's constraint write and validation without decoding a sentence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a lookup error from constraint validation.
+    pub fn choose_unreadable_step(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: PhraseToken,
+    ) -> Result<usize, EngineError> {
+        self.validate_selection_constraints()?;
+        let len = self
+            .constraints
+            .add(start, end, token, PhraseText::from(""));
+        self.validate_selection_constraints()?;
+        Ok(len)
+    }
+
     /// Revalidate existing forcings on a refused choose, preserving the pin's
     /// resize and spelling checks without attempting sentence decoding.
     fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {

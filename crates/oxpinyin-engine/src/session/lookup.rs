@@ -553,6 +553,7 @@ where
             let start = into.len();
             {
                 let mut buf = ScanBuf {
+                    span_start: 0,
                     span_base: anchor,
                     path: scratch.path,
                     tones: SmallVec::new(),
@@ -660,6 +661,7 @@ where
         end: usize,
     ) -> Result<(), EngineError> {
         let ScanBuf {
+            span_start,
             span_base,
             path,
             tones,
@@ -682,7 +684,7 @@ where
             .candidate_search_into(path, tones, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
         {
-            **unreadable |= failed_item;
+            unreadable.append(failed_item, *span_start, end);
             **continued |= extends;
             append_scan_entries(
                 entries.drain(..),
@@ -717,17 +719,25 @@ where
 
         if has_incomplete && !self.dictionary.handles_partial_keys() {
             for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                **unreadable |= self.lookup_and_append(
-                    sequence.as_slice(),
-                    tones,
+                unreadable.append(
+                    self.lookup_and_append(
+                        sequence.as_slice(),
+                        tones,
+                        end,
+                        system,
+                        addon,
+                        entries,
+                    )?,
+                    *span_start,
                     end,
-                    system,
-                    addon,
-                    entries,
-                )?;
+                );
             }
         } else {
-            **unreadable |= self.lookup_and_append(path, tones, end, system, addon, entries)?;
+            unreadable.append(
+                self.lookup_and_append(path, tones, end, system, addon, entries)?,
+                *span_start,
+                end,
+            );
         }
 
         let can_extend = self
@@ -758,12 +768,12 @@ where
         system: &mut Vec<Candidate>,
         addon: &mut Vec<Candidate>,
         entries: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, EngineError> {
+    ) -> Result<oxpinyin_core::UnreadableRows, EngineError> {
         // The flag rides this call: a token of a loaded library whose item
         // cannot be read, which the pin's candidate listing dies on.
         let unreadable = self
             .dictionary
-            .lookup_into_flagged(sequence, entries)
+            .lookup_candidate_rows(sequence, tones, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut toned: Vec<u32> = self
@@ -956,7 +966,7 @@ where
         // row per candidate is Gate 3.
         let gram = self.dynamic_adjust_gram(anchor, gate)?;
         {
-            let mut unreadable = false;
+            let mut unreadable = crate::candidate::UnreadableCandidates::default();
             let mut scratch = ScanScratch {
                 unreadable: &mut unreadable,
                 path,
@@ -1124,7 +1134,7 @@ where
         &mut self,
         build: impl FnOnce(&mut Self, &mut Vec<Candidate>) -> Result<(), EngineError>,
     ) -> Result<CandidateList, EngineError> {
-        self.scan_unreadable = false;
+        self.scan_unreadable = Default::default();
         self.scan_ranked_phrase = false;
         let mut items = core::mem::take(&mut self.scratch.window_items);
         if let Err(error) = build(self, &mut items) {
@@ -1237,7 +1247,7 @@ where
         // `rank_keys[i].0` is `out[i]`'s key: each slice appends its rows'
         // keys as it appends the rows.
         rank_keys.clear();
-        let mut unreadable = false;
+        let mut unreadable = crate::candidate::UnreadableCandidates::default();
         let mut ranked_phrase = false;
 
         for start in 0..bound {
@@ -1261,6 +1271,7 @@ where
             group.clear();
             {
                 let mut buf = ScanBuf {
+                    span_start: start,
                     span_base: 0,
                     path,
                     tones: SmallVec::new(),

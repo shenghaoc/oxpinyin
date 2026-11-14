@@ -472,6 +472,17 @@ pub extern "C" fn pinyin_choose_candidate(
     // terminator slot and changes nothing observable (GLib 2.84.4
     // `garray.c:349-354`, `:1051-1079`).
     let row = &inst.state.candidates[index];
+    if row.text == oxpinyin_facade::TextSpan::NULL
+        && row.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE
+        && let Some(token) = row.token.get()
+    {
+        let span = row.selection;
+        let span_len = row.span_len;
+        return match inst.core.choose_unreadable_step(span, token) {
+            Ok(len) => choose_answer(offset, if len == 0 { 0 } else { span_len }),
+            Err(_) => -1,
+        };
+    }
     if row.token.get().is_none()
         && row.candidate_type() != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
     {

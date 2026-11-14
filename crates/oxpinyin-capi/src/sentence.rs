@@ -591,7 +591,18 @@ pub extern "C" fn pinyin_guess_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    for cand in candidates.iter() {
+    let unreadable = candidates.sole_unreadable_candidate().filter(|_| {
+        !sentence_rows_only
+            && candidates
+                .iter()
+                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+            && !facade_total_is_zero(&inst.read())
+    });
+    for (cand, missing) in candidates
+        .iter()
+        .map(|row| (row, false))
+        .chain(unreadable.iter().map(|row| (row, true)))
+    {
         // The engine's remaining-raw-input `Fallback` row is the
         // session-API affordance (`session-api.md`: it keeps `select`
         // meaningful when no phrase is found) —
@@ -622,9 +633,14 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             continue;
         }
-        let bytes = phrase_text_bytes(cand.text());
-        let Some(text) = inst.state.candidates.intern(&bytes) else {
-            continue;
+        let text = if missing {
+            oxpinyin_facade::TextSpan::NULL
+        } else {
+            let bytes = phrase_text_bytes(cand.text());
+            let Some(text) = inst.state.candidates.intern(&bytes) else {
+                continue;
+            };
+            text
         };
         let selection = oxpinyin_facade::SelectionSpan::of_candidate(cand, session_offset);
         // The pin's `m_end - m_begin`: `m_begin` is the caller's guess

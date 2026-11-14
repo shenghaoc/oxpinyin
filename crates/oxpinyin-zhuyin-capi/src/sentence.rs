@@ -394,7 +394,7 @@ fn validated_lookup_offset(
 /// Whether the facade's `guint32` unigram total is zero: the loaded
 /// libraries' sum, the user store's deltas and the accepted
 /// `zhuyin_token_add_unigram_frequency` deltas, wrapped.
-fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
+pub(crate) fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.lm.amplified_total() == 0
 }
 

@@ -159,7 +159,7 @@ An entry holds nothing else.
 ### `table.conf` follows its rows; malformed ones fail the triggering call (policy rows 78, 79, 80 and 83)
 
 - **Pin:** a missing `source table format:` line leaves `str` unwritten and compares it (`src/storage/table_info.cpp:209-229`): undefined. A `table.conf` that points a loaded library at another file leaves tokens with no item, and the formatter leaves the string NULL (`src/pinyin.cpp:1635-1637`, `:2010-2016`). The string comparison is undefined if it reaches that NULL (`:2053`, `:2082`). A sole ordinary row survives when the facade total is positive and the prepends add no row. At zero the ranking assertion fires before formatting (`:1855-1865`, row 61).
-- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. Candidate guesses omit the unreadable item and return true without a warning on the recorded comparison paths. Row 106 records the sole-row and zero-total boundaries.
+- **oxpinyin:** the missing line is `TableConfError::UninitialisedSourceFormat`: init answers NULL with one warning. Candidate guesses omit the unreadable item and return true without a warning on the recorded comparison paths. For a sole searched row with a positive total and no prepended rows, both facades publish it with a NULL string. Row 106 records the choose and zero-total boundaries.
 - **Decision:** accepted, class (b) (row 80); rows 78 and 83 read the rows and λ as the pin does, and row 79 reproduces the pin.
 - **Tests:** `table_info::tests::header_misses_are_the_ordinary_false_or_the_uninitialised_read` (header parsing), `e2e_tests::table_conf_919_short_row_merged` (row handling).
 

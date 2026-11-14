@@ -41,7 +41,7 @@ where
                 sentence: SentenceState::default(),
                 candidate_prefixes: Vec::new(),
                 scratch: Scratch::default(),
-                scan_unreadable: false,
+                scan_unreadable: Default::default(),
                 scan_ranked_phrase: false,
             },
         }
