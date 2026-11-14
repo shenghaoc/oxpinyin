@@ -53,6 +53,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
      An empty scan gives the raw-input fallback row.
 3. **Sentence and longer candidates come from the C facade, not the scan.**
    - `pinyin_guess_candidates` prepends the n-best sentence rows (`NBEST_MATCH_CANDIDATE`) unless `SORT_WITHOUT_SENTENCE_CANDIDATE` is set.
+     The LONGER winner is the maximum-unigram eligible token. Ties keep the earlier library, then the earlier matrix path and cursor token within that library (`phrase_large_table3.h:77-97`; `pinyin.cpp:1870-1928`).
      It prepends a `LONGER_CANDIDATE` row unless `SORT_WITHOUT_LONGER_CANDIDATE` is set (`pinyin.cpp:2290-2300`; `crates/oxpinyin-capi/src/sentence.rs`; [sentence-surface.md](sentence-surface.md)).
    - The W4 capture (`fixtures/w4/oracle-candidate-structure.txt`, sort word `0x1e`, options `0x18a`) holds only `NORMAL_CANDIDATE` rows.
      That observation applies to the capture only.
