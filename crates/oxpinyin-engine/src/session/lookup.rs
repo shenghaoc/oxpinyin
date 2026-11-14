@@ -586,18 +586,9 @@ where
                         ));
                     }
                 };
-                // The lookup that collected this row read its live item
-                // already and kept the item's unigram, the model's
-                // visible-live answer for the same state (no store, mask,
-                // option or training write runs between that lookup and
-                // this step; see `RuntimeDict::fill_lookup`). Price from
-                // it; a row without one reads the model as before.
-                let count = match candidate.live_unigram() {
-                    Some(live) => Some(u64::from(live)),
-                    None => self.model.unigram_freq(&token).map_err(|error| {
-                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?,
-                };
+                let count = self.model.unigram_freq(&token).map_err(|error| {
+                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                })?;
                 count.map(|count| {
                     if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
                         // zhuyin.cpp:1264-1268 has no libpinyin 0.1
@@ -803,7 +794,7 @@ where
                 system,
             );
             self.dictionary
-                .lookup_addon_candidates_into(path, entries)
+                .lookup_addon_into(path, entries)
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
@@ -874,7 +865,7 @@ where
         // cannot be read, which the pin's candidate listing dies on.
         let unreadable = self
             .dictionary
-            .lookup_candidates_into(sequence, entries)
+            .lookup_into_flagged(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut toned: Vec<u32> = self
@@ -895,7 +886,7 @@ where
             system,
         );
         self.dictionary
-            .lookup_addon_candidates_into(sequence, entries)
+            .lookup_addon_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         append_scan_entries(
             entries.drain(..),

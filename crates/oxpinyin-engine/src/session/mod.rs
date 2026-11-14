@@ -342,11 +342,14 @@ fn append_scan_entries(
 ) {
     for entry in entries {
         let token = entry.token();
-        let live_unigram = entry.live_unigram();
-        into.push(
-            Candidate::new(entry.into_text(), kind, keys, end, Some(token), None)
-                .with_live_unigram(live_unigram),
-        );
+        into.push(Candidate::new(
+            entry.into_text(),
+            kind,
+            keys,
+            end,
+            Some(token),
+            None,
+        ));
     }
 }
 

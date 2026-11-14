@@ -48,7 +48,7 @@ The defaulted methods form these groups:
   `TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value; `RuntimeDict` keeps the path's user lookup and tone-less keys there (`PathPricing`, `crates/oxpinyin-runtime/src/lib.rs`) instead of recomputing them per token.
   `trellis_item_with_facts` and `trellis_text_with_facts` are the sentence-only variants that also record sentence facts.
 - **Candidate lookup.**
-  `lookup_into`, `lookup_into_flagged`, `lookup_candidates_into`, `candidate_search_into` and the addon variants (`lookup_addon`, `lookup_addon_into`, `lookup_addon_candidates_into`, `phrase_prefix_exists_addon`) fill caller-owned buffers or read the addon facade.
+  `lookup_into`, `lookup_into_flagged`, `candidate_search_into` and the addon variants (`lookup_addon`, `lookup_addon_into`, `phrase_prefix_exists_addon`) fill caller-owned buffers or read the addon facade. A lookup carries tokens and text only; a step reads one token's pronunciation possibility through `trellis_item`.
 - **Phrase index reads.**
   `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues`, `phrase_index_item_count`, `handles_partial_keys`, `suggest_extension_tokens`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `overlong_extension_gate`.
 - **`phrase_item_pronunciations(token)`** reads the stored pronunciations of the phrase item behind a token; the default answers `PhraseItemRead::Unsupported`.

@@ -98,7 +98,7 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 }
 
 /// Resolves the surviving records of one search through `libraries`:
-/// text from the chunk item, possibility over its pronunciations. A token
+/// the text of each chunk item. A token
 /// without a loaded item is dropped (upstream's `NULL == head` skip).
 ///
 /// Answers whether the search met a token whose library is loaded (a system
@@ -108,14 +108,13 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 /// the pin's candidate listing goes on to compare the string it never set.
 fn resolve_items(
     libraries: &PhraseLibraries,
-    pricing_keys: Option<&[ChewingKey]>,
     tokens: &[u32],
     out: &mut Vec<PhraseEntry>,
     user_nibbles: u32,
 ) -> bool {
     let mut unreadable = false;
     for &token in tokens {
-        let Some(entry) = resolve_item(libraries, pricing_keys, token) else {
+        let Some(entry) = resolve_item(libraries, None, token) else {
             unreadable |= library_loaded(libraries, user_nibbles, token);
             continue;
         };
@@ -505,7 +504,13 @@ fn user_nibbles(conf: &TableConf) -> u32 {
 impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
     SystemDictionary<L, T>
 {
-    /// Resolve system-index tokens through the live owner of detached chunks.
+    /// The system lookup: the tokens `ChewingLargeTable2::search` finds for
+    /// `syllables`, each with its text, in the order the table stores them
+    /// (`chewing_large_table2.h:91-133` at 074a2219). The pin's search
+    /// carries tokens only; a pronunciation's price is read later, for one
+    /// token, through [`Self::trellis_item`]. A token of a detached library
+    /// resolves through `live`, its live owner. The answer is whether a token
+    /// of a loaded library had no readable item.
     ///
     /// # Errors
     /// Returns a dictionary error when the system index cannot be searched.
@@ -513,9 +518,8 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-        price: bool,
         mut visible: impl FnMut(u32) -> bool,
-        mut live: impl FnMut(u32, Option<&[ChewingKey]>) -> Option<PhraseEntry>,
+        mut live: impl FnMut(u32) -> Option<PhraseEntry>,
     ) -> Result<bool, DictError> {
         out.clear();
         if syllables.is_empty() {
@@ -525,7 +529,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             return Ok(false);
         };
         let tokens = self.pinyin.search(&keys)?;
-        let pricing = price.then_some(keys.as_slice());
         let mut unreadable = false;
         for token in tokens {
             // Unloaded or removed tokens are not malformed loaded items.
@@ -538,9 +541,9 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
                 .library(token)
                 .is_some_and(|library| library.is_detached())
             {
-                live(token, pricing)
+                live(token)
             } else {
-                resolve_item(self.libraries(), pricing, token)
+                resolve_item(self.libraries(), None, token)
             };
             if let Some(entry) = entry {
                 out.push(entry);
@@ -854,28 +857,19 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables_to_chewing_keys(syllables)
     }
 
-    /// [`Dictionary::lookup_into_flagged`]'s body.
+    /// [`Dictionary::lookup_into_flagged`]'s body: [`Self::lookup_with_live`]
+    /// with every library visible and each item read from its own chunk.
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-        price: bool,
     ) -> Result<bool, DictError> {
-        out.clear();
-        if syllables.is_empty() {
-            return Ok(false);
-        }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
-        let items = self.pinyin.search(&keys)?;
-        Ok(resolve_items(
-            self.libraries(),
-            price.then_some(keys.as_slice()),
-            &items,
+        self.lookup_with_live(
+            syllables,
             out,
-            self.user_nibbles,
-        ))
+            |_| true,
+            |token| resolve_item(self.libraries(), None, token),
+        )
     }
 }
 
@@ -888,7 +882,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut entries, true)?;
+        self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
     }
 
@@ -956,7 +950,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out, true).map(|_| ())
+        self.fill_lookup(syllables, out).map(|_| ())
     }
 
     fn lookup_into_flagged(
@@ -964,15 +958,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out, true)
-    }
-
-    fn lookup_candidates_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out, false)
+        self.fill_lookup(syllables, out)
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, DictError> {
@@ -1309,28 +1295,6 @@ impl AddonDictionary {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out, true)
-    }
-
-    /// Candidate text/token rows, without unused pronunciation pricing.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::lookup_into`].
-    pub fn lookup_candidates_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out, false)
-    }
-
-    fn fill_lookup(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-        price: bool,
-    ) -> Result<(), DictError> {
         out.clear();
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(());
@@ -1344,13 +1308,7 @@ impl AddonDictionary {
             return Ok(());
         };
         let items = pinyin.search(&keys)?;
-        resolve_items(
-            &self.libraries,
-            price.then_some(keys.as_slice()),
-            &items,
-            out,
-            0,
-        );
+        resolve_items(&self.libraries, &items, out, 0);
         Ok(())
     }
 

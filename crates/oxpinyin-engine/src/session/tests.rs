@@ -1884,125 +1884,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     );
 }
 
-#[test]
-fn candidate_frequencies_price_a_captured_live_unigram_without_the_model() {
-    use super::CandidateKind;
-    use crate::candidate::Candidate;
-
-    // The model answers a count far above the captured one. A row carrying
-    // the lookup's live unigram 14 prices as 14 without asking the model
-    // (3 over 51,051,831, as the test above); a row without one reads the
-    // model as before; and a captured count runs through the same
-    // arithmetic as the model's answer would.
-    let session = Session::new(
-        SessionSettings::default(),
-        Silent,
-        FixedUnigrams {
-            system: 999_999,
-            addon: 14,
-            total: 51_051_831,
-            addon_total: 25_525_916,
-        },
-    );
-    let row = |text: &str, token: u32, live: Option<u32>| {
-        Candidate::new(
-            compact_str::CompactString::from(text),
-            CandidateKind::Phrase,
-            1,
-            3,
-            Some(PhraseToken::new(token)),
-            None,
-        )
-        .with_live_unigram(live)
-    };
-    let collected = vec![
-        row("股", 1, Some(14)),
-        row("附", 2, None),
-        row("零", 3, Some(0)),
-        row("同", 4, Some(999_999)),
-    ];
-    let mut frequencies = Vec::new();
-    session
-        .candidate_frequencies(&collected, None, true, &mut frequencies)
-        .expect("frequency reads cannot fail here");
-    assert_eq!(
-        frequencies[0], 3,
-        "the captured 14 prices as the model's 14 did"
-    );
-    assert_eq!(
-        frequencies[2], 0,
-        "a captured zero is a zero count, not a missing one"
-    );
-    assert!(
-        frequencies[1] > 3,
-        "an uncaptured row reads the model's 999_999"
-    );
-    assert_eq!(
-        frequencies[3], frequencies[1],
-        "a captured count and the model's equal count price identically"
-    );
-}
-
-/// Two one-key entries whose live unigrams come from a cell the test moves
-/// between scans: the next lookup reads what a training write left.
-struct LiveUnigramDict {
-    live: std::rc::Rc<std::cell::Cell<(u32, u32)>>,
-}
-
-impl Dictionary for LiveUnigramDict {
-    type Error = EngineError;
-    type PathMemo = ();
-    type Syllable = SyllableKey;
-
-    fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
-        let (first, second) = self.live.get();
-        Ok(vec![
-            PhraseEntry::new(PhraseToken::new(0x0100_0001), "一".to_owned())
-                .with_live_unigram(first),
-            PhraseEntry::new(PhraseToken::new(0x0100_0002), "二".to_owned())
-                .with_live_unigram(second),
-        ])
-    }
-}
-
-#[test]
-fn a_window_ranked_after_a_training_write_prices_the_rewritten_item() {
-    fn texts(list: &crate::candidate::CandidateList) -> Vec<&str> {
-        list.iter()
-            .filter_map(crate::candidate::Candidate::text_str)
-            .collect()
-    }
-
-    let live = std::rc::Rc::new(std::cell::Cell::new((5_000_000, 10_000_000)));
-    let mut session = Session::new(
-        SessionSettings::default(),
-        LiveUnigramDict {
-            live: std::rc::Rc::clone(&live),
-        },
-        FixedUnigrams {
-            system: 0,
-            addon: 0,
-            total: 51_051_831,
-            addon_total: 1,
-        },
-    );
-    session.replace_raw("a").expect("typing cannot fail");
-    assert_eq!(
-        texts(session.candidates()),
-        ["二", "一"],
-        "the larger captured unigram ranks first"
-    );
-
-    // The training write: the second item's field falls below the first's.
-    live.set((5_000_000, 1));
-    // The retained list is not ranked again, so its order stands...
-    assert_eq!(texts(session.candidates()), ["二", "一"]);
-    // ...and a window ranked after the write reads the items afresh: its
-    // order follows the rewritten field, not the earlier capture.
-    let window = session.candidates_at(0).expect("window at 0");
-    assert_eq!(texts(&window), ["一", "二"]);
-}
-
 /// One entry per facade, so a scan's two batches are exactly one
 /// system and one addon candidate.
 struct TwoFacadeDict {
@@ -2132,6 +2013,111 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
         texts,
         ["系", "附"],
         "a full three-key tie must keep the pin's system-before-addon array order"
+    );
+}
+
+/// Two one-key entries, ranked by a model whose system unigrams a test
+/// moves between scans, as a training write moves the live item.
+struct TrainedUnigrams {
+    counts: std::rc::Rc<std::cell::Cell<(u64, u64)>>,
+}
+
+impl LanguageModel for TrainedUnigrams {
+    type Error = EngineError;
+    type Token = PhraseToken;
+
+    fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
+        let (first, second) = self.counts.get();
+        Ok(Some(if token.value() == 0x0100_0001 {
+            first
+        } else {
+            second
+        }))
+    }
+
+    fn unigram_total(&self) -> Result<Option<u64>, EngineError> {
+        Ok(Some(51_051_831))
+    }
+}
+
+/// `_compute_frequency_of_items` reads each item's unigram when the window
+/// is ranked (`pinyin.cpp:1794-1866` at 074a2219), and the candidate list
+/// is ranked once per guess. A list built before a training write keeps
+/// its order; a window ranked after it reads the new counts.
+#[test]
+fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
+    fn texts(list: &crate::candidate::CandidateList) -> Vec<&str> {
+        list.iter()
+            .filter_map(crate::candidate::Candidate::text_str)
+            .collect()
+    }
+
+    let counts = std::rc::Rc::new(std::cell::Cell::new((5_000_000, 10_000_000)));
+    let mut session = Session::new(
+        SessionSettings::default(),
+        FixtureDictionary::parse(
+            "token=16777217\tkeys=a\ttext=一\tunigram=1\n\
+             token=16777218\tkeys=a\ttext=二\tunigram=1\n",
+        )
+        .expect("authored fixture"),
+        TrainedUnigrams {
+            counts: std::rc::Rc::clone(&counts),
+        },
+    );
+    session.replace_raw("a").expect("typing cannot fail");
+    assert_eq!(
+        texts(session.candidates()),
+        ["二", "一"],
+        "the larger count ranks first"
+    );
+
+    // The training write: the second item's count falls below the first's.
+    counts.set((5_000_000, 1));
+    assert_eq!(
+        texts(session.candidates()),
+        ["二", "一"],
+        "the retained list is not ranked again"
+    );
+    let window = session.candidates_at(0).expect("window at 0");
+    assert_eq!(
+        texts(&window),
+        ["一", "二"],
+        "a new window reads the new counts"
+    );
+}
+
+/// The pin's candidate listing dies on a loaded library's token whose
+/// item cannot be read (`pinyin.cpp:1635-1637`, `:2053` at 074a2219). The
+/// lookup answers that it met one, and the window it builds says so for
+/// the C ABIs to fail the call.
+#[test]
+fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
+    struct UnreadableDict;
+    impl Dictionary for UnreadableDict {
+        type Error = EngineError;
+        type PathMemo = ();
+        type Syllable = SyllableKey;
+
+        fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+            Ok(vec![PhraseEntry::new(PhraseToken::new(0x0100_0001), "你")])
+        }
+
+        fn lookup_into_flagged(
+            &self,
+            syllables: &[SyllableKey],
+            out: &mut Vec<PhraseEntry>,
+        ) -> Result<bool, EngineError> {
+            *out = self.lookup(syllables)?;
+            Ok(true)
+        }
+    }
+    let mut session = Session::new(SessionSettings::default(), UnreadableDict, Silent);
+    session.replace_raw("ni").expect("typing cannot fail");
+    let window = session.candidates_at(0).expect("window at 0");
+    assert!(window.had_unreadable_item());
+    assert!(
+        window.iter().any(|row| row.text_str() == Some("你")),
+        "the readable rows stay listed"
     );
 }
 
@@ -4291,58 +4277,6 @@ fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
     let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
     session.dictionary.failing = true;
     assert!(session.guess_sentence().is_err());
-}
-
-#[test]
-fn candidate_collection_uses_unpriced_system_and_addon_operations() {
-    struct CandidateDict;
-    impl Dictionary for CandidateDict {
-        type Error = EngineError;
-        type PathMemo = ();
-        type Syllable = SyllableKey;
-        fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
-            panic!("candidate collection must not request priced lookup");
-        }
-        fn lookup_candidates_into(
-            &self,
-            _: &[SyllableKey],
-            out: &mut Vec<PhraseEntry>,
-        ) -> Result<bool, EngineError> {
-            out.clear();
-            out.push(PhraseEntry::new(PhraseToken::new(0x0100_0001), "你"));
-            Ok(true)
-        }
-        fn lookup_addon(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
-            panic!("candidate collection must not request priced addon lookup");
-        }
-        fn lookup_addon_candidates_into(
-            &self,
-            _: &[SyllableKey],
-            out: &mut Vec<PhraseEntry>,
-        ) -> Result<(), EngineError> {
-            out.clear();
-            out.push(PhraseEntry::new(PhraseToken::new(0x0400_0001), "拟"));
-            Ok(())
-        }
-    }
-    let session = Session::new(SessionSettings::default(), CandidateDict, Silent);
-    let (mut system, mut addon, mut entries) = (Vec::new(), Vec::new(), Vec::new());
-    assert!(
-        session
-            .lookup_and_append(
-                &[SyllableKey::from_text("ni").unwrap()],
-                &[0],
-                2,
-                &mut system,
-                &mut addon,
-                &mut entries
-            )
-            .unwrap()
-    );
-    assert_eq!(system.len(), 1);
-    assert_eq!(addon.len(), 1);
-    assert_eq!(system[0].token(), Some(PhraseToken::new(0x0100_0001)));
-    assert_eq!(addon[0].token(), Some(PhraseToken::new(0x0400_0001)));
 }
 
 /// One phrase for one key: its searched row and the decoded sentence share

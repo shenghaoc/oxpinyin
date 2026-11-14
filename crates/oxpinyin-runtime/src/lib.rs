@@ -294,14 +294,6 @@ impl AddonSet {
         self.dict.lookup_into(syllables, out)
     }
 
-    fn lookup_candidates_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        self.dict.lookup_candidates_into(syllables, out)
-    }
-
     fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         self.dict.prefix_exists(syllables)
     }
@@ -413,49 +405,31 @@ pub struct RuntimeDict<'a> {
     library_mask: &'a Cell<u32>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static PRICING_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 impl<'a> RuntimeDict<'a> {
-    /// Shared lookup keeps search side effects and visibility identical;
-    /// candidate collection omits only the pronunciation prices it discards.
+    /// The one lookup: the system table's search, then the user table's, as
+    /// `FacadeChewingTable2::search` runs them (`facade_chewing_table2.h:
+    /// 109-129` at 074a2219), each token with its text. The search carries
+    /// tokens only; the ranking reads each token's frequency
+    /// (`_compute_frequency_of_items`, `pinyin.cpp:1794`) and a step reads
+    /// its pronunciation possibility (`phonetic_lookup.h:646-656`) on their
+    /// own. The answer is whether a token of a loaded library had no
+    /// readable item.
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-        price: bool,
     ) -> Result<bool, DictError> {
-        // The ranking prices each row from `RuntimeLm::unigram_freq`, whose
-        // visible-live answer is `UserStore::system_unigram`: the libpinyin
-        // session's live-buffer item, the same bytes this read decodes for
-        // the text. Capture that field here, on exactly that branch (an
-        // `Overlay` item), so the ranking of this lookup
-        // does not read the item a second time. A removed item or a masked
-        // library leaves no entry; a shipped or user-table entry captures
-        // nothing and the ranking reads as before.
         let unreadable = self.system.lookup_with_live(
             syllables,
             out,
-            price,
             |token| self.library_visible_token(token),
-            |token, keys| {
+            |token| {
                 self.live_items()
                     .read(token, |item| {
-                        let mut entry =
-                            PhraseEntry::new(PhraseToken::new(token), item.phrase_text()?);
-                        if item.origin() == ItemOrigin::Overlay {
-                            entry = entry.with_live_unigram(item.unigram());
-                        }
-                        if let Some(keys) = keys {
-                            let (matched, total) = Self::item_possibility(item, keys);
-                            entry = entry.with_pronunciation_possibility(
-                                u64::from(matched),
-                                u64::from(total),
-                            );
-                        }
-                        Some(entry)
+                        Some(PhraseEntry::new(
+                            PhraseToken::new(token),
+                            item.phrase_text()?,
+                        ))
                     })
                     .found()
                     .flatten()
@@ -463,18 +437,7 @@ impl<'a> RuntimeDict<'a> {
         )?;
         let query: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.user.note_pinyin_search_keys(&query);
-        let user_start = out.len();
         self.user_lookup().lookup_into(&query, out);
-        // Price after the user phrase borrow has ended, as before.
-        if price && self.live_items().has_overlay() {
-            for entry in &mut out[user_start..] {
-                if let Some((matched, total)) =
-                    self.effective_possibility(&query, entry.token().value())
-                {
-                    entry.set_pronunciation_possibility(u64::from(matched), u64::from(total));
-                }
-            }
-        }
         if self.token_filter_active() {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
@@ -554,8 +517,6 @@ impl<'a> RuntimeDict<'a> {
         item: oxpinyin_user::SystemItem<'_>,
         query: &[oxpinyin_core::ChewingKey],
     ) -> (u32, u32) {
-        #[cfg(test)]
-        PRICING_EVALUATIONS.with(|count| count.set(count.get() + 1));
         let mut total = 0_u32;
         let mut matched = 0_u32;
         for reading in item.pronunciations() {
@@ -1178,15 +1139,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
-        self.fill_lookup(syllables, out, true)
-    }
-
-    fn lookup_candidates_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, Self::Error> {
-        self.fill_lookup(syllables, out, false)
+        self.fill_lookup(syllables, out)
     }
 
     fn candidate_search_into(
@@ -1200,7 +1153,7 @@ impl Dictionary for RuntimeDict<'_> {
         }
         // One failed native get/check per search_matrix leaf. Tone and
         // continuation probes must not make additional system reads.
-        let unreadable = self.fill_lookup(syllables, out, false)?;
+        let unreadable = self.fill_lookup(syllables, out)?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut ranges = PhraseIndexRanges::new();
             if let Some(query) = Self::trellis_query(syllables, tones) {
@@ -1313,15 +1266,6 @@ impl Dictionary for RuntimeDict<'_> {
     ) -> Result<(), Self::Error> {
         let addons = self.addons.borrow();
         addons.lookup_into(syllables, out)
-    }
-
-    fn lookup_addon_candidates_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
-        let addons = self.addons.borrow();
-        addons.lookup_candidates_into(syllables, out)
     }
 
     fn phrase_prefix_exists_addon(
@@ -2694,156 +2638,39 @@ mod tests {
         }
     }
 
-    /// `fill_lookup` on the candidate path, as the window scan calls it
-    /// (`Dictionary::lookup_candidates_into`).
-    fn candidate_entries(runtime: &Runtime, text: &str) -> Vec<PhraseEntry> {
-        let key = SyllableKey::from_text(text).unwrap();
-        let mut out = Vec::new();
-        runtime
-            .dict()
-            .lookup_candidates_into(&[key], &mut out)
-            .unwrap();
-        out
-    }
-
-    /// Every live unigram the lookup captured is what the model answers for
-    /// its token in the same state; returns how many entries captured one.
-    fn assert_captures_price_as_the_model(runtime: &Runtime, entries: &[PhraseEntry]) -> usize {
-        let mut captured = 0;
-        for entry in entries {
-            let model = runtime.lm().unigram_freq(&entry.token()).unwrap();
-            if let Some(live) = entry.live_unigram() {
-                captured += 1;
-                assert_eq!(Some(u64::from(live)), model, "token {}", entry.token());
-            }
-        }
-        captured
-    }
-
-    fn entry_for(entries: &[PhraseEntry], token: u32) -> Option<&PhraseEntry> {
-        entries.iter().find(|entry| entry.token().value() == token)
-    }
-
+    /// A step prices the token it ranges from the token's item
+    /// (`get_phrase_item` then `compute_pronunciation_possibility`,
+    /// `phonetic_lookup.h:646-656` at 074a2219): a system token appended
+    /// to a system library and indexed by the user table, as well as a
+    /// shipped one, whatever the lookup that listed it carries.
     #[test]
-    fn candidate_lookup_captures_the_live_unigram_the_ranking_reads() {
-        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
-        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
-        let library = runtime.libraries().library(token).unwrap();
-        assert!(library.is_detached());
-
-        // A pristine item of a detached library on the phrases path: the
-        // capture fires, and it is the live field the model prices with.
-        let entries = candidate_entries(&runtime, "ni");
-        let entry = entry_for(&entries, token).expect("你 is a ni candidate");
-        let live = runtime.user_store().system_unigram(token).unwrap();
-        assert!(live > 0);
-        assert_eq!(
-            entry.live_unigram(),
-            Some(live),
-            "a pristine detached item captures its live unigram"
-        );
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(u64::from(live))
-        );
-        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
-
-        // A facade bump lands in the session store's live item; a window
-        // collected after it captures the moved field.
-        assert!(runtime.add_unigram_delta(token, 9));
-        let entries = candidate_entries(&runtime, "ni");
-        let bumped = entry_for(&entries, token).unwrap().live_unigram();
-        assert_eq!(bumped, Some(live + 9));
-        assert_captures_price_as_the_model(&runtime, &entries);
-
-        // A training write, then the window ranked again: the recapture is
-        // the trained field, not the capture the earlier window carried.
-        runtime
-            .user_store_mut()
-            .observe_selection(oxpinyin_user::SENTENCE_START, token)
-            .unwrap();
-        let trained = runtime.user_store().system_unigram(token).unwrap();
-        assert!(trained > live + 9, "training raises the live field");
-        let entries = candidate_entries(&runtime, "ni");
-        let recaptured = entry_for(&entries, token).unwrap().live_unigram();
-        assert_eq!(recaptured, Some(trained));
-        assert_ne!(recaptured, bumped);
-        assert_captures_price_as_the_model(&runtime, &entries);
-
-        // A masked library leaves no entry to capture, and the model's
-        // fallback answer for its token omits the live system item.
-        runtime.library_mask.set(1 << (token >> 24));
-        runtime
-            .user_store_mut()
-            .set_library_loaded((token >> 24) as u8, false);
-        let entries = candidate_entries(&runtime, "ni");
-        assert!(
-            entries
-                .iter()
-                .all(|entry| entry.token().value() >> 24 != token >> 24),
-            "a masked library's tokens leave the lookup"
-        );
-        assert_captures_price_as_the_model(&runtime, &entries);
-        let delta = runtime.user_store().unigram_delta(token).unwrap();
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(delta),
-            "the masked token prices from its user delta"
-        );
-        runtime.library_mask.set(0);
-        runtime
-            .user_store_mut()
-            .set_library_loaded((token >> 24) as u8, true);
-        let entries = candidate_entries(&runtime, "ni");
-        assert_eq!(
-            entry_for(&entries, token).unwrap().live_unigram(),
-            Some(trained)
-        );
-        assert_captures_price_as_the_model(&runtime, &entries);
-    }
-
-    #[test]
-    fn candidate_lookup_leaves_user_items_to_the_model() {
+    fn a_step_prices_system_tokens_the_user_table_indexes() {
         let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
         let ni = SyllableKey::from_text("ni").unwrap();
-        let keys = [oxpinyin_user::toned_key(ni.index(), 0).unwrap()];
-        // A user library's phrase arrives through the user table and
-        // captures nothing; the ranking reads the model for it as before.
-        let user = runtime
-            .user_store_mut()
-            .add_phrase_in(5, &"鎄".into(), &keys, Some(5))
-            .unwrap();
-        assert_eq!(user >> 24, 5);
-        // An item appended to a system library is a user item for its
-        // token (`with_user_item` answers it first); captured or not, it
-        // prices as the model does.
+        let shipped = runtime.dict().system().tokens_for_text("你").unwrap()[0];
+        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
         let appended = runtime
             .user_store_mut()
-            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
+            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(5))
             .unwrap();
-        assert_eq!(appended >> 24, 1);
-        assert_eq!(runtime.user_store().system_unigram(appended), Some(0));
-
-        let entries = candidate_entries(&runtime, "ni");
-        let entry = entry_for(&entries, user).expect("the user library's phrase is a ni candidate");
-        assert_eq!(
-            entry.live_unigram(),
-            None,
-            "a user-table entry captures nothing"
-        );
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(user)).unwrap(),
-            Some(15)
-        );
-        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
-        let entry = entry_for(&entries, appended)
-            .expect("the appended system token for 龘 is a ni candidate");
-        assert_eq!(
-            entry.live_unigram().map(u64::from).or(Some(0)),
-            runtime
-                .lm()
-                .unigram_freq(&PhraseToken::new(appended))
+        let listed = runtime.dict().lookup(&[ni]).unwrap();
+        for token in [shipped, appended] {
+            assert!(listed.iter().any(|entry| entry.token().value() == token));
+            let item = runtime
+                .dict()
+                .trellis_item(&[ni], &[], token)
                 .unwrap()
+                .expect("the step finds the item");
+            assert!(item.pronunciation.is_some(), "token {token:#x} is priced");
+        }
+        assert!(
+            runtime
+                .dict()
+                .trellis_records(&[ni], &[3])
+                .unwrap()
+                .iter()
+                .any(|entry| entry.token().value() == shipped
+                    && entry.pronunciation_possibility().is_some())
         );
     }
 
@@ -2955,11 +2782,12 @@ mod tests {
             runtime.dict().live_items().read(token, |_| ()),
             oxpinyin_user::Lookup::Absent
         );
-        // The removed item leaves no entry, so nothing is captured for it;
-        // the other items of the window capture what the model answers.
-        let entries = candidate_entries(&runtime, "ni");
-        assert!(entry_for(&entries, token).is_none());
-        assert!(assert_captures_price_as_the_model(&runtime, &entries) >= 1);
+        // The removed item leaves no entry.
+        let entries = runtime
+            .dict()
+            .lookup(&[SyllableKey::from_text("ni").unwrap()])
+            .unwrap();
+        assert!(entries.iter().all(|entry| entry.token().value() != token));
         assert_eq!(
             runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
             Some(0)
@@ -2970,128 +2798,6 @@ mod tests {
                 .unigram_freq(&PhraseToken::new(u32::MAX))
                 .unwrap(),
             Some(0)
-        );
-    }
-
-    #[test]
-    fn candidate_lookup_omits_prices_without_changing_live_priced_reads() {
-        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
-
-        let ni = SyllableKey::from_text("ni").unwrap();
-        let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
-        assert!(
-            runtime
-                .dict()
-                .system()
-                .libraries()
-                .library(token)
-                .unwrap()
-                .is_detached()
-        );
-        assert!(
-            runtime
-                .dict()
-                .lookup(&[ni])
-                .unwrap()
-                .iter()
-                .any(|entry| entry.token().value() == token),
-            "a transferred chunk routes through its live owner before history exists"
-        );
-
-        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
-        runtime
-            .user_store_mut()
-            .add_system_phrase_in(1, Some(token), &"你".into(), &keys, Some(5))
-            .unwrap();
-        // A newly appended system token is also indexed by the user table.
-        // It must be priced once when that table contributes it.
-        let indexed_system = runtime
-            .user_store_mut()
-            .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(5))
-            .unwrap();
-        let mut candidates = Vec::new();
-        assert!(
-            !runtime
-                .dict()
-                .lookup_candidates_into(&[ni], &mut candidates)
-                .unwrap()
-        );
-        assert!(!candidates.is_empty());
-        assert!(
-            candidates
-                .iter()
-                .all(|entry| entry.pronunciation_possibility().is_none())
-        );
-        PRICING_EVALUATIONS.with(|count| count.set(0));
-        let priced = runtime.dict().lookup(&[ni]).unwrap();
-        let evaluated = PRICING_EVALUATIONS.with(std::cell::Cell::get);
-        let priced_system_results = priced
-            .iter()
-            .filter(|entry| {
-                runtime
-                    .dict()
-                    .live_items()
-                    .is_system_library((entry.token().value() >> 24) as u8)
-                    && entry.pronunciation_possibility().is_some()
-            })
-            .count();
-        assert!(priced_system_results > 0);
-        assert!(
-            priced
-                .iter()
-                .any(|entry| entry.token().value() == indexed_system
-                    && entry.pronunciation_possibility().is_some()),
-            "the user-index result naming a system token is priced"
-        );
-        assert_eq!(
-            evaluated, priced_system_results,
-            "each system result is priced once"
-        );
-        let rows = |entries: &[PhraseEntry]| {
-            entries
-                .iter()
-                .map(|entry| (entry.token(), entry.text().clone()))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(rows(&candidates), rows(&priced));
-        assert!(
-            priced
-                .iter()
-                .find(|entry| entry.token().value() == token)
-                .unwrap()
-                .pronunciation_possibility()
-                .is_some()
-        );
-        assert!(
-            runtime
-                .dict()
-                .trellis_records(&[ni], &[3])
-                .unwrap()
-                .iter()
-                .find(|entry| entry.token().value() == token)
-                .unwrap()
-                .pronunciation_possibility()
-                .is_some()
-        );
-        assert!(runtime.unload_library(1));
-        runtime
-            .dict()
-            .lookup_candidates_into(&[ni], &mut candidates)
-            .unwrap();
-        assert!(
-            candidates
-                .iter()
-                .all(|entry| entry.token().value() != token)
-        );
-        assert!(runtime.load_library(1));
-        runtime
-            .dict()
-            .lookup_candidates_into(&[ni], &mut candidates)
-            .unwrap();
-        assert!(
-            candidates
-                .iter()
-                .any(|entry| entry.token().value() == token)
         );
     }
 
