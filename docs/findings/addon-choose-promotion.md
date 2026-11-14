@@ -71,15 +71,22 @@ store (`oxpinyin-user`). Nibbles 6 and 7 live there, and `addon.bin`
 (nibble 5) is a `USER_FILE` of the same facade, so promotion writes there
 too:
 
-- `UserStore::promote_addon_phrase(text, readings, unigram)`
-  (`crates/oxpinyin-user/src/store.rs`) allocates the next nibble-5 token,
-  writes the phrase text and each reading's key sequence and count, sets the
-  token's unigram to the copied item frequency and adds it to the unigram
-  total, in one write transaction, the same shape as `add_phrase_in`.
+- `UserStore::promote_addon_phrase(token, item)`
+  (`crates/oxpinyin-user/src/store.rs`) takes the addon item's wire bytes
+  and copies them: the item is written to the token's sub-index as stored,
+  the phrase table takes its stored words, and the pinyin index takes one
+  record per stored reading with the packed keys as stored, tones included.
+  The facade total takes the item's unigram. An item with no reading skips
+  the index records and is still written. It refuses only bytes that are
+  not a whole item and an item longer than `MAX_PHRASE_LENGTH` (16): the
+  pin copies words and readings into arrays of that size
+  (`pinyin.cpp:2548`, `:2555`), so a longer item is undefined there.
+  `check_add` keeps its refusals (an empty key, a malformed stored record,
+  register row 101).
 - `SharedDict::addon_phrase_item(token)`
-  (`crates/oxpinyin-capi/src/state.rs`) reads the addon dictionary the
-  candidate came from (text, pronunciations, unigram) and converts each
-  pronunciation spelling back to `SyllableKey` ids.
+  (`crates/oxpinyin-runtime/src/lib.rs`) reads the item's stored bytes from
+  the addon library (`PhraseItemView::as_bytes`). No spelling is rendered
+  and parsed back, so no tone, reading or non-scalar word is lost.
 - `pinyin_choose_candidate` (`crates/oxpinyin-capi/src/candidates.rs`) runs
   the promotion for an `ADDON` candidate before selecting, rewrites the
   snapshot candidate to `NORMAL_CANDIDATE` at the promoted token, and selects
@@ -116,6 +123,19 @@ list and replaces it (§5).
 
 - Promotion is gated on an `ADDON` candidate, which exists only once an
   addon library is loaded, so the empty-store, no-addon path does not change.
+- `oxpinyin-capi`'s
+  `union_e2e_tests::a_promoted_addon_item_keeps_every_toned_reading` and
+  `union_e2e_tests::an_addon_item_with_no_reading_is_still_promoted` and
+  `union_e2e_tests::an_addon_item_with_a_non_scalar_word_is_promoted_as_stored`
+  choose a crafted toned item, an indexed item with no reading and an item
+  whose words include 0xD800. They check the
+  candidate type, find the token with `pinyin_lookup_tokens` and compare
+  the packed readings and the item text.
+  `oxpinyin-user`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
+  `promote_addon_phrase_copies_an_item_with_no_reading`,
+  `promote_addon_phrase_copies_a_word_that_is_not_a_scalar` and
+  `promote_addon_phrase_takes_length_16_and_refuses_17` compare the copied
+  item bytes, which include the reading frequencies.
 - `oxpinyin-capi`'s
   `union_e2e_tests::chosen_addon_candidate_is_promoted_into_default_nibble_5`
   loads addon library 4 and chooses the surfaced `ADDON_CANDIDATE`. It

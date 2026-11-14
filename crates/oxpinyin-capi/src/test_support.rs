@@ -938,6 +938,112 @@ pub fn items_system(
     system
 }
 
+/// One item of [`addon_system`]'s addon library 4.
+pub struct AddonItem<'a> {
+    /// The stored UCS-4 words.
+    pub text: &'a [u32],
+    /// The stored readings: packed keys, tones included, and a count.
+    pub readings: &'a [(&'a [u16], u32)],
+    /// The keys the addon pinyin index files the item under. An item with
+    /// no reading is indexed all the same, as the pin's index and item
+    /// bodies are separate files.
+    pub indexed_as: &'a [u16],
+    /// The stored unigram.
+    pub unigram: u32,
+}
+
+/// A private system under `parent`, linked from `source`, whose addon
+/// library 4 holds exactly `items` (tokens 0x04000001 on, in order), with
+/// matching addon pinyin and phrase indexes. Answers its path.
+pub fn addon_system(
+    source: &std::path::Path,
+    parent: &std::path::Path,
+    items: &[AddonItem<'_>],
+) -> PathBuf {
+    use std::collections::BTreeMap;
+    let system = parent.join("system");
+    std::fs::create_dir_all(&system).expect("private system dir");
+    for entry in std::fs::read_dir(source).expect("system dir") {
+        let entry = entry.expect("system entry");
+        link_file(&entry.path(), &system.join(entry.file_name()));
+    }
+    let words =
+        |words: &[u16]| -> Vec<u8> { words.iter().flat_map(|word| word.to_le_bytes()).collect() };
+    let mut content = vec![0_u8; 8];
+    let mut offsets = vec![0_u32];
+    let mut phonetic: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut phrases: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+    let mut total = 0_u32;
+    for (slot, item) in items.iter().enumerate() {
+        let token = 0x0400_0000 | u32::try_from(slot + 1).expect("slot");
+        let raw_text: Vec<u8> = item
+            .text
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        total = total.wrapping_add(item.unigram);
+        offsets.push(u32::try_from(content.len()).expect("offset"));
+        content.extend([
+            u8::try_from(item.text.len()).expect("length"),
+            u8::try_from(item.readings.len()).expect("readings"),
+        ]);
+        content.extend(item.unigram.to_le_bytes());
+        content.extend(&raw_text);
+        for (keys, count) in item.readings {
+            content.extend(words(keys));
+            content.extend(count.to_le_bytes());
+        }
+        let raw_keys = words(item.indexed_as);
+        let index: Vec<u8> = item
+            .indexed_as
+            .iter()
+            .flat_map(|word| (word & 4095).to_le_bytes())
+            .collect();
+        for end in (2..index.len()).step_by(2) {
+            phonetic.entry(index[..end].to_vec()).or_default();
+        }
+        let mut record = token.to_le_bytes().to_vec();
+        record.extend(&raw_keys);
+        record.resize(record.len().div_ceil(4) * 4, 0);
+        phonetic.entry(index).or_default().extend(record);
+        for end in (4..raw_text.len()).step_by(4) {
+            phrases.entry(raw_text[..end].to_vec()).or_default();
+        }
+        phrases
+            .entry(raw_text)
+            .or_default()
+            .extend(token.to_le_bytes());
+    }
+    let count = u32::try_from(offsets.len()).expect("offsets");
+    let index_two = 17 + count * 4 + 1;
+    let content_len = u32::try_from(content.len()).expect("content");
+    let mut payload: Vec<u8> = [total, 17, index_two, index_two + content_len + 1]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    payload.push(b'#');
+    payload.extend(offsets.iter().flat_map(|value| value.to_le_bytes()));
+    payload.push(b'#');
+    payload.extend(&content);
+    payload.push(b'#');
+    let art = system.join("art.bin");
+    std::fs::remove_file(&art).expect("unlink art.bin");
+    std::fs::write(
+        &art,
+        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("art.bin");
+    for (name, rows) in [
+        ("addon_pinyin_index.bin", phonetic),
+        ("addon_phrase_index.bin", phrases),
+    ] {
+        let path = system.join(name);
+        std::fs::remove_file(&path).expect("unlink an addon index");
+        craft_tree(&path, &rows.into_iter().collect::<Vec<_>>());
+    }
+    system
+}
+
 mod death_tests {
     /// A panic that reaches this non-unwinding function aborts the process,
     /// as a facade panic inside an entry point would.
