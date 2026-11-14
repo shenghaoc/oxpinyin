@@ -218,25 +218,25 @@ impl ConstraintStore {
     /// Propagates the spelling probe's backend failure.
     pub(crate) fn validate<F>(&mut self, len: usize, still_spells: F) -> Result<bool, EngineError>
     where
-        F: Fn(usize, usize, PhraseToken, usize) -> Result<bool, EngineError>,
+        F: Fn(usize, usize, PhraseToken) -> Result<bool, EngineError>,
     {
         self.cells.resize(len, Cell::None);
         // The forcings to inspect, gathered before any mutation clears
         // cells the iteration would otherwise alias.
-        let forcings: Vec<(usize, PhraseToken, usize, usize)> = self
+        let forcings: Vec<(usize, PhraseToken, usize)> = self
             .cells
             .iter()
             .enumerate()
             .filter_map(|(index, cell)| {
-                if let Cell::OneStep { token, end, text } = cell {
-                    Some((index, *token, *end, text.phrase_length()))
+                if let Cell::OneStep { token, end, .. } = cell {
+                    Some((index, *token, *end))
                 } else {
                     None
                 }
             })
             .collect();
         let mut dropped = false;
-        for (index, token, end, length) in forcings {
+        for (index, token, end) in forcings {
             // The spelling probe runs first even for a run that overruns: the
             // pin reads the forced token's item before its overrun test
             // (`phonetic_lookup.cpp:152-154`), and a later forcing whose item
@@ -244,7 +244,7 @@ impl ConstraintStore {
             // for an overrunning run leaves the carried item as it was, as
             // the pin's failed `get_phrase_item` leaves `item`
             // (`:141-154`), and the run is cleared all the same.
-            let spells = still_spells(index, end, token, length);
+            let spells = still_spells(index, end, token);
             let overruns = end >= self.cells.len();
             if overruns || !spells? {
                 // The run's interior cells go with it (`clear_constraint`).
@@ -379,7 +379,7 @@ mod tests {
         assert!(store.clear_by_offset(0));
         assert!(store.clear_by_offset(1));
         assert!(
-            !store.validate(6, |_, _, _, _| Ok(false)).expect("validate"),
+            !store.validate(6, |_, _, _| Ok(false)).expect("validate"),
             "nothing is cleared"
         );
         assert_eq!(store.cell(0), Some(&null));
@@ -438,7 +438,7 @@ mod tests {
         // Shrink below the second run's end: the second run drops, the
         // first survives (growing never drops).
         let dropped = store
-            .validate(4, |_, _, _, _| Ok(true))
+            .validate(4, |_, _, _| Ok(true))
             .expect("probe cannot fail");
         assert!(dropped);
         assert!(store.is_one_step_at(0));
@@ -446,7 +446,7 @@ mod tests {
 
         // A token that no longer spells over its span drops.
         let dropped = store
-            .validate(6, |start, _, value, _| Ok(value.value() != 7 || start != 0))
+            .validate(6, |start, _, value| Ok(value.value() != 7 || start != 0))
             .expect("probe cannot fail");
         assert!(dropped);
         assert!(!store.is_active());
@@ -458,7 +458,7 @@ mod tests {
         store.resize(3);
         store.add(0, 2, token(7), "你".into());
         let dropped = store
-            .validate(8, |_, _, _, _| Ok(true))
+            .validate(8, |_, _, _| Ok(true))
             .expect("probe cannot fail");
         assert!(!dropped);
         assert!(store.is_one_step_at(0));
@@ -539,7 +539,7 @@ mod tests {
         // end == len - 1: a run ending at the last real byte — the
         // exact-buffer-end forcing — survives validation.
         store.add(0, 3, token(7), "你".into());
-        let dropped = store.validate(4, |_, _, _, _| Ok(true)).expect("probe ok");
+        let dropped = store.validate(4, |_, _, _| Ok(true)).expect("probe ok");
         assert!(!dropped);
         assert!(store.is_one_step_at(0));
 
@@ -549,7 +549,7 @@ mod tests {
         let mut store = ConstraintStore::default();
         store.resize(4);
         assert_eq!(store.add(0, 4, token(7), "你".into()), 4);
-        let dropped = store.validate(4, |_, _, _, _| Ok(true)).expect("probe ok");
+        let dropped = store.validate(4, |_, _, _| Ok(true)).expect("probe ok");
         assert!(dropped);
         assert!(!store.is_active());
     }

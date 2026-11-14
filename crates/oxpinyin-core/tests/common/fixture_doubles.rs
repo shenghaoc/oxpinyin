@@ -196,6 +196,9 @@ fn number(fields: &[(&str, &str)], name: &'static str, line: usize) -> Result<u6
 #[derive(Clone, Debug, Default)]
 pub struct FixtureDictionary {
     entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>>,
+    /// Each token's phrase item: one pronunciation per record that spells
+    /// it, toneless, with frequency 1.
+    items: BTreeMap<PhraseToken, oxpinyin_core::PronunciationRows>,
     count: usize,
 }
 
@@ -208,16 +211,25 @@ impl FixtureDictionary {
     pub fn parse(text: &str) -> Result<Self, FixtureError> {
         let records = parse_vocab(text)?;
         let mut entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>> = BTreeMap::new();
+        let mut items: BTreeMap<PhraseToken, oxpinyin_core::PronunciationRows> = BTreeMap::new();
         let count = records.len();
 
         for record in records {
+            items
+                .entry(record.token)
+                .or_default()
+                .push((record.keys.iter().map(|key| key.chewing_key()).collect(), 1));
             entries
                 .entry(record.keys)
                 .or_default()
                 .push(PhraseEntry::new(record.token, record.text));
         }
 
-        Ok(Self { entries, count })
+        Ok(Self {
+            entries,
+            items,
+            count,
+        })
     }
 
     /// Number of phrases held.
@@ -263,6 +275,16 @@ impl Dictionary for FixtureDictionary {
             .filter(|(keys, _)| keys.len() > syllables.len() && keys.starts_with(syllables))
             .flat_map(|(_, entries)| entries.iter().map(|entry| entry.token()))
             .collect())
+    }
+
+    fn phrase_item_pronunciations(
+        &self,
+        token: PhraseToken,
+    ) -> Result<oxpinyin_core::PhraseItemRead, FixtureError> {
+        Ok(self.items.get(&token).cloned().map_or(
+            oxpinyin_core::PhraseItemRead::NoItem,
+            oxpinyin_core::PhraseItemRead::Item,
+        ))
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {

@@ -51,7 +51,7 @@ The defaulted methods form these groups:
   `lookup_into`, `lookup_into_flagged`, `candidate_search_into` and the addon variants (`lookup_addon`, `lookup_addon_into`, `phrase_prefix_exists_addon`) fill caller-owned buffers or read the addon facade. A lookup carries tokens and text only; a step reads one token's pronunciation possibility through `trellis_item`.
 - **Phrase index reads.**
   `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues`, `phrase_index_item_count`, `handles_partial_keys`, `suggest_extension_tokens`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `overlong_extension_gate`.
-- **`phrase_item_pronunciations(token)`** reads the stored pronunciations of the phrase item behind a token; the default answers `PhraseItemRead::Unsupported`.
+- **`phrase_item_pronunciations(token)`** reads the stored pronunciations of the phrase item behind a token; the default answers `PhraseItemRead::NoItem`, as the pin's `get_phrase_item` fails for a token it has no item for.
   A forcing is then revalidated as the pin's `validate_constraint` does it (`phonetic_lookup.cpp:120-165` at 074a2219).
 
 ## `UserModel`

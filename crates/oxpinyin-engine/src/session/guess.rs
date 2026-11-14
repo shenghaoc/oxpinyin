@@ -201,8 +201,8 @@ where
             self.input.physical_separators(),
             self.input.as_bytes(),
         );
-        let dropped = store.validate(validation_size, |start, end, token, text_len| {
-            spelling.spells(&self.dictionary, start, end, token, text_len)
+        let dropped = store.validate(validation_size, |start, end, token| {
+            spelling.spells(&self.dictionary, start, end, token)
         });
         drop(spelling);
         self.constraints = store;

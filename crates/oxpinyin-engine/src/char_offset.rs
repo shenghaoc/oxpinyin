@@ -43,12 +43,11 @@
 //! refusing, not asserting, on an empty column or a zero key that shares its
 //! column, and in calling the caller's `add` at every complete path.
 
-use oxpinyin_core::scoring::{ScoringError, expand_keys};
-use oxpinyin_core::{Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_core::scoring::ScoringError;
+use oxpinyin_core::{Dictionary, PhraseToken, SyllableKey};
 
 use crate::cursor::MatrixKey;
 use crate::error::EngineError;
-use crate::session::SCAN_EXPANSION_LIMIT;
 
 /// One matrix column: the real keys placed at the position, in placement
 /// order, plus the zero-key entry when the position holds one.
@@ -100,19 +99,14 @@ fn build_columns(
 }
 
 /// Whether `token`'s item pronounces `key` with a kept possibility —
-/// `item.get_pronunciation_possibility(&key) >= FLT_EPSILON`. An entry
-/// spelling the token keeps it when its possibility is `None` (no counts,
-/// read as 1) or `Some` with a nonzero matched count; an incomplete key
-/// is expanded over its completions like the n-best span scan, since the
-/// pin's `pinyin_compare_with_tones` accepts every final for one.
+/// `item.get_pronunciation_possibility(&key) >= FLT_EPSILON` over the
+/// item's stored pronunciations (`phrase_index.h:136-163`). A token with
+/// no readable item keeps nothing.
 fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
-    let Some(syllable) = SyllableKey::from_chewing_key(key.key()) else {
-        return Ok(false);
-    };
     match dictionary
         .phrase_item_pronunciations(token)
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
@@ -128,31 +122,10 @@ where
                 .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
             // phrase_index.h:141-162: wrapping guint32 sums, then gfloat
             // division; the caller compares against FLT_EPSILON.
-            return Ok(total != 0 && matched as f32 / total as f32 >= f32::EPSILON);
+            Ok(total != 0 && matched as f32 / total as f32 >= f32::EPSILON)
         }
-        oxpinyin_core::PhraseItemRead::NoItem => return Ok(false),
-        oxpinyin_core::PhraseItemRead::Unsupported => {}
+        oxpinyin_core::PhraseItemRead::NoItem => Ok(false),
     }
-    let key = syllable;
-    let keeps = |entries: Vec<PhraseEntry>| {
-        entries.iter().any(|entry| {
-            entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
-        })
-    };
-    let lookup = |keys: &[SyllableKey]| {
-        dictionary
-            .lookup(keys)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))
-    };
-    if key.completeness() == Completeness::Partial {
-        for sequence in expand_keys(&[key], SCAN_EXPANSION_LIMIT) {
-            if keeps(lookup(sequence.as_slice())?) {
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
-    Ok(keeps(lookup(&[key])?))
 }
 
 /// Whether `token`'s item pronounces `key` with a kept possibility, the
