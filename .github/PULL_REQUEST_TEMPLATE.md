@@ -31,7 +31,10 @@ evidence archives, upload requests or separate findings document by default.
 <!--
 State the effects on the C ABI, pinned behaviour, persistent data,
 performance, and memory.
-For code that adds something the pin does not do, cite the pin's file and line that establishes the difference and place the addition in Stage 3.
+For optional retained complexity, such as a cache, explain the expected
+resource trade-off, record measurements where they already exist, and mark
+unmeasured effects as unknown.
+An unapproved capability, independently maintained parallel product model or observable behaviour goes to Stage 3; the compatibility policy governs permitted differences. Cite the pin's file and line that establishes the difference.
 For a change that alters an algorithm, a data structure, allocation behaviour
 or an input bound, state the source-derived complexity argument
 (Source policy, controlling rule).

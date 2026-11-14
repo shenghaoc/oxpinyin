@@ -37,8 +37,9 @@ The supported external interfaces are the C APIs and ABIs; the tools stay drop-i
 
 ## Performance
 
-Stage 2 code may replace what the pin does with an idiomatic Rust expression of it.
-It never adds something the pin does not do.
+Stage 2 code may replace how existing required work is represented or performed.
+It adds no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
+Optional retained complexity, such as a cache, must justify itself in memory, execution time or binary size.
 Existing registered exceptions remain in force until each is revisited on its own.
 An implementation can be faster or smaller than the pin by any amount within that limit.
 The complexity rule still applies ([performance standard](source-policy.md#performance-standard)).
@@ -48,7 +49,7 @@ The [roadmap](../ROADMAP.md) lists the open internal improvements.
 ## Stage 3
 
 Stage 3 follows Stage 2.
-A Stage 3 departure adds something the pin does not do, or intentionally changes observable output, files or the ABI.
+A Stage 3 departure adds an unapproved capability or independently maintained parallel product model, or intentionally changes observable output, files or the ABI beyond what the compatibility policy permits.
 Examples include a new language model, different candidate behaviour or an incompatible data format.
 The [source policy](source-policy.md#stage-3) states what a departure requires: an opt-in cargo feature, off by default, a default build that stays bug-for-bug compatible, and no claim of libpinyin's binary identity for a build that breaks the ABI or data formats.
 See the [Stage 3 roadmap](../ROADMAP.md#stage-3-after-stage-2).

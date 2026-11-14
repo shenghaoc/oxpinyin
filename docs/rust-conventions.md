@@ -21,8 +21,10 @@ The workspace denies `clippy::undocumented_unsafe_blocks`: Clippy enforces that 
 
 ## Panics and errors
 
-The [constitution](constitution.md) (§4) decides where a panic is permitted: only where its failure is proven unreachable.
-A reachable pin assert or abort uses `std::process::abort()` in the C adapters and tools, never a panic.
+The [constitution](constitution.md) (§4) decides where a panic is permitted: only where failure is proven unreachable under the applicable preconditions.
+A reachable pin assert or abort uses `std::process::abort()` at the corresponding failure point, in any crate when all affected call paths require termination.
+Shared code may instead return a typed error when the caller must determine the abort point.
+A panic can run `Drop` implementations before termination and is not a substitute for the pin's abort.
 These lint conventions apply the rule.
 
 The non-test crate roots deny `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::panic_in_result_fn` and `clippy::unreachable`, and these denials stay.

@@ -13,8 +13,11 @@
 //! ## Panic discipline
 //!
 //! Panics follow constitution §4's pin-matched failure policy; class (b)
-//! rulings remain authoritative, and where the pin asserts or aborts this
-//! crate calls `std::process::abort()` (class (c) retired 2026-10-31 UTC). The library crates on this
+//! rulings remain authoritative, and where the pin asserts or aborts
+//! oxpinyin calls `std::process::abort()` at the corresponding failure point
+//! (class (c) retired 2026-10-31 UTC): in any crate when all affected call
+//! paths require termination, or here on a typed error when the caller must
+//! determine the abort point. The library crates on this
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn`/`unreachable` outside tests —
@@ -23,8 +26,9 @@
 //! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
 //! saw a construct, not that its failure condition matches the pin.
 //! Other panic sources also need to respect §4. A panic that reaches an
-//! `extern "C"` boundary aborts
-//! the process. There is deliberately no panic-catching wrapper.
+//! `extern "C"` boundary aborts the process, but it can run `Drop`
+//! implementations first and is not a substitute for the pin's abort.
+//! There is deliberately no panic-catching wrapper.
 //! Abort at the ABI boundary applies under either panic strategy (the
 //! release profile is `unwind`; `panic = "abort"` was tried and reverted
 //! for its keystroke-cycle cost).

@@ -14,11 +14,14 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    See [shipping-library sizes](packaging.md#shipping-library-sizes).
 3. **No local AI.** oxpinyin has no client neural inference or LLM inference.
 4. **Failure behaviour.** oxpinyin follows the pin's observable failure behaviour.
-   Where the pin asserts or aborts, the C adapters and the drop-in tools call `std::process::abort()`, after the pin's preceding work.
-   The shared Rust code returns a typed error at the pin's failure point so that they can do this.
-   A reachable pin abort is never a `panic!`, `assert!` or `unwrap()`.
-   A panic-producing assertion is permitted only where its failure is proven unreachable.
-   No panic is introduced where the pin continues or returns an error.
+   Where the pin asserts or aborts, oxpinyin calls `std::process::abort()` at the corresponding failure point, after the pin's preceding observable work.
+   This may occur in any crate when all affected call paths require termination.
+   Shared code may instead return a typed error when the caller must determine the abort point.
+   `abort()` does not unwind or run destructors.
+   Under the current unwind panic strategy, a Rust panic can run `Drop` implementations before termination and is not a substitute for the pin's abort.
+   An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts.
+   A panic-producing assertion is permitted only where failure is proven unreachable under the applicable preconditions.
+   No abort or panic is introduced where the pin continues or returns an error.
    Error handling is idiomatic Rust; internal Rust APIs do not all need to return `Result`.
    Class (b) rulings stay authoritative.
    The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
@@ -40,23 +43,12 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
 7. **Dependencies.** oxpinyin depends on no other pinyin or IME crate and uses no transpiler dumps.
    Pin-built libpinyin is a test and migration subject; shipping code does not link to it.
 8. **Uncertainty.** A doubt goes to the maintainer; it is not settled by improvisation.
-9. **Pin-derived implementation.** The core crates are plain, idiomatic Rust.
-   oxpinyin implements libpinyin's own code; it never copies another language's library implementation.
-   Where the pin calls a library, oxpinyin matches that call's contract.
-   At a boundary, it uses the real interface through the established crate: `cxx`, `bindgen`, `libc`, `glib-sys` or `cargo-c`.
-   The pin's own code decides what oxpinyin does.
-   oxpinyin code is added or removed when it differs.
-   Unreleased Rust internals create no independent compatibility obligation.
-   The pinned C interfaces, behaviour and persistent formats remain binding.
-   In Stages 1 and 2, oxpinyin code may replace what the pin's code does with an idiomatic Rust expression of it.
-   It never adds something the pin does not do.
-   Code that does something the pin does not do is unnecessary and is removed.
-   Divergence starts at Stage 3.
-   An expectation about the pin's behaviour derives from cited lines of the pin.
-   A Rust-specific safety or tooling expectation follows its own stated contract.
-   A test of behaviour that survives a removal is kept, and only its fixtures are adjusted.
-   A test that exists only to exercise removed behaviour is removed with it.
-   Existing registered exceptions remain in force until each is revisited on its own.
+9. **Pin-derived implementation.** oxpinyin reproduces libpinyin's defined product behaviour and external contracts, including observable defects, subject to explicit compatibility rulings.
+   It implements that behaviour in idiomatic, safe Rust, free to replace internal representations, algorithms, ownership and allocation strategies.
+   It adds no unrelated capability and no independently maintained parallel product model; divergence starts at Stage 3.
+   External libraries are used according to their documented contracts, never reimplemented or emulated; where the pin breaks a callee's contract, the compatibility policy's [API-misuse](findings/compatibility-policy.md#external-api-misuse) and [algorithm-precondition](findings/compatibility-policy.md#algorithm-precondition-violations) rulings govern, not the resulting undefined behaviour.
+   The boundaries are the database backends, file I/O and the C API that clients such as ibus-libpinyin call; there, compatibility is maximal and unsafe code is confined (§5).
+   Details: [source policy, "Internal implementation and performance"](source-policy.md#internal-implementation-and-performance).
 
 ## External interfaces
 

@@ -16,10 +16,11 @@ The pin is cited by file and line at the commit named in [oracle-pin.txt](../too
 ## Method
 
 Stages 1 and 2 reproduce the pin in idiomatic Rust.
-Internal refactoring may replace what the pin's code does with an idiomatic Rust expression of it; it never adds something the pin does not do.
-Code that does something the pin does not do is unnecessary and is removed.
+Internal refactoring may replace how existing required work is represented or performed ([internal implementation](#internal-implementation-and-performance)).
+It adds no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
 A performance or memory improvement is Stage 2 work only within that limit.
-The pin's own code decides: a difference is corrected by adding or removing oxpinyin code.
+The pin's own code decides what oxpinyin does.
+An unapproved difference in required behaviour is corrected by adding or removing oxpinyin code.
 oxpinyin's present behaviour is not a reason to retain a difference.
 Divergence starts at Stage 3.
 Existing registered exceptions remain in force until each is revisited on its own.
@@ -27,11 +28,32 @@ Existing registered exceptions remain in force until each is revisited on its ow
 The [algorithm reference](findings/libpinyin-structures-and-algorithms.md) describes the pin’s structures, algorithms and complexity.
 The PR that changes a recorded structure or algorithm updates it.
 
-Every coefficient takes the pin's value: seeds, factors, ceilings, thresholds, beam widths, store widths, epsilons, penalties and discounts.
+Every coefficient of product semantics takes the pin's value: seeds, factors, ceilings, thresholds, beam widths, store widths, epsilons, penalties and discounts.
+A choice internal to oxpinyin, such as when to switch between equivalent in-memory representations, is not a coefficient.
 The algorithm record holds each value with its pin citation.
 A coefficient is never swept, tuned or fitted to make outputs match.
 
 ### Internal implementation and performance
+
+A replacement changes how existing required work is represented or performed and supersedes the old implementation.
+A different Rust representation, algorithm, ownership strategy or allocation strategy is permitted when it replaces existing required work; the pin need not contain the same field, helper or allocation strategy.
+Stages 1 and 2 add no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
+
+Code is removed when it is unused, redundant, introduces an unapproved behavioural difference or capability, or retains complexity whose costs are not justified.
+A valid replacement is not removed merely because the pin implements it differently.
+Optional retained complexity, such as a cache, must justify itself in memory, execution time or binary size, without compromising compatibility, safety or existing explicit rulings.
+
+A PR records measurements where they already exist, explains the expected resource trade-off, and marks unmeasured effects as unknown.
+Systematic measurement is deferred to the end of the phase.
+
+The pin's source defines the required product behaviour.
+An external library's documented contract defines what its calls guarantee.
+oxpinyin does not reproduce a library's implementation details or rely on consequences of violated preconditions.
+Rust ownership, borrowing, lifetimes, types and error handling are implementation choices, not product features, and need no resource justification.
+A change to an algorithm or data structure follows the [performance standard](#performance-standard).
+
+Unreleased Rust internals create no independent compatibility obligation.
+The pinned C interfaces, behaviour and persistent formats remain binding.
 
 Source-derived complexity is the default performance evidence.
 Routine performance-measurement campaigns are not required.
@@ -49,7 +71,6 @@ No fixed number of arms, samples, repetitions, profiles or instrumentation passe
 
 External interface behaviour is preserved.
 The target is a smaller binary, faster execution and much lower RAM use than libpinyin.
-In Stages 1 and 2, internal implementation freedom permits an idiomatic Rust replacement for what the pin's code does, not an addition to it.
 Binary size follows [constitution §2](constitution.md), separately from time and space comparisons.
 Binary size per PR is not complexity: a change can be split into arbitrarily small PRs.
 
@@ -94,7 +115,7 @@ A regression on one axis must be traded for a gain on the other, kept as small a
 Equal asymptotic bounds do not prove equal cost.
 Obvious allocation waste, large constants and hot-path work are caught by reading the code, and by a targeted test or assertion where that suffices.
 No comparison with the pin is made where the two intentionally do different amounts of work.
-In Stages 1 and 2, oxpinyin follows the pin's own algorithm in idiomatic Rust and matches the contracts of the libraries it calls.
+In Stages 1 and 2, oxpinyin performs the pin's required work in idiomatic Rust and matches the contracts of the libraries it calls.
 
 #### Unchanged verification
 
@@ -165,13 +186,13 @@ On Linux, formatted output also uses the pin's external I/O call ([platform scop
 
 ## Stages
 
-Replacement of what the pin's code does, rather than addition to it, separates Stage 2 from Stage 3; observable compatibility alone does not.
+Replacement of existing required work, rather than an added capability, separates Stage 2 from Stage 3; observable compatibility alone does not.
 
 | Property | Stage 2 (current) | Stage 3 (after Stage 2) |
 |---|---|---|
-| Goal | Replace what the pin's code does with idiomatic Rust, without adding to it | Intentional departures from libpinyin |
-| Performance work | Improve the Rust expression of what the pin's code does; add nothing the pin does not do | Additions and intentional departures |
-| Internal refactoring | Allowed as replacement of what the pin's code does, not addition to it | Allowed |
+| Goal | Replace how existing required work is represented or performed, in idiomatic Rust, without adding a capability | Intentional departures from libpinyin |
+| Performance work | Replace existing required work with a better Rust representation or algorithm; add no capability that libpinyin lacks | Added capabilities and intentional departures |
+| Internal refactoring | Allowed as replacement of existing required work, not as an added capability | Allowed |
 | Observable behaviour | Product behaviour matches under existing exceptions; external I/O uses the pin's calls on Linux ([platform scope](#platform-scope-of-pinned-behaviour)) | Explicit differences permitted |
 | Data formats and ABI | Drop-in compatibility stays | An incompatible change requires explicit opt-in and a suitable binary identity |
 
@@ -182,8 +203,8 @@ Data formats and ABI do not change.
 
 Older records use "Stage 2" for compatible performance work.
 Those records describe the ruling under which the work was done.
-They do not permit code that adds something the pin does not do in current Stage 2 work.
-Additions to what the pin's code does and intentional output changes belong to Stage 3.
+Current Stage 2 work adds no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
+An unapproved capability or intentional output change belongs to Stage 3.
 New benchmark names do not include a stage.
 
 ### Stage 2
@@ -193,8 +214,8 @@ It preserves the pin's observable behaviour, including its logic defects.
 An observable pin defect is recorded as an upstream defect instead of being fixed.
 The existing classes and the internal language-artefact exception apply to departures.
 The contract of each library call is matched; the library's implementation is never copied.
-The real boundary interface is used through the established crate under the existing [boundary and platform rules](findings/compatibility-policy.md#external-io).
-Code that does something the pin does not do is unnecessary and is removed, even when output, files and the ABI stay unchanged.
+The real boundary interface is used through the established crate (`cxx`, `bindgen`, `libc`, `glib-sys` or `cargo-c`) under the existing [boundary and platform rules](findings/compatibility-policy.md#external-io).
+Code is removed under the [internal implementation](#internal-implementation-and-performance) rule; a valid replacement is not removed merely because the pin implements it differently.
 An expectation about the pin's behaviour derives from cited lines of the pin.
 A Rust-specific safety or tooling expectation follows its own stated contract.
 A test of behaviour that survives a removal is kept, and only its fixtures are adjusted.
@@ -207,7 +228,7 @@ A change that alters an algorithm, a data structure, allocation behaviour or an 
 Measurement is the exception ([controlling rule](#controlling-rule)).
 An implementation that is worse on both time and space is fixed.
 A faster Rust expression of what the pin's code does needs no artificial performance ceiling.
-Dictionary cursor walks, incremental lattices and new per-session allocation work belong to Stage 3 when they add something the pin does not do.
+Dictionary cursor walks for lattice building, incremental lattices and new per-session arenas are reserved for Stage 3 by roadmap decision ([ROADMAP.md, Stage 3 items 4–6](../ROADMAP.md#stage-3-after-stage-2)), independent of the replacement rule.
 A mapping change must preserve the pin's external call ([external I/O](findings/compatibility-policy.md#external-io)).
 
 ### Stage 3
@@ -238,7 +259,7 @@ Every requirement, SPEC line and finding is classified on exactly one side:
 - **oxpinyin improvements:** class (a)–(b), standing divergences, recorded language artefacts and constitution rules.
   This side also includes internal architecture, crate decoupling, performance and Stage 3 departures.
 
-An improvement with no observable change is permitted in Stage 2 only as an idiomatic Rust replacement for what the pin's code does, not an addition to it.
+An improvement with no observable change is permitted in Stage 2 only as a replacement of existing required work, not as an added capability.
 An observable change requires class (a)–(b), a recorded internal language artefact, or a Stage 3 opt-in feature.
 An internal language artefact cannot change external I/O, the ABI or files on disk.
 The default build stays bug-for-bug compatible under the recorded exceptions.

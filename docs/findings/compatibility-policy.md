@@ -160,11 +160,11 @@ For calls that the pin makes, the documented contract of the call governs, not o
 - A pin `assert` (including `check_result`, `include/pinyin_utils.h:27-31`) or `abort()` is reproduced with `std::process::abort()`: abnormal termination, no return, no destructors, SIGABRT on Unix.
 - The reference build passes no `-DNDEBUG` (autoconf's default `-g -O2`), so every `assert` at the pin is an abort site.
 - Before it aborts, oxpinyin does the pin's preceding observable work in the pin's order: files written, removed or renamed, and stderr bytes.
-- The shared Rust facade returns a typed error at the pin's failure point, after the pin's preceding work. The C adapters (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) and the drop-in tools call `std::process::abort()` on that error.
-- A reachable pin abort is never implemented with `panic!`, `assert!` or `unwrap()`. A panic prints Rust's own text and adds more at an `extern "C"` boundary. `libc::abort()` is not used in a crate that forbids `unsafe`.
+- oxpinyin calls `std::process::abort()` at the corresponding failure point. This may occur in any crate when all affected call paths require termination. Shared code may instead return a typed error when the caller must determine the abort point.
+- `abort()` does not unwind or run destructors. Under the current unwind panic strategy, a Rust panic can run `Drop` implementations before termination and is not a substitute for the pin's abort. An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts. `libc::abort()` is not used in a crate that forbids `unsafe`.
 
-**Unreachable internal invariants.** A panic-producing assertion is permitted only where its failure is proven unreachable under the applicable preconditions.
-Where the pin continues or returns an error, oxpinyin must not introduce a panic.
+**Unreachable internal invariants.** A panic-producing assertion is permitted only where failure is proven unreachable under the applicable preconditions.
+No abort or panic is introduced where the pin continues or returns an error.
 Error handling is idiomatic Rust; internal Rust APIs do not all need to return `Result`.
 Non-test crate roots deny `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::panic_in_result_fn` and `clippy::unreachable`.
 A permitted site uses the narrowest scoped `#[expect(..., reason = "...")]` and cites the established invariant that makes failure unreachable.
