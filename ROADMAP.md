@@ -17,7 +17,7 @@ The sentence-trellis residual is a frozen exception (compatibility policy row 11
 
 ## Stage 2: current
 
-Stage 2 replaces what the pin's code does with idiomatic Rust, without adding to it.
+Stage 2 replaces how existing required work is represented or performed, in idiomatic Rust, without adding a capability.
 The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 
 ### Exit gate: the third bug-for-bug sweep
@@ -45,13 +45,12 @@ They do not block the sweep.
 
 ### Internal implementation
 
-oxpinyin code may replace what the pin's code does with an idiomatic Rust expression of it.
-It never adds something the pin does not do.
-Code that does something the pin does not do is unnecessary and is removed, along with tests that exist only to exercise the removed behaviour.
+oxpinyin code may replace how existing required work is represented or performed.
+It adds no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
+Code is removed when it is unused, redundant, introduces an unapproved behavioural difference or capability, or retains complexity whose costs are not justified, along with tests that exist only to exercise the removed behaviour.
+Optional retained complexity, such as a cache, must justify itself in memory, execution time or binary size ([source policy](docs/source-policy.md#internal-implementation-and-performance)).
 Existing registered exceptions remain in force until each is revisited on its own.
 Each change lands independently and does not block the sweep.
-
-- Remove oxpinyin-only synchronisation from the steady cycle where the pin has none.
 
 ## Stage 3: after Stage 2
 
