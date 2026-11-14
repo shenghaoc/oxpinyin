@@ -35,6 +35,7 @@ use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use pinyin_capi::fuzz_api::{
+    ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
     lookup_candidate_type_t, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_choose_candidate,
     pinyin_clear_constraint, pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_fini,
@@ -43,7 +44,6 @@ use pinyin_capi::fuzz_api::{
     pinyin_get_sentence, pinyin_guess_sentence, pinyin_init, pinyin_iterator_add_phrase,
     pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
     pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_double_pinyin_scheme, pinyin_train,
-    ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
 };
 
 use std::os::raw::c_void;
@@ -144,7 +144,7 @@ fn session() -> &'static Session {
         // once here and read only by teardown_at_exit after all fuzz
         // runs complete. atexit returns 0 on success.
         // SAFETY: atexit is POSIX/C standard; signature matches.
-        extern "C" {
+        unsafe extern "C" {
             fn atexit(cb: extern "C" fn()) -> c_int;
         }
         unsafe {

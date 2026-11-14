@@ -30,8 +30,8 @@ use oxpinyin_core::SyllableKey;
 use oxpinyin_data::table_info::TableConf;
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_user::{
-    phrase_index_library_index, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw,
-    UserStore, UserStoreError, USER_DICTIONARY,
+    LibraryLoopRows, PinyinKey, SystemOriginals, USER_DICTIONARY, UserConfLaw, UserStore,
+    UserStoreError, phrase_index_library_index,
 };
 use tempfile::TempDir;
 
@@ -354,9 +354,11 @@ fuzz_target!(|data: &[u8]| {
                         added.retain(|&other| other != token);
                     }
                 }
-                assert!(!store
-                    .remove_user_phrase(u32::MAX - 7)
-                    .expect("absent remove is Ok(false)"));
+                assert!(
+                    !store
+                        .remove_user_phrase(u32::MAX - 7)
+                        .expect("absent remove is Ok(false)")
+                );
             }
             // bigram writes: explicit set, then the two observation
             // flavors (train-shaped)

@@ -2,7 +2,7 @@
 name = "oxpinyin-fuzz"
 version = "0.0.0"
 publish = false
-edition = "2021"
+edition = "2024"
 
 # The fuzz workspace does not inherit the root workspace's lints (separate
 # workspace). deny rather than forbid: the FFI-driving capi-commands target

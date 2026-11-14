@@ -14,7 +14,7 @@
 //! or sanitizer report, or a violated invariant here.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::{ZhuyinParser, ZhuyinScheme, USE_TONE, ZHUYIN_INCOMPLETE};
+use oxpinyin_core::{USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinParser, ZhuyinScheme};
 
 /// Every zhuyin keyboard except the `StandardDvorak` abort slot (upstream's
 /// setter aborts on it; `ZhuyinParser` reports `false` and keeps the current
