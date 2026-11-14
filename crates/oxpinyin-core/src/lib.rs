@@ -113,6 +113,25 @@ impl UserCountDelta {
     };
 }
 
+/// Unreadable rows from one candidate search.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UnreadableRows {
+    /// Number of unreadable rows encountered.
+    pub count: usize,
+    /// First unreadable token, when the search retained its identity.
+    pub first: Option<PhraseToken>,
+}
+
+impl UnreadableRows {
+    /// Adds a token without allocating storage for further failures.
+    pub fn push(&mut self, token: PhraseToken) {
+        if self.count == 0 {
+            self.first = Some(token);
+        }
+        self.count += 1;
+    }
+}
+
 /// Read-only lookup seam for dictionaries.
 ///
 /// Implementations return entries in stable order, use an empty vector for a
@@ -357,6 +376,24 @@ pub trait Dictionary {
         Ok(false)
     }
 
+    /// Searches and retains the first unreadable token and unreadable row count.
+    ///
+    /// # Errors
+    ///
+    /// As [Self::lookup_into_flagged].
+    fn lookup_candidate_rows(
+        &self,
+        syllables: &[Self::Syllable],
+        _tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<UnreadableRows, Self::Error> {
+        self.lookup_into_flagged(syllables, out)
+            .map(|failed| UnreadableRows {
+                count: usize::from(failed),
+                first: None,
+            })
+    }
+
     /// Optional single-search candidate path, including tones and the
     /// continuation bit. `Some((unreadable, continued))` replaces the
     /// separate lookup, tone filtering and prefix probe. Implementations
@@ -370,7 +407,7 @@ pub trait Dictionary {
         _syllables: &[Self::Syllable],
         _tones: &[u8],
         _out: &mut Vec<PhraseEntry>,
-    ) -> Result<Option<(bool, bool)>, Self::Error> {
+    ) -> Result<Option<(UnreadableRows, bool)>, Self::Error> {
         Ok(None)
     }
 

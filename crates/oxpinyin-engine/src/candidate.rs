@@ -261,11 +261,26 @@ impl Candidate {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct UnreadableCandidates {
+    pub count: usize,
+    first: Option<(PhraseToken, usize, usize)>,
+}
+
+impl UnreadableCandidates {
+    pub fn append(&mut self, rows: oxpinyin_core::UnreadableRows, start: usize, end: usize) {
+        if self.count == 0 {
+            self.first = rows.first.map(|token| (token, start, end));
+        }
+        self.count += rows.count;
+    }
+}
+
 /// An ordered, deterministic candidate list.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CandidateList {
     items: Vec<Candidate>,
-    unreadable_item: bool,
+    unreadable_item: UnreadableCandidates,
     ranked_phrase_row: bool,
 }
 
@@ -273,12 +288,18 @@ impl CandidateList {
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
         Self {
             items,
-            unreadable_item: false,
+            unreadable_item: UnreadableCandidates {
+                count: 0,
+                first: None,
+            },
             ranked_phrase_row: false,
         }
     }
 
-    pub(crate) const fn with_unreadable_item(mut self, unreadable_item: bool) -> Self {
+    pub(crate) const fn with_unreadable_item(
+        mut self,
+        unreadable_item: UnreadableCandidates,
+    ) -> Self {
         self.unreadable_item = unreadable_item;
         self
     }
@@ -303,12 +324,23 @@ impl CandidateList {
     }
 
     /// Whether the lookups that built this list met a token of a loaded
-    /// library whose item cannot be read. The pin's candidate listing dies
-    /// there (`pinyin.cpp:1635-1637`, `:2053`); the entry is left out of the
-    /// list and the C ABIs fail the call.
+    /// library whose item cannot be read. The readable candidates remain
+    /// available separately from that search metadata.
     #[must_use]
     pub const fn had_unreadable_item(&self) -> bool {
-        self.unreadable_item
+        self.unreadable_item.count != 0
+    }
+
+    /// The searched row to publish with a null string if no other row survives.
+    #[must_use]
+    pub fn sole_unreadable_candidate(&self) -> Option<Candidate> {
+        if self.unreadable_item.count != 1 {
+            return None;
+        }
+        let (token, start, end) = self.unreadable_item.first?;
+        let mut candidate = Candidate::new("", CandidateKind::Phrase, 0, end, Some(token), None);
+        candidate.set_span_start(start);
+        Some(candidate)
     }
 
     /// The rows, for their storage to be reused.

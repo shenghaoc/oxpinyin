@@ -474,6 +474,20 @@ impl<
         Ok(matched)
     }
 
+    /// Select a published null-string row through the pin's constraint path.
+    ///
+    /// # Errors
+    ///
+    /// Returns a lookup error from constraint validation.
+    pub fn choose_unreadable_step(
+        &mut self,
+        span: SelectionSpan,
+        token: PhraseToken,
+    ) -> Result<usize, EngineError> {
+        self.session
+            .choose_unreadable_step(span.begin(), span.end(), token)
+    }
+
     /// Selects the published `row` by its own span, token, rank and text —
     /// the pin's choose reads the row alone (`pinyin.cpp:2577-2590`,
     /// `zhuyin.cpp:1646-1666`), so a repeat choose of the same row, after a

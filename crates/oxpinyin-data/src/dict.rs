@@ -517,19 +517,23 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     pub fn lookup_with_live(
         &self,
         syllables: &[SyllableKey],
+        tones: &[u8],
         out: &mut Vec<PhraseEntry>,
         mut visible: impl FnMut(u32) -> bool,
         mut live: impl FnMut(u32) -> Option<PhraseEntry>,
-    ) -> Result<bool, DictError> {
+    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
         out.clear();
         if syllables.is_empty() {
-            return Ok(false);
+            return Ok(Default::default());
         }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
+        let Some(mut keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(Default::default());
         };
+        for (key, &tone) in keys.iter_mut().zip(tones) {
+            *key = key.with_tone(tone);
+        }
         let tokens = self.pinyin.search(&keys)?;
-        let mut unreadable = false;
+        let mut unreadable = oxpinyin_core::UnreadableRows::default();
         for token in tokens {
             // Unloaded or removed tokens are not malformed loaded items.
             // Their live owner can be absent precisely because it was unloaded.
@@ -547,8 +551,8 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             };
             if let Some(entry) = entry {
                 out.push(entry);
-            } else {
-                unreadable |= library_loaded(self.libraries(), self.user_nibbles, token);
+            } else if library_loaded(self.libraries(), self.user_nibbles, token) {
+                unreadable.push(PhraseToken::new(token));
             }
         }
         Ok(unreadable)
@@ -857,9 +861,10 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, DictError> {
+    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
         self.lookup_with_live(
             syllables,
+            &[],
             out,
             |_| true,
             |token| resolve_item(self.libraries(), None, token),
@@ -952,7 +957,22 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out)
+        self.fill_lookup(syllables, out).map(|rows| rows.count != 0)
+    }
+
+    fn lookup_candidate_rows(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<oxpinyin_core::UnreadableRows, Self::Error> {
+        self.lookup_with_live(
+            syllables,
+            tones,
+            out,
+            |_| true,
+            |token| resolve_item(self.libraries(), None, token),
+        )
     }
 
     /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a

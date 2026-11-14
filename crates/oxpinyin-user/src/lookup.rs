@@ -65,9 +65,20 @@ impl<'a> UserLookup<'a> {
 
     /// Append the matching live entries in stored token order.
     pub fn lookup_into(&self, keys: &[oxpinyin_core::ChewingKey], out: &mut Vec<PhraseEntry>) {
+        self.lookup_resolving_missing(keys, out, |_| None);
+    }
+
+    /// Appends live matches and calls the fallback for tokens without a live item.
+    pub fn lookup_resolving_missing(
+        &self,
+        keys: &[oxpinyin_core::ChewingKey],
+        out: &mut Vec<PhraseEntry>,
+        mut missing: impl FnMut(u32) -> Option<PhraseText>,
+    ) {
         let phrases = self.phrases.borrow();
         phrases.index.visit_matches(keys, |token| {
-            if let Some(text) = session_text(&phrases, self.items, token) {
+            if let Some(text) = session_text(&phrases, self.items, token).or_else(|| missing(token))
+            {
                 out.push(PhraseEntry::new(PhraseToken::new(token), text));
             }
         });

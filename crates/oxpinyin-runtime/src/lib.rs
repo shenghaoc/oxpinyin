@@ -376,12 +376,14 @@ impl<'a> RuntimeDict<'a> {
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
+        tones: &[u8],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, DictError> {
-        let unreadable = self.system.lookup_with_live(
+    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
+        let mut unreadable = self.system.lookup_with_live(
             syllables,
+            tones,
             out,
-            |token| self.library_visible_token(token),
+            |token| self.library_visible(u32::from(library_of(token))),
             |token| {
                 self.live_items()
                     .read(token, |item| {
@@ -396,7 +398,23 @@ impl<'a> RuntimeDict<'a> {
         )?;
         let query: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.user.note_pinyin_search_keys(&query);
-        self.user_lookup().lookup_into(&query, out);
+        let mut query = query;
+        for (key, &tone) in query.iter_mut().zip(tones) {
+            *key = key.with_tone(tone);
+        }
+        self.user_lookup()
+            .lookup_resolving_missing(&query, out, |token| {
+                if !self.system.library_loaded(token)
+                    || !self.library_visible(u32::from(library_of(token)))
+                {
+                    return None;
+                }
+                let text = self.token_text(token);
+                if text.is_none() {
+                    unreadable.push(PhraseToken::new(token));
+                }
+                text
+            });
         if self.token_filter_active() {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
@@ -1062,7 +1080,17 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
-        self.fill_lookup(syllables, out)
+        self.fill_lookup(syllables, &[], out)
+            .map(|rows| rows.count != 0)
+    }
+
+    fn lookup_candidate_rows(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<oxpinyin_core::UnreadableRows, Self::Error> {
+        self.fill_lookup(syllables, tones, out)
     }
 
     fn candidate_search_into(
@@ -1070,22 +1098,13 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<Option<(bool, bool)>, Self::Error> {
+    ) -> Result<Option<(oxpinyin_core::UnreadableRows, bool)>, Self::Error> {
         if !self.system.pinyin_attachment_failed() {
             return Ok(None);
         }
         // One failed native get/check per search_matrix leaf. Tone and
         // continuation probes must not make additional system reads.
-        let unreadable = self.fill_lookup(syllables, out)?;
-        if tones.iter().any(|tone| *tone != 0) {
-            let mut ranges = PhraseIndexRanges::new();
-            if let Some(query) = Self::trellis_query(syllables, tones) {
-                self.user_trellis_ranges(&query, &mut ranges)?;
-            }
-            let mut tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
-            tokens.sort_unstable();
-            out.retain(|entry| tokens.binary_search(&entry.token().value()).is_ok());
-        }
+        let unreadable = self.fill_lookup(syllables, tones, out)?;
         Ok(Some((
             unreadable,
             self.user_lookup().phrase_prefix_exists(syllables),
