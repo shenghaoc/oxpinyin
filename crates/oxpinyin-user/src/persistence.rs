@@ -1433,9 +1433,6 @@ fn load_libraries(
             }
             Err(error) => {
                 record_skip(&mut loaded.skip_notes(), format_args!("{name}: {error}"));
-                if let Ok(headers) = UserLibrary::load_headers_payload(&bytes) {
-                    libraries.insert(nibble, headers);
-                }
             }
         }
     }
