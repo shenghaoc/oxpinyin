@@ -1848,6 +1848,79 @@ fn an_import_reading_parses_with_the_corrections() {
     close(context, instance);
 }
 
+/// At 074a2219 the USER_FILE load installs the whole offset and content
+/// sections (phrase_index.cpp:335-362). A bad offset fails only the item
+/// read (phrase_index.cpp:180-205); neighbouring items remain readable.
+#[test]
+fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-bad-item");
+    write_user_conf(&user.path, &system_dir());
+    let rows = [(1, "你", 0x302b_u16), (2, "好", 0x30a7), (3, "吗", 0x5083)];
+    let items = rows.map(|(slot, phrase, key)| {
+        (
+            slot,
+            ChunkItem {
+                phrase: phrase.chars().map(u32::from).collect(),
+                unigram: 17,
+                prons: vec![(vec![key], 5)],
+            },
+        )
+    });
+    let chunk = build_chunk(&items).expect("three-item user chunk");
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_two = offsets_start as usize + 2 * 4;
+    payload[slot_two..slot_two + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let (context, instance) = open_at(&user.path);
+    for (slot, expected, key) in [rows[0], rows[2]] {
+        let token = 0x0700_0000 | slot;
+        let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
+        assert!(crate::dict::pinyin_token_get_phrase(
+            instance,
+            token,
+            &raw mut length,
+            &raw mut phrase
+        ));
+        assert_eq!(
+            (length, crate::ffi::take_owned_cstr(phrase).as_str()),
+            (1, expected)
+        );
+        let mut count = UNTOUCHED;
+        assert!(pinyin_token_get_n_pronunciation(
+            instance,
+            token,
+            &raw mut count
+        ));
+        assert_eq!(count, 1);
+        assert_eq!(reading_bytes(instance, token, 0), key.to_le_bytes());
+    }
+    let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
+    assert!(!crate::dict::pinyin_token_get_phrase(
+        instance,
+        0x0700_0002,
+        &raw mut length,
+        &raw mut phrase
+    ));
+    assert_eq!((length, phrase), (UNTOUCHED, ptr::null_mut()));
+    let mut count = UNTOUCHED;
+    assert!(!pinyin_token_get_n_pronunciation(
+        instance,
+        0x0700_0002,
+        &raw mut count
+    ));
+    assert_eq!(count, 0);
+    close(context, instance);
+}
+
 /// A stored user key word is read back as it is stored: 0x8000.
 #[test]
 fn a_stored_user_key_word_is_read_back_verbatim() {

@@ -1,6 +1,6 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
-use oxpinyin_data::chunk_write::{sub_phrase_index_sections, validate_phrase_item};
+use oxpinyin_data::chunk_write::sub_phrase_index_sections;
 use oxpinyin_data::phrase_library::PhraseItemView;
 
 use crate::user_index::UserIndex;
@@ -12,7 +12,6 @@ pub(crate) struct UserLibrary {
     total: u32,
     slots: Slots,
     content: Vec<u8>,
-    headers_only: bool,
 }
 
 /// `table_offset_t` is `guint32` (`novel_types.h:128` at 074a2219), so a
@@ -195,9 +194,6 @@ impl UserLibrary {
     }
 
     pub(crate) fn token_end(&self) -> u32 {
-        if self.headers_only {
-            return 1;
-        }
         self.slots
             .0
             .iter()
@@ -243,11 +239,7 @@ impl UserLibrary {
     fn placement(&self, slot: u32, view: PhraseItemView<'_>) -> Replacement {
         Replacement {
             slot,
-            offset: if self.headers_only {
-                8
-            } else {
-                append_offset(self.content.len())
-            },
+            offset: append_offset(self.content.len()),
             length: view.as_bytes().len(),
             unigram: view.unigram(),
             removes_old: true,
@@ -259,9 +251,6 @@ impl UserLibrary {
     /// earlier bytes without growing the size, or past the end as an append.
     /// Nothing else is adjusted for the bytes it overwrites.
     fn apply_replacement(&mut self, change: Replacement, bytes: &[u8]) {
-        if self.headers_only {
-            *self = Self::default();
-        }
         let slot = change.slot;
         let bytes = &bytes[..change.length];
         if change.removes_old
@@ -503,23 +492,12 @@ impl UserLibrary {
         Self::load_payload(payload)
     }
 
+    /// Load the sections and stored total. The pin reads individual offsets
+    /// and headers only in `get_phrase_item` (074a2219
+    /// `phrase_index.cpp:180-205,335-362`).
     pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
         let (total, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
-        // Retain the old decoder's all-or-nothing validation, including slot
-        // zero, partial trailing offset words, and arbitrary text/key values.
-        for (slot, bytes) in offsets.as_chunks::<4>().0.iter().enumerate() {
-            let offset = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-            if offset == 0 {
-                continue;
-            }
-            let bytes = content.get(offset as usize..).ok_or_else(|| {
-                format!("chunk write error: sub phrase index: slot {slot} offset out of range")
-            })?;
-            validate_phrase_item(bytes).map_err(|error| {
-                format!("chunk write error: sub phrase index: slot {slot}: {error}")
-            })?;
-        }
         let entries = offsets
             .as_chunks::<4>()
             .0
@@ -530,33 +508,12 @@ impl UserLibrary {
             total,
             slots,
             content: content.to_vec(),
-            headers_only: false,
-        })
-    }
-
-    /// A rejected body can still have the two bytes the pin's count getter
-    /// reads (phrase_index.cpp:195-204). Retain those bytes, not a count map.
-    pub(crate) fn load_headers_payload(payload: &[u8]) -> Result<Self, String> {
-        let (_, offsets, content) =
-            sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
-        Ok(Self {
-            total: 0,
-            slots: Slots(
-                offsets
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                    .collect(),
-            ),
-            content: content.to_vec(),
-            headers_only: true,
         })
     }
 
     pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
         let offset = self.slots.offset(slot)? as usize;
-        self.content.get(offset + 1).map(|&n| u32::from(n))
+        self.content.get(offset..)?.get(1).copied().map(u32::from)
     }
 
     pub(crate) const fn total(&self) -> u32 {
@@ -574,9 +531,6 @@ impl UserLibrary {
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
-        if self.headers_only {
-            return None;
-        }
         let offset = self.slots.offset(slot)?;
         PhraseItemView::from_bytes(self.content.get(offset as usize..)?)
     }
@@ -724,9 +678,14 @@ mod tests {
         assert_eq!(loaded.item(3).unwrap().as_bytes(), body);
         assert_eq!(saved, loaded.store().unwrap());
 
-        // A missing final pronunciation-frequency byte remains a structural
-        // refusal; an empty phrase does not relax the declared body extent.
-        assert!(UserLibrary::load(&file(&body[..body.len() - 1])).is_err());
+        // At 074a2219, load keeps the stored total and slots
+        // (phrase_index.cpp:335-362,624-646). The count reads only the item
+        // header (pinyin.cpp:2786-2798); row 111 bounds reads of the body.
+        let truncated = UserLibrary::load(&file(&body[..body.len() - 1])).unwrap();
+        assert_eq!(truncated.total(), 91);
+        assert_eq!(truncated.token_end(), 4);
+        assert_eq!(truncated.pronunciation_count(3), Some(2));
+        assert!(truncated.item(3).is_none());
         assert!(library.replace(4, &body[..body.len() - 1]).is_err());
         assert_eq!(library.store().unwrap(), saved);
     }
