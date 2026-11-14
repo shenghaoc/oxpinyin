@@ -632,10 +632,9 @@ pub trait Dictionary {
     /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
     /// table, so it has no expansion of incomplete keys to bound.
     ///
-    /// Defaulted to [`PhraseItemRead::Unsupported`] so existing implementors
-    /// compile unchanged (`docs/findings/core-trait-seam.md`: the seam grows
-    /// by defaulted methods only); a dictionary that keeps no phrase items is
-    /// revalidated through [`Self::lookup`] instead.
+    /// The default answers [`PhraseItemRead::NoItem`]: a dictionary that
+    /// keeps no phrase items has none to read, as the pin's
+    /// `get_phrase_item` fails for a token it has no item for.
     ///
     /// # Errors
     ///
@@ -644,7 +643,7 @@ pub trait Dictionary {
         &self,
         _token: PhraseToken,
     ) -> Result<PhraseItemRead, Self::Error> {
-        Ok(PhraseItemRead::Unsupported)
+        Ok(PhraseItemRead::NoItem)
     }
 }
 
@@ -655,8 +654,6 @@ pub type PronunciationRows = Vec<(Vec<ChewingKey>, u32)>;
 /// What [`Dictionary::phrase_item_pronunciations`] found behind a token.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PhraseItemRead {
-    /// The dictionary keeps no phrase items to read.
-    Unsupported,
     /// The token has no readable item: its library is not loaded or hidden,
     /// or the slot is empty. The pin's `get_phrase_item` then fails and
     /// leaves the caller's `PhraseItem` untouched (`phrase_index.h:649-650`,

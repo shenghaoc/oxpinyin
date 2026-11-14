@@ -35,19 +35,17 @@ use std::collections::hash_map::Entry;
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
-use oxpinyin_core::scoring::{ScoringError, expand_keys};
+use oxpinyin_core::scoring::ScoringError;
 use oxpinyin_core::{
-    ChewingKey, Completeness, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges,
-    PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
+    ChewingKey, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
+    PhraseToken, PronunciationRows, SyllableKey,
 };
 use smallvec::SmallVec;
 
 use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
 use crate::session::matrix::{ParsedMatrix, ScanMatrix};
-use crate::session::{
-    MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty, training_readings,
-};
+use crate::session::{MAX_PHRASE_LENGTH, ScanKey, column_is_empty, training_readings};
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -1178,11 +1176,6 @@ impl<'a> ConstraintSpelling<'a> {
     /// `< FLT_EPSILON` test does on the pinned data, where no per-token
     /// total reaches 2^23 (`docs/findings/compatibility-policy.md`, row 7).
     ///
-    /// `length` is the forced phrase's stored length
-    /// ([`PhraseText::phrase_length`]); it only bounds
-    /// the walk for a dictionary that keeps no phrase items
-    /// ([`PhraseItemRead::Unsupported`]).
-    ///
     /// # Errors
     ///
     /// Propagates the dictionary's backend failure.
@@ -1192,7 +1185,6 @@ impl<'a> ConstraintSpelling<'a> {
         start: usize,
         end: usize,
         token: PhraseToken,
-        length: usize,
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
@@ -1211,7 +1203,6 @@ impl<'a> ConstraintSpelling<'a> {
         let read = dictionary
             .phrase_item_pronunciations(token)
             .map_err(dictionary_error)?;
-        let item_less = matches!(read, PhraseItemRead::Unsupported);
         let mut last = self.last_item.borrow_mut();
         if let PhraseItemRead::Item(rows) = read {
             *last = Some(rows);
@@ -1224,14 +1215,6 @@ impl<'a> ConstraintSpelling<'a> {
             || column_is_empty(columns, &parsed.zeros, start)
             || column_is_empty(columns, &parsed.zeros, end)
         {
-            return Ok(false);
-        }
-        if item_less {
-            for reading in training_readings(columns, self.input, start, end, length) {
-                if lookup_finds_token(dictionary, &reading, token)? {
-                    return Ok(true);
-                }
-            }
             return Ok(false);
         }
         let Some(rows) = last.as_ref() else {
@@ -1279,49 +1262,6 @@ pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bo
                     || (s.middle == 0 && s.final_ == 0))
                 && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
         })
-}
-
-/// [`ConstraintSpelling::spells`] for a dictionary that keeps no phrase
-/// items: the token is searched under `reading`, an incomplete key standing
-/// for its bounded completions, and kept unless its possibility is the
-/// zero count. Every shipping dictionary reads its items instead.
-fn lookup_finds_token<D>(
-    dictionary: &D,
-    reading: &[ChewingKey],
-    token: PhraseToken,
-) -> Result<bool, EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
-{
-    let Some(path) = reading
-        .iter()
-        .map(|key| SyllableKey::from_canonical_text(key.pinyin_spelling()))
-        .collect::<Option<SmallVec<[SyllableKey; 16]>>>()
-    else {
-        return Ok(false);
-    };
-    let has_incomplete = path
-        .iter()
-        .any(|key| key.completeness() == Completeness::Partial);
-    let mut found = false;
-    let mut look = |sequence: &[SyllableKey]| -> Result<(), EngineError> {
-        let entries = dictionary
-            .lookup(sequence)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        found |= entries.iter().any(|entry| {
-            entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
-        });
-        Ok(())
-    };
-    if has_incomplete && !dictionary.handles_partial_keys() {
-        for sequence in expand_keys(&path, SCAN_EXPANSION_LIMIT) {
-            look(sequence.as_slice())?;
-        }
-    } else {
-        look(&path)?;
-    }
-    Ok(found)
 }
 
 #[derive(Default)]

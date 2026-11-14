@@ -542,8 +542,8 @@ where
                 self.input.physical_separators(),
                 self.input.as_bytes(),
             );
-            store.validate(size, |start, end, token, text_len| {
-                spelling.spells(&self.dictionary, start, end, token, text_len)
+            store.validate(size, |start, end, token| {
+                spelling.spells(&self.dictionary, start, end, token)
             })
         };
         self.constraints = store;

@@ -399,8 +399,8 @@ where
                 self.input.physical_separators(),
                 self.input.as_bytes(),
             );
-            retained.validate(bound + 1, |start, end, token, text_len| {
-                spelling.spells(&self.dictionary, start, end, token, text_len)
+            retained.validate(bound + 1, |start, end, token| {
+                spelling.spells(&self.dictionary, start, end, token)
             })?;
         } else {
             // No selection text is valid for this matrix. The real
