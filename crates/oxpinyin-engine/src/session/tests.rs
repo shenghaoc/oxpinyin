@@ -1957,7 +1957,7 @@ fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
                 "before cursor: {before_cursor}, warmed: {warm:?}, retained: {retained:?}",
             );
             assert!(session.scratch.window_items.is_empty());
-            assert!(!session.scan_unreadable);
+            assert!(session.scan_unreadable.count == 0);
             assert!(!session.scan_ranked_phrase);
         }
     }

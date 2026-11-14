@@ -162,7 +162,7 @@ pub struct SessionState {
     /// Whether the scan in progress (or the last one) met a token of a
     /// loaded library whose item cannot be read; set by the lookups of that
     /// scan alone and read back into the [`CandidateList`] it built.
-    scan_unreadable: bool,
+    scan_unreadable: crate::candidate::UnreadableCandidates,
     /// Whether the scan in progress (or the last one) searched a phrase row
     /// the pin's `_compute_frequency_of_items` scores against the facade
     /// total, before any prepend or dedup; read back into the
@@ -516,7 +516,7 @@ include!("split_tables.rs");
 struct ScanScratch<'a> {
     /// Set when a lookup of this scan met a token of a loaded library whose
     /// item cannot be read.
-    unreadable: &'a mut bool,
+    unreadable: &'a mut crate::candidate::UnreadableCandidates,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
     window_addon: &'a mut Vec<Candidate>,
@@ -528,6 +528,7 @@ struct ScanScratch<'a> {
 }
 
 struct ScanBuf<'a> {
+    span_start: usize,
     span_base: usize,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     /// The typed tone of each key on `path`, in step with it.
@@ -536,7 +537,7 @@ struct ScanBuf<'a> {
     addon: &'a mut Vec<Candidate>,
     continued: &'a mut bool,
     /// As [`ScanScratch::unreadable`].
-    unreadable: &'a mut bool,
+    unreadable: &'a mut crate::candidate::UnreadableCandidates,
     entries: &'a mut Vec<PhraseEntry>,
     /// As [`ScanScratch::explicit`].
     explicit: bool,
