@@ -252,17 +252,28 @@ impl<
     E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
 > InstanceView<'_, S, E>
 {
-    /// The full-pinyin batch seam — the `parse_more_full_pinyins` law
-    /// both facades implement identically: continue or restart the
-    /// parse, remask the session under the live option word, then for
-    /// LUOMA / `SECONDARY_ZHUYIN` parse the raw input through the
-    /// scheme's pinned index and drive the session with the canonical
-    /// spellings, else (Hanyu) replace the raw buffer directly.
+    /// The pinyin full-pinyin batch parse. Its parse-time matrix applies
+    /// resplit, inner split and fuzzy expansion (`pinyin.cpp:1514-1520`
+    /// at 074a2219).
     ///
     /// Returns the original-input bytes consumed, 0 on failure or empty
     /// input.
     #[must_use]
     pub fn parse_full_more(&mut self, text: &str) -> usize {
+        self.parse_full_more_with_splits(text, true)
+    }
+
+    /// The zhuyin full-pinyin batch parse. Its parse-time matrix applies
+    /// fuzzy expansion after the fill (`zhuyin.cpp:1036-1038` at 074a2219).
+    ///
+    /// Returns the original-input bytes consumed, 0 on failure or empty
+    /// input.
+    #[must_use]
+    pub fn parse_full_more_zhuyin(&mut self, text: &str) -> usize {
+        self.parse_full_more_with_splits(text, false)
+    }
+
+    fn parse_full_more_with_splits(&mut self, text: &str, divided: bool) -> usize {
         self.begin_parse(text.as_bytes());
         if self.session.set_options(self.options()).is_err() {
             return 0;
@@ -308,7 +319,7 @@ impl<
             self.parsed_len = parsed.consumed();
             text.clone_into(&mut self.full_input);
             self.full_parse = Some(parsed);
-            self.keep_parse_matrix(true);
+            self.keep_parse_matrix(divided);
             return self.parsed_len;
         }
         let consumed = match self.session.replace_raw(text) {
@@ -321,9 +332,9 @@ impl<
 
     /// Builds the pin's parse-time matrix from the keys of the parse just
     /// stored, under the options in force now: `fill_matrix`, then
-    /// `resplit_step` and `inner_split_step` when `divided` (the full-pinyin
-    /// entry point, `pinyin.cpp:1514-1520`), then `fuzzy_syllable_step`
-    /// (`:1557-1559`, `:1602-1604`). The remember walk reads it later,
+    /// `resplit_step` and `inner_split_step` when `divided` (pinyin's
+    /// full-pinyin entry point, `pinyin.cpp:1514-1520`), then
+    /// `fuzzy_syllable_step`. The remember walk reads it later,
     /// whatever the options have become since.
     fn keep_parse_matrix(&mut self, divided: bool) {
         let keys = crate::cursor::matrix_keys_of(&self.parser_key_list());

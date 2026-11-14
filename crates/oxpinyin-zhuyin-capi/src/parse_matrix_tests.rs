@@ -2,25 +2,23 @@
 //! keep the matrix the pin built at the parse, and the offset and key
 //! functions read it. The pin's zhuyin functions read every item of a column
 //! in the character offset (`zhuyin.cpp:2117`) and the left offset (`:2009`),
-//! and the first item of columns the divided step fills in the others
+//! and the first item of the column in the other getters
 //! (`:1902`, `:1924`, `:1961`, `:2043-2053`). Register rows 19 and 66. The
 //! pinyin twins hold the first-item reads, which go through the shared
 //! facade code.
 
-use crate::config::{zhuyin_set_chewing_scheme, zhuyin_set_full_pinyin_scheme, zhuyin_set_options};
+use crate::config::{zhuyin_set_chewing_scheme, zhuyin_set_options};
 use crate::context::zhuyin_fini;
-use crate::cursor::zhuyin_get_left_zhuyin_offset;
 use crate::instance::zhuyin_free_instance;
 use crate::iterators::{
     zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase,
 };
-use crate::parse::{zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins};
+use crate::parse::zhuyin_parse_more_chewings;
 use crate::sentence::zhuyin_get_character_offset;
 use crate::test_support::{TempUserDir, cstr, open_with_user};
 use crate::types::{ZhuyinContext, ZhuyinInstance};
 
 const L_N: u32 = 1 << 15;
-const DIVIDED: u32 = 1 << 7;
 
 /// A context and instance that release themselves.
 struct Fixture {
@@ -53,19 +51,6 @@ impl Fixture {
         zhuyin_end_add_phrases(import);
         fixture
     }
-
-    /// `sian` (Luoma for `xian`) with the divided table on: the pin's matrix
-    /// also holds `xi` at column 0 and `an` at column 2.
-    fn luoma_xian(tag: &str) -> Self {
-        let fixture = Self::new(tag);
-        assert!(zhuyin_set_options(fixture.context, 0x8 | DIVIDED));
-        assert!(zhuyin_set_full_pinyin_scheme(fixture.context, 2));
-        assert_eq!(
-            zhuyin_parse_more_full_pinyins(fixture.instance, cstr("sian").as_ptr()),
-            4
-        );
-        fixture
-    }
 }
 
 impl Drop for Fixture {
@@ -96,16 +81,4 @@ fn the_character_offset_reads_the_chewing_fuzzy_alternative() {
     // The key's end lies past offset 2, so no character is consumed yet; the
     // walk answers true only because `long` pronounces 弄.
     assert_eq!(length, 0);
-}
-
-#[test]
-fn the_left_offset_reads_the_divided_column() {
-    let fixture = Fixture::luoma_xian("z-left-divided");
-    let mut left = usize::MAX;
-    assert!(zhuyin_get_left_zhuyin_offset(
-        fixture.instance,
-        4,
-        &raw mut left
-    ));
-    assert_eq!(left, 2);
 }
