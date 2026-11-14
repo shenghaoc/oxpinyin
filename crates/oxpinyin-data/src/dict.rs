@@ -80,9 +80,9 @@ impl From<crate::phrase_library::LibraryError> for DictError {
     }
 }
 
-/// Converts syllables to `ChewingKey`s, tone zero, by index. Every
-/// `SyllableKey` has a content-table row, so the conversion always
-/// succeeds; the `Option` keeps the callers' signature.
+/// Converts table syllables and packed matrix alternates to tone-zero
+/// `ChewingKey`s. The conversion always succeeds; the `Option` keeps
+/// the callers' signature.
 fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
     Some(syllables.iter().map(|s| s.chewing_key()).collect())
 }

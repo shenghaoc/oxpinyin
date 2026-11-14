@@ -4570,3 +4570,28 @@ fn a_stale_candidate_pointer_after_regeneration_is_refused() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// Every complete path calls _add_phrase, including repeated keys
+/// (pinyin.cpp:3594-3606). Repeated paths therefore repeat the count write.
+#[test]
+fn remember_user_input_writes_again_for_an_identical_complete_path() {
+    let user = TempUserDir::new("remember-identical-paths");
+    let (context, instance, token, before) = parsed_nong_under_l_n(&user);
+    // This fixture adds an identical column entry to the parsed matrix,
+    // as PhoneticTable::append does (phonetic_key_matrix.h:92-100).
+    let duplicate = {
+        // SAFETY: the live instance is exclusively borrowed before remember.
+        let mut inst = unsafe { crate::state::instance_mut(instance) };
+        let first = inst.core.parse_matrix[0];
+        inst.core.parse_matrix.push(first);
+        first.key().to_packed()
+    };
+    assert!(pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3));
+    let after = stored_readings(instance, token);
+    for ((key, was), (after_key, now)) in before.iter().zip(&after) {
+        assert_eq!(key, after_key);
+        assert_eq!(*now, *was + if *key == duplicate { 6 } else { 3 });
+    }
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
