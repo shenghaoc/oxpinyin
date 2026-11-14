@@ -6,6 +6,8 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
+use oxpinyin_core::phrase_index_library;
+
 use super::*;
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
@@ -88,7 +90,8 @@ where
     /// (`pinyin.cpp:1870-1933` at the pin): a suggestion search over the
     /// whole composition's matrix, its extensions capped at twice the
     /// parse's key count, the maximum-unigram token of the (char-length
-    /// capped) survivors as the row, typed `LONGER_CANDIDATE` with the
+    /// capped) survivors as the row, with ties in library order then
+    /// path order within each library, typed `LONGER_CANDIDATE` with the
     /// unigram-only amplified frequency and a zero span.
     ///
     /// `None` when the pin would prepend no row: the parse is empty, the
@@ -190,8 +193,12 @@ where
                 }
                 // The winner law: the first survivor initializes; a
                 // strictly greater unigram replaces (ties keep the earlier
-                // token — `:1904-1917`). The unigram read carries the
-                // user/training overlay (`add_unigram_frequency` writes
+                // token — `:1904-1917`). `reduce_tokens` concatenates
+                // libraries first (`phrase_large_table3.h:77-97`), so an
+                // equal unigram from an earlier library wins even when
+                // reached through a later path. Within a library the
+                // path walk order stays unchanged. The unigram read carries
+                // the user/training overlay (`add_unigram_frequency` writes
                 // the facade item), which the model's `unigram_freq`
                 // already merges.
                 let unigram = self
@@ -201,7 +208,12 @@ where
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .unwrap_or(0);
-                if winner.as_ref().is_none_or(|(_, best, _)| unigram > *best) {
+                if winner.as_ref().is_none_or(|(best_token, best, _)| {
+                    unigram > *best
+                        || (unigram == *best
+                            && phrase_index_library(token.value())
+                                < phrase_index_library(best_token.value()))
+                }) {
                     winner = Some((token, unigram, text));
                 }
             }
