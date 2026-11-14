@@ -1251,8 +1251,15 @@ fn a_selection_committed_composition_reparses_with_its_store() {
     crate::context::pinyin_fini(context);
 }
 
+/// The pin sorts the predicted rows with the stable `g_array_sort_with_data`
+/// and `compare_item_with_sort_option` under `SORT_BY_PHRASE_LENGTH |
+/// SORT_BY_FREQUENCY` (`pinyin.cpp:2443-2447` at `074a2219`; GLib's sort
+/// is stable since 2.32), so tied rows keep their arrival order:
+/// library by library (`reduce_tokens`, `phrase_large_table3.h:77-97`),
+/// and inside one library the phrase table's key order over the
+/// little-endian UCS-4 keys of the stored phrase text.
 #[test]
-fn predicted_tie_groups_are_text_ascending_including_user_rows() {
+fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
     use crate::sentence::pinyin_guess_predicted_candidates_with_punctuations;
     use crate::types::lookup_candidate_type_t;
 
@@ -1266,107 +1273,121 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
     }
 
+    /// The phrase table's key for `text`: its UCS-4 words, little-endian.
+    fn ucs4_le_key(text: &str) -> Vec<u8> {
+        text.chars()
+            .flat_map(|ch| u32::from(ch).to_le_bytes())
+            .collect()
+    }
+
     let user_dir = TempUserDir::new("pred-defined-order");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     // Populate the USER seam: the prefix phrase 中 (a fixture phrase too,
-    // so the system side also contributes), then two user phrases under
-    // it whose TEXT order (华 U+534E before 年 U+5E74) is the REVERSE of
-    // their token order (中年 is added first, so its token is lower).
-    // Under the removed token pre-sort the tie group emitted 中年 then
-    // 中华; the defined order is text-ascending.
+    // so the system side also contributes), then two pairs of user
+    // phrases under it with equal counts, so each pair ties.
+    // - 中年 is added before 中华, so token order would put 年 first; key
+    //   order (and text order) put 华 first.
+    // - 中型 (型 U+578B, low byte 8B) and 中文 (文 U+6587, low byte 87):
+    //   text order puts 型 first, little-endian key order puts 文 first.
+    //   (The fixture already holds 中国 as a system phrase, so importing it
+    //   would train that system item rather than add a user row.)
+    //   This pair tells the pin's key order apart from text order.
     let iter = pinyin_begin_add_phrases(context, 7);
     assert!(!iter.is_null());
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr("\u{4e2d}").as_ptr(),
-        cstr("zhong").as_ptr(),
-        9
-    ));
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr("\u{4e2d}\u{5e74}").as_ptr(),
-        cstr("zhongnian").as_ptr(),
-        7
-    ));
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr("\u{4e2d}\u{534e}").as_ptr(),
-        cstr("zhonghua").as_ptr(),
-        7
-    ));
+    for (phrase, pinyin, count) in [
+        ("\u{4e2d}", "zhong", 9),
+        ("\u{4e2d}\u{5e74}", "zhongnian", 7),
+        ("\u{4e2d}\u{534e}", "zhonghua", 7),
+        ("\u{4e2d}\u{578b}", "zhongxing", 7),
+        ("\u{4e2d}\u{6587}", "zhongwen", 7),
+    ] {
+        assert!(pinyin_iterator_add_phrase(
+            iter,
+            cstr(phrase).as_ptr(),
+            cstr(pinyin).as_ptr(),
+            count
+        ));
+    }
     pinyin_end_add_phrases(iter);
 
-    let prefix = cstr("\u{4e2d}");
+    let prefix = "\u{4e2d}";
+    let prefix_c = cstr(prefix);
     assert!(pinyin_guess_predicted_candidates_with_punctuations(
         instance,
-        prefix.as_ptr()
+        prefix_c.as_ptr()
     ));
 
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
     let total = inst.core.lm.amplified_total();
-    let rows: Vec<(String, usize, u64)> = inst
+    // (text, length, amplified frequency, library, stored-text key)
+    let rows: Vec<(String, usize, u64, usize, Vec<u8>)> = inst
         .candidates
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| {
-            let baked = c.token.get().map_or(0, |token| {
-                inst.core
-                    .dict
-                    .live_items()
-                    .effective_unigram(token.value())
-                    .unwrap_or(0)
-                    + inst
-                        .core
-                        .user
-                        .unigram_delta(token.value())
-                        .ok()
-                        .unwrap_or(0)
-            });
+            let token = c.token.get().expect("a predicted row has a token");
+            let baked = inst
+                .core
+                .dict
+                .live_items()
+                .effective_unigram(token.value())
+                .unwrap_or(0)
+                + inst
+                    .core
+                    .user
+                    .unigram_delta(token.value())
+                    .ok()
+                    .unwrap_or(0);
+            let text = c.text_str().expect("candidate text is UTF-8").to_owned();
+            // A predicted row shows the phrase after the prefix; the
+            // phrase table keys the whole stored phrase.
+            let key = ucs4_le_key(&format!("{prefix}{text}"));
+            let length = text.chars().count();
             (
-                c.text_str().expect("candidate text is UTF-8").to_owned(),
-                c.text_str()
-                    .expect("candidate text is UTF-8")
-                    .chars()
-                    .count(),
+                text,
+                length,
                 amplified(baked, total),
+                oxpinyin_core::phrase_index_library(token.value()),
+                key,
             )
         })
         .collect();
 
     // The user rows survived the prefix slice and reached the list.
-    let texts: Vec<&str> = rows.iter().map(|(text, _, _)| text.as_str()).collect();
-    assert!(texts.contains(&"\u{534e}"), "中华 sliced to 华: {texts:?}");
-    assert!(texts.contains(&"\u{5e74}"), "中年 sliced to 年: {texts:?}");
+    let user_position = |text: &str| {
+        rows.iter()
+            .position(|row| row.0 == text && row.3 == usize::from(USER_DICTIONARY))
+            .unwrap_or_else(|| panic!("user row {text:?} missing from {rows:?}"))
+    };
+    let hua = user_position("\u{534e}");
+    let nian = user_position("\u{5e74}");
+    let xing = user_position("\u{578b}");
+    let wen = user_position("\u{6587}");
 
-    // DEFINED ORDER: the emitted list is sorted by the comparator's keys
-    // (length desc, amplified frequency desc) with TEXT ASCENDING inside
-    // every tie group — equivalently, no later row in the same group may
-    // sort before an earlier one. Covers the user seam: 华 and 年 tie
-    // (both user rows, equal live count 21) and must appear 华-first.
-    for (i, (text_a, len_a, freq_a)) in rows.iter().enumerate() {
-        for (text_b, len_b, freq_b) in rows.iter().skip(i + 1) {
+    // THE PIN'S ORDER: the list is sorted by the comparator's keys (length
+    // desc, amplified frequency desc), and inside every tie group the rows
+    // keep their arrival order: library ascending, then the little-endian
+    // UCS-4 key of the stored phrase text.
+    for (i, (text_a, len_a, freq_a, library_a, key_a)) in rows.iter().enumerate() {
+        for (text_b, len_b, freq_b, library_b, key_b) in rows.iter().skip(i + 1) {
             if len_a == len_b && freq_a == freq_b {
                 assert!(
-                    text_a <= text_b,
-                    "tie group out of defined order: {text_a:?} before {text_b:?} \
+                    (library_a, key_a) <= (library_b, key_b),
+                    "tie group out of the pin's order: {text_a:?} before {text_b:?} \
                      in {rows:?}"
                 );
             }
         }
     }
-    let hua = texts
-        .iter()
-        .position(|t| *t == "\u{534e}")
-        .expect("华 present");
-    let nian = texts
-        .iter()
-        .position(|t| *t == "\u{5e74}")
-        .expect("年 present");
+    // Both pairs tie inside the user library.
+    assert_eq!((rows[hua].1, rows[hua].2), (rows[nian].1, rows[nian].2));
+    assert_eq!((rows[xing].1, rows[xing].2), (rows[wen].1, rows[wen].2));
+    assert!(hua < nian, "key order, not token order: 华 before 年");
     assert!(
-        hua < nian,
-        "text order, not token order, inside the user tie group"
+        wen < xing,
+        "little-endian key order, not text order: 文 before 型"
     );
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
