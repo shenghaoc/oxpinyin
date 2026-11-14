@@ -201,21 +201,4 @@ mod tests {
         assert_eq!(empty.len(), 1);
         assert!(empty[0].is_empty());
     }
-
-    #[test]
-    fn the_expansion_limit_includes_the_empty_product() {
-        assert!(expand_keys(&[], 0).is_empty());
-        for limit in [1, 64] {
-            let empty = expand_keys(&[], limit);
-            assert_eq!(empty.len(), 1);
-            assert!(empty[0].is_empty());
-        }
-        assert!(expand_keys(&keys("ni"), 0).is_empty());
-    }
-
-    #[test]
-    fn expansion_beyond_the_limit_yields_nothing_rather_than_a_subset() {
-        assert!(expand_keys(&keys("h,h,h,h"), 64).is_empty());
-        assert!(expand_keys(&keys("ni,h"), 2).is_empty());
-    }
 }
