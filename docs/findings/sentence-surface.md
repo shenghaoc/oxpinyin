@@ -132,19 +132,20 @@ answer.
 Current scoring and selection:
 
 - **Float accumulation.** Real-table scoring uses f32 accumulation of std
-  `f64::ln` and the pin's pre-log epsilon gates (maintainer approval).
+  `f64::ln` and the pin's pre-log epsilon gates. The pronunciation gate
+  applies to the whole-span sum, not to individual paths.
   Register row 11 of `compatibility-policy.md` carries the classification.
 - **Selection.** The beam, node and tail order follow the S1/S2/S3 repairs
   of the
   [algorithm-precondition rules](compatibility-policy.md#algorithm-precondition-violations).
   §12 "Selection port" records the ported heap and merge order.
   No Rust sort takes the cyclic trellis comparator.
-- **Pronunciation.** `pinyin_poss` takes the share of the looked-up
-  spelling once per span: the first matrix path per token wins. It does
-  not sum the possibility over every matrix path of one span, as
-  `compute_pronunciation_possibility` does. This divergence is recorded,
-  not chased. The per-pronunciation counts are carried, so the polyphone
-  discount applies.
+- **Pronunciation.** Each transition uses the sum of the pronunciation
+  possibilities over every matrix path of its span. Each path divides its
+  matched frequency by the item's total in `f32`; recursive frames add
+  those possibilities in matrix order (`phonetic_key_matrix.cpp:534-600`).
+  Both step branches test the sum against `FLT_EPSILON`
+  (`phonetic_lookup.h:643-697`). No per-path epsilon gate applies.
 - **Constraints.** The constraint machinery (`CONSTRAINT_ONESTEP`,
   `diff_result`) is ported: the store in `constraint.rs`, the gated
   full-matrix walk, the reset split, the constraint-aware train and
