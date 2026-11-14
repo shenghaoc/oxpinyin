@@ -19,8 +19,8 @@
 use oxpinyin_core::{
     DoublePinyinParser, DoublePinyinScheme, FORCE_TONE, FullPinyinScheme, OptionBits,
     PINYIN_INCOMPLETE, SyllableKey, USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinParser, ZhuyinScheme,
-    luoma_pinyin_index, parse_full_pinyin_index, parse_full_pinyin_index_with_options,
-    parse_zhuyin_direct, secondary_zhuyin_index,
+    luoma_pinyin_index, parse_full_pinyin_index_with_options, parse_zhuyin_direct,
+    secondary_zhuyin_index,
 };
 
 /// All double-pinyin layouts with a compiled table (Customized has none).
@@ -460,8 +460,14 @@ fn with_fallback_suppressed_clears_only_the_fallback() {
 
 #[test]
 fn luoma_parses_through_the_dp() {
-    let parse =
-        |input: &str| parse_full_pinyin_index(input.as_bytes(), false, luoma_pinyin_index());
+    let parse = |input: &str| {
+        parse_full_pinyin_index_with_options(
+            input.as_bytes(),
+            OptionBits::from_bits(0),
+            luoma_pinyin_index(),
+        )
+        .expect("infallible parse")
+    };
 
     // Longest coverage wins; the canonical spelling is what the
     // segment maps to, spans stay raw.
@@ -496,7 +502,12 @@ fn luoma_parses_through_the_dp() {
 #[test]
 fn index_parse_handles_tone_digits() {
     let parse = |input: &str, use_tone| {
-        parse_full_pinyin_index(input.as_bytes(), use_tone, secondary_zhuyin_index())
+        parse_full_pinyin_index_with_options(
+            input.as_bytes(),
+            OptionBits::from_bits(if use_tone { USE_TONE } else { 0 }),
+            secondary_zhuyin_index(),
+        )
+        .expect("infallible parse")
     };
 
     // Under USE_TONE the trailing digit rides the key (secondary
@@ -522,8 +533,14 @@ fn dp_prefers_longest_coverage_then_fewest_keys() {
     // "xian" style ambiguity through the secondary index: "shian"
     // covers 5 bytes as one key; "shi"->xi + "an" also covers 5 as
     // two keys — fewest keys wins, so the single long key parses.
-    let parse =
-        |input: &str| parse_full_pinyin_index(input.as_bytes(), false, secondary_zhuyin_index());
+    let parse = |input: &str| {
+        parse_full_pinyin_index_with_options(
+            input.as_bytes(),
+            OptionBits::from_bits(0),
+            secondary_zhuyin_index(),
+        )
+        .expect("infallible parse")
+    };
     assert_eq!(parse("shian").full_pinyin(), "xian");
 
     // An initial-only target parses with no option bit: these

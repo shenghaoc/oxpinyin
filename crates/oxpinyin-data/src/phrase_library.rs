@@ -796,12 +796,6 @@ impl PhraseLibrary {
         })
     }
 
-    /// Number of readable items in an attached mapping.
-    #[must_use]
-    pub fn original_item_count(&self) -> u64 {
-        self.items().count() as u64
-    }
-
     /// Whether the chunk's mapping has moved to its live owner.
     #[must_use]
     pub const fn is_detached(&self) -> bool {

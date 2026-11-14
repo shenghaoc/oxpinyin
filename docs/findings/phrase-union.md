@@ -264,7 +264,7 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 | Upstream | oxpinyin |
 |---|---|
 | `lookup_candidate_type_t` per candidate | `CapiCandidate::candidate_type` (`crates/oxpinyin-capi/src/state.rs`) |
-| `pinyin_load_addon_phrase_library` | `crates/oxpinyin-capi/src/config.rs`, `RuntimeDict::load_addon` |
+| `pinyin_load_addon_phrase_library` | `crates/oxpinyin-capi/src/config.rs`, `RuntimeDict::load_addon_reporting` |
 | Prediction and punctuation prepend | `crates/oxpinyin-capi/src/predict.rs`, `crates/oxpinyin-facade/src/predict.rs` |
 
 ### 4.4 User store

@@ -589,12 +589,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         u64::from(self.libraries().unigram_total())
     }
 
-    /// The facade's item count.
-    #[must_use]
-    pub fn item_count(&self) -> u64 {
-        self.libraries().item_count()
-    }
-
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order.
     #[must_use]
@@ -961,10 +955,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.fill_lookup(syllables, out)
     }
 
-    fn phrase_index_item_count(&self) -> Result<u64, DictError> {
-        Ok(self.libraries().item_count())
-    }
-
     /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
     /// phrase or as a marker for longer phrases — one point read, no
     /// record decode (the bit is set whenever the key exists).
@@ -1165,22 +1155,15 @@ impl AddonDictionary {
     }
 
     /// Loads addon library `index`'s chunk file from `dir` —
-    /// `pinyin_load_addon_phrase_library`. `false` when the index names no
-    /// addon library, the library is already loaded, or the file is
-    /// missing or malformed.
-    pub fn load(&mut self, index: u8, dir: &Path) -> bool {
-        self.load_reporting(index, dir).unwrap_or(false)
-    }
-
-    /// [`AddonDictionary::load`] with the failure it answers `false` for
-    /// kept: `Ok(true)` loaded, `Ok(false)` for an index that names no
+    /// `pinyin_load_addon_phrase_library`: `Ok(true)` loaded, `Ok(false)`
+    /// for an index that names no
     /// addon library or one already loaded (the pin's guard, silent), and
     /// an error otherwise — [`LibraryError::Unmappable`] when the chunk
     /// does not map, where the pin writes `mmap %s failed!`
     /// (`pinyin.cpp:290`). A directory is judged as `MemoryChunk::mmap`
     /// does (Unix: [`LibraryError::Row`] from its reported size, else the
     /// unmappable refusal); any other file that is not a regular file is not
-    /// an error: it answers `Ok(false)` as before.
+    /// an error: it answers `Ok(false)`.
     ///
     /// # Errors
     ///

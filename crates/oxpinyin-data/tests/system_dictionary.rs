@@ -165,7 +165,6 @@ fn open_costs_handles_only() {
     let fix = Fixture::new();
     let dict = fix.dict();
     // gbk_char.bin is absent: nibble 2 is simply unloaded.
-    assert_eq!(dict.item_count(), 6);
     assert_eq!(dict.unigram_total(), 30);
     assert!(dict.libraries().is_loaded(1));
     assert!(!dict.libraries().is_loaded(2));
@@ -264,7 +263,6 @@ fn token_surface_resolves_through_the_chunk_file() {
     assert_eq!(prons.len(), 2);
     assert_eq!(prons[0], ("ni".to_owned(), 5));
     assert_eq!(prons[1], ("ni".to_owned(), 3));
-    assert_eq!(dict.phrase_index_item_count().unwrap(), 6);
 }
 
 #[test]

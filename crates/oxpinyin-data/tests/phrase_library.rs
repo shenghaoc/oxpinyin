@@ -436,11 +436,9 @@ fn chunk_level_refusals_name_the_file_and_layout_faults_do_not() {
     let _ = std::fs::remove_file(&path);
 }
 
-// Unix only: the test damages the library file while it is mapped; Windows
-// refuses a write into a mapped file (error 1224).
 #[cfg(unix)]
 #[test]
-fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
+fn libraries_record_absent_files() {
     let dir = temp_dir("recheck");
     let first = dir.join("a.bin");
     std::fs::write(&first, sample()).expect("write a.bin");
@@ -450,28 +448,6 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     assert_eq!(
         libraries.unmapped().collect::<Vec<_>>(),
         [dir.join("b.bin")]
-    );
-    assert!(libraries.unmappable_now(|_| true, None).is_empty());
-
-    // The file goes bad after the open: the pin maps it again on a save.
-    let mut bytes = sample();
-    bytes[4] ^= 0xFF;
-    std::fs::write(&first, bytes).expect("damage a.bin");
-    assert_eq!(
-        libraries.unmappable_now(|_| true, None),
-        std::slice::from_ref(&first)
-    );
-    assert_eq!(
-        libraries.unmappable_now(|n| n == 1, Some(1)),
-        std::slice::from_ref(&first)
-    );
-    assert!(
-        libraries.unmappable_now(|_| true, Some(2)).is_empty(),
-        "only the named library is looked at"
-    );
-    assert!(
-        libraries.unmappable_now(|_| false, None).is_empty(),
-        "an unloaded library is skipped"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -484,8 +460,7 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
 fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     let dir = temp_dir("addon");
     let mut addons = AddonDictionary::empty();
-    // Absent: `false`, and the file the pin cannot map.
-    assert!(!addons.load(4, &dir));
+    // Absent: the file the pin cannot map.
     let error = addons
         .load_reporting(4, &dir)
         .expect_err("art.bin is absent");
@@ -494,7 +469,6 @@ fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     let mut bytes = sample();
     bytes[4] ^= 0xFF;
     std::fs::write(dir.join("art.bin"), bytes).expect("write art.bin");
-    assert!(!addons.load(4, &dir));
     assert!(addons.load_reporting(4, &dir).is_err());
     // Whole: loads once, and a second load is the pin's silent guard even
     // with the file gone.

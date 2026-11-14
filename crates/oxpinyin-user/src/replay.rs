@@ -1470,12 +1470,6 @@ impl ReplayedLibrary {
         self.content.loaded_slot_is_empty(slot)
     }
 
-    pub(crate) fn readable_item_count(&self) -> u64 {
-        (0..self.content.slots.data_end / 4)
-            .filter(|&slot| self.item_bytes(slot as u32).is_some())
-            .count() as u64
-    }
-
     /// The sum of the readable items' unigrams over the library's range, as
     /// `FacadePhraseIndex::compact` rebuilds the total (074a2219
     /// `phrase_index.cpp:648-675`): every slot in `get_range` is read and an

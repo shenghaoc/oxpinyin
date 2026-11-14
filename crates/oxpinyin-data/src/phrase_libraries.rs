@@ -12,7 +12,6 @@
 //! one the addon libraries (`m_addon_phrase_index`, indexes 4–15, loaded
 //! on demand by `pinyin_load_addon_phrase_library`).
 
-use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
@@ -36,24 +35,12 @@ pub struct LibraryPronunciation {
     pub freq: u64,
 }
 
-/// A loaded library plus its lazily tallied item count.
+/// A loaded library and the file it came from.
 #[derive(Debug)]
 struct Loaded {
     library: PhraseLibrary,
     /// The file it was mapped from, as `load` was given it.
     path: PathBuf,
-    /// Resident items, tallied once on the first query — upstream keeps
-    /// `m_length` as O(1) bookkeeping; the reader pays one offset-array
-    /// scan per library at the first count query, never at open.
-    item_count: OnceCell<u64>,
-}
-
-impl Loaded {
-    fn item_count(&self) -> u64 {
-        *self
-            .item_count
-            .get_or_init(|| self.library.original_item_count())
-    }
 }
 
 /// The phrase libraries of one facade, dispatched by token nibble.
@@ -182,27 +169,6 @@ impl PhraseLibraries {
         self.unmapped.iter().map(PathBuf::as_path)
     }
 
-    /// The files of the loaded libraries that `MemoryChunk::mmap` would
-    /// refuse now, in nibble order: where the pin maps a system library
-    /// again and writes `mmap %s failed!` (save, mask-out, reload,
-    /// `pinyin.cpp:956`, `:1265`). Only the nibbles `visible` accepts are
-    /// looked at — an unloaded library is skipped, as the pin's
-    /// `get_range` skips it — and with `only` set, only that one.
-    #[must_use]
-    pub fn unmappable_now(&self, visible: impl Fn(u8) -> bool, only: Option<u8>) -> Vec<PathBuf> {
-        (0u8..)
-            .zip(&self.by_nibble)
-            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
-            .filter_map(|(_, slot)| {
-                let loaded = slot.as_ref()?;
-                verify_chunk(&loaded.path)
-                    .err()
-                    .is_some_and(|error| error.unmappable_path().is_some())
-                    .then(|| loaded.path.clone())
-            })
-            .collect()
-    }
-
     /// Validate each selected loaded library once, retaining both the
     /// first fault's classification and the reportable paths. The caller
     /// applies its operation's table-row and visibility guards.
@@ -264,7 +230,6 @@ impl PhraseLibraries {
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
-            item_count: OnceCell::new(),
         });
         Ok(true)
     }
@@ -293,7 +258,6 @@ impl PhraseLibraries {
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
-            item_count: OnceCell::new(),
         });
         Ok(true)
     }
@@ -331,11 +295,7 @@ impl PhraseLibraries {
         } else {
             self.stocked &= !(1 << nibble);
         }
-        *slot = Some(Loaded {
-            library,
-            path,
-            item_count: OnceCell::new(),
-        });
+        *slot = Some(Loaded { library, path });
     }
 
     /// Transfers one loaded mapping, retaining no reader of its bytes.
@@ -474,60 +434,6 @@ impl PhraseLibraries {
         total
     }
 
-    /// The item count across the loaded libraries — the parity surface
-    /// the ranking denominator reproduces (`FacadePhraseIndex` item
-    /// count).
-    #[must_use]
-    pub fn item_count(&self) -> u64 {
-        self.item_count_where(|_| true)
-    }
-
-    /// [`Self::item_count`] over the loaded libraries `visible` accepts.
-    pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.sum_loaded(visible, Loaded::item_count)
-    }
-
-    /// Count live items through the detached owner. The scalar is cached just
-    /// as in the direct reader.
-    pub fn item_count_where_live(
-        &self,
-        visible: impl Fn(u8) -> bool,
-        pristine: impl Fn(u8) -> Option<u64>,
-    ) -> u64 {
-        self.by_nibble
-            .iter()
-            .enumerate()
-            .filter_map(|(nibble, slot)| {
-                let nibble = u8::try_from(nibble).ok()?;
-                if !visible(nibble) {
-                    return None;
-                }
-                let loaded = slot.as_ref()?;
-                Some(*loaded.item_count.get_or_init(|| {
-                    if loaded.library.is_detached() {
-                        pristine(nibble).unwrap_or(0)
-                    } else {
-                        loaded.library.original_item_count()
-                    }
-                }))
-            })
-            .fold(0_u64, u64::saturating_add)
-    }
-
-    fn sum_loaded(&self, visible: impl Fn(u8) -> bool, count: impl Fn(&Loaded) -> u64) -> u64 {
-        self.by_nibble
-            .iter()
-            .enumerate()
-            .filter_map(|(nibble, slot)| {
-                if !visible(u8::try_from(nibble).unwrap_or(u8::MAX)) {
-                    return None;
-                }
-                let loaded = slot.as_ref()?;
-                Some(count(loaded))
-            })
-            .fold(0_u64, u64::saturating_add)
-    }
-
     /// `PhraseItem::get_pronunciation_possibility(keys)`
     /// (`phrase_index.h:135-160`): `(matched, total)` over the item's
     /// stored pronunciations, where `matched` sums the frequencies of the
@@ -660,7 +566,6 @@ mod tests {
         assert!(libs.is_empty());
         assert!(libs.phrase_text(0x0100_0001).is_none());
         assert_eq!(libs.unigram_total(), 0);
-        assert_eq!(libs.item_count(), 0);
         assert!(!libs.is_loaded(1));
         assert!(!libs.unload(1));
         dir.close().unwrap();
@@ -719,7 +624,6 @@ mod tests {
         let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
         assert!(libs.is_loaded(4));
         assert!(libs.phrase_text(0x0400_0001).is_none());
-        assert_eq!(libs.item_count(), 0);
         assert_eq!(libs.unigram_total(), 0);
         let library = libs.library(0x0400_0000).expect("loaded");
         assert!(library.is_layout_failed());
