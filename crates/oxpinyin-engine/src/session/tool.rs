@@ -94,7 +94,7 @@ pub struct LookupRow {
 pub struct PreparedLookup {
     /// Returned parser length and original keys, for the physical dump.
     pub parsed: Parse,
-    scan: Vec<Vec<super::ScanKey>>,
+    scan: super::matrix::ScanMatrix,
 }
 
 /// Parse once and build one scan matrix from the same selected edges.
@@ -107,7 +107,9 @@ pub fn prepare_lookup(input: &[u8], options: u32) -> Result<PreparedLookup, crat
     let graph = SegmentGraph::build_with_options(input.as_ref(), options)?;
     let path = graph.fewest_keys(options.has_incomplete());
     let parsed = selected_parse(input.as_ref(), &path);
-    let scan = super::build_scan_matrix_over(&graph, &path, options, false);
+    let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
+        &graph, &path, options, false,
+    ));
     Ok(PreparedLookup { parsed, scan })
 }
 

@@ -72,21 +72,23 @@ impl Column {
 fn build_columns(
     input: &[u8],
     parsed_len: usize,
-    keys: &[MatrixKey],
+    keys: impl IntoIterator<Item = MatrixKey>,
     separators: bool,
 ) -> Vec<Column> {
     let bound = input.len();
     let mut columns: Vec<Column> = (0..=bound).map(|_| Column::default()).collect();
+    let mut any_key = false;
     for key in keys {
+        any_key = true;
         if let Some(column) = columns.get_mut(key.syllable_start()) {
-            column.real.push(*key);
+            column.real.push(key);
         }
     }
     let parsed = parsed_len.min(bound);
     if separators {
         let leading_run = input.iter().take_while(|byte| **byte == b'\'').count();
         for position in 0..parsed {
-            if input[position] == b'\'' && (position >= leading_run || keys.is_empty()) {
+            if input[position] == b'\'' && (position >= leading_run || !any_key) {
                 columns[position].zero_end = Some(position + 1);
             }
         }
@@ -190,10 +192,11 @@ pub struct MatrixColumns {
 pub fn matrix_columns(
     input: &[u8],
     parsed_len: usize,
-    keys: &[MatrixKey],
+    keys: impl IntoIterator<Item = MatrixKey>,
     separators: bool,
 ) -> Option<MatrixColumns> {
-    if input.is_empty() || keys.is_empty() {
+    let mut keys = keys.into_iter().peekable();
+    if input.is_empty() || keys.peek().is_none() {
         return None;
     }
     let columns = build_columns(input, parsed_len, keys, separators);
@@ -355,7 +358,7 @@ where
 pub fn character_offset_with_walk_over_keys<D>(
     input: &[u8],
     parsed_len: usize,
-    keys: &[MatrixKey],
+    keys: impl IntoIterator<Item = MatrixKey>,
     separators: bool,
     dictionary: &D,
     phrase: &oxpinyin_core::PhraseText,
@@ -368,7 +371,8 @@ where
     // `0 == matrix.size()`: no parse ran, or the parse placed no key —
     // `fill_matrix` clears the matrix and returns before sizing it when
     // the key vector is empty (`phonetic_key_matrix.cpp:34-38`).
-    if input.is_empty() || keys.is_empty() {
+    let mut keys = keys.into_iter().peekable();
+    if input.is_empty() || keys.peek().is_none() {
         return Ok((None, false));
     }
     if offset > input.len() {

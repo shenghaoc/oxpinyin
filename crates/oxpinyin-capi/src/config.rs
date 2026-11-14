@@ -18,8 +18,9 @@ const GBK_DICTIONARY: u8 = 2;
 ///
 /// Stores the full option word in the live context. `PINYIN_INCOMPLETE`
 /// updates the setting sessions opened later use; the parsers read
-/// `USE_TONE` off the stored word. The rest of the word remasks
-/// already-allocated full-pinyin sessions.
+/// `USE_TONE` off the stored word. Already-allocated full-pinyin sessions
+/// read the rest of the word at their next parse; a guess reads it over
+/// the matrix that parse filled (`pinyin.cpp:1299-1306` at 074a2219).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
     if context.is_null() {

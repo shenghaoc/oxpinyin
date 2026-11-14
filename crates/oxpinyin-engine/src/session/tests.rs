@@ -34,36 +34,6 @@ fn replacing_raw_clears_the_exact_chain() {
     );
 }
 
-#[test]
-fn an_anchor_inside_an_exact_segment_decodes_nothing() {
-    use oxpinyin_core::graph::ExactSegment;
-    let mut session = session();
-    let ni_hao: Vec<ExactSegment> = {
-        let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
-        let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");
-        vec![
-            ExactSegment::new(0, 2, ni, 0),
-            ExactSegment::new(3, 6, hao, 0),
-        ]
-    };
-    session
-        .replace_raw_exact("ni'hao", &ni_hao)
-        .expect("replace");
-    // Anchor 1 sits inside the `ni` segment: the tail `hao` must not
-    // decode across the skipped `i'` bytes.
-    let raw = session.input.as_str().to_owned();
-    let graph = session
-        .build_graph_at(1, &raw.as_bytes()[1..])
-        .expect("anchor inside a segment answers an empty graph");
-    assert!(graph.edges().is_empty());
-    assert_eq!(graph.consumed(), 0);
-    // A boundary anchor (2, the end of the first segment) still decodes.
-    let graph = session
-        .build_graph_at(2, &raw.as_bytes()[2..])
-        .expect("boundary anchor builds");
-    assert_eq!(graph.edges().len(), 1);
-}
-
 use oxpinyin_core::{
     Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey, UserModel,
 };
@@ -2421,7 +2391,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     select_token(&mut session, 1); // 你 over [0,2)
     select_token(&mut session, 2); // 好 over [2,5)
     // The remainder has no window candidates: select the raw-text
-    // fallback to consume the buffer — the commit-branch shape.
+    // fallback to consume the buffer — the whole-buffer selection shape.
     let index = session
         .candidates()
         .iter()
@@ -3485,7 +3455,8 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
         .expect("intake");
     // Pin Luoma lishihbakua: keys at 0..2, 2..6, 6..8, 8..11;
     // the same keys in the session's canonical coordinate space below.
-    let (keys, parsed) = session.matrix_keys().expect("matrix");
+    let keys: Vec<_> = session.matrix_keys().iter().collect();
+    let parsed = session.input.parsed.retained.matrix.bound;
     assert_eq!(parsed, 12);
     assert_eq!(
         keys.iter()
@@ -3501,11 +3472,10 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
 }
 
 #[test]
-fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
+fn retained_matrix_keeps_leading_gaps_empty_and_follows_the_last_parse() {
     let mut session = session();
     session.replace_raw("'ni''hao'").expect("parsed input");
-    session.ensure_matrix().expect("retained matrix");
-    let matrix = &session.input.parse.get().expect("matrix").matrix;
+    let matrix = &session.input.parsed.retained.matrix;
     assert!(matrix.columns[0].is_empty());
     assert!(!matrix.zeros[0], "leading gap cannot carry a zero-key hop");
     assert!(
@@ -3520,8 +3490,7 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
     );
 
     session.replace_raw("nihao").expect("replacement");
-    session.ensure_matrix().expect("replacement matrix");
-    let matrix = &session.input.parse.get().expect("matrix").matrix;
+    let matrix = &session.input.parsed.retained.matrix;
     assert!(
         !matrix.columns[0].is_empty(),
         "old leading gap must disappear"
@@ -3529,20 +3498,6 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
     assert!(
         !matrix.zeros[3],
         "old separator must not survive replacement"
-    );
-    session.matrix_keys().expect("key list");
-    assert!(session.input.keys.get().is_some());
-    session.set_collapse_sentence_rows_to_best(true);
-    assert!(
-        session.input.parse.get().is_none() && session.input.keys.get().is_none(),
-        "the mode drops the retained matrix and its key list together"
-    );
-    session.ensure_matrix().expect("zhuyin matrix");
-    assert!(session.input.parse.get().is_some());
-    session.set_collapse_sentence_rows_to_best(true);
-    assert!(
-        session.input.parse.get().is_some(),
-        "an unchanged mode keeps the retained matrix"
     );
 }
 
@@ -3576,7 +3531,7 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
 }
 
 #[test]
-fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
+fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
     use oxpinyin_core::OptionBits;
 
     const HALF_VOCAB: &str = "token=1\tkeys=an\ttext=安\tunigram=1000\n\
@@ -3605,16 +3560,26 @@ fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
                 .any(|row| row.text() == wanted),
             "zhuyin's full-pinyin matrix omits the split passes"
         );
-        assert!(session.input.parse.get().is_some());
 
+        // The mode reaches the matrix at the next parse, as the option
+        // word does: the matrix the last parse filled stays as it is.
         session.set_collapse_sentence_rows_to_best(false);
+        assert!(
+            !session
+                .candidates_at(offset)
+                .expect("unparsed window")
+                .iter()
+                .any(|row| row.text() == wanted),
+            "the mode alone does not re-parse"
+        );
+        session.replace_raw(raw).expect("pinyin parse");
         let rows = session.candidates_at(offset).expect("pinyin window");
         let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
         assert_eq!(row.consumed_bytes(), end - offset);
         assert_eq!(session.raw_input(), raw);
 
         session.set_collapse_sentence_rows_to_best(true);
-        session.candidates_at(0).expect("live zhuyin window");
+        session.replace_raw(raw).expect("zhuyin parse");
         assert!(
             !session
                 .candidates_at(offset)
@@ -3639,7 +3604,8 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
         .set_options(OptionBits::from_bits(0x18a))
         .expect("options");
     let spans = |session: &Session<Silent, Silent>| {
-        let (keys, parsed) = session.matrix_keys().expect("keys");
+        let keys: Vec<_> = session.matrix_keys().iter().collect();
+        let parsed = session.input.parsed.retained.matrix.bound;
         (
             keys.iter()
                 .map(|key| (key.syllable_start(), key.end()))
@@ -3654,10 +3620,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     assert!(session.spans_a_matrix_key(2).expect("span"));
 
     session.set_collapse_sentence_rows_to_best(true);
-    assert!(
-        session.input.keys.get().is_none(),
-        "the mode change drops the projected key list"
-    );
+    session.replace_raw("xian").expect("zhuyin parse");
     let (zhuyin_keys, parsed) = spans(&session);
     assert_eq!(parsed, 4);
     assert_eq!(
@@ -3669,6 +3632,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     assert_eq!(session.full_parsed_len(), 4);
 
     session.set_collapse_sentence_rows_to_best(false);
+    session.replace_raw("xian").expect("pinyin parse");
     assert_eq!(spans(&session).0, pinyin_keys, "pinyin topology returns");
     assert!(session.spans_a_matrix_key(2).expect("span"));
 }
@@ -3705,7 +3669,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
         ),
     ];
     session.replace_raw_exact("nihk", &segments).expect("parse");
-    assert!(session.input.parse.get().expect("matrix").matrix.zeros[4]);
+    assert!(session.input.parsed.retained.matrix.zeros[4]);
     let rows = session.candidates_at(2).expect("hao window");
     assert!(rows.iter().any(|row| row.text() == "好"));
 }
@@ -3909,203 +3873,64 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
     );
 }
 
+/// `pinyin_set_options` only stores the word (`pinyin.cpp:1299-1306` at
+/// 074a2219): the matrix the last parse filled stays as it is, and the
+/// word reaches the matrix at the next parse.
 #[test]
-fn parse_consumers_share_the_whole_input_graph() {
-    use std::rc::Rc;
-
-    let mut session = session();
-    session.replace_raw("ni'hao'").expect("parse");
-    let original = session.input.graph.get().expect("retained graph").clone();
-    session.ensure_matrix().expect("matrix");
-    let mut candidates = Vec::new();
-    let window = session
-        .scan_window(0, &mut candidates, false)
-        .expect("window");
-    assert_eq!(window, session.full_parsed_len());
-    assert_eq!(window, 7);
-    assert!(Rc::ptr_eq(
-        &original,
-        session.input.graph.get().expect("shared graph")
-    ));
-
-    let uncached = session
-        .build_uncached_graph_at(0, session.input.as_bytes())
-        .expect("fresh graph");
-    assert_eq!(*original, uncached);
-    let nonzero = session
-        .build_graph_at(2, &session.input.as_bytes()[2..])
-        .expect("suffix");
-    let expected = session
-        .build_uncached_graph_at(2, &session.input.as_bytes()[2..])
-        .expect("fresh suffix");
-    assert_eq!(*nonzero, expected);
-    assert!(!Rc::ptr_eq(&original, &nonzero));
-}
-
-#[test]
-fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
-    use oxpinyin_core::graph::ExactSegment;
-    use std::rc::Rc;
-
+fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     let mut session = session();
     session.replace_raw("sh").expect("parse");
-    let first = session.input.graph.get().expect("graph").clone();
+    assert_eq!(session.full_parsed_len(), 2);
+    let keys: Vec<_> = session.matrix_keys().iter().collect();
+    let parsed = session.input.parsed.retained.matrix.bound;
+    assert_eq!((keys.len(), parsed), (1, 2));
+
     let options = session
         .settings
         .options
         .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
     session.set_options(options).expect("options");
-    let changed = session.input.graph.get().expect("new graph").clone();
-    assert!(!Rc::ptr_eq(&first, &changed));
-    assert_eq!(session.full_parsed_len(), 0);
-    session.set_options(options).expect("same options");
-    assert!(Rc::ptr_eq(
-        &changed,
-        session.input.graph.get().expect("same graph")
-    ));
+    assert_eq!(session.full_parsed_len(), 2, "no re-parse");
+    assert_eq!(session.input.parsed.retained.matrix.bound, 2);
 
-    let sh = SyllableKey::from_text("sh").expect("initial");
+    session.replace_raw("sh").expect("parse under the new word");
+    assert_eq!(session.full_parsed_len(), 0);
+    assert!(session.matrix_keys().is_empty());
+
+    session.reset();
+    assert_eq!(session.full_parsed_len(), 0);
+}
+
+/// The key getters read the matrix the last parse filled in place
+/// (`pinyin.cpp:2924`, `:3013-3066` at 074a2219). Its keys are already in
+/// the pin's column order — a key that rides over an apostrophe run, and
+/// the resplit, divided and fuzzy additions (`pinyin.cpp:1514-1520`),
+/// included — so no getter collects or sorts them.
+#[test]
+fn the_matrix_keys_are_the_parse_in_column_order() {
+    use crate::cursor::KeySpans as _;
+    use oxpinyin_core::OptionBits;
+
+    let mut session = session();
     session
-        .replace_raw_exact("sh", &[ExactSegment::new(0, 2, sh, 0)])
-        .expect("exact parse");
-    assert_eq!(session.full_parsed_len(), 2);
-    assert!(!Rc::ptr_eq(
-        &changed,
-        session.input.graph.get().expect("exact graph")
-    ));
-    session.replace_raw("ni").expect("raw replacement");
-    assert_eq!(session.full_parsed_len(), 2);
-    let replaced = session.input.graph.get().expect("rebuilt graph").clone();
-    assert!(!Rc::ptr_eq(&changed, &replaced));
-    session.replace_raw("nih").expect("raw growth");
-    let grown = session.input.graph.get().expect("grown graph").clone();
-    assert!(!Rc::ptr_eq(&replaced, &grown));
-    session.replace_raw("ni").expect("raw shrink");
-    assert!(!Rc::ptr_eq(
-        &grown,
-        session.input.graph.get().expect("shrunk graph")
-    ));
-    session.reset();
-    assert!(session.input.graph.get().is_none());
-    assert_eq!(session.full_parsed_len(), 0);
-}
-
-#[test]
-fn cached_matrix_keys_follow_every_input_and_option_change() {
-    // The key getters read `matrix_keys` once per input; every mutation
-    // must drop the cached list, or a getter answers the previous parse.
-    fn spans(session: &Session<Silent, Silent>) -> (Vec<(usize, usize)>, usize) {
-        let (keys, parsed) = session.matrix_keys().expect("matrix");
-        let spans = keys
-            .iter()
-            .map(|key| (key.syllable_start(), key.end()))
-            .collect();
-        (spans, parsed)
-    }
-
-    let mut session = session();
-    session.replace_raw("nihao").expect("parse");
-    assert_eq!(spans(&session), (vec![(0, 2), (2, 5)], 5));
-    assert!(session.input.keys.get().is_some(), "the list is cached");
-    session.replace_raw("ni'hao").expect("replace");
-    assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
-    session.replace_raw("ni'haos").expect("grow");
-    assert_eq!(spans(&session).1, 7);
-    session.replace_raw("ni'hao").expect("shrink");
-    assert_eq!(spans(&session), (vec![(0, 2), (3, 6)], 6));
-    session.replace_raw("sh").expect("initial only");
-    let with_incomplete = spans(&session);
-    let options = session
-        .settings
-        .options
-        .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
-    session.set_options(options).expect("options");
-    assert_ne!(spans(&session), with_incomplete, "options drop the list");
-    session.reset();
-    assert!(session.input.keys.get().is_none());
-    assert_eq!(spans(&session), (Vec::new(), 0));
-}
-
-#[test]
-fn shared_graph_window_lengths_match_independent_suffix_parses() {
-    use oxpinyin_core::graph::ExactSegment;
-    use oxpinyin_core::{FORCE_TONE, OptionBits, PINYIN_INCOMPLETE, USE_TONE};
-
-    let mut session = session();
-    let check = |session: &Session<Silent, Silent>| {
-        let graph = session.input.graph.get().expect("whole graph");
-        for anchor in 0..=session.input.len() {
-            if !session.input.is_char_boundary(anchor) {
-                continue;
-            }
-            let remaining = &session.input.as_bytes()[anchor..];
-            let independent = session
-                .build_uncached_graph_at(anchor, remaining)
-                .expect("suffix");
-            let expected = super::apostrophe_extended(
-                remaining,
-                independent
-                    .fewest_keys(session.settings.incomplete())
-                    .last()
-                    .map_or(0, oxpinyin_core::graph::Edge::to),
-            );
-            assert_eq!(
-                session.window_parsed_len(graph, anchor),
-                expected,
-                "{} at {anchor}",
-                session.input.as_str()
-            );
+        .set_options(OptionBits::from_bits(0x18a))
+        .expect("options");
+    session.replace_raw("ni'hao").expect("parse");
+    let spans: Vec<_> = session
+        .matrix_keys()
+        .iter()
+        .map(|key| (key.syllable_start(), key.end()))
+        .collect();
+    assert_eq!(spans, [(0, 2), (3, 6)]);
+    for raw in ["ni''hao", "'xian'", "banangang", "lianai", "zhong'guo'ren"] {
+        session.replace_raw(raw).expect("parse");
+        let keys = session.matrix_keys();
+        let starts: Vec<usize> = keys.iter().map(|key| key.syllable_start()).collect();
+        assert!(starts.is_sorted(), "{raw}: {starts:?}");
+        for index in 0..keys.len() {
+            let key = keys.get(index);
+            assert_eq!(keys.span(index), (key.syllable_start(), key.end()), "{raw}");
         }
-    };
-    for options in [
-        USE_TONE,
-        USE_TONE | PINYIN_INCOMPLETE,
-        USE_TONE | FORCE_TONE,
-    ] {
-        session
-            .set_options(OptionBits::from_bits(options))
-            .expect("options");
-        for input in [
-            "ni'hao'",
-            "xianhao",
-            "n",
-            "ni!hao",
-            "ni'hao1",
-            "'ni''hao'",
-            "'，hao",
-        ] {
-            session.replace_raw(input).expect("parse");
-            check(&session);
-        }
-    }
-    let ni = SyllableKey::from_text("ni").expect("ni");
-    let hao = SyllableKey::from_text("hao").expect("hao");
-    let sh = SyllableKey::from_text("sh").expect("sh");
-    for (input, segments) in [
-        (
-            "ni'hao'",
-            vec![
-                ExactSegment::new(0, 2, ni, 0),
-                ExactSegment::new(3, 6, hao, 0),
-            ],
-        ),
-        (
-            "''ni''hao'",
-            vec![
-                ExactSegment::new(2, 4, ni, 0),
-                ExactSegment::new(6, 9, hao, 0),
-            ],
-        ),
-        (
-            "ni'sh",
-            vec![
-                ExactSegment::new(0, 2, ni, 0),
-                ExactSegment::new(3, 5, sh, 0),
-            ],
-        ),
-    ] {
-        session.replace_raw_exact(input, &segments).expect("exact");
-        check(&session);
     }
 }
 

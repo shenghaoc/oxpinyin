@@ -63,14 +63,11 @@ where
     /// upstream's `m_nbest_results` is cleared nowhere else — and
     /// [`Session::candidates`] prepends them while they live.
     ///
-    /// Which matrix the walk covers: an unconstrained decode with input
-    /// remaining is today's remaining-input walk (the W6 re-seed,
-    /// bit-identical under the frozen pins — the store is empty there).
-    /// Anything else with a non-empty raw buffer walks the **full**
-    /// matrix: a constrained composition (the §3 gates, the chosen
-    /// prefix forced) or a fully-consumed one (upstream's walk still
-    /// answers a terminal choose — the L1 surface), which the remaining-input model
-    /// structurally cannot.
+    /// The walk always covers the whole matrix the last parse filled, with
+    /// the constraint store forcing the chosen spans, as the pin's
+    /// `get_nbest_match(m_prefixes, &m_matrix, m_constraints, …)` does
+    /// (`pinyin.cpp:1373-1385`). Selections never re-parse the input that
+    /// remains after them.
     ///
     /// Returns whether a lookup ran at all (upstream returns the lookup's
     /// `false` only for an empty key matrix; zero rows is still `true`).
@@ -80,7 +77,6 @@ where
     /// Returns [`EngineError`] when a backend fails during the lookup.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         self.set_candidate_prefixes(core::iter::empty());
-        self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
             // validate_constraint shrinks the store to the empty matrix
@@ -90,47 +86,14 @@ where
             self.record.clear();
             return Ok(false);
         }
-        let remaining_empty = self.record.consumed() >= self.input.len();
-        if !remaining_empty && !self.constraints.is_active() {
-            return self.guess_over_remaining();
-        }
-
-        let bound = self.retained_parse()?.matrix.bound;
+        let bound = self.retained_parse().matrix.bound;
         if bound == 0 {
             return Ok(false);
         }
 
-        // `pinyin_update_constraints`: re-sync the store to the matrix —
-        // grow with free cells (forcings survive typing), shrink by
-        // truncation, drop forcings that overrun or no longer spell. If a
-        // forcing dropped (the buffer changed under it), the selection
-        // record follows the surviving forcings.
-        let mut store = core::mem::take(&mut self.constraints);
-        let retained = match self.retained_parse() {
-            Ok(retained) => retained,
-            Err(error) => {
-                self.constraints = store;
-                return Err(error);
-            }
-        };
-        let spelling = crate::nbest::ConstraintSpelling::new(
-            &retained.scan,
-            bound,
-            self.input.physical_separators(),
-            self.input.as_bytes(),
-        );
-        let dropped = store.validate(bound + 1, |start, end, token, text_len| {
-            spelling.spells(&self.dictionary, start, end, token, text_len)
-        });
-        drop(spelling);
-        self.constraints = store;
-        if dropped? || (self.constraints.has_runs() && self.record.history().is_empty()) {
-            // A temporary incompatible parse may have cleared the safe
-            // selection record while retaining the actual constraints.
-            self.rebuild_selection_from_constraints();
-        }
+        self.validate_guess_constraints(bound, bound + 1)?;
 
-        let retained = self.retained_parse()?;
+        let retained = self.retained_parse();
         self.sentence.rows = crate::nbest::nbest_sentences_generation(
             crate::nbest::GenerationInput {
                 matrix: &retained.scan,
@@ -145,11 +108,8 @@ where
             self.nbest_shape,
         )?;
         // The full-matrix rows already carry the chosen prefix: a chosen
-        // row's record is its own whole path, so no lookup-time history
-        // snapshot stands behind it (the remaining-input walk's §10
-        // snapshot-restore pair does not apply).
+        // row's record is its own whole path.
         let state = self.state.borrow_mut();
-        state.sentence.history.clear();
         state.sentence.last_result = state
             .sentence
             .rows
@@ -165,7 +125,7 @@ where
     /// the prefix tokens join the virtual start as zero-cost initial
     /// trellis nodes (`fill_prefixes`, `phonetic_lookup.h:244-276`),
     /// the constraint store validates against the matrix, and the
-    /// ordinary full-matrix decode runs — no remaining-input shortcut.
+    /// ordinary full-matrix decode runs.
     /// The caller supplies the tail-substring tokens (`_compute_prefixes`
     /// over the prefix text).
     ///
@@ -177,7 +137,6 @@ where
         prefix_tokens: &[PhraseToken],
     ) -> Result<bool, EngineError> {
         self.set_candidate_prefixes(prefix_tokens.iter().copied());
-        self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
             // validate_constraint shrinks the store to the empty matrix
@@ -187,42 +146,19 @@ where
             self.record.clear();
             return Ok(false);
         }
-        let bound = self.retained_parse()?.matrix.bound;
+        let bound = self.retained_parse().matrix.bound;
         if bound == 0 {
             return Ok(false);
         }
 
-        let mut store = core::mem::take(&mut self.constraints);
-        let retained = match self.retained_parse() {
-            Ok(retained) => retained,
-            Err(error) => {
-                self.constraints = store;
-                return Err(error);
-            }
-        };
-        let spelling = crate::nbest::ConstraintSpelling::new(
-            &retained.scan,
-            bound,
-            self.input.physical_separators(),
-            self.input.as_bytes(),
-        );
-        let dropped = store.validate(bound + 1, |start, end, token, text_len| {
-            spelling.spells(&self.dictionary, start, end, token, text_len)
-        });
-        drop(spelling);
-        self.constraints = store;
-        if dropped? || (self.constraints.has_runs() && self.record.history().is_empty()) {
-            // A temporary incompatible parse may have cleared the safe
-            // selection record while retaining the actual constraints.
-            self.rebuild_selection_from_constraints();
-        }
+        self.validate_guess_constraints(bound, bound + 1)?;
 
         // `m_prefixes = [sentence_start] + _compute_prefixes(prefix)`:
         // every entry seeds a zero-cost initial node.
         let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
         seeds.push(PhraseToken::new(crate::nbest::SENTENCE_START));
         seeds.extend_from_slice(prefix_tokens);
-        let retained = self.retained_parse()?;
+        let retained = self.retained_parse();
         self.sentence.rows = crate::nbest::nbest_sentences_with_seeds_generation(
             crate::nbest::GenerationInput {
                 matrix: &retained.scan,
@@ -246,80 +182,35 @@ where
         Ok(true)
     }
 
-    /// Today's remaining-input walk — the W6 re-seed surface, verbatim:
-    /// the trellis over `raw[consumed..]` seeded from the selection
-    /// history, the §10 text prefix, and the lookup-time history
-    /// snapshot a later row choice restores.
-    pub(super) fn guess_over_remaining(&mut self) -> Result<bool, EngineError> {
-        let remaining = &self.input.as_str()[self.record.consumed()..];
-        if remaining.is_empty() {
-            return Ok(false);
+    /// Re-syncs the constraint store to the matrix the last parse filled —
+    /// upstream `pinyin_update_constraints`: grow with free cells
+    /// (forcings survive typing), shrink by truncation, drop forcings that
+    /// overrun or no longer spell. If a forcing dropped (the buffer changed
+    /// under it), the selection record follows the surviving forcings.
+    /// `validation_size` is the store size the pin validates against.
+    fn validate_guess_constraints(
+        &mut self,
+        bound: usize,
+        validation_size: usize,
+    ) -> Result<(), EngineError> {
+        let mut store = core::mem::take(&mut self.constraints);
+        let retained = self.retained_parse();
+        let spelling = crate::nbest::ConstraintSpelling::new(
+            &retained.scan,
+            bound,
+            self.input.physical_separators(),
+            self.input.as_bytes(),
+        );
+        let dropped = store.validate(validation_size, |start, end, token, text_len| {
+            spelling.spells(&self.dictionary, start, end, token, text_len)
+        });
+        drop(spelling);
+        self.constraints = store;
+        if dropped? || (self.constraints.has_runs() && self.record.history().is_empty()) {
+            // A temporary incompatible parse may have cleared the safe
+            // selection record while retaining the actual constraints.
+            self.rebuild_selection_from_constraints();
         }
-
-        let graph = self.build_graph_at(self.record.consumed(), remaining.as_bytes())?;
-        let bound = graph.consumed();
-        if bound == 0 {
-            return Ok(false);
-        }
-
-        let offset = self.record.consumed();
-        // The whole-input window reads the retained scan and topology;
-        // a later anchor has its own suffix graph, scanned under the
-        // same facade rule.
-        let suffix;
-        let (matrix, topology) = if offset == 0 {
-            let retained = self.retained_parse()?;
-            (&retained.scan, Some(&retained.matrix))
-        } else {
-            suffix = build_scan_matrix(&graph, self.settings.options, self.scan_divided());
-            (&suffix, None)
-        };
-        self.sentence.rows = crate::nbest::nbest_sentences_generation(
-            crate::nbest::GenerationInput {
-                matrix,
-                bound,
-                physical_separators: self.input.physical_separators(),
-                topology,
-            },
-            &self.dictionary,
-            &self.model,
-            self.record.history(),
-            None,
-            self.nbest_shape,
-        )?;
-        // The rows were seeded with the history as it stands right here;
-        // a later row selection restores this snapshot before extending
-        // the record with the row's own tokens.
-        let state = self.state.borrow_mut();
-        state.sentence.history.clear();
-        state
-            .sentence
-            .history
-            .extend_from_slice(state.record.history());
-        // The walk's positions are remaining-relative; the store and the
-        // train result are absolute.
-        for row in &mut state.sentence.rows {
-            for span in &mut row.spans {
-                span.start += offset;
-            }
-        }
-        state.sentence.last_result = state
-            .sentence
-            .rows
-            .first()
-            .map_or_else(Vec::new, |row| row.spans.clone());
-
-        if !state.record.selected().is_empty() {
-            state.sentence.prefix = state.record.parts().to_vec();
-            for row in &mut state.sentence.rows {
-                let mut full = PhraseTextConcat::new();
-                full.push(state.record.selected());
-                full.push(&row.text);
-                row.text = full.finish();
-            }
-        }
-
-        self.refresh_after_parse()?;
-        Ok(true)
+        Ok(())
     }
 }

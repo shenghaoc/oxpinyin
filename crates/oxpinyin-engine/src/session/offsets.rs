@@ -62,14 +62,14 @@ where
     ///
     /// # Errors
     ///
-    /// [`EngineError::Graph`] when the buffer cannot be represented as a
-    /// segment graph, and [`EngineError::ZeroKeyOffsetCheck`] where the
-    /// pin's `_check_offset` aborts. A cursor past one-past-end is NOT an
+    /// [`EngineError::ZeroKeyOffsetCheck`] where the pin's `_check_offset`
+    /// aborts. A cursor past one-past-end is NOT an
     /// error: like the pin, the cursor is clamped to the parsed length, so
     /// there is no out-of-range shape here.
     pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
-        let (keys, parsed) = self.matrix_keys()?;
-        crate::cursor::lookup_offset_over_spans(self.input.as_bytes(), parsed, keys, true, cursor)
+        let keys = self.matrix_keys();
+        let parsed = self.retained_parse().matrix.bound;
+        crate::cursor::lookup_offset_over_spans(self.input.as_bytes(), parsed, &keys, true, cursor)
     }
 
     /// The word-level left move over the session's own buffer and options
@@ -78,19 +78,19 @@ where
     ///
     /// # Errors
     ///
-    /// [`EngineError::Graph`] when the buffer cannot be represented as a
-    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// [`EngineError::ZeroKeyOffsetCheck`] where the pin's
     /// `_check_offset` aborts (an input offset one past a lone zero-key
     /// column, or the second check on the computed result); and
     /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        let (keys, parsed) = self.matrix_keys()?;
+        let keys = self.matrix_keys();
+        let parsed = self.retained_parse().matrix.bound;
         crate::cursor::left_word_offset_over_spans(
             self.input.as_bytes(),
             parsed,
-            keys,
+            &keys,
             true,
             offset,
         )
@@ -103,19 +103,19 @@ where
     ///
     /// # Errors
     ///
-    /// [`EngineError::Graph`] when the buffer cannot be represented as a
-    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// [`EngineError::ZeroKeyOffsetCheck`] where the pin's
     /// `_check_offset` aborts (an input offset one past a lone zero-key
     /// column, or the second check on the computed result); and
     /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
-        let (keys, parsed) = self.matrix_keys()?;
+        let keys = self.matrix_keys();
+        let parsed = self.retained_parse().matrix.bound;
         crate::cursor::right_word_offset_over_spans(
             self.input.as_bytes(),
             parsed,
-            keys,
+            &keys,
             true,
             offset,
         )
@@ -128,46 +128,13 @@ where
     /// by [`Session::right_word_offset`] agree by construction. The C ABI's
     /// `pinyin_get_pinyin_key` family reads this.
     ///
-    /// The keys are in the pin's column order ([`crate::cursor::KeySpans`])
-    /// and are built once per input: every input mutation and option change
-    /// drops them with the parser graph, so each getter after a parse costs
-    /// a lookup rather than a rebuild.
-    ///
-    /// # Errors
-    ///
-    /// [`EngineError::Graph`] when the raw buffer cannot be built into a
-    /// segment graph.
-    pub fn matrix_keys(&self) -> Result<(&[crate::cursor::MatrixKey], usize), EngineError> {
-        let (keys, parsed) = match self.input.keys.get() {
-            Some(cached) => cached,
-            None => {
-                let built = self.build_matrix_keys()?;
-                self.input.keys.get_or_init(|| built)
-            }
-        };
-        Ok((keys, *parsed))
-    }
-
-    /// [`Session::matrix_keys`] without the cache.
-    fn build_matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
-        if self.input.full_pinyin() {
-            // pinyin.cpp:1497-1525 fills the matrix from the indexed parser's
-            // keys, including initial-only keys accepted without INCOMPLETE;
-            // zhuyin.cpp:1886-1927 reads the one matrix its own parse
-            // filled. Both facades project their keys from the retained
-            // scan matrix, whichever transforms it carries.
-            let retained = self.retained_parse()?;
-            let keys = retained
-                .scan
-                .iter()
-                .flatten()
-                .map(|key| {
-                    crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
-                })
-                .collect();
-            return Ok((crate::cursor::in_column_order(keys), retained.matrix.bound));
-        }
-        crate::cursor::matrix_keys(self.input.as_bytes(), self.settings.options)
+    /// The keys are in the pin's column order ([`crate::cursor::KeySpans`]),
+    /// borrowed from the matrix the last parse filled, as every pin getter
+    /// reads `m_matrix` in place (`pinyin.cpp:2924`, `:3013-3066`;
+    /// `zhuyin.cpp:1886-1927` at 074a2219).
+    #[must_use]
+    pub fn matrix_keys(&self) -> crate::cursor::MatrixKeys<'_> {
+        crate::cursor::MatrixKeys::new(self.retained_parse().scan.keys())
     }
 
     /// Lookup byte offset → character count within `phrase` over the
@@ -181,8 +148,7 @@ where
     ///
     /// # Errors
     ///
-    /// [`EngineError::Graph`] when the raw buffer cannot be built into a
-    /// segment graph; [`EngineError::LookupOffsetOutOfRange`],
+    /// [`EngineError::LookupOffsetOutOfRange`],
     /// [`EngineError::ZeroKeyOffsetCheck`] and
     /// [`EngineError::MatrixColumnAssert`] where the pin asserts; the
     /// dictionary's backend failure.
@@ -195,18 +161,10 @@ where
         // builds for scheme modes: pre-parsed scheme segments keep their
         // boundaries and gain no divided/resplit alternates, as every other
         // law over the session's matrix has it.
-        let retained = self.retained_parse()?;
-        let parsed = retained.matrix.bound;
-        let keys: Vec<crate::cursor::MatrixKey> = retained
-            .scan
-            .iter()
-            .flatten()
-            .map(|key| crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
-            .collect();
         crate::character_offset_with_walk_over_keys(
             self.input.as_bytes(),
-            parsed,
-            &keys,
+            self.retained_parse().matrix.bound,
+            self.matrix_keys().iter(),
             true,
             &self.dictionary,
             phrase,
@@ -232,8 +190,7 @@ where
         // The exact chain drives the length when a scheme parse owns the
         // buffer: re-segmenting the joined text through the pinyin
         // inventory would under-report zhuyin-only spellings ("den" → 2).
-        self.selected_path()
-            .map_or(0, |selected| selected.parsed_len)
+        self.selected_path().parsed_len
     }
 
     /// Rounds `offset` up to the next character boundary of the raw input.

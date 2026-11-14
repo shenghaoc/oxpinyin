@@ -427,10 +427,9 @@ pub extern "C" fn pinyin_guess_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    // The keyless check reads the session's retained key list in place;
-    // the borrow ends before the option and sort-word mutations below,
-    // and the validation reads the list again afterwards (a lookup in the
-    // cache, rebuilt only if `set_options` changed the option word).
+    // The keyless check reads the keys of the matrix the last parse
+    // filled; the borrow ends before the option and sort-word mutations
+    // below. `set_options` stores the word and does not re-parse.
     //
     // The pin frees the candidates, then answers `false` for a matrix
     // without a step before it stores the sort word
@@ -975,6 +974,133 @@ mod prefix_ranking_tests {
             3
         );
         assert!(!rank(), "full reset clears prefixes");
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+#[cfg(test)]
+mod parse_time_matrix_tests {
+    use oxpinyin_core::PINYIN_INCOMPLETE;
+
+    use super::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
+    use crate::candidates::{
+        pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_candidate_type,
+        pinyin_get_n_candidate,
+    };
+    use crate::config::pinyin_set_options;
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+    use crate::types::{GUint, LookupCandidate, lookup_candidate_type_t};
+
+    /// The length getters answer `m_parsed_len`, which each parse stores
+    /// (`pinyin.cpp:1511`) and `pinyin_reset` zeroes (`:2692`); the matrix
+    /// has `m_parsed_len + 1` columns once a key was placed
+    /// (`phonetic_key_matrix.cpp:44-46`) and none otherwise. An option
+    /// word changed after the parse changes neither.
+    #[test]
+    fn the_length_getters_answer_the_stored_parse_length() {
+        let user_dir = TempUserDir::new("parse-time-length");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let lengths = || {
+            // SAFETY: `instance` is live; no mutation overlaps this read.
+            let inst = unsafe { crate::state::instance_ref(instance) };
+            (
+                inst.core.pin_parsed_len(),
+                inst.core.pin_matrix_columns().expect("columns"),
+            )
+        };
+        let input = cstr("nih");
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
+        assert_eq!(lengths(), (3, 4));
+
+        assert!(pinyin_set_options(context, 0));
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        assert_eq!(lengths(), (3, 4), "the option word does not re-parse");
+
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 2);
+        assert_eq!(lengths(), (2, 3), "the next parse stores its own length");
+
+        assert!(crate::instance::pinyin_reset(instance));
+        assert_eq!(lengths(), (0, 0));
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    fn sentence(instance: *mut crate::types::PinyinInstance) -> String {
+        let mut text = std::ptr::null_mut();
+        assert!(pinyin_get_sentence(instance, 0, &raw mut text));
+        crate::ffi::take_owned_cstr(text)
+    }
+
+    /// `pinyin_set_options` only stores the word (`pinyin.cpp:1299-1306` at
+    /// 074a2219), and `pinyin_guess_candidates` and `pinyin_guess_sentence`
+    /// read `m_matrix` as the last parse filled it (`:2184-2190`,
+    /// `:1373-1385`). An option word changed between the parse and the
+    /// guesses does not re-parse: `h` stays an incomplete key.
+    #[test]
+    fn a_guess_after_an_option_change_reads_the_parse_time_matrix() {
+        let user_dir = TempUserDir::new("parse-time-options");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        let input = cstr("nih");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
+        assert!(pinyin_guess_sentence(instance));
+        let parsed = sentence(instance);
+        assert_eq!(parsed.chars().count(), 2, "{parsed}");
+
+        assert!(pinyin_set_options(context, 0));
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        assert_eq!(crate::parse::pinyin_get_parsed_input_length(instance), 3);
+        assert!(pinyin_guess_sentence(instance));
+        assert_eq!(sentence(instance), parsed);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// `pinyin_guess_sentence` decodes the whole matrix under the
+    /// constraint store (`pinyin.cpp:1373-1385`;
+    /// `lookup/phonetic_lookup.h:736-845`). Choosing the 1-best sentence
+    /// row writes no forcing (`diff_result` finds no difference,
+    /// `pinyin.cpp:2576-2584`), and the next guess still decodes from the
+    /// first column: the unparsed `v` left after the row's span does not
+    /// make it answer `false`.
+    #[test]
+    fn a_guess_after_a_choice_without_a_forcing_decodes_the_whole_matrix() {
+        let user_dir = TempUserDir::new("parse-time-whole");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let input = cstr("nihaov");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+        assert!(pinyin_guess_sentence(instance));
+        let decoded = sentence(instance);
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+
+        let mut count: GUint = 0;
+        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        let row = (0..count)
+            .map(|index| {
+                let mut candidate: *mut LookupCandidate = std::ptr::null_mut();
+                assert!(pinyin_get_candidate(instance, index, &raw mut candidate));
+                candidate
+            })
+            .find(|candidate| {
+                let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
+                assert!(pinyin_get_candidate_type(
+                    instance,
+                    *candidate,
+                    &raw mut kind
+                ));
+                kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+            })
+            .expect("the 1-best sentence row");
+        assert!(pinyin_choose_candidate(instance, 0, row) > 0);
+
+        assert!(pinyin_guess_sentence(instance));
+        assert_eq!(sentence(instance), decoded);
+
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }

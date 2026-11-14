@@ -15,12 +15,7 @@
 //! explicitly: the plain seam clears it before refilling, the scheme seam
 //! sets it afterwards through [`InputBuffer::set_exact`].
 
-use std::cell::OnceCell;
-use std::rc::Rc;
-
-use oxpinyin_core::graph::{Edge, ExactSegment, SegmentGraph};
-
-use crate::cursor::MatrixKey;
+use oxpinyin_core::graph::{Edge, ExactSegment};
 
 /// The fewest-keys path of the whole-input graph and the filtered parse
 /// length it gives: the path's last byte extended over a trailing
@@ -31,26 +26,27 @@ pub(super) struct SelectedPath {
     pub(super) parsed_len: usize,
 }
 
+/// What a parse of the raw input leaves behind, as the pin's parse leaves
+/// `m_parsed_len`, `m_parsed_key_len` and `m_matrix` on the instance
+/// (`pinyin.cpp:1497-1525`, `zhuyin.cpp:1017-1076` at 074a2219). Every
+/// parse seam fills it ([`super::Session::reparse`]); readers take it as it
+/// stands, so an option word changed after the parse does not change it.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Parsed {
+    /// The selected key path and the parsed length read from it.
+    pub(super) selected: SelectedPath,
+    /// The scan matrix the parse filled.
+    pub(super) retained: super::matrix::RetainedParse,
+}
+
 /// The typed input and the scheme-parse chain over it.
 #[derive(Clone, Debug, Default)]
 pub(super) struct InputBuffer {
     /// The raw characters typed so far.
     raw: String,
-    /// Whole-input parser graph, shared by the matrix, window and length queries.
-    /// Input/provenance mutations and option changes invalidate it.
-    pub(super) graph: OnceCell<Rc<SegmentGraph>>,
-    /// The selected key path of the whole-input graph and the parsed length
-    /// read from it, kept with the graph so one DP answers every query
-    /// ([`super::Session::selected_path`]). Invalidated with the graph.
-    pub(super) selected: OnceCell<SelectedPath>,
-    /// The retained scan matrix and its projections, built once per input,
-    /// option word and collapse mode ([`super::Session::retained_parse`]).
-    /// Invalidated with the graph; the collapse setter drops it alone.
-    pub(super) parse: OnceCell<super::matrix::RetainedParse>,
-    /// The scan-matrix keys and parsed length the cursor and key getters
-    /// read ([`super::Session::matrix_keys`]), projected once per retained
-    /// parse so that enumerating every offset stays linear.
-    pub(super) keys: OnceCell<(Vec<MatrixKey>, usize)>,
+    /// The last parse of `raw`. A mutation below leaves it as it was; the
+    /// parse seam that made the mutation refills it.
+    pub(super) parsed: Parsed,
     /// Whether apostrophes came from canonical formatting rather than typing.
     /// Used only by trellis generation, never by the ordinary scan or graph.
     formatting_separators: bool,
@@ -65,22 +61,6 @@ pub(super) struct InputBuffer {
 }
 
 impl InputBuffer {
-    /// Drops every structure derived from the input, its provenance or
-    /// the option word: each input mutation and option change calls this.
-    pub(super) fn invalidate(&mut self) {
-        self.graph.take();
-        self.selected.take();
-        self.invalidate_topology();
-    }
-
-    /// Drops the retained scan matrix and every projection of it, keeping
-    /// the graph and its selected path: the collapse mode changes which
-    /// topology is retained, not the parse.
-    pub(super) fn invalidate_topology(&mut self) {
-        self.parse.take();
-        self.keys.take();
-    }
-
     /// The raw input as a string slice.
     pub(super) fn as_str(&self) -> &str {
         &self.raw
@@ -117,7 +97,6 @@ impl InputBuffer {
     }
 
     pub(super) fn set_full_pinyin(&mut self, segments: &[ExactSegment]) {
-        self.invalidate();
         self.set_exact(segments);
         self.parsed_full_pinyin = true;
         self.formatting_separators = true;
@@ -126,7 +105,7 @@ impl InputBuffer {
     /// Empties the buffer and the exact chain — `pinyin_reset`'s input
     /// half.
     pub(super) fn clear(&mut self) {
-        self.invalidate();
+        self.parsed = Parsed::default();
         self.raw.clear();
         self.exact.clear();
         self.parsed_full_pinyin = false;
@@ -136,7 +115,6 @@ impl InputBuffer {
     /// Exits exact mode without touching `raw` — the plain replace seam,
     /// which clears the chain before refilling.
     pub(super) fn clear_exact(&mut self) {
-        self.invalidate();
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
@@ -149,7 +127,6 @@ impl InputBuffer {
 
     /// Stores separator provenance for the private trellis generation view.
     pub(super) fn set_physical_separators(&mut self, physical: bool) {
-        self.invalidate();
         self.formatting_separators = !physical;
     }
 
@@ -157,7 +134,6 @@ impl InputBuffer {
     /// plain seam has already cleared it and the scheme seam sets it
     /// afterwards through [`InputBuffer::set_exact`].
     pub(super) fn refill(&mut self, text: &str) {
-        self.invalidate();
         text.clone_into(&mut self.raw);
     }
 
@@ -165,7 +141,6 @@ impl InputBuffer {
     /// the buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
-        self.invalidate();
         self.formatting_separators = false;
         self.parsed_full_pinyin = false;
         let raw_len = self.raw.len();

@@ -9,11 +9,11 @@ use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
-use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
+use oxpinyin_core::graph::{Edge, ExactSegment, SegmentGraph};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     Completeness, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText,
-    PhraseTextConcat, PhraseToken, SyllableKey, UserModel,
+    PhraseToken, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -137,8 +137,8 @@ pub struct SessionState {
     /// `gint16` parse bound is a language artefact
     /// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
     input: InputBuffer,
-    /// What the user has chosen so far: text, cursor, token history, and
-    /// the commit-branch flag, kept mutually consistent.
+    /// What the user has chosen so far: text, cursor and token history,
+    /// kept mutually consistent.
     record: SelectionRecord,
     /// The §3 constraint store — one cell per raw-buffer byte position,
     /// the coordinate space the scan matrix and the choose cursor share.
@@ -147,8 +147,7 @@ pub struct SessionState {
     /// `pinyin_parse_more_full_pinyins`; cleared only by the full
     /// [`Session::reset`] (`pinyin_reset`'s rule).
     constraints: crate::constraint::ConstraintStore,
-    /// The candidate list and the parse length behind it — the output of
-    /// one [`Session::refresh`].
+    /// The candidate list — the output of one [`Session::refresh`].
     lookup: Lookup,
     /// The last sentence lookup's decoded rows and what a chosen row needs
     /// — the `m_nbest_results` surface.
@@ -223,21 +222,16 @@ impl<D, L> Session<D, L> {
     }
 }
 
-/// The candidate list and the parse length behind it — the output of one
-/// [`Session::refresh`], anchored at the composition offset.
+/// The candidate list — the output of one [`Session::refresh`], anchored
+/// at the composition offset.
 #[derive(Clone, Debug)]
 struct Lookup {
     /// The current candidates, in rank order; sentence rows are prepended
     /// once [`Session::guess_sentence`] has run for the composition.
     candidates: CandidateList,
-    /// Filtered parse length of the remaining input from the last refresh
-    /// — the last byte of [`SegmentGraph::fewest_keys`] under the session's
-    /// `incomplete-pinyin` setting, not the unfiltered
-    /// [`SegmentGraph::consumed`].
-    parsed_prefix: usize,
     /// Whether a deferred parse or sentence guess changed the input behind
-    /// [`Self::candidates`] and [`Self::parsed_prefix`] without rebuilding
-    /// them; the next [`Session::refresh_candidates`] does.
+    /// [`Self::candidates`] without rebuilding them; the next
+    /// [`Session::refresh_candidates`] does.
     stale: bool,
     /// The last sort-option word applied — upstream's `m_sort_option`
     /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on
@@ -254,14 +248,13 @@ impl Lookup {
     /// recorded behavior.
     const PARITY_SORT_WORD: u32 = 0x1e;
 
-    /// Empties the candidate list and the cached parse length — the
+    /// Empties the candidate list — the
     /// parse-path reset (`reset_composition`). The sort word survives:
     /// upstream's `m_sort_option` is instance state that lives until the
     /// instance is freed (`pinyin_reset` does not clear it), and the next
     /// guess re-stores its own word anyway.
     fn reset(&mut self) {
         self.candidates = CandidateList::default();
-        self.parsed_prefix = 0;
         self.stale = false;
     }
 }
@@ -270,7 +263,6 @@ impl Default for Lookup {
     fn default() -> Self {
         Self {
             candidates: CandidateList::default(),
-            parsed_prefix: 0,
             stale: false,
             sort_word: Self::PARITY_SORT_WORD,
         }
@@ -311,7 +303,7 @@ mod record;
 mod sentence;
 pub use sentence::SentencePart;
 
-use buffer::{InputBuffer, SelectedPath};
+use buffer::{InputBuffer, Parsed, SelectedPath};
 use record::SelectionRecord;
 use sentence::SentenceState;
 
@@ -584,7 +576,8 @@ impl ScanKey {
 /// keys, plus the resplit, divided and fuzzy additions. See
 /// `docs/findings/matrix-split-tables.md` for the pair lists it states and
 /// `docs/findings/option-bits.md` for the fuzzy step.
-pub fn build_scan_matrix(
+#[cfg(test)]
+pub(crate) fn build_scan_matrix(
     graph: &SegmentGraph,
     options: OptionBits,
     divided: bool,

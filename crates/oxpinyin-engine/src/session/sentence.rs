@@ -2,12 +2,12 @@
 //!
 //! Groups the transient state a sentence lookup produces and the two
 //! surfaces that read it back — the prepended candidate rows, and the
-//! constraint-aware train walk. These four fields live and die together:
+//! constraint-aware train walk. These three fields live and die together:
 //! [`SentenceState::begin`] clears them and marks a lookup active before a
 //! decode fills them, and [`SentenceState::reset`] clears them on the full
 //! reset only — upstream's parse never touches `m_nbest_results`
-//! (`pinyin.cpp:1497-1524`), which `pinyin_reset` alone clears (`:2700`). `rows`, `history` and `last_result` stay fields
-//! because a lookup rewrites them wholesale and
+//! (`pinyin.cpp:1497-1524`), which `pinyin_reset` alone clears (`:2700`).
+//! `rows` and `last_result` stay fields because a lookup rewrites them wholesale and
 //! [`crate::session::Session::guess_sentence`] mutates the rows in place
 //! (absolutising walk-local span positions) — an access pattern no method
 //! seam captures without obscuring it.
@@ -45,10 +45,6 @@ pub(super) struct SentenceState {
     /// [`SentenceState::reset`]; survives further typing, selections and
     /// re-parses, as upstream's does.
     pub(super) rows: Vec<NbestRow>,
-    /// History snapshot taken when the rows were decoded — the seed
-    /// context they were decoded against. Selecting an n-best row restores
-    /// it before the row's tokens extend the record.
-    pub(super) history: Vec<PhraseToken>,
     /// Whether a sentence lookup has run since the last full reset — the
     /// half of the `m_nbest_results` gate an empty-but-active lookup still
     /// satisfies (`pinyin_guess_sentence` attempts the search even on an
@@ -59,10 +55,6 @@ pub(super) struct SentenceState {
     /// upstream's `m_nbest_results[0]`, the result `pinyin_train` walks
     /// against the constraint store.
     pub(super) last_result: Vec<PhraseSpan>,
-    /// The selection record's pieces the remaining-input walk prepended to
-    /// every row's text, empty when it prepended none: the leading parts of
-    /// each row ([`SentenceState::parts`]).
-    pub(super) prefix: Vec<SentencePart>,
 }
 
 impl SentenceState {
@@ -77,18 +69,13 @@ impl SentenceState {
     /// having written a token only at each phrase's start column and
     /// `null_token` elsewhere (`extract_result`,
     /// `lookup/phonetic_lookup.h:370-396`). A row the trellis decoded
-    /// carries those phrases as its spans, after any prepended selection
-    /// parts. The caller resolves each token when it reads the sentence.
-    pub(super) fn parts<'a>(
-        &'a self,
-        row: &'a NbestRow,
-    ) -> impl Iterator<Item = SentencePart> + 'a {
+    /// carries those phrases as its spans. The caller resolves each token
+    /// when it reads the sentence.
+    pub(super) fn parts(row: &NbestRow) -> impl Iterator<Item = SentencePart> + '_ {
         let whole = row.spans.is_empty();
-        let prefix: &[SentencePart] = if whole { &[] } else { &self.prefix };
-        prefix
+        row.spans
             .iter()
-            .cloned()
-            .chain(row.spans.iter().map(|span| SentencePart::Token(span.token)))
+            .map(|span| SentencePart::Token(span.token))
             .chain(whole.then(|| SentencePart::Raw(row.text.clone())))
     }
 
@@ -97,9 +84,7 @@ impl SentenceState {
     /// decoded-or-nothing even when the lookup produced no rows.
     pub(super) fn begin(&mut self) {
         self.rows.clear();
-        self.history.clear();
         self.last_result.clear();
-        self.prefix.clear();
         self.active = true;
     }
 
@@ -109,9 +94,7 @@ impl SentenceState {
     /// hangs on.
     pub(super) fn reset(&mut self) {
         self.rows.clear();
-        self.history.clear();
         self.last_result.clear();
-        self.prefix.clear();
         self.active = false;
     }
 }

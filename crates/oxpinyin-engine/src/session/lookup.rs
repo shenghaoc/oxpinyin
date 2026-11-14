@@ -6,8 +6,6 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
-use std::rc::Rc;
-
 use super::*;
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
@@ -51,116 +49,6 @@ where
     /// a window at a lookup offset without disturbing the cached list
     /// ([`Session::candidates_at`]). With `anchor == self.record.consumed()`
     /// it reproduces `Session::refresh`'s cached list exactly.
-    /// Builds the working graph for `remaining` (the raw slice from
-    /// `anchor`): the exact-mode chain when the session carries
-    /// pre-parsed scheme segments, the parsed graph otherwise. A segment
-    /// that straddles `anchor` is dropped, not truncated — a mid-key
-    /// anchor is the caller's boundary question, and exact keys do not
-    /// re-syllabify around it.
-    pub(super) fn build_graph_at(
-        &self,
-        anchor: usize,
-        remaining: &[u8],
-    ) -> Result<Rc<SegmentGraph>, EngineError> {
-        // A suffix has its own origin and reachability. Only byte-zero
-        // callers share the whole-input graph; nonzero windows keep their
-        // existing independent parse law.
-        if anchor == 0 {
-            if let Some(graph) = self.input.graph.get() {
-                return Ok(Rc::clone(graph));
-            }
-            let graph = Rc::new(self.build_uncached_graph_at(anchor, remaining)?);
-            let _ = self.input.graph.set(Rc::clone(&graph));
-            return Ok(graph);
-        }
-        self.build_uncached_graph_at(anchor, remaining).map(Rc::new)
-    }
-
-    pub(super) fn build_uncached_graph_at(
-        &self,
-        anchor: usize,
-        remaining: &[u8],
-    ) -> Result<SegmentGraph, EngineError> {
-        if self.input.exact().is_empty() {
-            return SegmentGraph::build_with_options(remaining, self.settings.options)
-                .map_err(EngineError::Graph);
-        }
-        // An anchor strictly inside an exact segment must not decode the
-        // tail segments across the skipped bytes — that would consume
-        // input the anchor excluded (exact `xian'hao` anchored at 2
-        // decoding `hao` over `an'hao`). Refuse instead: an empty exact
-        // graph answers no candidates and a zero parse for this anchor.
-        if self
-            .input
-            .exact()
-            .iter()
-            .any(|segment| segment.start() < anchor && anchor < segment.end())
-        {
-            return SegmentGraph::build_exact(remaining, &[]).map_err(EngineError::Graph);
-        }
-        let rebased: Vec<ExactSegment> = self
-            .input
-            .exact()
-            .iter()
-            .copied()
-            .filter(|segment| segment.start() >= anchor)
-            .map(|segment| {
-                ExactSegment::new(
-                    segment.start() - anchor,
-                    segment.end() - anchor,
-                    segment.key(),
-                    segment.tone(),
-                )
-            })
-            .collect();
-        SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
-    }
-
-    /// Filtered reachability from a nonzero window origin. Fewest-key ties
-    /// change the chosen path, never its furthest end; this query needs only
-    /// that end and the same trailing-apostrophe extension.
-    pub(super) fn window_parsed_len(&self, graph: &SegmentGraph, anchor: usize) -> usize {
-        let remaining = &self.input.as_bytes()[anchor..];
-        if self
-            .input
-            .exact()
-            .iter()
-            .any(|segment| segment.start() < anchor && anchor < segment.end())
-        {
-            return apostrophe_extended(remaining, 0);
-        }
-        let mut reached = vec![false; remaining.len() + 1];
-        reached[0] = true;
-        let mut end = anchor;
-        // An exact chain carries a separator on the preceding key's end
-        // column. A fresh suffix instead attaches its first retained key
-        // to byte zero, even when the anchor is inside that separator gap
-        // or at the next key's start. Seed precisely that first edge.
-        if let Some(first) = self
-            .input
-            .exact()
-            .iter()
-            .find(|segment| segment.start() >= anchor)
-        {
-            reached[first.end() - anchor] = true;
-            end = first.end();
-        }
-        for node in anchor..self.input.len() {
-            if !reached[node - anchor] {
-                continue;
-            }
-            for edge in graph
-                .outgoing(node)
-                .iter()
-                .filter(|edge| self.settings.incomplete() || edge.kind() != EdgeKind::Incomplete)
-            {
-                reached[edge.to() - anchor] = true;
-                end = end.max(edge.to());
-            }
-        }
-        apostrophe_extended(remaining, end - anchor)
-    }
-
     /// Prepends the LONGER candidate row when the sort word leaves
     /// `SORT_WITHOUT_LONGER_CANDIDATE` clear — the pin's
     /// `_prepend_longer_candidates` call (`pinyin.cpp:2292-2293`).
@@ -224,7 +112,7 @@ where
         // slice's. The suggestion matrix walk starts at column 0 of the
         // same matrix regardless of the guess offset
         // (`search_suggestion_with_matrix`, `phonetic_key_matrix.cpp:504-529`).
-        let selected = &self.selected_path()?.edges;
+        let selected = &self.selected_path().edges;
         let prefix_len = selected.len();
         if prefix_len == 0 || prefix_len >= MAX_PHRASE_LENGTH {
             return Ok(None);
@@ -234,7 +122,7 @@ where
         // SEARCH_NONE`) and longer than `prefix_len * 2` (`:472-475`).
         let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
 
-        let matrix = &self.retained_parse()?.scan;
+        let matrix = &self.retained_parse().scan;
         // `search_suggestion_with_matrix` walks to `matrix->size() - 1`
         // (`phonetic_key_matrix.cpp:512`), the parse's reserved slot: the
         // last byte the SELECTED parse covers. That is not
@@ -243,7 +131,7 @@ where
         // otherwise put `end` past the last key's column, the walk would
         // find no path, and the LONGER row would vanish.
         let end = selected.last().map_or(0, |edge| edge.to());
-        if matrix.first().is_none_or(std::vec::Vec::is_empty) {
+        if matrix.get(0).is_none_or(<[ScanKey]>::is_empty) {
             return Ok(None);
         }
 
@@ -349,7 +237,7 @@ where
     /// scan's own zero-key column skip.
     fn collect_suggestion_paths(
         &self,
-        matrix: &[Vec<ScanKey>],
+        matrix: &matrix::ScanMatrix,
         node: usize,
         end: usize,
         max_keys: usize,
@@ -414,7 +302,7 @@ where
         }
         // The retained scan carries the split alternates exactly when the
         // window scan does (`scan_divided`), and exact keys never gain them.
-        let retained = self.retained_parse()?;
+        let retained = self.retained_parse();
         let matrix = &retained.scan;
         if matrix
             .iter()
@@ -638,9 +526,7 @@ where
         // pinyin.cpp:2229-2262 searches from the offset in the existing
         // whole-parse matrix. Re-parsing the suffix loses resplit/divided
         // keys whose spans were created by the earlier whole-parse passes.
-        let Some(retained) = self.input.parse.get().map(|parse| &parse.matrix) else {
-            return Ok(());
-        };
+        let retained = &self.retained_parse().matrix;
         let anchor = self.input.len().saturating_sub(input.len());
         let bound = retained.bound.saturating_sub(anchor);
         let mut end = 1usize;
@@ -935,14 +821,13 @@ where
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
         // keystrokes.
-        self.ensure_matrix()?;
         let anchor = self.record.consumed();
         let mut items = Vec::new();
         self.lookup.candidates.swap_items(&mut items);
         // A failed scan leaves the emptied list, as it always has; it is
         // not stale, so the next reader indexes it rather than rescanning.
         self.lookup.stale = false;
-        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items, false)?;
+        self.scan_window(anchor, &mut items, false)?;
         self.lookup.candidates.swap_items(&mut items);
         Ok(())
     }
@@ -956,7 +841,6 @@ where
         if !self.defer_list_builds {
             return self.refresh();
         }
-        self.ensure_matrix()?;
         self.lookup.stale = true;
         Ok(())
     }
@@ -989,9 +873,8 @@ where
         anchor: usize,
         out: &mut Vec<Candidate>,
         gate: bool,
-    ) -> Result<usize, EngineError> {
+    ) -> Result<(), EngineError> {
         out.clear();
-        self.ensure_matrix()?;
         if anchor >= self.input.len() {
             // A fully-consumed (or past-end) anchor still carries its
             // sentence rows — upstream's window prepends `m_nbest_results`
@@ -1002,7 +885,7 @@ where
             // loop finds nothing but the prepends still run).
             self.prepend_longer_row(out, gate)?;
             self.prepend_nbest_rows(out);
-            return Ok(0);
+            return Ok(());
         }
 
         self.with_scan_scratch(|session, scratch| {
@@ -1012,10 +895,10 @@ where
 
     // Keep scratch separate from the session so the scan can borrow the
     // retained input and topology while filling the caller's output.
-    fn with_scan_scratch(
+    fn with_scan_scratch<T>(
         &mut self,
-        scan: impl FnOnce(&mut Self, &mut Scratch) -> Result<usize, EngineError>,
-    ) -> Result<usize, EngineError> {
+        scan: impl FnOnce(&mut Self, &mut Scratch) -> Result<T, EngineError>,
+    ) -> Result<T, EngineError> {
         let mut scratch = core::mem::take(&mut self.scratch);
         let result = scan(self, &mut scratch);
         if result.is_err() {
@@ -1036,7 +919,7 @@ where
         out: &mut Vec<Candidate>,
         gate: bool,
         scratch: &mut Scratch,
-    ) -> Result<usize, EngineError> {
+    ) -> Result<(), EngineError> {
         let Scratch {
             entries,
             path,
@@ -1048,16 +931,6 @@ where
         let collected = out;
 
         let remaining = &self.input.as_str()[anchor..];
-        let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        // Windows scan the retained matrix. Their parse-length query can
-        // start at the anchor on the shared graph too, without reparsing
-        // spellings or rebasing/copying edges. At anchor zero the stored
-        // selected path answers.
-        let parsed_prefix = if anchor == 0 {
-            self.selected_path()?.parsed_len
-        } else {
-            self.window_parsed_len(&graph, anchor)
-        };
 
         // The pinned construction: the expanding-window scan, the
         // three-key order (text length, pinyin span, frequency),
@@ -1166,7 +1039,7 @@ where
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
         self.prepend_nbest_rows(collected);
 
-        Ok(parsed_prefix)
+        Ok(())
     }
 
     /// Rebuilds the candidate window anchored at a caller lookup `offset`,
@@ -1324,7 +1197,6 @@ where
         out: &mut Vec<Candidate>,
     ) -> Result<usize, EngineError> {
         out.clear();
-        self.ensure_matrix()?;
         self.with_scan_scratch(|session, scratch| {
             session.scan_window_ending_with_scratch(offset, out, scratch)
         })
@@ -1346,9 +1218,7 @@ where
             ..
         } = scratch;
         // The retained topology also serves the before-cursor window.
-        let Some(matrix) = self.input.parse.get().map(|parse| &parse.matrix) else {
-            return Ok(0);
-        };
+        let matrix = &self.retained_parse().matrix;
         let bound = matrix.bound.min(offset);
 
         let mut group: Vec<Candidate> = Vec::new();

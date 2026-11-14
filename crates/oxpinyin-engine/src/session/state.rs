@@ -136,7 +136,7 @@ where
     #[must_use]
     pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = SentencePart> + '_> {
         let row = self.sentence.rows.get(usize::from(index))?;
-        (!row.text.is_empty()).then(|| self.sentence.parts(row))
+        (!row.text.is_empty()).then(|| SentenceState::parts(row))
     }
 
     /// The decoded text of n-best row `index`, best-first. `None` when
@@ -242,9 +242,9 @@ where
         self.constraints.clear();
     }
 
-    /// The parse-path reset: the composition's PARSE state goes; the
-    /// raw input, the selection record, the constraint store and the
-    /// n-best rows stay.
+    /// The parse-path reset: resets the lookup state (the candidate list).
+    /// The retained parse is replaced by `reparse()`; the raw input, the
+    /// selection record, the constraint store and the n-best rows stay.
     ///
     /// `pinyin_parse_more_full_pinyins` replaces the input buffer — the
     /// frontend re-sends the whole buffer every keystroke — and never
@@ -258,8 +258,8 @@ where
     ///
     /// The raw buffer is NOT cleared here: a cleared raw with a surviving
     /// cursor would leave `consumed > raw.len()` observable, and every
-    /// `raw[consumed..]` slice in the remaining-input sentence walk would
-    /// panic — the constitution forbids that window. Input replacement is atomic
+    /// `raw[consumed..]` slice would panic — the constitution forbids that
+    /// window. Input replacement is atomic
     /// in [`Session::replace_raw`], which clears, refills, clamps, and
     /// refreshes in one call, so this reset alone always leaves a
     /// consistent session.
@@ -317,6 +317,7 @@ where
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
         self.input.set_physical_separators(physical_separators);
+        self.reparse()?;
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
@@ -327,7 +328,7 @@ where
     /// `segments` — the scheme-parse seam (zhuyin, double pinyin).
     ///
     /// The scan and the training record use these keys verbatim: the
-    /// graph is one [`EdgeKind::Exact`] chain, so the pinyin inventory
+    /// graph is one [`EdgeKind::Exact`](oxpinyin_core::graph::EdgeKind::Exact) chain, so the pinyin inventory
     /// never re-segments the joined spelling (upstream's decoder receives
     /// the scheme parser's `ChewingKey`s the same way). Segments are
     /// absolute over `text`; spans reaching past its end are dropped,
@@ -348,6 +349,7 @@ where
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
         self.input.set_exact(segments);
+        self.reparse()?;
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
@@ -371,6 +373,7 @@ where
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
         self.input.set_full_pinyin(segments);
+        self.reparse()?;
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
@@ -386,7 +389,7 @@ where
         if self.record.consumed() == 0 {
             return Ok(());
         }
-        let parse = self.retained_parse()?;
+        let parse = self.retained_parse();
         let bound = parse.matrix.bound;
         let mut retained = self.constraints.clone();
         if bound > 0 {
@@ -434,9 +437,12 @@ where
 
     /// Apply a live option-word change and refresh if composing.
     ///
-    /// This is the engine half of `pinyin_set_options`: correction and
-    /// ambiguity bits remask already-allocated sessions on the next parse or
-    /// guess. The C ABI stores the raw word and calls this before parse/guess.
+    /// This is the engine half of `pinyin_set_options`, which only stores
+    /// the word (`pinyin.cpp:1299-1306` at 074a2219). Correction and
+    /// ambiguity bits reach the matrix at the next parse; the matrix the
+    /// last parse filled stays as it is, and every reader of it reads it as
+    /// parsed (`pinyin.cpp:1373-1386`, `:2184-2190`). The C ABI stores the
+    /// raw word and calls this before parse/guess.
     ///
     /// # Errors
     ///
@@ -447,7 +453,6 @@ where
             return Ok(());
         }
         self.settings.options = options;
-        self.input.invalidate();
         if self.input.is_empty() {
             return Ok(());
         }
@@ -514,12 +519,11 @@ where
     /// is what keeps the phrase rows upstream keeps: a phrase whose text
     /// equals a non-first row's own text never collides there (the rows all
     /// display the 1-best string), so it must not be absorbed here either.
+    ///
+    /// The mode also picks the facade's parse order: with it, a full-pinyin
+    /// parse omits the resplit and divided passes (`zhuyin.cpp:1038-1040`).
+    /// Like the option word, it reaches the matrix at the next parse.
     pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
-        if self.collapse_sentence_rows_to_best != collapse {
-            // The mode picks which topology is retained: drop it and its
-            // key list together, whichever way the mode moves.
-            self.input.invalidate_topology();
-        }
         self.collapse_sentence_rows_to_best = collapse;
     }
 

@@ -10,13 +10,28 @@
 //! false (`pinyin.cpp:3085-3086`), encoded `Ok(None)` on the right move.
 
 use oxpinyin_core::OptionBits;
+use oxpinyin_core::graph::SegmentGraph;
 
 use super::*;
 use crate::error::EngineError;
+use crate::session::build_scan_matrix;
+use crate::session::matrix::ScanMatrix;
 
 /// The parity word: `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
 /// USE_RESPLIT_TABLE` plus the harness's `0x2` bit.
 const PARITY: OptionBits = OptionBits::from_bits(0x18a);
+
+/// The full-pinyin scan matrix's keys of `input` with their spans, plus
+/// the graph's consumed length, as a parse under `options` fills them.
+///
+/// Keys appear in the matrix's column order, so the first key of a column
+/// is the pin's `matrix.get_item(column, 0, ...)`.
+fn matrix_keys(input: &[u8], options: OptionBits) -> Result<(Vec<MatrixKey>, usize), EngineError> {
+    let graph = SegmentGraph::build_with_options(input, options)?;
+    let parsed = graph.consumed();
+    let matrix = ScanMatrix::from_columns(build_scan_matrix(&graph, options, true));
+    Ok((MatrixKeys::new(matrix.keys()).iter().collect(), parsed))
+}
 
 /// The setup the cursor laws' plain entry points did: the full-pinyin scan
 /// matrix of `input` as (syllable start, raw end) spans, then `law` over

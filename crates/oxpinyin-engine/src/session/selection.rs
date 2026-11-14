@@ -120,15 +120,10 @@ where
     L::Error: Display,
 {
     /// The retained matrix, borrowed for the composition state's own
-    /// lifetime so a plan can keep it. The checks that precede this call
-    /// have built it; the build is repeated only if they did not.
-    fn plan_matrix(&self) -> Result<&'s super::matrix::ParsedMatrix, EngineError> {
+    /// lifetime so a plan can keep it.
+    fn plan_matrix(&self) -> &'s super::matrix::ParsedMatrix {
         let state: &'s SessionState = self.state;
-        if let Some(parse) = state.input.parse.get() {
-            return Ok(&parse.matrix);
-        }
-        let built = self.build_retained_parse()?;
-        Ok(&state.input.parse.get_or_init(|| built).matrix)
+        &state.input.parsed.retained.matrix
     }
 
     /// Check one n-best training operation without retaining a storage reader.
@@ -151,10 +146,8 @@ where
             }
             None
         } else {
-            match self.plan_spans(&row.spans, check)? {
-                Some(ends) => Some((self.plan_matrix()?, ends)),
-                None => None,
-            }
+            self.plan_spans(&row.spans, check)?
+                .map(|ends| (self.plan_matrix(), ends))
         };
         Ok(Some(TrainingPlan {
             state: self.state,
@@ -257,7 +250,7 @@ where
         // (`ParsedMatrix::from_scan` — the matrix the lookup indexes), or a
         // span over the gap would silently read a filled column `:663`
         // refuses.
-        let parsed = &self.retained_parse()?.matrix;
+        let parsed = &self.retained_parse().matrix;
         let matrix = &parsed.columns;
         let zeros = &parsed.zeros;
         // 074a2219 phonetic_lookup.h:921 tails the last span at
@@ -389,7 +382,7 @@ where
         let span_end = target.span_end;
         if target.nbest_row.is_none()
             && target.token.is_some()
-            && span_end > self.selection_constraint_size()?
+            && span_end > self.selection_constraint_size()
         {
             // Both choose functions validate before and after add_constraint,
             // even when it returns zero (074a2219 pinyin.cpp:2578-2587;
@@ -454,16 +447,9 @@ where
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way.
-            let parts = target
-                .nbest_row
-                .and_then(|rank| state.sentence.rows.get(usize::from(rank)))
-                .map_or_else(
-                    || vec![SentencePart::Raw(text.clone())],
-                    |row| state.sentence.parts(row).collect(),
-                );
-            state.record.set_selected(&text, parts);
+            state.record.set_selected(&text);
         } else {
-            state.record.append_selected(gap, &text, token);
+            state.record.append_selected(gap, &text);
         }
         if let Some(token) = token {
             state.record.push_token(token);
@@ -478,14 +464,10 @@ where
             // surviving row off the position its rank would give it, and a
             // positional lookup then trains the wrong path.
             if let Some(row) = state.sentence.rows.get(usize::from(rank)) {
-                // The row replaces everything decoded since the lookup ran
-                // — the text side of that replace is the assign above. A
-                // normal selection made in between must leave no token in
-                // the record either, so restore the snapshot the rows were
-                // decoded against before extending with this row's path.
-                state
-                    .record
-                    .reset_history_extend(&state.sentence.history, &row.tokens);
+                // The row is a path over the whole matrix — the text side
+                // of that replace is the assign above — so a normal
+                // selection made before it leaves no token in the record.
+                state.record.replace_history(&row.tokens);
             }
         }
         // The §3 constraint writes (`pinyin_choose_candidate`,
@@ -550,22 +532,20 @@ where
     /// Revalidate existing forcings on a refused choose, preserving the pin's
     /// resize and spelling checks without attempting sentence decoding.
     fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
-        self.ensure_matrix()?;
-        let size = self.selection_constraint_size()?;
+        let size = self.selection_constraint_size();
         let mut store = core::mem::take(&mut self.constraints);
-        let result = (|| {
-            let retained = self.retained_parse()?;
-            let bound = retained.matrix.bound;
+        let result = {
+            let retained = self.retained_parse();
             let spelling = crate::nbest::ConstraintSpelling::new(
                 &retained.scan,
-                bound,
+                retained.matrix.bound,
                 self.input.physical_separators(),
                 self.input.as_bytes(),
             );
             store.validate(size, |start, end, token, text_len| {
                 spelling.spells(&self.dictionary, start, end, token, text_len)
             })
-        })();
+        };
         self.constraints = store;
         // Only a run can restore a record that lost its tokens. A null step
         // alone leaves the store active with none, and a rebuild from no
@@ -580,11 +560,11 @@ where
     /// otherwise its size is parsed_len + 1, not the raw input length
     /// (074a2219 storage/phonetic_key_matrix.cpp:30-48). Read the retained
     /// key path and matrix rather than keeping another parse-length field.
-    fn selection_constraint_size(&self) -> Result<usize, EngineError> {
-        if self.selected_path()?.edges.is_empty() {
-            Ok(0)
+    fn selection_constraint_size(&self) -> usize {
+        if self.selected_path().edges.is_empty() {
+            0
         } else {
-            Ok(self.retained_parse()?.matrix.bound + 1)
+            self.retained_parse().matrix.bound + 1
         }
     }
 
@@ -646,8 +626,8 @@ where
         // the differing phrases); their text is the current buffer's bytes,
         // so the rebuilt record never drops raw input the forcings skip
         // over — the selected text would otherwise lose exactly that gap. The
-        // record owns the rebuild (and the commit-branch flag it clears):
-        // this seam only hands it the surviving runs and the buffer.
+        // record owns the rebuild: this seam only hands it the surviving
+        // runs and the buffer.
         let runs = self.constraints.runs();
         let state = self.state.borrow_mut();
         state

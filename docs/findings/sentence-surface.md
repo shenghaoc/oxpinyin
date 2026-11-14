@@ -148,9 +148,8 @@ Current scoring and selection:
 - **Constraints.** The constraint machinery (`CONSTRAINT_ONESTEP`,
   `diff_result`) is ported: the store in `constraint.rs`, the gated
   full-matrix walk, the reset split, the constraint-aware train and
-  `pinyin_clear_constraint`. The remaining-input re-seed (the W6 surface)
-  still carries every empty-store decode, which is the shape of the W4
-  pins. On that path the §10 prefix context is the display rule.
+  `pinyin_clear_constraint`. Every guess decodes the whole matrix under
+  the store, as `pinyin_guess_sentence` does (`pinyin.cpp:1373-1385`).
 
 ## 4. Implementation record
 
@@ -286,21 +285,15 @@ over the full `PhoneticKeyMatrix` with `CONSTRAINT_ONESTEP` /
 
 **Implementation.**
 
-- `Session::guess_sentence` computes the n-best rows from the remaining
-  input. When the selected text is not empty, it prepends that text to
-  the text of each row. The span, tokens, keys and cost of the row do not
-  change; only the display text carries the prefix.
-- The same call keeps a snapshot of the selection history beside the
-  rows: the seed context that the rows were decoded against. The next
-  lookup and `reset` clear it with the rows.
-- When the user selects an n-best row (`nbest_row().is_some()`),
-  `Session::select_target` assigns the candidate text to `self.selected`
-  and does not append it, because the text already contains the prefix.
-  Other candidates append. The row selection also restores the history
-  snapshot before it extends the history with the tokens of the row. A
-  normal selection made between the lookup and the row choice is thus
-  replaced in the record, as its text is replaced. The selected text and
-  the token record stay synchronized.
+- `Session::guess_sentence` decodes the full matrix the last parse
+  filled, with the constraint store forcing the chosen spans
+  (`pinyin.cpp:1373-1385`). The rows already carry the chosen prefix in
+  their own paths. The offset guess does not decode only the remaining
+  input, and it does not prepend the selected text.
+- n-best rows cover the full matrix. Choosing a row assigns its text as
+  the selected text and replaces the selection history with the row's
+  tokens (`record.replace_history`); a normal selection made before it
+  leaves no token in the record.
 
 ## 11. Candidate tie law and the sentence trellis
 
