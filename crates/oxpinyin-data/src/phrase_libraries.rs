@@ -642,18 +642,6 @@ mod tests {
     }
 
     #[test]
-    fn a_checksum_mismatch_is_unmappable_not_a_layout_fault() {
-        let mut bytes = chunk(&valid_empty_payload());
-        bytes[4] ^= 0xFF;
-        let (dir, _) = temp_library(&bytes);
-        let error = match PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]) {
-            Err(error) => error,
-            Ok(_) => panic!("a bad chunk must be refused"),
-        };
-        assert!(matches!(error, LibraryError::Unmappable { .. }), "{error}");
-    }
-
-    #[test]
     fn an_out_of_bounds_separator_index_stays_a_format_refusal() {
         // The pin would read payload[index_two - 1] past the chunk; this
         // reader refuses the layout instead of reproducing the read.

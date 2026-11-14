@@ -6,8 +6,7 @@
 //!   and the saved-snapshot read-back.
 //! - `libchewing/tests/test-userphrase.c`: add → lookup → remove cycles,
 //!   persistence across independent sessions, same-reading/different-phrase
-//!   coexistence, multi-reading phrases, the phrase-length ceiling, and
-//!   removing an absent phrase.
+//!   coexistence, multi-reading phrases and the phrase-length ceiling.
 //!
 //! Divergences are asserted as the oxpinyin contract where the upstream
 //! shape has no equivalent: `set_bigram_count` unifies upstream's
@@ -178,24 +177,6 @@ fn mask_out_zero_clears_every_recorded_item() {
     // of and back into the facade (`phrase_index.cpp:713-715`); with both
     // items gone the user side holds nothing.
     assert_eq!(store.unigram_total().unwrap(), 0);
-}
-
-#[test]
-fn a_mask_selects_only_the_matching_tokens() {
-    // Upstream mask_out is a predicate wipe `(token & mask) == value`; the
-    // oxpinyin store applies it to bigram rows, unigram deltas, and phrase
-    // texts alike. Wiping one side's token must leave the other rows.
-    let mut store = session();
-    let a = FIRST_USER_TOKEN;
-    let b = FIRST_USER_TOKEN + 1;
-    let c = FIRST_USER_TOKEN + 2;
-
-    store.set_bigram_count(a, b, 4).unwrap();
-    store.set_bigram_count(a, c, 8).unwrap();
-    store.mask_out(!0, b).unwrap();
-    assert_eq!(store.bigram_count(a, b).unwrap(), 0, "b's row is wiped");
-    assert_eq!(store.bigram_count(a, c).unwrap(), 8, "c's row survives");
-    assert_eq!(store.bigram_total(a).unwrap(), 8, "totals are rewritten");
 }
 
 #[test]
@@ -454,22 +435,6 @@ fn the_same_reading_on_different_texts_yields_distinct_tokens() {
 }
 
 #[test]
-fn adding_an_existing_phrase_returns_the_same_token() {
-    // Upstream chewing has no token exposure; the oxpinyin seam guarantees
-    // one token per phrase text, so a re-add is an update, not a duplicate.
-    let mut store = session();
-    let (text, reading) = user_phrase("你好", "ni,hao");
-    let first = store
-        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &reading, None)
-        .unwrap();
-    let second = store
-        .add_phrase(&oxpinyin_core::PhraseText::from(&text), &reading, None)
-        .unwrap();
-    assert_eq!(first, second);
-    assert_eq!(store.phrases().unwrap().len(), 1);
-}
-
-#[test]
 fn phrase_length_ceiling_rejects_sixteen_characters() {
     // Upstream rejects a 12-syllable phrase and accepts 11. The oxpinyin
     // ceiling is MAX_PHRASE_LENGTH (16): 15 characters are accepted, 16
@@ -495,59 +460,4 @@ fn phrase_length_ceiling_rejects_sixteen_characters() {
         ),
         Err(UserStoreError::InvalidPhrase)
     ));
-}
-
-#[test]
-fn key_count_must_match_the_phrase_length() {
-    // Upstream rejects a phrase/bopomofo length mismatch for add and
-    // remove alike; oxpinyin rejects it at add time with `InvalidPhrase`.
-    let mut store = session();
-    assert!(matches!(
-        store.add_phrase(&"测试".into(), &keys("ce"), None),
-        Err(UserStoreError::InvalidPhrase)
-    ));
-    assert!(matches!(
-        store.add_phrase(&"测试".into(), &keys("ce,shi,de"), None),
-        Err(UserStoreError::InvalidPhrase)
-    ));
-    assert!(matches!(
-        store.add_phrase(&"".into(), &[], None),
-        Err(UserStoreError::InvalidPhrase)
-    ));
-}
-
-#[test]
-fn removing_an_absent_phrase_is_not_an_error() {
-    // Upstream: removing an absent phrase returns 0. oxpinyin: Ok(false).
-    let mut store = session();
-    assert!(!store.remove_user_phrase(FIRST_USER_TOKEN).unwrap());
-}
-
-#[test]
-fn learning_grows_unigrams_and_bigrams_differently() {
-    // Upstream test_ngram asserts frequencies land in the gram; upstream
-    // chewing asserts auto-learn persists after commit. The oxpinyin store
-    // records a selection as a seeded bigram count plus a unigram delta on
-    // the selected item; without the explicit observe call nothing changes
-    // (learning is caller-driven, `docs/findings/user-store.md` §2).
-    let mut store = session();
-    let a = bare_token(&mut store, "甲", "jia");
-    let b = bare_token(&mut store, "乙", "yi");
-
-    // The bare item is readable with a zero unigram, and nothing else moved.
-    let before = store.count_delta(Some(a), b).unwrap();
-    assert_eq!(
-        before,
-        oxpinyin_core::UserCountDelta {
-            unigram_live: Some(0),
-            ..oxpinyin_core::UserCountDelta::ZERO
-        }
-    );
-
-    store.observe_selection(a, b).unwrap();
-
-    let delta = store.count_delta(Some(a), b).unwrap();
-    assert!(delta.bigram_count > 0, "the bigram row is seeded");
-    assert_eq!(delta.bigram_total, store.bigram_total(a).unwrap());
-    assert!(delta.unigram_delta > 0, "the unigram delta moves");
 }

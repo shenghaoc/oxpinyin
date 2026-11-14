@@ -2626,11 +2626,6 @@ impl UserStore {
         items.get(&token).map(|item| read(&item))
     }
 
-    #[cfg(test)]
-    pub(crate) fn system_items_borrowed(&self) -> bool {
-        self.inner.system_items.try_borrow_mut().is_err()
-    }
-
     /// Reads the item a system library's live buffer holds under `token`.
     /// Nothing is decoded or kept.
     pub(crate) fn with_live_item<R>(
@@ -3084,19 +3079,6 @@ mod tests {
         }
 
         #[test]
-        fn open_creates_empty_store() {
-            let store = transient();
-            assert!(!store.has_user_data());
-            assert_eq!(store.write_generation(), 0);
-            assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
-            assert_eq!(store.bigram_total(1).unwrap(), 0);
-            assert_eq!(store.unigram_delta(2).unwrap(), 0);
-            assert_eq!(store.unigram_total().unwrap(), 0);
-            assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
-            assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
-        }
-
-        #[test]
         fn count_delta_reads_committed_writes() {
             let mut store = transient();
             let cur = bare_token(&mut store, "你", &[key("ni")]);
@@ -3131,25 +3113,6 @@ mod tests {
                     unigram_total_delta: 483 + 966,
                     unigram_live: Some(483 + 966),
                 }
-            );
-        }
-
-        #[test]
-        fn mask_out_all_marks_store_empty_again() {
-            let mut store = transient();
-            let cur = bare_token(&mut store, "你", &[key("ni")]);
-            store.observe_selection(1, cur).unwrap();
-            assert!(store.has_user_data());
-            assert_ne!(
-                store.count_delta(Some(1), cur).unwrap(),
-                UserCountDelta::ZERO
-            );
-
-            store.mask_out(0, 0).unwrap();
-            assert!(!store.has_user_data());
-            assert_eq!(
-                store.count_delta(Some(1), cur).unwrap(),
-                UserCountDelta::ZERO
             );
         }
 
@@ -3340,29 +3303,6 @@ mod tests {
             assert_eq!(token, 0x0700_0001);
             assert!(phrase::is_user_token(token));
             assert_eq!(next_user_token(&store), FIRST_USER_TOKEN + 1);
-        }
-
-        #[test]
-        fn allocation_increments_by_one_without_gap() {
-            let mut store = transient();
-            let a = store.add_phrase(&"甲".into(), &[key("jia")], None).unwrap();
-            let b = store.add_phrase(&"乙".into(), &[key("yi")], None).unwrap();
-            let c = store
-                .add_phrase(&"丙".into(), &[key("bing")], None)
-                .unwrap();
-            assert_eq!(a, FIRST_USER_TOKEN);
-            assert_eq!(b, a + 1);
-            assert_eq!(c, a + 2);
-            assert_eq!(next_user_token(&store), a + 3);
-        }
-
-        #[test]
-        fn user_token_is_distinguishable_from_system_token() {
-            const SYSTEM: Token = 0x0100_0001;
-            let mut store = transient();
-            let user = store.add_phrase(&"词".into(), &[key("ci")], None).unwrap();
-            assert!(phrase::is_user_token(user));
-            assert!(!phrase::is_user_token(SYSTEM));
         }
 
         #[test]

@@ -553,6 +553,33 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
+    /// tests/include/test_memory_chunk.cpp:44-65 at 074a2219: the two
+    /// surviving words, then `save`, `load` and `mmap` of one file.
+    #[test]
+    fn framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map() {
+        // The file the pin's test_memory_chunk leaves after the removal:
+        // data length 8, checksum 10 ^ 12, then the words 10 and 12.
+        let file = [8_u32, 10 ^ 12, 10, 12]
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect::<Vec<u8>>();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.bin");
+        std::fs::write(&path, b"old bytes that must be truncated").unwrap();
+        save(&path, &file).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), file);
+
+        let mapped = MappingSource::open(&path).unwrap().map().unwrap();
+        assert_eq!(mapped.as_slice(), file.as_slice());
+        drop(mapped);
+
+        assert!(matches!(
+            save(dir.path(), &file),
+            Err(ChunkSaveError::Io(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), file);
+    }
+
     #[test]
     fn an_unopenable_path_is_the_soft_failure() {
         let dir = tempfile::tempdir().unwrap();

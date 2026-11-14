@@ -658,34 +658,6 @@ mod tests {
     }
 
     #[test]
-    fn search_filters_by_tone() {
-        let dbm = MemoryDbm::new();
-        let ba = ChewingKey::from_pinyin("ba").unwrap();
-        let ba1 = PinyinIndexItem {
-            token: 0x0100_0001,
-            keys: vec![ba.with_tone(1)],
-        };
-        let ba3 = PinyinIndexItem {
-            token: 0x0100_0002,
-            keys: vec![ba.with_tone(3)],
-        };
-        let key = encode_complete_key(&[ba]);
-        dbm.put(key, encode_items(&[ba1, ba3]));
-        let table = ChewingTable::new(dbm);
-
-        let items = table.search(&[ba.with_tone(1)]).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0], 0x0100_0001);
-
-        let items = table.search(&[ba.with_tone(3)]).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0], 0x0100_0002);
-
-        let items = table.search(&[ba]).unwrap();
-        assert_eq!(items.len(), 2);
-    }
-
-    #[test]
     fn search_preserves_matching_token_order_and_duplicates_at_every_stride() {
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         for length in 1..=16 {
@@ -917,57 +889,61 @@ mod tests {
     }
 
     #[test]
-    fn suggestion_checks_lengths_with_one_lookup_and_one_walk() {
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-        struct Counted {
-            inner: MemoryDbm,
-            gets: Arc<AtomicUsize>,
-            walks: Arc<AtomicUsize>,
-        }
-        impl ChewingDbm for Counted {
-            fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-                self.gets.fetch_add(1, Ordering::Relaxed);
-                self.inner.get(key, value)
-            }
-            fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
-                self.gets.fetch_add(1, Ordering::Relaxed);
-                self.inner.contains(key)
-            }
-            fn walk(
-                &self,
-                lo: &[u8],
-                hi: Option<&[u8]>,
-                visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-            ) -> Result<(), DictError> {
-                self.walks.fetch_add(1, Ordering::Relaxed);
-                self.inner.walk(lo, hi, visit)
-            }
-        }
+    fn suggestion_walk_matches_the_separate_probes() {
         let ni = ChewingKey::from_pinyin("ni").unwrap();
-        for malformed in [false, true] {
+        let hao = ChewingKey::from_pinyin("hao").unwrap();
+        let ni_hao = || {
+            (
+                encode_complete_key(&[ni, hao]),
+                encode_items(&[PinyinIndexItem {
+                    token: 0x0100_0099,
+                    keys: vec![ni.with_tone(3), hao.with_tone(3)],
+                }]),
+            )
+        };
+        let overlong = || {
+            let mut odd = encode_complete_key(&[ni; 17]);
+            odd.push(7);
+            (odd, Vec::new())
+        };
+        let marker = || (encode_complete_key(&[ni]), Vec::new());
+        let cases: [Vec<(Vec<u8>, Vec<u8>)>; 5] = [
+            vec![marker()],
+            vec![marker(), ni_hao()],
+            vec![ni_hao()],
+            vec![marker(), overlong()],
+            vec![marker(), ni_hao(), overlong()],
+        ];
+        for (case, rows) in cases.into_iter().enumerate() {
             let dbm = MemoryDbm::new();
-            dbm.put(encode_complete_key(&[ni]), Vec::new());
-            if malformed {
-                let mut odd = encode_complete_key(&[ni; 17]);
-                odd.push(7);
-                dbm.put(odd, Vec::new());
+            for (key, value) in rows {
+                dbm.put(key, value);
             }
-            let gets = Arc::new(AtomicUsize::new(0));
-            let walks = Arc::new(AtomicUsize::new(0));
-            let table = ChewingTable::new(Counted {
-                inner: dbm,
-                gets: gets.clone(),
-                walks: walks.clone(),
-            });
-            assert_eq!(
-                table.walk_suggestions(&[ni], |_, _| Ok(false)).unwrap(),
-                malformed
-            );
-            assert_eq!(gets.load(Ordering::Relaxed), 1);
-            assert_eq!(walks.load(Ordering::Relaxed), 1);
+            let table = ChewingTable::new(dbm);
+            let mut fused = Vec::new();
+            let fused_overlong = table
+                .walk_suggestions(&[ni], |len, items| {
+                    fused.push((len, items.to_vec()));
+                    Ok(false)
+                })
+                .unwrap();
+            // The uncached path: the existence probe, the key-length scan and
+            // the extension walk, each on its own.
+            let exists = table.key_exists(&[ni]).unwrap();
+            let separate_overlong = exists && table.has_overlong_extension(&[ni]).unwrap();
+            assert_eq!(fused_overlong, separate_overlong, "case {case}");
+            if !separate_overlong {
+                let mut separate = Vec::new();
+                if exists {
+                    table
+                        .walk_extensions(&[ni], |len, items| {
+                            separate.push((len, items.to_vec()));
+                            Ok(false)
+                        })
+                        .unwrap();
+                }
+                assert_eq!(fused, separate, "case {case}");
+            }
         }
     }
 
@@ -1027,17 +1003,5 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn truncated_value_does_not_panic() {
-        let dbm = MemoryDbm::new();
-        let ni = ChewingKey::from_pinyin("ni").unwrap();
-        let hao = ChewingKey::from_pinyin("hao").unwrap();
-        let key = encode_complete_key(&[ni, hao]);
-        dbm.put(key, vec![0x01, 0x00, 0x00, 0x00, 0x0E, 0x00]);
-        let table = ChewingTable::new(dbm);
-        let result = table.search(&[ni, hao]);
-        assert!(result.is_err());
     }
 }

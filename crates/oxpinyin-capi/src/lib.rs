@@ -209,3 +209,5 @@ mod pinned_data_tests;
 mod test_support;
 #[cfg(test)]
 mod union_e2e_tests;
+#[cfg(test)]
+mod user_dir_tests;

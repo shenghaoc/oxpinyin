@@ -135,3 +135,78 @@ fn a_merge_the_pin_cannot_read_answers_its_fault() {
         system
     );
 }
+
+/// A stored row: the `guint32` total, then `(token, count)` records.
+fn gram(total: u32, records: &[(u32, u32)]) -> Vec<u8> {
+    let mut bytes = total.to_le_bytes().to_vec();
+    for (token, count) in records {
+        bytes.extend_from_slice(&token.to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+    }
+    bytes
+}
+
+fn merged(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Vec<u8>> {
+    oxpinyin_core::MergedGram::merge(system, user).map(|row| row.to_bytes())
+}
+
+/// `merge_single_gram`'s loop (`ngram.cpp:308-349` at `074a2219`),
+/// written out item by item: no sort, no dedup, equal heads summed,
+/// remainders appended.
+fn pin_merge(system: (u32, &[(u32, u32)]), user: (u32, &[(u32, u32)])) -> Vec<u8> {
+    let mut items = Vec::new();
+    let (mut left, mut right) = (0, 0);
+    while left < system.1.len() && right < user.1.len() {
+        let (s, u) = (system.1[left], user.1[right]);
+        if s.0 < u.0 {
+            items.push(s);
+            left += 1;
+        } else if s.0 > u.0 {
+            items.push(u);
+            right += 1;
+        } else {
+            items.push((s.0, s.1.wrapping_add(u.1)));
+            left += 1;
+            right += 1;
+        }
+    }
+    items.extend_from_slice(&system.1[left..]);
+    items.extend_from_slice(&user.1[right..]);
+    gram(system.0.wrapping_add(user.0), &items)
+}
+
+#[test]
+fn row_merge_is_the_pins_two_pointer_interleave_for_arbitrary_rows() {
+    for seed in 0..128_u32 {
+        let system = [(seed % 7, u32::MAX), (3, seed), (seed % 5, 0), (3, 1)];
+        let user = [(seed % 6, u32::MAX), (3, seed), (seed % 7, 0), (3, 1)];
+        let (system_total, user_total) = (seed.wrapping_mul(0x8000_0001), seed.wrapping_mul(3));
+        assert_eq!(
+            merged(
+                Some(gram(system_total, &system)),
+                Some(gram(user_total, &user))
+            ),
+            Some(pin_merge((system_total, &system), (user_total, &user))),
+            "seed {seed}"
+        );
+    }
+}
+
+/// `merge_single_gram` (`ngram.cpp:303-349`): no row only when both loads
+/// miss.
+#[test]
+fn row_merge_is_none_only_when_both_sides_miss() {
+    assert!(merged(None, None).is_none());
+    // One side absent: that side's bytes, item-less or not.
+    let itemless = gram(7, &[]);
+    assert_eq!(merged(None, Some(itemless.clone())), Some(itemless));
+    let user = gram(0, &[(9, 1), (2, 0)]);
+    assert_eq!(merged(None, Some(user.clone())), Some(user));
+}
+
+#[test]
+fn row_merge_keeps_a_zero_total_system_row() {
+    // `merge_single_gram` answers true as soon as one load answers.
+    let system = gram(0, &[(5, 2)]);
+    assert_eq!(merged(Some(system.clone()), None), Some(system));
+}
