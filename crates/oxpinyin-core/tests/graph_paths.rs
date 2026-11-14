@@ -11,8 +11,11 @@
 //! this, which is the point: the check belongs in ordinary portable CI, not
 //! behind a Linux-only feature.
 
-use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::{Completeness, OptionBits, SyllableKey};
+use oxpinyin_core::graph::{ExactSegment, GraphError, SegmentGraph};
+use oxpinyin_core::{
+    Completeness, OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_ON_ONG,
+    SyllableKey,
+};
 
 use crate::common::capture_text::unescape;
 
@@ -165,4 +168,185 @@ fn every_captured_oracle_path_is_a_graph_path() {
         inputs, OPEN_APOSTROPHE_CASES,
         "unexpected consumed-length gaps: {disagreements:?}"
     );
+}
+
+#[test]
+fn exact_graph_has_one_edge_per_segment_and_no_resplits() {
+    // "bie" pre-parsed as one key: no bi+e edge may appear.
+    let bie = SyllableKey::from_canonical_text("bie").expect("bie");
+    let graph = SegmentGraph::build_exact(b"bie", &[ExactSegment::new(0, 3, bie, 0)])
+        .expect("valid segments");
+    let edges: Vec<String> = graph
+        .edges()
+        .iter()
+        .map(|edge| {
+            format!(
+                "{}-{}:{}:{}",
+                edge.from(),
+                edge.to(),
+                edge.key().text(),
+                edge.kind().as_wire()
+            )
+        })
+        .collect();
+    assert_eq!(edges, ["0-3:bie:exact"]);
+    assert_eq!(graph.consumed(), 3);
+    let walk: Vec<&str> = graph
+        .fewest_keys(false)
+        .iter()
+        .map(|edge| edge.key().text())
+        .collect();
+    assert_eq!(walk, ["bie"]);
+}
+
+#[test]
+fn exact_graph_rejects_bad_segments() {
+    let bie = SyllableKey::from_canonical_text("bie").expect("bie");
+    // Overlapping.
+    assert_eq!(
+        SegmentGraph::build_exact(
+            b"bie",
+            &[
+                ExactSegment::new(0, 3, bie, 0),
+                ExactSegment::new(2, 3, bie, 0)
+            ]
+        ),
+        Err(GraphError::ExactSegmentsInvalid)
+    );
+    // Out of bounds.
+    assert_eq!(
+        SegmentGraph::build_exact(b"bie", &[ExactSegment::new(0, 9, bie, 0)]),
+        Err(GraphError::ExactSegmentsInvalid)
+    );
+    // Empty span.
+    assert_eq!(
+        SegmentGraph::build_exact(b"bie", &[ExactSegment::new(2, 2, bie, 0)]),
+        Err(GraphError::ExactSegmentsInvalid)
+    );
+}
+
+#[test]
+fn exact_graph_rejects_non_apostrophe_gaps() {
+    let ni = SyllableKey::from_canonical_text("ni").expect("ni");
+    let hao = SyllableKey::from_canonical_text("hao").expect("hao");
+    // "nixhao": the gap byte 'x' is not a separator — riding it would
+    // decode hao across unverified input.
+    assert_eq!(
+        SegmentGraph::build_exact(
+            b"nixhao",
+            &[
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, hao, 0)
+            ]
+        ),
+        Err(GraphError::ExactSegmentsInvalid)
+    );
+    // Leading junk is equally refused.
+    assert_eq!(
+        SegmentGraph::build_exact(b"xni", &[ExactSegment::new(1, 3, ni, 0)]),
+        Err(GraphError::ExactSegmentsInvalid)
+    );
+    // A separator run between spans still rides, as in the parsed graph.
+    let graph = SegmentGraph::build_exact(
+        b"ni''hao",
+        &[
+            ExactSegment::new(0, 2, ni, 0),
+            ExactSegment::new(4, 7, hao, 0),
+        ],
+    )
+    .expect("apostrophe gap is a separator ride");
+    assert_eq!(graph.consumed(), 7);
+}
+
+// Pin 074a2219 pinyin_parser2.cpp:237–251 propagates each apostrophe
+// from a reachable position, including at the start and end.
+#[test]
+fn a_leading_apostrophe_run_is_consumed_like_a_separator() {
+    for (input, path) in [
+        ("'ni", &["ni"][..]),
+        ("''ni", &["ni"]),
+        ("ni''hao", &["ni", "hao"]),
+        ("ni'", &["ni"]),
+        ("'''", &[]),
+    ] {
+        let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
+            .expect("short input");
+        assert_eq!(graph.consumed(), input.len(), "{input:?}");
+        assert!(graph.fully_consumed(), "{input:?}");
+        assert!(
+            graph
+                .fewest_keys(false)
+                .iter()
+                .map(|edge| edge.key().text())
+                .eq(path.iter().copied()),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
+fn fewest_keys_picks_the_shortest_complete_path() {
+    for (input, complete, with_incomplete) in [
+        ("nihao", &["ni", "hao"][..], &["ni", "hao"][..]),
+        ("nihaoXYZ", &["ni", "hao"], &["ni", "hao"]),
+        ("ni'hao", &["ni", "hao"], &["ni", "hao"]),
+        ("n", &[], &["n"]),
+        ("nih", &["ni"], &["ni", "h"]),
+        ("xian", &["xian"], &["xian"]),
+        ("", &[], &[]),
+    ] {
+        let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
+            .expect("short input");
+        for (allow_incomplete, expected) in [(false, complete), (true, with_incomplete)] {
+            let path: Vec<_> = graph
+                .fewest_keys(allow_incomplete)
+                .iter()
+                .map(|edge| edge.key().text())
+                .collect();
+            assert_eq!(
+                path, expected,
+                "{input:?}, allow_incomplete={allow_incomplete}"
+            );
+        }
+    }
+}
+
+/// `text@start-end` of each selected key under `options`.
+fn selected(input: &str, options: OptionBits) -> Vec<String> {
+    SegmentGraph::build_with_options(input.as_bytes(), options)
+        .expect("the test inputs are short")
+        .fewest_keys(false)
+        .iter()
+        .map(|edge| {
+            format!(
+                "{}@{}-{}",
+                edge.key().text(),
+                edge.syllable_start(),
+                edge.to()
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn fewest_keys_breaks_equal_key_counts_by_correction_distance() {
+    // Pin 074a2219 `pinyin_parser2.cpp:305-309`: `chon` is a distance-1
+    // `PINYIN_CORRECT_ON_ONG` row, so `chong'a` (0) beats `chon'ga` (1).
+    let on_ong = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG);
+    assert_eq!(selected("chonga", on_ong), ["chong@0-5", "a@5-6"]);
+    assert_eq!(selected("chongan", on_ong), ["chong@0-5", "an@5-7"]);
+    assert_eq!(selected("zhonge", on_ong), ["zhong@0-5", "e@5-6"]);
+    assert_eq!(
+        selected("chonga", OptionBits::default()),
+        ["chong@0-5", "a@5-6"]
+    );
+
+    // Totals, not counts of corrected keys: `chong'agn` is 1, `chon'gagn` 2.
+    let two = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG | PINYIN_CORRECT_GN_NG);
+    assert_eq!(selected("chongagn", two), ["chong@0-5", "ang@5-8"]);
+
+    // The key count still comes first: `liou` is one key at distance 1
+    // rather than `li'ou`, two keys at 0.
+    let iou_iu = OptionBits::from_bits(PINYIN_CORRECT_IOU_IU);
+    assert_eq!(selected("liou", iou_iu), ["liu@0-4"]);
 }

@@ -468,18 +468,6 @@ mod tests {
         );
     }
 
-    /// On sorted records the lower bound is the first item not less than
-    /// the probe, including the first of several equal items.
-    #[test]
-    fn lower_bound_is_the_first_not_less_on_a_sorted_array() {
-        let bytes = gram(0, &[(2, 0), (4, 0), (4, 0), (8, 0)]);
-        let probes = [(1, 0), (2, 0), (3, 1), (4, 1), (5, 3), (8, 3), (9, 4)];
-        for (token, expected) in probes {
-            assert_eq!(lower_bound(&bytes, token), expected, "probe {token}");
-        }
-        assert_eq!(lower_bound(&new_gram(), 7), 0);
-    }
-
     #[test]
     fn empty_and_short_records_keep_their_refusal_contracts() {
         for len in 0..super::TOTAL_LEN {

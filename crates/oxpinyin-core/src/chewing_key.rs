@@ -353,17 +353,21 @@ mod chewing_key_data_tests {
         }
     }
 
-    /// A spelling no row can hold matches no row: longer than the key, or
-    /// carrying a NUL byte that zero padding would otherwise hide.
+    /// Look up boundary spellings against the source table by string equality.
     #[test]
-    fn spellings_outside_the_key_match_no_row() {
-        assert_eq!(spelling_key("zhuangzh"), Some(0x7a68_7561_6e67_7a68));
-        assert_eq!(spelling_key("zhuangzhu"), None);
-        assert_eq!(spelling_key("ni\0"), None);
-        assert!(ChewingKey::from_pinyin("ni\0").is_none());
-        assert!(ChewingKey::from_pinyin("zhuangzhu").is_none());
-        assert_eq!(spelling_key(""), Some(0));
-        assert_eq!(ChewingKey::from_pinyin(""), Some(ChewingKey::default()));
+    fn spelling_lookup_matches_a_scan_of_the_original_rows() {
+        for spelling in ["", "ni", "ni\0", "zhuang", "zhuangzh", "zhuangzhu"] {
+            let expected = CONTENT_TABLE
+                .iter()
+                .find(|row| row.pinyin == spelling)
+                .map(|row| ChewingKey {
+                    initial: row.initial,
+                    middle: row.middle,
+                    final_: row.final_,
+                    tone: super::CHEWING_ZERO_TONE,
+                });
+            assert_eq!(ChewingKey::from_pinyin(spelling), expected, "{spelling:?}");
+        }
     }
 
     /// The zero key renders empty everywhere and answers table index 0;
