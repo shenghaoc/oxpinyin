@@ -101,7 +101,7 @@ impl SharedMatrix {
         let parsed_len = core.parsed_len;
         let spans: Vec<(&'static str, u8, usize, usize)> =
             if let Some(parse) = core.double_parse.as_ref() {
-                // `mode_keys` leaves the double-pinyin tone out; the key
+                // `mode_key_list` leaves the double-pinyin tone out; the key
                 // carries it (`ChewingKey::m_tone`).
                 parse
                     .keys()

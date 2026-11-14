@@ -60,12 +60,9 @@
 
 use std::ops::Range;
 
-use oxpinyin_core::OptionBits;
 use oxpinyin_core::SyllableKey;
-use oxpinyin_core::graph::SegmentGraph;
 
 use crate::error::EngineError;
-use crate::session::build_scan_matrix;
 
 /// A parse's keys as `(syllable start, raw end)` spans, in input order:
 /// the starts never decrease, and keys sharing a start keep the order the
@@ -464,43 +461,60 @@ impl MatrixKey {
     }
 }
 
-/// The scan matrix's keys with their spans, plus the graph's consumed
-/// length.
-///
-/// Keys appear in column order (by syllable start, [`in_column_order`]), and within a column in the
-/// matrix's own order, so the first key of a column is the pin's
-/// `matrix.get_item(column, 0, ...)`.
-///
-/// # Errors
-///
-/// [`EngineError::Graph`] when the buffer cannot be built into a segment
-/// graph.
-pub fn matrix_keys(
-    input: &[u8],
-    options: OptionBits,
-) -> Result<(Vec<MatrixKey>, usize), EngineError> {
-    let graph = SegmentGraph::build_with_options(input, options)?;
-    let parsed = graph.consumed();
-    let matrix = build_scan_matrix(&graph, options, true);
-    let keys = matrix
-        .iter()
-        .flatten()
-        .map(|key| MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
-        .collect();
-    Ok((in_column_order(keys), parsed))
-}
-
 /// Orders scan-matrix keys as the pin's matrix holds them: by syllable
 /// start, the column the pin places each key in, keeping the scan's order
 /// within a column (a stable sort). The scan matrix files keys by the
 /// graph node they leave, and a node's syllable start never decreases
 /// with the node, so this only confirms the order [`KeySpans`] relies on.
-#[must_use]
-pub(crate) fn in_column_order(mut keys: Vec<MatrixKey>) -> Vec<MatrixKey> {
-    if !keys.is_sorted_by_key(|key| key.syllable_start) {
-        keys.sort_by_key(|key| key.syllable_start);
+/// The keys of the matrix a session's last parse filled, borrowed in the
+/// pin's column order (`matrix.get_item(column, …)`): the getters and the
+/// offset laws read them in place.
+#[derive(Clone, Copy, Debug)]
+pub struct MatrixKeys<'a> {
+    keys: &'a [crate::session::ScanKey],
+}
+
+impl<'a> MatrixKeys<'a> {
+    pub(crate) const fn new(keys: &'a [crate::session::ScanKey]) -> Self {
+        Self { keys }
     }
-    keys
+
+    /// The number of keys.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.keys.len()
+    }
+
+    /// Whether the matrix holds no key.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// Key `index` (`index < len()`).
+    #[must_use]
+    pub fn get(self, index: usize) -> MatrixKey {
+        let key = self.keys[index];
+        MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
+    }
+
+    /// Every key, in column order.
+    pub fn iter(self) -> impl Iterator<Item = MatrixKey> + 'a {
+        self.keys
+            .iter()
+            .map(|key| MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
+    }
+}
+
+impl KeySpans for MatrixKeys<'_> {
+    fn span_count(&self) -> usize {
+        self.keys.len()
+    }
+
+    fn span(&self, index: usize) -> (usize, usize) {
+        let key = self.keys[index];
+        (key.syllable_start, key.to)
+    }
 }
 
 #[cfg(test)]

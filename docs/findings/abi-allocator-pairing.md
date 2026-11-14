@@ -246,10 +246,8 @@ conversions and the conversion of each sentence phrase. Those buffers come from 
     later phrase makes `g_strconcat` stop at it and copy the result. Either
     way, that phrase is dropped. A sentence whose every conversion failed is
     NULL with `true`.
-  - Where oxpinyin's remaining-input walk prepends the selection record, its
-    pieces come first: each chosen phrase or n-best row phrase, and any raw
-    gap that the record holds ([below](#raw-gap-text-in-a-prepended-selection)). A row of the
-    pre-frequency fallback scorer, which the pin does not have, is one piece.
+  - A row of the pre-frequency fallback scorer, which the pin does not
+    have, is one piece.
   - A row with empty text still returns `false` (`NbestRow` rows with empty
     text are dropped).
 - The NULL `middle` of the aux concatenation is unreachable in the pin. The
@@ -263,9 +261,9 @@ conversions and the conversion of each sentence phrase. Those buffers come from 
 
 ### Read paths
 
-`Session::sentence_phrases` gives the parts of the row (`SentenceState::parts`),
-the saved prefix first: one `SentencePart::Token` for each phrase and one
-`SentencePart::Raw` for each raw gap. `Instance::sentence_phrases` resolves
+`Session::sentence_phrases` gives the parts of the row (`SentenceState::parts`):
+one `SentencePart::Token` for each phrase, or one `SentencePart::Raw` for a
+row with no phrase. `Instance::sentence_phrases` resolves
 each token through the live phrase index when the caller reads the sentence,
 as `convert_to_utf8` does (`lookup/lookup.cpp:37-48`). A token that does not
 resolve repeats the last phrase that resolved in the same read, or adds ""
@@ -273,30 +271,11 @@ when none has: the pin ignores the result of `get_phrase_item` (`:43`), and
 a failed read leaves the item as it was (`storage/phrase_index.cpp:180-206`,
 `storage/phrase_index.h:81-84`). The C helpers (`ffi::sentence_text`,
 `write_owned_sentence!`) take that iterator. The GLib calls and their order
-are unchanged. The saved prefix stays on the session, because the selection
-can change while an older sentence result stays readable. The candidate
+are unchanged. The candidate
 string stays a snapshot (`zhuyin.cpp:1865-1870`). `BigramExportWalk::get_next` does not
 build the phrase of the row. `ExportedBigramRow` carries the pinyin and count.
 The adapter copies the `m_phrase` that it converted from
 `BigramExportWalk::pair`.
-
-### Raw gap text in a prepended selection
-
-The selection record of the engine keeps raw bytes as text. These are the
-bytes typed between the composition offset and a re-anchored selection, and
-between forced runs on a rebuild (`SelectionRecord::append_selected`,
-`rebuild_from_constraints` in `oxpinyin-engine/src/session/record.rs`).
-`Session::guess_over_remaining` prepends that record to every row
-(`oxpinyin-engine/src/session/guess.rs`). The raw gap then becomes part of the
-sentence text, and `sentence_phrases` gives it as its own `SentencePart::Raw`. The
-pin keeps no such record. It decodes the whole matrix under its
-constraints (`pinyin.cpp:1372-1387`, `lookup/phonetic_lookup.h:736-845`),
-so its result holds a decoded phrase token there, never raw input.
-
-The register entry for the typed-but-unselected gap law of the engine is
-upstream divergences, "zhuyin before-cursor candidate window — CLOSED". It
-records the law on the `commit()` surface of the engine, and records the C
-sentence after a re-guess as the pin's re-decode.
 
 ### Allocation-failure gate
 
@@ -319,7 +298,3 @@ just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
 ```
-
-## Open
-
-- Whether a C-API call sequence reaches the remaining-input walk with a raw gap in the selection record: the pin source does not settle it.

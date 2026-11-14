@@ -38,7 +38,7 @@ pub use char_offset::{
     remember_walk,
 };
 pub use cursor::{
-    KeySpans, MatrixKey, left_word_offset_over_spans, lookup_offset_over_spans,
+    KeySpans, MatrixKey, MatrixKeys, left_word_offset_over_spans, lookup_offset_over_spans,
     right_word_offset_over_spans,
 };
 pub use error::{EngineError, TrainingSpanFault};

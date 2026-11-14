@@ -44,7 +44,7 @@ use smallvec::SmallVec;
 
 use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
-use crate::session::matrix::ParsedMatrix;
+use crate::session::matrix::{ParsedMatrix, ScanMatrix};
 use crate::session::{
     MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty, training_readings,
 };
@@ -695,7 +695,7 @@ where
 /// today's walk, bit for bit.
 #[cfg(test)]
 pub fn nbest_sentences<D, L>(
-    matrix: &[Vec<ScanKey>],
+    matrix: &ScanMatrix,
     bound: usize,
     dictionary: &D,
     model: &L,
@@ -926,7 +926,7 @@ where
 }
 
 pub(super) struct GenerationInput<'a> {
-    pub(super) matrix: &'a [Vec<ScanKey>],
+    pub(super) matrix: &'a ScanMatrix,
     pub(super) bound: usize,
     pub(super) physical_separators: bool,
     pub(super) topology: Option<&'a crate::session::matrix::ParsedMatrix>,
@@ -1129,7 +1129,7 @@ where
 /// of the current parse, with the separator zero keys the pin's
 /// `fill_matrix` writes.
 pub(crate) struct ConstraintSpelling<'a> {
-    scan: &'a [Vec<ScanKey>],
+    scan: &'a ScanMatrix,
     bound: usize,
     physical: bool,
     input: &'a [u8],
@@ -1142,7 +1142,7 @@ impl<'a> ConstraintSpelling<'a> {
     /// `scan` is the parse's scan matrix, `bound` its parsed length and
     /// `input` the raw bytes it was built over.
     pub(crate) const fn new(
-        scan: &'a [Vec<ScanKey>],
+        scan: &'a ScanMatrix,
         bound: usize,
         physical: bool,
         input: &'a [u8],
@@ -1606,7 +1606,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{NbestRow, NbestShape, Trellis, Value, nbest_sentences};
-    use crate::session::ScanKey;
+    use crate::session::matrix::ScanMatrix;
     use oxpinyin_core::PhraseEntry;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
@@ -2177,10 +2177,11 @@ mod tests {
         }
     }
 
-    fn one_column_matrix(text: &str) -> (Vec<Vec<ScanKey>>, usize) {
+    fn one_column_matrix(text: &str) -> (ScanMatrix, usize) {
         let graph = SegmentGraph::build_with_options(text.as_bytes(), OptionBits::default())
             .expect("short input builds");
-        let matrix = build_scan_matrix(&graph, OptionBits::default(), true);
+        let matrix =
+            ScanMatrix::from_columns(build_scan_matrix(&graph, OptionBits::default(), true));
         let bound = graph.consumed();
         (matrix, bound)
     }

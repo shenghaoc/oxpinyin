@@ -394,7 +394,7 @@ pub extern "C" fn pinyin_get_pinyin_offset(
         .core
         .pin_matrix_columns()
         .is_ok_and(|columns| columns == 0)
-        && cursor.min(inst.core.pin_parsed_len().unwrap_or(0)) >= 1
+        && cursor.min(inst.core.pin_parsed_len()) >= 1
     {
         std::process::abort();
     }
