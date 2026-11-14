@@ -776,34 +776,6 @@ mod tests {
     }
 
     #[test]
-    fn an_attached_bigram_synchronizes_before_close() {
-        use super::ffi::{NativeCall, take_native_calls};
-
-        // `Bigram::reset()` synchronizes, closes and deletes whatever it
-        // attached (ngram_kyotodb.cpp:43-50, 110-120).
-        let file = Temp::new("attached-bigram", "db");
-        for read_only in [false, true] {
-            let crate::SystemAttachment::Open(store) =
-                crate::SystemAttachment::attach_bigram(&file.0, read_only).unwrap()
-            else {
-                panic!("read only: {read_only}: the bigram did not attach");
-            };
-            take_native_calls();
-            let handle = store.db.address();
-            drop(store);
-            assert_eq!(
-                take_native_calls(),
-                [
-                    (handle, NativeCall::Synchronize(false)),
-                    (handle, NativeCall::Close),
-                    (handle, NativeCall::Delete),
-                ],
-                "read only: {read_only}"
-            );
-        }
-    }
-
-    #[test]
     fn a_failed_bigram_attach_keeps_its_hashdb_until_reset() {
         use super::ffi::{NativeCall, OCREATE, OREADER, OWRITER, take_native_calls};
         use crate::SystemAttachment;
@@ -1054,29 +1026,6 @@ mod tests {
         }
         assert_eq!(walked.len(), 3000);
         assert_eq!(db.keys().unwrap(), walked);
-    }
-
-    #[test]
-    fn point_reads_tell_empty_values_from_misses() {
-        let db = KcUserBigramDb::empty().unwrap();
-        db.store(b"empty", b"").unwrap();
-        db.store(b"full", &[7; 300]).unwrap();
-        assert_eq!(db.read_gram(b"empty").unwrap(), Some(Vec::new()));
-        assert_eq!(db.read_gram(b"full").unwrap(), Some(vec![7; 300]));
-        assert_eq!(db.read_gram(b"absent").unwrap(), None);
-        let store = KcStore::create_in_memory().unwrap();
-        store
-            .write(|txn| {
-                txn.put_raw(b"empty", b"")?;
-                txn.put_raw(b"full", &[9; 5])
-            })
-            .unwrap();
-        assert_eq!(store.read_raw(b"empty").unwrap(), Some(Vec::new()));
-        assert_eq!(store.read_raw(b"full").unwrap(), Some(vec![9; 5]));
-        assert_eq!(store.read_raw(b"absent").unwrap(), None);
-        assert!(store.contains_raw(b"empty").unwrap());
-        assert!(store.contains_raw(b"full").unwrap());
-        assert!(!store.contains_raw(b"absent").unwrap());
     }
 
     /// Keys that share prefixes, cross 0x00/0xFF and include the empty

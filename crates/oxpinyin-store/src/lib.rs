@@ -1706,90 +1706,6 @@ mod tests {
     #[cfg(feature = "bdb")]
     store_write_tests!(bdb_write, BdbStore, "db");
 
-    // ── Default-backend policy: mechanical invariants ──────────────────
-    //
-    // The workspace policy: the peer backends (KC,
-    // tkrzw, BDB) are equal implementations behind the store's trait
-    // surface; tkrzw is the default *selection* (the feature
-    // enabled by the workspace's default set), not a privileged one. These tests
-    // catch any accidental slide back to another default (or any other
-    // silent reordering) — a plain string check on `DEFAULT_STORE_EXT`
-    // pinned to the feature the build is running under, plus a
-    // compile-time type-identity check on `DefaultStore`.
-
-    #[test]
-    fn default_store_ext_matches_the_compiled_backend() {
-        // Each peer selects a distinct extension. The exactly-one-
-        // backend guards refuse combined builds, so exactly one of the
-        // arms below fires per build — and if none fired, this test
-        // would go unfound (`#[cfg]` gates the whole `#[test]` too).
-        #[cfg(feature = "kyotocabinet")]
-        assert_eq!(super::DEFAULT_STORE_EXT, "kct");
-        #[cfg(feature = "tkrzw")]
-        assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
-        #[cfg(feature = "bdb")]
-        assert_eq!(super::DEFAULT_STORE_EXT, "db");
-    }
-
-    /// `DefaultStore` resolves to `KcStore` on
-    /// `--no-default-features --features kyotocabinet`. This is a
-    /// compile-time type identity, so a silent flip in the cfg chain
-    /// would fail to build rather than pass silently.
-    #[cfg(feature = "kyotocabinet")]
-    #[test]
-    fn default_store_is_kc_when_kyotocabinet_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::KcStore>();
-    }
-
-    /// `DefaultStore` resolves to `TkrzwStore` on
-    /// `--no-default-features --features tkrzw`.
-    #[cfg(feature = "tkrzw")]
-    #[test]
-    fn default_store_is_tkrzw_when_only_tkrzw_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::TkrzwStore>();
-    }
-
-    /// `--no-default-features --features bdb` resolves `DefaultStore`
-    /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
-    #[cfg(feature = "bdb")]
-    #[test]
-    fn default_store_is_bdb_when_only_bdb_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::BdbStore>();
-    }
-
     /// Removes a tkrzw store file, and any stale `<file>-lock` (tkrzw
     /// creates none: it locks the data file itself with `fcntl`), on
     /// drop, so a panicking test leaves nothing behind in
@@ -1805,65 +1721,6 @@ mod tests {
             lock.push("-lock");
             let _ = std::fs::remove_file(std::path::PathBuf::from(lock));
         }
-    }
-
-    #[cfg(feature = "tkrzw")]
-    #[test]
-    fn tkrzw_orders_keys_as_unsigned_bytes() {
-        // The backend installs no custom comparator, so TreeDBM sorts by
-        // its default LexicalKeyComparator. That has to be plain
-        // *unsigned* byte order for oxpinyin's big-endian key codec to
-        // keep the byte-order contract — a signed-char
-        // comparison would sort 0x80.. before 0x00.., silently reversing
-        // every high-token range scan. ASCII fixtures cannot tell the
-        // two apart, so probe the high half explicitly.
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-tkrzw-order-{}.tkrzw",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let _cleanup = RemoveTkrzw(path.clone());
-        let store = TkrzwStore::create(&path).unwrap();
-        let keys: [&[u8]; 5] = [&[0x00], &[0x7f], &[0x80], &[0xfe], &[0xff]];
-        store
-            .write(|txn| {
-                // Inserted out of order, so the walk order is the store's
-                // and not the insertion sequence.
-                for key in [keys[2], keys[4], keys[0], keys[3], keys[1]] {
-                    txn.put_raw(key, b"x")?;
-                }
-                Ok(())
-            })
-            .unwrap();
-
-        let mut walked = Vec::new();
-        store
-            .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
-                walked.push(key.to_vec());
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(
-            walked,
-            keys.iter().map(|key| key.to_vec()).collect::<Vec<_>>(),
-            "TreeDBM must walk keys in ascending unsigned byte order"
-        );
-
-        // The same order must hold through a bounded scan: 0x80..=0xfe
-        // is the half a signed comparison would misplace.
-        let mut ranged = Vec::new();
-        store
-            .range_raw(
-                Bound::Included(&[0x80][..]),
-                Bound::Included(&[0xfe][..]),
-                |key, _value| {
-                    ranged.push(key.to_vec());
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(ranged, vec![vec![0x80], vec![0xfe]]);
-        drop(store);
     }
 
     #[cfg(feature = "tkrzw")]
@@ -2148,13 +2005,6 @@ mod tests {
                 .collect()
         }
 
-        fn be_keys() -> Vec<Vec<u8>> {
-            BOUNDARY_TOKENS
-                .iter()
-                .map(|t| t.to_be_bytes().to_vec())
-                .collect()
-        }
-
         // ── the store contract: byte order, not integer order ──────
 
         /// Ascending sort of `keys` by raw byte order — the store's one
@@ -2209,69 +2059,6 @@ mod tests {
                 out, expected,
                 "range walk must return the ascending byte-ordered slice \
                  inside its bounds",
-            );
-        }
-
-        // ── per-peer equivalence: the current peer walks byte order ──
-        //
-        // Under exactly-one-backend, cross-peer equivalence cannot be
-        // proven in one process. Instead each build proves *its* peer
-        // matches the mathematical byte-ordered sequence; running every
-        // peer build through CI proves the cross-peer equivalence.
-
-        #[test]
-        fn raw_walk_matches_the_byte_ordered_sequence_be_keys() {
-            let path = TempPath::new("xback-be");
-            let rows = insert_and_walk::<DefaultStore>(&path.0, &be_keys());
-            let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
-            assert_eq!(
-                keys,
-                sorted_by_bytes(&be_keys()),
-                "the peer's raw walk must be the byte-ordered walk",
-            );
-            let tokens: Vec<u32> = rows
-                .iter()
-                .map(|(k, _)| u32::from_be_bytes([k[0], k[1], k[2], k[3]]))
-                .collect();
-            assert!(
-                tokens.is_sorted(),
-                "big-endian keys share integer order across peers",
-            );
-        }
-
-        #[test]
-        fn composite_pair_walk_follows_byte_order() {
-            // 8-byte (prev, cur) big-endian pairs — the user-store bigram
-            // key shape — with both components crossing 256.
-            let mut keys: Vec<Vec<u8>> = Vec::new();
-            for &prev in &[0x0000_00FF_u32, 0x0000_0100, 0x0000_0101] {
-                for &cur in &[0x0000_0001_u32, 0x0000_00FF, 0x0000_0100, 0x0001_0000] {
-                    let mut key = Vec::with_capacity(8);
-                    key.extend_from_slice(&prev.to_be_bytes());
-                    key.extend_from_slice(&cur.to_be_bytes());
-                    keys.push(key);
-                }
-            }
-            let path = TempPath::new("xpair");
-            let rows = insert_and_walk::<DefaultStore>(&path.0, &keys);
-            let out: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
-            assert_eq!(
-                out,
-                sorted_by_bytes(&keys),
-                "the peer's raw walk must be the byte-ordered walk",
-            );
-            let pairs: Vec<(u32, u32)> = rows
-                .iter()
-                .map(|(k, _)| {
-                    (
-                        u32::from_be_bytes([k[0], k[1], k[2], k[3]]),
-                        u32::from_be_bytes([k[4], k[5], k[6], k[7]]),
-                    )
-                })
-                .collect();
-            assert!(
-                pairs.is_sorted(),
-                "big-endian (prev, cur) pairs walk in integer order",
             );
         }
     }

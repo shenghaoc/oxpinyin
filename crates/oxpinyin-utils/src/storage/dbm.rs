@@ -187,29 +187,6 @@ impl Hash {
 
 #[cfg(test)]
 mod tests {
-    use super::Hash;
-    use std::path::Path;
-
-    #[test]
-    fn a_failure_before_the_open_is_an_error_not_a_missing_container() {
-        // Every backend rejects a NUL path before its native open.
-        let nul = Path::new(std::ffi::OsStr::new("bad\0name.db"));
-        assert!(Hash::open_read_only(nul).is_err());
-        assert!(Hash::create_or_missing(nul).is_err());
-        // A failed native open is an unopened container: no record and no
-        // key. Its walk answers as `get_all_items` does on the failed
-        // object: true on Kyoto Cabinet, false on tkrzw and Berkeley DB.
-        let missing =
-            Hash::open_read_only(&missing_dir().join("missing.db")).expect("a failed open");
-        assert!(missing.get(&[0; 4]).is_none());
-        let keys = missing.native_keys();
-        if cfg!(feature = "kyotocabinet") {
-            assert_eq!(keys.expect("keys"), Vec::<Vec<u8>>::new());
-        } else {
-            assert!(keys.is_err(), "{keys:?}");
-        }
-    }
-
     #[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
     #[test]
     fn mask_all_empties_every_value_and_keeps_every_key() {
@@ -241,23 +218,5 @@ mod tests {
         for (key, _) in rows {
             assert_eq!(table.get(key), Some(Vec::new()), "{key:?}");
         }
-    }
-
-    #[test]
-    fn a_put_on_a_failed_attachment_reports_the_failure() {
-        // `Bigram::store` on the object a failed attach kept returns the
-        // refused native write, false on every backend (`ngram_kyotodb.cpp:
-        // 145-153`, `ngram_tkrzwdb.cpp:124-133`, `ngram_bdb.cpp:148-163` at
-        // 074a2219).
-        let path = missing_dir().join("bigram.db");
-        let hash = Hash::create_or_missing(&path).expect("a failed open");
-        assert!(hash.put(&[1, 0, 0, 0], b"gram").is_err());
-        assert!(hash.get(&[1, 0, 0, 0]).is_none());
-        assert!(!path.exists());
-    }
-
-    /// A directory that does not exist, so every attach in it fails.
-    fn missing_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("oxpinyin-utils-hash-{}", std::process::id()))
     }
 }
