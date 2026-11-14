@@ -141,7 +141,7 @@ pub struct InstanceState {
     /// The pin's parse-time matrix for the index-parsed full pinyin, double
     /// pinyin and chewing entry points: the parse's keys plus the steps the
     /// pin runs after `fill_matrix` under the options in force at that parse
-    /// (fuzzy alternatives, and for full pinyin the resplit and divided
+    /// (fuzzy alternatives, and for libpinyin full pinyin the resplit and divided
     /// passes). Empty for plain full pinyin, whose scan matrix the session
     /// keeps, and while no key was placed.
     pub parse_matrix: Vec<oxpinyin_engine::MatrixKey>,
