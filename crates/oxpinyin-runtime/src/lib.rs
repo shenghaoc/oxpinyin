@@ -357,7 +357,7 @@ pub struct RuntimeDict<'a> {
     punct: &'a PunctTable,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
-    /// `library_visible_token`, `visible_item_count`, and the
+    /// `library_visible_token` and the
     /// `unload_library` setter — that all consult it).  The pinyin ABI only
     /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
     /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
@@ -605,15 +605,7 @@ impl<'a> RuntimeDict<'a> {
         self.punct.punctuations(token).unwrap_or_default()
     }
 
-    /// Loads addon library `index` from `system_dir`; `false` when already
-    /// loaded or the tables are missing/unopenable.
-    #[must_use]
-    fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
-        self.load_addon_reporting(index, system_dir)
-            .unwrap_or(false)
-    }
-
-    /// [`RuntimeDict::load_addon`] with the failure kept: an error when
+    /// Loads addon library `index` from `system_dir`: an error when
     /// the library file is absent or does not verify, where
     /// [`LibraryError::unmappable_path`] names the file the pin could not
     /// map. `Ok(false)` for an index that names no addon library and for
@@ -625,22 +617,6 @@ impl<'a> RuntimeDict<'a> {
     fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
         let mut addons = self.addons.borrow_mut();
         addons.load_reporting(index, system_dir)
-    }
-
-    /// The system library files absent when the runtime opened, in the
-    /// pin's load order.
-    pub fn unmapped_system_libraries(&self) -> impl Iterator<Item = &Path> {
-        self.system.libraries().unmapped()
-    }
-
-    /// The loaded, visible system libraries whose files no longer map, in
-    /// library order; with `only` set, that library alone. An unloaded
-    /// library is not looked at.
-    #[must_use]
-    pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
-        self.system
-            .libraries()
-            .unmappable_now(|nibble| self.library_visible(u32::from(nibble)), only)
     }
 
     /// Unloads addon library `index`.
@@ -718,7 +694,6 @@ impl<'a> RuntimeDict<'a> {
     /// outside the u32 bit range both answer `true` — those nibbles
     /// have no bit to be masked off, so they are trivially visible.
     /// Every other visibility surface (`library_visible_token`,
-    /// `visible_item_count`,
     /// `pinyin_token_add_unigram_frequency` callers) routes through
     /// this to keep the shift and the `mask == 0` shortcut in one
     /// place.
@@ -729,17 +704,6 @@ impl<'a> RuntimeDict<'a> {
             return true;
         }
         mask & (1u32 << nibble) == 0
-    }
-
-    /// The visible item count for the amplified-law denominator: the
-    /// items of every library that is not unloaded. Per-library counts
-    /// are tallied once and cached.
-    #[must_use]
-    pub fn visible_item_count(&self) -> u64 {
-        self.system.libraries().item_count_where_live(
-            |nibble| self.library_visible(u32::from(nibble)),
-            |nibble| self.user.pristine_system_item_count(nibble),
-        )
     }
 
     /// Whether the token's item is readable, for entry-level filters: its
@@ -1233,15 +1197,6 @@ impl Dictionary for RuntimeDict<'_> {
     ) -> Result<bool, Self::Error> {
         let addons = self.addons.borrow();
         addons.prefix_exists(syllables)
-    }
-
-    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        // System items only, of the libraries that are loaded: upstream
-        // frees an unloaded sub-index, so its items leave the facade
-        // count. The parity surface the ranking denominator reproduces
-        // runs an empty user store, where this is the whole facade; a
-        // trained store's user items are not folded in.
-        Ok(self.visible_item_count())
     }
 
     /// `FacadeChewingTable2::search_suggestion`'s composition: the system
@@ -1888,10 +1843,7 @@ impl Runtime {
         };
 
         Ok(Self {
-            paths: StoragePaths::new(
-                user_dir.map(Path::to_path_buf).unwrap_or_default(),
-                vec![system_dir.to_path_buf()],
-            ),
+            paths: StoragePaths::new(vec![system_dir.to_path_buf()]),
             system: dict,
             model: lm,
             user,
@@ -2091,14 +2043,7 @@ impl Runtime {
         &mut self.user
     }
 
-    /// Loads addon library `index` from `system_dir`; `false` when already
-    /// loaded or the library tables do not open.
-    #[must_use]
-    pub fn load_addon(&mut self, index: u8, system_dir: &Path) -> bool {
-        self.dict().load_addon(index, system_dir)
-    }
-
-    /// [`Runtime::load_system_addon_reporting`] with the failure kept; `Ok(false)`
+    /// Loads addon library `index` from the system directory; `Ok(false)`
     /// when the runtime has no system directory or the library is already
     /// loaded.
     ///
@@ -2116,18 +2061,6 @@ impl Runtime {
     #[must_use]
     pub fn system_dir(&self) -> Option<&Path> {
         self.paths.system_data_dirs().first().map(PathBuf::as_path)
-    }
-
-    /// The system library files absent when this runtime opened.
-    pub fn unmapped_system_libraries(&self) -> impl Iterator<Item = &Path> {
-        self.libraries().unmapped()
-    }
-
-    /// The loaded, visible system libraries whose files no longer map; see
-    /// [`RuntimeDict::unmappable_system_libraries`].
-    #[must_use]
-    pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
-        self.dict().unmappable_system_libraries(only)
     }
 
     /// One validation pass over the system files this operation remaps.

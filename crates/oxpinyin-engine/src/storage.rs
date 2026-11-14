@@ -5,30 +5,20 @@
 //! depend on a directories crate. A shell knows where its platform puts
 //! things; it says so here.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-/// Where a session reads system data and reads or writes user data.
+/// Where a session reads system data.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StoragePaths {
-    user_data_dir: PathBuf,
     system_data_dirs: Vec<PathBuf>,
 }
 
 impl StoragePaths {
-    /// Builds paths with a user data directory and the system data
-    /// directories, searched in the given order.
+    /// Builds paths with the system data directories, searched in the
+    /// given order.
     #[must_use]
-    pub fn new(user_data_dir: PathBuf, system_data_dirs: Vec<PathBuf>) -> Self {
-        Self {
-            user_data_dir,
-            system_data_dirs,
-        }
-    }
-
-    /// Directory holding this user's data.
-    #[must_use]
-    pub fn user_data_dir(&self) -> &Path {
-        &self.user_data_dir
+    pub fn new(system_data_dirs: Vec<PathBuf>) -> Self {
+        Self { system_data_dirs }
     }
 
     /// System data directories, in search order.

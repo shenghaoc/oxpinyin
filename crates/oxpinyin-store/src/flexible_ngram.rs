@@ -217,27 +217,6 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
         &self.items
     }
 
-    /// Append the stored items in [range_begin, range_end), starting at the
-    /// existing lower bound. Always succeeds; does not clear `array`
-    /// (`flexible_single_gram.h:118-139` at 074a2219).
-    ///
-    /// Unsorted records share the existing lower-bound precondition and
-    /// disposition in `upstream-divergences.md#flexiblebigram-unsorted-record-search`.
-    pub fn search(
-        &self,
-        range_begin: u32,
-        range_end: u32,
-        array: &mut Vec<ArrayItemWithToken<I>>,
-    ) -> bool {
-        for item in &self.items[self.lower_bound(range_begin)..] {
-            if item.token >= range_end {
-                break;
-            }
-            array.push(item.clone());
-        }
-        true
-    }
-
     /// The item of `token`, or `None` when the gram has none.
     ///
     /// Rust's partition point uses the pin's token comparator, followed by
@@ -806,57 +785,6 @@ mod tests {
     /// A stand-in for the KMM array item.
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct Item(u32, u32, u32, u32);
-
-    #[test]
-    fn search_uses_the_pin_test_program_ranges_and_preserves_append_order() {
-        // test_flexible_ngram.cpp:47-50,74-75,116-117 at 074a2219:
-        // the same [0,8) range before and after insert/remove/header edits.
-        let mut gram = SingleGram::<Magic, Magic>::new();
-        gram.set_header(Magic(16));
-        for (token, value) in [(2, 1), (6, 2), (4, 4), (3, 8), (1, 16), (3, 32)] {
-            if gram.get_array_item(token).is_some() {
-                assert!(gram.set_array_item(token, Magic(value)));
-            } else {
-                assert!(gram.insert_array_item(token, Magic(value)));
-            }
-        }
-        let original = gram.clone();
-        assert!(gram.insert_array_item(5, Magic(8)));
-        assert_eq!(gram.remove_array_item(1), Some(Magic(16)));
-        gram.set_header(Magic(32));
-        for value in [&original, &gram] {
-            let mut array = vec![ArrayItemWithToken {
-                token: 99,
-                item: Magic(99),
-            }];
-            assert!(value.search(0, 8, &mut array));
-            assert_eq!(&array[1..], value.items());
-        }
-        let mut after_header = original.clone();
-        after_header.set_header(Magic(1));
-        for value in [&after_header, &gram] {
-            let mut array = Vec::new();
-            assert!(value.search(0, 8, &mut array));
-            assert_eq!(array, value.items());
-        }
-        let mut array = Vec::new();
-        assert!(gram.search(3, 5, &mut array));
-        assert_eq!(
-            array,
-            vec![
-                ArrayItemWithToken {
-                    token: 3,
-                    item: Magic(32)
-                },
-                ArrayItemWithToken {
-                    token: 4,
-                    item: Magic(4)
-                },
-            ]
-        );
-        assert!(gram.search(8, 8, &mut array));
-        assert_eq!(array.len(), 2);
-    }
 
     impl FixedRecord for Magic {
         const LEN: usize = 4;

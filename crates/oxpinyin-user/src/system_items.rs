@@ -254,12 +254,6 @@ impl SystemItems {
         Some(read(&bytes))
     }
 
-    pub(crate) fn pristine_item_count(&self, nibble: u8) -> Option<u64> {
-        self.replayed
-            .get(&nibble)
-            .map(ReplayedLibrary::readable_item_count)
-    }
-
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.replayed
             .get(&crate::phrase::phrase_index_library_index(token))?

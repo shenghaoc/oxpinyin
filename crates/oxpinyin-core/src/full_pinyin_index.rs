@@ -48,13 +48,6 @@ pub const fn secondary_zhuyin_index() -> FullPinyinIndex {
     FullPinyinIndex(crate::string_tables::secondary_zhuyin_index())
 }
 
-/// Longest spelling in either index, in bytes.
-///
-/// The pinned parser's lookahead is `max_full_pinyin_length = 7`
-/// including the tone digit (`pinyin_parser2.cpp:82`); the longest
-/// index spelling is 6, so one tone digit fits inside the lookahead.
-pub const MAX_INDEX_SPELLING_LEN: usize = 6;
-
 /// Lookahead bound of the pinned full-pinyin DP, tone digit included
 /// (`max_full_pinyin_length`, `pinyin_parser2.cpp:82`).
 const MAX_LOOKAHEAD: usize = 7;
@@ -188,20 +181,11 @@ fn parse_one_index_key(
 /// here), with the first equal value kept — which makes the earliest
 /// start, i.e. the longest spelling, win ties. The result backtracks
 /// the longest covered prefix from the beginning of the input.
-#[must_use]
-pub fn parse_full_pinyin_index(
-    input: &[u8],
-    use_tone: bool,
-    index: FullPinyinIndex,
-) -> FullPinyinIndexParse {
-    let options = crate::OptionBits::from_bits(if use_tone { crate::USE_TONE } else { 0 });
-    parse_index(input, options, index)
-}
-
-/// Parses an indexed full-pinyin scheme under the complete option word.
+///
+/// The parse runs under the complete option word.
 /// `FORCE_TONE` requires a tone only when `USE_TONE` is also set, matching
 /// pin 074a2219 `pinyin_parser2.cpp:176-190`. Other option bits do not
-/// gate these plain index rows. The boolean entry retains its behavior.
+/// gate these plain index rows.
 ///
 /// # Errors
 /// The parser currently has no error cases: a rejected key ends the parsed

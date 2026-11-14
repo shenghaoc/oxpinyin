@@ -53,7 +53,7 @@ A shell can then render partial acceptance without re-deriving it.
 ## Storage and configuration
 
 ```rust
-pub struct StoragePaths { user_data_dir: PathBuf, system_data_dirs: Vec<PathBuf> }
+pub struct StoragePaths { system_data_dirs: Vec<PathBuf> }
 
 pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
 ```

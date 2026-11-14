@@ -50,9 +50,8 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     let dict = runtime.dict();
     let lm = runtime.lm();
 
-    // The facade sizes of the model libpinyin 074a2219 builds: 138,096 items
-    // over the four system libraries, real corpus counts from the chunk items.
-    assert_eq!(dict.visible_item_count(), 138_096);
+    // The facade total of the model libpinyin 074a2219 builds: real corpus
+    // counts from the chunk items.
     let total = LanguageModel::unigram_total(&lm)
         .expect("query")
         .expect("real unigrams");
@@ -129,8 +128,14 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     );
 
     // The addon facade: addon_pinyin_index.bin + art.bin on demand.
-    assert!(runtime.load_addon(4, &dir), "art loads from the same dir");
-    assert!(!runtime.load_addon(4, &dir), "second load is false");
+    assert!(
+        matches!(runtime.load_system_addon_reporting(4), Ok(true)),
+        "art loads from the same dir"
+    );
+    assert!(
+        matches!(runtime.load_system_addon_reporting(4), Ok(false)),
+        "second load is false"
+    );
     let dict = runtime.dict();
     let art = dict
         .lookup_addon(&syllables("er'huang"))

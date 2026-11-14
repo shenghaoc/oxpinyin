@@ -40,13 +40,12 @@ mod string_tables {
 mod syllables;
 mod vocab;
 mod zhuyin_map;
-pub use zhuyin_map::{zhuyin_display_for_pinyin, zhuyin_for_pinyin};
 
 pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey, KeyText};
 pub use full_pinyin_index::{
     FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT,
-    MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index,
-    parse_full_pinyin_index_with_options, secondary_zhuyin_index,
+    SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index_with_options,
+    secondary_zhuyin_index,
 };
 pub use options::{
     DYNAMIC_ADJUST, FORCE_TONE, OptionBits, PINYIN_AMB_ALL, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH,
@@ -486,28 +485,6 @@ pub trait Dictionary {
         _syllables: &[Self::Syllable],
     ) -> Result<bool, Self::Error> {
         Ok(false)
-    }
-
-    /// Number of phrase items the default facade carries.
-    ///
-    /// The pinned oracle's candidate frequency divides every unigram by the
-    /// phrase index's total frequency (`pinyin.cpp:1858`), and that total is
-    /// the sum of one baked unigram per item. A table-backed implementor
-    /// answers with its item count so the ranking can reproduce that
-    /// denominator; `Ok(0)` is the fixture answer, where no such index
-    /// exists. Fallible like every other state-reading method of this
-    /// trait: an implementor that must query its store reports the failure
-    /// instead of guessing a count.
-    ///
-    /// Defaulted so existing implementors compile unchanged
-    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
-    /// methods only).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the backend cannot report the item count.
-    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        Ok(0)
     }
 
     /// Whether [`Self::lookup_into`] and [`Self::lookup_addon_into`] accept

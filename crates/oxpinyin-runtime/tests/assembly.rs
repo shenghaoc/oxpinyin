@@ -311,7 +311,6 @@ fn open_reads_no_records_beyond_the_handles() {
         .expect("query")
         .expect("real unigrams");
     assert!(total > 0, "the mini set carries \\1-gram counts");
-    assert!(runtime.dict().visible_item_count() > 0);
 }
 
 #[test]
@@ -473,8 +472,14 @@ fn addon_unigram_totals_stay_none_until_a_library_loads() {
     // The committed w3 carries the addon DBM pair and art.bin; loading is
     // idempotent.
     let index = 4_u8;
-    assert!(runtime.load_addon(index, &w3_dir()));
-    assert!(!runtime.load_addon(index, &w3_dir()));
+    assert!(matches!(
+        runtime.load_system_addon_reporting(index),
+        Ok(true)
+    ));
+    assert!(matches!(
+        runtime.load_system_addon_reporting(index),
+        Ok(false)
+    ));
     assert!(
         LanguageModel::addon_unigram_total(&runtime.lm())
             .expect("infallible query")
@@ -518,7 +523,7 @@ fn unigram_add_rejects_a_token_found_only_in_the_addon_index() {
     let addon = PhraseLibrary::open(&system.path().join("art.bin")).unwrap();
     let token = 0x0400_0000 | addon.items().next().unwrap().0;
     let mut runtime = Runtime::open(system.path(), None).unwrap();
-    assert!(runtime.load_addon(4, system.path()));
+    assert!(matches!(runtime.load_system_addon_reporting(4), Ok(true)));
     assert!(
         runtime
             .lm()

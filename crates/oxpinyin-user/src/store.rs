@@ -2644,11 +2644,6 @@ impl UserStore {
         self.inner.system_items.borrow().with_live(token, read)
     }
 
-    /// Count the pristine items held by one transferred library.
-    pub fn pristine_system_item_count(&self, nibble: u8) -> Option<u64> {
-        self.inner.system_items.borrow().pristine_item_count(nibble)
-    }
-
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.inner
             .system_items

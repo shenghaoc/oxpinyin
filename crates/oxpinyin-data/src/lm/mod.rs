@@ -112,15 +112,6 @@ impl LmError {
     }
 }
 
-/// Additive merge of one count pair (`merge_single_gram`, §5).
-///
-/// Saturates rather than wrapping: a user count must not overflow into a
-/// wrong score (constitution §4).
-#[must_use]
-pub const fn merge_counts(system: u64, user: u64) -> u64 {
-    system.saturating_add(user)
-}
-
 /// Phrase-item frequencies are `guint32`, even when their accumulated
 /// overlay is wider (074a2219 `phrase_index.cpp:173-175`).
 const fn merge_unigram_counts(system: u64, user: u64) -> u64 {
