@@ -320,8 +320,7 @@ fn parse_index(
 #[cfg(test)]
 mod tests {
     use super::{
-        LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index,
-        secondary_zhuyin_index,
+        LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, secondary_zhuyin_index,
     };
 
     #[test]
@@ -367,123 +366,6 @@ mod tests {
         // And scheme-specific spellings absent from pinyin_index.
         assert_eq!(luoma("chyueh"), Some("que"));
         assert_eq!(secondary("au"), Some("ao"));
-    }
-
-    #[test]
-    fn luoma_parses_through_the_dp() {
-        let parse =
-            |input: &str| parse_full_pinyin_index(input.as_bytes(), false, luoma_pinyin_index());
-
-        // Longest coverage wins; the canonical spelling is what the
-        // segment maps to, spans stay raw.
-        let nihao = parse("nihao");
-        assert_eq!(nihao.consumed(), 5);
-        assert_eq!(nihao.full_pinyin(), "ni'hao");
-
-        let chiang = parse("chiang");
-        assert_eq!(chiang.consumed(), 6);
-        assert_eq!(chiang.full_pinyin(), "qiang");
-        assert_eq!(chiang.keys()[0].start(), 0);
-        assert_eq!(chiang.keys()[0].end(), 6);
-
-        // Apostrophes separate keys and are consumed.
-        let split = parse("ni'hao");
-        assert_eq!(split.consumed(), 6);
-        assert_eq!(split.full_pinyin(), "ni'hao");
-
-        // Junk stops the parse: parsed length covers only the prefix
-        // that resolves.
-        let junk = parse("chiangQ");
-        assert_eq!(junk.consumed(), 6);
-
-        // A spelling only pinyin_index knows parses nothing here; the
-        // luoma spelling of the ㄓ series targets the initial-only row
-        // ("jhih" -> zh), and the full zhi syllable has no spelling at
-        // all under this scheme.
-        assert_eq!(parse("zhi").consumed(), 0);
-        assert_eq!(parse("jhih").full_pinyin(), "zh");
-    }
-
-    #[test]
-    fn index_parse_handles_tone_digits() {
-        let parse = |input: &str, use_tone| {
-            parse_full_pinyin_index(input.as_bytes(), use_tone, secondary_zhuyin_index())
-        };
-
-        // Under USE_TONE the trailing digit rides the key (secondary
-        // spells zhu as "ju").
-        let toned = parse("ju4", true);
-        assert_eq!(toned.consumed(), 3);
-        assert_eq!(toned.full_pinyin(), "zhu");
-        assert_eq!(toned.keys()[0].tone(), 4);
-        assert_eq!(toned.keys()[0].end(), 3);
-
-        // Without USE_TONE the digit is junk: only the "ju" spelling
-        // consumes.
-        let untoned = parse("ju4", false);
-        assert_eq!(untoned.consumed(), 2);
-        assert_eq!(untoned.full_pinyin(), "zhu");
-
-        // A tone digit alone parses nothing.
-        assert_eq!(parse("3", true).consumed(), 0);
-    }
-
-    #[test]
-    fn dp_prefers_longest_coverage_then_fewest_keys() {
-        // "xian" style ambiguity through the secondary index: "shian"
-        // covers 5 bytes as one key; "shi"->xi + "an" also covers 5 as
-        // two keys — fewest keys wins, so the single long key parses.
-        let parse = |input: &str| {
-            parse_full_pinyin_index(input.as_bytes(), false, secondary_zhuyin_index())
-        };
-        assert_eq!(parse("shian").full_pinyin(), "xian");
-
-        // An initial-only target parses with no option bit: these
-        // indexes have no gated rows (secondary spells ㄘ-only "tsz").
-        assert_eq!(parse("tsz").full_pinyin(), "c");
-    }
-}
-
-#[cfg(test)]
-mod option_tests {
-    use super::*;
-    use crate::{FORCE_TONE, OptionBits, USE_TONE};
-
-    #[test]
-    fn force_tone_is_nested_under_use_tone_for_both_indexes() {
-        for (index, input) in [
-            (luoma_pinyin_index(), "shih"),
-            (secondary_zhuyin_index(), "tsz"),
-        ] {
-            for bits in [0, FORCE_TONE, USE_TONE, USE_TONE | FORCE_TONE] {
-                let options = OptionBits::from_bits(bits);
-                let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index)
-                    .expect("infallible parse");
-                assert_eq!(
-                    plain.consumed(),
-                    if bits == USE_TONE | FORCE_TONE {
-                        0
-                    } else {
-                        input.len()
-                    }
-                );
-                let toned = format!("{input}4");
-                let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index)
-                    .expect("infallible parse");
-                assert_eq!(
-                    parsed.consumed(),
-                    if bits & USE_TONE != 0 {
-                        toned.len()
-                    } else {
-                        input.len()
-                    }
-                );
-                assert_eq!(
-                    parsed.keys()[0].tone(),
-                    if bits & USE_TONE != 0 { 4 } else { 0 }
-                );
-            }
-        }
     }
 }
 

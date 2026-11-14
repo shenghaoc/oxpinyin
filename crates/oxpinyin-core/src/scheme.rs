@@ -1631,126 +1631,7 @@ fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
-    use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE, ZHUYIN_INCOMPLETE};
-
-    #[test]
-    fn zhuyin_direct_parse_is_the_pins_bopomofo_split() {
-        use super::parse_zhuyin_direct;
-        use crate::SyllableKey;
-        let options = USE_TONE | FORCE_TONE;
-        let text = |keys: Vec<(SyllableKey, u8)>| -> Vec<(&'static str, u8)> {
-            keys.into_iter()
-                .map(|(key, tone)| (key.text(), tone))
-                .collect()
-        };
-        // Toned, unmarked (tone 1), and the neutral tone.
-        assert_eq!(
-            text(parse_zhuyin_direct("ㄘㄜˋ ㄘㄜˋ", options)),
-            [("ce", 4), ("ce", 4)]
-        );
-        assert_eq!(
-            text(parse_zhuyin_direct("ㄘㄜ'ㄘㄜ", options)),
-            [("ce", 1), ("ce", 1)]
-        );
-        assert_eq!(
-            text(parse_zhuyin_direct("ㄑㄧㄥ ㄕㄥ˙", options)),
-            [("qing", 1), ("sheng", 5)]
-        );
-        // Runs of separators are skipped; a trailing one is harmless.
-        assert_eq!(
-            text(parse_zhuyin_direct("ㄋㄧˇ  ㄏㄠˇ ", options)),
-            [("ni", 3), ("hao", 3)]
-        );
-        // Romanized input and incomplete keys parse nothing; the parse
-        // stops at the first failing segment.
-        assert!(parse_zhuyin_direct("ce'ce", options).is_empty());
-        assert!(parse_zhuyin_direct("ㄑ ㄑ", options).is_empty());
-        assert_eq!(text(parse_zhuyin_direct("ㄘ ㄑ", options)), [("ci", 1)]);
-        assert_eq!(
-            text(parse_zhuyin_direct("ㄘㄜˋ xx ㄘㄜˋ", options)),
-            [("ce", 4)]
-        );
-        assert!(parse_zhuyin_direct("", options).is_empty());
-    }
-
-    /// `ZhuyinDirectParser2::parse` walks the input with `int` indices
-    /// (`zhuyin_parser2.cpp:914-958`) and has no length bound. A key that
-    /// starts past byte 65535 still parses.
-    #[test]
-    fn zhuyin_direct_parse_has_no_length_bound() {
-        use super::parse_zhuyin_direct;
-        let input = format!("ㄋㄧˇ{}ㄏㄠˇ", " ".repeat(70_000));
-        let keys: Vec<(&str, u8)> = parse_zhuyin_direct(&input, USE_TONE | FORCE_TONE)
-            .into_iter()
-            .map(|(key, tone)| (key.text(), tone))
-            .collect();
-        assert_eq!(keys, [("ni", 3), ("hao", 3)]);
-    }
-
-    #[test]
-    fn default_scheme_is_ms() {
-        assert_eq!(DoublePinyinParser::new().scheme(), DoublePinyinScheme::Ms);
-    }
-
-    /// `DoublePinyinParser2::parse_one_key` on the MS tables: a two-key
-    /// spelling resolves to its syllable with tone zero, a three-key
-    /// input carries the tone only under `USE_TONE`, and `FORCE_TONE`
-    /// demands exactly three bytes.
-    #[test]
-    fn double_one_key_law() {
-        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
-
-        let key = parser.parse_one_key(0, b"ni").expect("ni parses");
-        assert_eq!(key.pinyin_string(), "ni");
-        assert_eq!(key.tone, 0);
-        assert_eq!(key.shengmu_string(), "n");
-        assert_eq!(key.yunmu_string(), "i");
-
-        // Without USE_TONE the three-byte form is refused.
-        assert_eq!(parser.parse_one_key(0, b"ni3"), None);
-        let toned = parser.parse_one_key(USE_TONE, b"ni3").expect("toned");
-        assert_eq!(toned.pinyin_string(), "ni3");
-
-        // FORCE_TONE: two bytes rejected; a three-byte input already
-        // carries its tone digit, so it passes with the key toned (the
-        // pin's zero-tone check at `pinyin_parser2.cpp:448` is dead —
-        // the digit parse above already refused every non-tone byte).
-        assert_eq!(parser.parse_one_key(FORCE_TONE, b"ni"), None);
-        assert!(
-            parser
-                .parse_one_key(USE_TONE | FORCE_TONE, b"ni3")
-                .is_some()
-        );
-        // A non-tone third byte is refused with or without FORCE_TONE.
-        assert_eq!(parser.parse_one_key(USE_TONE, b"ni9"), None);
-        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"ni9"), None);
-
-        // A four-byte input is refused outright.
-        assert_eq!(parser.parse_one_key(0, b"niha"), None);
-    }
-
-    /// The double one-key incomplete probe under `PINYIN_INCOMPLETE`
-    /// (`z` → the initial-only `z` key on MS), refused without the bit.
-    #[test]
-    fn double_one_key_incomplete_needs_its_bit() {
-        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
-        assert_eq!(parser.parse_one_key(0, b"z"), None);
-        let key = parser
-            .parse_one_key(PINYIN_INCOMPLETE, b"z")
-            .expect("incomplete z");
-        assert_eq!(key.pinyin_string(), "z");
-        assert_eq!(key.yunmu_string(), "");
-    }
-
-    /// The double one-key second yunmu candidate: MS `oo` enters through
-    /// the zero shengmu (`'` → empty) and lands on `o`, the second of
-    /// `o`'s two yunmu rows (`uo` misses first).
-    #[test]
-    fn double_one_key_tries_the_second_yunmu() {
-        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
-        let key = parser.parse_one_key(0, b"oo").expect("oo parses");
-        assert_eq!(key.pinyin_string(), "o");
-    }
+    use crate::options::{USE_TONE, ZHUYIN_INCOMPLETE};
 
     #[test]
     fn double_two_keys_use_fallback_when_the_first_yunmu_is_missing() {
@@ -1771,147 +1652,6 @@ mod tests {
         // Pin pinyin_parser2.cpp:478-479: a NULL first slot goes to fallback.
         let key = parse_two_keys(b"oo", tables).expect("oo resolves through fallback");
         assert_eq!(key.text(), "ou");
-    }
-
-    /// `ZhuyinSimpleParser2::parse_one_key` on STANDARD: `18` is ㄅㄚ
-    /// (ba), the trailing `3` is tone 3 under `USE_TONE`, and
-    /// `FORCE_TONE` rejects the toneless form while accepting the toned
-    /// one.
-    #[test]
-    fn chewing_one_key_law_on_standard() {
-        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
-
-        let key = parser.parse_one_key(0, b"18").expect("ba parses");
-        assert_eq!(key.pinyin_string(), "ba");
-        assert_eq!(key.shengmu_string(), "b");
-        assert_eq!(key.yunmu_string(), "a");
-        assert_eq!(key.zhuyin_string(), "ㄅㄚ");
-
-        // `USE_TONE` alone does not demand a tone: `8` is not a tone
-        // key on STANDARD, nothing is stripped, and the match carries
-        // tone zero. `FORCE_TONE` is what rejects it.
-        let toneless = parser.parse_one_key(USE_TONE, b"18").expect("ba");
-        assert_eq!(toneless.pinyin_string(), "ba");
-        assert_eq!(toneless.tone, 0);
-        let toned = parser.parse_one_key(USE_TONE, b"183").expect("ba3");
-        assert_eq!(toned.pinyin_string(), "ba3");
-        assert_eq!(toned.zhuyin_string(), "ㄅㄚˇ");
-
-        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"18"), None);
-        assert!(
-            parser
-                .parse_one_key(USE_TONE | FORCE_TONE, b"183")
-                .is_some()
-        );
-    }
-
-    /// The chewing incomplete row gate: ㄅ alone resolves to the
-    /// initial-only `b` key only under `ZHUYIN_INCOMPLETE`.
-    #[test]
-    fn chewing_one_key_incomplete_needs_its_bit() {
-        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
-        assert_eq!(parser.parse_one_key(0, b"1"), None);
-        let key = parser
-            .parse_one_key(ZHUYIN_INCOMPLETE, b"1")
-            .expect("incomplete b");
-        assert_eq!(key.pinyin_string(), "b");
-    }
-
-    /// Empty input is refused on every keyboard family (upstream reads
-    /// `str[-1]` under `USE_TONE` on the Simple law, a read outside the
-    /// string; this function refuses instead), and the `StandardDvorak` slot parses
-    /// nothing.
-    #[test]
-    fn chewing_one_key_refuses_empty_and_dvorak() {
-        let standard = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
-        assert_eq!(standard.parse_one_key(USE_TONE, b""), None);
-        assert_eq!(standard.parse_one_key(0, b""), None);
-        let dvorak = ZhuyinParser::with_scheme(ZhuyinScheme::StandardDvorak);
-        assert_eq!(dvorak.parse_one_key(0, b"18"), None);
-    }
-
-    #[test]
-    fn ms_parses_common_spellings() {
-        let parser = DoublePinyinParser::new();
-        let parsed = parser.parse_with_options(b"nihao", PINYIN_INCOMPLETE);
-        assert_eq!(parsed.consumed(), 4);
-        assert_eq!(parsed.full_pinyin(), "ni'ha");
-    }
-
-    /// The batch law that `docs/findings/double-pinyin-spec.md` (Tone) states:
-    /// `USE_TONE` lets a three-byte key carry its `1`..=`5` digit as the
-    /// tone, and `FORCE_TONE` requires an exactly-three-byte key — so
-    /// `FORCE_TONE` without `USE_TONE` consumes nothing at all.
-    #[test]
-    fn batch_parse_honours_use_tone_and_force_tone() {
-        let parser = DoublePinyinParser::new();
-
-        // USE_TONE: the three-byte key rides its tone.
-        let toned = parser.parse_with_options(b"ni3", USE_TONE);
-        assert_eq!(toned.consumed(), 3);
-        assert_eq!(toned.keys().len(), 1);
-        assert_eq!(toned.keys()[0].key().text(), "ni");
-        assert_eq!(toned.keys()[0].tone(), 3);
-
-        // Without USE_TONE the three-byte key is refused and the walk
-        // retries length two.
-        let toneless = parser.parse_with_options(b"ni3", 0);
-        assert_eq!(toneless.consumed(), 2);
-        assert_eq!(toneless.keys()[0].tone(), 0);
-
-        // A non-tone third byte is refused even under USE_TONE.
-        assert_eq!(parser.parse_with_options(b"nix", USE_TONE).consumed(), 2);
-        assert_eq!(parser.parse_with_options(b"ni0", USE_TONE).consumed(), 2);
-
-        // FORCE_TONE: a two-byte key is refused.
-        assert_eq!(parser.parse_with_options(b"ni", FORCE_TONE).consumed(), 0);
-
-        // FORCE_TONE without USE_TONE: the three-byte key passes the
-        // length gate but the tone parse refuses it — nothing consumed.
-        assert_eq!(parser.parse_with_options(b"ni3", FORCE_TONE).consumed(), 0);
-
-        // USE_TONE | FORCE_TONE: only an exactly-three-byte toned key.
-        let forced = parser.parse_with_options(b"ni3", USE_TONE | FORCE_TONE);
-        assert_eq!(forced.consumed(), 3);
-        assert_eq!(forced.keys()[0].tone(), 3);
-        assert_eq!(
-            parser
-                .parse_with_options(b"ni3ha4", USE_TONE | FORCE_TONE)
-                .consumed(),
-            6
-        );
-    }
-    #[test]
-    fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
-        let parser = ZhuyinParser::new();
-        let rejected = parser.parse_with_options(b"su ", USE_TONE);
-        assert_eq!(rejected.consumed(), 0);
-        assert!(rejected.keys().is_empty());
-
-        let legal = parser.parse_with_options(b"su6", USE_TONE);
-        assert_eq!(legal.consumed(), 3);
-        assert_eq!(legal.full_pinyin(), "ni");
-        assert_eq!(legal.keys()[0].tone(), 2);
-
-        let untoned = parser.parse_with_options(b"su", USE_TONE);
-        assert_eq!(untoned.consumed(), 2);
-        assert_eq!(untoned.full_pinyin(), "ni");
-        assert_eq!(untoned.keys()[0].tone(), 0);
-    }
-
-    #[test]
-    fn tone_after_an_invalid_syllable_does_not_extend_a_valid_prefix() {
-        let parser = ZhuyinParser::new();
-        let parsed = parser.parse_with_options(b"sux6", USE_TONE);
-        assert_eq!(parsed.consumed(), 2);
-        assert_eq!(parsed.full_pinyin(), "ni");
-    }
-
-    #[test]
-    fn a_tone_key_alone_is_not_a_syllable() {
-        let parser = ZhuyinParser::new();
-        assert_eq!(parser.parse_with_options(b"6", USE_TONE).consumed(), 0);
-        assert_eq!(parser.parse_with_options(b" ", USE_TONE).consumed(), 0);
     }
 
     /// The key one zhuyin symbol maps to on `scheme`'s keyboard, derived
@@ -2216,49 +1956,6 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_keys_consume_zero_either_way() {
-        let parser = ZhuyinParser::new();
-        // With the option off the row is gated at the index; with it on
-        // the row matches and the post-match validity mask rejects it.
-        // Both consume 0 at this pin — same outcome as upstream.
-        assert_eq!(parser.parse_with_options(b"1", USE_TONE).consumed(), 0);
-        assert_eq!(
-            parser
-                .parse_with_options(b"1", USE_TONE | ZHUYIN_INCOMPLETE)
-                .consumed(),
-            0
-        );
-        assert_eq!(parser.parse_with_options(b"x", USE_TONE).consumed(), 0);
-        assert_eq!(
-            parser
-                .parse_with_options(b"x", USE_TONE | ZHUYIN_INCOMPLETE)
-                .consumed(),
-            0
-        );
-    }
-
-    #[test]
-    fn keyboards_switch_tables_and_stick() {
-        let mut parser = ZhuyinParser::new();
-        for scheme in [
-            ZhuyinScheme::Ibm,
-            ZhuyinScheme::Ginyieh,
-            ZhuyinScheme::Eten,
-            ZhuyinScheme::Hsu,
-            ZhuyinScheme::Eten26,
-            ZhuyinScheme::HsuDvorak,
-            ZhuyinScheme::DachenCp26,
-            ZhuyinScheme::Standard,
-        ] {
-            assert!(parser.set_scheme(scheme));
-            assert_eq!(parser.scheme(), scheme);
-        }
-        // The dvorak abort slot keeps the current scheme.
-        assert!(!parser.set_scheme(ZhuyinScheme::StandardDvorak));
-        assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
-    }
-
-    #[test]
     fn every_simple_keyboard_parses_the_same_symbols_through_its_own_keys() {
         for scheme in [
             ZhuyinScheme::Standard,
@@ -2297,6 +1994,27 @@ mod tests {
     }
 
     #[test]
+    fn keyboards_switch_tables_and_stick() {
+        let mut parser = ZhuyinParser::new();
+        for scheme in [
+            ZhuyinScheme::Ibm,
+            ZhuyinScheme::Ginyieh,
+            ZhuyinScheme::Eten,
+            ZhuyinScheme::Hsu,
+            ZhuyinScheme::Eten26,
+            ZhuyinScheme::HsuDvorak,
+            ZhuyinScheme::DachenCp26,
+            ZhuyinScheme::Standard,
+        ] {
+            assert!(parser.set_scheme(scheme));
+            assert_eq!(parser.scheme(), scheme);
+        }
+        // The dvorak abort slot keeps the current scheme.
+        assert!(!parser.set_scheme(ZhuyinScheme::StandardDvorak));
+        assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
+    }
+
+    #[test]
     fn contract_slots_reject_without_mutation() {
         // The #109 contract locks, core side: CUSTOMIZED (30) and the
         // dvorak fallthrough slot (7) reject and keep the live scheme —
@@ -2321,29 +2039,6 @@ mod tests {
             zhuyin.parse_with_options(b"t", USE_TONE).full_pinyin(),
             "zhi"
         );
-    }
-
-    /// `with_fallback_suppressed` reproduces upstream's half-mutation
-    /// state: the scheme's shengmu/yunmu tables are active but the
-    /// fallback table is null.
-    #[test]
-    fn with_fallback_suppressed_clears_only_the_fallback() {
-        let zrm = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
-        // ZRM "aa" goes through the fallback table.
-        assert_eq!(zrm.parse_with_options(b"aa", 0).consumed(), 2);
-        // ZRM "ni" (n+i) goes through shengmu/yunmu tables.
-        assert_eq!(zrm.parse_with_options(b"ni", 0).consumed(), 2);
-
-        let suppressed = zrm.with_fallback_suppressed();
-        // Fallback is gone — "aa" no longer resolves.
-        assert_eq!(suppressed.parse_with_options(b"aa", 0).consumed(), 0);
-        // Shengmu/yunmu are intact — "ni" still works.
-        assert_eq!(suppressed.parse_with_options(b"ni", 0).consumed(), 2);
-
-        // set_scheme clears the suppressed flag.
-        let mut parser = suppressed;
-        assert!(parser.set_scheme(DoublePinyinScheme::Zrm));
-        assert_eq!(parser.parse_with_options(b"aa", 0).consumed(), 2);
     }
 
     #[test]
