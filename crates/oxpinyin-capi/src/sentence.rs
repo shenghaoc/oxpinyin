@@ -222,8 +222,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// ```
 ///
 /// Out-param `sentence` is caller-owned (`g_free`): the pin's `g_strdup` of
-/// the converted text, NULL with `true` where the conversion's allocation
-/// failed (`lookup.cpp:27-69`).
+/// the converted text. If no phrase converts, the getter writes NULL
+/// and answers `true` (`lookup/lookup.cpp:27-70`).
 ///
 /// Answers decoded-or-nothing, as the pin does: once a sentence lookup is
 /// active ([`pinyin_guess_sentence`] ran since the last reset), the text of
@@ -259,7 +259,7 @@ pub extern "C" fn pinyin_get_sentence(
             // index past them is `assert(index < results.size())`, and the
             // process aborts. No rows at all is the pin's own graceful
             // `false` (`:1470-1471`).
-            if index > 0 && inst.core.session.sentence_text(0).is_some() {
+            if index > 0 && inst.core.session.has_nbest_rank(0) {
                 std::process::abort();
             }
             false
@@ -840,19 +840,22 @@ mod sentence_chain_tests {
 
     /// `convert_to_utf8`'s chain (`lookup.cpp:37-67`): `g_strdup` of the
     /// first phrase, `g_strconcat(prev, "", phrase, NULL)` for each later
-    /// one; no phrase leaves the pin's NULL.
+    /// one; a NULL phrase is left out, and no converted phrase leaves the
+    /// pin's NULL.
     #[test]
     fn the_chain_joins_each_phrase_and_no_phrase_is_null() {
         let phrases = [
-            PhraseText::from("你好"),
-            PhraseText::from(""),
-            PhraseText::from("世界"),
+            None,
+            Some(PhraseText::from("你好")),
+            Some(PhraseText::from("")),
+            None,
+            Some(PhraseText::from("世界")),
         ];
         assert_eq!(
-            crate::ffi::take_owned_cstr(crate::ffi::sentence_text(&phrases)),
+            crate::ffi::take_owned_cstr(crate::ffi::sentence_text(phrases)),
             "你好世界"
         );
-        assert!(crate::ffi::sentence_text(&[]).is_null());
+        assert!(crate::ffi::sentence_text([None::<PhraseText>]).is_null());
     }
 
     /// The row's phrases are the decoded path's phrases, which join to the
@@ -867,7 +870,12 @@ mod sentence_chain_tests {
         {
             // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
             let inst = unsafe { crate::state::instance_ref(instance) };
-            let phrases: Vec<PhraseText> = inst.core.sentence_phrases(0).expect("a row").collect();
+            let phrases: Vec<PhraseText> = inst
+                .core
+                .sentence_phrases(0)
+                .expect("a row")
+                .collect::<Option<_>>()
+                .expect("every phrase converts");
             let text = inst.core.session.sentence_text(0).expect("a row");
             assert!(phrases.len() > 1, "{phrases:?}");
             let joined: String = phrases

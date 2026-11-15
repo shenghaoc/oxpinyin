@@ -72,11 +72,16 @@ impl SentenceState {
     /// carries those phrases as its spans. The caller resolves each token
     /// when it reads the sentence.
     pub(super) fn parts(row: &NbestRow) -> impl Iterator<Item = SentencePart> + '_ {
-        let whole = row.spans.is_empty();
+        let whole = row
+            .text
+            .as_ref()
+            .filter(|_| row.spans.is_empty())
+            .cloned()
+            .map(SentencePart::Raw);
         row.spans
             .iter()
             .map(|span| SentencePart::Token(span.token))
-            .chain(whole.then(|| SentencePart::Raw(row.text.clone())))
+            .chain(whole)
     }
 
     /// Clears the decoded state and marks a lookup active — the head of

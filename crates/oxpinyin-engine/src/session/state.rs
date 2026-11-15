@@ -131,23 +131,30 @@ where
     /// (`pinyin_get_sentence`'s payload, `pinyin.cpp:1464-1482`,
     /// `lookup/lookup.cpp:27-69`). The caller resolves each
     /// [`SentencePart::Token`] through the live phrase index when it reads
-    /// the sentence. `None` when fewer rows exist or the row's text is
-    /// empty, as [`Self::sentence_text`].
+    /// the sentence. `None` when fewer rows exist. A NULL or empty string
+    /// still has a row (`lookup/lookup.cpp:27-70`).
     #[must_use]
     pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = SentencePart> + '_> {
         let row = self.sentence.rows.get(usize::from(index))?;
-        (!row.text.is_empty()).then(|| SentenceState::parts(row))
+        Some(SentenceState::parts(row))
     }
 
-    /// The decoded text of n-best row `index`, best-first. `None` when
-    /// fewer rows exist or the text is empty.
+    /// Whether the decoded results hold row 0 and row `rank`: the two
+    /// `check_result(results.get_result(...))` asserts of the pin's NBEST
+    /// choose (074a2219 `pinyin.cpp:2516-2517`).
+    #[must_use]
+    pub fn has_nbest_rank(&self, rank: u8) -> bool {
+        usize::from(rank) < self.sentence.rows.len()
+    }
+
+    /// The decoded text of n-best row `index`, best-first. `None` when the
+    /// row is absent or its string is NULL.
     #[must_use]
     pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
         self.sentence
             .rows
             .get(usize::from(index))
-            .map(|row| &row.text)
-            .filter(|text| !text.is_empty())
+            .and_then(|row| row.text.as_ref())
     }
 
     /// Accumulated natural-log possibility of a real-table sentence row.

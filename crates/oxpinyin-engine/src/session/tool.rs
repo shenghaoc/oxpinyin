@@ -143,14 +143,16 @@ where
     )
     .map(|rows| {
         rows.into_iter()
-            .map(|row| LookupRow {
-                tokens: row
-                    .spans
-                    .iter()
-                    .map(|span| (span.start, span.token.value()))
-                    .collect(),
-                text: row.text,
-                span: row.span,
+            .filter_map(|row| {
+                Some(LookupRow {
+                    text: row.text?,
+                    tokens: row
+                        .spans
+                        .iter()
+                        .map(|span| (span.start, span.token.value()))
+                        .collect(),
+                    span: row.span,
+                })
             })
             .collect()
     })

@@ -1379,18 +1379,22 @@ where
         } else {
             &self.sentence.rows[..]
         };
-        let nbest_n = rows.len();
-        collected.extend(rows.iter().enumerate().map(|(index, row)| {
-            Candidate::new(
-                row.text.clone(),
+        let before = collected.len();
+        collected.extend(rows.iter().enumerate().filter_map(|(index, row)| {
+            // Rows 80 and 106 omit NULL text on the dedup path. Keep the
+            // original n-best index of every displayed row.
+            let text = row.text.as_ref()?;
+            Some(Candidate::new(
+                text.clone(),
                 CandidateKind::Sentence,
                 row.keys,
                 row.span,
                 None,
                 Some(u8::try_from(index).unwrap_or(u8::MAX)),
-            )
+            ))
         }));
-        collected.rotate_right(nbest_n);
+        let prepended = collected.len() - before;
+        collected.rotate_right(prepended);
         dedup_by_text_keep_first(collected);
     }
 }

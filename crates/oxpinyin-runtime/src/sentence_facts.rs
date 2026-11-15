@@ -2,6 +2,7 @@
 //! Pin 074a2219 phonetic_lookup.h:643-697 reads one PhraseItem for length,
 //! unigram and pronunciation. Keep exceptional resolution on the old path.
 use super::*;
+use oxpinyin_core::TokenPhrase;
 use oxpinyin_core::sentence_facts::{SentenceFacts, TokenFacts};
 use oxpinyin_data::phrase_library::PhraseItemView;
 
@@ -77,10 +78,10 @@ impl RuntimeDict<'_> {
         let Some(view) = PhraseItemView::from_bytes(bytes) else {
             return self.priced_on_path(path, token, want_text);
         };
-        let text = if want_text { view.phrase_text() } else { None };
-        if want_text && text.is_none() {
-            return Ok(None);
-        }
+        let text = want_text.then(|| TokenPhrase {
+            phrase_length: view.phrase_length(),
+            text: view.phrase_text(),
+        });
         let pronunciation = path.keys.as_deref().map(|query| {
             let (matched, total) =
                 Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);

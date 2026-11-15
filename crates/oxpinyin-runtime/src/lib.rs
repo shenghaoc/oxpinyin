@@ -325,16 +325,7 @@ const fn library_of(token: u32) -> u8 {
     oxpinyin_user::phrase_index_library_index(token)
 }
 
-/// What `_token_get_phrase` reads from a present item (074a2219
-/// `pinyin.cpp:1627-1646`, `zhuyin.cpp:1096-1114`): the stored length and
-/// GLib's conversion of the stored words.
-pub struct TokenPhrase {
-    /// The stored `phrase_length`, which the pin writes to `*len`.
-    pub phrase_length: usize,
-    /// The text, `None` where `g_ucs4_to_utf8` answers NULL: a word at or
-    /// above 0x80000000 before the first zero. The pin still answers true.
-    pub text: Option<PhraseText>,
-}
+pub use oxpinyin_core::TokenPhrase;
 
 /// One token reading, without the text or any other reading's keys.
 pub struct TokenPronunciation {
@@ -589,24 +580,27 @@ impl<'a> RuntimeDict<'a> {
                     chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
                     pronunciation,
                 },
-                text: want_text.then(|| entry.text().clone()),
+                text: want_text.then(|| TokenPhrase::from(entry.text().clone())),
             }
         } else {
             let live = self.live_items();
+            // A text that does not convert keeps the item: the pin's
+            // `convert_to_utf8` drops only that phrase from the sentence
+            // (`lookup/lookup.cpp:58-65` at 074a2219).
             let Some((chars, text)) = live
                 .read(token, |item| {
                     (
                         u32::try_from(item.phrase_length()).unwrap_or(u32::MAX),
-                        if want_text { item.phrase_text() } else { None },
+                        want_text.then(|| TokenPhrase {
+                            phrase_length: item.phrase_length(),
+                            text: item.phrase_text(),
+                        }),
                     )
                 })
                 .found()
             else {
                 return Ok(None);
             };
-            if want_text && text.is_none() {
-                return Ok(None);
-            }
             PricedToken {
                 item: TrellisItem {
                     chars,
@@ -994,7 +988,8 @@ pub struct PathPricing {
 /// One token as the ordinary lookup prices it.
 struct PricedToken {
     item: TrellisItem,
-    text: Option<PhraseText>,
+    /// The item's stored length and text, read only when wanted.
+    text: Option<TokenPhrase>,
 }
 
 impl Dictionary for RuntimeDict<'_> {
@@ -1018,8 +1013,12 @@ impl Dictionary for RuntimeDict<'_> {
         let mut out = Vec::new();
         for (token, ()) in ranges.walk_tokens() {
             if let Some(priced) = self.priced_token(syllables, tones, token, true)? {
-                let mut entry =
-                    PhraseEntry::new(PhraseToken::new(token), priced.text.unwrap_or_default());
+                // An entry needs a text; an item whose text does not convert
+                // is not listed.
+                let Some(text) = priced.text.and_then(|phrase| phrase.text) else {
+                    continue;
+                };
+                let mut entry = PhraseEntry::new(PhraseToken::new(token), text);
                 if let Some((matched, total)) = priced.item.pronunciation {
                     entry = entry.with_pronunciation_possibility(matched, total);
                 }
@@ -1129,7 +1128,7 @@ impl Dictionary for RuntimeDict<'_> {
         tones: &[u8],
         token: u32,
         facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
-    ) -> Result<Option<PhraseText>, Self::Error> {
+    ) -> Result<Option<TokenPhrase>, Self::Error> {
         if syllables.is_empty() {
             return Ok(None);
         }
@@ -1143,7 +1142,7 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<PhraseText>, Self::Error> {
+    ) -> Result<Option<TokenPhrase>, Self::Error> {
         Ok(self
             .priced_token(syllables, tones, token, true)?
             .and_then(|priced| priced.text))

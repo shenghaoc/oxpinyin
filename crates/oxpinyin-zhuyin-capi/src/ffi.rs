@@ -120,14 +120,17 @@ pub fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
 /// result are then freed (`:66-67`). GLib aborts if its own allocation
 /// fails. NULL when every conversion failed.
 pub fn sentence_text(
-    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin_core::PhraseText>>,
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin_core::PhraseText>>>,
 ) -> *mut c_char {
     let mut result: *mut c_char = ptr::null_mut();
     for phrase in phrases {
-        let bytes = oxpinyin_capi_marshal::phrase_text::phrase_text_bytes(phrase.borrow());
-        let converted = malloc_cstr_with(bytes.len(), |out| {
-            out.copy_from_slice(&bytes);
-            bytes.len()
+        // A phrase whose words GLib does not convert is NULL here.
+        let converted = phrase.map_or(ptr::null_mut(), |phrase| {
+            let bytes = oxpinyin_capi_marshal::phrase_text::phrase_text_bytes(phrase.borrow());
+            malloc_cstr_with(bytes.len(), |out| {
+                out.copy_from_slice(&bytes);
+                bytes.len()
+            })
         });
         let previous = result;
         result = if previous.is_null() {

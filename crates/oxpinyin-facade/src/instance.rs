@@ -364,21 +364,27 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// thus repeats the last phrase that resolved in the same read, or adds
     /// "" when none has: the default item has length 0
     /// (`storage/phrase_index.h:81-84`).
-    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = PhraseText> + '_> {
-        let mut last = PhraseText::default();
+    ///
+    /// Each part is `None` where `g_ucs4_to_utf8` answers NULL for the
+    /// item's words (`:58`), which `convert_to_utf8` then leaves out.
+    pub fn sentence_phrases(
+        &self,
+        index: u8,
+    ) -> Option<impl Iterator<Item = Option<PhraseText>> + '_> {
+        let mut last = Some(PhraseText::default());
         Some(
             self.session
                 .sentence_phrases(index)?
                 .map(move |part| match part {
                     SentencePart::Token(token) => {
-                        if let Some(text) = self.dict.token_text(token.value()) {
-                            last.clone_from(&text);
-                            text
+                        if let Some(phrase) = self.dict.token_phrase(token.value()) {
+                            last.clone_from(&phrase.text);
+                            phrase.text
                         } else {
                             last.clone()
                         }
                     }
-                    SentencePart::Raw(text) => text,
+                    SentencePart::Raw(text) => Some(text),
                 }),
         )
     }

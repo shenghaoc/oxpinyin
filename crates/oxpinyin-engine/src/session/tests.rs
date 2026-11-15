@@ -637,7 +637,7 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     // history (the gate's empty-result rule does not apply to it).
     session.sentence.rows = vec![crate::nbest::NbestRow {
         poss: None,
-        text: "\u{4f60}".into(),
+        text: Some("\u{4f60}".into()),
         tokens: Vec::new(),
         spans: Vec::new(),
         keys: 1,
@@ -865,7 +865,7 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
     ];
     session.sentence.rows = vec![crate::nbest::NbestRow {
         poss: None,
-        text: "你X".into(),
+        text: Some("你X".into()),
         tokens: vec![PhraseToken::new(1), PhraseToken::new(1)],
         spans,
         keys: 2,
@@ -981,7 +981,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     }];
     session.sentence.rows = vec![crate::nbest::NbestRow {
         poss: None,
-        text: "你".into(),
+        text: Some("你".into()),
         tokens: vec![PhraseToken::new(1)],
         spans,
         keys: 1,
@@ -1077,7 +1077,7 @@ fn train_reports_a_failing_user_model() {
     type_and_select(&mut session, "ni", 1);
     session.sentence.rows = vec![crate::nbest::NbestRow {
         poss: None,
-        text: "你".into(),
+        text: Some("你".into()),
         tokens: Vec::new(),
         spans: Vec::new(),
         keys: 1,
@@ -1105,7 +1105,7 @@ fn a_row_records_its_whole_token_path() {
     // One authored row.
     session.sentence.rows = vec![NbestRow {
         poss: None,
-        text: "\u{884}".into(),
+        text: Some("\u{884}".into()),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
         keys: 1,
@@ -1139,7 +1139,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     session.sentence.rows = vec![
         NbestRow {
             poss: None,
-            text: "\u{597d}".into(),
+            text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x100)],
             spans: Vec::new(),
             keys: 1,
@@ -1147,7 +1147,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
         },
         NbestRow {
             poss: None,
-            text: "\u{597d}".into(),
+            text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x101)],
             spans: Vec::new(),
             keys: 1,
@@ -1155,7 +1155,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
         },
         NbestRow {
             poss: None,
-            text: "\u{6d69}".into(),
+            text: Some("\u{6d69}".into()),
             tokens: vec![PhraseToken::new(0x102)],
             spans: Vec::new(),
             keys: 1,
@@ -1195,7 +1195,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
         poss: None,
-        text: "你好".into(),
+        text: Some("你好".into()),
         tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
         spans: Vec::new(),
         keys: 2,
@@ -2652,7 +2652,7 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     session.sentence.rows = vec![
         crate::nbest::NbestRow {
             poss: None,
-            text: "\u{597d}".into(),
+            text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x100)],
             spans: vec![crate::constraint::PhraseSpan {
                 start: 0,
@@ -2664,7 +2664,7 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
         },
         crate::nbest::NbestRow {
             poss: None,
-            text: "\u{6d69}".into(),
+            text: Some("\u{6d69}".into()),
             tokens: vec![PhraseToken::new(0x102)],
             spans: vec![crate::constraint::PhraseSpan {
                 start: 0,
@@ -2899,7 +2899,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
         poss: None,
-        text: "你好世界".into(),
+        text: Some("你好世界".into()),
         tokens: vec![
             PhraseToken::new(0x100),
             PhraseToken::new(0x101),
@@ -2935,7 +2935,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
 
     let row = |text: &str| NbestRow {
         poss: None,
-        text: text.into(),
+        text: Some(text.into()),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
         keys: 2,
@@ -3079,7 +3079,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
         poss: None,
-        text: "你好".into(),
+        text: Some("你好".into()),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
         keys: 2,
@@ -4139,7 +4139,7 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
     // does: one row whose text is the phrase's.
     session.sentence.rows = vec![crate::nbest::NbestRow {
         poss: None,
-        text: "你".into(),
+        text: Some("你".into()),
         tokens: vec![PhraseToken::new(1)],
         spans: Vec::new(),
         keys: 1,

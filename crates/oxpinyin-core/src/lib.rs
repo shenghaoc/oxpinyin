@@ -321,12 +321,14 @@ pub trait Dictionary {
         tones: &[u8],
         token: u32,
         _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<Option<PhraseText>, Self::Error> {
+    ) -> Result<Option<TokenPhrase>, Self::Error> {
         self.trellis_text(syllables, tones, token)
     }
 
-    /// The phrase text [`Self::trellis_item`] priced, read when a result
-    /// is emitted (`convert_to_utf8`); `None` where that item is `None`.
+    /// The phrase [`Self::trellis_item`] priced, read when a result is
+    /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`): its stored
+    /// length and its text, which is `None` where GLib's conversion answers
+    /// NULL. `None` where that item is `None`.
     ///
     /// # Errors
     ///
@@ -336,13 +338,13 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<PhraseText>, Self::Error> {
+    ) -> Result<Option<TokenPhrase>, Self::Error> {
         Ok(self
             .trellis_records(syllables, tones)?
             .iter()
             .rev()
             .find(|entry| entry.token().value() == token)
-            .map(|entry| entry.text().clone()))
+            .map(|entry| TokenPhrase::from(entry.text().clone())))
     }
 
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
@@ -652,6 +654,29 @@ pub trait Dictionary {
 /// A phrase item's stored pronunciations in stored order: each one's keys,
 /// tones included, and its `guint32` frequency.
 pub type PronunciationRows = Vec<(Vec<ChewingKey>, u32)>;
+
+/// What `_token_get_phrase` and `convert_to_utf8` read from a present item
+/// (074a2219 `pinyin.cpp:1627-1646`, `zhuyin.cpp:1096-1114`,
+/// `lookup/lookup.cpp:39-68`): the stored length and GLib's conversion of
+/// the stored words.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenPhrase {
+    /// The stored `phrase_length`, which the pin writes to `*len`.
+    pub phrase_length: usize,
+    /// The text, `None` where `g_ucs4_to_utf8` answers NULL: a word at or
+    /// above 0x80000000 before the first zero. The item is still present.
+    pub text: Option<PhraseText>,
+}
+
+impl From<PhraseText> for TokenPhrase {
+    /// A text that converts, with its own stored length.
+    fn from(text: PhraseText) -> Self {
+        Self {
+            phrase_length: text.phrase_length(),
+            text: Some(text),
+        }
+    }
+}
 
 /// What [`Dictionary::phrase_item_pronunciations`] found behind a token.
 #[derive(Clone, Debug, Eq, PartialEq)]

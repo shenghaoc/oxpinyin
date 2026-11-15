@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
+use oxpinyin_core::{ChewingKey, PhraseText, TokenPhrase, TrellisItem};
 
 use crate::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk};
 
@@ -360,6 +360,18 @@ impl PhraseLibraries {
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         self.library(token)?.item(token)?.phrase_text()
+    }
+
+    /// `token`'s stored length and text, as `convert_to_utf8` reads them
+    /// (`lookup/lookup.cpp:39-68` at 074a2219): `Some` for a present item
+    /// whose text does not convert, with `text` `None`.
+    #[must_use]
+    pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
+        let item = self.library(token)?.item(token)?;
+        Some(TokenPhrase {
+            phrase_length: item.phrase_length(),
+            text: item.phrase_text(),
+        })
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored

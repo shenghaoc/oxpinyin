@@ -128,7 +128,8 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
 ///
 /// Out-param `sentence` is caller-owned (`g_free`). Decoded-or-nothing, as
 /// the pin: the 1-best row's text while a sentence lookup is active, `false`
-/// with `*sentence` untouched otherwise.
+/// with `*sentence` untouched otherwise. If no phrase in the row converts,
+/// the getter writes NULL and answers `true` (`lookup/lookup.cpp:27-70`).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_sentence(
     instance: *mut ZhuyinInstance,

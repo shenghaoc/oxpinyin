@@ -574,14 +574,6 @@ where
         Ok(len)
     }
 
-    /// Whether the decoded results hold row 0 and row `rank`: the two
-    /// `check_result(results.get_result(...))` asserts of the pin's NBEST
-    /// choose (074a2219 `pinyin.cpp:2516-2517`).
-    #[must_use]
-    pub fn has_nbest_rank(&self, rank: u8) -> bool {
-        usize::from(rank) < self.sentence.rows.len()
-    }
-
     /// The matrix size a choose validates the store to, the pin's
     /// `m_constraints->len` after `validate_constraint` (074a2219
     /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
@@ -602,7 +594,7 @@ where
         let Some(row) = self.sentence.rows.get(usize::from(rank)) else {
             return Ok(Selection::Refused);
         };
-        let (text, span_end) = (row.text.clone(), row.span);
+        let (text, span_end) = (row.text.clone().unwrap_or_default(), row.span);
         self.select_target(&SelectionTarget {
             span_start: 0,
             span_end,

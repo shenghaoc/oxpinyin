@@ -160,9 +160,9 @@ use oxpinyin_core::PhraseText;
 /// copy the test can reclaim, or NULL for no phrase, as a sentence whose
 /// every conversion failed answers.
 fn test_sentence_text(
-    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<PhraseText>>,
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<PhraseText>>>,
 ) -> *mut c_char {
-    let phrases: Vec<_> = phrases.into_iter().collect();
+    let phrases: Vec<_> = phrases.into_iter().flatten().collect();
     if phrases.is_empty() {
         return ptr::null_mut();
     }
@@ -178,7 +178,7 @@ oxpinyin_capi_marshal::write_owned_sentence!(test_sentence_text);
 #[test]
 fn sentence_null_out_param_answers_true() {
     assert!(write_owned_sentence(
-        &[PhraseText::from("你")],
+        [Some(PhraseText::from("你"))],
         ptr::null_mut()
     ));
 }
@@ -187,7 +187,7 @@ fn sentence_null_out_param_answers_true() {
 fn sentence_null_allocation_still_answers_true() {
     // The pin's `convert_to_utf8` returns true even when its result is NULL.
     let mut out = std::ptr::dangling_mut::<c_char>();
-    assert!(write_owned_sentence(&[], &mut out));
+    assert!(write_owned_sentence([None::<PhraseText>], &mut out));
     assert!(out.is_null());
 }
 
@@ -199,7 +199,7 @@ fn sentence_phrases_write_through() {
         PhraseText::from("x"),
     ];
     let mut out = ptr::null_mut();
-    assert!(write_owned_sentence(&phrases, &mut out));
+    assert!(write_owned_sentence(phrases.iter().map(Some), &mut out));
     assert!(!out.is_null());
     // SAFETY: the fixture returned CString::into_raw ownership to `out`.
     let cstr = unsafe { std::ffi::CString::from_raw(out) };
