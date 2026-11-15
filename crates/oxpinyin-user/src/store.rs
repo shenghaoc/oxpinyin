@@ -25,7 +25,7 @@ use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
     PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
-    is_user_file_library, phrase_index_library_index,
+    phrase_index_library_index,
 };
 use crate::phrase_table;
 use crate::replay::UnigramAdd;
@@ -1255,7 +1255,7 @@ impl UserStore {
     /// (`ERROR_NO_ITEM`).
     fn item_unigram(&self, token: Token) -> Option<u32> {
         self.system_unigram(token).or_else(|| {
-            is_user_file_library(phrase_index_library_index(token))
+            (!self.is_system_library(phrase_index_library_index(token)))
                 .then(|| self.with_user_item(token, |item| item.unigram()))
                 .flatten()
         })
@@ -1626,10 +1626,7 @@ impl UserStore {
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
         let words = phrase_words(phrase);
-        if !is_user_file_library(library)
-            || !self.has_user_library(library)
-            || !phrase_fits_keys(&words, keys)
-        {
+        if !self.has_user_library(library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
         // `_add_phrase`'s `count` reaches the item as a `guint32` delta
@@ -2511,23 +2508,20 @@ impl UserStore {
                     .collect()
             }));
         }
-        match phrase_index_library_index(token) {
-            5..=7 => Ok(self.phrase(token)?.map(|phrase| {
-                phrase
-                    .pronunciations()
-                    .iter()
-                    .filter_map(|pronunciation| {
-                        let keys = pinyin_keys_to_packed(pronunciation.keys())?
-                            .into_iter()
-                            .map(oxpinyin_core::ChewingKey::from_packed)
-                            .collect();
-                        let frequency = u32::try_from(pronunciation.count()).unwrap_or(u32::MAX);
-                        Some((keys, frequency))
-                    })
-                    .collect()
-            })),
-            _ => Ok(None),
-        }
+        Ok(self.phrase(token)?.map(|phrase| {
+            phrase
+                .pronunciations()
+                .iter()
+                .filter_map(|pronunciation| {
+                    let keys = pinyin_keys_to_packed(pronunciation.keys())?
+                        .into_iter()
+                        .map(oxpinyin_core::ChewingKey::from_packed)
+                        .collect();
+                    let frequency = u32::try_from(pronunciation.count()).unwrap_or(u32::MAX);
+                    Some((keys, frequency))
+                })
+                .collect()
+        }))
     }
 
     /// The live sub-index's range end for the export probe. A promotion can
@@ -2635,9 +2629,9 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the cursor cannot be read, or
-    /// `InvalidPhrase` for a library that is not a `USER_FILE` one.
+    /// `InvalidPhrase` for a system library.
     pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
-        if !is_user_file_library(library) {
+        if self.is_system_library(library) {
             return Err(UserStoreError::InvalidPhrase);
         }
         Ok(phrase::phrase_index_make_token(

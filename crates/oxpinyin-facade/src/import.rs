@@ -3,7 +3,7 @@
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_runtime::RuntimeDict;
-use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library};
+use oxpinyin_user::{PinyinKey, UserStore};
 
 /// What an import add does with one phrase/reading pair before it writes.
 pub enum ImportPlan {
@@ -80,8 +80,10 @@ pub fn plan_add(
         }
     }
     // The pin walks the tokens and asserts for any library index; only then
-    // does `get_range` reject a library that is not loaded.
-    if !is_user_file_library(index) && !user.is_system_library(index) {
+    // does `get_range` reject a library that is not loaded. The loaded
+    // libraries are the configured rows', whatever their index
+    // (`pinyin.cpp:303-321,377-392,588-608` at 074a2219).
+    if !user.has_user_library(index) && !user.is_system_library(index) {
         return ImportPlan::Refuse;
     }
     ImportPlan::Add {

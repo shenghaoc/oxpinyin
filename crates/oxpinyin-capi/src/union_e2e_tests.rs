@@ -620,6 +620,80 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     crate::context::pinyin_fini(context);
 }
 
+/// A default row typed `USER_FILE` is loaded from the user directory into
+/// its own sub-index, whatever its index, and a token is dispatched by its
+/// library nibble alone (074a2219 `pinyin.cpp:303-321,377-392`,
+/// `phrase_index.h:646-652`). With `GB_DICTIONARY` retyped, slot 1 of
+/// `gb_user.bin` is read at token 0x01000001 (`pinyin.cpp:2821-2834`), and
+/// an import into library 1 takes the next slot (`pinyin.cpp:588-608`).
+#[test]
+fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let system = TempSystemDir::new("gb-user-file");
+    let conf = std::fs::read_to_string(system.path.join("table.conf")).expect("table.conf");
+    let row = "default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE";
+    assert!(conf.contains(row));
+    system.write(
+        "table.conf",
+        &conf.replace(row, "default GB_DICTIONARY NULL NULL gb_user.bin USER_FILE"),
+    );
+    let user = TempUserDir::new("gb-user-file-user");
+    crate::test_support::write_user_conf(&user.path, &system.path);
+    let item = ChunkItem {
+        phrase: vec![u32::from('你')],
+        unigram: 17,
+        prons: vec![(vec![0x302b], 5)],
+    };
+    std::fs::write(
+        user.path.join("gb_user.bin"),
+        build_chunk(&[(1, item)]).expect("one-item chunk"),
+    )
+    .expect("write gb_user.bin");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let unigram = |token: u32| {
+        let mut freq = 0;
+        let found = crate::dict::pinyin_token_get_unigram_frequency(instance, token, &raw mut freq);
+        (found, freq)
+    };
+    assert_eq!(unigram(0x0100_0001), (true, 17));
+    let mut length = 0;
+    let mut text = std::ptr::null_mut();
+    assert!(crate::dict::pinyin_token_get_phrase(
+        instance,
+        0x0100_0001,
+        &raw mut length,
+        &raw mut text
+    ));
+    assert_eq!(length, 1);
+    assert!(!text.is_null());
+    // SAFETY: the getter returned a NUL-terminated GLib string that we own.
+    let rendered = unsafe { std::ffi::CStr::from_ptr(text) }
+        .to_bytes()
+        .to_vec();
+    // SAFETY: freed once with the matching allocator.
+    unsafe { glib_sys::g_free(text.cast()) };
+    assert_eq!(rendered, "你".as_bytes());
+    assert!(!unigram(0x0100_0002).0);
+    let iter = pinyin_begin_add_phrases(context, 1);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("测测").as_ptr(),
+        cstr("ce4'ce4").as_ptr(),
+        5,
+    ));
+    pinyin_end_add_phrases(iter);
+    assert!(unigram(0x0100_0002).0);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// With row 5 `NOT_USED`, the pin reads an unwritten token (074a2219
 /// phrase_index.cpp:610-613, pinyin.cpp:2541-2545). The class (b) outcome
 /// leaves the addon candidate and default sub-indices as they were.

@@ -775,8 +775,7 @@ impl<'a> RuntimeDict<'a> {
         // (074a2219 phrase_large_table3.cpp:42, novel_types.h:44).
         let library = library_of(token);
         self.library_visible(u32::from(library))
-            && (self.system.library_loaded(token)
-                || ((5..=7).contains(&library) && self.user.has_user_library(library)))
+            && (self.system.library_loaded(token) || self.user.has_user_library(library))
     }
 
     /// Read the live item's stored pronunciation count.
@@ -791,15 +790,10 @@ impl<'a> RuntimeDict<'a> {
         if self.is_system_library(library_of(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
-        match library_of(token) {
-            5..=7 => {
-                if !self.library_visible(u32::from(library_of(token))) {
-                    return None;
-                }
-                self.user.user_pronunciation_count(token)
-            }
-            _ => None,
+        if !self.library_visible(u32::from(library_of(token))) {
+            return None;
         }
+        self.user.user_pronunciation_count(token)
     }
 
     /// The live item's text for `_add_phrase`'s length and content checks
@@ -814,17 +808,12 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        match library_of(token) {
-            5..=7 => {
-                if !self.library_visible(u32::from(library_of(token))) {
-                    return None;
-                }
-                self.user
-                    .with_user_item(token, |item| item.phrase_text())
-                    .flatten()
-            }
-            _ => None,
+        if !self.library_visible(u32::from(library_of(token))) {
+            return None;
         }
+        self.user
+            .with_user_item(token, |item| item.phrase_text())
+            .flatten()
     }
 
     /// The stored length and text of the token's item, as the C token
@@ -854,23 +843,18 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        match library_of(token) {
-            5..=7 => {
-                if !self.library_visible(u32::from(library_of(token))) {
-                    return None;
-                }
-                self.user
-                    .with_user_item(token, |item| {
-                        read(
-                            item.phrase_length(),
-                            item.phrase_words_present(),
-                            item.phrase_text(),
-                        )
-                    })
-                    .flatten()
-            }
-            _ => None,
+        if !self.library_visible(u32::from(library_of(token))) {
+            return None;
         }
+        self.user
+            .with_user_item(token, |item| {
+                read(
+                    item.phrase_length(),
+                    item.phrase_words_present(),
+                    item.phrase_text(),
+                )
+            })
+            .flatten()
     }
 
     /// Whether the default facade owns this item. Missing/unloaded libraries
@@ -886,13 +870,8 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .is_some();
         }
-        match library_of(token) {
-            5..=7 => {
-                self.library_visible(u32::from(library_of(token)))
-                    && self.user.phrase_exists(token).unwrap_or(false)
-            }
-            _ => false,
-        }
+        self.library_visible(u32::from(library_of(token)))
+            && self.user.phrase_exists(token).unwrap_or(false)
     }
 
     /// Read only the nth insertion-ordered key list and the stored length of
@@ -939,7 +918,7 @@ impl<'a> RuntimeDict<'a> {
         nth: usize,
         read: impl FnOnce(usize, Option<&[u8]>) -> R,
     ) -> Option<R> {
-        if !(5..=7).contains(&library_of(token))
+        if self.is_system_library(library_of(token))
             || !self.library_visible(u32::from(library_of(token)))
         {
             return None;
@@ -1336,12 +1315,10 @@ impl Dictionary for RuntimeDict<'_> {
                 .read(token, |item| item.phrase_length())
                 .found();
         }
-        match library_of(token) {
-            5..=7 if self.library_visible(u32::from(library_of(token))) => {
-                self.user.phrase_length(token).ok().flatten()
-            }
-            _ => None,
+        if !self.library_visible(u32::from(library_of(token))) {
+            return None;
         }
+        self.user.phrase_length(token).ok().flatten()
     }
 
     /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):

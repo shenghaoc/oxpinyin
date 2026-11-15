@@ -71,9 +71,8 @@ pub use phrase::{
     ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_NETWORK_TOKEN,
     FIRST_USER_TOKEN, KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, MAX_PHRASE_LENGTH,
     NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY,
-    UserPhrase, UserPronunciation, is_user_file_library, is_user_file_token, is_user_token,
-    key_pinyin_string, key_syllable, key_tone, phrase_index_library_index, phrase_index_make_token,
-    toned_key,
+    UserPhrase, UserPronunciation, is_user_token, key_pinyin_string, key_syllable, key_tone,
+    phrase_index_library_index, phrase_index_make_token, toned_key,
 };
 pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
