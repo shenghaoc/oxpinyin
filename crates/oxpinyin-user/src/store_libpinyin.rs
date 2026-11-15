@@ -2478,6 +2478,50 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// `Bigram::mask_out` collects every key with `get_all_items`, which
+    /// asserts on a key that is not four bytes, before it loads any gram
+    /// (`ngram_tkrzwdb.cpp:160-172`, `:174-211` and their peers at
+    /// 074a2219). A container that holds such a key and a gram with a
+    /// partial tail answers the key fault, whichever the walk meets first,
+    /// and nothing is masked.
+    #[test]
+    fn a_non_token_bigram_key_is_the_masks_first_fault() {
+        let dir = tempdir("non-token-key-before-gram-faults");
+        let key = 1_u32.to_le_bytes();
+        let mut value = 7_u32.to_le_bytes().to_vec();
+        value.extend_from_slice(&9_u32.to_le_bytes());
+        value.extend_from_slice(&7_u32.to_le_bytes());
+        value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[
+                (key.to_vec(), value.clone()),
+                (vec![1, 2, 3], 7_u32.to_le_bytes().to_vec()),
+            ],
+        )
+        .expect("write grams");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+
+        let mut store =
+            crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        assert!(matches!(
+            store.check_mask_out(u32::MAX, 0),
+            Err(UserStoreError::NonTokenUserBigramKey)
+        ));
+        assert!(matches!(
+            store.mask_out(u32::MAX, 0),
+            Err(UserStoreError::NonTokenUserBigramKey)
+        ));
+        assert_eq!(store.bigram_count(1, 9).expect("unchanged item"), 7);
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
     #[test]
     fn short_bigram_guard_reads_the_live_raw_value() {
         let dir = tempdir("short-gram-live-guard");

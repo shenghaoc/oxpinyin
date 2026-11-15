@@ -628,9 +628,10 @@ impl ContextCore {
         // The user tables come first (`pinyin.cpp:1228-1230`,
         // `zhuyin.cpp:763-765`): their faults precede any system library or
         // journal, so find them before opening one. This changes no state.
-        if let Err(error) = self.user_store().check_mask_out(mask, value) {
-            return mask_error_outcome(&error);
-        }
+        let checked = match self.user_store().check_mask_out(mask, value) {
+            Ok(checked) => checked,
+            Err(error) => return mask_error_outcome(&error),
+        };
         // Then the pin's loop (`pinyin.cpp:1260-1294`): it maps library i,
         // reads its log once and checks its headers, then goes to library
         // i+1, so the first fault in that order decides and no later library
@@ -666,7 +667,9 @@ impl ContextCore {
         };
         let store = self.user_store_mut();
         // The user tables masked (`pinyin.cpp:1228-1230`, `zhuyin.cpp:763-765`).
-        if let Err(error) = store.mask_out(mask, value) {
+        // The remap walk and the log reads above wrote nothing to them, so
+        // the check at the top of the call still holds.
+        if let Err(error) = store.apply_mask_out(checked, mask, value) {
             return mask_error_outcome(&error);
         }
         // Then the phrase index loop: each loaded system sub-index is

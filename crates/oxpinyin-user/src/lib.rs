@@ -76,8 +76,8 @@ pub use phrase::{
 };
 pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
-    ExportedPhrase, SENTENCE_START, Token, TrainingCheck, TrainingFault, UserStore, UserStoreError,
-    add_system_reading,
+    ExportedPhrase, MaskCheck, SENTENCE_START, Token, TrainingCheck, TrainingFault, UserStore,
+    UserStoreError, add_system_reading,
 };
 
 #[cfg(feature = "tools")]
