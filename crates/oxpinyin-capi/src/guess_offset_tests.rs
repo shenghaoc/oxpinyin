@@ -415,15 +415,21 @@ fn a_guess_at_a_mid_syllable_offset_answers_the_empty_column() {
 /// the second validation, `:2582-2585`). In `ni'hao` the `'` at byte 2 is
 /// a zero-key column of its own, so a guess at 3 forces 好 over `[3, 6)`
 /// and a guess at 2 over `[2, 6)`; `pinyin_clear_constraint` answers false
-/// for a free cell (`:2643-2649`, `phonetic_lookup.cpp:88-115`). Under the
-/// Luoma index parse a guess at 2 matches too; a guess at 3 there is the
-/// registered "Index-parse separator column" difference.
+/// for a free cell (`:2643-2649`, `phonetic_lookup.cpp:88-115`). The Luoma
+/// and secondary-zhuyin index parses run the same parser over another
+/// index (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`),
+/// so `fill_matrix` gives their `'` the same column
+/// (`phonetic_key_matrix.cpp:52-79`). Secondary zhuyin spells 好 `hau`.
 #[rstest::rstest]
-#[case::hanyu_guess_at_the_key(1, 3, [false, true])]
-#[case::hanyu_guess_at_the_separator(1, 2, [true, true])]
-#[case::luoma_guess_at_the_separator(2, 2, [true, true])]
+#[case::hanyu_guess_at_the_key(1, "ni'hao", 3, [false, true])]
+#[case::hanyu_guess_at_the_separator(1, "ni'hao", 2, [true, true])]
+#[case::luoma_guess_at_the_key(2, "ni'hao", 3, [false, true])]
+#[case::luoma_guess_at_the_separator(2, "ni'hao", 2, [true, true])]
+#[case::secondary_zhuyin_guess_at_the_key(3, "ni'hau", 3, [false, true])]
+#[case::secondary_zhuyin_guess_at_the_separator(3, "ni'hau", 2, [true, true])]
 fn a_guess_start_is_the_forcings_start_across_a_separator(
     #[case] scheme: std::ffi::c_int,
+    #[case] input: &str,
     #[case] guess: usize,
     #[case] cleared: [bool; 2],
 ) {
@@ -431,7 +437,7 @@ fn a_guess_start_is_the_forcings_start_across_a_separator(
         let user_dir = TempUserDir::new("separator-start");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
         assert!(pinyin_set_full_pinyin_scheme(context, scheme));
-        assert_eq!(parse(instance, "ni'hao"), 6);
+        assert_eq!(parse(instance, input), 6);
         assert!(pinyin_guess_candidates(instance, guess, DEFAULT_SORT));
         let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
         assert_eq!(pinyin_choose_candidate(instance, guess, hao), 6);
@@ -443,4 +449,49 @@ fn a_guess_start_is_the_forcings_start_across_a_separator(
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }
+}
+
+/// `USE_DIVIDED_TABLE` (`pinyin.h`, bit 7).
+const DIVIDED: u32 = 1 << 7;
+
+/// The candidate texts a guess at `offset` answers for `input` under
+/// `scheme`, with the divided table on and 安 imported under `an`.
+fn divided_window(scheme: std::ffi::c_int, input: &str, offset: usize) -> Vec<String> {
+    use crate::iterators::{
+        pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase,
+    };
+    let user_dir = TempUserDir::new("divided-window");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let import = pinyin_begin_add_phrases(context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        import,
+        cstr("\u{5b89}").as_ptr(),
+        cstr("an").as_ptr(),
+        1
+    ));
+    pinyin_end_add_phrases(import);
+    assert!(crate::config::pinyin_set_options(context, 0x8 | DIVIDED));
+    assert!(pinyin_set_full_pinyin_scheme(context, scheme));
+    assert_eq!(parse(instance, input), 4);
+    assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));
+    let window = texts(instance);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    window
+}
+
+/// The divided table gives Luoma `sian` (xian, `[0, 4)`) an `an` key at
+/// column 2 (`inner_split_step`, `phonetic_key_matrix.cpp:169-228`; the
+/// column is `index + strlen("xi")`, `:206`). A guess there searches that
+/// column (`pinyin.cpp:2224-2262`): column 1 is empty, so `_check_offset`
+/// (`:2163-2181`) passes. The window is Hanyu `xian`'s at 2, not the
+/// empty list of a column inside a key.
+#[test]
+fn a_guess_at_a_divided_column_inside_a_luoma_key_searches_it() {
+    let hanyu = divided_window(1, "xian", 2);
+    assert!(
+        hanyu.iter().any(|text| text == "\u{5b89}"),
+        "the Hanyu divided column offers 安: {hanyu:?}"
+    );
+    assert_eq!(divided_window(2, "sian", 2), hanyu);
 }

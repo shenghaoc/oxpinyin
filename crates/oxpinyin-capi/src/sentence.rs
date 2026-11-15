@@ -472,17 +472,15 @@ pub extern "C" fn pinyin_guess_candidates(
     // The caller's offset lives in the active parse mode's ORIGINAL input
     // coordinates — the pin's matrix keeps each key at its key rest's
     // `m_raw_begin` (`phonetic_key_matrix.cpp:52-56`) for every scheme —
-    // while the session is driven with the `'`-joined full-pinyin spelling.
-    // The transformed seams map the offset across to the matrix column of
-    // the key it starts (`*_session_offset`: 0, or the apostrophe in front
-    // of the key, the column a forcing there spells under); plain full
-    // pinyin is the identity.
+    // while the double-pinyin and chewing sessions are driven with the
+    // `'`-joined full-pinyin spelling. Those seams map the offset across to
+    // the matrix column of the key it starts (`*_session_offset`: 0, or the
+    // apostrophe in front of the key, the column a forcing there spells
+    // under); plain and index-parsed full pinyin are the identity.
     let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
         oxpinyin_facade::double_session_offset(parse, normalized)
     } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
         oxpinyin_facade::zhuyin_session_offset(parse, normalized)
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_session_offset(parse, normalized)
     } else {
         normalized
     };
@@ -497,8 +495,6 @@ pub extern "C" fn pinyin_guess_candidates(
         oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
     } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
         oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_offset_is_mid_key(parse, normalized)
     } else {
         false
     };
@@ -602,7 +598,7 @@ pub extern "C" fn pinyin_guess_candidates(
                 .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
             && !abort_on_unreadable
     });
-    let published_bound = inst.core.publication_bound_mapper(true, true);
+    let published_bound = inst.core.publication_bound_mapper(true);
     for (cand, missing) in candidates
         .iter()
         .map(|row| (row, false))

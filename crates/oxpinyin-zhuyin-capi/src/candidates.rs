@@ -235,7 +235,6 @@ pub extern "C" fn zhuyin_choose_candidate(
                 text: oxpinyin_engine::RowText::Resolve,
             },
             false,
-            false,
         ),
         None => inst.core.session.refuse_selection(),
     };
@@ -261,7 +260,7 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    inst.core.clear_abi_constraint(offset, false, false)
+    inst.core.clear_abi_constraint(offset, false)
 }
 
 /// Train the current sentence.

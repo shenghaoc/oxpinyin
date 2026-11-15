@@ -75,6 +75,25 @@ fn a_leading_separator_guess_has_no_sentence() {
     close(context, instance);
 }
 
+/// The Luoma and secondary-zhuyin index parses run the same parser
+/// (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`), so
+/// `'ni` leaves column 0 empty too (`phonetic_key_matrix.cpp:52-79`): the
+/// beam never leaves it (`phonetic_lookup.h:753-771`) and the guess has
+/// no sentence.
+#[rstest::rstest]
+fn an_index_parse_leading_separator_guess_has_no_sentence(#[values(2, 3)] scheme: i32) {
+    let user = TempUserDir::new("index-separator-sentence");
+    let (context, instance) = open_at(&user.path);
+    assert!(pinyin_set_options(context, SEPARATOR_OPTIONS));
+    assert!(crate::config::pinyin_set_full_pinyin_scheme(
+        context, scheme
+    ));
+    assert_eq!(parse(instance, "'ni"), 3);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (false, None));
+    close(context, instance);
+}
+
 /// A keyless parse (one separator) refuses both sentence guesses before
 /// they clear the old result: the old sentence stays, the candidate list
 /// is empty, and a fresh instance has no sentence (:183).

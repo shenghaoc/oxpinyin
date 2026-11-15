@@ -354,12 +354,14 @@ where
         self.refresh_after_parse()
     }
 
-    /// Replaces input with parsed full-pinyin keys, without reparsing their
-    /// canonical spelling. Unlike the double/zhuyin exact seam, full-pinyin
+    /// Replaces input with the typed full pinyin `text` and the keys an
+    /// index parse (Luoma, secondary zhuyin) found in it, without reparsing
+    /// it as Hanyu. Unlike the double/zhuyin exact seam, full-pinyin
     /// resplit and divided matrix processing remains enabled (pin 074a2219,
-    /// `pinyin.cpp:1497-1525`). Inserted apostrophes are formatting separators.
-    /// Segments use byte offsets in `text`; a segment reaching past its end
-    /// is dropped.
+    /// `pinyin.cpp:1497-1525`), and each `'` in `text` is a typed separator
+    /// with its own zero-key column, as in plain full pinyin
+    /// (`phonetic_key_matrix.cpp:52-79`). Segments use byte offsets in
+    /// `text`; a segment reaching past its end is dropped.
     ///
     /// # Errors
     /// Returns [`EngineError`] if refreshing the new input fails.
