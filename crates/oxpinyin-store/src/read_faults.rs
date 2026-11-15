@@ -16,7 +16,9 @@ static READS: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 /// Lets the next `reads` point reads of `key` in the read-only stores of
 /// this process through, then fails each later read of it, as a native
-/// `Get`, `get` or `check` that reports an I/O error does. The in-memory
+/// `Get`, `get` or `check` that reports an I/O error does. The existence
+/// checks and the cursor walks of those stores meet the same point: a walk
+/// at its lower bound and at each record it reads. The in-memory
 /// containers are not affected. A process arms one key; a second call
 /// changes only the count.
 pub fn fail_point_read_of(key: &[u8], reads: usize) {
@@ -36,5 +38,32 @@ pub(crate) fn point_read(key: &[u8]) -> Result<(), StoreError> {
         Err(_) => Err(StoreError::Io(std::io::Error::other(
             "injected point-read fault",
         ))),
+    }
+}
+
+/// The fault point before a read-only store's cursor is positioned at the
+/// scan's lower bound: a failed `Jump`.
+pub(crate) fn scan_start(read_only: bool, lo: std::ops::Bound<&[u8]>) -> Result<(), StoreError> {
+    match lo {
+        std::ops::Bound::Included(key) | std::ops::Bound::Excluded(key) if read_only => {
+            point_read(key)
+        }
+        std::ops::Bound::Included(_)
+        | std::ops::Bound::Excluded(_)
+        | std::ops::Bound::Unbounded => Ok(()),
+    }
+}
+
+/// `visit` behind the fault point of a read-only store's cursor read of
+/// each record: a failed cursor `Get`, or the `Next` that led to it.
+pub(crate) fn scan_visitor(
+    read_only: bool,
+    mut visit: impl FnMut(&[u8], &[u8]) -> Result<crate::Flow, StoreError>,
+) -> impl FnMut(&[u8], &[u8]) -> Result<crate::Flow, StoreError> {
+    move |key, value| {
+        if read_only {
+            point_read(key)?;
+        }
+        visit(key, value)
     }
 }

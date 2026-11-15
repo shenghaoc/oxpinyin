@@ -4370,3 +4370,151 @@ fn a_step_prices_a_user_item_from_its_readings() {
     );
     close(context, instance);
 }
+
+/// A phrase-table read that fails is a miss: `PhraseLargeTable3::search`
+/// answers `SEARCH_NONE` (`phrase_large_table3_tkrzwdb.cpp:136-139`,
+/// `phrase_large_table3_bdb.cpp:196-198`,
+/// `phrase_large_table3_kyotodb.cpp:174-177` at 074a2219). With the read
+/// of the row of 测测 failing, `_add_phrase` finds no token for the phrase
+/// and adds it (`pinyin.cpp:536-542`, `:588-608`).
+#[test]
+fn a_failed_phrase_table_read_is_a_miss() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_phrase_table_read_is_a_miss",
+        |user| {
+            let (context, instance) = open_at(user);
+            let row: Vec<u8> = "测测"
+                .chars()
+                .flat_map(|word| u32::from(word).to_le_bytes())
+                .collect();
+            oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
+            assert_eq!(import_batch(context, 7, &[("测测", "ce4'ce4", 5)]), [true]);
+            close(context, instance);
+        },
+    );
+}
+
+/// A failed existence read of a pinyin-table key is a miss too: the search
+/// for that key answers `SEARCH_NONE` and the candidate lookup goes on
+/// (`chewing_large_table2_tkrzwdb.cpp:146-149`, `:511` at 074a2219). With
+/// every read of the `ni` row failing, the candidate guess still answers
+/// true.
+#[test]
+fn a_failed_pinyin_table_existence_read_is_a_miss() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_pinyin_table_existence_read_is_a_miss",
+        |user| {
+            let (context, instance) = open_at(user);
+            let mut key = 0_u16;
+            let text = cstr("ni");
+            assert!(pinyin_parse_full_pinyin(
+                instance,
+                text.as_ptr(),
+                (&raw mut key).cast()
+            ));
+            assert_eq!(parse(instance, "nihao"), 5);
+            oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
+            assert!(pinyin_guess_candidates(
+                instance,
+                0,
+                crate::test_support::DEFAULT_SORT
+            ));
+            close(context, instance);
+        },
+    );
+}
+
+/// A cursor read that fails ends the suggestion walk with the rows read
+/// before it: the pin leaves its loop when the iterator's `Get` is not OK
+/// (`chewing_large_table2_tkrzwdb.cpp:516-541`,
+/// `phrase_large_table3_tkrzwdb.cpp:171-186` at 074a2219). With the read
+/// of the `ni'hao` row failing in the walk from `ni`, the candidate guess
+/// still answers true.
+#[test]
+fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_pinyin_table_cursor_read_ends_the_walk",
+        |user| {
+            let (context, instance) = open_at(user);
+            let key = |text: &str| {
+                let mut key = 0_u16;
+                let text = cstr(text);
+                assert!(pinyin_parse_full_pinyin(
+                    instance,
+                    text.as_ptr(),
+                    (&raw mut key).cast()
+                ));
+                key.to_le_bytes()
+            };
+            let row = [key("ni"), key("hao")].concat();
+            assert_eq!(parse(instance, "ni"), 2);
+            oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
+            // Sort word 0 keeps the longer-candidate row, which walks the
+            // rows that extend `ni`.
+            assert!(pinyin_guess_candidates(instance, 0, 0));
+            close(context, instance);
+        },
+    );
+}
+
+/// The phrase table's suggestion walk ends at a cursor read that fails and
+/// keeps the rows read before it (`phrase_large_table3_tkrzwdb.cpp:171-186`
+/// at 074a2219). The walk from 你 reads its extensions in key order; with
+/// the read of the second one failing, the first is still predicted.
+#[test]
+fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_phrase_table_cursor_read_keeps_the_rows_before_it",
+        |user| {
+            let prefix: Vec<u8> = u32::from('你').to_le_bytes().to_vec();
+            // The system phrase table's rows that extend the prefix, in
+            // key order, read as the library attaches the file.
+            let mut extensions: Vec<Vec<u8>> = Vec::new();
+            {
+                use oxpinyin_store::RawReadStore as _;
+                let table = oxpinyin_store::DefaultStore::open_read_only(
+                    &system_dir().join("phrase_index.bin"),
+                )
+                .expect("open the phrase table");
+                table
+                    .range_raw(
+                        std::ops::Bound::Unbounded,
+                        std::ops::Bound::Unbounded,
+                        |key, value| {
+                            if key.len() > prefix.len()
+                                && key.starts_with(&prefix)
+                                && !value.is_empty()
+                            {
+                                extensions.push(key.to_vec());
+                            }
+                            Ok(())
+                        },
+                    )
+                    .expect("read the phrase table");
+            }
+            extensions.sort();
+            assert!(extensions.len() >= 2, "two phrases extend the prefix");
+            let text = |key: &[u8]| {
+                key.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|word| char::from_u32(u32::from_le_bytes(*word)).expect("a scalar"))
+                    .collect::<String>()
+            };
+            let (context, instance) = open_at(user);
+            oxpinyin_store::read_faults::fail_point_read_of(&extensions[1], 0);
+            assert!(pinyin_guess_predicted_candidates(
+                instance,
+                cstr("你").as_ptr()
+            ));
+            let rows: Vec<String> = capture_rows(instance)
+                .into_iter()
+                .map(|(_, text, _)| text)
+                .collect();
+            let first = text(&extensions[0]);
+            let first = first.strip_prefix('你').expect("the prefix");
+            assert!(rows.iter().any(|row| row == first), "{rows:?}");
+            close(context, instance);
+        },
+    );
+}
