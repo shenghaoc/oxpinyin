@@ -1907,6 +1907,51 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     close(context, instance);
 }
 
+/// Register entry "Token getters on a phrase longer than sixteen characters
+/// (policy row 124, class (b))": at 074a2219 `_token_get_phrase` and
+/// `pinyin_token_get_nth_pronunciation` copy a 17-word item into 16-entry
+/// stack buffers (`pinyin.cpp:1633,1639,2808,2815`), so the pin's result is
+/// undefined and nothing runs on it. oxpinyin's prescribed result: both
+/// answer true with the whole stored item.
+#[test]
+fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-long-phrase");
+    write_user_conf(&user.path, &system_dir());
+    let text = "一二三四五六七八九十一二三四五六七";
+    let keys = vec![0x302b_u16; 17];
+    let item = ChunkItem {
+        phrase: text.chars().map(u32::from).collect(),
+        unigram: 17,
+        prons: vec![(keys.clone(), 5)],
+    };
+    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&chunk[8..]).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let (context, instance) = open_at(&user.path);
+    let token = 0x0700_0001;
+    let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
+    assert!(crate::dict::pinyin_token_get_phrase(
+        instance,
+        token,
+        &raw mut length,
+        &raw mut phrase
+    ));
+    assert_eq!(
+        (length, crate::ffi::take_owned_cstr(phrase).as_str()),
+        (17, text)
+    );
+    let expected: Vec<u8> = keys.iter().flat_map(|key| key.to_le_bytes()).collect();
+    assert_eq!(reading_bytes(instance, token, 0), expected);
+    close(context, instance);
+}
+
 /// A stored user key word is read back as it is stored: 0x8000.
 #[test]
 fn a_stored_user_key_word_is_read_back_verbatim() {

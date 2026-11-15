@@ -752,6 +752,14 @@ for _cell in W3_DIRECTORIES:
     OBSERVATIONS[f'utility/{_cell}/gen-deleted-ngram'] = Utility(
         _cell, 'training', 'gen_deleted_ngram', ('--deleted-bigram-file', 'deleted.db'), SEGMENTED,
         ('deleted.db', TRAINING_TOKENS))
+# Policy row 127's defined range: a phrase index from 128 to 255 shifted into the token
+# (src/include/novel_types.h:45-46), frozen as pinyin-phrase-index-131 and zhuyin-phrase-index-131.
+OBSERVATIONS['utility/tkrzw/pinyin-phrase-index-131'] = Utility(
+    'tkrzw', 'storage', 'gen_pinyin_table', ('-t', '131', '-o', 'temp.out', '/dev/stdin'),
+    '你 ni 5\n'.encode())
+OBSERVATIONS['utility/tkrzw/zhuyin-phrase-index-131'] = Utility(
+    'tkrzw', 'storage', 'gen_zhuyin_table', ('-t', '131', '-o', 'temp.out', '/dev/stdin'),
+    '你 5 ㄋㄧ\n'.encode())
 # C1, the ignored-tests audit: the pin's data sequence on the bdb cell, for the pin-written Berkeley DB
 # evidence of fixtures/w3/db/'s bigram.db and index trees (oxpinyin-utils wrote the committed files).
 OBSERVATIONS['utility/bdb/data-sequence'] = DataSequence('bdb', ('bigram.db', 'phrase_index.bin', 'pinyin_index.bin'))

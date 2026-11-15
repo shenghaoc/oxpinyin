@@ -140,6 +140,13 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b): no part of the path has a defined pin result.
 - **Tests:** none for the undefined path.
 
+### Token getters on a phrase longer than sixteen characters (policy row 124, class (b))
+
+- **Pin:** `_token_get_phrase` copies the stored words into `ucs4_t buffer[MAX_PHRASE_LENGTH]` (`src/pinyin.cpp:1633`, `:1639`; `src/zhuyin.cpp:1101`, `:1107`), and both `*_token_get_nth_pronunciation` getters copy the reading into `ChewingKey buffer[MAX_PHRASE_LENGTH]` (`src/pinyin.cpp:2808`, `:2815`; `src/zhuyin.cpp:1800`, `:1807`). A stored phrase length of 17 to 255 writes past the 16-entry stack buffer.
+- **oxpinyin:** answers true and returns the whole item. `*_token_get_phrase` writes the stored length and the UTF-8 of the words before the first zero. `*_token_get_nth_pronunciation` appends all of the reading's keys (`crates/oxpinyin-capi/src/dict.rs`, `crates/oxpinyin-zhuyin-capi/src/dict.rs`).
+- **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result. It needs a crafted chunk or user library; an import refuses a phrase of sixteen characters or more (`src/pinyin.cpp:643-644`).
+- **Tests:** `token_getters_return_a_phrase_longer_than_sixteen_whole` (`crates/oxpinyin-capi/src/boundary_tests.rs`, `crates/oxpinyin-zhuyin-capi/src/boundary_tests.rs`). Nothing runs on the pin: its result is undefined.
+
 ## Accepted divergences — store and data files
 
 ### The pinyin index DBMs carry uninitialized struct padding
@@ -249,6 +256,27 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b): a NULL read.
 - **Tests:** `zhuyin-missing-frequency`; control `zhuyin-normal` (`crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`).
 
+### gen_zhuyin_table truncated final lead byte (policy row 125, class (b))
+
+- **Pin:** a phrase field that ends in a truncated UTF-8 lead byte, such as the line `"\xE3 5 ㄅ"`, makes `g_utf8_strlen` step past the end of the `g_strsplit_set` allocation (`utils/storage/gen_zhuyin_table.cpp:150`, `:168`): a heap over-read, so the length is undefined.
+- **oxpinyin:** counts the length over zero bytes after the field (`crates/oxpinyin-utils/src/gen_zhuyin_table.rs`), so the example has length 1. The row then takes the invalid UTF-8 phrase path above: the output opens at the pin's point, the earlier rows are written, and the utility refuses with exit 1.
+- **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
+- **Tests:** `a_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`). Nothing runs on the pin: its result is undefined.
+
+### gen_pinyin_table truncated lead byte on the first line (policy row 126, class (b))
+
+- **Pin:** `char phrase[1024]` starts indeterminate (`utils/storage/gen_pinyin_table.cpp:135`). When the first phrase ends in a truncated UTF-8 lead byte, `g_utf8_strlen` (`:168`) reads the indeterminate bytes after the terminator. On later lines it reads the bytes that earlier lines left.
+- **oxpinyin:** starts the buffer zeroed (`TableInput`, `crates/oxpinyin-input/src/tool.rs`), so the count stops at the first zero past the lead byte's skip; the row then takes the invalid UTF-8 phrase path above. Later lines read the same stale bytes as the pin.
+- **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
+- **Tests:** `a_first_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`). Nothing runs on the pin: its result is undefined.
+
+### Generator phrase index of 256 or more, or negative (policy row 127, class (b))
+
+- **Pin:** `phrase_index` is a `gint` (`utils/storage/gen_pinyin_table.cpp:36`, `:41`; `utils/storage/gen_zhuyin_table.cpp:42`, `:47`), and `PHRASE_INDEX_MAKE_TOKEN` shifts it left by 24 (`src/include/novel_types.h:45-46`). The pin builds at C++11 or later (`configure.ac:51`). Under CWG 1457, which compilers also apply to C++11, a non-negative shift whose result fits the unsigned type is defined, and GCC and Clang wrap the conversion back to `int`. A value from 128 to 255 therefore gives the library nibble as the value modulo 16: pin behaviour reproduced, held by the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131`. A value of 256 or more, or a negative value, is undefined behaviour.
+- **oxpinyin:** shifts the value as an unsigned 32-bit word and masks it (`wrapping_shl(24) & LIBRARY_MASK`, `crates/oxpinyin-utils/src/gen_pinyin_table.rs`), so the library nibble is the value modulo 16, and the tokens print through `%d`.
+- **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
+- **Tests:** `a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble` (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`, `crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`), with 259 and −1. Nothing runs on the pin: its result is undefined.
+
 ### k_mixture_model_to_interpolation undefined lines
 
 - **Pin:** `taglib_read` reads `tokens[0]` as the line tag (`src/storage/tag_utility.cpp:179-190`): an empty line, a re-read empty last line (`utils/training/k_mixture_model_to_interpolation.cpp:86-88`) and a trailing escape that makes `split_line` return NULL (`tag_utility.cpp:137`) read through NULL: SIGSEGV. A truncated UTF-8 sequence at the line end reads past the string.
@@ -304,7 +332,7 @@ An entry holds nothing else.
 - **Pin:** the three required `../../data/gb_char.bin` loads ignore `MemoryChunk::load` returning false and reach row 76's NULL read (`tests/storage/test_phrase_index_logger.cpp:28-30`, `:45-48`, `:52-54`; `src/storage/phrase_index.cpp:271-282`, `:335-354`).
 - **oxpinyin:** The shared utility loader `Libraries::load` exits with `ENOENT` when a required system phrase chunk cannot be loaded (`crates/oxpinyin-utils/src/storage/libraries.rs`).
 - **Decision:** accepted, class (b), by maintainer approval.
-- **Tests:** none.
+- **Tests:** none. Commit f76b0d8f0 made the logger program a product test, so no program run reaches this path.
 
 ## Approved product and ruling exceptions
 
