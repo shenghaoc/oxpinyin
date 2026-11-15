@@ -27,19 +27,18 @@ fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
         tool::exit(tool::ENOENT);
     })
 }
-fn dump(matrix: &[Vec<Key>]) {
-    for (position, column) in matrix.iter().enumerate() {
-        if column.is_empty() {
-            continue;
+fn dump(matrix: impl IntoIterator<Item = (usize, Key)>) {
+    let mut previous = None;
+    for (position, key) in matrix {
+        if previous != Some(position) {
+            output::column(position);
+            previous = Some(position);
         }
-        output::column(position);
-        for key in column {
-            output::key(
-                &present(CString::new(key.key.pinyin_string()).ok()),
-                key.span.start as u16,
-                key.span.end as u16,
-            );
-        }
+        output::key(
+            &present(CString::new(key.key.pinyin_string()).ok()),
+            key.span.start as u16,
+            key.span.end as u16,
+        );
     }
 }
 fn continued(data: &Lookup, matrix: &[Vec<Key>], start: usize, end: usize) -> bool {
@@ -94,7 +93,11 @@ pub fn matrix_main(data: &Path) {
         let parsed = parse_full(input.line(), options);
         let matrix = physical_matrix(&parsed, options);
         output::parsed(parsed.consumed, parsed.keys.len());
-        dump(&matrix);
+        dump(
+            matrix.iter().enumerate().flat_map(|(position, column)| {
+                column.iter().cloned().map(move |key| (position, key))
+            }),
+        );
         for start in 0..matrix.len() {
             for end in start + 1..matrix.len() {
                 output::search(start, end);
@@ -121,7 +124,7 @@ pub fn pinyin_main(data: &Path) {
         if prepared.parsed.keys.is_empty() {
             continue;
         }
-        dump(&physical_matrix(&prepared.parsed, options));
+        dump(prepared.matrix_keys());
         let rows = data.phonetic(&prepared).unwrap_or_else(|_| tool::abort());
         for row in rows {
             for (position, token) in row.tokens {

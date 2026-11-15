@@ -91,9 +91,39 @@ pub struct LookupRow {
 
 /// The parsed scan matrix used by the nonshipping phonetic lookup mode.
 pub struct PreparedLookup {
-    /// Returned parser length and original keys, for the physical dump.
+    /// Returned parser length and original keys.
     pub parsed: Parse,
     scan: super::matrix::ScanMatrix,
+    matrix: super::matrix::ParsedMatrix,
+}
+
+impl PreparedLookup {
+    /// Physical columns for the dump, from the same keys and topology
+    /// lookup uses. Separator and terminal zero keys are emitted in place
+    /// (074a2219 phonetic_key_matrix.cpp:52-78), without a second matrix.
+    pub fn matrix_keys(&self) -> impl Iterator<Item = (usize, Key)> + '_ {
+        let columns = if self.parsed.keys.is_empty() {
+            0
+        } else {
+            self.matrix.len()
+        };
+        (0..columns).flat_map(|position| {
+            let zero = self.matrix.zeros[position].then(|| Key {
+                key: oxpinyin_core::ChewingKey::default(),
+                span: position..position + 1,
+            });
+            let keys = self
+                .matrix
+                .get(position)
+                .unwrap_or_default()
+                .iter()
+                .map(|key| Key {
+                    key: key.key.chewing_key().with_tone(key.tone),
+                    span: key.syllable_start..key.to,
+                });
+            zero.into_iter().chain(keys).map(move |key| (position, key))
+        })
+    }
 }
 
 /// Parse once and build one scan matrix from the same selected edges.
@@ -111,7 +141,12 @@ pub fn prepare_lookup(
     let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
         &graph, &path, options, false,
     ));
-    Ok(PreparedLookup { parsed, scan })
+    let matrix = super::matrix::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
+    Ok(PreparedLookup {
+        parsed,
+        scan,
+        matrix,
+    })
 }
 
 /// Run the existing PhoneticLookup<2,3> over an already-built matrix.
@@ -134,7 +169,7 @@ where
             matrix: &prepared.scan,
             bound: prepared.parsed.consumed,
             physical_separators: true,
-            topology: None,
+            topology: Some(&prepared.matrix),
         },
         dictionary,
         model,
