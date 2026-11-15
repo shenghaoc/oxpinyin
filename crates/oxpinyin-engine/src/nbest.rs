@@ -122,8 +122,6 @@ pub struct NbestRow {
     pub(crate) keys: usize,
     /// Bytes of the input the sentence spans.
     pub(crate) span: usize,
-    /// Accumulated log possibility of a trellis row.
-    pub(crate) poss: Option<f32>,
 }
 
 /// `m_last_step` of the seed: the pin's `-1` (074a2219 `phonetic_lookup.h:59`).
@@ -1011,7 +1009,6 @@ where
             spans: phrase_spans,
             keys: tail.keys as usize,
             span,
-            poss: Some(tail.poss),
         });
     }
     Ok(rows)
@@ -2392,7 +2389,6 @@ mod tests {
                     assert!(!rows.is_empty(), "the whole-span sum equals epsilon");
                     for row in rows {
                         assert_eq!(row.text.as_ref().and_then(PhraseText::as_str), Some("你"));
-                        assert_eq!(row.poss, Some(f64::from(f32::EPSILON).ln() as f32));
                     }
                 }
             }
@@ -2451,7 +2447,6 @@ mod tests {
             rows[0].text.as_ref().and_then(PhraseText::as_str),
             Some("你")
         );
-        assert_eq!(rows[0].poss, Some(f32::NEG_INFINITY));
     }
 
     /// A predecessor's row lives for one span load: the pin reloads both
@@ -2519,7 +2514,7 @@ mod tests {
                 Ok(costs(u64::from(freq.unwrap_or(0))))
             }
         }
-        fn decoded(rows: &[NbestRow]) -> Vec<(Option<String>, Vec<u32>, Option<u32>)> {
+        fn decoded(rows: &[NbestRow]) -> Vec<(Option<String>, Vec<u32>)> {
             rows.iter()
                 .map(|row| {
                     (
@@ -2528,7 +2523,6 @@ mod tests {
                             .and_then(PhraseText::as_str)
                             .map(str::to_owned),
                         row.tokens.iter().map(|token| token.value()).collect(),
-                        row.poss.map(f32::to_bits),
                     )
                 })
                 .collect()

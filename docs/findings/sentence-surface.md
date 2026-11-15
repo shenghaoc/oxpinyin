@@ -401,11 +401,10 @@ Canonical formatting carries its separator provenance through
 `Session::replace_raw_with_physical_separators`; ordinary lookup, matrix
 construction, ScanKey and the exact graph are unchanged.
 
-The companion test `sentence_surface_detects_per_step_score_shift` asserts
-the f32 bits of the first-sentence log possibility of four fixture anchors
-(`yaomeichong`, `xiehenshuaitong`, `nuanmanqianzhaofang`, `nic`). Adding
-one cost unit per phrase expansion must fail it, even where the visible
-sentence surface does not move. No mutable test hook ships.
+The sentence score is not visible at the C API, so no test reads it.
+A score change that moves no sentence leaves the C behaviour unchanged.
+The sentence and candidate surface goldens detect row-order changes in
+their covered cases.
 
 ### Resplit after a separator
 

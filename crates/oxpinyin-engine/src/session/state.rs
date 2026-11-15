@@ -157,15 +157,6 @@ where
             .and_then(|row| row.text.as_ref())
     }
 
-    /// Accumulated natural-log possibility of a real-table sentence row.
-    #[must_use]
-    pub fn sentence_log_possibility(&self, index: u8) -> Option<f32> {
-        self.sentence
-            .rows
-            .get(usize::from(index))
-            .and_then(|row| row.poss)
-    }
-
     /// The raw input typed so far.
     #[must_use]
     pub fn raw_input(&self) -> &str {

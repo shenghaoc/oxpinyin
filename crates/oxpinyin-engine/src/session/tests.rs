@@ -636,7 +636,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     // A fallback-model row without spans trains the recorded selection
     // history (the gate's empty-result rule does not apply to it).
     session.sentence.rows = vec![crate::nbest::NbestRow {
-        poss: None,
         text: Some("\u{4f60}".into()),
         tokens: Vec::new(),
         spans: Vec::new(),
@@ -864,7 +863,6 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
         },
     ];
     session.sentence.rows = vec![crate::nbest::NbestRow {
-        poss: None,
         text: Some("你X".into()),
         tokens: vec![PhraseToken::new(1), PhraseToken::new(1)],
         spans,
@@ -978,7 +976,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
         text,
     }];
     session.sentence.rows = vec![crate::nbest::NbestRow {
-        poss: None,
         text: Some("你".into()),
         tokens: vec![PhraseToken::new(1)],
         spans,
@@ -1074,7 +1071,6 @@ fn train_reports_a_failing_user_model() {
     let mut session = train_session();
     type_and_select(&mut session, "ni", 1);
     session.sentence.rows = vec![crate::nbest::NbestRow {
-        poss: None,
         text: Some("你".into()),
         tokens: Vec::new(),
         spans: Vec::new(),
@@ -1102,7 +1098,6 @@ fn a_row_records_its_whole_token_path() {
 
     // One authored row.
     session.sentence.rows = vec![NbestRow {
-        poss: None,
         text: Some("\u{884}".into()),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
@@ -1136,7 +1131,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     // (the 你→浩 training divergence, `sentence-surface.md` §8).
     session.sentence.rows = vec![
         NbestRow {
-            poss: None,
             text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x100)],
             spans: Vec::new(),
@@ -1144,7 +1138,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             span: 3,
         },
         NbestRow {
-            poss: None,
             text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x101)],
             spans: Vec::new(),
@@ -1152,7 +1145,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             span: 3,
         },
         NbestRow {
-            poss: None,
             text: Some("\u{6d69}".into()),
             tokens: vec![PhraseToken::new(0x102)],
             spans: Vec::new(),
@@ -1192,7 +1184,6 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // the row's text alone — never the typed-but-unselected gap (which
     // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
-        poss: None,
         text: Some("你好".into()),
         tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
         spans: Vec::new(),
@@ -2649,7 +2640,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
         crate::nbest::NbestRow {
-            poss: None,
             text: Some("\u{597d}".into()),
             tokens: vec![PhraseToken::new(0x100)],
             spans: vec![crate::constraint::PhraseSpan {
@@ -2661,7 +2651,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
             span: 3,
         },
         crate::nbest::NbestRow {
-            poss: None,
             text: Some("\u{6d69}".into()),
             tokens: vec![PhraseToken::new(0x102)],
             spans: vec![crate::constraint::PhraseSpan {
@@ -2896,7 +2885,6 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
-        poss: None,
         text: Some("你好世界".into()),
         tokens: vec![
             PhraseToken::new(0x100),
@@ -2932,7 +2920,6 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     use crate::nbest::NbestRow;
 
     let row = |text: &str| NbestRow {
-        poss: None,
         text: Some(text.into()),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
@@ -3076,7 +3063,6 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
 
     // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
-        poss: None,
         text: Some("你好".into()),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
@@ -4139,7 +4125,6 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
     // The decoded sentence, planted as `candidates_ending_at_walks_the_spans_that_end_there`
     // does: one row whose text is the phrase's.
     session.sentence.rows = vec![crate::nbest::NbestRow {
-        poss: None,
         text: Some("你".into()),
         tokens: vec![PhraseToken::new(1)],
         spans: Vec::new(),
@@ -4415,13 +4400,12 @@ where
 }
 
 #[test]
-fn duplicated_matrix_paths_change_sentence_prices_but_not_ordinary_rows() {
-    // The sentence uses the whole-span sum (:534-600); ordinary rows
-    // dedup tokens and use unigram/bigram frequency (pinyin.cpp:1772-1864).
+fn duplicated_matrix_paths_leave_ordinary_rows_unchanged() {
+    // Ordinary rows dedup tokens and use unigram/bigram frequency
+    // (pinyin.cpp:1772-1864), so a duplicated matrix path does not move them.
     let mut session = trellis_session();
     session.replace_raw("ni").unwrap();
     session.guess_sentence().unwrap();
-    let before = session.sentence.rows[0].poss.unwrap();
     let ordinary = |session: &mut Session<FixtureDictionary, TrellisModel>| {
         session
             .candidates_at(0)
@@ -4434,6 +4418,5 @@ fn duplicated_matrix_paths_change_sentence_prices_but_not_ordinary_rows() {
     let rows = ordinary(&mut session);
     duplicate_the_first_key(&mut session);
     session.guess_sentence().unwrap();
-    assert!((session.sentence.rows[0].poss.unwrap() - before - 2.0_f32.ln()).abs() < 1e-6);
     assert_eq!(ordinary(&mut session), rows);
 }
