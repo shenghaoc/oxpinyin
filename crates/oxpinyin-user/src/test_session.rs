@@ -213,13 +213,10 @@ pub(crate) fn load_checked(
         }
     }
     state.indexed = index.indexed_set();
-    let collected = phrase_table.for_each_record::<std::convert::Infallible>(|key, value| {
+    let Ok(()) = phrase_table.for_each_record::<std::convert::Infallible>(|key, value| {
         state.phrase_table.insert(key.to_vec(), value.to_vec());
         Ok(())
     });
-    if let Err(infallible) = collected {
-        match infallible {}
-    }
     let live = crate::system_items::SystemItems::new(replayed);
     for (token, item) in live.changed_items(originals) {
         state

@@ -17,7 +17,7 @@ pub(crate) fn append_punctuation(table: &Tree, token: u32, punctuation: &CStr) {
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+        .map(|word| u32::from_le_bytes(*word))
     {
         if word == 0 {
             runs.push(std::mem::take(&mut current));

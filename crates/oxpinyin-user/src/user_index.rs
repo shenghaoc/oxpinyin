@@ -508,31 +508,27 @@ impl UserIndex {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn indexed_set(&self) -> BTreeSet<(u32, Vec<u16>)> {
         let mut set = BTreeSet::new();
-        if let Err(infallible) =
-            self.records
-                .for_each_record::<std::convert::Infallible>(|key, value| {
-                    if value.is_empty() || !key.len().is_multiple_of(2) {
-                        return Ok(());
+        let Ok(()) = self
+            .records
+            .for_each_record::<std::convert::Infallible>(|key, value| {
+                if value.is_empty() || !key.len().is_multiple_of(2) {
+                    return Ok(());
+                }
+                let len = key.len() / 2;
+                if len == 0 || len > MAX_PHRASE_LENGTH {
+                    return Ok(());
+                }
+                if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, len)
+                {
+                    for item in items {
+                        set.insert((
+                            item.token,
+                            item.keys.iter().map(|key| key.to_packed()).collect(),
+                        ));
                     }
-                    let len = key.len() / 2;
-                    if len == 0 || len > MAX_PHRASE_LENGTH {
-                        return Ok(());
-                    }
-                    if let Ok(items) =
-                        oxpinyin_data::row_format::pinyin_index::decode_items(value, len)
-                    {
-                        for item in items {
-                            set.insert((
-                                item.token,
-                                item.keys.iter().map(|key| key.to_packed()).collect(),
-                            ));
-                        }
-                    }
-                    Ok(())
-                })
-        {
-            match infallible {}
-        }
+                }
+                Ok(())
+            });
         set
     }
 
@@ -609,18 +605,14 @@ impl UserIndex {
     #[cfg(test)]
     pub(crate) fn merge_missing(&mut self, other: &Self) {
         let mut missing = Vec::new();
-        if let Err(infallible) =
-            other
-                .records
-                .for_each_record::<std::convert::Infallible>(|key, value| {
-                    if !self.contains_key(key) {
-                        missing.push((key.to_vec(), value.to_vec()));
-                    }
-                    Ok(())
-                })
-        {
-            match infallible {}
-        }
+        let Ok(()) = other
+            .records
+            .for_each_record::<std::convert::Infallible>(|key, value| {
+                if !self.contains_key(key) {
+                    missing.push((key.to_vec(), value.to_vec()));
+                }
+                Ok(())
+            });
         for (key, value) in missing {
             self.records.insert(&key, &value).unwrap();
         }
@@ -655,7 +647,7 @@ fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bo
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|word| u16::from_le_bytes([word[0], word[1]]))
+                .map(|word| u16::from_le_bytes(*word))
                 .eq(packed.iter().copied())
     })
 }

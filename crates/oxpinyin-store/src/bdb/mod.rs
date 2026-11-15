@@ -226,9 +226,8 @@ impl BdbStore {
             Bound::Included(key) | Bound::Excluded(key) => Seek::AtOrAfter(key),
         };
         loop {
-            let row = match cursor.get(seek)? {
-                None => return Ok(()),
-                Some(row) => row,
+            let Some(row) = cursor.get(seek)? else {
+                return Ok(());
             };
             seek = Seek::Next;
             if matches!(lo, Bound::Excluded(bound) if row.key == bound) {

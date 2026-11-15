@@ -1123,11 +1123,7 @@ mod tests {
     }
 
     fn as_ref(bound: &Bound<Vec<u8>>) -> Bound<&[u8]> {
-        match bound {
-            Bound::Included(key) => Bound::Included(key),
-            Bound::Excluded(key) => Bound::Excluded(key),
-            Bound::Unbounded => Bound::Unbounded,
-        }
+        bound.as_ref().map(Vec::as_slice)
     }
 
     /// `scan_raw` over `store` agrees with the model for every bound pair,

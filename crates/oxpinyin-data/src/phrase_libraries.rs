@@ -496,7 +496,7 @@ impl PhraseLibraries {
                         .as_chunks::<2>()
                         .0
                         .iter()
-                        .map(|pair| ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])))
+                        .map(|pair| ChewingKey::from_packed(u16::from_le_bytes(*pair)))
                         .collect();
                     (keys, view.freq)
                 })
@@ -516,7 +516,7 @@ impl PhraseLibraries {
             let mut syllables = Vec::new();
             let mut ok = true;
             for pair in view.keys.as_chunks::<2>().0.iter() {
-                let packed = u16::from_le_bytes([pair[0], pair[1]]);
+                let packed = u16::from_le_bytes(*pair);
                 let key = ChewingKey::from_packed(packed);
                 let spelling = key.pinyin_spelling();
                 if spelling.is_empty() {
@@ -551,9 +551,7 @@ fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u6
                 .iter()
                 .zip(view.keys.as_chunks::<2>().0.iter())
                 .all(|(q, pair)| {
-                    q.matches_with_tones(ChewingKey::from_packed(u16::from_le_bytes([
-                        pair[0], pair[1],
-                    ])))
+                    q.matches_with_tones(ChewingKey::from_packed(u16::from_le_bytes(*pair)))
                 })
         {
             matched = matched.saturating_add(u64::from(view.freq));
@@ -594,7 +592,7 @@ mod tests {
         let mut checksum = 0_u32;
         let aligned = payload.len() & !0x3;
         for word in payload[..aligned].as_chunks::<4>().0.iter() {
-            checksum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+            checksum ^= u32::from_le_bytes(*word);
         }
         for (shift, byte) in payload[aligned..].iter().enumerate() {
             checksum ^= u32::from(*byte) << (8 * shift);

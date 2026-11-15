@@ -606,7 +606,7 @@ pub fn export_state(
     originals: &impl crate::persistence::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
     let mut state = export_for_save(store)?;
-    let collected = store
+    let Ok(()) = store
         .session_target()
         .phrases()
         .phrase_table
@@ -614,9 +614,6 @@ pub fn export_state(
             state.phrase_table.insert(key.to_vec(), value.to_vec());
             Ok(())
         });
-    if let Err(infallible) = collected {
-        match infallible {}
-    }
     // A session's system items are its live buffers: a save diffs them
     // against the file on disk (`persistence`), and only this test-facing
     // export reads them as values.
@@ -848,7 +845,7 @@ mod tests {
                 "network.bin",
             ];
             for name in &created {
-                let stem = name.strip_suffix(".tmp").unwrap_or(name);
+                let stem = name.trim_suffix(".tmp");
                 assert!(
                     earlier.contains(&stem),
                     "{law:?}: later file {name} was touched"
