@@ -301,6 +301,24 @@ time/space bound above and copies k selected keys/spans; keyboard parser
 bounds are unchanged. The driver's 1000 parse calls and the `gettimeofday`
 and `printf` calls are the pin's protocol (`tests/timer.h:30-44`).
 
+### REPL lookup matrix
+
+`prepare_lookup` builds the scan keys once. `PreparedLookup` retains their
+`ParsedMatrix` topology, which shares the key buffer and records the physical
+columns and zero-key positions (`storage/phonetic_key_matrix.cpp:52-78`).
+`pinyin_main` prints this view and lookup consumes it. The dump emits separator
+and terminal zero keys in place; it allocates no second matrix. The separate
+matrix-test mode still uses `physical_matrix` for its search-index trace.
+
+For n byte columns and k expanded keys, with the fixed fuzzy-alternative
+bound, construction and the dump take O(n + k) time. The shared keys take
+O(k) space and the topology takes O(n) offsets and flags. The prior dump
+built another O(n + k) matrix and repeated key expansion. Lookup already
+built this topology; it now reuses the prepared one. Existing REPL lookup
+transcripts cover the dump, including separators and embedded NUL. The runtime
+`embedded_nul_lookup_keeps_the_original_terminal_column` test covers the
+terminal column used by decoding. No output changes.
+
 ### Full-pinyin distance rule
 
 Among steps with equal parsed length and equal key count, the pin's DP
@@ -1203,13 +1221,3 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   (`lookup/phonetic_lookup.h:553,601-612`). Rust steps only a ranged token
   (`oxpinyin-engine/src/nbest.rs:890-894`). It needs an item whose readings the pinyin table does not
   index. Step the constraint token whether or not it is ranged.
-
-### Removal candidates
-
-These source-derived candidates follow the
-[internal implementation and performance rule](../source-policy.md#internal-implementation-and-performance).
-
-- **REPL lookup matrices.** `pinyin_main` builds a physical matrix and a scan
-  matrix from one parse in O(n·f) each (`crates/oxpinyin-repl/src/lookup.rs:122`,
-  `oxpinyin-engine/src/session/tool.rs:110-112`). Keep one, unless the scan
-  matrix cannot carry the separator zero keys for the dump.
