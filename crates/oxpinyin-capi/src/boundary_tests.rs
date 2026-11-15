@@ -2620,6 +2620,57 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     close(context, instance);
 }
 
+/// Every `search_bigram2` call loads the predecessor's system gram through
+/// the attached handle, `sentence_start` included, and follows that read's
+/// result (`phonetic_lookup.h:588-599`, `ngram_tkrzwdb.cpp:111-114` and its
+/// BDB and KC peers at 074a2219; the sentence-start ruling of the
+/// compatibility policy). Library 1 holds 甲 (ba1) at 1, 乙 (da1) at 1000
+/// and 丙丁 (ba1 da1) at 1; the `sentence_start` gram gives 甲 and 丙丁 half
+/// each. The step at 0 loads the gram for the span of 甲 and again for the
+/// span of 丙丁. With both reads good, 丙丁 takes its bigram and is the
+/// sentence. When the second read fails, 丙丁 has its unigram alone and
+/// 甲乙 is the sentence.
+#[test]
+fn a_later_span_reads_the_sentence_start_gram_again() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_later_span_reads_the_sentence_start_gram_again",
+        |user| {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = crate::test_support::items_system(
+                &system_dir(),
+                scratch.path(),
+                &[
+                    (&[0x7532], &[0x1081], 1),
+                    (&[0x4e59], &[0x1084], 1000),
+                    (&[0x4e19, 0x4e01], &[0x1081, 0x1084], 1),
+                ],
+                2000,
+            );
+            let sentence_start = 1_u32.to_le_bytes();
+            craft_hash(
+                &system.join("bigram.db"),
+                &[(
+                    sentence_start.to_vec(),
+                    gram_bytes(1000, &[(0x0100_0001, 500), (0x0100_0003, 500)]),
+                )],
+            );
+            let context = init_at(&system, user);
+            assert!(!context.is_null());
+            let instance = alloc(context);
+            assert!(pinyin_set_options(context, 1 << 5));
+            assert_eq!(parse(instance, "ba1da1"), 6);
+            assert!(pinyin_guess_sentence(instance));
+            assert_eq!(sentence_out(instance, 0), (true, Some("丙丁".to_owned())));
+            // The next guess reads the gram once for 甲's span; the read
+            // for 丙丁's span fails.
+            oxpinyin_store::read_faults::fail_point_read_of(&sentence_start, 1);
+            assert!(pinyin_guess_sentence(instance));
+            assert_eq!(sentence_out(instance, 0), (true, Some("甲乙".to_owned())));
+            close(context, instance);
+        },
+    );
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

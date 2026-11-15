@@ -1126,20 +1126,20 @@ impl MergedGram {
     }
 }
 
-/// One predecessor's lazily loaded row, owned by a single n-best step.
-/// Drop it before advancing the step; training and mask changes must be
-/// observed by the next step or guess. A loaded miss is reused too.
+/// One predecessor's row for one span load: the pin's
+/// `m_merged_single_gram` between one `search_bigram2` load and the next
+/// (`phonetic_lookup.h:588-599`, `phrase_lookup.cpp:268-276` at 074a2219).
+/// It is never kept for another span, step or guess. A loaded miss is
+/// reused within the load too.
 #[derive(Default)]
 pub struct NbestStepRow {
-    loaded: Option<MergedGram>,
-    // The generation tag adds one word per cached row. None means unloaded;
-    // a loaded missing gram still has a nonzero generation tag.
-    generation: Option<core::num::NonZeroU64>,
+    /// `None` until the load; a loaded miss is `Some(None)`.
+    loaded: Option<Option<MergedGram>>,
 }
 
 impl NbestStepRow {
     /// Loads once on success, including a missing row. Errors are propagated
-    /// without turning corruption into a cached miss.
+    /// without turning corruption into a loaded miss.
     ///
     /// # Errors
     /// Returns the loader's error unchanged.
@@ -1147,32 +1147,10 @@ impl NbestStepRow {
         &mut self,
         load: impl FnOnce() -> Result<Option<MergedGram>, E>,
     ) -> Result<Option<&MergedGram>, E> {
-        self.get_or_try_init_in_generation(0, load)
-    }
-
-    /// Loads once per user-store generation, including a missing row.
-    ///
-    /// # Errors
-    /// Returns the loader's error unchanged, without caching it.
-    pub fn get_or_try_init_in_generation<E>(
-        &mut self,
-        generation: u64,
-        load: impl FnOnce() -> Result<Option<MergedGram>, E>,
-    ) -> Result<Option<&MergedGram>, E> {
-        let tag = core::num::NonZeroU64::new(generation.wrapping_add(1));
-        // At u64::MAX, do not cache: zero remains the unloaded tag and
-        // cannot be confused with a loaded miss even when the counter wraps.
-        if tag.is_none() || self.generation != tag {
-            self.loaded = load()?;
-            self.generation = tag;
+        if self.loaded.is_none() {
+            self.loaded = Some(load()?);
         }
-        Ok(self.loaded.as_ref())
-    }
-
-    /// The merged row just loaded.
-    #[must_use]
-    pub fn cached_merged(&self) -> Option<&MergedGram> {
-        self.loaded.as_ref()
+        Ok(self.loaded.as_ref().and_then(Option::as_ref))
     }
 }
 
@@ -1342,11 +1320,6 @@ pub trait LanguageModel {
     ) -> Result<NbestStepCosts, Self::Error> {
         self.nbest_step_costs_in_row(prev, token, row)
     }
-
-    /// Starts a phonetic span's predecessor load. Ordinary stores may
-    /// reuse a row across spans; a retained failed native handle must be
-    /// called again for each span (phonetic_lookup.h:588-599 at 074a2219).
-    fn begin_successor_span(&self, _row: &mut NbestStepRow) {}
 
     /// The merged row of one n-best predecessor, owned by this step.
     /// [`NbestSuccessors::Miss`] is a loaded miss of both grams; `None`

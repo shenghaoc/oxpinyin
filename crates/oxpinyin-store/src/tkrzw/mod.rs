@@ -820,6 +820,10 @@ impl crate::RawReadStore for TkrzwStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.read_only {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.get(key, value)
     }
 
