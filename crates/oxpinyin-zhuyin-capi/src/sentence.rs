@@ -417,11 +417,11 @@ fn guess_candidates_result(
     offset: usize,
     before_cursor: bool,
 ) -> Result<bool, CandidateGuessRefusal> {
-    // Both candidate exports free their rows before the empty-matrix
-    // refusal, leaving sentence results intact (074a2219,
-    // zhuyin.cpp:1468-1471,1548-1551).
+    // Both candidate exports free their rows before any check, leaving
+    // sentence results intact (074a2219, zhuyin.cpp:1468-1471,1548-1551),
+    // so every refusal below leaves an empty list.
+    inst.state.candidates.clear();
     if !matrix_has_keys(&inst.read()) {
-        inst.state.candidates.clear();
         return Ok(false);
     }
     if inst.core.session.set_options(inst.core.options()).is_err() {
@@ -430,15 +430,7 @@ fn guess_candidates_result(
     if !inst.core.session.is_composing() {
         return Ok(false);
     }
-    let offset = validated_lookup_offset(&inst.read(), offset);
-    let normalized = match offset {
-        Ok(normalized) => normalized,
-        Err(refusal) => {
-            inst.state.candidates.clear();
-            return Err(refusal);
-        }
-    };
-    inst.state.candidates.clear();
+    let normalized = validated_lookup_offset(&inst.read(), offset)?;
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's
     // `search_matrix` walk over `(start, offset)`); the after-cursor

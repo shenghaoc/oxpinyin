@@ -427,16 +427,17 @@ pub extern "C" fn pinyin_guess_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
+    // The pin frees the candidates before any check (`pinyin.cpp:2193`),
+    // so every `false` below leaves an empty list.
+    inst.state.candidates.clear();
     // The keyless check reads the keys of the matrix the last parse
     // filled; the borrow ends before the option and sort-word mutations
     // below. `set_options` stores the word and does not re-parse.
     //
-    // The pin frees the candidates, then answers `false` for a matrix
-    // without a step before it stores the sort word
-    // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix. An
-    // unreadable key list is left to the session.
+    // The pin answers `false` for a matrix without a step before it
+    // stores the sort word (`pinyin.cpp:2195-2198`); a keyless parse is
+    // such a matrix. An unreadable key list is left to the session.
     if matches!(inst.core.mode_has_keys(), Ok(false)) {
-        inst.state.candidates.clear();
         return false;
     }
     let options = inst.core.options();
@@ -462,10 +463,8 @@ pub extern "C" fn pinyin_guess_candidates(
         return false;
     }
     let Some(normalized) = validated_lookup_offset(&inst.read(), offset) else {
-        inst.state.candidates.clear();
         return false;
     };
-    inst.state.candidates.clear();
     // Search on every guess, including the composition offset: library
     // visibility can change without a parse (074a2219 pinyin.cpp:2193,
     // :2224-2262). The session's cached list predates such a change.

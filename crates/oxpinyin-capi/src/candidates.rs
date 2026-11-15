@@ -361,7 +361,9 @@ pub extern "C" fn pinyin_remove_user_candidate(
 ///   pin's `check_result` asserts and the process aborts. The answer is
 ///   this instance's `matrix.size() - 1`, the reserved tail slot one past
 ///   the last real matrix column, in the active parse mode's coordinates
-///   (`CapiInstance::parsed_len`; row 9).
+///   (row 9): `parsed_len` after a parse that placed a key, and -1 after
+///   one that placed none, which leaves the matrix empty
+///   (`phonetic_key_matrix.cpp:34-38`).
 /// - `LONGER_CANDIDATE` (`:2521-2530`): only the token's unigram trains,
 ///   by `initial_seed * unigram_factor = 69 * 7 = 483`. The answer is 0
 ///   when the library total would overflow and 1 otherwise.
@@ -421,7 +423,10 @@ pub extern "C" fn pinyin_choose_candidate(
         if inst.core.select_nbest_rank(row.nbest_index).is_err() {
             return -1;
         }
-        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+        // An unreadable key list is an engine failure.
+        return inst.core.pin_matrix_columns().map_or(-1, |columns| {
+            c_int::try_from(columns).map_or(c_int::MAX, |columns| columns - 1)
+        });
     }
     if row.candidate_type == lookup_candidate_type_t::LONGER_CANDIDATE {
         let Some(token) = row.token else {

@@ -723,6 +723,35 @@ fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
     close(context, instance);
 }
 
+/// A `BEST_MATCH` row chosen after a reparse that places no key answers the
+/// empty matrix's `size() - 1`, -1 (`zhuyin.cpp:1643-1644`,
+/// `phonetic_key_matrix.cpp:34-38` at 074a2219), not the consumed length.
+#[test]
+fn a_best_match_choose_after_a_keyless_reparse_answers_minus_one() {
+    let (context, _) = open();
+    let instance = chewing(context, "su3cl3");
+    assert!(zhuyin_guess_sentence(instance));
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    let mut row: *mut LookupCandidate = ptr::null_mut();
+    assert!(zhuyin_get_candidate(instance, 0, &raw mut row));
+    let mut kind = crate::types::lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR;
+    assert!(crate::candidates::zhuyin_get_candidate_type(
+        instance,
+        row,
+        &raw mut kind
+    ));
+    assert_eq!(
+        kind,
+        crate::types::lookup_candidate_type_t::BEST_MATCH_CANDIDATE
+    );
+    assert_eq!(zhuyin_parse_more_chewings(instance, cstr("").as_ptr()), 0);
+    assert_eq!(
+        crate::candidates::zhuyin_choose_candidate(instance, 0, row),
+        -1
+    );
+    close(context, instance);
+}
+
 /// `'ni'hao` under the separator options, guessed: column 3 holds the zero
 /// key that `_check_offset` asserts on (`zhuyin.cpp:1453`).
 fn separated(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {

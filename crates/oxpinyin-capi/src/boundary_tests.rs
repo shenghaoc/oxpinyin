@@ -2311,6 +2311,25 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
     pinyin_fini(context);
 }
 
+/// An NBEST row chosen after a reparse that places no key answers the
+/// empty matrix's `size() - 1`, -1 (`pinyin.cpp:2514-2520`,
+/// `phonetic_key_matrix.cpp:34-38` at 074a2219), not the consumed length.
+#[test]
+fn an_nbest_choose_after_a_keyless_reparse_answers_minus_one() {
+    let user = TempUserDir::new("keyless-nbest-choose");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(parse(instance, "nihao"), 5);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    let row = row_of(instance, NBEST);
+    assert_eq!(parse(instance, "'''"), 3);
+    assert_eq!(
+        crate::candidates::pinyin_choose_candidate(instance, 0, row),
+        -1
+    );
+    close(context, instance);
+}
+
 /// A private system whose library 1 holds 甲?乙 (the middle word `word`)
 /// at 100, 丙 at 1000, 戌 at 10 and 甲?乙丙; its bigram ranks 戌 after
 /// 甲?乙.
