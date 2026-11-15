@@ -83,7 +83,7 @@ A check that is skipped because it does not apply to the change is not a failure
 The checks that CI does not cover run locally: the differentials of the issue, revert-and-check, and any measurement that a concrete unresolved question requires for a decision ([controlling rule](../source-policy.md#controlling-rule)).
 Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
 For each PR that can change a shipping library, the `shipping-sizes` CI job reports the base and PR sizes in its job summary.
-The PR body carries a copy of the table and reports any increase over base.
+The PR body states and justifies any increase over base; it does not copy the table.
 Release libraries are not built locally to get sizes.
 [`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table, to debug a failure of the job.
 All commands stay documented and runnable without CI.

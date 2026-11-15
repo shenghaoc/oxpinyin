@@ -42,9 +42,10 @@ When a measurement is required, report the question, the arms and inputs
 relevant to it, the decision rule and the result, with the command needed to
 reproduce the comparison. One command may cover the whole table; include
 inputs/build/environment details that matter.
-For changes affecting shipping libraries, copy the base and PR sizes from the
-`shipping-sizes` job summary and note increases over base (Constitution 2). Do not
-build release libraries locally for them. Docs-only work needs no size build.
+For changes affecting shipping libraries, the `shipping-sizes` job summary
+records the base and PR sizes. State and justify any increase over base
+(Constitution 2). Do not build release libraries locally for them.
+Docs-only work needs no size build.
 Justify each time/space trade-off (Source policy).
 See docs/packaging.md#function-layout for the function-layout ruling.
 Write "None" when nothing applies.
