@@ -422,9 +422,9 @@ negative controls). The `GArray` lifecycle is held by the
 `glib-924-array-lifecycle-*` cases (a seeded clear callback, 257 appended
 caller elements, shrink, a refusing lookup, clearing and zero termination,
 zero-fill growth, `g_array_free(FALSE)` and `g_free`), by `oxpinyin-capi`
-`boundary_tests::lookup_tokens_resets_the_callers_array` and by
+`boundary_tests::token_getters::lookup_tokens_resets_the_callers_array` and by
 `oxpinyin-zhuyin-capi`
-`boundary_tests::caller_arrays_keep_their_metadata_and_clear_through_the_callback`.
+`boundary_tests::token_getters::caller_arrays_keep_their_metadata_and_clear_through_the_callback`.
 
 The version scripts `src/libpinyin.ver` and `src/libzhuyin.ver` are the ABI. At the pin,
 the macOS export list `src/libpinyin.exp` omits five exports that `libpinyin.ver` has:
@@ -800,7 +800,7 @@ values, so every case is backend-independent):
 | --- | --- | --- |
 | Version `%d`: LP64 `strtol` saturation, then the low 32 bits of the `int` store: `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, `-9223372036854775808` is `0` | contract | `oxpinyin-capi` `pinned_data_tests::user_conf_versions_past_int_take_the_scanners_int` |
 | Open counter `%d`: the same conversion; a missing directive reads 0; a counter above `OPEN_COUNTER_LIMIT` is non-conforming and `get_open_counter` turns it into 0; the load raises `get_open_counter(existing) + 1` and fini lowers it | contract | `oxpinyin-data` `user_files::tests::marker_fields_follow_the_scanner` |
-| `database format:%255s`: a known C string selects the backend; an unknown token aborts (row 44); EOF before the conversion leaves `UNKNOWN_FORMAT`; a missing literal or matching failure reads an unwritten `str` (class (b)); a NUL ends the C string, as the pin's `strcmp` does (`:122-131,350-354`) | contract; abort; class (b) | `marker_fields_follow_the_scanner`; `oxpinyin-capi` `boundary_tests::init_aborts_on_an_unknown_user_conf_database_format` |
+| `database format:%255s`: a known C string selects the backend; an unknown token aborts (row 44); EOF before the conversion leaves `UNKNOWN_FORMAT`; a missing literal or matching failure reads an unwritten `str` (class (b)); a NUL ends the C string, as the pin's `strcmp` does (`:122-131,350-354`) | contract; abort; class (b) | `marker_fields_follow_the_scanner`; `oxpinyin-capi` `boundary_tests::init_and_save::init_aborts_on_an_unknown_user_conf_database_format` |
 | Missing or malformed version directive: `load` returns `false` with the reset defaults (`0/0/UNKNOWN/0`); `check_format` sees a non-conforming marker and wipes the profile | contract | `user_conf_versions_past_int_take_the_scanners_int` |
 | Conformance: a conforming marker (including a wrapped version `7 + 2^32`, or a counter wrapping to 0) keeps every user file and learned count; a non-conforming marker follows `_clean_user_files`, and `write_marker` writes the system versions with the raised or lowered counter | contract | `user_conf_versions_past_int_take_the_scanners_int` (trained and imported unigrams after reopen) |
 | Writer: `UserTableInfo::save` writes the versions and counter signed with `%d` and the database format canonically | contract | `user-conf-920-version-overflow-*`, `user-conf-920-counter-*`, `an_out_of_int_version_is_written_signed` |

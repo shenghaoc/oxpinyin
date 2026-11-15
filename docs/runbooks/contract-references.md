@@ -5,7 +5,7 @@ This page describes the frozen expectations of the C-boundary tests and the loca
 The C-boundary tests are ordinary Rust tests in the `src` test modules of
 `crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`:
 
-- `boundary_tests.rs` runs on the w3 mini fixture;
+- the `boundary_tests/` modules run on the w3 mini fixture;
 - `pinned_data_tests.rs` runs on the pinned package.
 
 Their expected values are the frozen observations of the pin, inline in each test. The tests never run the pin.
