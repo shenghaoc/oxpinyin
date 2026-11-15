@@ -530,6 +530,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | A system library that is a directory, from 8 bytes of reported size (row 96) | `include/memory_chunk.h:493`, through `pinyin.cpp:255`, `:289`, `:955`, `:1264`; `zhuyin.cpp:199`, `:588`, `:799` | `{init,save,mask_out,reload}_aborts_on_a_directory_library`, `addon_load_aborts_on_a_directory_library` |
 | A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `phrase::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
 | A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `boundary_tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
+| A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `boundary_tests::a_phrase_table_body_read_failure_after_the_check_aborts` |
 
 ## Open
 
