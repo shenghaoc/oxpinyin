@@ -1,58 +1,24 @@
-//! `PinyinDirectParser2::parse` with `USE_TONE` (`src/storage/pinyin_parser2.cpp:623-715`
-//! at libpinyin 074a2219), the parser `ChewingLargeTable2::load_text` and
-//! `FacadePhraseIndex::load_text` use for a `pinyin` table.
-//!
-//! A spelling is split at `'` and space; consecutive separators are
-//! skipped. For one syllable, a trailing `1`..`5` is the tone digit and the
-//! rest resolves through the pinyin index with `USE_TONE` alone — an
-//! incomplete spelling (`PINYIN_INCOMPLETE`) and a correction spelling
-//! (`PINYIN_CORRECT_*`, `PINYIN_AMB_*`) need option bits the utilities do
-//! not pass, so those are refused. A syllable that does not resolve stops
-//! the parse; the keys parsed so far stand, exactly as the pin's
-//! `parsed_len` return leaves them.
+//! The direct parsers `ChewingLargeTable2::load_text` and
+//! `FacadePhraseIndex::load_text` use for a table's spellings
+//! (`src/storage/chewing_large_table2.cpp:129-141`,
+//! `src/storage/phrase_index.cpp:561-575` at libpinyin 074a2219), and the
+//! packed form of their keys.
 
 use std::ffi::CStr;
 
 use oxpinyin_core::ChewingKey;
 
-/// One syllable of the direct parser.
-fn parse_one_key(syllable: &[u8]) -> Option<ChewingKey> {
-    // An empty syllable is the pin's `input[parsed_len - 1]` read before
-    // the allocated string (class (b)); oxpinyin refuses it, which leaves
-    // the key count short exactly as the failing parse does.
-    let mut parsed_len = syllable.len();
-    if parsed_len == 0 {
-        return None;
-    }
-    let mut tone = 0_u8;
-    let last = syllable[parsed_len - 1];
-    if last > b'0' && last <= b'5' {
-        tone = last - b'0';
-        parsed_len -= 1;
-    }
-    let text = std::str::from_utf8(&syllable[..parsed_len]).ok()?;
-    let key = ChewingKey::from_pinyin(text)?;
-    // `check_pinyin_options`: an initial-only row needs
-    // `PINYIN_INCOMPLETE`, which the storage utilities never pass. The
-    // content table stores those rows as initial + zero middle/final.
-    if key.middle == 0 && key.final_ == 0 {
-        return None;
-    }
-    Some(key.with_tone(tone))
-}
-
-/// `PinyinDirectParser2::parse`: the keys it appended before the first
-/// failing syllable.
+/// `PinyinDirectParser2::parse` with `USE_TONE`
+/// (`src/storage/pinyin_parser2.cpp:623-715`): the keys it appended before
+/// the first failing syllable. Each syllable resolves through
+/// `pinyin_index` (`:618-621,655`), not the wider `content_table`.
 #[must_use]
 pub(crate) fn parse(pinyin: &CStr) -> Vec<ChewingKey> {
-    let bytes = pinyin.to_bytes();
-    let mut keys = Vec::new();
-    oxpinyin_core::direct::parse(
-        bytes,
-        |span| parse_one_key(&bytes[span]),
-        |key, _| keys.push(key),
-    );
-    keys
+    oxpinyin_core::tool::parse_direct(pinyin.to_bytes(), oxpinyin_core::USE_TONE, false)
+        .keys
+        .into_iter()
+        .map(|key| key.key)
+        .collect()
 }
 
 /// `ZhuyinDirectParser2::parse` with `USE_TONE | FORCE_TONE`
@@ -110,5 +76,7 @@ mod tests {
         assert_eq!(spellings("n"), Vec::<String>::new());
         // A correction spelling needs its option bit.
         assert_eq!(spellings("bagn"), Vec::<String>::new());
+        // A content-table spelling with no pinyin-index row is refused.
+        assert_eq!(spellings("ni'den4"), ["ni"]);
     }
 }

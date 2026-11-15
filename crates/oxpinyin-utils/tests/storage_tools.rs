@@ -226,6 +226,47 @@ mod frozen {
             }
         }
 
+        // `den` has a `content_table` row but no `pinyin_index` row
+        // (074a2219 `pinyin_parser_table.h:9-672,3976-4418`), so the
+        // direct parser refuses it (`pinyin_parser2.cpp:618-621,655`):
+        // both loaders skip the line with their diagnostics
+        // (`chewing_large_table2.cpp:142-148`, `phrase_index.cpp:577-582`)
+        // and the item keeps no reading.
+        #[test]
+        fn a_spelling_outside_the_pinyin_index_is_skipped_by_both_loaders() {
+            let directory = TempDir::new().expect("temporary model");
+            directory
+                .child("table.conf")
+                .write_str(&format!(
+                    "binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+                 source table format:pinyin\ndatabase format:{}\n\
+                 default RESERVED NULL NULL NULL NOT_USED\n\
+                 default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n",
+                    oxpinyin_store::DEFAULT_STORE_DB_FORMAT,
+                ))
+                .expect("configuration");
+            directory
+                .child("source.table")
+                .write_str("den4\t扥\t16777217\t1\n")
+                .expect("one source row");
+            cargo_bin_cmd!("gen_binary_files")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .assert()
+                .success()
+                .stdout("")
+                .stderr(
+                    "ChewingLargeTable2::load_text:den4\t扥\t16777217\t1\n\
+                     FacadePhraseIndex::load_text:den4\t扥\n",
+                );
+            let library = oxpinyin_data::phrase_library::PhraseLibrary::open(
+                &directory.path().join("gb_char.bin"),
+            )
+            .expect("generated phrase library");
+            let item = library.item(16777217).expect("source token");
+            assert_eq!(item.n_pronunciations(), 0);
+        }
+
         #[rstest]
         // gbf-bad-option: utils/storage/gen_binary_files.cpp at 074a2219: 26-34, 36-109,
         // 111-152; utils/utils_helper.h: 73-145; src/storage/table_text_parser.h: 34-121.
