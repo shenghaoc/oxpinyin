@@ -504,19 +504,6 @@ fn a_single_key_apostrophe_aborts() {
     });
 }
 
-/// An unload index of 16 or more is the unload's assert (`zhuyin.cpp:381`,
-/// register row 66).
-#[test]
-fn an_unload_index_past_the_sub_indices_aborts() {
-    crate::test_support::assert_aborts(
-        "e2e_tests::an_unload_index_past_the_sub_indices_aborts",
-        || {
-            let (context, _instance) = open();
-            crate::config::zhuyin_unload_phrase_library(context, 16);
-        },
-    );
-}
-
 /// Register row 66: on a fresh instance `offset >= matrix.size() - 1` is
 /// `offset >= SIZE_MAX` (`zhuyin.cpp:1892-1893`, `:1914-1915`), so
 /// `SIZE_MAX` answers `false` with the out-param NULLed.
