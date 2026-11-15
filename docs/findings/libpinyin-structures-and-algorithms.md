@@ -657,6 +657,48 @@ follows these types and conversion points in `f32` and `f64` (`expand_one`,
 Register row 11 classes std-maths precision differences as (a).
 Candidate and sentence rows carry no separate integer score.
 
+**Equivalence: failed** on the step's pronunciation input. The arithmetic
+is the pin's: `unigram_lambda` (`oxpinyin-data/src/lm/mod.rs:567`), the f64
+`elem` quotient (`:566`), the f32 bigram quotient and product (`:575-580`),
+the f64 product with the possibility and the widen, add and round
+(`oxpinyin-engine/src/nbest.rs:1566-1574`), the epsilon gates, the two-slot
+node store and the `<1>` admission (`:279-299`). Both enumerate the same
+leaves in the same order (`sum_paths`, `walk`, `nbest.rs:1007-1134`).
+Selection by S, batch position and the S3 sort are the
+[S1 and S2](compatibility-policy.md#s1-and-s2-one-ordered-adjusted-score)
+and [S3](compatibility-policy.md#s3-stable-descending-possibility) rulings.
+The possibility each step multiplies in is not the pin's:
+
+- the step prices with tone-less query keys
+  ([defect](#step-pricing-drops-query-tones));
+- a `USER_FILE` item is priced at 1
+  ([defect](#user-file-items-priced-at-one));
+- a repeated phrase-table token and an unranged `CONSTRAINT_ONESTEP` token
+  are stepped differently ([seed defect](#repeated-token-seed-nodes),
+  [ONESTEP defect](#unranged-onestep-token)).
+
+A zero stored tone compares equal to any query tone
+(`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
+shipped items keep the pin's possibility in a fresh session. Neither
+pricing defect causes row 11's residuals: those are measured on fresh
+sessions over the pinned data, which hold no `USER_FILE` item and no
+toned reading.
+
+The `<1>` store's length-0 overwrite (`lookup/phonetic_lookup_heap.h:111`)
+needs a priced length-0 item, which only an apostrophe-only span gives the
+pin; `sum_paths` returns 0 for empty keys (`nbest.rs:1019`) and `walk`
+ranges none (`:1089`). The store with `nstore = 1` is therefore equivalent
+on every reachable input.
+
+Cost: per span the pin recomputes `compute_pronunciation_possibility` for
+each of up to 32 predecessors and each yielded token, O(B·K·P·R·L) for B
+predecessors, K tokens, P paths, R readings and L keys; its heap selection
+is O(n + k log n) and its space O(steps × tokens × nstore). Rust caches
+the price per slot, O(S·P·C) for S slots and per-leaf cost C, selects in
+O(m + k log k), and adds O(P·L) span paths per span and a text map of
+O(tokens·L) key copies. The repeated per-slot walk is a
+[removal candidate](#removal-candidates).
+
 ### Constraint revalidation
 
 The pin revalidates a constraint without a table search.
@@ -687,6 +729,35 @@ increase path multiplicity and therefore work and pronunciation writes
 O(k) work for k original column entries and a constant number of swaps; the
 removed collapse took O(k²). The split passes and dictionary-call costs are
 unchanged. Net wall time, peak RSS and allocation effects are unknown.
+
+**Equivalence: argued**, given that the parse's columns are the pin's
+`fill_matrix` columns. `ConstraintSpelling::spells` (`nbest.rs:1213-1319`)
+and `ConstraintStore::validate` (`oxpinyin-engine/src/session/constraint.rs:220-262`)
+follow `validate_constraint` (`lookup/phonetic_lookup.cpp:120-169`):
+
+- the item is read before the overrun test and the last successful read
+  is carried (`:141,150`; `nbest.rs:1270-1276`); before any read the pin's
+  zero item gives 0 and Rust answers false (`:1289-1291`);
+- `end >= len` and an empty start or end column clear
+  (`phonetic_key_matrix.cpp:593-596`; `nbest.rs:1279-1284`);
+- `total` and `matched` wrap as u32, a zero total gives 0, and the f32
+  quotient is the pin's (`phrase_index.h:136-164`; `nbest.rs:1298-1314`);
+- each frame adds its children in column order in f32
+  (`phonetic_key_matrix.cpp:534-585`; `nbest.rs:1021-1034`);
+- `>= f32::EPSILON` keeps exactly what the pin's `< FLT_EPSILON` clears
+  (`phonetic_lookup.cpp:162-163`);
+- query tones are compared (`nbest.rs:1028`) and the incomplete rule is
+  symmetric (`pinyin_phrase3.h:80-86`; `nbest.rs:1327-1336`);
+- a zero-length run is kept (`phonetic_lookup.cpp:88-118`;
+  `constraint.rs:253-258`).
+
+A phrase forced over its abbreviation, one initial-only key per syllable
+(中国 over `zhg`), takes the incomplete disjunct on both sides with no
+expansion and no cap (`pinyin_phrase3.h:81-83`; `nbest.rs:1332`); the case
+is held by `oxpinyin-engine/src/session/tests.rs:4054-4090`. A read never
+fails: `UserStore::phrase` always returns `Ok`
+(`oxpinyin-user/src/store.rs:1800-1806`), and so does the system source
+(`oxpinyin-data/src/dict.rs:989-994`).
 
 ### Persisted empty items through arena reconstruction
 
@@ -723,19 +794,54 @@ an offset lookup is O(1). For S offset words, the dense array occupies O(S)
 space and a scan takes O(S) time. Saving validated views copies B bytes
 directly, as the pin does, with no additional per-item allocation.
 
+**Equivalence: argued.** `UserLibrary::store`
+(`oxpinyin-user/src/user_library.rs:564-613`) writes the pin's header
+offsets (`index_two = 18 + P`, `index_three = 19 + P + C`), eight zero
+bytes and then contiguous bodies from offset 8, as `add_phrase_item` does
+(`phrase_index.cpp:208-217`), and the wrapping total. Its slot count,
+`token_end` (`:196-202`), is the pin's highest copied token plus one,
+because every arena slot holds a validated view. The two could part only
+past a wrapped `table_offset_t`, at 4 GiB of content; row 112 refuses a
+copy from 2^31 bytes. Store makes a length pass and a copy pass, O(S + B)
+time and an exact O(S + B) allocation.
+
 ### Zhuyin index representation
 
 The pinned global `zhuyin_index` uses spelling pointers, flags and canonical
 content IDs (`src/storage/pinyin_parser_table.h:1492`).
 `search_chewing_index` uses strcmp/equal_range, gates flags and reads the key
-from content (`src/storage/zhuyin_parser2.cpp:44-101`). oxpinyin keeps its
-original representation of that sorted 1493-row inventory.
+from content (`src/storage/zhuyin_parser2.cpp:44-101`), asserting at most
+one match (`:71-101`). `hsu_zhuyin_index` (`pinyin_parser_table.h:2988`,
+500 rows) and `eten26_zhuyin_index` (`:3491`, 482 rows) have the same shape.
 
-Rejected alternative: immutable UTF-8 pool spans instead of three string
-slices per row, with the same `partition_point` search and first-match
-rendering. It reduces file size but makes the Simple and CP26 lookups slower.
-File size cannot offset a runtime regression; it is governed separately by
-Constitution §2.
+oxpinyin holds each table as a `StringTable<3>` of spans into one UTF-8
+blob plus a `u32` flag array (`oxpinyin-core/src/zhuyin_map.rs:17-35,73-108`;
+`oxpinyin-core/src/static_strings.rs:29-81`). `search_zhuyin_index`
+(`oxpinyin-core/src/scheme.rs:768-791`) runs `partition_point` over the bytes,
+checks equality, gates `ZHUYIN_CORRECT_ALL | PINYIN_AMB_ALL`, and builds the
+key from the row's pinyin text (`SyllableKey::from_canonical_text`,
+`vocab.rs:88-103`).
+
+**Equivalence: argued.** Every generated row equals the pin's row, joined
+through `content_table` (`pinyin_parser_table.h:3976`), in spelling,
+canonical zhuyin, pinyin and flag bits. Each table is
+strictly sorted in byte order with no repeated spelling, so `equal_range`
+and `partition_point` select the same single row; `strcmp` order is byte
+order for strings without NUL. The flag bits Rust drops gate nothing. The
+forced bits apply only in the batch parse, as at the pin
+(`zhuyin_parser2.cpp:221,272,413,474-486`), and the caller's
+`ZHUYIN_CORRECT_ALL` is stripped at every entry
+(`pinyin.cpp:1573,1589,1621`; `oxpinyin-facade/src/parse.rs:232,372`).
+Each `m_pinyin_str` is unique among the 441 content rows, so the key is the
+content key, and the canonical column is the `m_zhuyin_str` that
+`get_zhuyin_string` prints (`chewing_key.cpp:74-89`).
+
+Both search in O(L log n) byte comparisons. The pin then reads the key in
+O(1); Rust takes one to four perfect-hash lookups, repeats the equality test
+(`scheme.rs:776`, `static_strings.rs:80`) and allocates a `String` for the
+canonical spelling (`scheme.rs:1408,1476,1602`). Both store about 16 bytes
+a row plus the strings; Rust's blob also holds the canonical and pinyin
+columns. These costs are [removal candidates](#removal-candidates).
 
 ### Table-file scanning
 
@@ -749,6 +855,18 @@ retain their formats and ordering. Punctuation remains O(words) time/space;
 chunk payload retries preserve O(bytes) time and O(1) additional space, with
 the existing header/sync/rename contract.
 
+**Equivalence: argued.** `oxpinyin-input/src/native.rs:349-441` makes the
+same libc `fscanf` calls with the same format strings, `feof` (`:344-347`)
+and `atoi` (`:486-489`), so stream position, return counts, buffer
+contents and the dropped short last row are the pin's
+(`table_info.cpp:194-294,325-375`). `TableConf::load`
+(`oxpinyin-data/src/table_info.rs:364-454`) checks each row in the pin's
+order with the same `guint8` cut, and a later row replaces an earlier one.
+The locale is `"C"` after every path (row 39). The abort sites are rows 44
+and 79; a token for the source format followed by an unmatched
+`database format:` line aborts at `:132` on both sides
+(`table_info.rs:401-405`). Unwritten buffers are row 80 and row 44.
+
 ### Point-search pronunciation records
 
 Candidate guess calls table search
@@ -756,8 +874,10 @@ in `src/pinyin.cpp:2233-2253` and `src/zhuyin.cpp:1499-1510`. The BDB adapter
 borrows the returned row (`src/storage/chewing_large_table2_bdb.cpp:182-191`);
 `src/storage/chewing_large_table2.h:145-152` finds an equal range, then
 `:101-106` compares packed stored pronunciations and reads matching tokens.
-This work happens during guess, not init. For N records of L keys and M
-matches, the pin searches in O(L log N + ML), with output range storage.
+This work happens during guess, not init. For N records of L keys, the
+pin searches in O(L log N + NL), with output range storage: every record of
+a row compares equal to the row's index item, so `equal_range` spans the
+whole row and `convert` (`chewing_large_table2.h:91-133`) compares all N.
 
 Rust `ChewingTable::search` keeps its linear filter and the owned DBM row
 buffer, but `pinyin_index::item_views` validates the row and borrows its keys.
@@ -765,6 +885,20 @@ Only matching tokens are collected; `resolve_items` consumes those tokens.
 Worst-case time is O(NL) and temporary space O(B + M), for B row bytes. No
 key vector is allocated per record, and no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
+
+**Equivalence: failed** on a misaligned row
+([defect](#point-search-misaligned-row)). For a well-formed row the
+results are the pin's. Because `equal_range` spans the row, the pin's
+result is the row filtered in stored order, which is Rust's linear filter
+(`oxpinyin-data/src/chewing_table.rs:334-352`). Merged ranges are expanded
+again by `_append_items` (`pinyin.cpp:1769-1791`), and the stable library
+sort reproduces the library-major order
+(`oxpinyin-engine/src/session/mod.rs:340-425`). A token found twice gives
+identical rows that the pin's string dedup drops, as Rust's earlier
+first-occurrence dedup does. `SEARCH_OK` implies `SEARCH_CONTINUED`,
+because every present key sets it (`chewing_large_table2_bdb.cpp:187`), so
+the break at `pinyin.cpp:2255` is dead on both sides. A record with token 0
+lands in the unloaded library 0 on both sides (row 62).
 
 ### Narrow token getters
 
@@ -799,6 +933,20 @@ getter on a session item reads that one reading's packed words
 (`UserStore::nth_pronunciation_words`), O(L), as the pin's
 `get_nth_pronunciation` does.
 
+**Equivalence: failed** on crafted items, for two defects:
+
+- [a stored word at or above 0x80000000](#token-text-unconvertible-word);
+- [readings that run past the item's end](#token-getters-overrunning-readings).
+
+The rest is the pin's. `*num` and `*freq` are zeroed before the lookup,
+and the nth array is cleared first. Unknown or unloaded tokens answer
+false with the text outputs untouched. The high four bits are masked. The
+text keeps the stored length and cuts at the first zero. An out-of-range
+nth gives `phrase_length` zero keys (rows 51 and 70). A phrase longer than
+16 overruns the pin's 16-entry stack buffers (`pinyin.cpp:1633,2808`); row
+124 registers it. Two fallbacks always miss again and are
+[removal candidates](#removal-candidates).
+
 ### Table generators
 
 `utils/storage/gen_zhuyin_table.cpp:45-49,101-138` uses the same GLib
@@ -824,96 +972,83 @@ and renderer. BTreeMap uses the same phrase order; lookup is O(L log N),
 reading duplicate search O(R L), sorting O(N log N L), space O(N R L),
 as for the pin (L < 16, R readings per phrase, N distinct phrases).
 The boundary keeps native options, C++ streams, GLib text calls and C
-formatted writes in their source order. Undefined reads follow the two
-registered class (b) records; no crash or lost buffered output is emulated.
+formatted writes in their source order. Undefined behaviour follows the
+registered class (b) records: the invalid UTF-8 phrase, the missing zhuyin
+frequency, and rows 125-127. No crash or lost buffered output is emulated.
 
-### Memory-chunk test program
+`gen_pinyin_table` reads with `fscanf("%1023s %1023s %u")` and `feof`
+(`gen_pinyin_table.cpp:134-157`): a last row without a trailing newline is
+dropped. `TableInput` keeps the same persistent buffers and calls
+(`oxpinyin-input/src/tool.rs:777-984`). The full-pinyin parse runs with
+`PINYIN_CORRECT_ALL | USE_TONE` (`gen_pinyin_table.cpp:176-182`).
 
-`tests/include/test_memory_chunk.cpp:5-69` exercises the
-pin's own logical capacity algorithm (`src/include/memory_chunk.h:95-133`):
-borrowed storage copies to exactly size + growth; owned storage keeps its
-extent when sufficient, otherwise grows to max(2 * capacity, size + growth).
-New storage from the current size onward is zeroed. The tool-side Buffer
-uses safe bytes with independent logical size; Vec allocator capacity is
-never observed. Its fixed program prints capacities 4, 6, 12 and the
-source's integer rows. Save/load and optional map use the existing input
-boundary. The tool-diff runner compares all /tmp/test.bin bytes.
+**Equivalence: argued.** The scanner, `g_utf8_strlen`, the UCS-4
+conversion, the option parser and the `fprintf` formats are the pin's
+calls. The tree order of `to_ne_bytes` is `memcmp` order. `exact_compare2`
+(`oxpinyin-data/src/table_entries.rs:41-67`) is `pinyin_exact_compare2`
+field by field, and `sort_by` is stable. In the parse
+(`oxpinyin-core/src/graph.rs:250-300,452-517`), apostrophe propagation
+never competes with an edge, because `try_len` stops at the next
+separator. A value from an unreachable step never wins, because a
+reachable one has the longer parsed length. So `final_step`
+(`pinyin_parser2.cpp:346-380`) and `fewest_keys` select the same path:
+fewest keys, then lowest distance, then first found. All 662
+`pinyin_index` rows are lowercase ASCII, and each carries
+`PINYIN_INCOMPLETE` exactly when its key is initial-only. The zhuyin
+direct walk stops at the same segment as the pin (`direct.rs:9-31`): a pin
+segment matches an index row only when its bytes are valid UTF-8.
+`PhraseItem::cmp` allocates two vectors per comparison
+(`gen_pinyin_table.rs:89-95`), a [removal candidate](#removal-candidates).
 
-### Phrase-index and logger test programs
+### Upstream test programs
 
-`tests/storage/test_phrase_index.cpp:9-122` checks the synthetic
-item, shared pronunciation mutation, text imports, compact, and store/load.
-`test_phrase_index_logger.cpp:26-65` increments the whole local range,
-stores without compacting, diffs, reloads and merges. The shared importer
-keeps its existing generator behavior and exposes the test programs' phonetic
-choice and approved invalid-UTF-8 guard. The user crate's tools feature
-exposes the existing ReplayedLibrary arena, add/train/compact operations,
-diff_live_records and Merge, with raw offset/content serialization.
+The upstream test programs are off the parity path: they are not drop-in
+tools ([upstream test coverage](../testing/upstream-test-coverage.md#libpinyin-tests)).
+Commit f76b0d8f0 removed the ports that compared their output with the
+pin's and replaced them as follows:
 
-FacadePhraseIndex's cache takes a delta for every attempted range slot
-(`phrase_index.h:628-634`), even a hole or overflow refusal. Load subtracts
-the old local total unconditionally, adding the new total only if its layout
-is accepted (`phrase_index.cpp:237-248`);
-merge does the same around its record walk (`:291-296`). That cache is kept
-across both operations. The logger's ordinary sparse/overflow fixtures print
-the same cached total twice, while their stored totals and fields can differ.
+- `test_memory_chunk`, `test_phrase_index` and `test_phrase_index_logger`
+  are product tests that print nothing. Examples are
+  `framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map`
+  (`oxpinyin-input/src/chunk.rs:557-582`), `oxpinyin-user/src/replay.rs`,
+  `oxpinyin-utils/src/storage/libraries.rs` and
+  `oxpinyin-data/src/phrase_libraries.rs`.
+- `test_phrase_table`, `test_chewing_table`, `test_matrix`,
+  `test_pinyin_lookup` and `test_phrase_lookup` are modes of the
+  nonshipping `oxpinyin-repl` (`crates/oxpinyin-repl/src/tables.rs`,
+  `lookup.rs`). They take the data directory as an argument and run each
+  operation once, with no timing loop.
 
-The fixed 100000-call loop and the pin's basic f32 pronunciation ratios stay.
+Their frozen outputs are in `crates/oxpinyin-repl/tests/interactive.rs`.
+That file normalises only the pin's `Spent …` timing lines and the data
+path. `table_guards.rs` holds the row 115 and 116 refusals.
 
-### In-memory phrase and chewing table test programs
+The mode logic follows the pin's programs:
 
-`tests/storage/test_phrase_table.cpp:36-125` and
-`test_chewing_table.cpp:36-126` load text through
-`tests/tests_helper.h:51-83`, with both unconditional rewinds. The programs
-use the existing importers, a native in-memory DBM and the production row
-decoder. A present empty row is SEARCH_CONTINUED. Searches preserve stored
-item order, then emit libraries in slot order; contiguous matching tokens
-form ranges; a cursor starting at null_token is empty both before extending
-or flushing and at the final flush (`chewing_large_table2.h:90-132`). Range dumps use the native
-item pronunciations, including the literal backspace (`tests_helper.h:89-133`).
-The final mask retains keys and empties values, as the pin does.
+- phrase and chewing table search, range compression, the null cursor, an
+  empty row as `SEARCH_CONTINUED`, slot order and the literal backspace
+  (`tests/storage/test_phrase_table.cpp:14-99`,
+  `test_chewing_table.cpp:34-113`, `tests/tests_helper.h:51-135`,
+  `chewing_large_table2.h:91-133`);
+- the physical matrix with its gap and terminal zero keys, the
+  fuzzy-alternative order and search continuation
+  (`tests/storage/test_matrix.cpp:87-176`,
+  `phonetic_key_matrix.cpp:30-85,226-438`);
+- n-best phrase starts and newline-joined phrase lookup
+  (`tests/lookup/test_pinyin_lookup.cpp:35-136`,
+  `test_phrase_lookup.cpp:34-111`, `lookup/lookup.cpp:28-70`);
+- the `g_strndup` padding of `FullPinyinParser2::parse`
+  (`pinyin_parser2.cpp:234`).
 
-The source's 1000-call loops remain. Direct
-queries first check the first incomplete key's tone, then those longer than
-16 keys exit EINVAL before the pin's out-of-bounds
-index write; invalid UTF-8 exits EINVAL before the invalid conversion read.
-Both approved class (b) outcomes retain preceding observable work.
-
-### Matrix and direct lookup test programs
-
-`tests/storage/test_matrix.cpp:93-179` and
-`tests/lookup/test_pinyin_lookup.cpp:41-153` enable neither
-resplit nor divided-table options. The physical dump uses fill's original
-keys, explicit gap/terminal zero keys, and the existing fuzzy-alternative
-order (`phonetic_key_matrix.cpp:29-84,226-347`). Matrix search recursively
-follows each span, returns continued for empty end columns, and retains
-longest-reach information (`:350-437`); its range/pronunciation dump is
-compiled out. The source's fixed 1000/100 timed loops remain. The pinyin lookup parses
-and builds its scan matrix once before timing, then passes the same prepared
-matrix into all 100 n-best calls (`test_pinyin_lookup.cpp:85-137`).
-
-The runtime tools assembly attaches only the requested index, heap-loads
-each configured SYSTEM_FILE library in order, then attaches the system
-bigram when needed. The pin's NULL user-bigram attach returns before native
-I/O. The existing native dictionary/model readers feed the existing
-PhoneticLookup<2,3> trellis with sentence_start and no constraints, and the
-existing PhraseLookup span DP. N-best output keeps phrase-start positions;
-phrase lookup joins token-prefixed entries with newlines
-(`phrase_lookup.h:131-135`, `lookup.cpp:31-66`). Empty results write the
-source diagnostic and still exit zero.
-
-`FullPinyinParser2::parse` duplicates its explicit-length bytes with
-`g_strndup` (`pinyin_parser2.cpp:233`); GLib's documented contract pads after the first NUL
-([g_strndup](https://docs.gtk.org/glib/func.strndup.html);
-`gstrfuncs.c:397-407` at 2.86.1).
-Each candidate span retains its explicit length, while the index's string
-comparison sees only the prefix (`:169-210`). Tools retain that padding,
-and the shared graph's spelling check truncates at NUL after tone scanning.
-A dedicated test covers the extended span and erased trailing apostrophe.
-
-Data loading retains heap-owned payloads, as these programs'
-`MemoryChunk::load` calls do. The nonshipping adapters do not change the C
-ABI or file formats.
+The facade cache keeps the pin's semantics: it adds a delta for every
+attempted slot (`phrase_index.h:628-634`), and a rejected load or merge
+subtracts without adding (`phrase_index.cpp:237-248,291-296`). The check
+macro's message before SIGABRT is
+[policy-accepted](upstream-divergences.md#utility-check-macros-write-no-message).
+`repl` `pinyin_main` builds the physical matrix and a separate scan
+matrix from one parse (`lookup.rs:122`;
+`oxpinyin-engine/src/session/tool.rs:110-112`), a
+[removal candidate](#removal-candidates).
 
 ### Candidate strings across reparsing
 
@@ -921,7 +1056,7 @@ ABI or file formats.
 parse matrix without touching the candidate vector or its strings. The
 candidate string getters return the stored pointer (`pinyin.cpp:2873-2878`,
 `zhuyin.cpp:1865-1870`). Candidate guesses free the preceding list, even on
-an empty-matrix refusal (`pinyin.cpp:2183-2196`, `zhuyin.cpp:1460-1471`);
+an empty-matrix refusal (`pinyin.cpp:2184-2196`, `zhuyin.cpp:1460-1471,1542-1551`);
 reset also frees it (`pinyin.cpp:2693-2704`, `zhuyin.cpp:1718-1729`).
 
 Prediction invalidates the old phonetic candidate list before resolving
@@ -965,13 +1100,107 @@ the existing spelling check: each scans C constraint cells and probes F
 forcings, with O(F) temporary forcing storage plus the existing spelling
 matrix and search costs. The pin also validates twice.
 
+**Equivalence: failed** on one stock-data return value
+([defect](#keyless-reparse-best-match-choose)). Each claim above holds.
+The snapshot is cleared only by guess, reset and prediction
+(`oxpinyin-capi/src/instance.rs:101`, `predict.rs`, `sentence.rs`;
+`oxpinyin-zhuyin-capi/src/instance.rs:71`, `sentence.rs`). The refusal size
+is computed in input coordinates (`oxpinyin-facade/src/instance.rs:509-517`)
+and guarded again in the engine (`oxpinyin-engine/src/session/selection.rs:398-409`). The answers are
+`choose_answer` (`oxpinyin-capi/src/candidates.rs:490,532-535`) and the
+zhuyin span answer (`oxpinyin-zhuyin-capi/src/candidates.rs:214-240`).
+Some early exits of a guess keep the old snapshot, where the pin frees the
+list first ([defect](#guess-early-exit-keeps-snapshot)).
+
+### Candidate dedup over malformed phrase text
+
+A candidate's string is `g_ucs4_to_utf8` of its stored words
+(`_token_get_phrase`, `pinyin.cpp:1627-1647`). An n-best row's string comes
+from `convert_to_utf8` (`lookup/lookup.cpp:27-69`). GLib stops at the first
+zero word, returns NULL for a word at or above 0x80000000, and encodes
+surrogates and values up to 0x7FFFFFFF in the old four- to six-byte forms
+(`gutf8.c:1023-1071` at 2.90.1). `convert_to_utf8` drops a phrase whose
+conversion is NULL; a phrase that starts with a zero word gives `""`.
+`_remove_duplicated_items_by_phrase_string` (`pinyin.cpp:2058-2160`; zhuyin
+`zhuyin.cpp:1348-1416`) sorts by `strcmp` and keeps one row per run of
+equal strings: n-best first, the lower n-best index next, then the larger
+frequency, with ties to the earlier row (`:2128-2138`).
+
+`PhraseText::from_stored_words` (`oxpinyin-core/src/ucs4.rs:47-73`) refuses
+a word at or above 0x80000000 before the first zero. Equality and hash
+cover the words before the first zero (`:282-302,337-358`).
+`dedup_ranked_by_text` (`oxpinyin-engine/src/session/mod.rs:1104-1128`)
+keeps the first row of each text. `phrase_text_bytes` renders GLib's
+forms (`oxpinyin-capi-marshal/src/phrase_text.rs:20-25,57-101`).
+
+**Equivalence: failed** for two crafted n-best cases:
+
+- [a phrase that does not convert](#nbest-row-unconvertible-phrase);
+- [a row whose text is empty](#nbest-row-empty-text).
+
+For every non-NULL string it is argued. GLib's encoding of nonzero words
+below 0x80000000 is one-to-one and prefix-free and emits no zero byte, so
+`strcmp` equality is Rust's equality. The survivor depends only on runs of
+equal strings and on list order, so the
+[valid-text argument](addon-choose-promotion.md) carries over. A NULL
+string among two or more rows makes `strcmp` undefined (rows 80 and 106);
+a sole row keeps its NULL string on both sides. `pinyin_iterator_add_phrase`
+decodes with `g_utf8_to_ucs4` (`pinyin.cpp:628`), which accepts surrogates
+and five- and six-byte forms. Stock-data imports can therefore carry those
+words, and the argument covers them. A zero word or a word at or above
+0x80000000 needs a crafted chunk.
+
+The pin sorts in O(n log n · L) with an O(n) index array. Rust hashes in
+expected O(n·L) with an O(n) map and an O(n) flag vector; hashing a stored
+text allocates only for malformed text.
+
+### Table-text pinyin parser
+
+`gen_binary_files` reads table text through `ChewingLargeTable2::load_text`
+and `FacadePhraseIndex::load_text` with `USE_TONE`
+(`utils/storage/gen_binary_files.cpp:68,72`;
+`chewing_large_table2.cpp:129-148`; `phrase_index.cpp:563-582`). Each
+compares only the key count with the phrase length and skips a mismatched
+line with a diagnostic. `PinyinDirectParser2::parse`
+(`pinyin_parser2.cpp:623-715`) resolves each segment through
+`pinyin_index` (`:618-621,655`) and `check_pinyin_options` (`:38-58`).
+
+`crates/oxpinyin-utils/src/storage/pinyin.rs:47-56` shares the walk in
+`oxpinyin-core/src/direct.rs:9-31`. It resolves a segment through
+`ChewingKey::from_pinyin` (`oxpinyin-core/src/chewing_key.rs:142-154`),
+which searches the pin's `content_table` (`pinyin_parser_table.h:3976-4418`)
+instead.
+
+**Equivalence: failed** ([defect](#table-text-content-spellings)). Tones,
+uppercase, `v`, `ü`, separators, long spellings, correction and ambiguity
+spellings, initial-only spellings and the unused returned length all give
+the same keys. A leading `'` reads `input[-1]` at the pin (`:637`); both
+then fail the empty segment. Both take O(n log I) time over I index rows.
+The pin allocates one string per segment; Rust allocates none.
+
+### Double pinyin with an empty first yunmu slot
+
+`DoublePinyinParser2::parse_one_key` (`pinyin_parser2.cpp:405-528`) breaks
+to the fallback table when the first yunmu slot is NULL (`:475-477`). It
+never tries the second slot. Rust's `parse_two_keys`
+(`oxpinyin-core/src/scheme.rs:479-512`) does the same (`:491-493`). The
+fallback keeps the last match at the pin (`:511-515`) and the first in Rust
+(`:505-512`); the shipped fallback tables have unique inputs
+(`double_pinyin_table.h:99-112,324-337,399-412`).
+
+**Equivalence: argued**, and the case is unreachable.
+`pinyin_set_double_pinyin_scheme` only selects a compiled table
+(`pinyin.cpp:1155-1159`; `pinyin_parser2.cpp:578-615`), and `CUSTOMIZED`
+aborts (`:610-611`). The tables are `const` arrays with internal linkage,
+and no shipped row has an empty first slot and a filled second. Both probe
+in O(1).
+
 ## Open
 
-- Constraint revalidation over a phrase of the pinned model forced over its abbreviation, one initial-only key per syllable.
 - The [§9](#9-constants) value inventory is complete for the source sweep at `074a2219`. The sweep covered `src/pinyin.cpp`, `src/zhuyin.cpp`, `src/lookup/`, `src/storage/` and `src/include/`, and traced the corresponding C facade, storage and utility call paths in Rust. It counted named and inline coefficients, comparison and loop bounds, scanner widths and integer widths that affect results or saved bytes. It excluded pure indexes, capacity-only buffers, identity operands, unused table weights and unreachable legacy paths.
-- Equivalence not argued: candidate dedup for malformed phrase text.
-- Equivalence not argued: the table-text pinyin parser (`crates/oxpinyin-utils/src/storage/pinyin.rs`) against `PinyinDirectParser2::parse` with `USE_TONE`.
-- Equivalence not argued: double pinyin with a table whose first yunmu slot is empty and second is not (no shipped table has one).
+- Constraint revalidation and the node store with `nstore = 1` assume that the parse's columns are the pin's `fill_matrix` columns ([§11](#constraint-revalidation)).
+- The constraint-revalidation case of a phrase forced over its abbreviation is argued from source ([§11](#constraint-revalidation)); the oracle acceptance run in the roadmap is not done.
+- A probe added a second reading to a `USER_FILE` item through `UserStore::add_phrase_in`. A lookup of the second reading did not list the token. Whether the C import gives the same result is not checked.
 
 N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
 result supplies the tail; `changed` is set before each differing write;
@@ -1048,6 +1277,81 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   before import end (`oxpinyin-user/src/user_library.rs:323-361,498-511`).
   Give the edited slot an independent body.
 
+### Defects from §11
+
+- <a id="step-pricing-drops-query-tones"></a>**A sentence step prices with tone-less query keys.** Probe-confirmed.
+  The pin prices with the matrix's toned keys (`storage/phonetic_key_matrix.cpp:562,575`),
+  and a nonzero query tone matches only an equal or zero stored tone (`storage/pinyin_phrase3.h:96-105`).
+  Rust's path memo keeps tone-less keys (`oxpinyin-runtime/src/lib.rs:516-526,1033`,
+  `oxpinyin-data/src/dict.rs:80-88,794-812`). With stock data, add a `hao3` reading of
+  count 5 to the shipped 好 (`pinyin.cpp:563-606`). A probe read the `hao4` step under
+  `USE_TONE` as `(162062, 162062)`; the pin's result is 162057/162062. It needs a toned stored
+  reading, which an import or a learned phrase gives. It is not the cause of register row 11.
+  Price with the toned keys, as `ConstraintSpelling` does (`oxpinyin-engine/src/nbest.rs:1028`).
+- <a id="user-file-items-priced-at-one"></a>**A step prices every `USER_FILE` item at 1.** Probe-confirmed.
+  The pin prices each item's readings (`lookup/phonetic_lookup.h:646-656`, `storage/phrase_index.h:136-164`).
+  Rust's user entries carry no possibility (`oxpinyin-runtime/src/lib.rs:550-597`), and
+  `Pricing` maps `None` to 1 (`oxpinyin-engine/src/nbest.rs:689-697`). With stock data, a probe
+  gave a `USER_FILE` item the readings `le` 3 and `liao` 9 and read `None` for `le`; the pin's
+  result is 3/12. It needs an item with more than one reading. Price user entries from their item.
+- <a id="repeated-token-seed-nodes"></a>**A repeated phrase-table token seeds one node instead of two.** Source-derived.
+  For a phrase-table row that holds one token twice, the pin's `fill_prefixes` appends a second seed
+  node (`lookup/phonetic_lookup.h:244-269`). Both nodes enter the beam and can take its slots, so the
+  n-best results can change. Rust replaces the node in place (`oxpinyin-engine/src/nbest.rs:357-363`).
+  It needs a crafted phrase table: `PhraseTableEntry::add_index` refuses a duplicate
+  (`storage/phrase_large_table3.cpp:56-70`). Seed one node per occurrence.
+- <a id="unranged-onestep-token"></a>**An unranged `CONSTRAINT_ONESTEP` token is not stepped.** Source-derived.
+  The pin steps a `CONSTRAINT_ONESTEP` token even when the span's ranges do not hold it
+  (`lookup/phonetic_lookup.h:553,601-612`). Rust steps only a ranged token
+  (`oxpinyin-engine/src/nbest.rs:890-894`). It needs an item whose readings the pinyin table does not
+  index. Step the constraint token whether or not it is ranged.
+- <a id="point-search-misaligned-row"></a>**A misaligned pinyin-table row.** Source-derived.
+  For a record size in {1, 2, 5, 6, 13, 14} keys, the pin's pointer subtraction drops a trailing
+  partial record and the guess answers true (`storage/chewing_large_table2.h:145-150`). Rust refuses the row
+  (`oxpinyin-data/src/row_format.rs:155-184`), and the guess clears the list and answers false
+  (`oxpinyin-capi/src/sentence.rs:545-571`). It needs a crafted `pinyin_index.bin`; other record
+  sizes give an undefined count. Read the whole records, and register the other sizes as class (b).
+- <a id="token-text-unconvertible-word"></a>**`token_get_phrase` refuses a word at or above 0x80000000.** Source-derived.
+  The pin writes the length and NULL text and answers true (`pinyin.cpp:1639-1645`, `zhuyin.cpp:1096-1113`).
+  Rust answers false with the outputs untouched (`oxpinyin-core/src/ucs4.rs:55-56`,
+  `oxpinyin-capi/src/dict.rs:146-148`, `oxpinyin-zhuyin-capi/src/dict.rs:106-108`). It needs a crafted
+  chunk or user library. Answer as the pin, and correct the comment at `oxpinyin-data/src/dict.rs:104-108`.
+- <a id="token-getters-overrunning-readings"></a>**Token getters on an item whose readings run past its end.** Source-derived.
+  The pin checks only the header (`storage/phrase_index.cpp:195-204`), so the unigram, text and an
+  in-range reading are read from the buffer and answer true. Rust validates the whole extent first
+  and answers false (`oxpinyin-user/src/live_system.rs:288-295`, `oxpinyin-data/src/phrase_library.rs:210-216`),
+  while the count and existence getters succeed (`live_system.rs:304-325`). It needs a crafted system
+  chunk; row 107 covers only reads past the buffer end. Read the header fields and text before
+  validating the readings.
+- <a id="keyless-reparse-best-match-choose"></a>**Choosing a best-match or n-best row after a parse with no keys.** Source-derived.
+  After a guess and a parse that leaves no keys, the pin returns `matrix.size() - 1`, which is −1, for the
+  retained `BEST_MATCH` row (`zhuyin.cpp:1643-1644`) and for the NBEST row (`pinyin.cpp:2514-2520`).
+  Rust returns `parsed_len` (`oxpinyin-zhuyin-capi/src/candidates.rs:211-212`,
+  `oxpinyin-capi/src/candidates.rs:423`). It occurs with stock data. Return the matrix size minus one,
+  and correct register row 9, whose `parsed_len = matrix.size() - 1` fails for an empty matrix.
+- <a id="guess-early-exit-keeps-snapshot"></a>**Some failed guesses keep the old candidates.** Source-derived.
+  The pin frees the list before any check (`pinyin.cpp:2193`, `zhuyin.cpp:1460-1471,1542-1551`). Rust
+  keeps it on an options error, a sort-options error or no composition
+  (`oxpinyin-capi/src/sentence.rs:443,458,461`, `oxpinyin-zhuyin-capi/src/sentence.rs:427,430`).
+  It needs an engine refresh error or keys with no composition. Clear the snapshot at entry.
+- <a id="nbest-row-unconvertible-phrase"></a>**An n-best row with a phrase that does not convert.** Source-derived.
+  For an n-best path [A, B] whose item A holds a word at or above 0x80000000, the pin's row text is `B`
+  (`lookup/lookup.cpp:54-66`), and the row outranks the NORMAL `B` row in the dedup (`pinyin.cpp:2295-2296`).
+  Rust skips the row (`oxpinyin-engine/src/nbest.rs:504-510,939-941`) and keeps the NORMAL row. It needs
+  a crafted chunk; the [GLib inventory](glib-libc-inventory.md) does not admit this word family.
+  Keep the row with the phrases that convert.
+- <a id="nbest-row-empty-text"></a>**An n-best row whose text is empty.** Source-derived.
+  A row whose phrases all start with a zero word has the text `""` at the pin (`lookup/lookup.cpp:39-66`).
+  The row outranks a NORMAL `""` row, and `pinyin_get_sentence` returns true. Rust drops the row
+  (`oxpinyin-engine/src/nbest.rs:942-944`). It needs a crafted chunk. Keep the row with empty text.
+- <a id="table-text-content-spellings"></a>**The table-text parser accepts 12 content-only spellings.** Source-derived.
+  `chua den din eng fe kei len nia nun rua yai zhei` have `content_table` rows and no `pinyin_index` row
+  (`storage/pinyin_parser_table.h:9-672,3976-4418`). For `den4\t扥\t16777217\t1`, the pin skips the line
+  with diagnostics (`chewing_large_table2.cpp:145`, `phrase_index.cpp:581`). Rust indexes it
+  (`oxpinyin-utils/src/storage/pinyin.rs:19-42`), so both `.bin` files and stderr differ. The stock
+  model20 tables use none, so it needs crafted data. Use `oxpinyin_core::tool::parse_direct`
+  (`oxpinyin-core/src/tool.rs:46-65`), and correct the module comment at `pinyin.rs:7`.
+
 ### Existing separator issue
 
 - <a id="index-parse-separator-fill"></a>**Index-parse separator fill.** Source-derived follow-up to
@@ -1082,3 +1386,33 @@ These source-derived candidates follow the
   whose fallback reads the same sources that just missed
   (`oxpinyin-facade/src/export_rows.rs:550-590`, `oxpinyin-user/src/store.rs:1801-1806`).
   Remove the fallback and its retained state.
+- **Point-search allocations and probes.** `ChewingTable::search` allocates a
+  row vector and a key vector per path (`oxpinyin-data/src/chewing_table.rs:338-339`),
+  although `search_continued` reuses a scratch buffer. A separate `contains`
+  probe answers `SEARCH_CONTINUED` where the pin makes one read
+  (`oxpinyin-engine/src/session/lookup.rs:704-712`). Toned paths filter a
+  second search and sort it in O(M log M) (`lookup.rs:738-747`), although the
+  lookup already applies tones (`oxpinyin-runtime/src/lib.rs:382-417`).
+- **Per-slot trellis pricing.** A token ranged on k paths repeats an O(P)
+  pricing walk k times, but the sum does not depend on the slot. Price once
+  per token per span and keep only the path and keys per slot
+  (`oxpinyin-engine/src/nbest.rs:638-711`).
+- **`NbestRow.poss`.** Only tests read it (`oxpinyin-engine/src/nbest.rs:968`).
+- **Zhuyin index columns.** Store the content key index instead of the pinyin
+  text and its perfect-hash lookups. Render from the key instead of the
+  canonical column and the per-key `String`. Drop the repeated equality test
+  (`oxpinyin-core/src/scheme.rs:776,1408,1476,1602`).
+- **Token getter fallbacks.** The `token_text` `USER_FILE` fallback
+  (`oxpinyin-runtime/src/lib.rs:803-807`) and the nth-reading fallback
+  (`oxpinyin-capi/src/dict.rs:313`) repeat arena lookups that have already
+  missed.
+- **Generator comparisons.** `PhraseItem::cmp` allocates two vectors per tree
+  comparison (`oxpinyin-utils/src/gen_pinyin_table.rs:89-95`). Compare the
+  native bytes in place.
+- **Table-text parser.** Remove `oxpinyin-utils/src/storage/pinyin.rs:19-42`
+  once the tools use `oxpinyin_core::tool::parse_direct`
+  ([defect](#table-text-content-spellings)).
+- **REPL lookup matrices.** `pinyin_main` builds a physical matrix and a scan
+  matrix from one parse in O(n·f) each (`crates/oxpinyin-repl/src/lookup.rs:122`,
+  `oxpinyin-engine/src/session/tool.rs:110-112`). Keep one, unless the scan
+  matrix cannot carry the separator zero keys for the dump.

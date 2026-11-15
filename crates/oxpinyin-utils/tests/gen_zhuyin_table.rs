@@ -1,4 +1,66 @@
 //! Frozen pin observations of `gen_zhuyin_table`; pin citations are in each case.
+//! The cases outside `frozen` hold registered class (b) results, which run
+//! only on oxpinyin.
+
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn run(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_gen_zhuyin_table"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run gen_zhuyin_table")
+}
+
+/// Register entry "gen_zhuyin_table truncated final lead byte (policy row
+/// 125, class (b))": at 074a2219 `g_utf8_strlen` steps past the end of the
+/// `g_strsplit_set` field (`gen_zhuyin_table.cpp:150,168`), so the pin's
+/// result is undefined and nothing runs on it. oxpinyin's prescribed
+/// result: the count stops on zero padding and the row takes the invalid
+/// UTF-8 phrase refusal.
+#[test]
+fn a_phrase_ending_in_a_truncated_lead_byte_is_refused() {
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.txt"), b"\xe3 1 \xe3\x84\x9a\n").unwrap();
+    let out = run(dir.path(), &["-o", "out.table", "in.txt"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, format!("nnodes: 1{newline}").into_bytes());
+    let mut stderr = b"gen_zhuyin_table: invalid UTF-8 phrase: \xe3".to_vec();
+    stderr.extend_from_slice(newline.as_bytes());
+    assert_eq!(out.stderr, stderr);
+    assert_eq!(std::fs::read(dir.path().join("out.table")).unwrap(), b"");
+}
+
+/// Register entry "Generator phrase index of 256 or more, or negative (policy
+/// row 127, class (b))": the zhuyin generator shifts its `gint` `-t` value
+/// the same way (`utils/storage/gen_zhuyin_table.cpp:42,47` at 074a2219).
+/// For 256 or more, or a negative value, the shift is undefined, so nothing
+/// runs on the pin. oxpinyin's prescribed result: the library nibble is the
+/// value modulo 16. The frozen case `zhuyin-phrase-index-131` holds the
+/// defined range.
+#[test]
+fn a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble() {
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.txt"), "你 5 ㄋㄧ\n").unwrap();
+    let cases: [(&[&str], u32); 2] = [
+        (&["-t", "259"], 0x0300_0001),
+        (&["--phraseindex=-1"], 0x0F00_0001),
+    ];
+    for (option, token) in cases {
+        let args = [option, &["-o", "out.table", "in.txt"]].concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(0), "{option:?}");
+        assert_eq!(
+            String::from_utf8(std::fs::read(dir.path().join("out.table")).unwrap()).unwrap(),
+            format!("ㄋㄧ\t你\t{token}\t5{newline}"),
+            "{option:?}"
+        );
+    }
+}
+
 #[cfg(unix)]
 mod common;
 
@@ -168,6 +230,24 @@ mod frozen {
                 stdout: Exact(NNODES_0),
                 stderr: CANT_WRITE_MISSING_OUT_TABLE,
                 files: &[],
+            },
+        )]
+        // zhuyin-phrase-index-131: pin capture runs 1 and 2 of utility/tkrzw/zhuyin-phrase-index-131
+        // (tools/oracle/pin_capture.py), equal and approved. libpinyin 074a2219:
+        // utils/storage/gen_zhuyin_table.cpp:42,47 (a gint) and src/include/novel_types.h:45-46. The defined
+        // 128..=255 range of policy row 127: library nibble 131 mod 16 = 3, token 50331649.
+        #[case::zhuyin_phrase_index_131(
+            &["-t", "131", "-o", "temp.out", "/dev/stdin"],
+            b"\xe4\xbd\xa0 5 \xe3\x84\x8b\xe3\x84\xa7\n",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_1),
+                stderr: b"",
+                files: &[(
+                    "temp.out",
+                    Sha256("c3c2391fd3d05b3129c94ff3a9bd793514eca567259267a2e9adca8da0613c00", 22),
+                )],
             },
         )]
         fn captured_cases(

@@ -476,6 +476,45 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     close(context, instance);
 }
 
+/// Register entry "Token getters on a phrase longer than sixteen characters
+/// (policy row 124, class (b))": at 074a2219 `_token_get_phrase` and
+/// `zhuyin_token_get_nth_pronunciation` copy a 17-word item into 16-entry
+/// stack buffers (`zhuyin.cpp:1101,1107,1800,1807`), so the pin's result is
+/// undefined and nothing runs on it. oxpinyin's prescribed result: both
+/// answer true with the whole stored item.
+#[test]
+fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-long-phrase");
+    write_user_conf(&user.path, &system_dir());
+    let text = "一二三四五六七八九十一二三四五六七";
+    let item = ChunkItem {
+        phrase: text.chars().map(u32::from).collect(),
+        unigram: 17,
+        prons: vec![(vec![0x302b_u16; 17], 5)],
+    };
+    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&chunk[8..]).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let (context, instance) = open_with_user(&user.path);
+    let token = 0x0700_0001;
+    assert_eq!(
+        token_phrase(instance, token),
+        (true, 17, Some(text.to_owned()))
+    );
+    assert_eq!(
+        nth_pronunciation(instance, token, 0),
+        (true, 17, "2b30".repeat(17))
+    );
+    close(context, instance);
+}
+
 /// A stored key word 0x8000 reads back verbatim (`phrase_index.cpp:33-50`).
 #[test]
 fn a_stored_key_word_reads_back_verbatim() {

@@ -62,6 +62,55 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
         expected
     );
 }
+/// Register entry "gen_pinyin_table truncated lead byte on the first line
+/// (policy row 126, class (b))": the pin's `char phrase[1024]` starts
+/// indeterminate (`gen_pinyin_table.cpp:135` at 074a2219) and
+/// `g_utf8_strlen` reads past the terminator (`:168`), so the pin's result
+/// is undefined and nothing runs on it. oxpinyin's prescribed result: the
+/// count stops on the zeroed buffer and the row takes the invalid UTF-8
+/// phrase refusal.
+#[test]
+fn a_first_phrase_ending_in_a_truncated_lead_byte_is_refused() {
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.txt"), b"\xe3 a 1\n").unwrap();
+    let out = run(dir.path(), &["-o", "out.table", "in.txt"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, format!("nnodes: 1{newline}").into_bytes());
+    let mut stderr = b"gen_pinyin_table: invalid UTF-8 phrase: \xe3".to_vec();
+    stderr.extend_from_slice(newline.as_bytes());
+    assert_eq!(out.stderr, stderr);
+    assert_eq!(std::fs::read(dir.path().join("out.table")).unwrap(), b"");
+}
+
+/// Register entry "Generator phrase index of 256 or more, or negative (policy
+/// row 127, class (b))": `PHRASE_INDEX_MAKE_TOKEN` shifts the `gint` `-t`
+/// value left by 24 (`src/include/novel_types.h:45-46`,
+/// `utils/storage/gen_pinyin_table.cpp:36,41` at 074a2219). For 256 or more,
+/// or a negative value, the shift is undefined, so nothing runs on the pin.
+/// oxpinyin's prescribed result: the library nibble is the value modulo 16.
+/// The frozen case `pinyin-phrase-index-131` holds the defined range.
+#[test]
+fn a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble() {
+    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("in.txt"), "你 ni 5\n").unwrap();
+    let cases: [(&[&str], u32); 2] = [
+        (&["-t", "259"], 0x0300_0001),
+        (&["--phraseindex=-1"], 0x0F00_0001),
+    ];
+    for (option, token) in cases {
+        let args = [option, &["-o", "out.table", "in.txt"]].concat();
+        let out = run(dir.path(), &args);
+        assert_eq!(out.status.code(), Some(0), "{option:?}");
+        assert_eq!(
+            String::from_utf8(std::fs::read(dir.path().join("out.table")).unwrap()).unwrap(),
+            format!("ni\t你\t{token}\t5{newline}"),
+            "{option:?}"
+        );
+    }
+}
+
 #[cfg(unix)]
 mod common;
 
@@ -214,6 +263,24 @@ mod frozen {
                 stdout: Exact(NNODES_0),
                 stderr: CANT_WRITE_MISSING_OUT_TABLE,
                 files: &[],
+            },
+        )]
+        // pinyin-phrase-index-131: pin capture runs 1 and 2 of utility/tkrzw/pinyin-phrase-index-131
+        // (tools/oracle/pin_capture.py), equal and approved. libpinyin 074a2219:
+        // utils/storage/gen_pinyin_table.cpp:36,41 (a gint) and src/include/novel_types.h:45-46. The defined
+        // 128..=255 range of policy row 127: library nibble 131 mod 16 = 3, token 50331649.
+        #[case::pinyin_phrase_index_131(
+            &["-t", "131", "-o", "temp.out", "/dev/stdin"],
+            b"\xe4\xbd\xa0 ni 5\n",
+            &[],
+            Run {
+                status: Exit(0),
+                stdout: Exact(NNODES_1),
+                stderr: b"",
+                files: &[(
+                    "temp.out",
+                    Sha256("ad65fadc7fd037d362d5d0563bacf293468ded4f9bf474773b01643b9da54473", 18),
+                )],
             },
         )]
         fn captured_cases(

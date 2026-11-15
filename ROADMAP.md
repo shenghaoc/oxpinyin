@@ -32,8 +32,8 @@ The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md) lists these gaps.
 They do not block the sweep.
 
-- Write the §11 equivalence arguments.
-  Record each failed argument as a separate defect.
+- §11 has equivalence arguments with complexity comparisons, and the Open items they settle are closed.
+  The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md#defects-from-11) lists each failed argument as a defect.
 - §§1–8 have source arguments and complexity comparisons for the unverified rows.
   The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md#open) lists the defects and removal candidates.
 - Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
