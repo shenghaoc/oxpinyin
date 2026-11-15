@@ -325,8 +325,8 @@ consumed bytes.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Layout | `PhoneticKeyMatrix` pairs the key and rest arrays at each column (`storage/phonetic_key_matrix.h:65-168`). | `ScanMatrix` is an ordered key buffer with column offsets. `ParsedMatrix` retains placed columns and zero flags (`oxpinyin-engine/src/session/matrix.rs:10-73`). | different / argued ([matrix representation](#matrix-representation)) |
-| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` places real keys and marks zero columns (`oxpinyin-engine/src/session/matrix.rs:76-119`). Index-parsed full pinyin also builds a decoder matrix over canonical spelling (`oxpinyin-facade/src/parse.rs:288-323`). | different / [open](#index-parse-separator-fill), shared cause with policy row 122 |
+| Layout | `PhoneticKeyMatrix` pairs the key and rest arrays at each column (`storage/phonetic_key_matrix.h:65-168`). | `ScanMatrix` is an ordered key buffer with column offsets. `ParsedMatrix` shares that buffer and holds the placed column offsets and zero flags (`oxpinyin-engine/src/session/matrix.rs`). | different / argued ([matrix representation](#matrix-representation)) |
+| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` finds each placed column's run of the shared buffer, copying no key, and marks zero columns (`oxpinyin-engine/src/session/matrix.rs`). Index-parsed full pinyin also builds a decoder matrix over canonical spelling (`oxpinyin-facade/src/parse.rs:288-323`). | different / [open](#index-parse-separator-fill), shared cause with policy row 122 |
 | Resplit and inner split | `resplit_step` (`:87`), `inner_split_step` (`:169`); linear scans of the `special_table.h` tables | `resplit_step`, `inner_split_step` (`session/mod.rs`), same tables (`matrix-split-tables.md`) | same / follows |
 | Fuzzy | `fuzzy_syllable_step` (`:226-310`): an initials pass, then a finals pass over the grown column | `extend_matrix` and `parse_time_keys` run the two column passes; packed final alternates survive without a syllable-table row | same / follows |
 | Column multiplicity | `PhoneticTable::append` (`phonetic_key_matrix.h:92-100`): a column is a bag | both matrix builders append every entry in pass order, without collapse | same / follows |
@@ -1343,10 +1343,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
 These source-derived candidates follow the
 [internal implementation and performance rule](../source-policy.md#internal-implementation-and-performance).
 
-- **Duplicate full matrix records.** The pin stores one key and rest per entry
-  (`storage/phonetic_key_matrix.h:123-155`). Rust retains a second full copy
-  (`oxpinyin-engine/src/session/matrix.rs:10-119,157-175`).
-  Share the key payload while preserving both views' indexing and order.
 - **Repeated separator suffix scan.** The pin remembers the next separator
   (`storage/pinyin_parser2.cpp:233-269`). Rust scans the suffix from each byte
   (`oxpinyin-core/src/full_pinyin_index.rs:219-247`). Reuse the separator position.

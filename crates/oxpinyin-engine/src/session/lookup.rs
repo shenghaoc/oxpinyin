@@ -544,10 +544,7 @@ where
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
-            let mut continued = retained
-                .columns
-                .get(anchor + end)
-                .is_none_or(std::vec::Vec::is_empty);
+            let mut continued = retained.get(anchor + end).is_none_or(<[ScanKey]>::is_empty);
             scratch.path.clear();
             scratch.window_addon.clear();
             let start = into.len();
@@ -598,7 +595,7 @@ where
         end: usize,
         buf: &mut ScanBuf<'_>,
     ) -> Result<(), EngineError> {
-        if matrix.columns.get(end).is_none_or(Vec::is_empty)
+        if matrix.get(end).is_none_or(<[ScanKey]>::is_empty)
             && !matrix.zeros.get(end).copied().unwrap_or(false)
         {
             return Ok(());
@@ -606,7 +603,7 @@ where
         if node < end && matrix.zeros.get(node).copied().unwrap_or(false) {
             return self.scan_parsed_paths(matrix, node + 1, end, buf);
         }
-        let Some(column) = matrix.columns.get(node) else {
+        let Some(column) = matrix.get(node) else {
             return Ok(());
         };
         for key in column {
@@ -1263,10 +1260,7 @@ where
             // `SEARCH_NONE` start (`search_matrix`,
             // `phonetic_key_matrix.cpp:416-418`): the span contributes
             // nothing and the walk skips it.
-            if matrix
-                .columns
-                .get(start)
-                .is_none_or(std::vec::Vec::is_empty)
+            if matrix.get(start).is_none_or(<[ScanKey]>::is_empty)
                 && !matrix.zeros.get(start).copied().unwrap_or(false)
             {
                 continue;
