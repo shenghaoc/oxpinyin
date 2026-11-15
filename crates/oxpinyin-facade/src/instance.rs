@@ -328,10 +328,11 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             .collect()
     }
 
-    /// The phrase text of `token`, when its library is loaded and owns it.
+    /// The stored length and text of `token`'s item, as the C token getters
+    /// read them ([`oxpinyin_runtime::RuntimeDict::token_phrase`]).
     #[must_use]
-    pub fn token_text(&self, token: u32) -> Option<PhraseText> {
-        self.dict.token_text(token)
+    pub fn token_phrase(&self, token: u32) -> Option<oxpinyin_runtime::TokenPhrase> {
+        self.dict.token_phrase(token)
     }
 
     /// The stored pronunciation count of `token`.

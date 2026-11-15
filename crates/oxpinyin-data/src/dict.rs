@@ -103,9 +103,12 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 ///
 /// Answers whether the search met a token whose library is loaded (a system
 /// chunk, or one of the `user_nibbles` `table.conf` types `USER_FILE`) but
-/// whose item cannot be read — the slot is past the chunk, or the text does
-/// not decode: `_token_get_phrase` fails for it (`pinyin.cpp:1635-1637`) and
-/// the pin's candidate listing goes on to compare the string it never set.
+/// whose item or text cannot be read. For an unreadable item
+/// `_token_get_phrase` fails (`pinyin.cpp:1635-1637`) and the pin's candidate
+/// listing goes on to compare the string it never set. For a stored word at
+/// or above 0x80000000 it succeeds, but `g_ucs4_to_utf8` sets the string to
+/// NULL (`:1641-1645`), and the listing compares that NULL. Both reach the
+/// class (b) `strcmp` of rows 80 and 106.
 fn resolve_items(
     libraries: &PhraseLibraries,
     tokens: &[u32],

@@ -254,6 +254,24 @@ impl SystemItems {
         Some(read(&bytes))
     }
 
+    /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`]. The
+    /// outer `None` means the token's library has no live buffer; the inner
+    /// one that the buffer holds no item the getters can read.
+    pub(crate) fn with_live_fields<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<Option<R>> {
+        let library = self
+            .replayed
+            .get(&crate::phrase::phrase_index_library_index(token))?;
+        Some(
+            library
+                .item_field_bytes(token & 0x00ff_ffff)
+                .map(|bytes| read(&bytes)),
+        )
+    }
+
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.replayed
             .get(&crate::phrase::phrase_index_library_index(token))?

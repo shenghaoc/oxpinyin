@@ -2471,6 +2471,74 @@ fn export_aborts_on_a_system_reading_with_a_field_outside_the_table() {
     );
 }
 
+/// A stored word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL,
+/// but `_token_get_phrase` still writes the stored length and answers true
+/// (`pinyin.cpp:1635-1645`).
+#[test]
+fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = prefix_system(scratch.path(), 0x8000_0000);
+    let user = TempUserDir::new("token-phrase-null");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    let (mut length, mut phrase) = (UNTOUCHED, UNTOUCHED as usize as *mut c_char);
+    assert!(crate::dict::pinyin_token_get_phrase(
+        instance,
+        0x0100_0001,
+        &raw mut length,
+        &raw mut phrase
+    ));
+    assert_eq!((length, phrase), (3, ptr::null_mut()));
+    close(context, instance);
+}
+
+/// `get_phrase_item` checks only the item's offset and two header bytes
+/// (`phrase_index.cpp:180-205`), so a shipped item whose second reading
+/// passes the content end still answers its unigram, text and first
+/// reading. The second reading is undefined at the pin; oxpinyin answers no
+/// reading (compatibility policy row 130).
+#[test]
+fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x4e19], &[0x1081], 100)],
+        2000,
+    );
+    let gb_char = system.join("gb_char.bin");
+    let mut payload = std::fs::read(&gb_char).expect("gb_char.bin")[8..].to_vec();
+    let content = u32::from_le_bytes(payload[8..12].try_into().expect("index two")) as usize;
+    // The item at content offset 8 now declares two readings.
+    payload[content + 8 + 1] = 2;
+    std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
+    std::fs::write(
+        &gb_char,
+        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("gb_char.bin");
+    let user = TempUserDir::new("token-overrun");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    let token = 0x0100_0001;
+    assert_eq!(unigram(instance, token), (true, 100));
+    assert_eq!(phrase_of(instance, token).as_deref(), Some("丙"));
+    assert_eq!(reading_bytes(instance, token, 0), 0x1081_u16.to_le_bytes());
+    // SAFETY: a fresh GArray of two-byte elements, freed below.
+    let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
+    assert!(!crate::dict::pinyin_token_get_nth_pronunciation(
+        instance,
+        token,
+        1,
+        keys.cast()
+    ));
+    // SAFETY: allocated above, freed once.
+    unsafe { glib_sys::g_array_free(keys, 1) };
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

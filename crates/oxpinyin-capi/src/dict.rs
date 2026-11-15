@@ -127,7 +127,7 @@ pub extern "C" fn pinyin_lookup_tokens(
 ///
 /// `false` for an unknown token or an unloaded library, with both
 /// out-params untouched; both out-params are optional; the string is
-/// caller-owned (`g_free`).
+/// caller-owned (`g_free`), and NULL for stored text GLib cannot convert.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_token_get_phrase(
     instance: *mut PinyinInstance,
@@ -144,20 +144,25 @@ pub extern "C" fn pinyin_token_get_phrase(
     let inst = unsafe { instance_ref(instance) };
     // An unknown token answers `false` with both out-params untouched
     // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`).
-    let Some(text) = inst.core.token_text(token) else {
+    let Some(phrase) = inst.core.token_phrase(token) else {
         return false;
     };
     if !len.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *len = GUint::try_from(text.phrase_length()).unwrap_or(GUint::MAX);
+            *len = GUint::try_from(phrase.phrase_length).unwrap_or(GUint::MAX);
         }
     }
     if !utf8_str.is_null() {
-        let text = phrase_text_bytes(&text);
-        let rendered = crate::ffi::malloc_cstr_with(text.len(), |out| {
-            out.copy_from_slice(&text);
-            text.len()
+        // A word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL;
+        // the pin stores that NULL and still answers true (074a2219
+        // pinyin.cpp:1641-1645, zhuyin.cpp:1110-1113).
+        let rendered = phrase.text.map_or(std::ptr::null_mut(), |text| {
+            let text = phrase_text_bytes(&text);
+            crate::ffi::malloc_cstr_with(text.len(), |out| {
+                out.copy_from_slice(&text);
+                text.len()
+            })
         });
         // SAFETY: Null-checked above.
         unsafe {
