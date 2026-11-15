@@ -7,8 +7,11 @@ takes every observation in its `OBSERVATIONS`. The first segment of an observati
 | families | what they hold | frozen in |
 | --- | --- | --- |
 | `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | C-API tests in the two capi crates |
-| `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
+| `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import`, `zhuyin-separator` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
 | `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; for C1, the two pin-written Berkeley DB tests in `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
+
+The `zhuyin-separator` observations parse `ni'hao` through libzhuyin's full-pinyin export.
+They record the default tone refusal, the guess-at-3 abort, and the guess-at-2 choose and clears.
 
 The crates that own the behaviour test the apostrophe inputs natively.
 `crates/oxpinyin-capi/src/parse.rs` and `crates/oxpinyin-zhuyin-capi/src/parse.rs` hold the
