@@ -33,7 +33,6 @@ The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md) lis
 They do not block the sweep.
 
 - The [§11 defects](docs/findings/libpinyin-structures-and-algorithms.md#defects-from-11) cover repeated seeds and unranged one-step tokens.
-- The [Open section](docs/findings/libpinyin-structures-and-algorithms.md#open) also tracks the REPL lookup matrices.
 - Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
   Force it, then revalidate through `guess_sentence` and a replaced selection.
   Compare with the reference-cell oracle using a contract test.
