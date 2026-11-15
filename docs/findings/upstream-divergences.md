@@ -115,7 +115,7 @@ An entry holds nothing else.
 ### A prediction candidate whose phrase item a journal REMOVE took out (policy row 106a, class (b))
 
 - **Pin:** `_compute_predicted_prefix_candidates` ignores `get_phrase_item`'s result and gates on the last successful read's length (`src/pinyin.cpp:2389-2405`). A missing token keeps a NULL string (`:2018-2022`, `:1635-1637`): with two or more pre-dedup rows the dedup `strcmp` dies of SIGSEGV (`:2041-2068`, `:2082`); a sole row survives, and choosing it adds to the facade total (`:2608-2616`; `src/storage/phrase_index.h:628-634`).
-- **oxpinyin:** `select_prefix_rows` (`crates/oxpinyin-capi/src/predict.rs`) keeps `last_read_length` in the pin's order, keeps a sole missing row as `TextSpan::NULL` and drops missing rows beside any other row; `pinyin_choose_predicted_candidate` advances the loaded facade total and returns `true`.
+- **oxpinyin:** `select_prefix_rows` (`crates/oxpinyin-capi/src/predict.rs`) keeps `last_read_length` in the pin's order, keeps a sole missing row as `TextSpan::NULL` and drops missing rows beside any other row; `pinyin_choose_predicted_candidate` advances the loaded facade total and returns `true` for a prefix row whose item the choosing instance's context lacks.
 - **Decision:** accepted, class (b): the NULL `strcmp` is not reproduced; the defined single-row path is the pin's.
 - **Tests:** `choosing_a_sole_missing_prefix_row_advances_the_facade_total`.
 
@@ -398,8 +398,8 @@ An entry holds nothing else.
 
 ### A candidate pointer that is not a row of a live published list
 
-- **Pin:** `pinyin_choose_candidate` and `zhuyin_choose_candidate` dereference the candidate (`src/pinyin.cpp:2501-2588`, `src/zhuyin.cpp:1635-1666`). A pointer past a regenerated, shorter list reads a stale row only because `GArray` keeps its capacity when the list shrinks.
-- **oxpinyin:** both choose functions read the row directly, as the candidate getters do; a pointer that is not a row of a live instance's published list is a caller precondition violation.
+- **Pin:** `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` dereference the candidate (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`). A pointer past a regenerated, shorter list reads a stale row only because `GArray` keeps its capacity when the list shrinks.
+- **oxpinyin:** all four read the row directly, as the candidate getters do; a pointer that is not a row of a live instance's published list is a caller precondition violation.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): GLib's retained capacity is a library internal, and in Rust the read is undefined. A row of another live instance's list follows the pin.
 - **Tests:** `foreign_candidate_tests` (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) for rows of other instances; none for an invalid pointer.
 
@@ -488,6 +488,6 @@ None.
 
 ## Resolved by source reading
 
-`pinyin_choose_candidate` and `zhuyin_choose_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance, as the pin does (`src/pinyin.cpp:2501-2588`, `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
+`pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance and its context, as the pin does (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
 
 A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-input/src/{native,chunk}.rs`, `crates/oxpinyin-data/src/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.
