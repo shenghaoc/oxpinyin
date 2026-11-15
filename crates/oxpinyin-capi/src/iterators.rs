@@ -480,8 +480,8 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     let (text, reading, frequency) = match step {
         ExportStep::Row(row) => row,
         // Register row 62: the pin `assert`s at the site (`pinyin.cpp:709`,
-        // `:714`, `:721`, `:724`, or `chewing_key.cpp:48`/`:50` from
-        // `:728`), and the process aborts, after its first line wrote
+        // `:721`, or `chewing_key.cpp:30-32`/`:48` from `:728`), and the
+        // process aborts, after its first line wrote
         // `*phrase = NULL; *pinyin = NULL; *count = -1;` (`:703`).
         ExportStep::Assert(_) => {
             // SAFETY: each out-param is null-checked before its write.
