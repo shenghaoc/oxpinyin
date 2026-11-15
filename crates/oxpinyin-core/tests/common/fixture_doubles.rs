@@ -19,7 +19,10 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken, SyllableKey};
+use oxpinyin_core::{
+    ChewingKey, Completeness, Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken,
+    SyllableKey,
+};
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -258,8 +261,39 @@ impl Dictionary for FixtureDictionary {
     type PathMemo = ();
     type Syllable = SyllableKey;
 
+    /// A query of complete keys is exact. A query with an initial-only key
+    /// is answered the way the runtime dictionaries' incomplete-projected
+    /// index answers it (`ChewingLargeTable2::search`,
+    /// `chewing_large_table2.cpp:161-172` at 074a2219): every entry of the
+    /// same length whose keys pass [`ChewingKey::matches_with_tones`] at
+    /// each position, in key order and then fixture order.
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, FixtureError> {
-        Ok(self.entries.get(syllables).cloned().unwrap_or_default())
+        if !has_incomplete(syllables) {
+            return Ok(self.entries.get(syllables).cloned().unwrap_or_default());
+        }
+        Ok(self
+            .entries
+            .iter()
+            .filter(|(keys, _)| keys.len() == syllables.len() && keys_match(syllables, keys))
+            .flat_map(|(_, entries)| entries.iter().cloned())
+            .collect())
+    }
+
+    /// `SEARCH_CONTINUED` for a query with an initial-only key: whether the
+    /// incomplete-projected index holds the query's key, that is, whether
+    /// an entry's leading keys share the query's initials. A query of
+    /// complete keys answers `true`, the trait default.
+    fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, FixtureError> {
+        if !has_incomplete(syllables) {
+            return Ok(true);
+        }
+        Ok(self.entries.keys().any(|keys| {
+            keys.len() >= syllables.len()
+                && syllables.iter().zip(keys).all(|(query, stored)| {
+                    let query = query.chewing_key();
+                    ChewingKey::new(query.initial, 0, 0, 0).matches_with_tones(stored.chewing_key())
+                })
+        }))
     }
 
     /// The §9 suggestion walk over the fixture's own table: every entry
@@ -295,6 +329,21 @@ impl Dictionary for FixtureDictionary {
             .find(|entry| entry.token() == token)
             .map(|entry| entry.text().clone())
     }
+}
+
+/// Whether any key of `syllables` is initial-only.
+fn has_incomplete(syllables: &[SyllableKey]) -> bool {
+    syllables
+        .iter()
+        .any(|key| key.completeness() == Completeness::Partial)
+}
+
+/// [`ChewingKey::matches_with_tones`] at every position of `query`.
+fn keys_match(query: &[SyllableKey], stored: &[SyllableKey]) -> bool {
+    query
+        .iter()
+        .zip(stored)
+        .all(|(query, stored)| query.chewing_key().matches_with_tones(stored.chewing_key()))
 }
 
 /// An in-memory unigram model read from fixtures.

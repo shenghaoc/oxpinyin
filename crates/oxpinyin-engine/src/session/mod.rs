@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 
 use oxpinyin_core::graph::{Edge, ExactSegment, SegmentGraph};
-use oxpinyin_core::scoring::{ScoringError, expand_keys};
+use oxpinyin_core::scoring::ScoringError;
 use oxpinyin_core::{
-    Completeness, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText,
-    PhraseToken, SyllableKey, UserModel,
+    Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText, PhraseToken,
+    SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -22,13 +22,6 @@ use crate::error::EngineError;
 /// Longest key sequence the window scan searches: the pin's phrase-length
 /// cap. Paths beyond it are not searched.
 pub const MAX_PHRASE_LENGTH: usize = 16;
-
-/// The window scan's expansion bound. Measured over the W2 corpus, the largest
-/// expansion that hits real phrases is a three-initial `q|q|q` span
-/// (14^3 = `2_744` — the pin's `qqq…` offers `请求权`); `4_096` covers it with
-/// headroom. Larger products yield nothing: no stored phrase matches a
-/// longer all-initial span.
-pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
 /// What choosing a candidate left behind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

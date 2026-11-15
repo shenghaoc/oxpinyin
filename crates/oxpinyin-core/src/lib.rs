@@ -1,5 +1,5 @@
-//! Pure pinyin and zhuyin algorithms: parsing, `SegmentGraph`, key expansion,
-//! chewing-key rendering and model traits. No I/O, platform dependencies or
+//! Pure pinyin and zhuyin algorithms: parsing, `SegmentGraph`, chewing-key
+//! rendering and model traits. No I/O, platform dependencies or
 //! unsafe code. Both C ABIs use these same keys and tables, as upstream does
 //! in `src/Makefile.am:108-125` at 074a2219.
 #![forbid(unsafe_code)]
@@ -66,7 +66,7 @@ pub use syllables::{
     MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES,
     canonical_complete_syllable, full_pinyin_syllable, full_pinyin_syllables,
-    option_alias_canonical, phonetic_initial, syllable_initial,
+    option_alias_canonical,
 };
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{
@@ -150,6 +150,15 @@ pub trait Dictionary {
     type PathMemo: Default;
 
     /// Looks up entries matching `syllables`.
+    ///
+    /// `syllables` may mix complete and initial-only keys, and an
+    /// implementation answers such a query directly, as the pin's
+    /// incomplete-key index does. `ChewingLargeTable2::search`
+    /// (`chewing_large_table2.cpp:161-173` at 074a2219) looks the query up
+    /// under `compute_incomplete_chewing_index` (`pinyin_phrase3.h:170-178`),
+    /// which projects each position to its initial. The record comparison
+    /// still checks each complete syllable with `pinyin_compare_with_tones`
+    /// (`chewing_large_table2.h:102-104`; [`ChewingKey::matches_with_tones`]).
     ///
     /// # Errors
     ///
@@ -419,7 +428,11 @@ pub trait Dictionary {
     /// When `syllables` contains an initial-only key the probe runs on the
     /// initial sequence instead — the index the pin uses for incomplete
     /// spellings — where a complete key contributes its own initial and an
-    /// initial-only key stands for every syllable that shares it.
+    /// initial-only key stands for every syllable that shares it. An
+    /// implementation answers such a mixed query directly, as the pin's
+    /// incomplete-key index does: `compute_incomplete_chewing_index`
+    /// (`pinyin_phrase3.h:170-178` at 074a2219) projects each position to
+    /// its initial.
     ///
     /// Defaulted to `true` so the frozen implementors keep compiling: always
     /// continuing the scan yields the same candidate set (the probe only
@@ -524,34 +537,6 @@ pub trait Dictionary {
         Ok(false)
     }
 
-    /// Whether [`Self::lookup_into`] and [`Self::lookup_addon_into`] accept
-    /// queries whose syllables mix complete and initial-only keys under
-    /// upstream's `pinyin_compare_with_tones` matching rule.
-    ///
-    /// A `true` return says the implementor's stored index answers a query
-    /// with any [`Completeness::Partial`] syllable in one call, returning
-    /// every record whose stored keys match the query — a complete syllable
-    /// exactly, an initial-only syllable by shared initial. That is the
-    /// libpinyin `chewing_large_table2.cpp:161-172` (pin `074a2219`)
-    /// contract: `add_index` writes each phrase into both the incomplete-
-    /// projected and the complete keyspace at `:184-197`, and `search`
-    /// dispatches on `contains_incomplete_pinyin`. The oxpinyin
-    /// [`SystemDictionary`](../../oxpinyin-data/src/dict.rs) and
-    /// [`UserLookup`](../../oxpinyin-user/src/lookup.rs) both hold that
-    /// invariant.
-    ///
-    /// A `false` return (the default) says the implementor answers only
-    /// exact-key queries and callers must enumerate completions themselves
-    /// — that is the behaviour of fixture-backed dictionaries that store
-    /// entries under complete-key sequences alone. The window-scan caller
-    /// consults this flag and expands partial paths through
-    /// [`crate::scoring::expand_keys`] when it is false, so implementations
-    /// stay compatible without a scan-side branch per implementor.
-    #[must_use]
-    fn handles_partial_keys(&self) -> bool {
-        false
-    }
-
     /// Tokens of phrases whose stored pinyin **strictly extends**
     /// `syllables` — `ChewingLargeTable2::search_suggestion`
     /// (`chewing_large_table2_tkrzwdb.cpp:493-535` at the pin `074a2219`),
@@ -647,7 +632,7 @@ pub trait Dictionary {
     /// tones included, and its `guint32` frequency, in stored order. This is
     /// what `ForwardPhoneticConstraints::validate_constraint` revalidates a
     /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
-    /// table, so it has no expansion of incomplete keys to bound.
+    /// table.
     ///
     /// The default answers [`PhraseItemRead::NoItem`]: a dictionary that
     /// keeps no phrase items has none to read, as the pin's

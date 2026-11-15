@@ -337,7 +337,6 @@ dependencies = [
  "compact_str",
  "phf",
  "phf_codegen",
- "smallvec",
 ]
 
 [[package]]

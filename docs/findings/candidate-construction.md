@@ -28,8 +28,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
      `Session::replace_raw` keeps every character, and the parse stops at the first byte that no key matches, as the pin's parse does ([parser-spec.md](parser-spec.md)).
      So `b#ing` ranks `不` first, not `并`.
    - A path with an initial-only key goes to the dictionary as one projected-index lookup.
-     The runtime dictionaries advertise `Dictionary::handles_partial_keys` and answer it in one probe.
-     A dictionary that does not handle partial keys gets the key sequences from the table's wildcard expansion (`expand_keys`; [scoring](scoring-spec.md#incomplete-keys)).
+     The dictionaries answer it from their incomplete-projected index in one probe ([scoring](scoring-spec.md#incomplete-keys)).
    - Widening is prefix-driven: `SEARCH_CONTINUED` means that the sequence's index key exists, with or without a library mask (`chewing_large_table2_tkrzwdb.cpp:146-152`).
      The scan skips consecutive apostrophe bytes.
      The key sequence is capped at 16 keys.
@@ -99,7 +98,7 @@ These invariants hold in the current code:
    No clock, locale or environment read enters.
 4. **No candidate cap.**
    The list is returned in full.
-   The scan bounds are `MAX_PHRASE_LENGTH` (16 keys per phrase) and `SCAN_EXPANSION_LIMIT` (4,096 expanded sequences per key-path), both in `crates/oxpinyin-engine/src/session/mod.rs`.
+   The scan bound is `MAX_PHRASE_LENGTH` (16 keys per phrase) in `crates/oxpinyin-engine/src/session/mod.rs`.
 
 ### 8.4 Tie classes
 

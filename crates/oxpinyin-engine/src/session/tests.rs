@@ -4006,9 +4006,9 @@ fn wide_abbreviation_item() -> oxpinyin_core::PronunciationRows {
     ]
 }
 
-/// A session over `zhhrm` — four incomplete keys, 19 · 19 · 14 · 19 =
-/// 96,026 completions, past `SCAN_EXPANSION_LIMIT` — with token 7 forced
-/// over all of it and the selection record rebuilt from that forcing.
+/// A session over `zhhrm`, five keys of which four are incomplete, with
+/// token 7 forced over all of it and the selection record rebuilt from that
+/// forcing.
 fn wide_abbreviation_session(
     item: Option<oxpinyin_core::PronunciationRows>,
 ) -> Session<ItemDictionary, TrellisModel> {
@@ -4046,8 +4046,8 @@ fn wide_abbreviation_session(
 /// #825: the pin revalidates a forcing against the item's stored
 /// pronunciations, where an incomplete key matches any final, so a
 /// forcing over an abbreviation of any width survives the next guess.
-/// Revalidating by searching its expanded completions dropped it once
-/// they passed the expansion limit.
+/// Revalidating by searching the table for every complete spelling of
+/// the abbreviation dropped it once that set grew too wide.
 #[test]
 fn a_forcing_over_a_wide_abbreviation_survives_the_next_guess() {
     let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));

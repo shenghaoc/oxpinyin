@@ -99,7 +99,9 @@ is an error, not a silent skip.
 `fixture_doubles.rs` provides:
 
 - `FixtureDictionary` — `Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>`.
-  Lookup is exact on the whole key slice and returns entries in fixture order.
+  Lookup on a slice of complete keys is exact and returns entries in fixture order.
+  A slice with an initial-only key is answered as the runtime dictionaries' incomplete-projected index answers it: every entry of the same length whose keys pass `ChewingKey::matches_with_tones` at each position, in key order and then fixture order.
+  `phrase_prefix_exists` on such a slice answers whether an entry's leading keys share the slice's initials; on a slice of complete keys it answers true, the trait default.
   An absent sequence is `Ok(vec![])`, never an error.
 - `FixtureLanguageModel` — `LanguageModel<Token = PhraseToken>`, an
   in-memory unigram model over the same vocabulary. It checks every bigram

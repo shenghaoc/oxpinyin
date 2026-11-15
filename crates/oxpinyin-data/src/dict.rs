@@ -992,14 +992,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             .pronunciation_rows(token.value())
             .map_or(PhraseItemRead::NoItem, PhraseItemRead::Item))
     }
-
-    /// The DBM double-indexes each row under both incomplete and complete
-    /// keyspaces (`crates/oxpinyin-data/src/table_entries.rs:95-98`), and
-    /// `super::chewing_table::ChewingTable::search` dispatches on
-    /// `contains_incomplete` — so a partial-key query answers in one probe.
-    fn handles_partial_keys(&self) -> bool {
-        true
-    }
 }
 
 // ── the addon facade ─────────────────────────────────────────────
