@@ -80,13 +80,6 @@ impl From<crate::phrase_library::LibraryError> for DictError {
     }
 }
 
-/// Converts table syllables and packed matrix alternates to tone-zero
-/// `ChewingKey`s. The conversion always succeeds; the `Option` keeps
-/// the callers' signature.
-fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
-    Some(syllables.iter().map(|s| s.chewing_key()).collect())
-}
-
 fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
     let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
     Ok(ChewingTable::new(RawChewingDbm::new(store)))
@@ -484,9 +477,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         if syllables.is_empty() {
             return Ok((unreadable, false));
         }
-        let Some(mut keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok((unreadable, false));
-        };
+        let mut keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         for (key, &tone) in keys.iter_mut().zip(tones) {
             *key = key.with_tone(tone);
         }
@@ -640,9 +631,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         if syllables.is_empty() {
             return Ok(Some(Vec::new()));
         }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(Some(Vec::new()));
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         let mut tokens: Vec<u32> = Vec::new();
         let overlong = self.pinyin.walk_suggestions(&keys, |length, items| {
             // The query-length row is the phrase itself — the pin's cursor
@@ -681,9 +670,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             // the one native call the pin makes, including its diagnostic.
             return false;
         }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return false;
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         self.pinyin.key_exists(&keys).unwrap_or(false)
             && self.pinyin.has_overlong_extension(&keys).unwrap_or(false)
     }
@@ -707,9 +694,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         ranges: &mut PhraseIndexRanges<()>,
         visible: impl Fn(u32) -> bool,
     ) -> Result<(), DictError> {
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(());
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         let query: Vec<_> = keys
             .iter()
             .enumerate()
@@ -745,9 +730,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         if syllables.is_empty() {
             return Ok(true);
         }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         let query: Vec<_> = keys
             .iter()
             .enumerate()
@@ -769,7 +752,13 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// unloaded or the item cannot be read.
     #[must_use]
     pub fn trellis_item(&self, syllables: &[SyllableKey], token: u32) -> Option<TrellisItem> {
-        self.trellis_item_keys(&syllables_to_chewing_keys(syllables)?, token)
+        self.trellis_item_keys(
+            &syllables
+                .iter()
+                .map(|s| s.chewing_key())
+                .collect::<Vec<_>>(),
+            token,
+        )
     }
 
     /// [`Self::trellis_item`] over the query's keys, already converted
@@ -816,9 +805,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         tones: &[u8],
     ) -> Result<Vec<PhraseEntry>, DictError> {
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(Vec::new());
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         Ok(ranges
@@ -860,13 +847,10 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
     fn trellis_text(
         &self,
-        syllables: &[SyllableKey],
+        _syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
     ) -> Result<Option<TokenPhrase>, DictError> {
-        if syllables_to_chewing_keys(syllables).is_none() {
-            return Ok(None);
-        }
         Ok(self.libraries().token_phrase(token))
     }
 
@@ -910,9 +894,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         if syllables.is_empty() {
             return Ok(true);
         }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         self.pinyin.key_exists(&keys)
     }
 
@@ -1213,9 +1195,7 @@ impl AddonDictionary {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(false);
         };
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         pinyin.search_into(&keys, row, |token| {
             out.extend(resolve_item(&self.libraries, None, token));
         })

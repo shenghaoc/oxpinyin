@@ -49,9 +49,7 @@ impl<'a> UserLookup<'a> {
     /// key's completions to find matching user entries.
     #[must_use]
     pub fn lookup(&self, syllables: &[SyllableKey]) -> Vec<PhraseEntry> {
-        let Some(keys) = query_keys(syllables) else {
-            return Vec::new();
-        };
+        let keys: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         let mut entries = Vec::new();
         self.lookup_into(&keys, &mut entries);
         entries
@@ -87,7 +85,8 @@ impl<'a> UserLookup<'a> {
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
     #[must_use]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
-        query_keys(syllables).is_some_and(|keys| self.with_index(|index| index.has_prefix(&keys)))
+        let keys: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
+        self.with_index(|index| index.has_prefix(&keys))
     }
 
     /// Phrase text from the current item, without decoding its readings.
@@ -128,9 +127,7 @@ impl<'a> UserLookup<'a> {
     /// nibble the way `reduce_tokens` does.
     #[must_use]
     pub fn suggest_extensions(&self, syllables: &[SyllableKey]) -> Vec<u32> {
-        let Some(keys) = query_keys(syllables) else {
-            return Vec::new();
-        };
+        let keys: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.with_index(|index| index.suggest(&keys))
     }
 
@@ -181,15 +178,6 @@ fn session_text(
             oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })
         .flatten()
-}
-
-fn query_keys(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-    Some(
-        syllables
-            .iter()
-            .map(|syllable| syllable.chewing_key())
-            .collect(),
-    )
 }
 
 #[cfg(test)]

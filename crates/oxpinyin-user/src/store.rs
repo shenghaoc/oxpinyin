@@ -1107,13 +1107,12 @@ impl UserStore {
     /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
     /// into the length's table entry, which the next `mask_out` walk starts
     /// from (#785). Read that record from the canonical table.
-    pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
+    pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
         if !crate::user_index::ENTRY_PER_LENGTH {
             return;
         }
-        if let Some(keys) = keys() {
-            self.note_pinyin_search_keys(&keys);
-        }
+        let keys = keys();
+        self.note_pinyin_search_keys(&keys);
     }
 
     /// Record an exact search using keys already built for lookup.
@@ -1125,17 +1124,16 @@ impl UserStore {
 
     /// A `search_suggestion` of the user pinyin table for the prefix `keys`
     /// makes (#785): every longer key it visits empties its length's entry.
-    pub fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
+    pub fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
         if !crate::user_index::ENTRY_PER_LENGTH {
             return;
         }
-        if let Some(keys) = keys() {
-            self.inner
-                .libpinyin
-                .phrases_mut()
-                .index
-                .note_suggestion(&keys);
-        }
+        let keys = keys();
+        self.inner
+            .libpinyin
+            .phrases_mut()
+            .index
+            .note_suggestion(&keys);
     }
 
     /// `SingleGram::get_freq(cur)` on `prev`'s raw gram — the first match
