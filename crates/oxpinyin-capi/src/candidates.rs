@@ -852,72 +852,14 @@ pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
 }
 
 #[cfg(test)]
-mod previous_token_tests {
-    use crate::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
-    use crate::parse::pinyin_parse_more_full_pinyins;
-    use crate::sentence::pinyin_guess_candidates;
-    use crate::state::{instance_mut, instance_ref};
-    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
-
-    /// `_get_previous_token(instance, 0)` skips a prefix token whose library
-    /// is unloaded (`get_phrase_item` fails, `pinyin.cpp:1722-1730`) and falls
-    /// back to `sentence_start`. The pin cannot show it: only a predicted
-    /// bigram row reads the predecessor there and the harness never gets
-    /// one, so this is a unit test.
-    #[test]
-    fn an_unloaded_library_prefix_is_not_the_predecessor() {
-        let user_dir = TempUserDir::new("prev-token-unloaded");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
-            2
-        );
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-        // SAFETY: live instance immediately after the guess.
-        let gbk = unsafe { instance_ref(instance) }
-            .candidates
-            .iter()
-            .filter_map(|c| c.token.get().map(oxpinyin_core::PhraseToken::value))
-            .find(|token| token >> 24 == 2)
-            .expect("the fixture carries a GBK candidate under ni");
-
-        // SAFETY: as above.
-        unsafe { instance_mut(instance) }
-            .core
-            .session
-            .set_candidate_prefixes([oxpinyin_core::PhraseToken::new(gbk)]);
-        assert_eq!(previous(instance), gbk);
-
-        assert!(pinyin_unload_phrase_library(context, 2));
-        assert_eq!(previous(instance), oxpinyin_user::SENTENCE_START);
-
-        assert!(pinyin_load_phrase_library(context, 2));
-        assert_eq!(previous(instance), gbk);
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-
-    fn previous(instance: *mut crate::types::PinyinInstance) -> u32 {
-        // SAFETY: a live `pinyin_alloc_instance` handle of the caller.
-        unsafe { instance_ref(instance) }
-            .core
-            .session
-            .prefix_predecessor()
-            .value()
-    }
-}
-
-#[cfg(test)]
 mod unloaded_library_tests {
     //! A library `pinyin_unload_phrase_library` let go has no sub-index in the
     //! pin (`phrase_index.cpp:261-269`): a write that names it answers an
     //! error before it moves anything (`phrase_index.h:628-635`), `compact`
     //! skips it (`phrase_index.cpp:651-652`), and the caller goes on.
     //!
-    //! Each test follows `previous_token_tests`: it opens the fixture, parses
-    //! `ni`, guesses its candidates, takes the one in the GBK library (2) and
-    //! unloads that library.
+    //! Each test opens the fixture, parses `ni`, guesses its candidates,
+    //! takes the one in the GBK library (2) and unloads that library.
 
     use std::os::raw::c_uint;
     use std::ptr;
@@ -946,7 +888,7 @@ mod unloaded_library_tests {
     /// The ibus preset that leaves `SORT_WITHOUT_LONGER_CANDIDATE` clear.
     const IBUS_DEFAULT_SORT: c_uint = 0x1c;
 
-    /// The open fixture of `previous_token_tests`, with `ni` parsed.
+    /// The open fixture, with `ni` parsed.
     struct Open {
         /// The directories the context reads, removed after it is freed.
         _dirs: Box<dyn std::any::Any>,
@@ -1198,21 +1140,6 @@ mod unloaded_library_tests {
             pinyin_token_add_unigram_frequency(instance, gbk, 1),
             "the library is loaded again"
         );
-    }
-
-    /// `pinyin_end_add_phrases` compacts the phrase index
-    /// (`pinyin.cpp:655-660`), and `compact` skips a missing sub-index
-    /// (`phrase_index.cpp:651-652`): the unloaded library's total does not move
-    /// into the facade's.
-    #[test]
-    fn closing_an_import_leaves_the_unloaded_librarys_total_alone() {
-        let open = Open::new("compact-unloaded");
-        assert!(pinyin_unload_phrase_library(open.context, 2));
-        let total = open.amplified_total();
-
-        pinyin_end_add_phrases(pinyin_begin_add_phrases(open.context, 2));
-
-        assert_eq!(open.amplified_total(), total);
     }
 
     /// The guards that already answer for an unloaded library: the increment

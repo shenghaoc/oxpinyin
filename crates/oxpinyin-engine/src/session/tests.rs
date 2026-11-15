@@ -439,6 +439,65 @@ impl Dictionary for Flaky {
     }
 }
 
+/// A [`FixtureDictionary`] whose `unloaded` token has no readable item, as a
+/// token of an unloaded library reads in the runtime.
+struct UnloadedToken {
+    inner: FixtureDictionary,
+    unloaded: u32,
+}
+
+impl Dictionary for UnloadedToken {
+    type Error = FixtureError;
+    type PathMemo = ();
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
+        self.inner.lookup(syllables)
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<oxpinyin_core::PhraseText> {
+        self.inner.phrase_text_for_token(token)
+    }
+
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        (token != self.unloaded)
+            .then(|| self.inner.phrase_length_for_token(token))
+            .flatten()
+    }
+}
+
+/// `_get_previous_token(instance, 0)` skips a prefix token whose item it
+/// cannot read (`get_phrase_item` fails, `pinyin.cpp:1722-1730`): the
+/// longest readable prefix wins, and with none the predecessor is
+/// `sentence_start`.
+#[test]
+fn an_unreadable_prefix_is_not_the_predecessor() {
+    let predecessor = |unloaded: u32, prefixes: &[u32]| {
+        let mut session = Session::new(
+            SessionSettings::default(),
+            UnloadedToken {
+                inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+                unloaded,
+            },
+            FixtureLanguageModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+        );
+        session.set_candidate_prefixes(prefixes.iter().copied().map(PhraseToken::new));
+        session.prefix_predecessor().value()
+    };
+    // Token 2 is 方面 (two characters), token 1 is 方.
+    assert_eq!(predecessor(0, &[1, 2]), 2, "the longest readable prefix");
+    assert_eq!(
+        predecessor(2, &[1, 2]),
+        1,
+        "the unreadable prefix is skipped"
+    );
+    assert_eq!(
+        predecessor(2, &[2]),
+        crate::nbest::SENTENCE_START,
+        "no readable prefix"
+    );
+}
+
 #[test]
 fn a_failed_deferred_build_stays_stale_and_is_retried() {
     let open = |defer: bool| {
