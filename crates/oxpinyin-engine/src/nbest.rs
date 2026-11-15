@@ -343,7 +343,7 @@ struct Trellis {
 }
 
 impl Trellis {
-    /// Seeds step 0 with one zero-cost node per token — upstream's
+    /// Seeds step 0 with one zero-cost node per token occurrence — upstream's
     /// `fill_prefixes` (`phonetic_lookup.h:244-276`), which inserts
     /// every `m_prefixes` entry as an initial node at `log(1.0)`.
     /// `pinyin_guess_sentence_with_prefix` drives this with the prefix
@@ -352,13 +352,17 @@ impl Trellis {
         let mut steps = vec![Step::default(); bound + 1];
         if let Some(first) = steps.first_mut() {
             for &seed_token in seeds {
-                // A repeated seed replaces its node in place, keeping the
-                // node's creation slot.
-                if let Some(node) = first.node_mut(seed_token) {
-                    *node = Node::EMPTY;
-                    node.values[0] = Value::seed(seed_token);
-                    node.len = 1;
-                }
+                // The C prefix path supplies at most 1 + 16 * 4 seeds.
+                let Ok(index) = u32::try_from(first.nodes.len()) else {
+                    break;
+                };
+                let mut node = Node::EMPTY;
+                node.values[0] = Value::seed(seed_token);
+                node.len = 1;
+                first.nodes.push(node);
+                // Every occurrence occupies a beam slot. Backtracking
+                // resolves the last node, as fill_prefixes' index does.
+                first.index.insert(seed_token, index);
             }
         }
         Self {

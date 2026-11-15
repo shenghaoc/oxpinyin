@@ -656,7 +656,7 @@ follows these types and conversion points in `f32` and `f64` (`expand_one`,
 Register row 11 classes std-maths precision differences as (a).
 Candidate and sentence rows carry no separate integer score.
 
-**Equivalence: failed** for repeated seeds and unranged one-step tokens. The arithmetic
+**Equivalence: failed** for unranged one-step tokens. The arithmetic
 is the pin's: `unigram_lambda` (`oxpinyin-data/src/lm/mod.rs:567`), the f64
 `elem` quotient (`:566`), the f32 bigram quotient and product (`:575-580`),
 the f64 product with the possibility and the widen, add and round
@@ -669,9 +669,17 @@ and [S3](compatibility-policy.md#s3-stable-descending-possibility) rulings.
 Steps price with the query tones (#1979) and the stored `USER_FILE`
 readings (#1983).
 
-A repeated phrase-table token and an unranged `CONSTRAINT_ONESTEP` token
-are stepped differently ([seed defect](#repeated-token-seed-nodes),
-[ONESTEP defect](#unranged-onestep-token)).
+An unranged `CONSTRAINT_ONESTEP` token is stepped differently
+([ONESTEP defect](#unranged-onestep-token)).
+
+Each prefix-token occurrence seeds its own node, including repeats
+(`lookup/phonetic_lookup.h:244-265`). The token index points to the last
+occurrence. `Trellis::with_seeds` preserves both rules. Initialization takes
+expected O(s) time and O(s) space for s occurrences, instead of O(u) node
+space for u distinct tokens. The C prefix path supplies at most 65 seeds
+(one start and four tokens per suffix, up to sixteen suffixes); the beam
+still keeps 32. Held by `repeated_prefix_tokens_keep_duplicate_sentence_rows`
+in `oxpinyin-capi/src/boundary_tests/sentence.rs`.
 
 A zero stored tone compares equal to any query tone
 (`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
@@ -1192,12 +1200,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
 
 ### Defects from §11
 
-- <a id="repeated-token-seed-nodes"></a>**A repeated phrase-table token seeds one node instead of two.** Source-derived.
-  For a phrase-table row that holds one token twice, the pin's `fill_prefixes` appends a second seed
-  node (`lookup/phonetic_lookup.h:244-269`). Both nodes enter the beam and can take its slots, so the
-  n-best results can change. Rust replaces the node in place (`oxpinyin-engine/src/nbest.rs:357-363`).
-  It needs a crafted phrase table: `PhraseTableEntry::add_index` refuses a duplicate
-  (`storage/phrase_large_table3.cpp:56-70`). Seed one node per occurrence.
 - <a id="unranged-onestep-token"></a>**An unranged `CONSTRAINT_ONESTEP` token is not stepped.** Source-derived.
   The pin steps a `CONSTRAINT_ONESTEP` token even when the span's ranges do not hold it
   (`lookup/phonetic_lookup.h:553,601-612`). Rust steps only a ranged token
