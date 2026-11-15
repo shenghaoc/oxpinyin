@@ -396,6 +396,18 @@ An entry holds nothing else.
 - **Decision:** accepted, language artefact (policy row 59), by maintainer decision: the stop is a C++ storage width.
 - **Tests:** `session::tests::input_past_the_pins_gint16_bound_is_kept_and_parsed_whole`, `session::tests::candidates_come_from_keys_past_the_pins_gint16_bound`, `boundary_tests::an_import_reading_parses_past_long_separator_runs`.
 
+### Oversized journal record payloads (policy row 123)
+
+- **Pin:** `PhraseIndexLogger::append_record` narrows lengths modulo 65536 and copies the full payload for ADD and REMOVE (`src/storage/phrase_index_logger.h:248-263`). For `LOG_MODIFY_RECORD`, it copies each full item and advances by the narrowed `oldlen` and `newlen` (`:269-278`). The bytes then extend past the boundaries a reader derives from the length fields (`:169-199`).
+- **oxpinyin:** the checked encoder refuses a payload above 65535 bytes (`crates/oxpinyin-data/src/user_files.rs:879-919`). `PersistenceError::Codec` becomes `UserStoreError::Persistence`, which the facade maps to `SaveOutcome::NotSaved` (`crates/oxpinyin-user/src/persistence.rs:2195-2200`, `crates/oxpinyin-user/src/store_libpinyin.rs:148-150`, `crates/oxpinyin-facade/src/context.rs:558-577`).
+- **Decision:** accepted under the [internal language artefact rule](compatibility-policy.md#internal-language-artefacts). The journal format prescribes a 16-bit length field and leaves oversized payload handling unspecified. oxpinyin keeps that width and writes records whose lengths fit it. A language-neutral journal requirement does not prescribe wrapping a length so that the payload crosses the reader's record boundary. The rule names unsigned wrap-around as a language artefact.
+- **Tests:** `e2e_tests::oversized_journal_record_payloads_refuse_save_and_keep_modified` and the `POLICY-ACCEPTED` capture case `oversized-journal-record-payloads` in [pin_capture.py](../../tools/oracle/pin_capture.py). Both use crafted system data because import accepts at most 15 keys (`src/pinyin.cpp:643`, `src/zhuyin.cpp:528`). An item with 128 characters and 255 readings occupies `6 + 128 * 4 + 255 * (128 * 2 + 4) = 66818` bytes (`src/storage/phrase_index.cpp:180-205`). Its stored length wraps to 1282.
+
+| `pinyin_save` effect | Pin | oxpinyin |
+| --- | --- | --- |
+| Journal on disk | `_write_files` stages the full payload under the wrapped length. `_rename_files` can publish a journal with broken record boundaries (`src/pinyin.cpp:963-971,1047-1062`). | The encoder refuses before writing any bytes for that record. The save stops before staging that journal, running the rename pass or writing the version marker (`crates/oxpinyin-user/src/persistence.rs:2065-2083,2303-2313`). |
+| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:209-213`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
+
 ### Key positions past byte 65535
 
 - **Pin:** the double-pinyin and keyboard zhuyin parsers store `int` positions into the `guint16`s of `ChewingKeyRest` (`src/storage/pinyin_parser2.cpp:565`, `zhuyin_parser2.cpp:259`, `chewing_key.h:102-103`), and `fill_matrix` puts each key at its wrapped begin (`phonetic_key_matrix.cpp:51-55`), so the getters answer `false` from column 65536 (`src/pinyin.cpp:2930-2931`).

@@ -4390,6 +4390,55 @@ fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
     crate::context::pinyin_fini(context);
 }
 
+/// Oversized journal record payloads (compatibility policy row 123).
+#[test]
+fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let system = crate::test_support::TempSystemDir::new("oversized-journal-record");
+    let user = TempUserDir::new("oversized-journal-record");
+    let ni = oxpinyin_core::ChewingKey::from_pinyin("ni")
+        .unwrap()
+        .to_packed();
+    // A 66,818-byte item fits the library format but exceeds a journal
+    // record's length field. Direct unigram access avoids rendering it.
+    let chunk = build_chunk(&[(
+        1,
+        ChunkItem {
+            phrase: vec![u32::from('你'); 128],
+            unigram: 100,
+            prons: vec![(vec![ni; 128], 1); 255],
+        },
+    )])
+    .unwrap();
+    std::fs::write(system.path.join("gb_char.bin"), chunk).unwrap();
+    let system_path = cstr(system.path.to_str().unwrap());
+    let user_path = cstr(user.path.to_str().unwrap());
+    let context = pinyin_init(system_path.as_ptr(), user_path.as_ptr());
+    assert!(!context.is_null());
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+
+    let token = 0x0100_0001;
+    assert_eq!(unigram_item_count(instance, token), (true, 100));
+    assert!(crate::dict::pinyin_token_add_unigram_frequency(
+        instance, token, 1
+    ));
+    assert_eq!(unigram_item_count(instance, token), (true, 101));
+    // The direct unigram change does not arm save. Closing the empty
+    // import sets the modified flag without adding a journal item.
+    pinyin_end_add_phrases(pinyin_begin_add_phrases(context, USER_DICTIONARY));
+    assert!(with_store(instance, UserStore::is_modified));
+
+    assert!(!pinyin_save(context));
+    assert!(with_store(instance, UserStore::is_modified));
+    assert!(!user.path.join("gb_char.dbin.tmp").exists());
+    assert!(!user.path.join("gb_char.dbin").exists());
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// At 074a2219, `pinyin.cpp:812-815` reads both live items each time a pair
 /// loads. `:904-910` copies the buffered row before loading the next pair.
 #[test]
