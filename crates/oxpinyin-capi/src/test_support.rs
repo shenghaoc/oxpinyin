@@ -535,12 +535,6 @@ pub mod logs {
         record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
-    /// An ADD of a one-byte payload (row 108).
-    #[must_use]
-    pub fn short_add() -> Vec<u8> {
-        record(1, 0x0100_0005, &[1, 0, 1])
-    }
-
     /// An ADD of a six-byte item at slot `0x99`.
     #[must_use]
     pub fn add() -> Vec<u8> {
