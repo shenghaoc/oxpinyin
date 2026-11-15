@@ -635,7 +635,7 @@ fn training_without_results_does_not_observe_selection_history() {
 /// leaves the store (`constraints->length() - 1`) past the current matrix.
 /// The pin's walk then asserts `end < matrix->size()`
 /// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the engine returns
-/// the fault before observing anything and the C adapters abort (row 82).
+/// the corresponding fault and the C adapters abort (row 82).
 #[test]
 fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut session = trellis_session();
@@ -656,15 +656,12 @@ fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
             fault: TrainingSpanFault::PastMatrixEnd,
         }
     );
-    assert!(
-        recorder.observed.is_empty(),
-        "the refusal precedes every observation"
-    );
 }
 
 /// The `'ni` twin: the leading apostrophe leaves column 0 empty, so the
 /// pin asserts `matrix->get_column_size(start) > 0`
-/// (`storage/phonetic_key_matrix.cpp:663`) before any key is trained.
+/// (`storage/phonetic_key_matrix.cpp:663`) after the step's bigram update
+/// (`phonetic_lookup.h:875-925`). The abort discards the in-memory changes.
 #[test]
 fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
     let mut session = trellis_session();
@@ -684,10 +681,6 @@ fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
             position: 0,
             fault: TrainingSpanFault::EmptyStartColumn,
         }
-    );
-    assert!(
-        recorder.observed.is_empty(),
-        "the refusal precedes every observation"
     );
 }
 
@@ -773,7 +766,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
 /// The stale end can still land on an empty column: after a re-parse to
 /// `ni'hao` the pin passes `:663` (the apostrophe column holds a zero key)
 /// and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses
-/// with [`TrainingSpanFault::EndEmptyColumn`] before observing anything.
+/// with [`TrainingSpanFault::EndEmptyColumn`].
 #[test]
 fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
     let mut session = trellis_session();
@@ -792,10 +785,6 @@ fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
             position: 2,
             fault: TrainingSpanFault::EndEmptyColumn,
         }
-    );
-    assert!(
-        recorder.observed.is_empty(),
-        "the refusal precedes every observation"
     );
 }
 
@@ -849,13 +838,13 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
             fault: TrainingSpanFault::PastMatrixEnd,
         }
     );
-    assert!(recorder.observed.is_empty());
 }
 
-/// The walk checks every step before it observes any: a valid forced
-/// phrase before a stale forced token leaves the user model untouched.
+/// A stale forced token at position 2 refuses after a valid forced span.
+/// The pin records the earlier span before its consistency assert
+/// (`phonetic_lookup.h:858-929`); the abort discards the in-memory changes.
 #[test]
-fn training_checks_every_step_before_observing_any() {
+fn training_refuses_a_stale_forced_token_at_a_later_span() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("parse");
     assert!(session.guess_sentence().expect("guess"));
@@ -872,15 +861,11 @@ fn training_checks_every_step_before_observing_any() {
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the later forcing refuses");
     assert_eq!(error, EngineError::StaleTrainingConstraint { position: 2 });
-    assert!(
-        recorder.observed.is_empty(),
-        "the refusal precedes every observation"
-    );
 }
 
-/// A forced phrase whose token differs from the decoded row's is the
-/// pin's consistency assert (`phonetic_lookup.h:868`): the training path
-/// answers a stale constraint and observes nothing.
+/// A forced phrase at position 0 whose token differs from the decoded
+/// row's reaches the pin's consistency assert (`phonetic_lookup.h:868`):
+/// the engine answers a stale constraint at that position.
 #[test]
 fn training_refuses_a_stale_forced_token() {
     let mut session = trellis_session();
@@ -895,7 +880,6 @@ fn training_refuses_a_stale_forced_token() {
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale forcing refuses");
     assert_eq!(error, EngineError::StaleTrainingConstraint { position: 0 });
-    assert!(recorder.observed.is_empty());
 }
 
 /// A stored phrase trains as long as its stored length, the
