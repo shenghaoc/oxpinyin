@@ -595,7 +595,32 @@ OPTION_BASE = 0x188  # PINYIN_INCOMPLETE|USE_DIVIDED_TABLE|USE_RESPLIT_TABLE, th
 OPTION_GATES = 0x1FE01800  # PINYIN_CORRECT_ALL|PINYIN_AMB_S_SH|PINYIN_AMB_Z_ZH, pinyin_custom2.h:51-52,79
 
 # Observation ID -> Api(function, input[, facade]) or Utility.
+def zhuyin_separator_constraint(facade, case):
+    """The full-pinyin matrix's separator: zhuyin.cpp:1017-1043,1440-1458,1460-1510,1635-1675.
+
+    Guess at 3 reaches the zero-key assert. At 2, choose the after-cursor 好 row and probe
+    one constraint column. Each observation has a fresh instance, so clears are independent.
+    """
+    guess, probe = case
+    # The default FORCE_TONE refuses the untoned input (pinyin_parser2.cpp:185-189).
+    facade.call('zhuyin_parse_more_full_pinyins', "ni'hao")
+    facade.call('zhuyin_set_options', 2)  # USE_TONE, with FORCE_TONE cleared.
+    facade.call('zhuyin_parse_more_full_pinyins', "ni'hao")
+    facade.call('zhuyin_guess_candidates_after_cursor', guess)
+    count = facade.call('zhuyin_get_n_candidate')[1]
+    for index in range(count):
+        row = read_row(facade, index, 'zhuyin')
+        if row and row[:2] == (2, '好'):  # NORMAL_CANDIDATE_AFTER_CURSOR, zhuyin.h:42
+            facade.call('zhuyin_choose_candidate', guess)
+            facade.call('zhuyin_clear_constraint', probe)
+            return
+    raise CaptureError('the after-cursor 好 row is absent')
+
+
 OBSERVATIONS = {
+    'zhuyin-separator/guess-3': Api(zhuyin_separator_constraint, [3, 2], 'zhuyin'),
+    **{f'zhuyin-separator/guess-2-clear-{probe}': Api(zhuyin_separator_constraint, [2, probe], 'zhuyin')
+       for probe in (2, 3)},
     "key-abort/'": Api(key_abort, "'"),
     "key-abort/''": Api(key_abort, "''"),
     "key-abort/'''": Api(key_abort, "'''"),
@@ -881,6 +906,8 @@ class Pin:
             return [ok, index.value]
         if base == 'choose_candidate':
             return int(self.fn(name, I, P, Z, P)(inst, args[0], self.candidate))
+        if base == 'clear_constraint':
+            return bool(self.fn(name, B, P, Z)(inst, args[0]))
         if base == 'train':
             return bool(self.fn(name, B, P, U8)(inst, args[0]))
         if base == 'save':
