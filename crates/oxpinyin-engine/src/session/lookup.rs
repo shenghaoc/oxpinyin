@@ -559,6 +559,7 @@ where
                     continued: &mut continued,
                     unreadable: &mut *scratch.unreadable,
                     entries: scratch.entries,
+                    row: scratch.row,
                     explicit: scratch.explicit,
                 };
                 self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
@@ -649,6 +650,7 @@ where
             continued,
             unreadable,
             entries,
+            row,
             explicit,
         } = buf;
         let end = end.saturating_sub(*span_base);
@@ -658,110 +660,34 @@ where
         if *explicit {
             EngineError::check_toned_incomplete(path, tones)?;
         }
-        if let Some((failed_item, extends)) = self
+        // One search per table answers the rows and `SEARCH_CONTINUED`
+        // (`search_matrix`, `pinyin.cpp:2231-2256` at 074a2219). A typed
+        // tone already filters the rows there (`pinyin_phrase3.h:97-105`).
+        let (failed_item, extends) = self
             .dictionary
-            .candidate_search_into(path, tones, entries)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
-        {
-            unreadable.append(failed_item, *span_start, end);
-            **continued |= extends;
-            append_scan_entries(
-                entries.drain(..),
-                path.len(),
-                end,
-                CandidateKind::Phrase,
-                system,
-            );
-            self.dictionary
-                .lookup_addon_into(path, entries)
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
-            append_scan_entries(
-                entries.drain(..),
-                path.len(),
-                end,
-                CandidateKind::Addon,
-                addon,
-            );
-            **continued |= self
-                .dictionary
-                .phrase_prefix_exists_addon(path)
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
-            return Ok(());
-        }
-        unreadable.append(
-            self.lookup_and_append(path, tones, end, system, addon, entries)?,
-            *span_start,
-            end,
-        );
-
-        let can_extend = self
-            .dictionary
-            .phrase_prefix_exists(path)
+            .candidate_search_into(path, tones, entries, row)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        let addon_extend = self
-            .dictionary
-            .phrase_prefix_exists_addon(path)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        **continued |= can_extend || addon_extend;
-        Ok(())
-    }
-
-    /// `tones` are the typed tones of `sequence`. The dictionary's
-    /// `lookup_into` is toneless, but the pin's user index keeps each
-    /// phrase's stored tones and its search compares them with
-    /// `pinyin_compare_tone3` (`pinyin_phrase3.h:97-105`: a zero tone on
-    /// either side matches, two different tones do not, pin 074a2219). A
-    /// path that types a tone on complete syllables therefore keeps only
-    /// the entries `trellis_records` also returns — the tone-aware match
-    /// the sentence trellis already uses.
-    pub(super) fn lookup_and_append(
-        &self,
-        sequence: &[SyllableKey],
-        tones: &[u8],
-        end: usize,
-        system: &mut Vec<Candidate>,
-        addon: &mut Vec<Candidate>,
-        entries: &mut Vec<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, EngineError> {
-        // The flag rides this call: a token of a loaded library whose item
-        // cannot be read, which the pin's candidate listing dies on.
-        let unreadable = self
-            .dictionary
-            .lookup_candidate_rows(sequence, tones, entries)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        if tones.iter().any(|tone| *tone != 0) {
-            let mut toned: Vec<u32> = self
-                .dictionary
-                .trellis_records(sequence, tones)
-                .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
-                .iter()
-                .map(|record| record.token().value())
-                .collect();
-            toned.sort_unstable();
-            entries.retain(|entry| toned.binary_search(&entry.token().value()).is_ok());
-        }
+        unreadable.append(failed_item, *span_start, end);
+        **continued |= extends;
         append_scan_entries(
             entries.drain(..),
-            sequence.len(),
+            path.len(),
             end,
             CandidateKind::Phrase,
             system,
         );
-        self.dictionary
-            .lookup_addon_into(sequence, entries)
+        **continued |= self
+            .dictionary
+            .search_addon_into(path, entries, row)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         append_scan_entries(
             entries.drain(..),
-            sequence.len(),
+            path.len(),
             end,
             CandidateKind::Addon,
             addon,
         );
-        Ok(unreadable)
+        Ok(())
     }
 }
 
@@ -904,6 +830,7 @@ where
     ) -> Result<(), EngineError> {
         let Scratch {
             entries,
+            row,
             path,
             window_addon,
             frequencies,
@@ -931,6 +858,7 @@ where
                 unreadable: &mut unreadable,
                 path,
                 entries,
+                row,
                 window_addon,
                 explicit: gate,
             };
@@ -1234,6 +1162,7 @@ where
         let rank_word = self.rank_word();
         let Scratch {
             entries,
+            row,
             path,
             window_addon,
             frequencies,
@@ -1279,6 +1208,7 @@ where
                     continued: &mut continued,
                     unreadable: &mut unreadable,
                     entries,
+                    row,
                     // `scan_window_ending` serves only the explicit
                     // before-cursor guess (`zhuyin.cpp:1542-1607`).
                     explicit: true,

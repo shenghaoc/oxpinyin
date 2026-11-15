@@ -275,6 +275,8 @@ impl Default for Lookup {
 struct Scratch {
     /// Dictionary-hit buffer for one window-scan lookup.
     entries: Vec<PhraseEntry>,
+    /// The table row one window-scan search reads.
+    row: Vec<u8>,
     /// One scan path (phrase length ≤ 16).
     path: SmallVec<[SyllableKey; 16]>,
     /// Per-window scan batch, addon facade.
@@ -512,6 +514,7 @@ struct ScanScratch<'a> {
     unreadable: &'a mut crate::candidate::UnreadableCandidates,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
+    row: &'a mut Vec<u8>,
     window_addon: &'a mut Vec<Candidate>,
     /// An explicit guess: the scan is the pin's `pinyin_guess_candidates`
     /// search, so its table searches assert where the pin's do
@@ -532,6 +535,7 @@ struct ScanBuf<'a> {
     /// As [`ScanScratch::unreadable`].
     unreadable: &'a mut crate::candidate::UnreadableCandidates,
     entries: &'a mut Vec<PhraseEntry>,
+    row: &'a mut Vec<u8>,
     /// As [`ScanScratch::explicit`].
     explicit: bool,
 }

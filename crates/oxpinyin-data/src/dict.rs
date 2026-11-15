@@ -97,35 +97,6 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
     Ok(PhraseTable::new(RawChewingDbm::new(store)))
 }
 
-/// Resolves the surviving records of one search through `libraries`:
-/// the text of each chunk item. A token
-/// without a loaded item is dropped (upstream's `NULL == head` skip).
-///
-/// Answers whether the search met a token whose library is loaded (a system
-/// chunk, or one of the `user_nibbles` `table.conf` types `USER_FILE`) but
-/// whose item or text cannot be read. For an unreadable item
-/// `_token_get_phrase` fails (`pinyin.cpp:1635-1637`) and the pin's candidate
-/// listing goes on to compare the string it never set. For a stored word at
-/// or above 0x80000000 it succeeds, but `g_ucs4_to_utf8` sets the string to
-/// NULL (`:1641-1645`), and the listing compares that NULL. Both reach the
-/// class (b) `strcmp` of rows 80 and 106.
-fn resolve_items(
-    libraries: &PhraseLibraries,
-    tokens: &[u32],
-    out: &mut Vec<PhraseEntry>,
-    user_nibbles: u32,
-) -> bool {
-    let mut unreadable = false;
-    for &token in tokens {
-        let Some(entry) = resolve_item(libraries, None, token) else {
-            unreadable |= library_loaded(libraries, user_nibbles, token);
-            continue;
-        };
-        out.push(entry);
-    }
-    unreadable
-}
-
 /// `token`'s entry: its text, priced against `keys`; `None` when the
 /// library is unloaded or the item cannot be read.
 ///
@@ -492,8 +463,10 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// (`chewing_large_table2.h:91-133` at 074a2219). The pin's search
     /// carries tokens only; a pronunciation's price is read later, for one
     /// token, through [`Self::trellis_item`]. A token of a detached library
-    /// resolves through `live`, its live owner. The answer is whether a token
-    /// of a loaded library had no readable item.
+    /// resolves through `live`, its live owner. The search makes one DBM
+    /// get, into `row`, the caller's buffer. The answer is whether a token
+    /// of a loaded library had no readable item, and whether the query's
+    /// index key exists (`SEARCH_CONTINUED`, from that get).
     ///
     /// # Errors
     /// Returns a dictionary error when the system index cannot be searched.
@@ -502,26 +475,26 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
+        row: &mut Vec<u8>,
         mut visible: impl FnMut(u32) -> bool,
         mut live: impl FnMut(u32) -> Option<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
+    ) -> Result<(oxpinyin_core::UnreadableRows, bool), DictError> {
         out.clear();
+        let mut unreadable = oxpinyin_core::UnreadableRows::default();
         if syllables.is_empty() {
-            return Ok(Default::default());
+            return Ok((unreadable, false));
         }
         let Some(mut keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(Default::default());
+            return Ok((unreadable, false));
         };
         for (key, &tone) in keys.iter_mut().zip(tones) {
             *key = key.with_tone(tone);
         }
-        let tokens = self.pinyin.search(&keys)?;
-        let mut unreadable = oxpinyin_core::UnreadableRows::default();
-        for token in tokens {
+        let present = self.pinyin.search_into(&keys, row, |token| {
             // Unloaded or removed tokens are not malformed loaded items.
             // Their live owner can be absent precisely because it was unloaded.
             if !visible(token) {
-                continue;
+                return;
             }
             let entry = if self
                 .libraries()
@@ -537,8 +510,8 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             } else if library_loaded(self.libraries(), self.user_nibbles, token) {
                 unreadable.push(PhraseToken::new(token));
             }
-        }
-        Ok(unreadable)
+        })?;
+        Ok((unreadable, present))
     }
 
     /// Whether `token`'s library is loaded in this facade — a system
@@ -817,9 +790,11 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             syllables,
             &[],
             out,
+            &mut Vec::new(),
             |_| true,
             |token| resolve_item(self.libraries(), None, token),
         )
+        .map(|(unreadable, _)| unreadable)
     }
 }
 
@@ -911,16 +886,18 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.fill_lookup(syllables, out).map(|rows| rows.count != 0)
     }
 
-    fn lookup_candidate_rows(
+    fn candidate_search_into(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, Self::Error> {
+        row: &mut Vec<u8>,
+    ) -> Result<(oxpinyin_core::UnreadableRows, bool), Self::Error> {
         self.lookup_with_live(
             syllables,
             tones,
             out,
+            row,
             |_| true,
             |token| resolve_item(self.libraries(), None, token),
         )
@@ -1218,55 +1195,30 @@ impl AddonDictionary {
         )
     }
 
-    /// The addon lookup pass: every addon-index record for `syllables`
-    /// whose library is loaded.
+    /// Reads the addon index once for rows and `SEARCH_CONTINUED`
+    /// (`pinyin.cpp:2231-2256` at 074a2219). The row determines
+    /// continuation even if its library is unloaded. The loaded-library
+    /// filter applies to the returned candidates.
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] when the DBM read or a value decode fails.
-    pub fn lookup_into(
+    /// Returns [`DictError`] when a value decode fails.
+    pub fn search_into(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
+        row: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
         out.clear();
         let Some(pinyin) = self.pinyin.as_ref() else {
-            return Ok(());
-        };
-        // pinyin.cpp:2237 searches the addon index even without a loaded
-        // addon library. A retained failed handle must receive that read.
-        if (self.libraries.is_empty() && !pinyin.attachment_failed()) || syllables.is_empty() {
-            return Ok(());
-        }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(());
-        };
-        let items = pinyin.search(&keys)?;
-        resolve_items(&self.libraries, &items, out, 0);
-        Ok(())
-    }
-
-    /// The addon facade's `SEARCH_CONTINUED` probe.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read fails.
-    pub fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
-        let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(false);
         };
-        // This is the auxiliary continuation probe after the real search;
-        // an unopened object already answered SEARCH_NONE there.
-        if self.libraries.is_empty() || pinyin.attachment_failed() {
-            return Ok(false);
-        }
-        if syllables.is_empty() {
-            return Ok(true);
-        }
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
             return Ok(false);
         };
-        pinyin.key_exists(&keys)
+        pinyin.search_into(&keys, row, |token| {
+            out.extend(resolve_item(&self.libraries, None, token));
+        })
     }
 }
 

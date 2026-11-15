@@ -387,39 +387,33 @@ pub trait Dictionary {
         Ok(false)
     }
 
-    /// Searches and retains the first unreadable token and unreadable row count.
+    /// The candidate search of one key path: the entries, the first
+    /// unreadable token with the unreadable row count, and the
+    /// `SEARCH_CONTINUED` bit. The pin answers all three from one
+    /// `search_internal` read per table (`chewing_large_table2_bdb.cpp:
+    /// 180-189`, `facade_chewing_table2.h:109-129` at 074a2219), and a
+    /// nonzero query tone keeps only stored readings with an equal or zero
+    /// tone (`pinyin_phrase3.h:97-105`). `row` is the caller's buffer for
+    /// that read.
     ///
-    /// # Errors
-    ///
-    /// As [Self::lookup_into_flagged].
-    fn lookup_candidate_rows(
-        &self,
-        syllables: &[Self::Syllable],
-        _tones: &[u8],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<UnreadableRows, Self::Error> {
-        self.lookup_into_flagged(syllables, out)
-            .map(|failed| UnreadableRows {
-                count: usize::from(failed),
-                first: None,
-            })
-    }
-
-    /// Optional single-search candidate path, including tones and the
-    /// continuation bit. `Some((unreadable, continued))` replaces the
-    /// separate lookup, tone filtering and prefix probe. Implementations
-    /// use this when repeating a native read would itself be observable.
-    /// `None` preserves the ordinary candidate path.
+    /// The default is the tone-less [`Self::lookup_into_flagged`] then
+    /// [`Self::phrase_prefix_exists`].
     ///
     /// # Errors
     /// Returns a dictionary read or decoding error.
     fn candidate_search_into(
         &self,
-        _syllables: &[Self::Syllable],
+        syllables: &[Self::Syllable],
         _tones: &[u8],
-        _out: &mut Vec<PhraseEntry>,
-    ) -> Result<Option<(UnreadableRows, bool)>, Self::Error> {
-        Ok(None)
+        out: &mut Vec<PhraseEntry>,
+        _row: &mut Vec<u8>,
+    ) -> Result<(UnreadableRows, bool), Self::Error> {
+        let failed = self.lookup_into_flagged(syllables, out)?;
+        let unreadable = UnreadableRows {
+            count: usize::from(failed),
+            first: None,
+        };
+        Ok((unreadable, self.phrase_prefix_exists(syllables)?))
     }
 
     /// Whether a stored phrase's pinyin can extend `syllables`.
@@ -510,32 +504,22 @@ pub trait Dictionary {
         Ok(Vec::new())
     }
 
-    /// [`Self::lookup_addon`] into a caller-owned buffer.
+    /// Reads addon candidates into a caller-owned buffer and returns the
+    /// same search's `SEARCH_CONTINUED` bit. The default uses
+    /// [`Self::lookup_addon`] and has no continuation bit.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
-    fn lookup_addon_into(
+    fn search_addon_into(
         &self,
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
+        _row: &mut Vec<u8>,
+    ) -> Result<bool, Self::Error> {
         let entries = self.lookup_addon(syllables)?;
         out.clear();
         out.extend(entries);
-        Ok(())
-    }
-
-    /// Addon-facade `SEARCH_CONTINUED` probe, `false` for every existing
-    /// implementor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the addon backend cannot evaluate the prefix probe.
-    fn phrase_prefix_exists_addon(
-        &self,
-        _syllables: &[Self::Syllable],
-    ) -> Result<bool, Self::Error> {
         Ok(false)
     }
 

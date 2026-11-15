@@ -313,29 +313,11 @@ oxpinyin mirrors upstream's two-facade split:
 ### 6.3 Candidate collection
 
 The `Dictionary` and `LanguageModel` seams carry defaulted addon methods
-([`core-trait-seam.md`](core-trait-seam.md)). The shape:
-
-```rust
-trait Dictionary {
-    // existing methods ...
-
-    /// Addon lookup pass, empty for every existing implementor.
-    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
-        Ok(Vec::new())
-    }
-
-    /// Addon continued-search probe, false for every existing implementor.
-    fn phrase_prefix_exists_addon(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
-        Ok(false)
-    }
-}
-```
-
-In the real-frequency window scan, after the default lookup the engine
-also calls `lookup_addon` on each complete key-path and tags those entries
-`CandidateKind::Addon`; the widening probe ORs `phrase_prefix_exists_addon`.
-Implementors without addon data return empty/false, so the no-addon path is
-unchanged.
+([`core-trait-seam.md`](core-trait-seam.md)). For each complete key path, the
+candidate scan searches the default tables, then calls `search_addon_into`.
+The addon search reads rows and the continuation bit together. The engine
+tags the entries `CandidateKind::Addon` and ORs the continuation bits
+(`pinyin.cpp:2231-2256` at 074a2219).
 
 ### 6.4 Scoring/ranking
 
