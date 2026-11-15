@@ -33,7 +33,10 @@ fn full_pinyin_separator() -> Fixture {
         zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()),
         0
     );
-    assert!(zhuyin_set_options(fixture.context, oxpinyin_core::USE_TONE));
+    assert!(zhuyin_set_options(
+        fixture.context,
+        oxpinyin_core::OptionBits::USE_TONE.bits()
+    ));
     assert_eq!(
         zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()),
         6

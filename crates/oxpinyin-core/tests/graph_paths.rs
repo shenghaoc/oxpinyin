@@ -12,10 +12,7 @@
 //! behind a Linux-only feature.
 
 use oxpinyin_core::graph::{ExactSegment, GraphError, SegmentGraph};
-use oxpinyin_core::{
-    Completeness, OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_ON_ONG,
-    SyllableKey,
-};
+use oxpinyin_core::{Completeness, OptionBits, SyllableKey};
 
 use crate::common::capture_text::unescape;
 
@@ -332,7 +329,7 @@ fn selected(input: &str, options: OptionBits) -> Vec<String> {
 fn fewest_keys_breaks_equal_key_counts_by_correction_distance() {
     // Pin 074a2219 `pinyin_parser2.cpp:305-309`: `chon` is a distance-1
     // `PINYIN_CORRECT_ON_ONG` row, so `chong'a` (0) beats `chon'ga` (1).
-    let on_ong = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG);
+    let on_ong = OptionBits::PINYIN_CORRECT_ON_ONG;
     assert_eq!(selected("chonga", on_ong), ["chong@0-5", "a@5-6"]);
     assert_eq!(selected("chongan", on_ong), ["chong@0-5", "an@5-7"]);
     assert_eq!(selected("zhonge", on_ong), ["zhong@0-5", "e@5-6"]);
@@ -342,11 +339,11 @@ fn fewest_keys_breaks_equal_key_counts_by_correction_distance() {
     );
 
     // Totals, not counts of corrected keys: `chong'agn` is 1, `chon'gagn` 2.
-    let two = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG | PINYIN_CORRECT_GN_NG);
+    let two = OptionBits::PINYIN_CORRECT_ON_ONG | OptionBits::PINYIN_CORRECT_GN_NG;
     assert_eq!(selected("chongagn", two), ["chong@0-5", "ang@5-8"]);
 
     // The key count still comes first: `liou` is one key at distance 1
     // rather than `li'ou`, two keys at 0.
-    let iou_iu = OptionBits::from_bits(PINYIN_CORRECT_IOU_IU);
+    let iou_iu = OptionBits::PINYIN_CORRECT_IOU_IU;
     assert_eq!(selected("liou", iou_iu), ["liu@0-4"]);
 }

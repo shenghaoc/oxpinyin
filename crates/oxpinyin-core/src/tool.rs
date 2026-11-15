@@ -43,7 +43,7 @@ pub struct Parse {
 /// Direct-parser outputs from the existing single-key parsers and shared
 /// segment walk (`pinyin_parser2.cpp:623-715`, `zhuyin_parser2.cpp:858-960`).
 #[must_use]
-pub fn parse_direct(input: &[u8], options: u32, zhuyin: bool) -> Parse {
+pub fn parse_direct(input: &[u8], options: crate::OptionBits, zhuyin: bool) -> Parse {
     let mut keys = Vec::new();
     let consumed = crate::direct::parse(
         input,
@@ -67,11 +67,11 @@ pub fn parse_direct(input: &[u8], options: u32, zhuyin: bool) -> Parse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE};
+    use crate::OptionBits;
 
     #[test]
     fn direct_spans_keep_skipped_separators_and_partial_failure() {
-        let parsed = parse_direct(b"ni3'' hao3  invalid", USE_TONE, false);
+        let parsed = parse_direct(b"ni3'' hao3  invalid", OptionBits::USE_TONE, false);
         assert_eq!(parsed.consumed, 12);
         assert_eq!(
             parsed
@@ -84,7 +84,7 @@ mod tests {
         assert_eq!(parsed.keys[0].key.pinyin_string(), "ni3");
         let corrected = parse_direct(
             b"bagn n",
-            USE_TONE | PINYIN_CORRECT_ALL | PINYIN_INCOMPLETE,
+            OptionBits::USE_TONE | OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_INCOMPLETE,
             false,
         );
         assert_eq!(corrected.consumed, 6);
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn zhuyin_spans_are_utf8_bytes_from_the_shipping_key_parser() {
         let input = "ㄋㄧˇ' ㄏㄠˇ  bad";
-        let parsed = parse_direct(input.as_bytes(), USE_TONE, true);
+        let parsed = parse_direct(input.as_bytes(), OptionBits::USE_TONE, true);
         assert_eq!(parsed.consumed, 20);
         assert_eq!(
             parsed
@@ -105,7 +105,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0..8, 10..18]
         );
-        let shipping = crate::parse_zhuyin_direct(input, USE_TONE);
+        let shipping = crate::parse_zhuyin_direct(input, OptionBits::USE_TONE);
         assert_eq!(shipping.len(), parsed.keys.len());
         for ((key, tone), with_span) in shipping.iter().zip(parsed.keys) {
             assert_eq!(

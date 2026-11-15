@@ -21,15 +21,6 @@ use oxpinyin_facade::{ContextCore, OpenFailure};
 
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
-/// `USE_TONE | FORCE_TONE` — the option word `zhuyin_init` seeds
-/// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin). This is the zhuyin facade's
-/// distinguishing default: `FORCE_TONE` is on, unlike `pinyin_init`'s `USE_TONE`.
-///
-/// Superseded by [`oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD`]; kept as
-/// the crate-local name the tests cite.
-#[cfg(test)]
-pub const ZHUYIN_DEFAULT_OPTIONS: u32 = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
-
 /// State behind `zhuyin_context_t *`.
 pub struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered

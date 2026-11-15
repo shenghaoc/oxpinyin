@@ -24,7 +24,7 @@
 //! the recorded capture harness and update `EXPECTED_PIN_REF` — a
 //! change here is a re-freeze, not a silent drift.
 
-use oxpinyin_core::{USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinKey, ZhuyinParser, ZhuyinScheme};
+use oxpinyin_core::{OptionBits, ZhuyinKey, ZhuyinParser, ZhuyinScheme};
 
 const FIXTURE: &str = include_str!("../../../fixtures/w4/oracle-zhuyin-parse.txt");
 const EXPECTED_PIN_REF: &str = "libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99\
@@ -38,7 +38,7 @@ const CAPTURE_SCHEMA: &str = "pinyin-capture-v1";
 struct CaptureLine {
     case: String,
     input: String,
-    flags: u32,
+    flags: OptionBits,
     scheme: u8,
     parse_return: usize,
     parsed_input_length: usize,
@@ -97,6 +97,7 @@ fn fixture_lines() -> Vec<CaptureLine> {
         let _api_sequence = next(); // recorded provenance, not replayed
         let input = unescape(next().strip_prefix("input=").expect("input field"));
         let flags = u32::from_str_radix(next().strip_prefix("flags=0x").expect("flags field"), 16)
+            .map(OptionBits::from_bits_retain)
             .expect("hex flags");
         let scheme: u8 = next()
             .strip_prefix("scheme=")
@@ -171,7 +172,7 @@ fn zhuyin_parse_matches_the_frozen_oracle_pin() {
         let parser = ZhuyinParser::with_scheme(scheme_for(line.scheme));
         let parsed = parser.parse_with_options(
             line.input.as_bytes(),
-            line.flags & (USE_TONE | ZHUYIN_INCOMPLETE),
+            line.flags & (OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE),
         );
 
         assert_eq!(
@@ -251,17 +252,21 @@ fn the_battery_covers_every_keyboard_and_option_word() {
         );
     }
     assert!(
-        lines.iter().any(|line| line.flags & USE_TONE != 0),
+        lines
+            .iter()
+            .any(|line| line.flags.contains(OptionBits::USE_TONE)),
         "no case exercises USE_TONE"
-    );
-    assert!(
-        lines.iter().any(|line| line.flags & ZHUYIN_INCOMPLETE != 0),
-        "no case exercises ZHUYIN_INCOMPLETE"
     );
     assert!(
         lines
             .iter()
-            .any(|line| line.flags & (USE_TONE | ZHUYIN_INCOMPLETE) == 0),
+            .any(|line| line.flags.contains(OptionBits::ZHUYIN_INCOMPLETE)),
+        "no case exercises ZHUYIN_INCOMPLETE"
+    );
+    assert!(
+        lines.iter().any(|line| !line
+            .flags
+            .intersects(OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE)),
         "no case exercises the plain option word"
     );
 }

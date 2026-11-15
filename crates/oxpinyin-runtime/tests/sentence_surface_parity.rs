@@ -86,7 +86,7 @@ fn sentence_surface_matches_supplementary_tie_order() {
     let mut owner = open_session();
     let mut session = owner.session();
     session
-        .set_options(oxpinyin_core::OptionBits::from_bits(0x18a))
+        .set_options(oxpinyin_core::OptionBits::from_bits_retain(0x18a))
         .expect("capture options must apply");
     session
         .set_sort_options(0x1e)

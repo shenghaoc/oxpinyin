@@ -2859,7 +2859,10 @@ fn a_short_sentence_start_gram_aborts_the_guess_after_parsing() {
             );
             let context = init_at(&user.path);
             assert!(!context.is_null());
-            assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+            assert!(pinyin_set_options(
+                context,
+                oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits()
+            ));
             let instance = pinyin_alloc_instance(context);
             assert!(!instance.is_null());
             assert_eq!(
@@ -2898,7 +2901,10 @@ fn partial_candidate_gram_logs_once(
     );
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     if operation == "lookup" {
-        assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+        assert!(pinyin_set_options(
+            context,
+            oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits()
+        ));
         assert!(!crate::sentence::pinyin_guess_sentence_with_prefix(
             instance,
             c"你好".as_ptr()
@@ -2945,7 +2951,10 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
                 )],
             );
             let context = init_at(user);
-            assert!(pinyin_set_options(context, oxpinyin_core::DYNAMIC_ADJUST));
+            assert!(pinyin_set_options(
+                context,
+                oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits()
+            ));
             let instance = pinyin_alloc_instance(context);
             assert_eq!(pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()), 2);
 

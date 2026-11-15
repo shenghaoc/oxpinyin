@@ -6,12 +6,12 @@ use pinyin_capi::tool::Driver;
 
 /// tests/test_pinyin.cpp:34-101.
 pub fn pinyin(data: &std::ffi::CStr) {
-    let options = oxpinyin_core::PINYIN_INCOMPLETE
-        | oxpinyin_core::PINYIN_CORRECT_ALL
-        | oxpinyin_core::USE_DIVIDED_TABLE
-        | oxpinyin_core::USE_RESPLIT_TABLE
-        | oxpinyin_core::DYNAMIC_ADJUST;
-    let mut driver = Driver::new(data, data, Some(options));
+    let options = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE
+        | oxpinyin_core::OptionBits::PINYIN_CORRECT_ALL
+        | oxpinyin_core::OptionBits::USE_DIVIDED_TABLE
+        | oxpinyin_core::OptionBits::USE_RESPLIT_TABLE
+        | oxpinyin_core::OptionBits::DYNAMIC_ADJUST;
+    let mut driver = Driver::new(data, data, Some(options.bits()));
     let mut input = LineReader::stdin();
     loop {
         output::prefix_prompt();

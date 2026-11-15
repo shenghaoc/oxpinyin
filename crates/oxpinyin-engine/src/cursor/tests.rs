@@ -19,7 +19,7 @@ use crate::session::matrix::ScanMatrix;
 
 /// The parity word: `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
 /// USE_RESPLIT_TABLE` plus the harness's `0x2` bit.
-const PARITY: OptionBits = OptionBits::from_bits(0x18a);
+const PARITY: OptionBits = OptionBits::from_bits_retain(0x18a);
 
 /// The full-pinyin scan matrix's keys of `input` with their spans, plus
 /// the graph's consumed length, as a parse under `options` fills them.

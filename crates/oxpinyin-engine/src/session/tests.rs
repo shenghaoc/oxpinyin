@@ -1290,12 +1290,10 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
 
 #[test]
 fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
-    use oxpinyin_core::DYNAMIC_ADJUST;
-    use oxpinyin_core::MergedGram;
-    use oxpinyin_core::OptionBits;
+    use oxpinyin_core::{MergedGram, OptionBits};
 
     let clear = OptionBits::default();
-    let set = OptionBits::default().with(DYNAMIC_ADJUST, true);
+    let set = OptionBits::DYNAMIC_ADJUST;
     // 500 of a 1000-count row: the pin's bigram_freq / total.
     let gram = MergedGram::new(1_000, vec![(7, 100), (42, 500)]);
 
@@ -1452,7 +1450,7 @@ fn dynamic_adjust_run(
     dynamic: bool,
     row: Option<oxpinyin_core::MergedGram>,
 ) -> DynamicAdjustRun {
-    use oxpinyin_core::{DYNAMIC_ADJUST, OptionBits, PINYIN_INCOMPLETE};
+    use oxpinyin_core::OptionBits;
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -1484,11 +1482,11 @@ fn dynamic_adjust_run(
     // Both arms set the same word apart from the one bit, so nothing
     // else about the parse can differ between them.
     session
-        .set_options(
-            OptionBits::default()
-                .with(PINYIN_INCOMPLETE, true)
-                .with(DYNAMIC_ADJUST, dynamic),
-        )
+        .set_options(if dynamic {
+            OptionBits::PINYIN_INCOMPLETE | OptionBits::DYNAMIC_ADJUST
+        } else {
+            OptionBits::PINYIN_INCOMPLETE
+        })
         .expect("set_options");
     session.replace_raw("a").expect("typing cannot fail");
     DynamicAdjustRun {
@@ -1912,7 +1910,7 @@ impl Dictionary for TwoFacadeDict {
 /// fresh session's window, before and after the cursor.
 #[test]
 fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
-    use oxpinyin_core::{DYNAMIC_ADJUST, MergedGram, OptionBits};
+    use oxpinyin_core::{MergedGram, OptionBits};
 
     let whole = MergedGram::new(4, vec![(DYNAMIC_ADJUST_FIRST, 4)]).to_bytes();
     let mut partial = whole.clone();
@@ -1940,7 +1938,7 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
         );
         session.set_defer_list_builds(true);
         session
-            .set_options(OptionBits::default().with(DYNAMIC_ADJUST, true))
+            .set_options(OptionBits::DYNAMIC_ADJUST)
             .expect("set options");
         session.replace_raw("a").expect("parse");
         session
@@ -2113,10 +2111,11 @@ fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
 
 #[test]
 fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
+    use oxpinyin_core::OptionBits;
     use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
-    use oxpinyin_core::{OptionBits, PINYIN_AMB_L_N, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE};
 
-    let options = OptionBits::from_bits(PINYIN_AMB_L_N | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE);
+    let options =
+        OptionBits::PINYIN_AMB_L_N | OptionBits::USE_DIVIDED_TABLE | OptionBits::USE_RESPLIT_TABLE;
     let ni = SyllableKey::from_text("ni").expect("ni key");
     let graph =
         SegmentGraph::build_exact(b"ni", &[ExactSegment::new(0, 2, ni, 3)]).expect("exact ni");
@@ -2154,15 +2153,12 @@ fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
 
 #[test]
 fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
+    use oxpinyin_core::OptionBits;
     use oxpinyin_core::graph::SegmentGraph;
-    use oxpinyin_core::{
-        OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE,
-        USE_TONE,
-    };
 
-    let tables = USE_DIVIDED_TABLE | USE_RESPLIT_TABLE;
-    let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE | tables);
-    let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | tables);
+    let tables = OptionBits::USE_DIVIDED_TABLE | OptionBits::USE_RESPLIT_TABLE;
+    let incomplete = OptionBits::PINYIN_INCOMPLETE | tables;
+    let toned = OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE | tables;
 
     // Fuzzy alternates inherit the tone: upstream copies the whole
     // ChewingKey before swapping the initial
@@ -2170,7 +2166,7 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     let graph = SegmentGraph::build_with_options(b"zai4", toned).expect("valid");
     let columns = super::build_scan_matrix(
         &graph,
-        OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH | tables),
+        OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE | OptionBits::PINYIN_AMB_Z_ZH | tables,
         true,
     );
     let column: Vec<_> = columns[0]
@@ -3255,11 +3251,9 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
 /// only difference is `USE_DIVIDED_TABLE`.
 #[test]
 fn divided_table_gate_controls_the_split_column() {
-    use oxpinyin_core::OptionBits;
-
     // PINYIN_INCOMPLETE in both arms so the parse reaches the divided
     // column — the arms differ only in USE_DIVIDED_TABLE.
-    let without_divided = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE);
+    let without_divided = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE;
 
     let mut s = session();
     s.set_options(without_divided)
@@ -3277,7 +3271,7 @@ fn divided_table_gate_controls_the_split_column() {
     // With USE_DIVIDED_TABLE set (same PINYIN_INCOMPLETE base), byte 10
     // IS live — the contrast that proves the gate matters.
     let with_divided =
-        OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE | oxpinyin_core::USE_DIVIDED_TABLE);
+        oxpinyin_core::OptionBits::PINYIN_INCOMPLETE | oxpinyin_core::OptionBits::USE_DIVIDED_TABLE;
     let mut s2 = session();
     s2.set_options(with_divided)
         .expect("set_options cannot fail on an empty session");
@@ -3403,7 +3397,7 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
             },
         );
         session
-            .set_options(oxpinyin_core::OptionBits::from_bits(0x1aa))
+            .set_options(oxpinyin_core::OptionBits::from_bits_retain(0x1aa))
             .expect("options apply");
         session.replace_raw(input).expect("typing cannot fail");
         session
@@ -3423,9 +3417,7 @@ fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input(
     use oxpinyin_core::graph::ExactSegment;
     let mut session = session();
     session
-        .set_options(oxpinyin_core::OptionBits::from_bits(
-            oxpinyin_core::USE_TONE,
-        ))
+        .set_options(oxpinyin_core::OptionBits::USE_TONE)
         .expect("options");
     let sh = SyllableKey::from_canonical_text("sh").expect("initial");
     session
@@ -3442,9 +3434,7 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
     use oxpinyin_core::graph::ExactSegment;
     let mut session = session();
     session
-        .set_options(oxpinyin_core::OptionBits::from_bits(
-            oxpinyin_core::USE_TONE,
-        ))
+        .set_options(oxpinyin_core::OptionBits::USE_TONE)
         .expect("options");
     let segments: Vec<_> = [(0, 2, "li"), (3, 5, "sh"), (6, 8, "ba"), (9, 12, "kua")]
         .into_iter()
@@ -3529,7 +3519,7 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
             },
         );
         session
-            .set_options(OptionBits::from_bits(0x18a))
+            .set_options(OptionBits::from_bits_retain(0x18a))
             .expect("options");
         session.replace_raw(raw).expect("parse");
         let rows = session.candidates_at(offset).expect("window");
@@ -3558,7 +3548,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
             },
         );
         session
-            .set_options(OptionBits::from_bits(0x18a))
+            .set_options(OptionBits::from_bits_retain(0x18a))
             .expect("options");
         session.set_collapse_sentence_rows_to_best(true);
         session.replace_raw(raw).expect("full pinyin parse");
@@ -3611,7 +3601,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     // sees `xi` + `an` in all three.
     let mut session = session();
     session
-        .set_options(OptionBits::from_bits(0x18a))
+        .set_options(OptionBits::from_bits_retain(0x18a))
         .expect("options");
     let spans = |session: &Session<Silent, Silent>| {
         let keys: Vec<_> = session.matrix_keys().iter().collect();
@@ -3895,10 +3885,7 @@ fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     let parsed = session.input.parsed.retained.matrix.bound;
     assert_eq!((keys.len(), parsed), (1, 2));
 
-    let options = session
-        .settings
-        .options
-        .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
+    let options = session.settings.options - oxpinyin_core::OptionBits::PINYIN_INCOMPLETE;
     session.set_options(options).expect("options");
     assert_eq!(session.full_parsed_len(), 2, "no re-parse");
     assert_eq!(session.input.parsed.retained.matrix.bound, 2);
@@ -3923,7 +3910,7 @@ fn the_matrix_keys_are_the_parse_in_column_order() {
 
     let mut session = session();
     session
-        .set_options(OptionBits::from_bits(0x18a))
+        .set_options(OptionBits::from_bits_retain(0x18a))
         .expect("options");
     session.replace_raw("ni'hao").expect("parse");
     let spans: Vec<_> = session
@@ -4029,11 +4016,7 @@ fn wide_abbreviation_session(
         },
     );
     session
-        .set_options(
-            session
-                .options()
-                .with(oxpinyin_core::PINYIN_INCOMPLETE, true),
-        )
+        .set_options(session.options() | oxpinyin_core::OptionBits::PINYIN_INCOMPLETE)
         .expect("incomplete on");
     session.replace_raw("zhhrm").expect("parse");
     session.constraints.resize(6);
@@ -4236,12 +4219,11 @@ fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
 
 #[test]
 fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
-    use oxpinyin_core::{
-        ChewingKey, OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_L_N, PINYIN_AMB_L_R,
-    };
+    use oxpinyin_core::{ChewingKey, OptionBits};
     // phonetic_key_matrix.h:92-100 appends without collapse. Initials
     // read the original column; finals read the grown column (:226-310).
-    let options = OptionBits::from_bits(PINYIN_AMB_L_N | PINYIN_AMB_L_R | PINYIN_AMB_AN_ANG);
+    let options =
+        OptionBits::PINYIN_AMB_L_N | OptionBits::PINYIN_AMB_L_R | OptionBits::PINYIN_AMB_AN_ANG;
     let lan = SyllableKey::from_text("lan").unwrap();
     let key = ScanKey {
         key: lan,
@@ -4287,11 +4269,11 @@ fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
 
 #[test]
 fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
-    use oxpinyin_core::{ChewingKey, OptionBits, PINYIN_AMB_EN_ENG};
+    use oxpinyin_core::{ChewingKey, OptionBits};
     // Finals append without get_table_index (:287-306). shun -> shung has
     // no syllable row, but its packed key and source span still exist.
     let shun = SyllableKey::from_text("shun").unwrap();
-    let options = OptionBits::from_bits(PINYIN_AMB_EN_ENG);
+    let options = OptionBits::PINYIN_AMB_EN_ENG;
     let graph = SegmentGraph::build_exact(b"shun", &[ExactSegment::new(0, 4, shun, 3)]).unwrap();
     let scan = super::build_scan_matrix(&graph, options, false);
     let alternate = ChewingKey {

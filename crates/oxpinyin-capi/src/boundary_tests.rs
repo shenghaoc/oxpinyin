@@ -2643,7 +2643,10 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, oxpinyin_core::USE_TONE));
+    assert!(pinyin_set_options(
+        context,
+        oxpinyin_core::OptionBits::USE_TONE.bits()
+    ));
     assert_eq!(parse(instance, "ba1"), 3);
     assert!(pinyin_guess_sentence(instance));
 
@@ -2808,7 +2811,7 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     let instance = alloc(context);
     assert!(pinyin_set_options(
         context,
-        oxpinyin_core::USE_TONE | oxpinyin_core::PINYIN_AMB_EN_ENG
+        (oxpinyin_core::OptionBits::USE_TONE | oxpinyin_core::OptionBits::PINYIN_AMB_EN_ENG).bits()
     ));
     assert_eq!(parse(instance, "shun3"), 5);
     let phrase = cstr("甲");
@@ -3012,15 +3015,15 @@ fn auxiliary_text_cuts_before_a_tone() {
 fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess: bool) {
     let user = TempUserDir::new("aux-parse-options");
     let (context, instance) = open_at(&user.path);
-    let incomplete = oxpinyin_core::PINYIN_INCOMPLETE;
+    let incomplete = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE;
     assert!(pinyin_set_options(
         context,
-        incomplete | oxpinyin_core::USE_TONE
+        (incomplete | oxpinyin_core::OptionBits::USE_TONE).bits()
     ));
     assert_eq!(parse(instance, "ni3hao3"), 7);
     assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
 
-    assert!(pinyin_set_options(context, incomplete));
+    assert!(pinyin_set_options(context, incomplete.bits()));
     if after_guess {
         assert!(pinyin_guess_candidates(
             instance,

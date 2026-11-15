@@ -896,7 +896,7 @@ mod sentence_chain_tests {
 mod prefix_ranking_tests {
     use super::*;
     use crate::test_support::{TempUserDir, cstr, open};
-    use oxpinyin_core::{DYNAMIC_ADJUST, Dictionary};
+    use oxpinyin_core::{Dictionary, OptionBits};
 
     // 074a2219: pinyin.cpp:1711-1740,2200-2215 and
     // zhuyin.cpp:1146-1175,1473-1489 choose the longest live prefix at zero.
@@ -925,7 +925,10 @@ mod prefix_ranking_tests {
                     .expect("seed real bigram row");
             }
         }
-        assert!(crate::config::pinyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(crate::config::pinyin_set_options(
+            context,
+            OptionBits::DYNAMIC_ADJUST.bits()
+        ));
         if prediction {
             assert!(crate::predict::pinyin_guess_predicted_candidates(
                 instance,
@@ -964,7 +967,10 @@ mod prefix_ranking_tests {
         );
         assert!(crate::config::pinyin_set_options(context, 0));
         assert!(!rank(), "without DYNAMIC_ADJUST only unigram order remains");
-        assert!(crate::config::pinyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(crate::config::pinyin_set_options(
+            context,
+            OptionBits::DYNAMIC_ADJUST.bits()
+        ));
         assert!(rank(), "option changes preserve the prefix tokens");
 
         // A plain sentence guess clears prefixes even when its matrix is empty.
@@ -996,7 +1002,7 @@ mod prefix_ranking_tests {
 
 #[cfg(test)]
 mod parse_time_matrix_tests {
-    use oxpinyin_core::PINYIN_INCOMPLETE;
+    use oxpinyin_core::OptionBits;
 
     use super::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
     use crate::candidates::{
@@ -1026,7 +1032,10 @@ mod parse_time_matrix_tests {
             )
         };
         let input = cstr("nih");
-        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        assert!(pinyin_set_options(
+            context,
+            OptionBits::PINYIN_INCOMPLETE.bits()
+        ));
         assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
         assert_eq!(lengths(), (3, 4));
 
@@ -1059,7 +1068,10 @@ mod parse_time_matrix_tests {
     fn a_guess_after_an_option_change_reads_the_parse_time_matrix() {
         let user_dir = TempUserDir::new("parse-time-options");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        assert!(pinyin_set_options(
+            context,
+            OptionBits::PINYIN_INCOMPLETE.bits()
+        ));
         let input = cstr("nih");
         assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
         assert!(pinyin_guess_sentence(instance));

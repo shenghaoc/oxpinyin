@@ -73,9 +73,11 @@ pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 /// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
 /// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing
 /// default: incomplete OFF, tone digits consumed.
-pub const PINYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::USE_TONE;
+pub const PINYIN_DEFAULT_OPTION_WORD: oxpinyin_core::OptionBits =
+    oxpinyin_core::OptionBits::USE_TONE;
 
 /// The option word `zhuyin_init` seeds (`USE_TONE | FORCE_TONE`,
 /// `zhuyin.cpp:273` at both pins) — the zhuyin facade's distinguishing
 /// default: incomplete OFF, unlike `pinyin_init`.
-pub const ZHUYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::USE_TONE | oxpinyin_core::FORCE_TONE;
+pub const ZHUYIN_DEFAULT_OPTION_WORD: oxpinyin_core::OptionBits =
+    oxpinyin_core::OptionBits::USE_TONE.union(oxpinyin_core::OptionBits::FORCE_TONE);

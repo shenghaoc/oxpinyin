@@ -78,7 +78,7 @@ fn partial_candidate_gram_logs_once() {
     let (context, instance) = open_with_user(&user.path);
     assert!(crate::config::zhuyin_set_options(
         context,
-        oxpinyin_core::DYNAMIC_ADJUST
+        oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits()
     ));
     assert!(!crate::sentence::zhuyin_guess_sentence_with_prefix(
         instance,

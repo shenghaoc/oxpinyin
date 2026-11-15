@@ -108,7 +108,7 @@ fn full_aux_text(
     let parsed = &raw[..parsed_len.min(raw.len())];
     let cursor = cursor.min(parsed.len());
     let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options).ok()?;
-    let keys = graph.fewest_keys(options.has_incomplete());
+    let keys = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     if keys.first()?.syllable_start() != 0 {
         // A leading separator leaves the first column empty. The pin's
         // prefix walk asserts there (074a2219 pinyin.cpp:3307-3311).
@@ -377,7 +377,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
 
 #[cfg(test)]
 mod tests {
-    use oxpinyin_core::{OptionBits, USE_TONE};
+    use oxpinyin_core::OptionBits;
 
     /// The rendered text, as the final `g_strconcat` joins its parts.
     fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
@@ -417,7 +417,7 @@ mod tests {
         // cursor can land on the digit itself. Carrying the digit keeps
         // raw and canonical lengths equal, holding the #130 over-read
         // closed on HANYU.
-        let options = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE | USE_TONE);
+        let options = OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE;
         for (cursor, expected) in [
             (0, "|zai4 "),
             (1, "z|ai4 "),
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn full_aux_text_matches_the_oracle_for_incomplete_tails() {
         // nih parses as ni + incomplete h with PINYIN_INCOMPLETE set.
-        let options = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE);
+        let options = OptionBits::PINYIN_INCOMPLETE;
         for (cursor, expected) in [(0, "|ni h "), (2, "ni |h "), (3, "ni h |"), (4, "ni h |")] {
             assert_eq!(
                 full_aux_text("nih", 3, cursor, options),

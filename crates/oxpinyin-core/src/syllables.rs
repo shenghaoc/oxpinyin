@@ -1,10 +1,6 @@
 //! Frozen complete full-pinyin syllable inventory.
 
-use crate::options::{
-    OptionBits, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
-    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
-    PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
-};
+use crate::options::OptionBits;
 
 include!("table_data/syllable_inventory.rs");
 
@@ -48,8 +44,9 @@ pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'stati
     // Most parser option words enable neither spelling corrections nor
     // the two parser-table ambiguity aliases. Avoid their suffix scans;
     // matrix-only fuzzy bits do not admit a spelling alias here.
-    let alias_bits = crate::PINYIN_CORRECT_ALL | PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH;
-    if options.bits() & alias_bits == 0 {
+    let alias_bits =
+        OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_S_SH | OptionBits::PINYIN_AMB_Z_ZH;
+    if !options.intersects(alias_bits) {
         return None;
     }
     correction_canonical(text, options).or_else(|| ambiguity_canonical(text, options))
@@ -58,25 +55,25 @@ pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'stati
 fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     let bytes = text.as_bytes();
 
-    if options.contains(PINYIN_CORRECT_GN_NG) && text.ends_with("gn") {
+    if options.contains(OptionBits::PINYIN_CORRECT_GN_NG) && text.ends_with("gn") {
         return checked_canonical(text, 2, "ng");
     }
-    if options.contains(PINYIN_CORRECT_MG_NG) && text.ends_with("mg") {
+    if options.contains(OptionBits::PINYIN_CORRECT_MG_NG) && text.ends_with("mg") {
         return checked_canonical(text, 2, "ng");
     }
-    if options.contains(PINYIN_CORRECT_IOU_IU) && text.ends_with("iou") {
+    if options.contains(OptionBits::PINYIN_CORRECT_IOU_IU) && text.ends_with("iou") {
         return checked_canonical(text, 3, "iu");
     }
-    if options.contains(PINYIN_CORRECT_UEI_UI) && text.ends_with("uei") {
+    if options.contains(OptionBits::PINYIN_CORRECT_UEI_UI) && text.ends_with("uei") {
         return checked_canonical(text, 3, "ui");
     }
-    if options.contains(PINYIN_CORRECT_UEN_UN) && text.ends_with("uen") {
+    if options.contains(OptionBits::PINYIN_CORRECT_UEN_UN) && text.ends_with("uen") {
         return checked_canonical(text, 3, "un");
     }
-    if options.contains(PINYIN_CORRECT_UE_VE) && text.ends_with("ue") {
+    if options.contains(OptionBits::PINYIN_CORRECT_UE_VE) && text.ends_with("ue") {
         return checked_canonical(text, 2, "ve");
     }
-    if options.contains(PINYIN_CORRECT_V_U)
+    if options.contains(OptionBits::PINYIN_CORRECT_V_U)
         && bytes.len() >= 2
         && matches!(bytes[0], b'j' | b'q' | b'x' | b'y')
         && bytes[1] == b'v'
@@ -87,7 +84,8 @@ fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str>
         candidate.push_str(&text[2..]);
         return canonical_complete_syllable(&candidate);
     }
-    if options.contains(PINYIN_CORRECT_ON_ONG) && text.ends_with("on") && text.len() > 2 {
+    if options.contains(OptionBits::PINYIN_CORRECT_ON_ONG) && text.ends_with("on") && text.len() > 2
+    {
         let mut candidate = String::with_capacity(text.len() + 1);
         candidate.push_str(text);
         candidate.push('g');
@@ -99,8 +97,8 @@ fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str>
 
 fn ambiguity_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     match text {
-        "sua" if options.contains(PINYIN_AMB_S_SH) => Some("shua"),
-        "zua" if options.contains(PINYIN_AMB_Z_ZH) => Some("zhua"),
+        "sua" if options.contains(OptionBits::PINYIN_AMB_S_SH) => Some("shua"),
+        "zua" if options.contains(OptionBits::PINYIN_AMB_Z_ZH) => Some("zhua"),
         _ => None,
     }
 }
@@ -208,43 +206,36 @@ mod tests {
 
     #[test]
     fn correction_aliases_resolve_to_their_canonical_syllable() {
-        use super::{
-            OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG,
-            PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
-            PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U, option_alias_canonical,
-        };
+        use super::{OptionBits, option_alias_canonical};
 
         let cases = [
-            ("agn", "ang", PINYIN_CORRECT_GN_NG),
-            ("amg", "ang", PINYIN_CORRECT_MG_NG),
-            ("diou", "diu", PINYIN_CORRECT_IOU_IU),
-            ("duei", "dui", PINYIN_CORRECT_UEI_UI),
-            ("duen", "dun", PINYIN_CORRECT_UEN_UN),
-            ("lue", "lve", PINYIN_CORRECT_UE_VE),
-            ("jv", "ju", PINYIN_CORRECT_V_U),
+            ("agn", "ang", OptionBits::PINYIN_CORRECT_GN_NG),
+            ("amg", "ang", OptionBits::PINYIN_CORRECT_MG_NG),
+            ("diou", "diu", OptionBits::PINYIN_CORRECT_IOU_IU),
+            ("duei", "dui", OptionBits::PINYIN_CORRECT_UEI_UI),
+            ("duen", "dun", OptionBits::PINYIN_CORRECT_UEN_UN),
+            ("lue", "lve", OptionBits::PINYIN_CORRECT_UE_VE),
+            ("jv", "ju", OptionBits::PINYIN_CORRECT_V_U),
         ];
         for (alias, canonical, bit) in cases {
-            assert_eq!(
-                option_alias_canonical(alias, OptionBits::from_bits(bit)),
-                Some(canonical)
-            );
+            assert_eq!(option_alias_canonical(alias, bit), Some(canonical));
             assert_eq!(option_alias_canonical(alias, OptionBits::default()), None);
         }
         assert_eq!(
-            option_alias_canonical("zon", OptionBits::from_bits(1 << 28)),
+            option_alias_canonical("zon", OptionBits::PINYIN_CORRECT_ON_ONG),
             Some("zong")
         );
         // Bare gn/mg/on are not in pinyin_index (80/80/17 stemmed rows).
         assert_eq!(
-            option_alias_canonical("gn", OptionBits::from_bits(PINYIN_CORRECT_GN_NG)),
+            option_alias_canonical("gn", OptionBits::PINYIN_CORRECT_GN_NG),
             None
         );
         assert_eq!(
-            option_alias_canonical("mg", OptionBits::from_bits(PINYIN_CORRECT_MG_NG)),
+            option_alias_canonical("mg", OptionBits::PINYIN_CORRECT_MG_NG),
             None
         );
         assert_eq!(
-            option_alias_canonical("on", OptionBits::from_bits(PINYIN_CORRECT_ON_ONG)),
+            option_alias_canonical("on", OptionBits::PINYIN_CORRECT_ON_ONG),
             None
         );
     }

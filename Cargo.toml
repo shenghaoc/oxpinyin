@@ -49,6 +49,8 @@ oxpinyin-engine = { path = "crates/oxpinyin-engine" }
 oxpinyin-store = { path = "crates/oxpinyin-store", default-features = false }
 oxpinyin-user = { path = "crates/oxpinyin-user", default-features = false }
 bindgen = "0.73.2"
+# The parser option word (oxpinyin-core OptionBits); no dependencies of its own.
+bitflags = "2.13"
 smallvec = "1.15"
 compact_str = "0.10"
 # Perfect-hash text lookups over the frozen syllable inventories;

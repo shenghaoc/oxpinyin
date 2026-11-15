@@ -11,11 +11,7 @@
 //! [`crate::zhuyin_map`].
 
 use crate::SyllableKey;
-use crate::options::{
-    FORCE_TONE, OptionBits, PINYIN_AMB_ALL, PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE,
-    ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE,
-    ZHUYIN_INCOMPLETE,
-};
+use crate::options::OptionBits;
 use crate::zhuyin_map::VALID_ZHUYIN_TONES;
 use crate::{CHEWING_ZERO_TONE, ChewingKey};
 
@@ -319,17 +315,16 @@ impl DoublePinyinParser {
     /// two-key lookup is `lookup_pinyin`'s forced-`UE_VE`/`V_U` law
     /// whatever the word carries (`:409, :434-436`).
     #[must_use]
-    pub fn parse_with_options(&self, input: &[u8], options: u32) -> DoublePinyinParse {
+    pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> DoublePinyinParse {
         let Some(mut tables) = self.scheme.tables() else {
             return DoublePinyinParse::default();
         };
         if self.suppress_fallback {
             tables.fallback = None;
         }
-        let bits = OptionBits::from_bits(options);
-        let use_tone = bits.contains(USE_TONE);
-        let force_tone = bits.contains(FORCE_TONE);
-        let allow_incomplete = bits.contains(PINYIN_INCOMPLETE);
+        let use_tone = options.contains(OptionBits::USE_TONE);
+        let force_tone = options.contains(OptionBits::FORCE_TONE);
+        let allow_incomplete = options.contains(OptionBits::PINYIN_INCOMPLETE);
 
         // The probe window is option-blind, exactly upstream: tone digits
         // extend it even without USE_TONE (`:538-545`).
@@ -390,9 +385,9 @@ impl DoublePinyinParser {
     /// under `USE_TONE` (`:439-451`). A two-byte match carries tone
     /// zero. `None` is the upstream `false`.
     #[must_use]
-    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
-        let bits = OptionBits::from_bits(options & !(PINYIN_CORRECT_ALL | PINYIN_AMB_ALL));
-        if bits.contains(FORCE_TONE) && input.len() != 3 {
+    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
+        let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
+        if options.contains(OptionBits::FORCE_TONE) && input.len() != 3 {
             return None;
         }
         let mut tables = self.scheme.tables()?;
@@ -401,14 +396,17 @@ impl DoublePinyinParser {
         }
         match input.len() {
             1 => {
-                let syllable =
-                    parse_incomplete(input[0], bits.contains(PINYIN_INCOMPLETE), tables)?;
+                let syllable = parse_incomplete(
+                    input[0],
+                    options.contains(OptionBits::PINYIN_INCOMPLETE),
+                    tables,
+                )?;
                 ChewingKey::from_pinyin(syllable.text())
             }
             2 | 3 => {
                 let mut tone = 0;
                 if input.len() == 3 {
-                    if !bits.contains(USE_TONE) {
+                    if !options.contains(OptionBits::USE_TONE) {
                         return None;
                     }
                     tone = match input[2] {
@@ -679,7 +677,7 @@ struct DiscreteTables {
     index: crate::zhuyin_map::ZhuyinIndex,
     /// The correction bit `ZhuyinDiscreteParser2::set_scheme` forces for
     /// this keyboard (`zhuyin_parser2.cpp:474-490`).
-    correction: u32,
+    correction: OptionBits,
 }
 
 impl DiscreteTables {
@@ -761,17 +759,18 @@ include!("table_data/tone_symbols.rs");
 fn search_zhuyin_index(
     index: crate::zhuyin_map::ZhuyinIndex,
     zhuyin: &str,
-    options: u32,
+    options: OptionBits,
 ) -> Option<SyllableKey> {
     let (key, flags) = index.get(index.position(zhuyin)?)?;
     // An incomplete row needs its option bit; a correction-flagged row
     // needs every correction bit present ((flags & options) != flags
     // rejects).
-    if flags & ZHUYIN_INCOMPLETE != 0 && options & ZHUYIN_INCOMPLETE == 0 {
+    if flags.contains(OptionBits::ZHUYIN_INCOMPLETE)
+        && !options.contains(OptionBits::ZHUYIN_INCOMPLETE)
+    {
         return None;
     }
-    let corrections = flags & (ZHUYIN_CORRECT_ALL | PINYIN_AMB_ALL);
-    if corrections != 0 && corrections & options != corrections {
+    if !options.contains(flags & (OptionBits::ZHUYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL)) {
         return None;
     }
     Some(key)
@@ -783,7 +782,7 @@ fn search_zhuyin_index(
 /// that is not — the keys before it are the result. Returns the keys as
 /// `(syllable, tone)`.
 #[must_use]
-pub fn parse_zhuyin_direct(input: &str, options: u32) -> Vec<(SyllableKey, u8)> {
+pub fn parse_zhuyin_direct(input: &str, options: OptionBits) -> Vec<(SyllableKey, u8)> {
     let mut keys = Vec::new();
     crate::direct::parse(
         input.as_bytes(),
@@ -803,12 +802,15 @@ pub fn parse_zhuyin_direct(input: &str, options: u32) -> Vec<(SyllableKey, u8)> 
 /// `zhuyin_index` spelling admitted by `check_chewing_options` with the
 /// ambiguity bits cleared. `FORCE_TONE` never refuses: the default tone
 /// is already non-zero.
-pub(crate) fn parse_zhuyin_direct_key(segment: &str, options: u32) -> Option<(SyllableKey, u8)> {
-    let options = options & !PINYIN_AMB_ALL;
+pub(crate) fn parse_zhuyin_direct_key(
+    segment: &str,
+    options: OptionBits,
+) -> Option<(SyllableKey, u8)> {
+    let options = options - OptionBits::PINYIN_AMB_ALL;
     let last = segment.chars().last()?;
     let mut tone = 1_u8;
     let mut body = segment;
-    if options & USE_TONE != 0 {
+    if options.contains(OptionBits::USE_TONE) {
         let mut buffer = [0_u8; 4];
         let last = last.encode_utf8(&mut buffer);
         if let Some(found) = (1..=5).find(|&t| tone_symbol(t) == last) {
@@ -898,7 +900,7 @@ impl ZhuyinScheme {
                 finals: HSU_FINALS,
                 tones: HSU_TONES,
                 index: crate::zhuyin_map::hsu_zhuyin_index(),
-                correction: ZHUYIN_CORRECT_HSU,
+                correction: OptionBits::ZHUYIN_CORRECT_HSU,
             }),
             Self::Eten26 => Some(DiscreteTables {
                 initials: ETEN26_INITIALS,
@@ -906,7 +908,7 @@ impl ZhuyinScheme {
                 finals: ETEN26_FINALS,
                 tones: ETEN26_TONES,
                 index: crate::zhuyin_map::eten26_zhuyin_index(),
-                correction: ZHUYIN_CORRECT_ETEN26,
+                correction: OptionBits::ZHUYIN_CORRECT_ETEN26,
             }),
             Self::HsuDvorak => Some(DiscreteTables {
                 initials: HSU_DVORAK_INITIALS,
@@ -914,7 +916,7 @@ impl ZhuyinScheme {
                 finals: HSU_DVORAK_FINALS,
                 tones: HSU_DVORAK_TONES,
                 index: crate::zhuyin_map::hsu_zhuyin_index(),
-                correction: ZHUYIN_CORRECT_HSU,
+                correction: OptionBits::ZHUYIN_CORRECT_HSU,
             }),
             Self::Standard
             | Self::Ibm
@@ -1081,11 +1083,10 @@ impl ZhuyinParser {
     /// `ZHUYIN_CORRECT_ALL`, the zhuyin facade's whole word (its pin
     /// default carries `USE_TONE | FORCE_TONE`).
     #[must_use]
-    pub fn parse_with_options(&self, input: &[u8], options: u32) -> ZhuyinParse {
-        let bits = OptionBits::from_bits(options);
-        let use_tone = bits.contains(USE_TONE);
-        let force_tone = bits.contains(FORCE_TONE);
-        let allow_incomplete = bits.contains(ZHUYIN_INCOMPLETE);
+    pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> ZhuyinParse {
+        let use_tone = options.contains(OptionBits::USE_TONE);
+        let force_tone = options.contains(OptionBits::FORCE_TONE);
+        let allow_incomplete = options.contains(OptionBits::ZHUYIN_INCOMPLETE);
         self.parse_detailed(input, use_tone, force_tone, allow_incomplete)
     }
 
@@ -1103,9 +1104,9 @@ impl ZhuyinParser {
         let (maximum_len, probe) = match keyboard {
             Keyboard::Simple(tables) => {
                 let options = if allow_incomplete {
-                    ZHUYIN_CORRECT_SHUFFLE | ZHUYIN_INCOMPLETE
+                    OptionBits::ZHUYIN_CORRECT_SHUFFLE | OptionBits::ZHUYIN_INCOMPLETE
                 } else {
-                    ZHUYIN_CORRECT_SHUFFLE
+                    OptionBits::ZHUYIN_CORRECT_SHUFFLE
                 };
                 let maximum_len = input
                     .iter()
@@ -1125,7 +1126,7 @@ impl ZhuyinParser {
             }
             Keyboard::Discrete(tables) => {
                 let options = if allow_incomplete {
-                    tables.correction | ZHUYIN_INCOMPLETE
+                    tables.correction | OptionBits::ZHUYIN_INCOMPLETE
                 } else {
                     tables.correction
                 };
@@ -1153,9 +1154,9 @@ impl ZhuyinParser {
                 // ZHUYIN_INCOMPLETE crosses into the global index's
                 // gate.
                 let options = if allow_incomplete {
-                    ZHUYIN_INCOMPLETE
+                    OptionBits::ZHUYIN_INCOMPLETE
                 } else {
-                    0
+                    OptionBits::empty()
                 };
                 let maximum_len = input
                     .iter()
@@ -1235,7 +1236,7 @@ impl ZhuyinParser {
     /// out-of-keyboard and assert shapes; the C adapters abort on the
     /// ones where the pin asserts.
     #[must_use]
-    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
+    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         zhuyin_parse_one_key(self.scheme, options, input)
     }
 }
@@ -1252,7 +1253,7 @@ enum KeyProbe {
         /// The `USE_TONE` option.
         use_tone: bool,
         /// The parser-owned option word.
-        options: u32,
+        options: OptionBits,
         /// The `FORCE_TONE` option: a toneless match is rejected, nested
         /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:178`).
         force_tone: bool,
@@ -1264,7 +1265,7 @@ enum KeyProbe {
         /// The `USE_TONE` option.
         use_tone: bool,
         /// The parser-owned option word.
-        options: u32,
+        options: OptionBits,
         /// The `FORCE_TONE` option: a toneless match is rejected
         /// unconditionally (upstream `zhuyin_parser2.cpp:373,387`).
         force_tone: bool,
@@ -1276,7 +1277,7 @@ enum KeyProbe {
         /// The `USE_TONE` option.
         use_tone: bool,
         /// The parser-owned option word.
-        options: u32,
+        options: OptionBits,
         /// The `FORCE_TONE` option: a toneless match is rejected, nested
         /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:602`).
         force_tone: bool,
@@ -1328,27 +1329,31 @@ impl KeyProbe {
 
 /// The `ZhuyinParser::parse_one_key` body, split out of the impl so the
 /// keyboard dispatch can borrow the [`Keyboard`] probe per family.
-fn zhuyin_parse_one_key(scheme: ZhuyinScheme, options: u32, input: &[u8]) -> Option<ChewingKey> {
-    let bits = OptionBits::from_bits(options & !PINYIN_AMB_ALL);
-    let use_tone = bits.contains(USE_TONE);
-    let force_tone = bits.contains(FORCE_TONE);
+fn zhuyin_parse_one_key(
+    scheme: ZhuyinScheme,
+    options: OptionBits,
+    input: &[u8],
+) -> Option<ChewingKey> {
+    let options = options - OptionBits::PINYIN_AMB_ALL;
+    let use_tone = options.contains(OptionBits::USE_TONE);
+    let force_tone = options.contains(OptionBits::FORCE_TONE);
     let (syllable, tone) = match scheme.keyboard()? {
         Keyboard::Simple(tables) => {
-            let (key, tone) = parse_one_zhuyin_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
             if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
             (key, tone)
         }
         Keyboard::Discrete(tables) => {
-            let (key, tone) = parse_one_discrete_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
             if force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
             (key, tone)
         }
         Keyboard::Cp26(tables) => {
-            let (key, tone) = parse_one_cp26_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
             if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
@@ -1367,7 +1372,7 @@ impl Default for ZhuyinParser {
 fn parse_one_zhuyin_key(
     input: &[u8],
     use_tone: bool,
-    options: u32,
+    options: OptionBits,
     tables: SimpleTables,
 ) -> Option<(SyllableKey, u8)> {
     let mut symbol_len = input.len();
@@ -1404,7 +1409,7 @@ fn parse_one_zhuyin_key(
 fn parse_one_discrete_key(
     input: &[u8],
     use_tone: bool,
-    options: u32,
+    options: OptionBits,
     tables: DiscreteTables,
 ) -> Option<(SyllableKey, u8)> {
     if input.is_empty() {
@@ -1485,7 +1490,7 @@ fn parse_one_discrete_key(
 fn parse_one_cp26_key(
     input: &[u8],
     use_tone: bool,
-    options: u32,
+    options: OptionBits,
     tables: Cp26Tables,
 ) -> Option<(SyllableKey, u8)> {
     /// `count_same_chars` (`:560-573`): the length of the run of
@@ -1613,8 +1618,13 @@ fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
-    use crate::options::{USE_TONE, ZHUYIN_INCOMPLETE};
+    use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParse, ZhuyinParser, ZhuyinScheme};
+    use crate::options::OptionBits;
+
+    /// `parser` over `input` under `USE_TONE`, the word most cases here set.
+    fn toned(parser: &ZhuyinParser, input: &[u8]) -> ZhuyinParse {
+        parser.parse_with_options(input, OptionBits::USE_TONE)
+    }
 
     #[test]
     fn double_two_keys_use_fallback_when_the_first_yunmu_is_missing() {
@@ -1677,9 +1687,6 @@ mod tests {
 
     #[test]
     fn index_matches_the_pinned_row_counts_and_shuffle_law() {
-        use crate::ZHUYIN_CORRECT_SHUFFLE;
-        use crate::ZHUYIN_INCOMPLETE;
-
         assert_eq!(
             crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
                 .iter()
@@ -1697,12 +1704,16 @@ mod tests {
         let incomplete: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
             .iter()
             .copied()
-            .filter(|row| row.3 & ZHUYIN_INCOMPLETE != 0)
+            .filter(|row| {
+                OptionBits::from_bits_retain(row.3).contains(OptionBits::ZHUYIN_INCOMPLETE)
+            })
             .collect();
         let shuffle: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
             .iter()
             .copied()
-            .filter(|row| row.3 & ZHUYIN_CORRECT_SHUFFLE != 0)
+            .filter(|row| {
+                OptionBits::from_bits_retain(row.3).contains(OptionBits::ZHUYIN_CORRECT_SHUFFLE)
+            })
             .collect();
         let plain: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
             .iter()
@@ -1744,7 +1755,10 @@ mod tests {
         }
         assert_eq!(expected.len(), 1062);
         for (spelling, _canonical, pinyin, flags) in shuffle.iter().copied() {
-            assert_eq!(flags, ZHUYIN_CORRECT_SHUFFLE);
+            assert_eq!(
+                OptionBits::from_bits_retain(flags),
+                OptionBits::ZHUYIN_CORRECT_SHUFFLE
+            );
             assert!(
                 expected.contains(&(spelling.to_owned(), pinyin)),
                 "unexpected shuffle row {spelling:?}"
@@ -1778,27 +1792,35 @@ mod tests {
     #[test]
     fn index_flags_gate_through_the_option_word() {
         use super::search_zhuyin_index;
-        use crate::ZHUYIN_CORRECT_SHUFFLE;
-        use crate::ZHUYIN_INCOMPLETE;
         use crate::zhuyin_map::zhuyin_pinyin_map;
 
         // Shuffle rows: only under the parser-owned correction bit.
         let bie = crate::SyllableKey::from_text("bie").expect("bie");
         assert_eq!(
-            search_zhuyin_index(zhuyin_pinyin_map(), "ㄅㄝㄧ", ZHUYIN_CORRECT_SHUFFLE),
+            search_zhuyin_index(
+                zhuyin_pinyin_map(),
+                "ㄅㄝㄧ",
+                OptionBits::ZHUYIN_CORRECT_SHUFFLE
+            ),
             Some(bie)
         );
-        assert_eq!(search_zhuyin_index(zhuyin_pinyin_map(), "ㄅㄝㄧ", 0), None);
+        assert_eq!(
+            search_zhuyin_index(zhuyin_pinyin_map(), "ㄅㄝㄧ", OptionBits::empty()),
+            None
+        );
 
         // Incomplete rows: only under the caller's option bit. All 14 are
         // parse-dead after the validity mask, but the index gate itself is
         // what this pins (both outcomes at this pin consume 0).
         let b = crate::SyllableKey::from_text("b").expect("b");
         assert_eq!(
-            search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", ZHUYIN_INCOMPLETE),
+            search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", OptionBits::ZHUYIN_INCOMPLETE),
             Some(b)
         );
-        assert_eq!(search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", 0), None);
+        assert_eq!(
+            search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", OptionBits::empty()),
+            None
+        );
     }
 
     #[test]
@@ -1806,9 +1828,9 @@ mod tests {
         let parser = ZhuyinParser::new();
         // The SPEC's own example: ㄅㄝㄧ (shuffled ㄅㄧㄝ) is bie, and it
         // displays as the canonical spelling, like upstream's aux text.
-        let shuffled = parser.parse_with_options(
+        let shuffled = toned(
+            &parser,
             &keystrokes(ZhuyinScheme::Standard, &["ㄅ", "ㄝ", "ㄧ"]),
-            USE_TONE,
         );
         assert_eq!(shuffled.consumed(), 3);
         assert_eq!(shuffled.full_pinyin(), "bie");
@@ -1817,8 +1839,7 @@ mod tests {
         // Every permutation of a three-symbol spelling parses.
         let canonical = ["ㄅ", "ㄧ", "ㄝ"];
         permute(&canonical, &mut |permutation: &[&str]| {
-            let parsed = parser
-                .parse_with_options(&keystrokes(ZhuyinScheme::Standard, permutation), USE_TONE);
+            let parsed = toned(&parser, &keystrokes(ZhuyinScheme::Standard, permutation));
             assert_eq!(
                 parsed.full_pinyin(),
                 "bie",
@@ -1827,14 +1848,13 @@ mod tests {
         });
 
         // A two-symbol swap: ㄧㄅ (shuffled ㄅㄧ) is bi.
-        let swapped =
-            parser.parse_with_options(&keystrokes(ZhuyinScheme::Standard, &["ㄧ", "ㄅ"]), USE_TONE);
+        let swapped = toned(&parser, &keystrokes(ZhuyinScheme::Standard, &["ㄧ", "ㄅ"]));
         assert_eq!(swapped.full_pinyin(), "bi");
 
         // Shuffle composes with tone.
-        let toned = parser.parse_with_options(
+        let toned = toned(
+            &parser,
             &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄅ", "ㄝ", "ㄧ"], 4),
-            USE_TONE,
         );
         assert_eq!(toned.full_pinyin(), "bie");
         assert_eq!(toned.keys()[0].tone(), 4);
@@ -1847,54 +1867,47 @@ mod tests {
         // ㄉㄣ (den): tones 0 and 4 valid; tone 1 is mask-invalid, so the
         // post-match break stops the whole parse at the two symbol keys.
         assert_eq!(
-            parser
-                .parse_with_options(&keystrokes(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"]), USE_TONE,)
-                .full_pinyin(),
+            toned(&parser, &keystrokes(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"])).full_pinyin(),
             "den"
         );
-        let den4 = parser.parse_with_options(
+        let den4 = toned(
+            &parser,
             &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"], 4),
-            USE_TONE,
         );
         assert_eq!(den4.consumed(), 3);
         assert_eq!(den4.full_pinyin(), "den");
-        let den1 = parser.parse_with_options(
+        let den1 = toned(
+            &parser,
             &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"], 1),
-            USE_TONE,
         );
         assert_eq!(den1.consumed(), 0, "tone 1 is mask-invalid for den");
 
         // ㄥ (eng): tones 0 and 1 valid — first tone legal, unlike ㄋㄧ.
-        let eng = parser.parse_with_options(b"/", USE_TONE);
+        let eng = toned(&parser, b"/");
         assert_eq!(eng.full_pinyin(), "eng");
-        let eng1 = parser.parse_with_options(
+        let eng1 = toned(
+            &parser,
             &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄥ"], 1),
-            USE_TONE,
         );
         assert_eq!(eng1.consumed(), 2, "tone 1 is mask-valid for eng");
         assert_eq!(eng1.full_pinyin(), "eng");
 
         // ㄓㄟ (zhei): tones 0 and 4 valid.
+        assert_eq!(toned(&parser, b"5o").full_pinyin(), "zhei");
         assert_eq!(
-            parser.parse_with_options(b"5o", USE_TONE).full_pinyin(),
-            "zhei"
-        );
-        assert_eq!(
-            parser
-                .parse_with_options(
-                    &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 4),
-                    USE_TONE,
-                )
-                .consumed(),
+            toned(
+                &parser,
+                &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 4)
+            )
+            .consumed(),
             3
         );
         assert_eq!(
-            parser
-                .parse_with_options(
-                    &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 1),
-                    USE_TONE,
-                )
-                .consumed(),
+            toned(
+                &parser,
+                &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 1)
+            )
+            .consumed(),
             0
         );
 
@@ -1907,7 +1920,7 @@ mod tests {
             keystrokes(ZhuyinScheme::Standard, &["ㄌ", "ㄣ"]), // len
             keystrokes(ZhuyinScheme::Standard, &["ㄖ", "ㄨ", "ㄚ"]), // rua
         ] {
-            let parsed = parser.parse_with_options(&input, USE_TONE);
+            let parsed = toned(&parser, &input);
             assert_eq!(parsed.consumed(), 0, "{input:?} is a dead row at the pin");
         }
     }
@@ -1956,12 +1969,10 @@ mod tests {
             let parser = ZhuyinParser::with_scheme(scheme);
 
             // Tone-bearing and tone-rejection through this keyboard's keys.
-            let ni2 = parser
-                .parse_with_options(&keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 2), USE_TONE);
+            let ni2 = toned(&parser, &keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 2));
             assert_eq!((scheme, ni2.consumed()), (scheme, 3));
             assert_eq!((scheme, ni2.full_pinyin().as_str()), (scheme, "ni"));
-            let ni1 = parser
-                .parse_with_options(&keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 1), USE_TONE);
+            let ni1 = toned(&parser, &keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 1));
             assert_eq!((scheme, ni1.consumed()), (scheme, 0));
 
             // Keyboard membership mirrors the tables: every symbol key
@@ -2011,24 +2022,26 @@ mod tests {
         // including a fallback-bearing scheme's fallback behaviour.
         let mut parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
         assert!(
-            parser.parse_with_options(b"aa", 0).consumed() == 2,
+            parser
+                .parse_with_options(b"aa", OptionBits::empty())
+                .consumed()
+                == 2,
             "ZRM fallback row"
         );
         assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
         assert_eq!(parser.scheme(), DoublePinyinScheme::Zrm);
-        assert_eq!(parser.parse_with_options(b"aa", 0).consumed(), 2);
+        assert_eq!(
+            parser
+                .parse_with_options(b"aa", OptionBits::empty())
+                .consumed(),
+            2
+        );
 
         let mut zhuyin = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
-        assert_eq!(
-            zhuyin.parse_with_options(b"t", USE_TONE).full_pinyin(),
-            "zhi"
-        );
+        assert_eq!(toned(&zhuyin, b"t").full_pinyin(), "zhi");
         assert!(!zhuyin.set_scheme(ZhuyinScheme::StandardDvorak));
         assert_eq!(zhuyin.scheme(), ZhuyinScheme::DachenCp26);
-        assert_eq!(
-            zhuyin.parse_with_options(b"t", USE_TONE).full_pinyin(),
-            "zhi"
-        );
+        assert_eq!(toned(&zhuyin, b"t").full_pinyin(), "zhi");
     }
 
     #[test]
@@ -2098,18 +2111,17 @@ mod tests {
 
             // Canonical control: ㄋㄧ through the n/e keys, tone-bearing
             // and tone-rejection.
-            let ni =
-                parser.parse_with_options(&discrete_keystrokes(scheme, &["ㄋ", "ㄧ"]), USE_TONE);
+            let ni = toned(&parser, &discrete_keystrokes(scheme, &["ㄋ", "ㄧ"]));
             assert_eq!((scheme, ni.consumed()), (scheme, 2));
             assert_eq!((scheme, ni.full_pinyin().as_str()), (scheme, "ni"));
-            let ni2 = parser.parse_with_options(
+            let ni2 = toned(
+                &parser,
                 &discrete_keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 2),
-                USE_TONE,
             );
             assert_eq!((scheme, ni2.consumed()), (scheme, 3));
-            let ni1 = parser.parse_with_options(
+            let ni1 = toned(
+                &parser,
                 &discrete_keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 1),
-                USE_TONE,
             );
             assert_eq!((scheme, ni1.consumed()), (scheme, 0));
         }
@@ -2122,29 +2134,27 @@ mod tests {
         // The keyboard's correction rows: ㄍㄧ→ji (typed g,e), ㄐㄨㄥ→
         // zhong (j,x,l), ㄑ→chi (q), ㄒ→shi (c), ㄇ→an (m). Display
         // renders each row's canonical spelling.
-        let ji =
-            hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄍ", "ㄧ"]), USE_TONE);
+        let ji = toned(&hsu, &discrete_keystrokes(hsu.scheme(), &["ㄍ", "ㄧ"]));
         assert_eq!(ji.full_pinyin(), "ji");
         assert_eq!(ji.keys()[0].display(), "ㄐㄧ");
 
-        let zhong = hsu.parse_with_options(
+        let zhong = toned(
+            &hsu,
             &discrete_keystrokes(hsu.scheme(), &["ㄐ", "ㄨ", "ㄥ"]),
-            USE_TONE,
         );
         assert_eq!(zhong.full_pinyin(), "zhong");
         assert_eq!(zhong.keys()[0].display(), "ㄓㄨㄥ");
 
-        let chi = hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄑ"]), USE_TONE);
+        let chi = toned(&hsu, &discrete_keystrokes(hsu.scheme(), &["ㄑ"]));
         assert_eq!(chi.full_pinyin(), "chi");
-        let shi = hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄒ"]), USE_TONE);
+        let shi = toned(&hsu, &discrete_keystrokes(hsu.scheme(), &["ㄒ"]));
         assert_eq!(shi.full_pinyin(), "shi");
-        let an = hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄇ"]), USE_TONE);
+        let an = toned(&hsu, &discrete_keystrokes(hsu.scheme(), &["ㄇ"]));
         assert_eq!(an.full_pinyin(), "an");
 
         // The palatal plain rows stay reachable through the same keys
         // plus a middle: c,e types ㄒㄧ = xi.
-        let xi =
-            hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄒ", "ㄧ"]), USE_TONE);
+        let xi = toned(&hsu, &discrete_keystrokes(hsu.scheme(), &["ㄒ", "ㄧ"]));
         assert_eq!(xi.full_pinyin(), "xi");
     }
 
@@ -2154,9 +2164,9 @@ mod tests {
 
         // ETEN26 remaps ㄍㄧ to the qi series (HSU remaps it to ji) and
         // has its own vowel stand-ins: ㄆ→ou, ㄊ→ang, ㄌ→eng, ㄏ→er.
-        let qi = eten26.parse_with_options(
+        let qi = toned(
+            &eten26,
             &discrete_keystrokes(eten26.scheme(), &["ㄍ", "ㄧ"]),
-            USE_TONE,
         );
         assert_eq!(qi.full_pinyin(), "qi");
         assert_eq!(qi.keys()[0].display(), "ㄑㄧ");
@@ -2168,8 +2178,7 @@ mod tests {
             (vec!["ㄏ"], "er"),
             (vec!["ㄒ", "ㄨ"], "shu"),
         ] {
-            let parsed = eten26
-                .parse_with_options(&discrete_keystrokes(eten26.scheme(), &symbols), USE_TONE);
+            let parsed = toned(&eten26, &discrete_keystrokes(eten26.scheme(), &symbols));
             assert_eq!(
                 parsed.full_pinyin(),
                 pinyin,
@@ -2202,8 +2211,6 @@ mod tests {
     #[test]
     fn discrete_indexes_gate_their_correction_rows() {
         use super::search_zhuyin_index;
-        use crate::ZHUYIN_CORRECT_ETEN26;
-        use crate::ZHUYIN_CORRECT_HSU;
         use crate::zhuyin_map::{eten26_zhuyin_index, hsu_zhuyin_index};
 
         // ㄍㄧ is ji under the HSU bit and qi under the ETEN26 bit — the
@@ -2211,12 +2218,15 @@ mod tests {
         let ji = crate::SyllableKey::from_text("ji").expect("ji");
         let qi = crate::SyllableKey::from_text("qi").expect("qi");
         assert_eq!(
-            search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", ZHUYIN_CORRECT_HSU),
+            search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", OptionBits::ZHUYIN_CORRECT_HSU),
             Some(ji)
         );
-        assert_eq!(search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", 0), None);
         assert_eq!(
-            search_zhuyin_index(eten26_zhuyin_index(), "ㄍㄧ", ZHUYIN_CORRECT_ETEN26),
+            search_zhuyin_index(
+                eten26_zhuyin_index(),
+                "ㄍㄧ",
+                OptionBits::ZHUYIN_CORRECT_ETEN26
+            ),
             Some(qi)
         );
 
@@ -2225,12 +2235,16 @@ mod tests {
         let hsu_incomplete = crate::zhuyin_map::reference::HSU_ZHUYIN_INDEX
             .iter()
             .copied()
-            .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
+            .filter(|row| {
+                OptionBits::from_bits_retain(row.3).contains(OptionBits::ZHUYIN_INCOMPLETE)
+            })
             .count();
         let eten26_incomplete = crate::zhuyin_map::reference::ETEN26_ZHUYIN_INDEX
             .iter()
             .copied()
-            .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
+            .filter(|row| {
+                OptionBits::from_bits_retain(row.3).contains(OptionBits::ZHUYIN_INCOMPLETE)
+            })
             .count();
         assert_eq!(hsu_incomplete, 5);
         assert_eq!(eten26_incomplete, 6);
@@ -2269,7 +2283,7 @@ mod tests {
 
         // Parsing takes the first row: 'c' alone is ㄒ → the HSU remap
         // row makes it shi, never si-from-ㄕ.
-        let c_alone = hsu.parse_with_options(b"c", USE_TONE);
+        let c_alone = toned(&hsu, b"c");
         assert_eq!(c_alone.full_pinyin(), "shi");
     }
 
@@ -2287,8 +2301,8 @@ mod tests {
             b"m",
         ] {
             assert_eq!(
-                hsu.parse_with_options(input, USE_TONE),
-                dvorak.parse_with_options(input, USE_TONE),
+                toned(&hsu, input),
+                toned(&dvorak, input),
                 "{input:?} must parse identically on HSU and HSU_DVORAK"
             );
         }
@@ -2300,10 +2314,13 @@ mod tests {
         // the parse either way (the derivation uses HSU's own keys).
         let hsu = ZhuyinParser::with_scheme(ZhuyinScheme::Hsu);
         let b_key = discrete_key_for(ZhuyinScheme::Hsu, 0, "ㄅ");
-        assert_eq!(hsu.parse_with_options(&[b_key], USE_TONE).consumed(), 0);
+        assert_eq!(toned(&hsu, &[b_key]).consumed(), 0);
         assert_eq!(
-            hsu.parse_with_options(&[b_key], USE_TONE | ZHUYIN_INCOMPLETE)
-                .consumed(),
+            hsu.parse_with_options(
+                &[b_key],
+                OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE
+            )
+            .consumed(),
             0
         );
     }
@@ -2314,39 +2331,18 @@ mod tests {
 
         // Initials: single tap is the first row, the run cycles —
         // t→ㄓ (zhi), tt→ㄔ (chi); q/t/w are the dual initial keys.
-        assert_eq!(
-            parser.parse_with_options(b"t", USE_TONE).full_pinyin(),
-            "zhi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"tt", USE_TONE).full_pinyin(),
-            "chi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"ttt", USE_TONE).full_pinyin(),
-            "zhi"
-        );
+        assert_eq!(toned(&parser, b"t").full_pinyin(), "zhi");
+        assert_eq!(toned(&parser, b"tt").full_pinyin(), "chi");
+        assert_eq!(toned(&parser, b"ttt").full_pinyin(), "zhi");
 
         // The same tap-count law on a dual final: i→ㄛ (o), ii→ㄞ (ai).
-        assert_eq!(parser.parse_with_options(b"i", USE_TONE).full_pinyin(), "o");
-        assert_eq!(
-            parser.parse_with_options(b"ii", USE_TONE).full_pinyin(),
-            "ai"
-        );
+        assert_eq!(toned(&parser, b"i").full_pinyin(), "o");
+        assert_eq!(toned(&parser, b"ii").full_pinyin(), "ai");
 
         // Single taps that are complete plain rows.
-        assert_eq!(
-            parser.parse_with_options(b"g", USE_TONE).full_pinyin(),
-            "shi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"u", USE_TONE).full_pinyin(),
-            "yi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"m", USE_TONE).full_pinyin(),
-            "yu"
-        );
+        assert_eq!(toned(&parser, b"g").full_pinyin(), "shi");
+        assert_eq!(toned(&parser, b"u").full_pinyin(), "yi");
+        assert_eq!(toned(&parser, b"m").full_pinyin(), "yu");
     }
 
     #[test]
@@ -2354,63 +2350,27 @@ mod tests {
         let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
 
         // u cycles (count-1) % 3: ㄧ, ㄚ, ㄧㄚ.
-        assert_eq!(
-            parser.parse_with_options(b"u", USE_TONE).full_pinyin(),
-            "yi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"uu", USE_TONE).full_pinyin(),
-            "a"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"uuu", USE_TONE).full_pinyin(),
-            "ya"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"uuuu", USE_TONE).full_pinyin(),
-            "yi"
-        );
+        assert_eq!(toned(&parser, b"u").full_pinyin(), "yi");
+        assert_eq!(toned(&parser, b"uu").full_pinyin(), "a");
+        assert_eq!(toned(&parser, b"uuu").full_pinyin(), "ya");
+        assert_eq!(toned(&parser, b"uuuu").full_pinyin(), "yi");
 
         // m cycles (count-1) % 2: ㄩ, ㄡ.
-        assert_eq!(
-            parser.parse_with_options(b"m", USE_TONE).full_pinyin(),
-            "yu"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"mm", USE_TONE).full_pinyin(),
-            "ou"
-        );
+        assert_eq!(toned(&parser, b"m").full_pinyin(), "yu");
+        assert_eq!(toned(&parser, b"mm").full_pinyin(), "ou");
 
         // With an initial, the specials still apply: quu is ㄅㄚ (ba),
         // amm is ㄇㄡ (mou — ㄅㄡ is not a Mandarin syllable, so the
         // m-special needs a compatible initial); after a consumed
         // middle the finals table is probed plainly, so vum is ㄒㄧㄡ
         // (xiu) and vub is ㄒㄧㄝ (xie).
-        assert_eq!(
-            parser.parse_with_options(b"qu", USE_TONE).full_pinyin(),
-            "bi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"qqu", USE_TONE).full_pinyin(),
-            "pi"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"quu", USE_TONE).full_pinyin(),
-            "ba"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"amm", USE_TONE).full_pinyin(),
-            "mou"
-        );
-        assert_eq!(parser.parse_with_options(b"qmm", USE_TONE).consumed(), 0);
-        assert_eq!(
-            parser.parse_with_options(b"vub", USE_TONE).full_pinyin(),
-            "xie"
-        );
-        assert_eq!(
-            parser.parse_with_options(b"vum", USE_TONE).full_pinyin(),
-            "xiu"
-        );
+        assert_eq!(toned(&parser, b"qu").full_pinyin(), "bi");
+        assert_eq!(toned(&parser, b"qqu").full_pinyin(), "pi");
+        assert_eq!(toned(&parser, b"quu").full_pinyin(), "ba");
+        assert_eq!(toned(&parser, b"amm").full_pinyin(), "mou");
+        assert_eq!(toned(&parser, b"qmm").consumed(), 0);
+        assert_eq!(toned(&parser, b"vub").full_pinyin(), "xie");
+        assert_eq!(toned(&parser, b"vum").full_pinyin(), "xiu");
     }
 
     #[test]
@@ -2421,23 +2381,23 @@ mod tests {
         // byte first — eke is ㄍㄜ plus tone 2, dkd is ㄎㄜ plus tone 4,
         // and a bare "ee"/"dd" strips to the lone incomplete initials
         // ㄍ/ㄎ and consumes 0 (upstream identically).
-        let ge2 = parser.parse_with_options(b"eke", USE_TONE);
+        let ge2 = toned(&parser, b"eke");
         assert_eq!(ge2.full_pinyin(), "ge");
         assert_eq!(ge2.keys()[0].tone(), 2);
-        let ke4 = parser.parse_with_options(b"dkd", USE_TONE);
+        let ke4 = toned(&parser, b"dkd");
         assert_eq!(ke4.full_pinyin(), "ke");
         assert_eq!(ke4.keys()[0].tone(), 4);
-        assert_eq!(parser.parse_with_options(b"ee", USE_TONE).consumed(), 0);
-        assert_eq!(parser.parse_with_options(b"dd", USE_TONE).consumed(), 0);
+        assert_eq!(toned(&parser, b"ee").consumed(), 0);
+        assert_eq!(toned(&parser, b"dd").consumed(), 0);
 
         // Tone-bearing and tone-rejection on ㄋㄧ (s, u, e / space).
-        let ni2 = parser.parse_with_options(b"sue", USE_TONE);
+        let ni2 = toned(&parser, b"sue");
         assert_eq!(ni2.full_pinyin(), "ni");
         assert_eq!(ni2.keys()[0].tone(), 2);
-        assert_eq!(parser.parse_with_options(b"su ", USE_TONE).consumed(), 0);
+        assert_eq!(toned(&parser, b"su ").consumed(), 0);
 
         // A lone tone-or-initial key under USE_TONE strips to nothing.
-        assert_eq!(parser.parse_with_options(b"d", USE_TONE).consumed(), 0);
+        assert_eq!(toned(&parser, b"d").consumed(), 0);
     }
 
     #[test]
@@ -2445,23 +2405,23 @@ mod tests {
         let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
 
         // Multi-syllable greedy: ni then shi.
-        let sug = parser.parse_with_options(b"sug", USE_TONE);
+        let sug = toned(&parser, b"sug");
         assert_eq!(sug.consumed(), 3);
         assert_eq!(sug.full_pinyin(), "ni'shi");
 
         // ㄅ alone is the global index's incomplete row: matched under
         // the option, stopped by the all-zero mask — consumed 0 either
         // way, and CP26 owns no correction bit to change that.
-        assert_eq!(parser.parse_with_options(b"q", USE_TONE).consumed(), 0);
+        assert_eq!(toned(&parser, b"q").consumed(), 0);
         assert_eq!(
             parser
-                .parse_with_options(b"q", USE_TONE | ZHUYIN_INCOMPLETE)
+                .parse_with_options(b"q", OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE)
                 .consumed(),
             0
         );
 
         // Empty input.
-        assert_eq!(parser.parse_with_options(b"", USE_TONE).consumed(), 0);
+        assert_eq!(toned(&parser, b"").consumed(), 0);
     }
 
     #[test]

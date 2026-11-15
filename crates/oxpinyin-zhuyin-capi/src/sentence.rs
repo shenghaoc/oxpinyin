@@ -696,7 +696,7 @@ mod tests {
 mod prefix_ranking_tests {
     use super::*;
     use crate::test_support::{TempUserDir, cstr, open_with_user};
-    use oxpinyin_core::{DYNAMIC_ADJUST, Dictionary};
+    use oxpinyin_core::{Dictionary, OptionBits};
 
     // 074a2219: pinyin.cpp:1711-1740,2200-2215 and
     // zhuyin.cpp:1146-1175,1473-1489 choose the longest live prefix at zero.
@@ -725,7 +725,10 @@ mod prefix_ranking_tests {
                     .expect("seed real bigram row");
             }
         }
-        assert!(crate::config::zhuyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(crate::config::zhuyin_set_options(
+            context,
+            OptionBits::DYNAMIC_ADJUST.bits()
+        ));
         assert!(!zhuyin_guess_sentence_with_prefix(
             instance,
             cstr("你好").as_ptr()
@@ -753,7 +756,10 @@ mod prefix_ranking_tests {
         );
         assert!(crate::config::zhuyin_set_options(context, 0));
         assert!(!rank(), "without DYNAMIC_ADJUST only unigram order remains");
-        assert!(crate::config::zhuyin_set_options(context, DYNAMIC_ADJUST));
+        assert!(crate::config::zhuyin_set_options(
+            context,
+            OptionBits::DYNAMIC_ADJUST.bits()
+        ));
         assert!(rank(), "option changes preserve the prefix tokens");
 
         // A plain sentence guess clears prefixes even when its matrix is empty.

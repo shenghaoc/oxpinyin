@@ -3,7 +3,7 @@
 
 use std::os::raw::{c_char, c_int};
 
-use oxpinyin_core::{FORCE_TONE, USE_TONE, parse_zhuyin_direct};
+use oxpinyin_core::{OptionBits, parse_zhuyin_direct};
 use oxpinyin_facade::plan_add;
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, toned_key};
 
@@ -179,7 +179,7 @@ fn plan_import(
         oxpinyin_capi_marshal::borrow_c_string!(pinyin),
     );
     let user = handle.user;
-    let Some(keys) = parse_zhuyin_direct(&pinyin, USE_TONE | FORCE_TONE)
+    let Some(keys) = parse_zhuyin_direct(&pinyin, OptionBits::USE_TONE | OptionBits::FORCE_TONE)
         .into_iter()
         .map(|(key, tone)| toned_key(key.index(), tone))
         .collect::<Option<Vec<PinyinKey>>>()

@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, OsString, c_int};
 
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::{ChewingKey, OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
+use oxpinyin_core::{ChewingKey, OptionBits};
 use oxpinyin_data::table_entries::exact_compare2;
 use oxpinyin_input::tool::gen_pinyin_table::{self as edge, TableInput};
 use oxpinyin_input::tool::{
@@ -118,7 +118,7 @@ pub struct Table {
 /// (`:178-182`): the keys of the longest parsable prefix, fewest keys, as
 /// the import iterator parses (`pinyin.cpp:629-637`).
 fn parse_keys(pinyin: &[u8]) -> Vec<ChewingKey> {
-    let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
+    let options = OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE;
     let Ok(graph) = SegmentGraph::build_with_options(pinyin, options) else {
         return Vec::new();
     };

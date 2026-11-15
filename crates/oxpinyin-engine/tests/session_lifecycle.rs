@@ -41,11 +41,7 @@ fn reset_clears_the_composition_but_not_the_configuration() {
     // time, under the configuration set before the reset.
     let mut session = session();
     session
-        .set_options(
-            session
-                .options()
-                .with(oxpinyin_core::PINYIN_INCOMPLETE, false),
-        )
+        .set_options(session.options() - OptionBits::PINYIN_INCOMPLETE)
         .expect("the option toggles");
     let options = session.options();
 
@@ -189,16 +185,10 @@ fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
     let undefined_bit = 1 << 0; // bits 0..2 are outside the frozen set
     let mut session = session();
     session
-        .set_options(OptionBits::from_bits(
-            oxpinyin_core::PINYIN_INCOMPLETE | undefined_bit,
-        ))
+        .set_options(OptionBits::PINYIN_INCOMPLETE | OptionBits::from_bits_retain(undefined_bit))
         .expect("the option word accepts undefined bits");
     session
-        .set_options(
-            session
-                .options()
-                .with(oxpinyin_core::PINYIN_INCOMPLETE, true),
-        )
+        .set_options(session.options() | OptionBits::PINYIN_INCOMPLETE)
         .expect("the option toggles");
     session.replace_raw("n").expect("typing");
     assert!(

@@ -5,11 +5,12 @@
 //! the effective scheme unchanged.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme, PINYIN_INCOMPLETE};
+use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme, OptionBits};
 
 fuzz_target!(|data: &[u8]| {
     let allow_incomplete = data.first().is_some_and(|byte| byte & 1 == 1);
-    let options = u32::from(allow_incomplete) * PINYIN_INCOMPLETE;
+    let mut options = OptionBits::empty();
+    options.set(OptionBits::PINYIN_INCOMPLETE, allow_incomplete);
     let schemes = [
         DoublePinyinScheme::Zrm,
         DoublePinyinScheme::Ms,

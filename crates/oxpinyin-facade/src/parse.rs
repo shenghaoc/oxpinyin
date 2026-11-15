@@ -3,8 +3,8 @@
 use oxpinyin_core::graph::ExactSegment;
 use oxpinyin_core::{
     ChewingKey, DoublePinyinKey, DoublePinyinParser, DoublePinyinScheme, FullPinyinParser,
-    FullPinyinScheme, PINYIN_CORRECT_ALL, SyllableKey, USE_TONE, ZHUYIN_CORRECT_ALL, ZhuyinKey,
-    ZhuyinParser, ZhuyinScheme, parse_full_pinyin_index_with_options,
+    FullPinyinScheme, OptionBits, SyllableKey, ZhuyinKey, ZhuyinParser, ZhuyinScheme,
+    parse_full_pinyin_index_with_options,
 };
 
 use crate::instance::{InstanceState, InstanceView};
@@ -144,15 +144,15 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
 /// must be one row of the index exactly, and the key is the row's
 /// canonical syllable with that tone.
 fn parse_one_scheme_key(
-    options: u32,
+    options: OptionBits,
     input: &[u8],
     index: oxpinyin_core::FullPinyinIndex,
 ) -> Option<ChewingKey> {
     if input.contains(&b'\'') {
         return None;
     }
-    let use_tone = options & USE_TONE != 0;
-    let force_tone = options & oxpinyin_core::FORCE_TONE != 0;
+    let use_tone = options.contains(OptionBits::USE_TONE);
+    let force_tone = options.contains(OptionBits::FORCE_TONE);
     let mut tone = oxpinyin_core::CHEWING_ZERO_TONE;
     let mut spelling = input;
     if use_tone {
@@ -186,8 +186,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         corrections: PinyinCorrections,
     ) -> Option<ChewingKey> {
         let options = match corrections {
-            PinyinCorrections::FromOptions => self.options().bits(),
-            PinyinCorrections::Masked => self.options().bits() & !PINYIN_CORRECT_ALL,
+            PinyinCorrections::FromOptions => self.options(),
+            PinyinCorrections::Masked => self.options() - OptionBits::PINYIN_CORRECT_ALL,
         };
         // The probe runs on the context's live full-pinyin parser, whose
         // index `pinyin_set_full_pinyin_scheme` swaps
@@ -219,7 +219,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
                 p
             }
         };
-        parser.parse_one_key(self.options().bits(), text.as_bytes())
+        parser.parse_one_key(self.options(), text.as_bytes())
     }
 
     /// The one-key chewing probe — the `parse_chewing` law both facades
@@ -229,7 +229,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     #[must_use]
     pub fn parse_one_chewing(&self, text: &str) -> Option<ChewingKey> {
         let scheme = zhuyin_scheme(self.live.zhuyin_scheme.get())?;
-        let options = self.options().bits() & !ZHUYIN_CORRECT_ALL;
+        let options = self.options() - OptionBits::ZHUYIN_CORRECT_ALL;
         ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
     }
 
@@ -239,7 +239,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// not on the keyboard (upstream's `false`).
     #[must_use]
     pub fn in_keyboard(&self, key: u8) -> Vec<String> {
-        let use_tone = self.options().contains(USE_TONE);
+        let use_tone = self.options().contains(OptionBits::USE_TONE);
         let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
             return Vec::new();
         };
@@ -368,13 +368,15 @@ impl<
             // (`pinyin.cpp:1589` at the pin — the caller's zhuyin
             // corrections never reach the chewing parser), the libzhuyin
             // facade strips nothing.
-            ToneForwarding::PinFacade => parser
-                .parse_with_options(text.as_bytes(), self.options().bits() & !ZHUYIN_CORRECT_ALL),
+            ToneForwarding::PinFacade => parser.parse_with_options(
+                text.as_bytes(),
+                self.options() - OptionBits::ZHUYIN_CORRECT_ALL,
+            ),
             // The libzhuyin facade forwards the whole word, so the pin's
             // default `USE_TONE | FORCE_TONE` is honoured by the batch
             // law (`zhuyin.cpp:1061` at the pin).
             ToneForwarding::ZhuyinFacade => {
-                parser.parse_with_options(text.as_bytes(), self.options().bits())
+                parser.parse_with_options(text.as_bytes(), self.options())
             }
         };
 
@@ -428,7 +430,7 @@ impl<
                 p
             }
         };
-        let parsed = parser.parse_with_options(text.as_bytes(), self.options().bits());
+        let parsed = parser.parse_with_options(text.as_bytes(), self.options());
 
         if text.is_empty() {
             // The same fill_matrix empty-input law as full pinyin.
@@ -458,18 +460,14 @@ mod tests {
 
     #[test]
     fn den_matrix_keeps_key_and_fuzzy_deng() {
-        let parse =
-            ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse_with_options(b"2p", USE_TONE);
+        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
+            .parse_with_options(b"2p", OptionBits::USE_TONE);
         let keys = crate::cursor::ModeKeys::Zhuyin(parse.keys())
             .iter()
             .collect::<Vec<_>>();
         let keys = crate::cursor::matrix_keys_of(&keys);
-        let matrix = oxpinyin_engine::parse_time_keys(
-            &keys,
-            2,
-            oxpinyin_core::OptionBits::from_bits(oxpinyin_core::PINYIN_AMB_EN_ENG),
-            false,
-        );
+        let matrix =
+            oxpinyin_engine::parse_time_keys(&keys, 2, OptionBits::PINYIN_AMB_EN_ENG, false);
         assert_eq!(
             matrix
                 .iter()
@@ -495,7 +493,7 @@ mod tests {
     #[test]
     fn exact_input_joins_keys_with_apostrophes_and_spans_each_one() {
         let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
-            .parse_with_options(b"su3cl3", USE_TONE);
+            .parse_with_options(b"su3cl3", OptionBits::USE_TONE);
         let (text, segments) = exact_input(parse.keys());
         assert_eq!(text, "ni'hao");
         assert_eq!(segments.len(), 2);
