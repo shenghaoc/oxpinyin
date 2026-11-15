@@ -2847,6 +2847,57 @@ fn import_end_compaction_drops_the_reserved_slot() {
     close(context, instance);
 }
 
+/// An import of a reading its phrase already holds removes the item, edits
+/// a copy and adds the copy back at the content's end
+/// (`pinyin.cpp:563-582`, `phrase_index.cpp:208-235` at 074a2219), so the
+/// bytes the slot named before are not written. Slots 1 and 2 of `user.bin`
+/// name one body and the phrase table holds token 1 alone: the import
+/// raises token 1's count and token 2 keeps the old one.
+#[test]
+fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-aliased-slots");
+    write_user_conf(&user.path, &system_dir());
+    let ce4 = oxpinyin_core::ChewingKey::from_pinyin("ce")
+        .expect("ce")
+        .with_tone(4)
+        .to_packed();
+    let item = || ChunkItem {
+        phrase: "测测".chars().map(u32::from).collect(),
+        unigram: 15,
+        prons: vec![(vec![ce4, ce4], 5)],
+    };
+    let chunk = build_chunk(&[(1, item()), (2, item())]).expect("two-item user chunk");
+    // Point slot 2 at slot 1's body.
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_one = offsets_start as usize + 4;
+    payload.copy_within(slot_one..slot_one + 4, slot_one + 4);
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+    set_phrase_table_row(&user.path, "测测", &[0x0700_0001]);
+
+    let (context, instance) = open_at(&user.path);
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(crate::iterators::pinyin_iterator_add_phrase(
+        iter,
+        cstr("测测").as_ptr(),
+        cstr("ce4'ce4").as_ptr(),
+        7,
+    ));
+    assert_eq!(
+        export_rows_of(context, 7, "测测"),
+        [("ce4'ce4".to_owned(), 12), ("ce4'ce4".to_owned(), 5)]
+    );
+    pinyin_end_add_phrases(iter);
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

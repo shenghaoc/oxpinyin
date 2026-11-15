@@ -320,6 +320,13 @@ impl UserLibrary {
         true
     }
 
+    /// `_add_phrase` on a phrase the library already holds
+    /// (`pinyin.cpp:563-582` at 074a2219): `remove_phrase_item` copies the
+    /// body out and zeroes the slot, `add_pronunciation` edits the copy, and
+    /// `add_phrase_item` stores the copy at the content's end and points
+    /// the slot at it (`phrase_index.cpp:56-93`, `:208-235`). The old bytes
+    /// stay as they were, for any other slot that names them, and the item
+    /// is added back even when the count is refused.
     pub(crate) fn add_reading(
         &mut self,
         slot: u32,
@@ -327,51 +334,7 @@ impl UserLibrary {
         delta: u32,
     ) -> Result<(), String> {
         let item = self.item(slot).ok_or("missing user phrase")?;
-        if item.phrase_length() != keys.len() {
-            return Err("user phrase reading length differs".into());
-        }
-        let mut total = 0_u32;
-        let mut matched = None;
-        for (i, reading) in item.pronunciations().enumerate() {
-            total = total.wrapping_add(reading.freq);
-            if reading
-                .keys
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .zip(keys)
-                .all(|(bytes, &key)| {
-                    u16::from_le_bytes([bytes[0], bytes[1]]) & 0x7fff == key & 0x7fff
-                })
-            {
-                matched = Some((i, reading.freq, total.checked_add(delta).is_some()));
-                break;
-            }
-        }
-        if let Some((i, frequency, accepted)) = matched {
-            if accepted {
-                let position = self.slots.offset(slot).ok_or("missing user phrase")? as usize
-                    + 6
-                    + 4 * keys.len()
-                    + i * (2 * keys.len() + 4)
-                    + 2 * keys.len();
-                self.content[position..position + 4]
-                    .copy_from_slice(&frequency.wrapping_add(delta).to_le_bytes());
-            }
-            return Ok(());
-        }
-        let mut bytes = item.as_bytes().to_vec();
-        bytes[1] = bytes[1].wrapping_add(1);
-        if bytes[1] == 0 {
-            // The next get_phrase_item sizes the body from the wrapped header
-            // (074a2219 phrase_index.cpp:195-204); no reading is then visible.
-            bytes.truncate(6 + keys.len() * 4);
-        } else {
-            for key in keys {
-                bytes.extend_from_slice(&key.to_le_bytes());
-            }
-            bytes.extend_from_slice(&delta.to_le_bytes());
-        }
+        let bytes = Self::merged_reading(item, keys, delta)?;
         self.replace(slot, &bytes)
     }
 
