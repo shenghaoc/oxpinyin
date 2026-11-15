@@ -46,6 +46,7 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,8 @@ class Api:
     function: object
     input: object
     facade: str = 'pinyin'
+    prepare_system: object = None
+    disposition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -617,10 +620,53 @@ def zhuyin_separator_constraint(facade, case):
     raise CaptureError('the after-cursor 好 row is absent')
 
 
+def oversized_journal_system(source, system, shape):
+    """Replace gb_char.bin with a one-item library for policy row 123."""
+    for file in source.iterdir():
+        if file.name != 'gb_char.bin':
+            (system / file.name).symlink_to(file.resolve())
+
+    characters, readings = shape
+    unigram = 100
+    ni = 0x2b  # CHEWING_N | CHEWING_I << 5
+    item = (struct.pack('<BBI', characters, readings, unigram)
+            + struct.pack('<I', ord('你')) * characters
+            + (struct.pack('<H', ni) * characters + struct.pack('<I', 1)) * readings)
+    # Slot 1 points past the eight reserved bytes in the entry area.
+    offsets = struct.pack('<II', 0, 8)
+    entries = bytes(8) + item
+    index_one = 17
+    index_two = index_one + len(offsets) + 1
+    index_three = index_two + len(entries) + 1
+    payload = (struct.pack('<IIII', unigram, index_one, index_two, index_three)
+               + b'#' + offsets + b'#' + entries + b'#')
+    # MemoryChunk::get_check_sum (memory_chunk.h:136-160).
+    aligned = len(payload) & ~3
+    checksum = int.from_bytes(payload[aligned:], 'little')
+    for (word,) in struct.iter_unpack('<I', payload[:aligned]):
+        checksum ^= word
+    (system / 'gb_char.bin').write_bytes(struct.pack('<II', len(payload), checksum) + payload)
+
+
+def oversized_journal_record_payloads(facade, _shape):
+    """Change the crafted system item and capture its save and the next save."""
+    token = 0x01000001
+    facade.call('pinyin_token_get_unigram_frequency', token)
+    facade.call('pinyin_token_add_unigram_frequency', token, 1)
+    facade.call('pinyin_token_get_unigram_frequency', token)
+    import_rows(facade, 7, ())  # Closing the import arms the save.
+    facade.call('pinyin_save')
+    facade.call('user_files')
+    facade.call('pinyin_save')
+
+
 OBSERVATIONS = {
     'zhuyin-separator/guess-3': Api(zhuyin_separator_constraint, [3, 2], 'zhuyin'),
     **{f'zhuyin-separator/guess-2-clear-{probe}': Api(zhuyin_separator_constraint, [2, probe], 'zhuyin')
        for probe in (2, 3)},
+    'oversized-journal-record-payloads': Api(
+        oversized_journal_record_payloads, [128, 255],
+        prepare_system=oversized_journal_system, disposition='POLICY-ACCEPTED'),
     "key-abort/'": Api(key_abort, "'"),
     "key-abort/''": Api(key_abort, "''"),
     "key-abort/'''": Api(key_abort, "'''"),
@@ -941,6 +987,8 @@ class Pin:
             value = U32(UNTOUCHED)
             ok = bool(self.fn(name, B, P, U32, C.POINTER(U32))(inst, args[0], C.byref(value)))
             return [ok, value.value]
+        if base == 'token_add_unigram_frequency':
+            return bool(self.fn(name, B, P, U32, U32)(inst, *args))
         if base == 'token_get_nth_pronunciation':
             array = self.lib.g_array_new(0, 1, 2)
             try:
@@ -963,7 +1011,15 @@ class Pin:
 def worker(name, prefix, data):
     spec = OBSERVATIONS[name]
     os.umask(0o022)
-    with tempfile.TemporaryDirectory(prefix='pin-observation-') as user:
+    with tempfile.TemporaryDirectory(prefix='pin-observation-') as scratch:
+        user = Path(scratch)
+        if spec.prepare_system is not None:
+            system = user / 'system'
+            user = user / 'user'
+            system.mkdir()
+            user.mkdir()
+            spec.prepare_system(Path(data), system, spec.input)
+            data = system
         pin = Pin(Path(prefix) / LIBRARIES[spec.facade][0], data, user, spec.facade)
         spec.function(pin, spec.input)
     return 0
@@ -990,7 +1046,10 @@ def observe(name, prefix, data):
                            + result.stderr.decode(errors='replace')[-600:])
     end = {'exit': 0} if result.returncode == 0 else {'signal': -result.returncode}
     spec = OBSERVATIONS[name]
-    return {'facade': spec.facade, 'input': spec.input, 'calls': calls, 'results': results, 'end': end}
+    observation = {'facade': spec.facade, 'input': spec.input, 'calls': calls, 'results': results, 'end': end}
+    if spec.disposition is not None:
+        observation['disposition'] = spec.disposition
+    return observation
 
 
 # ── the utility runs ─────────────────────────────────────────────────────
