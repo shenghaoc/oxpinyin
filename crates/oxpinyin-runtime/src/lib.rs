@@ -562,10 +562,21 @@ impl<'a> RuntimeDict<'a> {
             .rev()
             .find(|entry| entry.token().value() == token);
         let mut priced = if let Some(entry) = user {
+            // The pin prices a user item from its own readings, as a system
+            // one (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at
+            // 074a2219). The user lookup lists only tokens with a session
+            // item, which `with_user_item` reads.
+            let pronunciation = path.keys.as_deref().and_then(|query| {
+                self.user.with_user_item(token, |view| {
+                    let (matched, total) =
+                        Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);
+                    (u64::from(matched), u64::from(total))
+                })
+            });
             PricedToken {
                 item: TrellisItem {
                     chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
-                    pronunciation: entry.pronunciation_possibility(),
+                    pronunciation,
                 },
                 text: want_text.then(|| entry.text().clone()),
             }
