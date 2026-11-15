@@ -3981,3 +3981,30 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
         },
     );
 }
+
+// ── Step pricing ──────────────────────────────────────────────────────────
+
+/// A step prices a reading with the query's tone (`phonetic_key_matrix.cpp:
+/// 562,575`, `phrase_index.h:136-164` at 074a2219): a nonzero query tone
+/// matches an equal or zero stored tone only (`pinyin_phrase3.h:96-105`).
+/// The second import of 甲 adds a reading and no index row
+/// (`pinyin.cpp:563-582`). Under `USE_TONE`, `ba4` prices 甲 at 2/100, so
+/// 乙 (unigram 3) outranks 甲 (unigram 6).
+#[test]
+fn a_step_prices_readings_with_the_query_tone() {
+    let user = TempUserDir::new("toned-step");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(
+        crate::e2e_tests::import_batch(
+            context,
+            1,
+            &[("甲", "ba4", 2), ("甲", "ba3", 98), ("乙", "ba4", 1)]
+        ),
+        [true; 3]
+    );
+    assert!(pinyin_set_options(context, 1 << 5));
+    assert_eq!(parse(instance, "ba4"), 3);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (true, Some("乙".to_owned())));
+    close(context, instance);
+}

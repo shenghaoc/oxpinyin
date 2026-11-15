@@ -141,7 +141,7 @@ mod tests {
     fn path(runtime: &Runtime, spelling: &str) -> PathPricing {
         runtime
             .dict()
-            .path_pricing(&[SyllableKey::from_text(spelling).unwrap()])
+            .path_pricing(&[SyllableKey::from_text(spelling).unwrap()], &[])
             .unwrap()
     }
     fn price(runtime: &Runtime, path: &PathPricing, token: u32, facts: &mut SentenceFacts) {

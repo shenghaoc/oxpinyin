@@ -1714,3 +1714,25 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
     assert_eq!(segmented_token(instance), (true, token));
     close(context, instance);
 }
+
+// ── Step pricing ──────────────────────────────────────────────────────────
+
+/// A step prices a reading with the query's tone (`phonetic_key_matrix.cpp:
+/// 562,575`, `phrase_index.h:136-164` at 074a2219): a nonzero query tone
+/// matches an equal or zero stored tone only (`pinyin_phrase3.h:96-105`).
+/// The second import of 甲 adds a reading and no index row
+/// (`pinyin.cpp:563-582`). Under the default `USE_TONE` (`zhuyin.cpp:273`),
+/// ㄅㄚˋ prices 甲 at 2/100, so 乙 (unigram 3) outranks 甲 (unigram 6).
+#[test]
+fn a_step_prices_readings_with_the_query_tone() {
+    let user = TempUserDir::new("toned-step");
+    let (context, instance) = open_with_user(&user.path);
+    for (text, reading, count) in [("甲", "ㄅㄚˋ", 2), ("甲", "ㄅㄚˇ", 98), ("乙", "ㄅㄚˋ", 1)]
+    {
+        assert!(import(context, 1, text, reading.as_bytes(), count));
+    }
+    zhuyin_parse_more_chewings(instance, cstr("184").as_ptr());
+    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(sentence(instance), (true, Some("乙".to_owned())));
+    close(context, instance);
+}

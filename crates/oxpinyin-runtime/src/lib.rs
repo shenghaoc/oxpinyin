@@ -515,14 +515,19 @@ impl<'a> RuntimeDict<'a> {
     }
 
     /// What [`Self::priced_token`] reads of `syllables` whatever the
-    /// token: the user table's lookup and the path's tone-less keys.
-    fn path_pricing(&self, syllables: &[SyllableKey]) -> Result<PathPricing, DictError> {
+    /// token: the user table's lookup and the path's toned keys. The pin
+    /// prices a step with the matrix keys, tones included
+    /// (`phonetic_key_matrix.cpp:562,575` at 074a2219), and a nonzero
+    /// query tone matches only an equal or zero stored tone
+    /// (`pinyin_compare_tone3`, `pinyin_phrase3.h:96-105`).
+    fn path_pricing(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+    ) -> Result<PathPricing, DictError> {
         Ok(PathPricing {
             user: self.user_lookup().lookup(syllables),
-            keys:
-                SystemDictionary::<oxpinyin_data::phrase_libraries::PhraseLibraries>::trellis_keys(
-                    syllables,
-                ),
+            keys: Self::trellis_query(syllables, tones),
         })
     }
 
@@ -534,13 +539,14 @@ impl<'a> RuntimeDict<'a> {
     fn priced_token(
         &self,
         syllables: &[SyllableKey],
+        tones: &[u8],
         token: u32,
         want_text: bool,
     ) -> Result<Option<PricedToken>, DictError> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        self.priced_on_path(&self.path_pricing(syllables)?, token, want_text)
+        self.priced_on_path(&self.path_pricing(syllables, tones)?, token, want_text)
     }
 
     /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
@@ -899,7 +905,7 @@ impl<'a> RuntimeDict<'a> {
 pub struct PathPricing {
     /// The user table's lookup of the path.
     user: Vec<PhraseEntry>,
-    /// The path's tone-less keys; `None` when a syllable is no key.
+    /// The path's toned keys ([`RuntimeDict::trellis_query`]).
     keys: Option<Vec<oxpinyin_core::ChewingKey>>,
 }
 
@@ -929,7 +935,7 @@ impl Dictionary for RuntimeDict<'_> {
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         let mut out = Vec::new();
         for (token, ()) in ranges.walk_tokens() {
-            if let Some(priced) = self.priced_token(syllables, token, true)? {
+            if let Some(priced) = self.priced_token(syllables, tones, token, true)? {
                 let mut entry =
                     PhraseEntry::new(PhraseToken::new(token), priced.text.unwrap_or_default());
                 if let Some((matched, total)) = priced.item.pronunciation {
@@ -992,11 +998,11 @@ impl Dictionary for RuntimeDict<'_> {
     fn trellis_item(
         &self,
         syllables: &[Self::Syllable],
-        _tones: &[u8],
+        tones: &[u8],
         token: u32,
     ) -> Result<Option<TrellisItem>, Self::Error> {
         Ok(self
-            .priced_token(syllables, token, false)?
+            .priced_token(syllables, tones, token, false)?
             .map(|priced| priced.item))
     }
 
@@ -1005,14 +1011,14 @@ impl Dictionary for RuntimeDict<'_> {
     fn trellis_item_on_path(
         &self,
         syllables: &[Self::Syllable],
-        _tones: &[u8],
+        tones: &[u8],
         token: u32,
         memo: &Self::PathMemo,
     ) -> Result<Option<TrellisItem>, Self::Error> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let path = memo.get_or_try_init(|| self.path_pricing(syllables))?;
+        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
         Ok(self
             .priced_on_path(path, token, false)?
             .map(|priced| priced.item))
@@ -1029,8 +1035,7 @@ impl Dictionary for RuntimeDict<'_> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let path = memo.get_or_try_init(|| self.path_pricing(syllables))?;
-        let _ = tones; // The existing path memo deliberately uses tone-less keys.
+        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
         Ok(self
             .priced_with_facts(path, token, false, facts)?
             .map(|priced| priced.item))
@@ -1039,7 +1044,7 @@ impl Dictionary for RuntimeDict<'_> {
     fn trellis_text_with_facts(
         &self,
         syllables: &[Self::Syllable],
-        _tones: &[u8],
+        tones: &[u8],
         token: u32,
         facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
     ) -> Result<Option<PhraseText>, Self::Error> {
@@ -1047,18 +1052,18 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(None);
         }
         Ok(self
-            .priced_with_facts(&self.path_pricing(syllables)?, token, true, facts)?
+            .priced_with_facts(&self.path_pricing(syllables, tones)?, token, true, facts)?
             .and_then(|priced| priced.text))
     }
 
     fn trellis_text(
         &self,
         syllables: &[Self::Syllable],
-        _tones: &[u8],
+        tones: &[u8],
         token: u32,
     ) -> Result<Option<PhraseText>, Self::Error> {
         Ok(self
-            .priced_token(syllables, token, true)?
+            .priced_token(syllables, tones, token, true)?
             .and_then(|priced| priced.text))
     }
 

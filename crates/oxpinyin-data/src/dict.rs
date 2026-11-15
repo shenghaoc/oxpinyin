@@ -796,18 +796,11 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.trellis_item_keys(&syllables_to_chewing_keys(syllables)?, token)
     }
 
-    /// [`Self::trellis_item`] over the query's tone-less keys, already
-    /// converted from the syllables ([`Self::trellis_keys`]).
+    /// [`Self::trellis_item`] over the query's keys, already converted
+    /// from the syllables.
     #[must_use]
     pub fn trellis_item_keys(&self, keys: &[ChewingKey], token: u32) -> Option<TrellisItem> {
         self.libraries().trellis_item(token, keys)
-    }
-
-    /// The tone-less keys [`Self::trellis_item`] prices `syllables`
-    /// against; `None` when a syllable is not a content-table spelling.
-    #[must_use]
-    pub fn trellis_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
-        syllables_to_chewing_keys(syllables)
     }
 
     /// [`Dictionary::lookup_into_flagged`]'s body: [`Self::lookup_with_live`]
