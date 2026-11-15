@@ -216,8 +216,13 @@ fn parse_index(
     ];
     steps[0].reached = true;
 
+    // The end of the separator-free run the walk is in: found once per run
+    // and forgotten at each separator, as the pin's `next_sep`
+    // (`pinyin_parser2.cpp:233`, `:249`, `:253-261` at 074a2219).
+    let mut run_end = None;
     for position in 0..input.len() {
         if input[position] == b'\'' {
+            run_end = None;
             // Propagate the current step past the separator.
             let previous = steps[position];
             if previous.reached {
@@ -239,11 +244,13 @@ fn parse_index(
             continue;
         }
 
-        let next_sep = position
-            + input[position..]
-                .iter()
-                .position(|&byte| byte == b'\'')
-                .unwrap_or(input.len() - position);
+        let next_sep = *run_end.get_or_insert_with(|| {
+            position
+                + input[position..]
+                    .iter()
+                    .position(|&byte| byte == b'\'')
+                    .unwrap_or(input.len() - position)
+        });
         let try_end = (position + MAX_LOOKAHEAD).min(next_sep);
         for end in (position + 1)..=try_end {
             let Some(key) = parse_one_index_key(&input[position..end], options, index) else {

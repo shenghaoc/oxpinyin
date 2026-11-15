@@ -528,6 +528,48 @@ fn index_parse_handles_tone_digits() {
     assert_eq!(parse("3", true).consumed(), 0);
 }
 
+/// Each key is bounded by the next separator of its own run
+/// (`pinyin_parser2.cpp:253-269` at 074a2219): a key never spans a
+/// separator, every separator is consumed, and a later run is bounded by
+/// its own end, not by an earlier run's.
+#[test]
+fn index_parse_bounds_each_key_by_its_runs_next_separator() {
+    let parse = |input: &str| {
+        parse_full_pinyin_index_with_options(
+            input.as_bytes(),
+            OptionBits::from_bits(0),
+            luoma_pinyin_index(),
+        )
+        .expect("infallible parse")
+    };
+    let spans = |input: &str| {
+        parse(input)
+            .keys()
+            .iter()
+            .map(|key| (key.start(), key.end()))
+            .collect::<Vec<_>>()
+    };
+
+    // Three runs, a doubled separator and a trailing one.
+    let runs = "ni'hao''chiang'";
+    assert_eq!(spans(runs), [(0, 2), (3, 6), (8, 14)]);
+    assert_eq!(parse(runs).consumed(), runs.len());
+    assert_eq!(parse(runs).full_pinyin(), "ni'hao'qiang");
+    // A short run after a long one: `ni` ends at its own separator.
+    assert_eq!(spans("chiang'ni'hao"), [(0, 6), (7, 9), (10, 13)]);
+
+    // A long input with no separator parses as its unit does, repeated.
+    let unit = parse("nihao");
+    let long = "nihao".repeat(200);
+    let parsed = parse(&long);
+    assert_eq!(parsed.consumed(), long.len());
+    assert_eq!(parsed.keys().len(), 200 * unit.keys().len());
+    assert_eq!(
+        parsed.full_pinyin(),
+        vec![unit.full_pinyin(); 200].join("'")
+    );
+}
+
 #[test]
 fn dp_prefers_longest_coverage_then_fewest_keys() {
     // "xian" style ambiguity through the secondary index: "shian"
