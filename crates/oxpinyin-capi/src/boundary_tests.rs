@@ -2539,6 +2539,87 @@ fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
     close(context, instance);
 }
 
+/// An n-best row whose phrases all start with a zero word has the string
+/// `""` at the pin (`lookup/lookup.cpp:39-68`): `pinyin_get_sentence`
+/// answers true with it, and the NBEST row outranks the NORMAL row of the
+/// same string in the dedup (`pinyin.cpp:2116-2125`, `:2295-2296`).
+#[test]
+fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0, 0x4e19], &[0x1081; 2], 100)],
+        2000,
+    );
+    let user = TempUserDir::new("nbest-empty-text");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert!(pinyin_set_options(context, 1 << 5));
+    assert_eq!(parse(instance, "ba1ba1"), 6);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (true, Some(String::new())));
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert_eq!(capture_rows(instance), [(NBEST, String::new(), Some(0))]);
+    close(context, instance);
+}
+
+/// `convert_to_utf8` leaves out a phrase whose `g_ucs4_to_utf8` is NULL, a
+/// word at or above 0x80000000 (`lookup/lookup.cpp:58-65`), so the row
+/// [A, 丙] reads `丙` and `pinyin_get_sentence` answers true. A's own NORMAL
+/// row has a NULL string, which the candidate dedup compares (rows 80 and
+/// 106, class (b)), so the test lists no candidates.
+#[test]
+fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let an = oxpinyin_core::ChewingKey::from_pinyin("an")
+        .expect("frozen syllable")
+        .with_tone(1)
+        .to_packed();
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x8000_0000], &[0x1081], 100), (&[0x4e19], &[an], 100)],
+        2000,
+    );
+    let user = TempUserDir::new("nbest-unconvertible");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert!(pinyin_set_options(context, 1 << 5));
+    assert_eq!(parse(instance, "ba1an1"), 6);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (true, Some("丙".to_owned())));
+    close(context, instance);
+}
+
+/// A failed conversion for the row's only phrase leaves the sentence NULL
+/// and still answers true (074a2219 `lookup/lookup.cpp:27-70`,
+/// `pinyin.cpp:1464-1482`).
+#[test]
+fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x8000_0000], &[0x1081], 100)],
+        2000,
+    );
+    let user = TempUserDir::new("nbest-null-text");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert!(pinyin_set_options(context, oxpinyin_core::USE_TONE));
+    assert_eq!(parse(instance, "ba1"), 3);
+    assert!(pinyin_guess_sentence(instance));
+
+    let mut out = UNTOUCHED as usize as *mut c_char;
+    assert!(pinyin_get_sentence(instance, 0, &raw mut out));
+    assert!(out.is_null());
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

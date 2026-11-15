@@ -196,7 +196,7 @@ macro_rules! write_owned_sentence {
         /// answers `true` (`lookup.cpp:69`).
         fn write_owned_sentence(
             phrases: impl IntoIterator<
-                Item = impl ::core::borrow::Borrow<::oxpinyin_core::PhraseText>,
+                Item = Option<impl ::core::borrow::Borrow<::oxpinyin_core::PhraseText>>,
             >,
             sentence: *mut *mut ::std::os::raw::c_char,
         ) -> bool {

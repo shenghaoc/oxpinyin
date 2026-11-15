@@ -431,10 +431,8 @@ pub fn write_user_conf(user_dir: &Path, system: &Path) {
     .expect("write user.conf");
 }
 
-/// Replaces the tree DBM at `path` with one that holds exactly `rows`, raw
-/// keys and values that the library may never write: a system table. Only
-/// the tkrzw pinned-data tests craft system tables.
-#[cfg(feature = "tkrzw")]
+/// Replaces the file at `path` with a tree DBM of the running backend.
+/// The tree holds exactly `rows`, raw keys and values for a system table.
 pub fn craft_tree(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin_store::{WriteStore as _, WriteTxn as _};
     if path.exists() {

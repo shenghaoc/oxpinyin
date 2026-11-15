@@ -24,7 +24,7 @@ use std::path::Path;
 
 use oxpinyin_core::{
     ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseText,
-    PhraseToken, SyllableKey, TrellisItem,
+    PhraseToken, SyllableKey, TokenPhrase, TrellisItem,
 };
 use oxpinyin_store::{DefaultStore, RawReadStore};
 
@@ -888,11 +888,11 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
-    ) -> Result<Option<PhraseText>, DictError> {
+    ) -> Result<Option<TokenPhrase>, DictError> {
         if syllables_to_chewing_keys(syllables).is_none() {
             return Ok(None);
         }
-        Ok(self.libraries().phrase_text(token))
+        Ok(self.libraries().token_phrase(token))
     }
 
     fn lookup_into(

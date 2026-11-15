@@ -248,10 +248,12 @@ conversions and the conversion of each sentence phrase. Those buffers come from 
     NULL with `true`.
   - A row of the pre-frequency fallback scorer, which the pin does not
     have, is one piece.
-  - A row whose phrases all start with a zero word converts to `""`, and the
-    pin returns true with it (`lookup/lookup.cpp:39-66`). oxpinyin drops
-    `NbestRow` rows with empty text and returns `false`: a
-    [defect](libpinyin-structures-and-algorithms.md#nbest-row-empty-text).
+  - A row whose text is empty is a row: `pinyin_get_sentence` returns
+    `true` with `""`, as `convert_to_utf8` builds it
+    (`lookup/lookup.cpp:39-68`). Both sentence getters keep a row whose
+    phrases all fail to convert and answer `true` with NULL
+    (`pinyin.cpp:1464-1482`, `zhuyin.cpp:983-999`). Candidate dedup skips
+    NULL text on its comparison path (policy rows 80 and 106, class (b)).
 - The NULL `middle` of the aux concatenation is unreachable in the pin. The
   walk dies first at `assert(matrix.get_column_size(offset) >= 1)`
   (`pinyin.cpp:3410`, `:3467`, `:3545`), which oxpinyin reproduces.

@@ -32,12 +32,11 @@ use std::cell::{OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 
-use oxpinyin_core::PhraseText;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
 use oxpinyin_core::scoring::ScoringError;
 use oxpinyin_core::{
     ChewingKey, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-    PhraseToken, PronunciationRows, SyllableKey,
+    PhraseText, PhraseToken, PronunciationRows, SyllableKey, TokenPhrase,
 };
 use smallvec::SmallVec;
 
@@ -107,8 +106,9 @@ pub const SENTENCE_START: u32 = 1;
 /// One decoded sentence row, in tail order (index 0 is the 1-best).
 #[derive(Clone, Debug)]
 pub struct NbestRow {
-    /// Concatenated phrase texts.
-    pub(crate) text: PhraseText,
+    /// Concatenated phrase texts. `None` represents a NULL string when no
+    /// phrase converts.
+    pub(crate) text: Option<PhraseText>,
     /// The phrase tokens in order — the selection record a chosen row
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
@@ -451,15 +451,15 @@ impl Trellis {
         spans
     }
 
-    /// The phrase text of `token`, read once per call through `cache`;
-    /// `None` where the dictionary has no text for it.
+    /// The stored length and text of `token`, read once per call through
+    /// `cache`; `None` where the dictionary has no item for it.
     fn token_text<'cache, D>(
         &self,
         dictionary: &D,
-        cache: &'cache mut TokenMap<Option<PhraseText>>,
+        cache: &'cache mut TokenMap<Option<TokenPhrase>>,
         token: u32,
         facts: &RefCell<SentenceFacts>,
-    ) -> Result<Option<&'cache PhraseText>, EngineError>
+    ) -> Result<Option<&'cache TokenPhrase>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
         D::Error: core::fmt::Display,
@@ -490,10 +490,19 @@ impl Trellis {
         Ok(slot.insert(text).as_ref())
     }
 
+    /// The row's string as `convert_to_utf8` builds it
+    /// (`lookup/lookup.cpp:39-68` at 074a2219): each phrase converted on its
+    /// own and cut at its first zero, a phrase whose conversion is NULL left
+    /// out (`g_strdup(NULL)` and `g_strconcat` stop at it, `:62-65`).
+    /// When all items are present and no phrase converts, `None` is the
+    /// pin's NULL string. The sentence getters return true and write NULL
+    /// (`pinyin.cpp:1464-1482`, `zhuyin.cpp:983-999`). Only the candidate
+    /// dedup's `strcmp` on NULL is class (b) (policy rows 80 and 106).
+    /// A missing item also stops this read; the span walk rejects that row.
     fn text<D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<PhraseText>>,
+        cache: &mut TokenMap<Option<TokenPhrase>>,
         spans: &[(usize, u32)],
         facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
@@ -502,13 +511,17 @@ impl Trellis {
         D::Error: core::fmt::Display,
     {
         let mut text = oxpinyin_core::PhraseTextConcat::new();
+        let mut converted = false;
         for (_, token) in spans {
             let Some(part) = self.token_text(dictionary, cache, *token, facts)? else {
                 return Ok(None);
             };
-            text.push(part);
+            if let Some(part) = &part.text {
+                text.push(part);
+                converted = true;
+            }
         }
-        Ok(Some(text.finish()))
+        Ok(converted.then(|| text.finish()))
     }
 }
 
@@ -936,22 +949,19 @@ where
     let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let Some(text) = trellis.text(dictionary, &mut texts, &spans, &facts)? else {
-            continue;
-        };
-        if text.is_empty() {
-            continue;
-        }
-        // `trellis.text` resolved every token's text or the row was
-        // skipped above; each span keeps its phrase's own text, stored words
-        // and length included, for the constraint writes and training.
+        let text = trellis.text(dictionary, &mut texts, &spans, &facts)?;
+        // Each span needs a present item. It keeps the stored length for
+        // constraint writes and training even if its text does not convert.
         let Some(phrase_spans) = spans
             .iter()
             .map(|(start, token)| {
+                let phrase = texts.get(token)?.as_ref()?;
                 Some(PhraseSpan {
                     start: *start,
                     token: PhraseToken::new(*token),
-                    text: texts.get(token)?.clone()?,
+                    text: phrase.text.clone().unwrap_or_else(|| {
+                        PhraseText::from_stored_parts(Vec::new(), phrase.phrase_length)
+                    }),
                 })
             })
             .collect::<Option<Vec<PhraseSpan>>>()
@@ -1613,7 +1623,7 @@ mod tests {
     use oxpinyin_core::PhraseEntry;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
-        Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseToken, SyllableKey,
+        Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseText, PhraseToken, SyllableKey,
     };
     use std::cell::RefCell;
 
@@ -2246,7 +2256,7 @@ mod tests {
                 } else {
                     assert!(!rows.is_empty(), "the whole-span sum equals epsilon");
                     for row in rows {
-                        assert_eq!(row.text.as_str(), Some("你"));
+                        assert_eq!(row.text.as_ref().and_then(PhraseText::as_str), Some("你"));
                         assert_eq!(row.poss, Some(f64::from(f32::EPSILON).ln() as f32));
                     }
                 }
@@ -2302,7 +2312,10 @@ mod tests {
             NbestShape::PINYIN,
         )
         .expect("the trellis cannot fail here");
-        assert_eq!(rows[0].text.as_str(), Some("你"));
+        assert_eq!(
+            rows[0].text.as_ref().and_then(PhraseText::as_str),
+            Some("你")
+        );
         assert_eq!(rows[0].poss, Some(f32::NEG_INFINITY));
     }
 
@@ -2375,7 +2388,10 @@ mod tests {
             rows.iter()
                 .map(|row| {
                     (
-                        row.text.as_str().map(str::to_owned),
+                        row.text
+                            .as_ref()
+                            .and_then(PhraseText::as_str)
+                            .map(str::to_owned),
                         row.tokens.iter().map(|token| token.value()).collect(),
                         row.poss.map(f32::to_bits),
                     )
@@ -2650,7 +2666,10 @@ mod tests {
             nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
                 .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
-        assert_eq!(rows[0].text.as_str(), Some("你好"));
+        assert_eq!(
+            rows[0].text.as_ref().and_then(PhraseText::as_str),
+            Some("你好")
+        );
         assert_eq!(rows[0].span, bound);
         assert_eq!(rows[0].keys, 2);
     }
@@ -2683,8 +2702,12 @@ mod tests {
             1,
             "libzhuyin's shape extracts one tail: {zhuyin:?}"
         );
-        assert_eq!(pinyin[0].text, "你好");
-        assert_eq!(zhuyin[0].text, "你好", "earlier batch position wins ties");
+        assert_eq!(pinyin[0].text, Some("你好".into()));
+        assert_eq!(
+            zhuyin[0].text,
+            Some("你好".into()),
+            "earlier batch position wins ties"
+        );
         assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 

@@ -548,6 +548,46 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
     close(context, instance);
 }
 
+/// A failed conversion for the row's only phrase leaves the sentence NULL
+/// and still answers true (074a2219 `lookup/lookup.cpp:27-70`,
+/// `zhuyin.cpp:983-999`).
+#[test]
+fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_data::row_format::pinyin_index::{encode_complete_key, encode_item};
+
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = private_system(scratch.path());
+    let token = 0x0100_0001;
+    let keys = [oxpinyin_core::ChewingKey::from_packed(0x1081)];
+    let items = [(
+        1,
+        ChunkItem {
+            phrase: vec![0x8000_0000],
+            unigram: 100,
+            prons: vec![(vec![keys[0].to_packed()], 10)],
+        },
+    )];
+    let library = system.join("gb_char.bin");
+    std::fs::remove_file(&library).expect("unlink gb_char.bin");
+    std::fs::write(&library, build_chunk(&items).expect("one-item chunk"))
+        .expect("write gb_char.bin");
+    crate::test_support::craft_tree(
+        &system.join("pinyin_index.bin"),
+        &[(encode_complete_key(&keys), encode_item(token, &keys))],
+    );
+
+    let context = init_on(&system, None);
+    assert!(!context.is_null());
+    let instance = full_pinyin(context, oxpinyin_core::USE_TONE, "ba1");
+    assert!(zhuyin_guess_sentence(instance));
+
+    let mut out = SEEDED as *mut c_char;
+    assert!(zhuyin_get_sentence(instance, &raw mut out));
+    assert!(out.is_null());
+    close(context, instance);
+}
+
 /// A stored key word 0x8000 reads back verbatim (`phrase_index.cpp:33-50`).
 #[test]
 fn a_stored_key_word_reads_back_verbatim() {
