@@ -655,9 +655,12 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
 }
 
 /// The store's dense syllable ids for a reading's packed `ChewingKey`
-/// words, decoded from the words' fields; `None` when any word is one no
-/// pin parser writes (the zero key, an invalid field combination, a tone
-/// past 5). This is the boundary conversion the two key models need —
+/// words, decoded from the words' fields; `None` when any word is the zero
+/// key, has a field outside the table dimensions or a tone past 5. A key
+/// inside the dimensions with no syllable-table row keeps its packed
+/// fields: the pin stores a matrix alternate as it stores any key
+/// (`phonetic_key_matrix.cpp:285-306`, `pinyin.cpp:3594-3606` at 074a2219).
+/// This is the boundary conversion the two key models need —
 /// `SyllableKey::index()` is a dense id, `ChewingKey::to_packed()` the
 /// 16-bit bit-field the pin's files carry.
 pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>> {
@@ -665,7 +668,10 @@ pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase:
         .iter()
         .map(|&bits| {
             let key = oxpinyin_core::ChewingKey::from_packed(bits);
-            let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
+            if key.with_tone(0).to_packed() == 0 || !key.elements_in_dims() {
+                return None;
+            }
+            let syllable = oxpinyin_core::SyllableKey::from_matrix_key(key);
             phrase::toned_key(syllable.index(), key.tone)
         })
         .collect()
@@ -692,11 +698,7 @@ pub(crate) fn pronunciation_matches(
 /// words.
 pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
-        .map(|&id| {
-            let syllable = oxpinyin_core::SyllableKey::from_index(phrase::key_syllable(id))?;
-            oxpinyin_core::ChewingKey::from_pinyin(syllable.text())
-                .map(|key| key.with_tone(phrase::key_tone(id)).to_packed())
-        })
+        .map(|&id| phrase::key_chewing(id).map(oxpinyin_core::ChewingKey::to_packed))
         .collect()
 }
 

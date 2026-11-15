@@ -134,8 +134,14 @@ fn add_remembered_path(
     let Some(keys) = path
         .iter()
         .map(|key| {
-            oxpinyin_core::SyllableKey::from_chewing_key(key.key())
-                .and_then(|syllable| toned_key(syllable.index(), key.tone()))
+            // The matrix key as it is, with or without a syllable-table
+            // row: `_remember_phrase_recur` pushes the matrix's own key and
+            // `_add_phrase` stores it (`pinyin.cpp:3594-3606`, `:3647-3663`;
+            // `phonetic_key_matrix.cpp:285-306` at 074a2219).
+            toned_key(
+                oxpinyin_core::SyllableKey::from_matrix_key(key.key()).index(),
+                key.tone(),
+            )
         })
         .collect::<Option<Vec<PinyinKey>>>()
     else {
