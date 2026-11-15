@@ -32,6 +32,16 @@ pub struct SelectionTarget<'a> {
     pub text: &'a PhraseText,
 }
 
+/// Where [`Session::select_row`] takes the recorded text from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowText {
+    /// The session dictionary's item text for the token.
+    Resolve,
+    /// No text: an addon row whose item the receiving context lacks
+    /// (class (b), `pinyin.cpp:2534-2563`).
+    Empty,
+}
+
 impl<'a> SelectionTarget<'a> {
     /// The target of `candidate` read in a window anchored at `anchor`,
     /// forcing `token_override` in place of its own token when given (the
@@ -431,6 +441,19 @@ where
         if span_start < self.record.consumed() && target.nbest_row.is_none() {
             return self.select_behind(constraint_start, constraint_end, token, text);
         }
+        // The normal choose of a token: `add_constraint(m_begin, m_end,
+        // token)`, then `validate_constraint` again (074a2219
+        // `pinyin.cpp:2582-2585`, `zhuyin.cpp:1652-1662`;
+        // `phonetic_lookup.cpp:120-168`), which drops a forcing whose token
+        // does not spell its span. The record follows the forcings that
+        // survive.
+        if target.nbest_row.is_none()
+            && let Some(token) = token
+        {
+            self.constraints
+                .add(constraint_start, constraint_end, token, text);
+            return self.settle_written_forcing();
+        }
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
         // (span start > composition offset) they would otherwise be dropped
@@ -500,10 +523,6 @@ where
                     .constraints
                     .diff_result(best, &chosen.spans, chosen.span);
             }
-        } else if let Some(token) = token {
-            state
-                .constraints
-                .add(constraint_start, constraint_end, token, text);
         }
         state.record.set_consumed(constraint_end);
         self.refresh()?;
@@ -553,6 +572,127 @@ where
             .add(start, end, token, PhraseText::from(""));
         self.validate_selection_constraints()?;
         Ok(len)
+    }
+
+    /// Whether the decoded results hold row 0 and row `rank`: the two
+    /// `check_result(results.get_result(...))` asserts of the pin's NBEST
+    /// choose (074a2219 `pinyin.cpp:2516-2517`).
+    #[must_use]
+    pub fn has_nbest_rank(&self, rank: u8) -> bool {
+        usize::from(rank) < self.sentence.rows.len()
+    }
+
+    /// The matrix size a choose validates the store to, the pin's
+    /// `m_constraints->len` after `validate_constraint` (074a2219
+    /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
+    #[must_use]
+    pub fn selection_capacity(&self) -> usize {
+        self.selection_constraint_size()
+    }
+
+    /// The pin's choose of an NBEST row: only the rank is read off the row;
+    /// the results, their spans and their text are this session's own
+    /// (074a2219 `pinyin.cpp:2515-2520`). The caller checks
+    /// [`Self::has_nbest_rank`] first, where the pin asserts.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from the refresh that follows the selection.
+    pub fn select_nbest_row(&mut self, rank: u8) -> Result<Selection, EngineError> {
+        let Some(row) = self.sentence.rows.get(usize::from(rank)) else {
+            return Ok(Selection::Refused);
+        };
+        let (text, span_end) = (row.text.clone(), row.span);
+        self.select_target(&SelectionTarget {
+            span_start: 0,
+            span_end,
+            token: None,
+            nbest_row: Some(rank),
+            text: &text,
+        })
+    }
+
+    /// The pin's normal choose of `token` over `[start, end)` in store
+    /// coordinates (074a2219 `pinyin.cpp:2577-2590`, `zhuyin.cpp:1646-1666`).
+    /// The pin reads no text here. The record keeps the text this session's
+    /// dictionary holds for the token, the text the C sentence read
+    /// converts later (`src/lookup/lookup.cpp:39-68`); with
+    /// [`RowText::Empty`], or when the dictionary has no item for the
+    /// token, the record keeps none. A token without an item takes the
+    /// pin's write and both validations without a sentence decode
+    /// ([`Self::choose_unreadable_step`]).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from the validations and the refresh.
+    pub fn select_row(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: PhraseToken,
+        text: RowText,
+    ) -> Result<Selection, EngineError> {
+        let text = match text {
+            RowText::Resolve => match self.dictionary.phrase_text_for_token(token.value()) {
+                Some(text) => text,
+                None => {
+                    let len = self.choose_unreadable_step(start, end, token)?;
+                    return Ok(if len == 0 {
+                        Selection::Refused
+                    } else {
+                        self.selection_outcome()
+                    });
+                }
+            },
+            RowText::Empty => PhraseText::from(""),
+        };
+        self.select_target(&SelectionTarget {
+            span_start: start,
+            span_end: end,
+            token: Some(token),
+            nbest_row: None,
+            text: &text,
+        })
+    }
+
+    /// A choose whose span does not start or end on a key of the current
+    /// parse. The pin writes the forcing at a matrix column no key fills;
+    /// its second `validate_constraint` removes that forcing, and the
+    /// forcings `add_constraint` cleared stay cleared (074a2219
+    /// `pinyin.cpp:2577-2590`, `phonetic_lookup.cpp:61-86`). `[start, end)`
+    /// covers, in store coordinates, the keys the span overlaps.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from either validation.
+    pub fn choose_unspellable_span(
+        &mut self,
+        start: usize,
+        end: usize,
+    ) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
+        let mut cleared = false;
+        for index in start..end.min(self.constraints.cell_count()) {
+            cleared |= self.constraints.clear_by_offset(index);
+        }
+        if cleared {
+            self.rebuild_selection_from_constraints();
+        }
+        self.validate_selection_constraints()?;
+        Ok(self.selection_outcome())
+    }
+
+    /// A choose `add_constraint` refuses (`end > m_constraints->len`): both
+    /// validations still run, and nothing else changes (074a2219
+    /// `pinyin.cpp:2578-2587`, `zhuyin.cpp:1646-1666`).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from either validation.
+    pub fn refuse_selection(&mut self) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
+        self.validate_selection_constraints()?;
+        Ok(Selection::Refused)
     }
 
     /// Revalidate existing forcings on a refused choose, preserving the pin's
@@ -615,6 +755,16 @@ where
         let state = self.state.borrow_mut();
         state.constraints.resize(state.input.len() + 1);
         state.constraints.add(start, end, token, text);
+        self.settle_written_forcing()
+    }
+
+    /// After a normal choose's `add_constraint`: the pin's second
+    /// `validate_constraint` (074a2219 `pinyin.cpp:2585`, `zhuyin.cpp:1662`;
+    /// `phonetic_lookup.cpp:120-168`) drops a forcing whose token does not
+    /// spell its span, and the selection record is rebuilt from the
+    /// forcings that survive.
+    fn settle_written_forcing(&mut self) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
         self.rebuild_selection_from_constraints();
         self.refresh()?;
         Ok(self.selection_outcome())

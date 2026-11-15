@@ -603,6 +603,7 @@ pub extern "C" fn pinyin_guess_candidates(
                 .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
             && !abort_on_unreadable
     });
+    let published_bound = inst.core.publication_bound_mapper(true, true);
     for (cand, missing) in candidates
         .iter()
         .map(|row| (row, false))
@@ -647,13 +648,17 @@ pub extern "C" fn pinyin_guess_candidates(
             };
             text
         };
-        let selection = oxpinyin_facade::SelectionSpan::of_candidate(cand, session_offset);
-        // The pin's `m_end - m_begin`: `m_begin` is the caller's guess
+        // The pin's `m_begin` and `m_end`: `m_begin` is the caller's guess
         // offset itself (`start = offset`, `pinyin.cpp:2228`, `:2246`), and
-        // `m_end` the span end in the same coordinates.
-        let span_len =
-            u32::try_from(original_offset(&inst.read(), selection.end()).saturating_sub(offset))
-                .unwrap_or(u32::MAX);
+        // `m_end` the span end in the same coordinates, both `guint16`
+        // (`:103-104`). A sentence or LONGER row keeps the default zero
+        // span (`:114`; `_prepend_sentence_candidates`, `:1936-1950`).
+        let (begin, end) = if is_longer || cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
+            (0, 0)
+        } else {
+            let selection = oxpinyin_facade::SelectionSpan::of_candidate(cand, session_offset);
+            (offset as u16, published_bound(selection.end()) as u16)
+        };
         if cand.text().outward_bytes().is_none() {
             inst.state.candidates.keep_stored_text(cand.text().clone());
         }
@@ -683,8 +688,8 @@ pub extern "C" fn pinyin_guess_candidates(
             ),
             nbest_index: cand.nbest_index(),
             token: Cell::new(cand.token()),
-            selection,
-            span_len,
+            begin,
+            end,
         });
     }
     // Every row now carries its span; the window's storage goes back to
@@ -695,24 +700,6 @@ pub extern "C" fn pinyin_guess_candidates(
     // A non-empty parse with no candidates (apostrophe-only runs,
     // unmatchable tails) answers true with zero rows.
     !(inst.state.candidates.is_empty() && inst.core.parsed_len == 0)
-}
-
-/// `session_offset` in the active parse mode's original input coordinates,
-/// the pin's matrix coordinates: the transformed seams map it back through
-/// the parse's key spans; plain full pinyin is the identity.
-pub(crate) fn original_offset(
-    inst: &crate::state::CapiInstanceRead<'_>,
-    session_offset: usize,
-) -> usize {
-    if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_original_offset(parse, session_offset)
-    } else if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_original_offset(parse, session_offset)
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_original_offset(parse, session_offset)
-    } else {
-        session_offset
-    }
 }
 
 #[cfg(test)]

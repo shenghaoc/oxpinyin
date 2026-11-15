@@ -165,70 +165,79 @@ pub extern "C" fn zhuyin_get_candidate_string(
 ///                             size_t offset, lookup_candidate_t * candidate);
 /// ```
 ///
-/// Uses the zhuyin 4-value enum: `BEST_MATCH_CANDIDATE` answers the whole
-/// parse end; the normal rows record their span.
+/// The pin reads the candidate's type, token and bounds and never checks
+/// which instance published it (`zhuyin.cpp:1635-1666`). The context,
+/// matrix and constraints are the receiving `instance`'s. So does this:
+/// the row's scalars are copied out of the handle and everything else is
+/// this instance's.
+///
+/// - `BEST_MATCH_CANDIDATE` answers this instance's `matrix.size() - 1`
+///   and leaves the constraints alone (`:1643-1644`). Unlike
+///   `pinyin.cpp:2515-2520`, this facade does not diff the chosen row
+///   against result 0; `zhuyin_train` always walks result 0
+///   (`:1709-1713`).
+/// - `NORMAL_CANDIDATE_AFTER_CURSOR` and `NORMAL_CANDIDATE_BEFORE_CURSOR`
+///   validate, add the row's token over its bounds against this
+///   instance's parse, validate again, and answer the row's own `m_end`
+///   or `m_begin` (`:1646-1666`), whether `add_constraint` wrote the span
+///   or refused it. The caller's offset takes no part.
+/// - Any other row validates twice and answers the caller's offset.
+///
+/// Returns -1 for a NULL argument or an engine failure. The handle must be
+/// a row of a live instance's published candidate list, valid for the
+/// whole call and not used elsewhere during it. Any other pointer is a
+/// caller precondition violation, as for the candidate getters.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_choose_candidate(
     instance: *mut ZhuyinInstance,
-    _offset: usize,
+    offset: usize,
     candidate: *mut LookupCandidate,
 ) -> c_int {
     if instance.is_null() || candidate.is_null() {
         return -1;
     }
 
+    // The scalars are copied, and the view ends before any view of
+    // `instance`.
+    let (candidate_type, token, begin, end) = {
+        // SAFETY: `candidate` is non-null and is a row of a live published
+        // list (the export's precondition).
+        let row = unsafe { candidate_ref(candidate) };
+        (row.candidate_type, row.token, row.span_begin, row.span_end)
+    };
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    let Some(index) = inst
-        .candidates
-        .iter()
-        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-    else {
-        return -1;
-    };
-    // 074a2219 zhuyin.cpp:1643-1644: every BEST_MATCH candidate returns
-    // the matrix tail without touching constraints or the selection
-    // record. Unlike pinyin.cpp:2515-2520, this facade does not diff the
-    // chosen row against result 0; zhuyin_train always walks result 0
-    // (zhuyin.cpp:1709-1713).
-    if inst.state.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE
-    {
+    if candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
-    let row = &inst.state.candidates[index];
-    if row.text == oxpinyin_facade::TextSpan::NULL
-        && let Some(token) = row.token
-    {
-        let span = row.selection;
-        if inst.core.choose_unreadable_step(span, token).is_err() {
-            return -1;
+    let answer = match candidate_type {
+        lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR => end,
+        lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => begin,
+        _ => {
+            return match inst.core.session.refuse_selection() {
+                Ok(_) => offset as u32 as c_int,
+                Err(_) => -1,
+            };
         }
-    } else {
-        let text = inst.state.candidates.phrase_text(index, row.text);
-        // Only a BEST_MATCH row is a sentence row, and it answered above.
-        let published = oxpinyin_facade::PublishedRow {
-            span: row.selection,
-            token: row.token,
-            nbest_row: None,
-            text: &text,
-        };
-        if inst.core.select_published(&published).is_err() {
-            return -1;
-        }
-    }
-    // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1649-1666` at the
-    // pin): an after-cursor row answers its own `m_end`, a before-cursor row
-    // its own `m_begin`, both fixed at the guess, whether `add_constraint`
-    // wrote the span or refused it; the caller's offset is overwritten and
-    // takes no part. The BEST_MATCH row answered the matrix end above.
-    let chosen = &inst.state.candidates[index];
-    let end = if chosen.candidate_type == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR {
-        chosen.span_begin
-    } else {
-        chosen.span_end
     };
-    c_int::try_from(end).unwrap_or(c_int::MAX)
+    let outcome = match token {
+        Some(token) => inst.core.select_published(
+            &oxpinyin_facade::PublishedRow {
+                begin,
+                end,
+                token,
+                text: oxpinyin_engine::RowText::Resolve,
+            },
+            false,
+            false,
+        ),
+        None => inst.core.session.refuse_selection(),
+    };
+    match outcome {
+        Ok(_) => c_int::from(answer),
+        Err(_) => -1,
+    }
 }
 
 /// Clear the constraint a prior choose pinned, by offset.
@@ -402,10 +411,10 @@ pub fn snapshot_candidates(
                     normal_type
                 }
             },
-            span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
-            span_end: u32::try_from(span_end).unwrap_or(u32::MAX),
+            // The pin's `guint16` fields (`zhuyin.cpp:83-84`).
+            span_begin: span_begin as u16,
+            span_end: span_end as u16,
             token: cand.token(),
-            selection: oxpinyin_facade::SelectionSpan::of_candidate(cand, anchor),
         });
     }
 }

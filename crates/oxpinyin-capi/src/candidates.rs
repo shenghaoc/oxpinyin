@@ -342,50 +342,49 @@ pub extern "C" fn pinyin_remove_user_candidate(
 ///                             lookup_candidate_t * candidate);
 /// ```
 ///
-/// Returns -1 on failure (consistent with the `int` return type). The
-/// returned cursor for an accepted normal span is its absolute end position in
-/// the active parse mode's coordinates. A retained span that overruns the
-/// current constraint array returns the caller's offset without selection
-/// (`074a2219` pinyin.cpp:2581-2589). This avoids overshooting even
-/// when the caller offset sits one position past a separator run the
-/// candidate's span also covers (the ibus idiom commits exactly at
-/// `cursor == length`).
+/// The pin reads the candidate's type, token, n-best index and bounds and
+/// never checks which instance published it (`pinyin.cpp:2501-2588`). The
+/// context, matrix, constraints, n-best results and sort option are the
+/// receiving `instance`'s. So does this: the row's scalars are copied out
+/// of the handle, and everything else is read from and written to
+/// `instance` and its context.
 ///
-/// An `NBEST_MATCH_CANDIDATE` row answers the whole parse end instead
-/// (`pinyin.cpp:2513-2519` returns `matrix.size() - 1` unconditionally):
-/// the reserved tail slot one past the last real matrix column —
-/// `fill_matrix` sizes the matrix to `parsed_len + 1` and no split/fuzzy
-/// step resizes it, so that is `m_parsed_len`, carried here as
-/// `CapiInstance::parsed_len` in the active parse mode's own
-/// coordinates — whatever span the row's own path covered. The lookup at
-/// that cursor starts no span, so the next `pinyin_guess_candidates`
-/// there offers no word candidates and the frontend re-runs
-/// `pinyin_guess_sentence` under the forcings `diff_result` wrote
-/// (`docs/findings/compatibility-policy.md`, row 9).
+/// Returns -1 for a NULL argument or an engine failure. The handle must be
+/// a row of a live instance's published candidate list, valid for the
+/// whole call and not used elsewhere during it. Any other pointer is a
+/// caller precondition violation, as for the candidate getters.
 ///
-/// Resolves the candidate by pointer identity over the instance's snapshot
-/// and calls `Session::select_target` with the row's own record, which
-/// records the constraint — the selected
-/// token joins the session's sentence record. Per §2.2 the *bigram* training
-/// of a normal selection is deferred to [`pinyin_train`]; a `NORMAL_CANDIDATE`
-/// writes nothing to the user store. A chosen `ADDON_CANDIDATE` is promoted
-/// into the default facade's nibble-5 (`ADDON_DICTIONARY`, `addon.bin`)
-/// sub-index first — #105 (`pinyin.cpp:2532-2561`,
-/// `docs/findings/addon-choose-promotion.md`): the addon phrase item is copied
-/// across facades, the snapshot candidate becomes a `NORMAL_CANDIDATE` at the
-/// freshly allocated nibble-5 token, and it is that token the constraint
-/// records. The §2.2 special-candidate unigram training is reachable from
-/// §9: a chosen `LONGER_CANDIDATE` row trains `+483` unigram through the
-/// phrase-index overlay above and answers cursor `1` — the same law the
-/// pin's LONGER branch applies (`pinyin.cpp:2521-2530`). The
-/// `SORT_WITHOUT_SENTENCE_CANDIDATE` leg of that same call site
-/// (`:2565-2576`) applies the same law to any other row when the last
-/// `pinyin_guess_candidates` word set bit `0x1`: after an addon row's
-/// promotion (`:2534-2563`) the row's token trains `+483` unigram, no
-/// constraint is written and the call answers `true` (cursor `1`). The
-/// pin `assert`s `0 == offset` there (`:2566`) and aborts on any other
-/// offset, and so does this (register row 45). A predicted row is the
-/// pin's `assert` at `:2507`, and the process aborts (register row 64).
+/// The dispatch, in the pin's order:
+/// - A predicted row is the pin's `assert` at `:2507`, and the process
+///   aborts (register row 64).
+/// - `NBEST_MATCH_CANDIDATE` (`:2513-2519`): `diff_result` against this
+///   instance's results 0 and `m_nbest_index`. If either is absent, the
+///   pin's `check_result` asserts and the process aborts. The answer is
+///   this instance's `matrix.size() - 1`, the reserved tail slot one past
+///   the last real matrix column, in the active parse mode's coordinates
+///   (`CapiInstance::parsed_len`; row 9).
+/// - `LONGER_CANDIDATE` (`:2521-2530`): only the token's unigram trains,
+///   by `initial_seed * unigram_factor = 69 * 7 = 483`. The answer is 0
+///   when the library total would overflow and 1 otherwise.
+/// - `ADDON_CANDIDATE` (`:2532-2562`): promoted into this context's
+///   nibble-5 (`ADDON_DICTIONARY`, `addon.bin`) sub-index
+///   (`docs/findings/addon-choose-promotion.md`). The supplied row becomes
+///   a `NORMAL_CANDIDATE` at the new token, and its string is unchanged.
+///   If this context's addon dictionary has no item for the token, the pin
+///   reaches undefined behaviour (class (b); register entry "An addon row
+///   chosen on a context whose addon dictionary has no item for its
+///   token"):
+///   nothing is promoted or rewritten, and the choose continues with the
+///   addon token and no recorded text.
+/// - `SORT_WITHOUT_SENTENCE_CANDIDATE` set by the last
+///   `pinyin_guess_candidates` (`:2565-2576`): the pin asserts `0 ==
+///   offset` (register row 45). Then only the unigram trains, as LONGER.
+/// - Otherwise (`:2577-2590`): validate, `add_constraint(m_begin, m_end,
+///   token)` against this instance's parse, validate again, and answer
+///   `offset + len`. A refused span answers `offset + 0`.
+///
+/// Per §2.2, the bigram training of a normal selection is deferred to
+/// [`pinyin_train`].
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
@@ -396,55 +395,60 @@ pub extern "C" fn pinyin_choose_candidate(
         return -1;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    // Identify the candidate by pointer equality over the current
-    // snapshot. `offset_from` would be UB unless `candidate` points
-    // into `inst.state.candidates`, which cannot be assumed across C calls.
-    let Some(index) = inst
-        .candidates
-        .iter()
-        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-    else {
-        return -1;
-    };
+    // SAFETY: `candidate` is non-null and is a row of a live published
+    // list (the export's precondition). The shared view ends here, before
+    // any view of `instance`.
+    let row = RowArgs::read(unsafe { candidate_ref(candidate) });
     // Register row 64, `pinyin.cpp:2507`: the pin asserts the row is not a
     // predicted bigram or prefix row (those go to
     // `pinyin_choose_predicted_candidate`).
     if matches!(
-        inst.state.candidates[index].candidate_type(),
+        row.candidate_type,
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
     ) {
         std::process::abort();
     }
-    // §9's LONGER branch runs FIRST, exactly as the pin's dispatch
-    // (`pinyin.cpp:2521-2530`): a LONGER row is never a selection — no
-    // constraint, no window, no record change — it only trains the
-    // token's unigram by `initial_seed * unigram_factor = 69 * 7 = 483`
-    // into the phrase-index overlay and answers as the pin does
-    // ([`unigram_leg_answer`]).
-    if inst.state.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
-        let Some(token) = inst.state.candidates[index].token.get() else {
+    if row.candidate_type == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let mut inst = unsafe { instance_mut(instance) };
+        // `check_result(results.get_result(0, best))` and
+        // `check_result(results.get_result(m_nbest_index, other))`
+        // (`pinyin.cpp:2516-2517`): both are `assert`s.
+        if !inst.core.has_nbest_rank(row.nbest_index) {
+            std::process::abort();
+        }
+        if inst.core.select_nbest_rank(row.nbest_index).is_err() {
+            return -1;
+        }
+        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+    }
+    if row.candidate_type == lookup_candidate_type_t::LONGER_CANDIDATE {
+        let Some(token) = row.token else {
             return -1;
         };
-        // SAFETY: the instance read is finished; this serialized C operation
-        // exclusively borrows its retained owner for the unigram write.
+        // SAFETY: no instance view is live; this serialized C operation
+        // exclusively borrows the retained owner for the unigram write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
-    // SAFETY: the prior view is no longer used. Promotion borrows the retained
-    // owner only for its own reads and write, before the new instance view.
-    let addon_token = unsafe { try_promote_addon(instance, index) };
+    let mut token = row.token;
+    let mut text = oxpinyin_engine::RowText::Resolve;
+    if row.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE {
+        // SAFETY: no instance or candidate view is live; the handle meets
+        // the export's precondition.
+        match unsafe { try_promote_addon(instance, candidate) } {
+            Some(promoted) => token = Some(promoted),
+            None => text = oxpinyin_engine::RowText::Empty,
+        }
+    }
     // SAFETY: promotion has released its context borrow; the live instance
-    // is re-borrowed for the remainder of this serialized operation.
+    // is borrowed for the remainder of this serialized operation.
     let mut inst = unsafe { instance_mut(instance) };
     // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
     // reached after the addon promotion exactly as the pin's dispatch
-    // falls through to it: only the unigram trains, by the LONGER
-    // branch's `69 * 7 = 483`, into the same overlay, with the same
-    // answer.
+    // falls through to it.
     if inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0 {
         if offset != 0 {
             // Register row 45: the pin's `assert(0 == offset)` (`:2566`),
@@ -454,11 +458,10 @@ pub extern "C" fn pinyin_choose_candidate(
         // The row's `m_token`, the null token for a predicted punctuation
         // row: library 0 is reserved and never loaded, so the add meets no
         // sub-index and the pin answers `true` (`phrase_index.h:628-635`).
-        let token = addon_token
-            .or(inst.state.candidates[index].token.get())
-            .map_or(0, PhraseToken::value);
-        // SAFETY: the instance read is finished; this serialized C operation
-        // exclusively borrows its retained owner for the unigram write.
+        let token = token.map_or(0, PhraseToken::value);
+        // SAFETY: the instance view is no longer used; this serialized C
+        // operation exclusively borrows its retained owner for the unigram
+        // write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
     }
@@ -471,59 +474,55 @@ pub extern "C" fn pinyin_choose_candidate(
     // overwrites it. After a reset the write lands in the empty array's
     // terminator slot and changes nothing observable (GLib 2.84.4
     // `garray.c:349-354`, `:1051-1079`).
-    let row = &inst.state.candidates[index];
-    if row.text == oxpinyin_facade::TextSpan::NULL
-        && row.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE
-        && let Some(token) = row.token.get()
-    {
-        let span = row.selection;
-        let span_len = row.span_len;
-        return match inst.core.choose_unreadable_step(span, token) {
-            Ok(len) => choose_answer(offset, if len == 0 { 0 } else { span_len }),
-            Err(_) => -1,
-        };
-    }
-    if row.token.get().is_none()
-        && row.candidate_type() != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-    {
+    let Some(token) = token else {
         return match inst.core.session.choose_null_step() {
             Ok(()) => choose_answer(offset, 0),
             Err(_) => -1,
         };
-    }
-    // Select the row the caller actually saw by its own span and its token
-    // as it stands — the promoted one once a promotion has run, on this
-    // choose or an earlier one (`pinyin.cpp:2559-2561`) — and keep the
-    // span's end for the answer below.
-    let text = inst.state.candidates.phrase_text(index, row.text);
-    let published = oxpinyin_facade::PublishedRow {
-        span: row.selection,
-        token: row.token.get(),
-        // The engine lists at most `NBEST_ROWS` sentence rows, each with
-        // its rank, and every other row with none; the snapshot types a
-        // sentence row `NBEST_MATCH_CANDIDATE` alone.
-        nbest_row: (row.candidate_type() == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
-            .then_some(row.nbest_index),
-        text: &text,
     };
-    match inst.core.select_published(&published) {
+    let published = oxpinyin_facade::PublishedRow {
+        begin: row.begin,
+        end: row.end,
+        token,
+        text,
+    };
+    match inst.core.select_published(&published, true, true) {
         // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
-        Ok(oxpinyin_engine::Selection::Refused) => return choose_answer(offset, 0),
-        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {}
-        Err(_) => return -1,
+        Ok(oxpinyin_engine::Selection::Refused) => choose_answer(offset, 0),
+        // The pin answers the caller's choose offset plus the length
+        // `add_constraint` wrote, `m_end - m_begin` of the row's own span
+        // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever
+        // offset the caller passes.
+        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {
+            choose_answer(
+                offset,
+                usize::from(row.end).wrapping_sub(usize::from(row.begin)),
+            )
+        }
+        Err(_) => -1,
     }
-    // The pin answers the caller's choose offset plus the length
-    // `add_constraint` wrote, `m_end - m_begin` of the row's own span
-    // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever offset
-    // the caller passes: the forced span is the row's, never the caller's.
-    // The sentence-row branch above answers the matrix end instead
-    // (`:2515-2520`).
-    if inst.state.candidates[index].candidate_type()
-        == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-    {
-        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+}
+
+/// The scalars the pin's choose reads off a candidate (`pinyin.cpp:97-105`),
+/// copied so that no view of the row outlives the read.
+struct RowArgs {
+    candidate_type: lookup_candidate_type_t,
+    token: Option<PhraseToken>,
+    nbest_index: u8,
+    begin: u16,
+    end: u16,
+}
+
+impl RowArgs {
+    fn read(row: &CapiCandidate) -> Self {
+        Self {
+            candidate_type: row.candidate_type(),
+            token: row.token.get(),
+            nbest_index: row.nbest_index,
+            begin: row.begin,
+            end: row.end,
+        }
     }
-    choose_answer(offset, inst.state.candidates[index].span_len)
 }
 
 /// `return offset + len;` (`pinyin.cpp:2588`): `len` is the `guint8` the
@@ -531,7 +530,7 @@ pub extern "C" fn pinyin_choose_candidate(
 /// `size_t` sum converts to `int`, which GCC reduces modulo 2^32 (its
 /// documented implementation-defined conversion to a narrower signed
 /// type).
-fn choose_answer(offset: usize, span_len: u32) -> c_int {
+fn choose_answer(offset: usize, span_len: usize) -> c_int {
     let len = usize::from(span_len as u8);
     offset.wrapping_add(len) as u32 as c_int
 }
@@ -581,29 +580,48 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
 }
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
-/// (`pinyin.cpp:2532-2561`): copies the addon phrase item into the default
-/// facade under the token the range's end holds, rewrites the snapshot
-/// candidate to a `NORMAL_CANDIDATE` at that token, and returns the token
-/// so the constraint records it in place of the addon-facade token.
+/// (`pinyin.cpp:2532-2561`): copies this context's addon phrase item into
+/// its default facade under the token the range's end holds, rewrites the
+/// supplied candidate to a `NORMAL_CANDIDATE` at that token, and returns
+/// the token so the constraint records it in place of the addon-facade
+/// token. The candidate may belong to another instance: the pin rewrites
+/// the row it was given.
 ///
-/// If sub-index 5 is missing, `get_range` leaves its output unwritten
-/// (074a2219 `phrase_index.cpp:610-613`). The pin reads it anyway
-/// (`pinyin.cpp:2541-2545`), so its token is undefined. Skip promotion
-/// on this path, as for an unreadable addon item.
-unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Option<PhraseToken> {
+/// Two paths promote nothing and rewrite nothing:
+/// - If sub-index 5 is missing, `get_range` leaves its output unwritten
+///   (074a2219 `phrase_index.cpp:610-613`). The pin reads it anyway
+///   (`pinyin.cpp:2541-2545`), so its token is undefined.
+/// - If this context's addon dictionary has no item for the token (a row
+///   from a context with other addon data, or an addon library unloaded
+///   since the guess), the failed `get_phrase_item` leaves the default
+///   item (`phrase_index.h:81-84`, `:646-652`; `phrase_index.cpp:180-205`)
+///   and the pin calls `add_index(0, phrase, token)`
+///   (`pinyin.cpp:2551-2553`). Its prefix walk starts at `size_t len =
+///   phrase_length - 1`, which wraps to `SIZE_MAX`, and reads past the key
+///   buffer on every backend (`phrase_large_table3_tkrzwdb.cpp:215-218`,
+///   `phrase_large_table3_kyotodb.cpp:280-283`,
+///   `phrase_large_table3_bdb.cpp:298-305`). Class (b).
+///
+/// # Safety
+///
+/// `instance` is live, `candidate` meets [`pinyin_choose_candidate`]'s
+/// precondition, and neither has a live view.
+unsafe fn try_promote_addon(
+    instance: *mut PinyinInstance,
+    candidate: *mut LookupCandidate,
+) -> Option<PhraseToken> {
     let item = {
-        // SAFETY: the caller supplies a live instance and snapshot index.
+        // SAFETY: the caller supplies a live candidate row; the view ends
+        // with this block.
+        let addon_token = unsafe { candidate_ref(candidate) }.token.get()?;
+        // SAFETY: the caller supplies a live instance with no other view.
         let inst = unsafe { instance_ref(instance) };
-        if inst.state.candidates[index].candidate_type() != lookup_candidate_type_t::ADDON_CANDIDATE
-        {
-            return None;
-        }
-        let addon_token = inst.state.candidates[index].token.get()?;
         inst.core.dict.addon_phrase_item(addon_token.value())?
     };
     let promoted = {
-        // SAFETY: the read view above has ended; the caller serializes this
-        // context mutation with every other operation on its instances.
+        // SAFETY: the read views above have ended; the caller serializes
+        // this context mutation with every other operation on its
+        // instances.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         let store = ctx.core.user_store_mut();
         let range_end = store.addon_promotion_range_end()?;
@@ -613,12 +631,13 @@ unsafe fn try_promote_addon(instance: *mut PinyinInstance, index: usize) -> Opti
         range_end
     };
     let promoted = PhraseToken::new(promoted);
-    // SAFETY: the context write has ended and the same live snapshot remains.
-    let inst = unsafe { crate::state::instance_state_ref(instance) };
-    let snapshot = &inst.state.candidates[index];
-    // `pinyin.cpp:2561-2562`.
-    snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
-    snapshot.token.set(Some(promoted));
+    // SAFETY: the context write has ended. The row is reached only through
+    // this shared view, and its tag and token are cells, so the rewrite
+    // is sound even when the row belongs to another instance or to this
+    // one (`pinyin.cpp:2561-2562`).
+    let row = unsafe { candidate_ref(candidate) };
+    row.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
+    row.token.set(Some(promoted));
     Some(promoted)
 }
 

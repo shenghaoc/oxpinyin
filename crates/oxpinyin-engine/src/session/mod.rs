@@ -318,7 +318,7 @@ mod lookup;
 mod offsets;
 mod selection;
 pub(crate) use selection::column_is_empty;
-pub use selection::{SelectionTarget, TrainingPlan};
+pub use selection::{RowText, SelectionTarget, TrainingPlan};
 mod state;
 
 #[cfg(test)]

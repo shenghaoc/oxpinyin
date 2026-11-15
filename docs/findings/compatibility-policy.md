@@ -484,6 +484,7 @@ No registered standing divergence outside these rulings and the classes is live.
 
 Key positions past byte 65535 reach the C getters wrapped mod 2^16, as `ChewingKeyRest`'s `guint16` fields hold them at the pin; this is contract (limb 1).
 The pin's placement of keys at the wrapped begin, a 65536-column ring matrix, is waived.
+Candidate bounds (`m_begin`, `m_end`, `guint16` at `pinyin.cpp:103-104` and `zhuyin.cpp:83-84`) are stored and answered at the same width, and a choose reads them against the real-offset columns under the same waiver (maintainer ruling 2026-11-15).
 See [Key positions past byte 65535](upstream-divergences.md#key-positions-past-byte-65535).
 
 ### `LC_NUMERIC` after init (row 39)
