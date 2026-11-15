@@ -216,11 +216,15 @@ where
         )
     }
 
-    /// The training walk's checks over `spans`, in the pin's step order,
-    /// before anything is observed: each step's forced-phrase assert, then
-    /// `check` (the user model's store checks for the step), then the span
-    /// asserts. Answers each observed span's end, or `None`
-    /// when no span is forced (nothing trains).
+    /// Check `spans` before the engine observes them. The check order
+    /// matches the pin: each step's forced-phrase assert, then `check`
+    /// (the user model's store checks for the step), then the span asserts.
+    /// The pin records step by step (`phonetic_lookup.h:858-929`). Its user
+    /// bigram is loaded into memory at init (`pinyin.cpp:401`) and written
+    /// to disk only by `pinyin_save` (`:1018`). An abort discards the
+    /// in-memory training changes, so checks-first is equivalent at the
+    /// C API. Answers each observed span's end, or `None` when no span is
+    /// forced (nothing trains).
     fn plan_spans<F>(
         &self,
         spans: &[PhraseSpan],
@@ -241,7 +245,7 @@ where
         }
         // `assert(token == constraint->m_token)` at a forced position
         // (`phonetic_lookup.h:868`): checked in the walk below, in span
-        // order, since the pin's abort leaves nothing behind.
+        // order. The pin's abort discards earlier in-memory training.
         // The walk indexes raw-buffer positions, separators included. The
         // pin's `fill_matrix` leaves a leading separator gap empty
         // (`phonetic_key_matrix.cpp:52-78`), but the raw scan has already
@@ -261,10 +265,10 @@ where
         // pin's `increase_pronunciation_possibility` then asserts the
         // walk stays inside and starts on a filled column
         // (`storage/phonetic_key_matrix.cpp:661`, `:663`), which the
-        // engine answers as an error before observing anything; the C
-        // facades abort there. The endpoints are pre-computed in one pass
-        // so the error precedes every observation, as the pin's abort
-        // leaves the process dead.
+        // engine answers as an error; the C facades abort there. The
+        // engine pre-computes the endpoints before recording anything.
+        // The pin records step by step, but its abort discards those
+        // in-memory changes, so the C API result is the same.
         let constraint_len = self.constraints.cell_count();
         let tail = constraint_len.saturating_sub(1);
         let mut train_next = false;
@@ -290,7 +294,8 @@ where
             // `increase_pronunciation_possibility`'s three asserts
             // (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) for
             // the same span, so an earlier span's bounds fault is reached
-            // before a later span's token fault. Both are preflight.
+            // before a later span's token fault. The engine checks both
+            // during preflight; the pin records each step as it goes.
             if forced
                 && self
                     .constraints
