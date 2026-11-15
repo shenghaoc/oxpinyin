@@ -88,6 +88,18 @@ The `oxpinyin-input` boundary calls the C library through the `libc` crate, with
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
+### Dependency decisions
+
+- `thiserror` is used.
+  Error types derive `Display`, `Error` and plain `From` conversions with it.
+  A conversion with its own semantics, such as `TableError`'s `From<StoreError>`, stays handwritten.
+- `fst` is not used for the prefix tables.
+  It was slower there than the existing binary search.
+- `zerocopy` is not used.
+  Packed records are decoded as the [C struct parsing rule](rust-conventions.md#c-struct-parsing) states.
+- `arrayvec` is not used.
+  The bounded collections already stay inline, as the `SmallVec` `QueryKey` in `oxpinyin-user`'s `user_index.rs` does, or use plain arrays, as `oxpinyin-engine`'s `nbest.rs` does.
+
 ## External I/O
 
 `oxpinyin-input` owns bidirectional external calls in scoped unsafe modules.

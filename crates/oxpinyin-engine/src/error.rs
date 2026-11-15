@@ -30,9 +30,10 @@ pub enum TrainingSpanFault {
 /// `LanguageModel` seams leave their `Error` types unbounded: the engine
 /// renders them at the boundary rather than leaking an associated type into
 /// its public surface.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EngineError {
     /// A candidate index was out of range, most likely a stale one.
+    #[error("candidate index {index} is out of range 0..{len}")]
     CandidateIndexOutOfRange {
         /// The index the caller asked for.
         index: usize,
@@ -43,6 +44,10 @@ pub enum EngineError {
     /// which the zero-start walk cannot normalize away — `_check_offset`'s
     /// refusal at libpinyin@dbff264, answered as an error instead of the
     /// upstream abort.
+    #[error(
+        "lookup offset {offset} sits one past a leading separator \
+         run (normalized to {normalized})"
+    )]
     LookupOffsetPastSeparator {
         /// The offset the caller asked to look up at.
         offset: usize,
@@ -52,6 +57,7 @@ pub enum EngineError {
     /// A lookup offset lay beyond the raw input's one-past-end position —
     /// upstream reads its matrix out of bounds there, so the range has no
     /// pinned behaviour and the engine refuses it.
+    #[error("lookup offset {offset} is out of range 0..={len}")]
     LookupOffsetOutOfRange {
         /// The offset the caller asked to look up at.
         offset: usize,
@@ -62,6 +68,10 @@ pub enum EngineError {
     /// input — no window exists under a mid-character slice, so the
     /// anchor is refused rather than rounded (rounding would silently
     /// answer a neighbouring offset's window).
+    #[error(
+        "lookup offset {offset} falls inside a multi-byte character \
+         of the {len}-byte raw input"
+    )]
     LookupOffsetInsideCharacter {
         /// The offset the caller asked to look up at.
         offset: usize,
@@ -80,6 +90,7 @@ pub enum EngineError {
     /// token-bearing row is now selected that way and the record moves
     /// back to it; this error remains only for a row with no token to
     /// force (the engine's raw-input `Fallback` row).
+    #[error("selection anchor {anchor} precedes the composition offset {composition}")]
     SelectionAnchorBeforeComposition {
         /// The window anchor the caller supplied.
         anchor: usize,
@@ -93,6 +104,7 @@ pub enum EngineError {
     /// discards (the function then completes with the computed value).
     /// The engine answers with an error; the left and right moves abort on
     /// it in the C adapters (register row 14).
+    #[error("offset {offset} sits one past a lone zero-key column")]
     ZeroKeyOffsetCheck {
         /// The examined offset whose preceding column holds the lone zero key.
         offset: usize,
@@ -102,6 +114,7 @@ pub enum EngineError {
     /// `pinyin.cpp:3152` at the pin) or a zero key sharing a column with
     /// real keys (`assert(1 == size)`, `pinyin.cpp:3166`). Answered as an
     /// error, on which the C adapters abort (register row 19).
+    #[error("matrix column {offset} has no key or mixes a zero key with real keys")]
     MatrixColumnAssert {
         /// The column position the walk stepped to.
         offset: usize,
@@ -111,6 +124,7 @@ pub enum EngineError {
     /// the last sentence lookup. The pin's `train_result3` asserts it
     /// (`assert(token == constraint->m_token)`, `phonetic_lookup.h:868` at
     /// the pin); the engine answers an error, before observing anything.
+    #[error("the forced phrase at {position} differs from the decoded result's")]
     StaleTrainingConstraint {
         /// The matrix position of the forced phrase.
         position: usize,
@@ -121,6 +135,7 @@ pub enum EngineError {
     /// (`:252`, loop `:261`) walk
     /// with `cur_item != end` and read past it (register row 100); the
     /// engine answers an error, before observing anything.
+    #[error("the predecessor {token:#010x} has a partial user-bigram item")]
     UnsafeTrainingPredecessor {
         /// The predecessor token whose gram has the partial tail.
         token: u32,
@@ -130,6 +145,7 @@ pub enum EngineError {
     /// `get_total_freq` asserts on it (`phonetic_lookup.h:884` through
     /// `ngram.cpp:49`, `memory_chunk.h:390`; register row 85). The engine
     /// answers an error, before observing anything.
+    #[error("the predecessor {token:#010x} has a user-bigram value shorter than its total")]
     ShortTrainingPredecessor {
         /// The predecessor token whose gram is too short for a total.
         token: u32,
@@ -141,6 +157,7 @@ pub enum EngineError {
     /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
     /// `memory_chunk.h:390` (register row 85). The engine answers an error
     /// instead of the abort.
+    #[error("the predecessor {token:#010x} has a user-bigram value shorter than its total")]
     ShortLookupPredecessor {
         /// The predecessor token whose gram is too short for a total.
         token: u32,
@@ -149,6 +166,7 @@ pub enum EngineError {
     /// item the merge consumes (`ngram.cpp:318-349`), or a `get_freq` or
     /// `search` walk (`:241-248`, `:167-173`) that leaves the value
     /// (register row 98). The engine answers an error instead.
+    #[error("reading the predecessor {token:#010x}'s bigram leaves its value")]
     UnsafeLookupPredecessor {
         /// The predecessor token whose gram the read leaves.
         token: u32,
@@ -157,6 +175,7 @@ pub enum EngineError {
     /// value or read a different size. Kyoto Cabinet's `Bigram::load`
     /// asserts at that point (`ngram_kyotodb.cpp:131-139` at 074a2219);
     /// the engine answers an error instead.
+    #[error("the predecessor {token:#010x}'s bigram read failed after its size check")]
     ReadAfterCheck {
         /// The predecessor token whose bigram read failed.
         token: u32,
@@ -166,6 +185,7 @@ pub enum EngineError {
     /// `check_result(user->set_freq(token, freq + seed))` asserts
     /// (`phonetic_lookup.h:903`). The engine answers an error, before
     /// observing anything.
+    #[error("training the predecessor {token:#010x}'s gram misses its inserted item")]
     TrainingSetFreqMiss {
         /// The predecessor token whose gram the step trains.
         token: u32,
@@ -175,6 +195,10 @@ pub enum EngineError {
     /// `check_result(m_user_bigram->store(last_token, user))` asserts
     /// (`phonetic_lookup.h:904`). The engine answers an error, before
     /// observing anything.
+    #[error(
+        "training the predecessor {token:#010x}'s gram stores into the failed \
+         user bigram container"
+    )]
     FailedUserBigramStore {
         /// The predecessor token whose gram the step trains.
         token: u32,
@@ -187,6 +211,7 @@ pub enum EngineError {
     /// `assert(matrix->get_column_size(start) > 0)`, `:663`;
     /// `assert(matrix->get_column_size(end) > 0)`, `:664` at the pin);
     /// the engine answers an error instead, before observing anything.
+    #[error("the training span at {position} leaves the current matrix ({fault:?})")]
     StaleTrainingSpan {
         /// The matrix position of the offending phrase.
         position: usize,
@@ -201,6 +226,10 @@ pub enum EngineError {
     /// `default: abort()` dies (`storage/chewing_large_table2_bdb.cpp:282`
     /// at the pin); the engine answers an error, on which the C adapters
     /// abort (register row 84).
+    #[error(
+        "a pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
+         {syllables}-syllable prefix"
+    )]
     OverlongUserIndexKey {
         /// The prefix path length the walk was on when it reached the key.
         syllables: usize,
@@ -210,191 +239,27 @@ pub enum EngineError {
     /// `CHEWING_ZERO_TONE == key.m_tone` on the first initial-only key
     /// (`storage/pinyin_phrase3.h:146-156` at 074a2219), at the top of every
     /// table search and suggestion search that holds it.
+    #[error("a searched key path's first initial-only key carries a tone")]
     TonedIncompleteKey,
     /// A character's one-character phrase-table search held more than four
     /// tokens. `_pre_compute_tokens` reduces it through `get_first_token`
     /// (`pinyin.cpp:3117`, `zhuyin.cpp:2080`), whose validating
     /// `reduce_tokens` asserts `0 <= num && num <= 4`
     /// (`phrase_large_table3.h:95`, `:106`).
+    #[error("a phrase-table search held {count} tokens, more than four")]
     ReduceTokensCount {
         /// The tokens the search held.
         count: usize,
     },
     /// The user-model backend failed (the learning/observation seam).
+    #[error("user model error: {0}")]
     UserModel(String),
     /// The input could not be represented as a segment graph.
-    Graph(GraphError),
+    #[error("graph error: {0}")]
+    Graph(#[from] GraphError),
     /// Scoring failed.
-    Scoring(ScoringError),
-}
-
-impl fmt::Display for EngineError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CandidateIndexOutOfRange { index, len } => {
-                write!(
-                    formatter,
-                    "candidate index {index} is out of range 0..{len}"
-                )
-            }
-            Self::LookupOffsetPastSeparator { offset, normalized } => {
-                write!(
-                    formatter,
-                    "lookup offset {offset} sits one past a leading separator \
-                     run (normalized to {normalized})"
-                )
-            }
-            Self::LookupOffsetOutOfRange { offset, len } => {
-                write!(
-                    formatter,
-                    "lookup offset {offset} is out of range 0..={len}"
-                )
-            }
-            Self::LookupOffsetInsideCharacter { offset, len } => {
-                write!(
-                    formatter,
-                    "lookup offset {offset} falls inside a multi-byte character \
-                     of the {len}-byte raw input"
-                )
-            }
-            Self::SelectionAnchorBeforeComposition {
-                anchor,
-                composition,
-            } => {
-                write!(
-                    formatter,
-                    "selection anchor {anchor} precedes the composition offset {composition}"
-                )
-            }
-            Self::ZeroKeyOffsetCheck { offset } => {
-                write!(
-                    formatter,
-                    "offset {offset} sits one past a lone zero-key column"
-                )
-            }
-            Self::StaleTrainingConstraint { position } => {
-                write!(
-                    formatter,
-                    "the forced phrase at {position} differs from the decoded result's"
-                )
-            }
-            Self::UnsafeTrainingPredecessor { token } => {
-                write!(
-                    formatter,
-                    "the predecessor {token:#010x} has a partial user-bigram item"
-                )
-            }
-            Self::ShortTrainingPredecessor { token } => {
-                write!(
-                    formatter,
-                    "the predecessor {token:#010x} has a user-bigram value shorter than its total"
-                )
-            }
-            Self::ShortLookupPredecessor { token } => {
-                write!(
-                    formatter,
-                    "the predecessor {token:#010x} has a user-bigram value shorter than its total"
-                )
-            }
-            Self::UnsafeLookupPredecessor { token } => {
-                write!(
-                    formatter,
-                    "reading the predecessor {token:#010x}'s bigram leaves its value"
-                )
-            }
-            Self::ReadAfterCheck { token } => {
-                write!(
-                    formatter,
-                    "the predecessor {token:#010x}'s bigram read failed after its size check"
-                )
-            }
-            Self::TrainingSetFreqMiss { token } => {
-                write!(
-                    formatter,
-                    "training the predecessor {token:#010x}'s gram misses its inserted item"
-                )
-            }
-            Self::FailedUserBigramStore { token } => {
-                write!(
-                    formatter,
-                    "training the predecessor {token:#010x}'s gram stores into the failed \
-                     user bigram container"
-                )
-            }
-            Self::MatrixColumnAssert { offset } => {
-                write!(
-                    formatter,
-                    "matrix column {offset} has no key or mixes a zero key with real keys"
-                )
-            }
-            Self::StaleTrainingSpan { position, fault } => {
-                write!(
-                    formatter,
-                    "the training span at {position} leaves the current matrix ({fault:?})"
-                )
-            }
-            Self::OverlongUserIndexKey { syllables } => {
-                write!(
-                    formatter,
-                    "a pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
-                     {syllables}-syllable prefix"
-                )
-            }
-            Self::TonedIncompleteKey => {
-                formatter.write_str("a searched key path's first initial-only key carries a tone")
-            }
-            Self::ReduceTokensCount { count } => {
-                write!(
-                    formatter,
-                    "a phrase-table search held {count} tokens, more than four"
-                )
-            }
-            Self::UserModel(message) => write!(formatter, "user model error: {message}"),
-            Self::Graph(error) => write!(formatter, "graph error: {error}"),
-            Self::Scoring(error) => write!(formatter, "scoring error: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for EngineError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Graph(error) => Some(error),
-            Self::Scoring(error) => Some(error),
-            Self::CandidateIndexOutOfRange { .. }
-            | Self::LookupOffsetPastSeparator { .. }
-            | Self::LookupOffsetOutOfRange { .. }
-            | Self::LookupOffsetInsideCharacter { .. }
-            | Self::SelectionAnchorBeforeComposition { .. }
-            | Self::ZeroKeyOffsetCheck { .. }
-            | Self::MatrixColumnAssert { .. }
-            | Self::StaleTrainingConstraint { .. }
-            | Self::StaleTrainingSpan { .. }
-            | Self::UnsafeTrainingPredecessor { .. }
-            | Self::ShortTrainingPredecessor { .. }
-            | Self::TrainingSetFreqMiss { .. }
-            | Self::FailedUserBigramStore { .. }
-            | Self::ShortLookupPredecessor { .. }
-            | Self::UnsafeLookupPredecessor { .. }
-            | Self::ReadAfterCheck { .. }
-            | Self::OverlongUserIndexKey { .. }
-            | Self::TonedIncompleteKey
-            | Self::ReduceTokensCount { .. }
-            | Self::UserModel(_) => None,
-        }
-    }
-}
-
-impl From<GraphError> for EngineError {
-    fn from(error: GraphError) -> Self {
-        Self::Graph(error)
-    }
-}
-
-impl From<ScoringError> for EngineError {
-    fn from(error: ScoringError) -> Self {
-        Self::Scoring(error)
-    }
+    #[error("scoring error: {0}")]
+    Scoring(#[from] ScoringError),
 }
 
 impl EngineError {

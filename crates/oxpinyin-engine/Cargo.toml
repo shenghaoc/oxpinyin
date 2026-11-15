@@ -17,6 +17,7 @@ workspace = true
 oxpinyin-core = { path = "../oxpinyin-core" }
 smallvec.workspace = true
 compact_str.workspace = true
+thiserror.workspace = true
 
 [features]
 # Nonshipping parser-driver access; no extra shipping entry points.
