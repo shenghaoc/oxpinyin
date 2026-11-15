@@ -543,14 +543,13 @@ pub enum ZhuyinScheme {
     DachenCp26 = 9,
 }
 
-/// One parsed Zhuyin key: a tone-less full-pinyin [`SyllableKey`], its
-/// original keystroke span, the source Zhuyin spelling, and the parsed tone.
+/// Stores the original keystroke span, the tone-less full-pinyin
+/// [`SyllableKey`] ID, and the parsed tone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZhuyinKey {
     key: SyllableKey,
     start: usize,
     end: usize,
-    zhuyin: String,
     tone: u8,
 }
 
@@ -573,32 +572,24 @@ impl ZhuyinKey {
         self.end
     }
 
-    /// The tone-less canonical Zhuyin spelling of the matched row —
-    /// shuffled inputs render canonically, matching
-    /// `_ChewingKey::get_zhuyin_string`.
-    #[must_use]
-    #[cfg(test)]
-    fn zhuyin(&self) -> &str {
-        &self.zhuyin
-    }
-
     /// Tone number (1..5), or 0 for zero tone.
     #[must_use]
     pub const fn tone(&self) -> u8 {
         self.tone
     }
 
-    /// Zhuyin spelling plus the tone mark, matching
+    /// The key's canonical Zhuyin spelling plus the tone mark, matching
     /// `_ChewingKey::get_zhuyin_string` (`src/storage/chewing_key.cpp:74-89`):
     /// first and zero tones render the bare spelling; tones 2..5 append their
-    /// tone mark.
+    /// tone mark. A shuffled input renders canonically, because the matched
+    /// row's key is its `content_table` entry.
     #[must_use]
     pub fn display(&self) -> String {
-        let mut display = self.zhuyin.clone();
-        if (2..=5).contains(&self.tone) {
-            display.push_str(tone_symbol(self.tone));
-        }
-        display
+        self.key
+            .chewing_key()
+            .with_tone(self.tone)
+            .zhuyin_text()
+            .to_string()
     }
 }
 
@@ -756,9 +747,11 @@ include!("table_data/tone_symbols.rs");
 /// `search_chewing_index` + `check_chewing_options`
 /// (`src/storage/zhuyin_parser2.cpp:43-100`): binary search the sorted
 /// zhuyin index (at most one hit), gate the row's flags against the
-/// parser's option word, and return the key with the row's canonical
-/// spelling — what upstream renders through `ChewingKey::
-/// get_zhuyin_string`, so a shuffled input displays canonically.
+/// parser's option word, and return the row's key — its `content_table`
+/// entry, whose zhuyin upstream renders through `ChewingKey::
+/// get_zhuyin_string`, so a shuffled input displays canonically. The
+/// search compares the whole spelling, so no second equality test
+/// follows it.
 ///
 /// `options` carries only parser-owned bits — `ZHUYIN_CORRECT_SHUFFLE`
 /// (forced by `ZhuyinSimpleParser2::set_scheme`, `:272`) and optionally
@@ -769,13 +762,8 @@ fn search_zhuyin_index(
     index: crate::zhuyin_map::ZhuyinIndex,
     zhuyin: &str,
     options: u32,
-) -> Option<(SyllableKey, &'static str)> {
-    let position = index.position(zhuyin)?;
-    let (spelling, canonical, pinyin, flags) = index.get(position)?;
-
-    if spelling != zhuyin {
-        return None;
-    }
+) -> Option<SyllableKey> {
+    let (key, flags) = index.get(index.position(zhuyin)?)?;
     // An incomplete row needs its option bit; a correction-flagged row
     // needs every correction bit present ((flags & options) != flags
     // rejects).
@@ -786,7 +774,7 @@ fn search_zhuyin_index(
     if corrections != 0 && corrections & options != corrections {
         return None;
     }
-    SyllableKey::from_canonical_text(pinyin).map(|key| (key, canonical))
+    Some(key)
 }
 
 /// `ZhuyinDirectParser2::parse` (`zhuyin_parser2.cpp:914-958`): the input
@@ -831,7 +819,7 @@ pub(crate) fn parse_zhuyin_direct_key(segment: &str, options: u32) -> Option<(Sy
     if body.is_empty() {
         return None;
     }
-    let (key, _) = search_zhuyin_index(crate::zhuyin_map::zhuyin_pinyin_map(), body, options)?;
+    let key = search_zhuyin_index(crate::zhuyin_map::zhuyin_pinyin_map(), body, options)?;
     Some((key, tone))
 }
 
@@ -1200,15 +1188,14 @@ impl ZhuyinParser {
             let try_len = remaining.len().min(max_key_len);
             let mut matched = None;
             for len in (1..=try_len).rev() {
-                if let Some((key, zhuyin, tone)) =
-                    probe.parse_one_key(&input[parsed_len..parsed_len + len])
+                if let Some((key, tone)) = probe.parse_one_key(&input[parsed_len..parsed_len + len])
                 {
-                    matched = Some((key, zhuyin, tone, len));
+                    matched = Some((key, tone, len));
                     break;
                 }
             }
 
-            let Some((key, zhuyin, tone, len)) = matched else {
+            let Some((key, tone, len)) = matched else {
                 break;
             };
             // Same stop as upstream `:256-257`: do not retry a shorter key.
@@ -1219,7 +1206,6 @@ impl ZhuyinParser {
                 key,
                 start: parsed_len,
                 end: parsed_len + len,
-                zhuyin,
                 tone,
             });
             parsed_len += len;
@@ -1298,7 +1284,7 @@ enum KeyProbe {
 }
 
 impl KeyProbe {
-    fn parse_one_key(&self, input: &[u8]) -> Option<(SyllableKey, String, u8)> {
+    fn parse_one_key(&self, input: &[u8]) -> Option<(SyllableKey, u8)> {
         match *self {
             Self::Simple {
                 tables,
@@ -1306,11 +1292,11 @@ impl KeyProbe {
                 options,
                 force_tone,
             } => {
-                let (key, zhuyin, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
+                let (key, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
                 if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                     return None;
                 }
-                Some((key, zhuyin, tone))
+                Some((key, tone))
             }
             Self::Discrete {
                 tables,
@@ -1318,11 +1304,11 @@ impl KeyProbe {
                 options,
                 force_tone,
             } => {
-                let (key, zhuyin, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
+                let (key, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
                 if force_tone && tone == CHEWING_ZERO_TONE {
                     return None;
                 }
-                Some((key, zhuyin, tone))
+                Some((key, tone))
             }
             Self::Cp26 {
                 tables,
@@ -1330,11 +1316,11 @@ impl KeyProbe {
                 options,
                 force_tone,
             } => {
-                let (key, zhuyin, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
+                let (key, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
                 if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                     return None;
                 }
-                Some((key, zhuyin, tone))
+                Some((key, tone))
             }
         }
     }
@@ -1348,21 +1334,21 @@ fn zhuyin_parse_one_key(scheme: ZhuyinScheme, options: u32, input: &[u8]) -> Opt
     let force_tone = bits.contains(FORCE_TONE);
     let (syllable, tone) = match scheme.keyboard()? {
         Keyboard::Simple(tables) => {
-            let (key, _, tone) = parse_one_zhuyin_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_zhuyin_key(input, use_tone, bits.bits(), tables)?;
             if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
             (key, tone)
         }
         Keyboard::Discrete(tables) => {
-            let (key, _, tone) = parse_one_discrete_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_discrete_key(input, use_tone, bits.bits(), tables)?;
             if force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
             (key, tone)
         }
         Keyboard::Cp26(tables) => {
-            let (key, _, tone) = parse_one_cp26_key(input, use_tone, bits.bits(), tables)?;
+            let (key, tone) = parse_one_cp26_key(input, use_tone, bits.bits(), tables)?;
             if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
                 return None;
             }
@@ -1383,7 +1369,7 @@ fn parse_one_zhuyin_key(
     use_tone: bool,
     options: u32,
     tables: SimpleTables,
-) -> Option<(SyllableKey, String, u8)> {
+) -> Option<(SyllableKey, u8)> {
     let mut symbol_len = input.len();
     let mut tone = 0;
     if use_tone
@@ -1402,10 +1388,8 @@ fn parse_one_zhuyin_key(
         let symbol = tables.symbol(*byte)?;
         zhuyin.push_str(symbol);
     }
-    let (key, canonical) = search_zhuyin_index(tables.index, &zhuyin, options)?;
-    // Display carries the canonical spelling (upstream renders the
-    // matched key, not the raw keystrokes); the span stays input-based.
-    Some((key, canonical.to_owned(), tone))
+    let key = search_zhuyin_index(tables.index, &zhuyin, options)?;
+    Some((key, tone))
 }
 
 /// `ZhuyinDiscreteParser2::parse_one_key`
@@ -1422,7 +1406,7 @@ fn parse_one_discrete_key(
     use_tone: bool,
     options: u32,
     tables: DiscreteTables,
-) -> Option<(SyllableKey, String, u8)> {
+) -> Option<(SyllableKey, u8)> {
     if input.is_empty() {
         return None;
     }
@@ -1472,8 +1456,8 @@ fn parse_one_discrete_key(
     zhuyin.push_str(middle);
     zhuyin.push_str(final_);
 
-    let (key, canonical) = search_zhuyin_index(tables.index, &zhuyin, options)?;
-    Some((key, canonical.to_owned(), tone))
+    let key = search_zhuyin_index(tables.index, &zhuyin, options)?;
+    Some((key, tone))
 }
 
 /// `ZhuyinDaChenCP26Parser2::parse_one_key`
@@ -1503,7 +1487,7 @@ fn parse_one_cp26_key(
     use_tone: bool,
     options: u32,
     tables: Cp26Tables,
-) -> Option<(SyllableKey, String, u8)> {
+) -> Option<(SyllableKey, u8)> {
     /// `count_same_chars` (`:560-573`): the length of the run of
     /// `input[0]` (always ≥ 1).
     fn count_same_chars(input: &[u8]) -> usize {
@@ -1597,9 +1581,8 @@ fn parse_one_cp26_key(
     zhuyin.push_str(initial);
     zhuyin.push_str(middle);
     zhuyin.push_str(final_);
-    let (key, canonical) =
-        search_zhuyin_index(crate::zhuyin_map::zhuyin_pinyin_map(), &zhuyin, options)?;
-    Some((key, canonical.to_owned(), tone))
+    let key = search_zhuyin_index(crate::zhuyin_map::zhuyin_pinyin_map(), &zhuyin, options)?;
+    Some((key, tone))
 }
 
 /// `search_chewing_symbols2` (`zhuyin_parser2.cpp:131-157`): the first
@@ -1696,26 +1679,34 @@ mod tests {
     fn index_matches_the_pinned_row_counts_and_shuffle_law() {
         use crate::ZHUYIN_CORRECT_SHUFFLE;
         use crate::ZHUYIN_INCOMPLETE;
-        use crate::zhuyin_map::zhuyin_pinyin_map;
 
-        assert_eq!(zhuyin_pinyin_map().entries().len(), 1493);
+        assert_eq!(
+            crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
+                .iter()
+                .copied()
+                .len(),
+            1493
+        );
 
         // Sorted and unique: the binary-search invariant of the pinned
         // table (strcmp order == UTF-8 byte order).
-        for pair in zhuyin_pinyin_map().entries().collect::<Vec<_>>().windows(2) {
+        for pair in crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP.windows(2) {
             assert!(pair[0].0 < pair[1].0, "rows not strictly sorted");
         }
 
-        let incomplete: Vec<_> = zhuyin_pinyin_map()
-            .entries()
+        let incomplete: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
+            .iter()
+            .copied()
             .filter(|row| row.3 & ZHUYIN_INCOMPLETE != 0)
             .collect();
-        let shuffle: Vec<_> = zhuyin_pinyin_map()
-            .entries()
+        let shuffle: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
+            .iter()
+            .copied()
             .filter(|row| row.3 & ZHUYIN_CORRECT_SHUFFLE != 0)
             .collect();
-        let plain: Vec<_> = zhuyin_pinyin_map()
-            .entries()
+        let plain: Vec<_> = crate::zhuyin_map::reference::ZHUYIN_PINYIN_MAP
+            .iter()
+            .copied()
             .filter(|row| row.3 == 0)
             .collect();
         assert_eq!(incomplete.len(), 14);
@@ -1791,12 +1782,11 @@ mod tests {
         use crate::ZHUYIN_INCOMPLETE;
         use crate::zhuyin_map::zhuyin_pinyin_map;
 
-        // Shuffle rows: only under the parser-owned correction bit. The
-        // hit carries the canonical spelling for display.
+        // Shuffle rows: only under the parser-owned correction bit.
         let bie = crate::SyllableKey::from_text("bie").expect("bie");
         assert_eq!(
             search_zhuyin_index(zhuyin_pinyin_map(), "ㄅㄝㄧ", ZHUYIN_CORRECT_SHUFFLE),
-            Some((bie, "ㄅㄧㄝ"))
+            Some(bie)
         );
         assert_eq!(search_zhuyin_index(zhuyin_pinyin_map(), "ㄅㄝㄧ", 0), None);
 
@@ -1806,7 +1796,7 @@ mod tests {
         let b = crate::SyllableKey::from_text("b").expect("b");
         assert_eq!(
             search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", ZHUYIN_INCOMPLETE),
-            Some((b, "ㄅ"))
+            Some(b)
         );
         assert_eq!(search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", 0), None);
     }
@@ -1822,7 +1812,7 @@ mod tests {
         );
         assert_eq!(shuffled.consumed(), 3);
         assert_eq!(shuffled.full_pinyin(), "bie");
-        assert_eq!(shuffled.keys()[0].zhuyin(), "ㄅㄧㄝ");
+        assert_eq!(shuffled.keys()[0].display(), "ㄅㄧㄝ");
 
         // Every permutation of a three-symbol spelling parses.
         let canonical = ["ㄅ", "ㄧ", "ㄝ"];
@@ -2135,14 +2125,14 @@ mod tests {
         let ji =
             hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄍ", "ㄧ"]), USE_TONE);
         assert_eq!(ji.full_pinyin(), "ji");
-        assert_eq!(ji.keys()[0].zhuyin(), "ㄐㄧ");
+        assert_eq!(ji.keys()[0].display(), "ㄐㄧ");
 
         let zhong = hsu.parse_with_options(
             &discrete_keystrokes(hsu.scheme(), &["ㄐ", "ㄨ", "ㄥ"]),
             USE_TONE,
         );
         assert_eq!(zhong.full_pinyin(), "zhong");
-        assert_eq!(zhong.keys()[0].zhuyin(), "ㄓㄨㄥ");
+        assert_eq!(zhong.keys()[0].display(), "ㄓㄨㄥ");
 
         let chi = hsu.parse_with_options(&discrete_keystrokes(hsu.scheme(), &["ㄑ"]), USE_TONE);
         assert_eq!(chi.full_pinyin(), "chi");
@@ -2169,7 +2159,7 @@ mod tests {
             USE_TONE,
         );
         assert_eq!(qi.full_pinyin(), "qi");
-        assert_eq!(qi.keys()[0].zhuyin(), "ㄑㄧ");
+        assert_eq!(qi.keys()[0].display(), "ㄑㄧ");
 
         for (symbols, pinyin) in [
             (vec!["ㄆ"], "ou"),
@@ -2190,23 +2180,17 @@ mod tests {
 
     #[test]
     fn discrete_indexes_are_sorted_and_unique() {
-        use crate::zhuyin_map::{eten26_zhuyin_index, hsu_zhuyin_index};
-
         // `search_zhuyin_index` uses `partition_point`; an out-of-order
         // row would silently make valid spellings unreachable. Count is
         // already enforced by the array types (500 / 482).
-        for pair in hsu_zhuyin_index().entries().collect::<Vec<_>>().windows(2) {
+        for pair in crate::zhuyin_map::reference::HSU_ZHUYIN_INDEX.windows(2) {
             assert!(
                 pair[0].0 < pair[1].0,
                 "hsu_zhuyin_index not strictly sorted at {:?}",
                 pair[0].0
             );
         }
-        for pair in eten26_zhuyin_index()
-            .entries()
-            .collect::<Vec<_>>()
-            .windows(2)
-        {
+        for pair in crate::zhuyin_map::reference::ETEN26_ZHUYIN_INDEX.windows(2) {
             assert!(
                 pair[0].0 < pair[1].0,
                 "eten26_zhuyin_index not strictly sorted at {:?}",
@@ -2228,22 +2212,24 @@ mod tests {
         let qi = crate::SyllableKey::from_text("qi").expect("qi");
         assert_eq!(
             search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", ZHUYIN_CORRECT_HSU),
-            Some((ji, "ㄐㄧ"))
+            Some(ji)
         );
         assert_eq!(search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", 0), None);
         assert_eq!(
             search_zhuyin_index(eten26_zhuyin_index(), "ㄍㄧ", ZHUYIN_CORRECT_ETEN26),
-            Some((qi, "ㄑㄧ"))
+            Some(qi)
         );
 
         // The HSU incomplete set is 5 rows (ㄅㄆㄈㄉㄊ), ETEN26's is 6
         // (ㄅㄈㄉㄍㄎㄑ) — both smaller than the global 14.
-        let hsu_incomplete = hsu_zhuyin_index()
-            .entries()
+        let hsu_incomplete = crate::zhuyin_map::reference::HSU_ZHUYIN_INDEX
+            .iter()
+            .copied()
             .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
             .count();
-        let eten26_incomplete = eten26_zhuyin_index()
-            .entries()
+        let eten26_incomplete = crate::zhuyin_map::reference::ETEN26_ZHUYIN_INDEX
+            .iter()
+            .copied()
             .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
             .count();
         assert_eq!(hsu_incomplete, 5);

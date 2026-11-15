@@ -48,12 +48,6 @@ impl<const N: usize> StringTable<N> {
         Some(self.resolve(*self.rows.get(row)?.get(column)?))
     }
 
-    /// Resolves a row, preserving the original column order.
-    #[must_use]
-    pub fn get(self, row: usize) -> Option<[&'static str; N]> {
-        Some(self.rows.get(row)?.map(|span| self.resolve(span)))
-    }
-
     /// Resolves all rows in their stored order.
     pub fn entries(
         self,

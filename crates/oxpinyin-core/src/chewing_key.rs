@@ -316,19 +316,20 @@ mod chewing_key_data_tests {
 
     #[test]
     fn content_table_matches_original_rows() {
-        assert_eq!(content_strings().entries().count(), CONTENT_TABLE.len());
+        let entries = content_strings().entries();
+        assert_eq!(entries.len(), CONTENT_TABLE.len());
         assert_eq!(CONTENT_KEYS.len(), CONTENT_TABLE.len());
-        for (index, row) in CONTENT_TABLE.iter().enumerate() {
+        for (index, (entry, row)) in entries.zip(&CONTENT_TABLE).enumerate() {
             assert_eq!(
-                content_strings().get(index),
-                Some([
+                entry,
+                [
                     row.pinyin,
                     row.shengmu,
                     row.yunmu,
                     row.zhuyin,
                     row.luoma,
                     row.secondary
-                ]),
+                ],
                 "row {index}"
             );
             let key = CONTENT_KEYS[index];

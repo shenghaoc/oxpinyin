@@ -10,40 +10,30 @@
 //! row's `ChewingKey` triple. Source-embedded tables, copyable under
 //! the project source policy; not model-archive data.
 
-use crate::vocab::SYLLABLE_KEY_COUNT;
+use crate::vocab::{SYLLABLE_KEY_COUNT, SyllableKey};
 
 include!("table_data/zhuyin_tones.rs");
 
-/// A decoded view of one pinned zhuyin spelling index.
+/// A decoded view of one pinned zhuyin spelling index: the input
+/// spellings, each row's key and its option flags.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ZhuyinIndex {
-    strings: crate::static_strings::StringTable<3>,
+    spellings: crate::static_strings::StringTable<1>,
+    keys: &'static [u16],
     flags: &'static [u32],
 }
 
 impl ZhuyinIndex {
+    /// The row whose input spelling is exactly `spelling`.
     pub(crate) fn position(self, spelling: &str) -> Option<usize> {
-        self.strings.position(spelling)
+        self.spellings.position(spelling)
     }
 
-    pub(crate) fn get(
-        self,
-        index: usize,
-    ) -> Option<(&'static str, &'static str, &'static str, u32)> {
-        let [input, canonical, pinyin] = self.strings.get(index)?;
-        Some((input, canonical, pinyin, *self.flags.get(index)?))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn entries(
-        self,
-    ) -> impl ExactSizeIterator<Item = (&'static str, &'static str, &'static str, u32)>
-    + DoubleEndedIterator
-    + Clone {
-        self.strings
-            .entries()
-            .zip(self.flags)
-            .map(|([input, canonical, pinyin], &flags)| (input, canonical, pinyin, flags))
+    /// The row's key and flags. The key is the row's `content_table`
+    /// entry, so it also renders the row's canonical zhuyin.
+    pub(crate) fn get(self, index: usize) -> Option<(SyllableKey, u32)> {
+        let key = SyllableKey::from_index(usize::from(*self.keys.get(index)?))?;
+        Some((key, *self.flags.get(index)?))
     }
 }
 
@@ -52,15 +42,14 @@ const _: [(); ZHUYIN_PINYIN_COUNT] = [(); crate::string_tables::ZHUYIN_PINYIN_MA
 const _: [(); HSU_ZHUYIN_COUNT] = [(); crate::string_tables::HSU_ZHUYIN_INDEX_FLAGS.len()];
 const _: [(); ETEN26_ZHUYIN_COUNT] = [(); crate::string_tables::ETEN26_ZHUYIN_INDEX_FLAGS.len()];
 
-/// `(input spelling, canonical spelling, canonical pinyin, row flags)`
-/// quadruples, sorted by input spelling bytes — the binary-search
-/// invariant of the pinned table.
+/// Rows sorted by input spelling bytes — the binary-search invariant of
+/// the pinned table — each with its key and row flags.
 ///
-/// The canonical spelling is `content_table[idx].m_chewing` — what
+/// The key is the row's `content_table` entry; its zhuyin is what
 /// upstream's `ChewingKey::get_zhuyin_string` renders, so a shuffled
 /// input (ㄅㄝㄧ) displays as its canonical spelling (ㄅㄧㄝ) exactly like
-/// the oracle's auxiliary text. Plain and incomplete rows carry the input
-/// spelling back; only shuffle rows differ.
+/// the oracle's auxiliary text. build.rs checks that each source row's
+/// canonical spelling is that entry's zhuyin.
 ///
 /// Row flags are the upstream option bits consulted by
 /// `check_chewing_options` (`src/storage/zhuyin_parser2.cpp:43-63`):
@@ -72,7 +61,8 @@ const _: [(); ETEN26_ZHUYIN_COUNT] = [(); crate::string_tables::ETEN26_ZHUYIN_IN
 #[must_use]
 pub(crate) const fn zhuyin_pinyin_map() -> ZhuyinIndex {
     ZhuyinIndex {
-        strings: crate::string_tables::zhuyin_pinyin_map(),
+        spellings: crate::string_tables::zhuyin_pinyin_map(),
+        keys: &crate::string_tables::ZHUYIN_PINYIN_MAP_KEYS,
         flags: &crate::string_tables::ZHUYIN_PINYIN_MAP_FLAGS,
     }
 }
@@ -87,7 +77,8 @@ pub(crate) const fn zhuyin_pinyin_map() -> ZhuyinIndex {
 #[must_use]
 pub(crate) const fn hsu_zhuyin_index() -> ZhuyinIndex {
     ZhuyinIndex {
-        strings: crate::string_tables::hsu_zhuyin_index(),
+        spellings: crate::string_tables::hsu_zhuyin_index(),
+        keys: &crate::string_tables::HSU_ZHUYIN_INDEX_KEYS,
         flags: &crate::string_tables::HSU_ZHUYIN_INDEX_FLAGS,
     }
 }
@@ -102,43 +93,60 @@ pub(crate) const fn hsu_zhuyin_index() -> ZhuyinIndex {
 #[must_use]
 pub(crate) const fn eten26_zhuyin_index() -> ZhuyinIndex {
     ZhuyinIndex {
-        strings: crate::string_tables::eten26_zhuyin_index(),
+        spellings: crate::string_tables::eten26_zhuyin_index(),
+        keys: &crate::string_tables::ETEN26_ZHUYIN_INDEX_KEYS,
         flags: &crate::string_tables::ETEN26_ZHUYIN_INDEX_FLAGS,
     }
 }
 
 #[cfg(test)]
 mod identity_tests {
+    use super::ZhuyinIndex;
+    use crate::vocab::SyllableKey;
+
+    /// Every source row is found by its input spelling, and its stored key
+    /// is the canonical pinyin's key and renders the canonical zhuyin.
+    fn matches_original_rows(index: ZhuyinIndex, rows: &[(&str, &str, &str, u32)]) {
+        for (row, &(input, canonical, pinyin, flags)) in rows.iter().enumerate() {
+            assert_eq!(index.position(input), Some(row), "{input:?}");
+            let key = SyllableKey::from_canonical_text(pinyin).expect("canonical pinyin");
+            assert_eq!(index.get(row), Some((key, flags)), "{input:?}");
+            assert_eq!(
+                key.chewing_key().zhuyin_text().to_string(),
+                canonical,
+                "{input:?}"
+            );
+        }
+        assert_eq!(index.get(rows.len()), None);
+    }
+
     #[test]
     fn zhuyin_pinyin_map_matches_original_rows() {
-        assert!(
-            super::zhuyin_pinyin_map()
-                .entries()
-                .eq(super::reference::ZHUYIN_PINYIN_MAP)
+        matches_original_rows(
+            super::zhuyin_pinyin_map(),
+            &super::reference::ZHUYIN_PINYIN_MAP,
         );
     }
 
     #[test]
     fn hsu_zhuyin_index_matches_original_rows() {
-        assert!(
-            super::hsu_zhuyin_index()
-                .entries()
-                .eq(super::reference::HSU_ZHUYIN_INDEX)
+        matches_original_rows(
+            super::hsu_zhuyin_index(),
+            &super::reference::HSU_ZHUYIN_INDEX,
         );
     }
 
     #[test]
     fn eten26_zhuyin_index_matches_original_rows() {
-        assert!(
-            super::eten26_zhuyin_index()
-                .entries()
-                .eq(super::reference::ETEN26_ZHUYIN_INDEX)
+        matches_original_rows(
+            super::eten26_zhuyin_index(),
+            &super::reference::ETEN26_ZHUYIN_INDEX,
         );
     }
 }
 
 #[cfg(test)]
-mod reference {
+pub(crate) mod reference {
     use super::{ETEN26_ZHUYIN_COUNT, HSU_ZHUYIN_COUNT, ZHUYIN_PINYIN_COUNT};
     use crate::options::{
         ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
