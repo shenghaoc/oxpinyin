@@ -765,6 +765,12 @@ impl TrainingCheck {
     }
 }
 
+/// What [`UserStore::check_mask_out`] found fit to mask: the user bigram's
+/// keys from the one `get_all_items` walk, for [`UserStore::apply_mask_out`].
+pub struct MaskCheck {
+    container_keys: Result<Vec<Option<Token>>, StoreError>,
+}
+
 impl UserStore {
     /// Run the context's fini marker write once, while retaining its live data
     /// for handles that outlive the public context (compatibility row 42).
@@ -2323,13 +2329,13 @@ impl UserStore {
     /// (row 101), then the user bigram's non-token key, short value, partial
     /// tail and residual gram (rows 86, 85, 98, 87). It changes no state, so a
     /// caller can learn that the user tables fault before it opens any system
-    /// library or journal. The bigram keys are walked here and again by
-    /// [`Self::mask_out`]: time linear in the user bigram, nothing retained.
+    /// library or journal. The answer carries the one walk of the bigram
+    /// keys to [`Self::apply_mask_out`], which checks nothing again.
     ///
     /// # Errors
     ///
     /// The [`UserStoreError`] [`Self::mask_out`] would return.
-    pub fn check_mask_out(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+    pub fn check_mask_out(&self, mask: Token, value: Token) -> Result<MaskCheck, UserStoreError> {
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
@@ -2342,7 +2348,7 @@ impl UserStore {
         let container_keys = self.container_keys();
         match self.bigram_mask_fault_over(&container_keys, mask, value) {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => Ok(MaskCheck { container_keys }),
         }
     }
 
@@ -2356,27 +2362,27 @@ impl UserStore {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
-        // The same checks [`Self::check_mask_out`] makes.
-        if self.has_overlong_index_key() {
-            return Err(UserStoreError::OverlongIndexKey);
-        }
-        // `pinyin_mask_out` masks the user phrase table next
-        // (`pinyin.cpp:1229` at 074a2219); a record whose entry walk it
-        // would read past (register row 101) is refused before any change.
+        let checked = self.check_mask_out(mask, value)?;
+        self.apply_mask_out(checked, mask, value)
+    }
+
+    /// [`Self::mask_out`] after [`Self::check_mask_out`] passed for the same
+    /// `mask` and `value`, with no write to the user tables in between: the
+    /// index, the phrase table, the arenas and the bigram take the mask, and
+    /// nothing is checked again. The bigram mask walks the keys the check
+    /// collected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the mask cannot be written.
+    pub fn apply_mask_out(
+        &mut self,
+        checked: MaskCheck,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), UserStoreError> {
+        let MaskCheck { container_keys } = checked;
         let target = Rc::clone(&self.inner.libpinyin);
-        target
-            .phrases()
-            .phrase_table
-            .check_mask()
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        // The bigram walk's faults, in the pin's order: a non-token key
-        // (`get_all_items`), then a short value (`get_total_freq`), then a
-        // mask residual (`get_length`). The one `get_all_items` walk serves
-        // the check and the mask below.
-        let container_keys = self.container_keys();
-        if let Some(error) = self.bigram_mask_fault_over(&container_keys, mask, value) {
-            return Err(error);
-        }
         // The pin's mask walk edits every record of the user pinyin index,
         // in its native container.
         {
