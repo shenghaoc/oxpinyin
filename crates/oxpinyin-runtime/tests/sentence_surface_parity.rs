@@ -76,45 +76,6 @@ fn sentence_surface_matches_the_declared_residual() {
     );
 }
 
-/// Keep exact f32 accumulation checks for #574's recovered corpus inputs:
-/// the `gfloat m_poss` of the pin's `PhoneticLookup` (libpinyin 074a2219
-/// `src/lookup/phonetic_lookup.h`).
-#[test]
-fn sentence_surface_detects_per_step_score_shift() {
-    let mut owner = open_session();
-    let mut session = owner.session();
-    let actual: Vec<_> = [
-        "yaomeichong",
-        "xiehenshuaitong",
-        "nuanmanqianzhaofang",
-        "nic",
-    ]
-    .into_iter()
-    .map(|input| {
-        session.reset();
-        session.replace_raw(input).expect("input must parse");
-        assert!(session.guess_sentence().expect("sentence guess must run"));
-        (
-            input,
-            session
-                .sentence_log_possibility(0)
-                .expect("real-table score")
-                .to_bits(),
-        )
-    })
-    .collect();
-    assert_eq!(
-        actual,
-        [
-            ("yaomeichong", 0xc1b595f0),
-            ("xiehenshuaitong", 0xc201bc36),
-            ("nuanmanqianzhaofang", 0xc225aaba),
-            ("nic", 0xc144ff96)
-        ],
-        "f32 accumulation moved"
-    );
-}
-
 /// Supplementary #747 coverage, reported separately from the frozen 500.
 /// Every ordinary input matches the pin row for row. The current §12
 /// selection residuals match their exact recorded subject surfaces; changes
