@@ -97,7 +97,10 @@ impl DoublePinyinParse {
 /// pinned indexes in `crate::full_pinyin_index`; the out-of-enum
 /// `abort()` slot is deliberately not modelled here (contract-lock
 /// workstream).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
+#[repr(i32)]
 pub enum FullPinyinScheme {
     /// Hanyu pinyin (the default).
     #[default]
@@ -122,7 +125,10 @@ impl FullPinyinScheme {
 }
 
 /// `DoublePinyinScheme` from `src/storage/pinyin_custom2.h:108-117`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
+#[repr(i32)]
 pub enum DoublePinyinScheme {
     /// Ziranma.
     Zrm = 1,
@@ -518,7 +524,10 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 /// `docs/findings/compatibility-policy.md`, row 5c). The C API setters abort
 /// there as the pin does; `ZhuyinParser::set_scheme` returns `false` and
 /// keeps the current scheme.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
+#[repr(i32)]
 pub enum ZhuyinScheme {
     /// Standard keyboard.
     #[default]

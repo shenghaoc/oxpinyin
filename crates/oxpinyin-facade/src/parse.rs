@@ -44,13 +44,8 @@ pub enum PinyinCorrections {
 
 /// The full-pinyin-scheme dispatch over the header discriminants.
 #[must_use]
-pub const fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
-    match value {
-        1 => Some(FullPinyinScheme::Hanyu),
-        2 => Some(FullPinyinScheme::Luoma),
-        3 => Some(FullPinyinScheme::SecondaryZhuyin),
-        _ => None,
-    }
+pub fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
+    FullPinyinScheme::try_from(value).ok()
 }
 
 /// The zhuyin-scheme dispatch over the header discriminants.
@@ -59,33 +54,16 @@ pub const fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
 /// 1..=9 — the `STANDARD_DVORAK` (7) abort slot parses nothing but is a
 /// real header value; the C setters refuse it before it can be stored.
 #[must_use]
-pub const fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
-    match value {
-        1 => Some(ZhuyinScheme::Standard),
-        2 => Some(ZhuyinScheme::Hsu),
-        3 => Some(ZhuyinScheme::Ibm),
-        4 => Some(ZhuyinScheme::Ginyieh),
-        5 => Some(ZhuyinScheme::Eten),
-        6 => Some(ZhuyinScheme::Eten26),
-        7 => Some(ZhuyinScheme::StandardDvorak),
-        8 => Some(ZhuyinScheme::HsuDvorak),
-        9 => Some(ZhuyinScheme::DachenCp26),
-        _ => None,
-    }
+pub fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
+    ZhuyinScheme::try_from(value).ok()
 }
 
 /// The double-pinyin-scheme dispatch over the header discriminants.
 #[must_use]
-pub const fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
-    match value {
-        1 => Some(DoublePinyinScheme::Zrm),
-        2 => Some(DoublePinyinScheme::Ms),
-        3 => Some(DoublePinyinScheme::Ziguang),
-        4 => Some(DoublePinyinScheme::Abc),
-        5 => Some(DoublePinyinScheme::Pyjj),
-        6 => Some(DoublePinyinScheme::Xhe),
-        _ => None,
-    }
+pub fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
+    DoublePinyinScheme::try_from(value)
+        .ok()
+        .filter(|scheme| *scheme != DoublePinyinScheme::Customized)
 }
 
 /// The per-key view [`exact_input`] needs: the resolved syllable and its

@@ -33,6 +33,8 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [workspace.dependencies]
+# Checked integer conversions for parser schemes and the Pinyin C candidate type.
+num_enum = { version = "0.7.6", default-features = false }
 oxpinyin-core = { path = "crates/oxpinyin-core" }
 # The four store-backend chain crates carry default-features = false at the
 # workspace table so `--no-default-features` builds actually reach the
