@@ -120,11 +120,9 @@ impl Iterator for Syllables<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Packed(pairs) => pairs.next().map(|pair| {
-                chewing_syllable(ChewingKey::from_packed(u16::from_le_bytes([
-                    pair[0], pair[1],
-                ])))
-            }),
+            Self::Packed(pairs) => pairs
+                .next()
+                .map(|pair| chewing_syllable(ChewingKey::from_packed(u16::from_le_bytes(*pair)))),
         }
     }
 }
@@ -168,7 +166,7 @@ impl ExportRow<'_> {
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
             RowSource::Mapped { keys, .. } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
-                let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
+                let key = ChewingKey::from_packed(u16::from_le_bytes(*bytes));
                 if key.tone > MAX_KEY_TONE {
                     Some(ExportAssert::KeyTone)
                 } else if !key.elements_in_dims() {

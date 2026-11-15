@@ -211,9 +211,7 @@ impl UserStore {
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|pair| {
-                    oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]]))
-                })
+                .map(|pair| oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes(*pair)))
                 .collect();
             phrases.index.add(&keys, token);
         }

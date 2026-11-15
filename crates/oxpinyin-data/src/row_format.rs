@@ -147,7 +147,7 @@ pub mod pinyin_index {
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|bytes| ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]])))
+                .map(|bytes| ChewingKey::from_packed(u16::from_le_bytes(*bytes)))
         }
     }
 
@@ -329,7 +329,7 @@ pub mod phrase_index {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .map(|chunk| u32::from_le_bytes(*chunk))
             .collect())
     }
 }
@@ -420,7 +420,7 @@ pub mod punct {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .map(|chunk| u32::from_le_bytes(*chunk))
             .collect();
         let mut out = Vec::new();
         let mut cursor = 0_usize;

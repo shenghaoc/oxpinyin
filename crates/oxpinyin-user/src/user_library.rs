@@ -128,7 +128,7 @@ impl SessionPhrases {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .map(|b| u32::from_le_bytes(*b))
             .collect();
         let pronunciations = item
             .pronunciations()
@@ -138,7 +138,7 @@ impl SessionPhrases {
                     .as_chunks::<2>()
                     .0
                     .iter()
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .map(|b| u16::from_le_bytes(*b))
                     .collect();
                 let keys = crate::store_libpinyin::packed_to_pinyin_keys(&packed)?;
                 Some(crate::UserPronunciation::new(
@@ -359,9 +359,7 @@ impl UserLibrary {
                 .0
                 .iter()
                 .zip(keys)
-                .all(|(bytes, &key)| {
-                    u16::from_le_bytes([bytes[0], bytes[1]]) & 0x7fff == key & 0x7fff
-                });
+                .all(|(bytes, &key)| u16::from_le_bytes(*bytes) & 0x7fff == key & 0x7fff);
             if matches {
                 if total.checked_add(delta).is_some() {
                     let position = 6 + 4 * keys.len() + i * (2 * keys.len() + 4) + 2 * keys.len();
@@ -415,7 +413,7 @@ impl UserLibrary {
                         .as_chunks::<2>()
                         .0
                         .iter()
-                        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]])),
+                        .map(|bytes| u16::from_le_bytes(*bytes)),
                 );
                 if !matches {
                     continue;
@@ -467,7 +465,7 @@ impl UserLibrary {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+            .map(|b| u32::from_le_bytes(*b));
         let slots = Slots(entries.collect());
         Ok(Self {
             total,

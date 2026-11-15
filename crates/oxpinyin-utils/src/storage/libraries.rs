@@ -269,14 +269,14 @@ fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin_data::chunk_write::Chun
     let phrase: Option<Vec<u32>> = view.phrase_codes().collect();
     let mut prons = Vec::new();
     for pronunciation in view.pronunciations() {
-        let keys: Option<Vec<u16>> = pronunciation
+        let keys: Vec<u16> = pronunciation
             .keys
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|bytes| Some(u16::from_le_bytes([bytes[0], bytes[1]])))
+            .map(|bytes| u16::from_le_bytes(*bytes))
             .collect();
-        prons.push((keys?, pronunciation.freq));
+        prons.push((keys, pronunciation.freq));
     }
     Some(oxpinyin_data::chunk_write::ChunkItem {
         phrase: phrase?,

@@ -463,7 +463,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
         crate::test_support::open(user_dir.path.to_str().expect("UTF-8 path"));
 
     // Plant the trained bigram (first-seed 69 clears the filter of 10).
-    let nihao = std::ffi::CString::new("nihao").expect("no interior NUL");
+    let nihao = c"nihao";
     assert_eq!(
         crate::parse::pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()),
         5
@@ -477,7 +477,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
 
     // The plain variant for prefix 你: rows are the sliced suggestion
     // texts 们 (from 你们) and 好 (from 你好).
-    let prefix = std::ffi::CString::new("你").expect("no interior NUL");
+    let prefix = c"你";
     assert!(crate::predict::pinyin_guess_predicted_candidates(
         instance,
         prefix.as_ptr()

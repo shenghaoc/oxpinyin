@@ -554,9 +554,8 @@ impl<
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {
-                let count = match self.unigram_count(token.value()) {
-                    Some(count) => count,
-                    None => return Ok(oxpinyin_core::NbestStepCosts::default()),
+                let Some(count) = self.unigram_count(token.value()) else {
+                    return Ok(oxpinyin_core::NbestStepCosts::default());
                 };
                 merge_unigram_counts(count, user.unigram_delta)
             }

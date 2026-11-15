@@ -71,7 +71,7 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
     let mut checksum: u32 = 0;
     let aligned = payload.len() & !0x3;
     for word in payload[..aligned].as_chunks::<4>().0.iter() {
-        checksum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        checksum ^= u32::from_le_bytes(*word);
     }
     let mut shift = 0_u32;
     for &byte in &payload[aligned..] {

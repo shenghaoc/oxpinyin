@@ -318,7 +318,7 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .map(|c| u32::from_le_bytes(*c))
         .collect();
     offset = phrase_end;
 
@@ -332,7 +332,7 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         offset = keys_end;
         let freq = bytes

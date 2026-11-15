@@ -1867,8 +1867,7 @@ impl UserStore {
                     let pinyin = reading.keys.as_chunks::<2>().0.iter().enumerate().try_fold(
                         String::new(),
                         |mut text, (position, bytes)| {
-                            let key =
-                                ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
+                            let key = ChewingKey::from_packed(u16::from_le_bytes(*bytes));
                             let syllable = oxpinyin_core::SyllableKey::from_chewing_key(key)?;
                             crate::toned_key(syllable.index(), key.tone)?;
                             if position != 0 {
@@ -1886,7 +1885,7 @@ impl UserStore {
                             .as_chunks::<4>()
                             .0
                             .iter()
-                            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                            .map(|b| u32::from_le_bytes(*b))
                             .collect();
                         out.push(ExportedPhrase {
                             text,
@@ -2491,7 +2490,7 @@ impl UserStore {
                             .as_chunks::<2>()
                             .0
                             .iter()
-                            .map(|b| ChewingKey::from_packed(u16::from_le_bytes([b[0], b[1]])))
+                            .map(|b| ChewingKey::from_packed(u16::from_le_bytes(*b)))
                             .collect(),
                         reading.freq,
                     )
