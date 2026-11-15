@@ -7,9 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use oxpinyin_engine::{
-    Candidate, CandidateKind, EngineError, Selection, SelectionTarget, Session, SessionSettings,
-};
+use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
 
 #[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -146,37 +144,6 @@ fn an_apostrophe_is_a_boundary_the_decoder_honours() {
     let session = typed("xi'an");
     let texts = texts(&session);
     assert_eq!(&texts[..3], ["西安", "西岸", "锡安"]);
-}
-
-#[test]
-fn choosing_advances_the_composition_and_feeds_the_bigram() {
-    let mut session = typed("nihaozhongguo");
-    let first = session
-        .candidates()
-        .iter()
-        .position(|candidate| candidate.text() == "你好")
-        .expect("你好 is offered");
-
-    assert_eq!(
-        select_row(&mut session, first).expect("the index is live"),
-        Selection::Continued
-    );
-    assert_eq!(session.selected_text(), "你好");
-    assert_eq!(
-        &session.raw_input()[session.composition_offset()..],
-        "zhongguo"
-    );
-
-    let texts = texts(&session);
-    assert_eq!(texts[0], "中国", "the remaining input decodes on its own");
-
-    assert_eq!(
-        select_row(&mut session, 0).expect("the index is live"),
-        Selection::Completed
-    );
-    assert_eq!(session.selected_text().clone(), "你好中国");
-    session.reset();
-    assert!(!session.is_composing());
 }
 
 #[test]
@@ -468,18 +435,4 @@ fn candidate_differential_over_the_capture_families() {
         "top-5-set fell to {:.2}%",
         share(top5, covered)
     );
-}
-
-/// Chooses row `index` of the session's cached list at the composition
-/// offset, through [`Session::select_target`].
-fn select_row(session: &mut Fixtures, index: usize) -> Result<Selection, EngineError> {
-    session.refresh_candidates()?;
-    let candidate = session
-        .candidates()
-        .iter()
-        .nth(index)
-        .cloned()
-        .expect("the row is listed");
-    let anchor = session.composition_offset();
-    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }

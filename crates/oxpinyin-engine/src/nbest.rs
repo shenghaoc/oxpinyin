@@ -2306,54 +2306,117 @@ mod tests {
         assert_eq!(rows[0].poss, Some(f32::NEG_INFINITY));
     }
 
+    /// The per-step predecessor row (`StepCosts.rows`) is retained speed
+    /// code: the pin reloads both bigrams for every beam value and span
+    /// (`phonetic_lookup.h:595-596` at 074a2219). A row-caching model must
+    /// decode the same rows as the pair-wise default `nbest_step_costs_in_row`,
+    /// including after the gram changes between guesses, so no row outlives
+    /// its step and guess and no predecessor reads another's row.
     #[test]
-    fn predecessor_rows_are_reused_only_inside_each_step_and_guess() {
+    fn row_cached_step_costs_decode_as_the_pairwise_path() {
         use oxpinyin_core::{MergedGram, NbestStepRow};
-        use std::cell::RefCell;
-        struct Counting(RefCell<Vec<u32>>);
-        impl LanguageModel for Counting {
+        use std::cell::Cell;
+
+        fn records(prev: u32, flipped: bool) -> Vec<(u32, u64)> {
+            match (prev, flipped) {
+                (1, false) | (2, true) => vec![(1, 3), (2, 1)],
+                _ => vec![(1, 1), (2, 3)],
+            }
+        }
+        fn costs(freq: u64) -> NbestStepCosts {
+            NbestStepCosts {
+                blended: Some(freq as f64 / 4.0),
+                unigram: Some(0.25),
+                unigram_lambda: 0.5,
+            }
+        }
+        fn freq_of(records: &[(u32, u64)], token: u32) -> u64 {
+            records
+                .iter()
+                .find(|(next, _)| *next == token)
+                .map_or(0, |(_, freq)| *freq)
+        }
+        struct Pairwise<'a>(&'a Cell<bool>);
+        impl LanguageModel for Pairwise<'_> {
+            type Token = PhraseToken;
+            type Error = EngineError;
+            fn nbest_step_costs(
+                &self,
+                prev: &PhraseToken,
+                token: &PhraseToken,
+            ) -> Result<NbestStepCosts, EngineError> {
+                let records = records(prev.value(), self.0.get());
+                Ok(costs(freq_of(&records, token.value())))
+            }
+        }
+        struct RowCached<'a>(&'a Cell<bool>);
+        impl LanguageModel for RowCached<'_> {
             type Token = PhraseToken;
             type Error = EngineError;
             fn nbest_step_costs_in_row(
                 &self,
                 prev: &PhraseToken,
-                _: &PhraseToken,
+                token: &PhraseToken,
                 row: &mut NbestStepRow,
             ) -> Result<NbestStepCosts, EngineError> {
-                row.get_or_try_init::<EngineError>(|| {
-                    self.0.borrow_mut().push(prev.value());
-                    Ok(Some(MergedGram::new(2, vec![(1, 1), (2, 1)])))
-                })?;
-                Ok(NbestStepCosts {
-                    blended: Some(0.5),
-                    unigram: Some(0.25),
-
-                    unigram_lambda: 1.0,
-                })
+                let gram = row
+                    .get_or_try_init::<EngineError>(|| {
+                        Ok(Some(MergedGram::new(
+                            4,
+                            records(prev.value(), self.0.get()),
+                        )))
+                    })?
+                    .expect("loaded row");
+                let freq = gram.get_freq(token.value()).expect("whole gram");
+                Ok(costs(u64::from(freq.unwrap_or(0))))
             }
+        }
+        fn decoded(rows: &[NbestRow]) -> Vec<(Option<String>, Vec<u32>, Option<u32>)> {
+            rows.iter()
+                .map(|row| {
+                    (
+                        row.text.as_str().map(str::to_owned),
+                        row.tokens.iter().map(|token| token.value()).collect(),
+                        row.poss.map(f32::to_bits),
+                    )
+                })
+                .collect()
         }
         let dict = FixtureDictionary::parse(
             "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=ni\ttext=尼\tunigram=900\n",
         )
         .expect("authored fixture");
         let (matrix, bound) = one_column_matrix("nini");
-        let model = Counting(RefCell::new(Vec::new()));
-        for run in 1..=2 {
-            let rows = nbest_sentences(
+        let flipped = Cell::new(false);
+        let mut seen = Vec::new();
+        for flip in [false, true] {
+            flipped.set(flip);
+            let history = [PhraseToken::new(1)];
+            let cached = nbest_sentences(
                 &matrix,
                 bound,
                 &dict,
-                &model,
-                &[PhraseToken::new(1)],
+                &RowCached(&flipped),
+                &history,
                 None,
                 NbestShape::PINYIN,
             )
             .unwrap();
-            assert!(!rows.is_empty());
-            let loads = model.0.borrow();
-            assert_eq!(loads.iter().filter(|prev| **prev == 1).count(), 2 * run);
-            assert_eq!(loads.iter().filter(|prev| **prev == 2).count(), run);
+            let pairwise = nbest_sentences(
+                &matrix,
+                bound,
+                &dict,
+                &Pairwise(&flipped),
+                &history,
+                None,
+                NbestShape::PINYIN,
+            )
+            .unwrap();
+            assert!(!cached.is_empty());
+            assert_eq!(decoded(&cached), decoded(&pairwise), "flipped = {flip}");
+            seen.push(decoded(&cached));
         }
+        assert_ne!(seen[0], seen[1], "the gram change must move the rows");
     }
 
     #[test]
