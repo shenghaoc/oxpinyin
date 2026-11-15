@@ -1351,6 +1351,40 @@ impl ReplayedLibrary {
         Some(bytes)
     }
 
+    /// What `FacadePhraseIndex::compact` does to slots with overlapping bodies
+    /// (074a2219 `phrase_index.cpp:648-675`): it copies each readable item of
+    /// the range into a fresh sub-index with `add_phrase_item`, which stores
+    /// every item at its own offset (`:208-217`), so a later write through
+    /// one slot no longer reaches the other. After sorting the readable item
+    /// intervals, copy each body that overlaps an earlier interval to the
+    /// content's end. Non-overlapping bodies stay in place.
+    pub(crate) fn unshare_bodies(&mut self) {
+        let mut named: Vec<(usize, usize, u32)> = (1..self.range_end())
+            .filter_map(|slot| {
+                let offset = self.content.slot_offset(slot)? as usize;
+                let len = self.item_bytes(slot)?.len();
+                Some((offset, offset.checked_add(len)?, slot))
+            })
+            .collect();
+        named.sort_unstable();
+        let mut furthest_end = 0;
+        for (offset, end, slot) in named {
+            let overlaps = offset < furthest_end;
+            furthest_end = furthest_end.max(end);
+            if !overlaps {
+                continue;
+            }
+            let Some(bytes) = self.item_bytes(slot).map(Cow::into_owned) else {
+                continue;
+            };
+            let appended = self.content.append(&bytes);
+            self.content.set_slot_offset(slot, appended.offset);
+            if appended.in_place {
+                self.removed = true;
+            }
+        }
+    }
+
     /// `SubPhraseIndex::get_range`'s end (`:624-646`): one past the last slot
     /// whose offset word is not zero, and never below the first token.
     pub(crate) fn range_end(&self) -> u32 {
