@@ -468,16 +468,18 @@ impl UserLibrary {
     }
 
     /// `SubPhraseIndex::compact` (`phrase_index.cpp:624-675`): a fresh
-    /// sub-index takes every readable slot in slot order through the same
-    /// add, so its content can wrap in turn and its total is the sum of the
-    /// items copied. The pin does this only at end-import, save and mask-out.
+    /// sub-index takes every readable slot of the range in slot order
+    /// through the same add, so its content can wrap in turn and its total
+    /// is the sum of the items copied. The range begins at slot 1
+    /// (`get_range`, `:624-645`), so an item at the reserved slot 0 is not
+    /// copied. The pin does this only at end-import, save and mask-out.
     pub(crate) fn compact(&mut self) {
         *self = self.compacted();
     }
 
     fn compacted(&self) -> Self {
         let mut compacted = Self::default();
-        for (slot, item) in self.items() {
+        for (slot, item) in self.items().filter(|&(slot, _)| slot != 0) {
             let bytes = item.as_bytes();
             let change = compacted.placement(slot, item);
             compacted.apply_replacement(change, bytes);
