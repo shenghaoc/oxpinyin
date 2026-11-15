@@ -635,12 +635,6 @@ impl<
         self.nbest_item_costs(token, UserCountDelta::ZERO, item)
     }
 
-    fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
-        if self.attachment_failed() {
-            *row = oxpinyin_core::NbestStepRow::default();
-        }
-    }
-
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &Self::Token,

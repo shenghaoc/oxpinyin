@@ -698,7 +698,7 @@ fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
 }
 
 #[test]
-fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
+fn a_fresh_nbest_row_observes_a_reborrowed_stores_committed_write() {
     use oxpinyin_core::{NbestStepRow, NbestSuccessors};
     let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
     let dir = tmp.path().to_path_buf();
@@ -723,8 +723,8 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
         .unwrap();
     let prev = PhraseToken::new(SENTENCE_START);
     let mut row = NbestStepRow::default();
-    // The step's merged row: whether it carries `successor`, and the item
-    // costs of `token` read from it.
+    // One span load's merged row: whether it carries `successor`, and the
+    // item costs of `token` read from it.
     let carries = |runtime: &Runtime, row: &mut NbestStepRow, successor: u32| match runtime
         .lm()
         .nbest_successors_in_row(&prev, row)
@@ -762,19 +762,22 @@ fn cached_nbest_row_observes_a_reborrowed_stores_committed_write() {
         runtime.lm().nbest_step_costs(&prev, &token).unwrap()
     );
     assert!(carries(&runtime, &mut row, other));
-    // The cached query row survives an exclusive write operation; no
-    // dictionary/model reader is retained while the owner changes.
+    // A row is one load: the next load, after an exclusive write, reads
+    // the grams again. No dictionary/model reader is retained while the
+    // owner changes.
     runtime
         .user_store_mut()
         .observe_selection(SENTENCE_START, token.value())
         .unwrap();
     let trained = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(trained, before);
+    let mut row = NbestStepRow::default();
     assert!(carries(&runtime, &mut row, token.value()));
     assert_eq!(costs(&runtime, &mut row), trained);
     runtime.user_store_mut().mask_out(u32::MAX, other).unwrap();
     let forgotten = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(forgotten, trained);
+    let mut row = NbestStepRow::default();
     assert!(!carries(&runtime, &mut row, other));
     assert_eq!(costs(&runtime, &mut row), forgotten);
     drop(runtime);

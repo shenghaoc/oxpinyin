@@ -86,7 +86,7 @@ The methods are:
 
 - unigram reads: `unigram_freq`, `unigram_total`, `addon_unigram_freq`, `addon_unigram_total`;
 - the merged bigram row: `merged_successors(prev) -> Option<MergedGram>` ([`dynamic-adjust.md`](dynamic-adjust.md));
-- n-best step pricing: `nbest_step_costs`, `nbest_step_costs_in_row`, `nbest_item_costs_with_facts`, `nbest_item_costs_in_row`, `begin_successor_span`, `nbest_successors_in_row`, which return the pre-log `NbestStepCosts` pieces;
+- n-best step pricing: `nbest_step_costs`, `nbest_step_costs_in_row`, `nbest_item_costs_with_facts`, `nbest_item_costs_in_row`, `nbest_successors_in_row`, which return the pre-log `NbestStepCosts` pieces;
 - `is_read_after_check` and `amplification_lambda` (default: the pinned model's `0.312699`).
 
 A model reports arithmetic or backend failure through `Result`.

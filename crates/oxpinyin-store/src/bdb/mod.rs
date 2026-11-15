@@ -300,6 +300,10 @@ impl RawReadStore for BdbStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.get(key, value)
     }
 

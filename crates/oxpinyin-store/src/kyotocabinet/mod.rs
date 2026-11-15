@@ -237,10 +237,21 @@ impl crate::RawReadStore for KcStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.get(key, value)
     }
 
     fn get_bigram_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+        // A failed size check is the pin's silent miss
+        // (`ngram_kyotodb.cpp:131-134` at 074a2219).
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() && crate::read_faults::point_read(key).is_err() {
+            value.clear();
+            return Ok(false);
+        }
         self.db.get_bigram(key, value)
     }
 

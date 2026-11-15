@@ -879,9 +879,6 @@ where
             continue;
         }
 
-        // Own rows only for this step's span walk. A later
-        // step or guess reloads after training, store writes or mask_out.
-        let mut costs = StepCosts::default();
         if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
             // One span search to the fixed end, the forced token only —
             // `search_bigram2`/`search_unigram2`'s ONESTEP branches,
@@ -915,7 +912,6 @@ where
                         &beam,
                         position..end,
                         model,
-                        &mut costs,
                         &mut trellis,
                         Some(token.value()),
                     )?;
@@ -938,7 +934,6 @@ where
             position,
             &beam,
             &mut scratch,
-            &mut costs,
             &mut trellis,
         )?;
         position += 1;
@@ -1170,7 +1165,6 @@ fn widen_free_span<D, L>(
     position: usize,
     beam: &[BeamEntry],
     scratch: &mut GenerationPath,
-    costs: &mut StepCosts,
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
 where
@@ -1201,15 +1195,7 @@ where
             generation: env.generation,
             span: position..end,
         };
-        expand_entries(
-            &pricing,
-            beam,
-            position..end,
-            env.model,
-            costs,
-            trellis,
-            None,
-        )?;
+        expand_entries(&pricing, beam, position..end, env.model, trellis, None)?;
         end += 1;
     }
     Ok(())
@@ -1345,11 +1331,6 @@ pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bo
         })
 }
 
-#[derive(Default)]
-struct StepCosts {
-    rows: TokenMap<oxpinyin_core::NbestStepRow>,
-}
-
 /// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
 /// predecessors first, each over library/range/item order, then head unigram.
 ///
@@ -1365,7 +1346,6 @@ fn expand_entries<D, L>(
     beam: &[BeamEntry],
     span: std::ops::Range<usize>,
     model: &L,
-    costs: &mut StepCosts,
     trellis: &mut Trellis,
     one_step: Option<u32>,
 ) -> Result<(), EngineError>
@@ -1389,11 +1369,18 @@ where
     // item's own frequency, duplicates included.
     let mut items: Vec<(u32, u32)> = Vec::new();
     let mut selected: Vec<(&SpanEntry, (u32, u32))> = Vec::new();
-    for predecessor in beam {
+    // The best predecessor's row, which the unigram pass below hands to the
+    // model again.
+    let mut head_row = oxpinyin_core::NbestStepRow::default();
+    for (index, predecessor) in beam.iter().enumerate() {
         selected.clear();
         let prev = predecessor.value.token;
-        let row = costs.rows.entry(prev).or_default();
-        model.begin_successor_span(row);
+        // One load per predecessor and span: the pin loads both grams for
+        // every beam value in every `search_bigram2` call, `sentence_start`
+        // included (`phonetic_lookup.h:588-599` at 074a2219). No row is
+        // kept for the step's next span.
+        let mut loaded = oxpinyin_core::NbestStepRow::default();
+        let row = &mut loaded;
         let traversal = match model
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
             .map_err(|error| EngineError::row_read(model, prev, &error))?
@@ -1494,11 +1481,14 @@ where
                 )?;
             }
         }
+        if index == 0 {
+            head_row = loaded;
+        }
     }
     // The pin's independent unigram pass uses only the best predecessor
     // (search_unigram2, phonetic_lookup.h:560-572).
     if let Some(predecessor) = beam.first() {
-        let row = costs.rows.entry(predecessor.value.token).or_default();
+        let row = &mut head_row;
         for (token, slot) in entries.walk_tokens() {
             let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry)) else {
                 continue;
@@ -2319,12 +2309,12 @@ mod tests {
         assert_eq!(rows[0].poss, Some(f32::NEG_INFINITY));
     }
 
-    /// The per-step predecessor row (`StepCosts.rows`) is retained speed
-    /// code: the pin reloads both bigrams for every beam value and span
-    /// (`phonetic_lookup.h:595-596` at 074a2219). A row-caching model must
-    /// decode the same rows as the pair-wise default `nbest_step_costs_in_row`,
-    /// including after the gram changes between guesses, so no row outlives
-    /// its step and guess and no predecessor reads another's row.
+    /// A predecessor's row lives for one span load: the pin reloads both
+    /// bigrams for every beam value and span (`phonetic_lookup.h:595-596`
+    /// at 074a2219). A model that loads into the row must decode the same
+    /// rows as the pair-wise default `nbest_step_costs_in_row`, including
+    /// after the gram changes between guesses, so no row outlives its span
+    /// and no predecessor reads another's row.
     #[test]
     fn row_cached_step_costs_decode_as_the_pairwise_path() {
         use oxpinyin_core::{MergedGram, NbestStepRow};
@@ -2482,16 +2472,7 @@ mod tests {
         let model = Sparse(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
         let beam = trellis.beam(0);
-        super::expand_entries(
-            &pricing(&entries),
-            &beam,
-            0..1,
-            &model,
-            &mut super::StepCosts::default(),
-            &mut trellis,
-            None,
-        )
-        .unwrap();
+        super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
         // Bigram visits present 3,1,3 in the original range/item order;
         // the zero-count record 3 still participates. The independent head
         // unigram pass then visits every candidate, including absent 2.
@@ -2559,7 +2540,6 @@ mod tests {
                 &beam,
                 0..1,
                 &Rows(row),
-                &mut super::StepCosts::default(),
                 &mut trellis,
                 one_step,
             )
@@ -2632,16 +2612,7 @@ mod tests {
         let model = Walked(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
         let beam = trellis.beam(0);
-        super::expand_entries(
-            &pricing(&entries),
-            &beam,
-            0..1,
-            &model,
-            &mut super::StepCosts::default(),
-            &mut trellis,
-            None,
-        )
-        .unwrap();
+        super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
         // Range [1] yields 1; range [3] yields 3 and then 2; range [2]
         // starts past 2 and yields nothing.
         assert_eq!(

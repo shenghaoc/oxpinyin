@@ -356,7 +356,7 @@ changes the columns supplied to the decoder.
 | Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | `f32` running sum of natural logs: `(f64::from(poss) + probability.ln()) as f32` (`expand_one`, `nbest.rs`); pre-log pieces (`NbestStepCosts`) from `nbest_step_costs_using` (`oxpinyin-data/src/lm/mod.rs`) | same / class (a) — Rust std `ln` (`compatibility-policy.md`, row 11); see [sentence scoring types](#sentence-scoring-types) |
 | Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` ([constraint revalidation](#constraint-revalidation)); its recursive f32 path sum clears only below f32::EPSILON (`phonetic_lookup.cpp:159-163`) |
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — `f32` scores with Rust std `ln` |
-| Per-keystroke work | Trellis rebuilt. The decoder loads and merges both bigram rows for each beam value and successful span (`lookup/phonetic_lookup.h:588-599,750-753,785-810`). | Trellis rebuilt. `NbestStepRow` reuses a row or miss per predecessor, step and user generation (`oxpinyin-engine/src/nbest.rs:1382-1389`, `oxpinyin-runtime/src/lib.rs:1464-1475`). | different / [defect](#predecessor-row-reuse) under the system bigram native-read ruling |
+| Per-keystroke work | Trellis rebuilt. The decoder loads and merges both bigram rows for each beam value and successful span (`lookup/phonetic_lookup.h:588-599,750-753,785-810`). | Trellis rebuilt. `expand_entries` loads and merges both grams for each beam value and span, one `NbestStepRow` per load (`oxpinyin-engine/src/nbest.rs`), as the [native-read ruling](compatibility-policy.md#sentence-start-bigram-caching) requires. | same / follows |
 
 ### Decoder shape
 
@@ -1235,13 +1235,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   `pinyin.cpp:3594-3606,3647-3663`). Rust keeps the key in the matrix and refuses the write
   (`oxpinyin-core/src/vocab.rs:115-129`, `oxpinyin-capi/src/user_data.rs:125-143`).
   Keep the packed key through the store write.
-- <a id="predecessor-row-reuse"></a>**Merged rows skip required system bigram reads.** Source-derived.
-  The pin reads the attached system DBM for each load (`lookup/phonetic_lookup.h:588-599`).
-  `NbestStepRow` and `get_or_try_init_in_generation` reuse a loaded row or miss
-  (`oxpinyin-engine/src/nbest.rs:1382-1389`, `oxpinyin-runtime/src/lib.rs:1464-1475`).
-  This can skip a later native read and its failure with stock data.
-  Read the attached system DBM every time, including for `sentence_start`, as the
-  [native-read ruling](compatibility-policy.md#sentence-start-bigram-caching) requires.
 - <a id="mask-out-slot-bits"></a>**Mask-out compares the full token in the user arena.** Source-derived.
   With an imported phrase in the stock user library,
   `mask_out(0x10000000, 0x10000000)` removes its body at the pin and keeps it in Rust

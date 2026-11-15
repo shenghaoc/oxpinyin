@@ -1520,24 +1520,18 @@ impl LanguageModel for RuntimeLm<'_> {
         self.inner.nbest_item_costs(token, extra, item)
     }
 
-    fn begin_successor_span(&self, row: &mut oxpinyin_core::NbestStepRow) {
-        if self.inner.attachment_failed() {
-            *row = oxpinyin_core::NbestStepRow::default();
-        }
-    }
-
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &Self::Token,
         row: &'a mut oxpinyin_core::NbestStepRow,
     ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
-        row.get_or_try_init_in_generation(self.user.generation(), || {
-            self.merged_row(prev.value())
-        })?;
-        Ok(Some(match row.cached_merged() {
-            Some(gram) => oxpinyin_core::NbestSuccessors::Row(gram),
-            None => oxpinyin_core::NbestSuccessors::Miss,
-        }))
+        Ok(Some(
+            row.get_or_try_init(|| self.merged_row(prev.value()))?
+                .map_or(
+                    oxpinyin_core::NbestSuccessors::Miss,
+                    oxpinyin_core::NbestSuccessors::Row,
+                ),
+        ))
     }
 }
 
