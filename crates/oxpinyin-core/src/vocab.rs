@@ -8,11 +8,7 @@
 
 use core::fmt;
 
-use crate::options::{
-    OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H,
-    PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
-    PINYIN_AMB_Z_ZH,
-};
+use crate::options::OptionBits;
 use crate::syllables::{
     FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
@@ -253,13 +249,13 @@ pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<C
 pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut initials = Vec::new();
     for (bit, a, b) in [
-        (PINYIN_AMB_C_CH, "c", "ch"),
-        (PINYIN_AMB_Z_ZH, "z", "zh"),
-        (PINYIN_AMB_S_SH, "s", "sh"),
-        (PINYIN_AMB_L_R, "l", "r"),
-        (PINYIN_AMB_L_N, "l", "n"),
-        (PINYIN_AMB_F_H, "f", "h"),
-        (PINYIN_AMB_G_K, "g", "k"),
+        (OptionBits::PINYIN_AMB_C_CH, "c", "ch"),
+        (OptionBits::PINYIN_AMB_Z_ZH, "z", "zh"),
+        (OptionBits::PINYIN_AMB_S_SH, "s", "sh"),
+        (OptionBits::PINYIN_AMB_L_R, "l", "r"),
+        (OptionBits::PINYIN_AMB_L_N, "l", "n"),
+        (OptionBits::PINYIN_AMB_F_H, "f", "h"),
+        (OptionBits::PINYIN_AMB_G_K, "g", "k"),
     ] {
         if !options.contains(bit) {
             continue;
@@ -302,10 +298,10 @@ pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<Chew
 /// (`phonetic_key_matrix.cpp:301-306`), as `ChewingFinal` values
 /// (`chewing_enum.h:67-68`, `:73-74`, `:80-81`). `in` and `ing` are no
 /// syllables of their own, so their finals cannot come from a spelling.
-const FUZZY_FINALS: [(u32, u8, u8); 3] = [
-    (PINYIN_AMB_AN_ANG, 3, 4),
-    (PINYIN_AMB_EN_ENG, 9, 10),
-    (PINYIN_AMB_IN_ING, 16, 17),
+const FUZZY_FINALS: [(OptionBits, u8, u8); 3] = [
+    (OptionBits::PINYIN_AMB_AN_ANG, 3, 4),
+    (OptionBits::PINYIN_AMB_EN_ENG, 9, 10),
+    (OptionBits::PINYIN_AMB_IN_ING, 16, 17),
 ];
 
 impl fmt::Display for SyllableKey {
@@ -436,7 +432,6 @@ impl PhraseEntry {
 mod tests {
     use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
     use crate::ChewingKey;
-    use crate::OptionBits;
     use crate::{
         Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
     };
@@ -516,10 +511,10 @@ mod tests {
 
     #[test]
     fn fuzzy_alternatives_compose_an_initial_bit_then_a_final_bit() {
-        use crate::{PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_L_N};
+        use crate::OptionBits;
 
         let can = SyllableKey::from_text("can").expect("can");
-        let both = OptionBits::from_bits(PINYIN_AMB_C_CH | PINYIN_AMB_AN_ANG);
+        let both = OptionBits::PINYIN_AMB_C_CH | OptionBits::PINYIN_AMB_AN_ANG;
         let texts: Vec<&str> = can
             .fuzzy_alternatives(both)
             .iter()
@@ -531,7 +526,7 @@ mod tests {
         );
 
         let lan = SyllableKey::from_text("lan").expect("lan");
-        let ln_an = OptionBits::from_bits(PINYIN_AMB_L_N | PINYIN_AMB_AN_ANG);
+        let ln_an = OptionBits::PINYIN_AMB_L_N | OptionBits::PINYIN_AMB_AN_ANG;
         let texts: Vec<&str> = lan
             .fuzzy_alternatives(ln_an)
             .iter()
@@ -545,9 +540,9 @@ mod tests {
 
     #[test]
     fn fuzzy_alternatives_swap_in_and_ing() {
-        use crate::PINYIN_AMB_IN_ING;
+        use crate::OptionBits;
 
-        let in_ing = OptionBits::from_bits(PINYIN_AMB_IN_ING);
+        let in_ing = OptionBits::PINYIN_AMB_IN_ING;
         for (from, to) in [("jin", "jing"), ("jing", "jin"), ("bin", "bing")] {
             let key = SyllableKey::from_text(from).expect(from);
             let texts: Vec<&str> = key
@@ -561,10 +556,10 @@ mod tests {
 
     #[test]
     fn option_text_resolves_correction_aliases_under_their_bits() {
-        use crate::{PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG};
+        use crate::OptionBits;
 
-        let gn = OptionBits::from_bits(PINYIN_CORRECT_GN_NG);
-        let mg = OptionBits::from_bits(PINYIN_CORRECT_MG_NG);
+        let gn = OptionBits::PINYIN_CORRECT_GN_NG;
+        let mg = OptionBits::PINYIN_CORRECT_MG_NG;
         assert_eq!(
             SyllableKey::from_option_text("agn", gn).map(SyllableKey::text),
             Some("ang")

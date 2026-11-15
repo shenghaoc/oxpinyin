@@ -10,6 +10,7 @@
 //! row's `ChewingKey` triple. Source-embedded tables, copyable under
 //! the project source policy; not model-archive data.
 
+use crate::OptionBits;
 use crate::vocab::{SYLLABLE_KEY_COUNT, SyllableKey};
 
 include!("table_data/zhuyin_tones.rs");
@@ -31,9 +32,9 @@ impl ZhuyinIndex {
 
     /// The row's key and flags. The key is the row's `content_table`
     /// entry, so it also renders the row's canonical zhuyin.
-    pub(crate) fn get(self, index: usize) -> Option<(SyllableKey, u32)> {
+    pub(crate) fn get(self, index: usize) -> Option<(SyllableKey, OptionBits)> {
         let key = SyllableKey::from_index(usize::from(*self.keys.get(index)?))?;
-        Some((key, *self.flags.get(index)?))
+        Some((key, OptionBits::from_bits_retain(*self.flags.get(index)?)))
     }
 }
 
@@ -110,7 +111,11 @@ mod identity_tests {
         for (row, &(input, canonical, pinyin, flags)) in rows.iter().enumerate() {
             assert_eq!(index.position(input), Some(row), "{input:?}");
             let key = SyllableKey::from_canonical_text(pinyin).expect("canonical pinyin");
-            assert_eq!(index.get(row), Some((key, flags)), "{input:?}");
+            assert_eq!(
+                index.get(row),
+                Some((key, crate::OptionBits::from_bits_retain(flags))),
+                "{input:?}"
+            );
             assert_eq!(
                 key.chewing_key().zhuyin_text().to_string(),
                 canonical,
@@ -148,7 +153,7 @@ mod identity_tests {
 #[cfg(test)]
 pub(crate) mod reference {
     use super::{ETEN26_ZHUYIN_COUNT, HSU_ZHUYIN_COUNT, ZHUYIN_PINYIN_COUNT};
-    use crate::options::{
+    use crate::options::table_row::{
         ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
     };
     macro_rules! zhuyin_index {

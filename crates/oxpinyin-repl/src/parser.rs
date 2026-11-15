@@ -3,8 +3,7 @@
 use std::ffi::{CString, OsString};
 
 use oxpinyin_core::{
-    DoublePinyinParser, PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_RESPLIT_TABLE, USE_TONE,
-    ZHUYIN_INCOMPLETE, ZhuyinParser, ZhuyinScheme,
+    DoublePinyinParser, OptionBits, ZhuyinParser, ZhuyinScheme,
     tool::{Key, Parse, parse_direct},
 };
 use oxpinyin_input::tool::{self, OptionArg, OptionEntry, OptionValue};
@@ -17,7 +16,7 @@ enum Parser {
 }
 
 impl Parser {
-    fn parse(&self, input: &[u8], options: u32) -> Parse {
+    fn parse(&self, input: &[u8], options: OptionBits) -> Parse {
         match *self {
             Self::Full => oxpinyin_engine::tool::parse_full(input, options),
             Self::Double => {
@@ -100,9 +99,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         b"zhuyindirect" => Parser::Direct(true),
         _ => Parser::Full,
     };
-    let mut options = PINYIN_CORRECT_ALL | USE_TONE | USE_RESPLIT_TABLE;
+    let mut options =
+        OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE | OptionBits::USE_RESPLIT_TABLE;
     if matches!(parsed.values[1], OptionValue::Flag(true)) {
-        options |= PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE;
+        options |= OptionBits::PINYIN_INCOMPLETE | OptionBits::ZHUYIN_INCOMPLETE;
     }
     let mut input = tool::LineReader::stdin();
     while input.getline() {

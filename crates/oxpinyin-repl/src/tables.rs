@@ -1,6 +1,6 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
 use crate::{load_text_tables, present};
-use oxpinyin_core::{ChewingKey, PINYIN_INCOMPLETE, USE_TONE};
+use oxpinyin_core::{ChewingKey, OptionBits};
 use oxpinyin_data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
 use oxpinyin_data::{chewing_index_key as index_key, search_chewing_row as search_row};
 use oxpinyin_input::tool;
@@ -172,7 +172,10 @@ pub fn chewing_main(data: &Path) {
         if input.line() == b"quit" {
             break;
         }
-        let parsed = oxpinyin_engine::tool::parse_full(input.line(), USE_TONE | PINYIN_INCOMPLETE);
+        let parsed = oxpinyin_engine::tool::parse_full(
+            input.line(),
+            OptionBits::USE_TONE | OptionBits::PINYIN_INCOMPLETE,
+        );
         if parsed.keys.is_empty() {
             output::invalid();
             continue;

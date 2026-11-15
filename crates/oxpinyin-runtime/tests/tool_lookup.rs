@@ -1,7 +1,7 @@
 //! Real-model witnesses migrated from the nonshipping upstream lookup driver.
 //! The manifest requires the `tools` feature for this target.
 
-use oxpinyin_core::{PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE};
+use oxpinyin_core::OptionBits;
 use oxpinyin_data::table_info::TableConf;
 use oxpinyin_engine::tool::prepare_lookup;
 use oxpinyin_runtime::tool::Lookup;
@@ -27,8 +27,8 @@ fn embedded_nul_lookup_keeps_the_original_terminal_column() {
         (b"ni'\0hao".as_slice(), 2, 3),
     ] {
         for options in [
-            PINYIN_INCOMPLETE,
-            USE_TONE | PINYIN_CORRECT_ALL | PINYIN_INCOMPLETE,
+            OptionBits::PINYIN_INCOMPLETE,
+            OptionBits::USE_TONE | OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_INCOMPLETE,
         ] {
             let prepared = prepare_lookup(input, options).unwrap();
             assert_eq!(prepared.parsed.consumed, consumed);

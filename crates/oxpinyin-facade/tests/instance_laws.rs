@@ -23,7 +23,7 @@ fn fixture_root() -> PathBuf {
 }
 
 /// Opens the committed fixture set the compiled backend reads.
-fn open_context(option_word: u32) -> ContextCore {
+fn open_context(option_word: oxpinyin_core::OptionBits) -> ContextCore {
     ContextCore::open(&fixture_dir(), None, option_word, UserConfLaw::Pinyin)
         .expect("committed backend fixtures")
 }
@@ -94,7 +94,7 @@ fn full_pinyin_skips_a_consumed_separator_column() {
 /// the pinyin accessor walks on to the next real key.
 #[test]
 fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
-    let context = open_context(0x18a);
+    let context = open_context(oxpinyin_core::OptionBits::from_bits_retain(0x18a));
     let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("'ni'hao"), 7);
     let mut packed = |zhuyin| {

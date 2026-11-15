@@ -8,7 +8,7 @@ fn check(value: bool) {
     }
 }
 use oxpinyin_core::tool::Key;
-use oxpinyin_core::{ChewingKey, PINYIN_AMB_ALL, PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE};
+use oxpinyin_core::{ChewingKey, OptionBits};
 use oxpinyin_engine::tool::{parse_full, physical_matrix, prepare_lookup};
 use oxpinyin_input::tool::lookup_tests as output;
 use oxpinyin_runtime::tool::Lookup;
@@ -84,7 +84,8 @@ fn continued(data: &Lookup, matrix: &[Vec<Key>], start: usize, end: usize) -> bo
 /// Parse, matrix construction and complete search-index trace.
 pub fn matrix_main(data: &Path) {
     let data = load(data, true, false);
-    let options = PINYIN_CORRECT_ALL | PINYIN_AMB_ALL | PINYIN_INCOMPLETE;
+    let options =
+        OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL | OptionBits::PINYIN_INCOMPLETE;
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {
@@ -107,7 +108,8 @@ pub fn matrix_main(data: &Path) {
 /// Matrix dump and existing PhoneticLookup<2,3> results.
 pub fn pinyin_main(data: &Path) {
     let data = load(data, true, true);
-    let options = USE_TONE | PINYIN_CORRECT_ALL | PINYIN_INCOMPLETE;
+    let options =
+        OptionBits::USE_TONE | OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_INCOMPLETE;
     let mut input = tool::LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {

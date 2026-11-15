@@ -579,7 +579,7 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
 
     let context = init_on(&system, None);
     assert!(!context.is_null());
-    let instance = full_pinyin(context, oxpinyin_core::USE_TONE, "ba1");
+    let instance = full_pinyin(context, oxpinyin_core::OptionBits::USE_TONE.bits(), "ba1");
     assert!(zhuyin_guess_sentence(instance));
 
     let mut out = SEEDED as *mut c_char;

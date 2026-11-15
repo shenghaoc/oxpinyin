@@ -7,8 +7,8 @@
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
+use oxpinyin_core::OptionBits;
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep, plan_add};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, toned_key};
 
@@ -316,7 +316,7 @@ pub fn oxpinyin_import_aborts(
 /// 32767; that width is a language artefact
 /// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
 fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
-    let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
+    let options = OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE;
     let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;
     graph
         .fewest_keys(false)

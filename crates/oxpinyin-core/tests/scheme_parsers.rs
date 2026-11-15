@@ -17,10 +17,9 @@
 //! full-pinyin selected splits are checked in `tests/graph_paths.rs`.
 
 use oxpinyin_core::{
-    DoublePinyinParser, DoublePinyinScheme, FORCE_TONE, FullPinyinScheme, OptionBits,
-    PINYIN_INCOMPLETE, SyllableKey, USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinParser, ZhuyinScheme,
-    luoma_pinyin_index, parse_full_pinyin_index_with_options, parse_zhuyin_direct,
-    secondary_zhuyin_index,
+    DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme, OptionBits, SyllableKey, ZhuyinParse,
+    ZhuyinParser, ZhuyinScheme, luoma_pinyin_index, parse_full_pinyin_index_with_options,
+    parse_zhuyin_direct, secondary_zhuyin_index,
 };
 
 /// All double-pinyin layouts with a compiled table (Customized has none).
@@ -32,6 +31,10 @@ const DOUBLE_SCHEMES: &[DoublePinyinScheme] = &[
     DoublePinyinScheme::Pyjj,
     DoublePinyinScheme::Xhe,
 ];
+
+fn toned(parser: &ZhuyinParser, input: &[u8]) -> ZhuyinParse {
+    parser.parse_with_options(input, OptionBits::USE_TONE)
+}
 
 fn parser_accepts_spellings(joined: &str) -> bool {
     joined
@@ -47,7 +50,7 @@ fn every_double_pinyin_scheme_produces_aligned_key_spans() {
     for scheme in DOUBLE_SCHEMES {
         let mut parser = DoublePinyinParser::new();
         assert!(parser.set_scheme(*scheme), "{scheme:?} has a table");
-        let parse = parser.parse_with_options(input, 0);
+        let parse = parser.parse_with_options(input, OptionBits::empty());
         let mut cursor = 0;
         for key in parse.keys() {
             assert!(
@@ -79,7 +82,9 @@ fn double_pinyin_output_is_valid_full_pinyin_for_every_scheme() {
     for scheme in DOUBLE_SCHEMES {
         let mut parser = DoublePinyinParser::new();
         parser.set_scheme(*scheme);
-        let full = parser.parse_with_options(b"uikjkuk", 0).full_pinyin();
+        let full = parser
+            .parse_with_options(b"uikjkuk", OptionBits::empty())
+            .full_pinyin();
         assert!(
             parser_accepts_spellings(&full),
             "{scheme:?}: full-pinyin projection {full:?} is not parsable"
@@ -99,14 +104,15 @@ fn parse_with_options_honours_force_tone_like_the_batch_parser() {
     let parser = ZhuyinParser::new();
 
     // Toned syllables parse fully (tone is required by FORCE_TONE).
-    let toned = parser.parse_with_options(b"su3", USE_TONE | FORCE_TONE);
-    assert_eq!(toned.consumed(), 3);
-    assert_eq!(toned.keys().len(), 1);
+    let forced = parser.parse_with_options(b"su3", OptionBits::USE_TONE | OptionBits::FORCE_TONE);
+    assert_eq!(forced.consumed(), 3);
+    assert_eq!(forced.keys().len(), 1);
 
     // Toneless syllables are rejected: a complete syllable with no tone
     // consumes 0 under FORCE_TONE, exactly as the pin does.
     for syllables in [&b"li"[..], &b"ju"[..]] {
-        let untoned = parser.parse_with_options(syllables, USE_TONE | FORCE_TONE);
+        let untoned =
+            parser.parse_with_options(syllables, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
         assert_eq!(
             untoned.consumed(),
             0,
@@ -117,7 +123,7 @@ fn parse_with_options_honours_force_tone_like_the_batch_parser() {
 
     // The same toneless syllables DO parse under USE_TONE alone (the pin
     // without FORCE_TONE accepts them) — verifying FORCE_TONE is the gate.
-    let li = parser.parse_with_options(b"li", USE_TONE);
+    let li = toned(&parser, b"li");
     assert_eq!(li.consumed(), 2);
 }
 
@@ -136,7 +142,7 @@ fn the_full_pinyin_scheme_slot_enumerates_its_three_romanizations() {
 
 #[test]
 fn zhuyin_direct_parse_is_the_pins_bopomofo_split() {
-    let options = USE_TONE | FORCE_TONE;
+    let options = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
     let text = |keys: Vec<(SyllableKey, u8)>| -> Vec<(&'static str, u8)> {
         keys.into_iter()
             .map(|(key, tone)| (key.text(), tone))
@@ -178,10 +184,11 @@ fn zhuyin_direct_parse_is_the_pins_bopomofo_split() {
 #[test]
 fn zhuyin_direct_parse_has_no_length_bound() {
     let input = format!("ㄋㄧˇ{}ㄏㄠˇ", " ".repeat(70_000));
-    let keys: Vec<(&str, u8)> = parse_zhuyin_direct(&input, USE_TONE | FORCE_TONE)
-        .into_iter()
-        .map(|(key, tone)| (key.text(), tone))
-        .collect();
+    let keys: Vec<(&str, u8)> =
+        parse_zhuyin_direct(&input, OptionBits::USE_TONE | OptionBits::FORCE_TONE)
+            .into_iter()
+            .map(|(key, tone)| (key.text(), tone))
+            .collect();
     assert_eq!(keys, [("ni", 3), ("hao", 3)]);
 }
 
@@ -198,33 +205,40 @@ fn default_scheme_is_ms() {
 fn double_one_key_law() {
     let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
 
-    let key = parser.parse_one_key(0, b"ni").expect("ni parses");
+    let key = parser
+        .parse_one_key(OptionBits::empty(), b"ni")
+        .expect("ni parses");
     assert_eq!(key.pinyin_string(), "ni");
     assert_eq!(key.tone, 0);
     assert_eq!(key.shengmu_string(), "n");
     assert_eq!(key.yunmu_string(), "i");
 
     // Without USE_TONE the three-byte form is refused.
-    assert_eq!(parser.parse_one_key(0, b"ni3"), None);
-    let toned = parser.parse_one_key(USE_TONE, b"ni3").expect("toned");
+    assert_eq!(parser.parse_one_key(OptionBits::empty(), b"ni3"), None);
+    let toned = parser
+        .parse_one_key(OptionBits::USE_TONE, b"ni3")
+        .expect("toned");
     assert_eq!(toned.pinyin_string(), "ni3");
 
     // FORCE_TONE: two bytes rejected; a three-byte input already
     // carries its tone digit, so it passes with the key toned (the
     // pin's zero-tone check at `pinyin_parser2.cpp:448` is dead —
     // the digit parse above already refused every non-tone byte).
-    assert_eq!(parser.parse_one_key(FORCE_TONE, b"ni"), None);
+    assert_eq!(parser.parse_one_key(OptionBits::FORCE_TONE, b"ni"), None);
     assert!(
         parser
-            .parse_one_key(USE_TONE | FORCE_TONE, b"ni3")
+            .parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"ni3")
             .is_some()
     );
     // A non-tone third byte is refused with or without FORCE_TONE.
-    assert_eq!(parser.parse_one_key(USE_TONE, b"ni9"), None);
-    assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"ni9"), None);
+    assert_eq!(parser.parse_one_key(OptionBits::USE_TONE, b"ni9"), None);
+    assert_eq!(
+        parser.parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"ni9"),
+        None
+    );
 
     // A four-byte input is refused outright.
-    assert_eq!(parser.parse_one_key(0, b"niha"), None);
+    assert_eq!(parser.parse_one_key(OptionBits::empty(), b"niha"), None);
 }
 
 /// The double one-key incomplete probe under `PINYIN_INCOMPLETE`
@@ -232,9 +246,9 @@ fn double_one_key_law() {
 #[test]
 fn double_one_key_incomplete_needs_its_bit() {
     let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
-    assert_eq!(parser.parse_one_key(0, b"z"), None);
+    assert_eq!(parser.parse_one_key(OptionBits::empty(), b"z"), None);
     let key = parser
-        .parse_one_key(PINYIN_INCOMPLETE, b"z")
+        .parse_one_key(OptionBits::PINYIN_INCOMPLETE, b"z")
         .expect("incomplete z");
     assert_eq!(key.pinyin_string(), "z");
     assert_eq!(key.yunmu_string(), "");
@@ -246,7 +260,9 @@ fn double_one_key_incomplete_needs_its_bit() {
 #[test]
 fn double_one_key_tries_the_second_yunmu() {
     let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
-    let key = parser.parse_one_key(0, b"oo").expect("oo parses");
+    let key = parser
+        .parse_one_key(OptionBits::empty(), b"oo")
+        .expect("oo parses");
     assert_eq!(key.pinyin_string(), "o");
 }
 
@@ -258,7 +274,9 @@ fn double_one_key_tries_the_second_yunmu() {
 fn chewing_one_key_law_on_standard() {
     let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
 
-    let key = parser.parse_one_key(0, b"18").expect("ba parses");
+    let key = parser
+        .parse_one_key(OptionBits::empty(), b"18")
+        .expect("ba parses");
     assert_eq!(key.pinyin_string(), "ba");
     assert_eq!(key.shengmu_string(), "b");
     assert_eq!(key.yunmu_string(), "a");
@@ -267,17 +285,24 @@ fn chewing_one_key_law_on_standard() {
     // `USE_TONE` alone does not demand a tone: `8` is not a tone
     // key on STANDARD, nothing is stripped, and the match carries
     // tone zero. `FORCE_TONE` is what rejects it.
-    let toneless = parser.parse_one_key(USE_TONE, b"18").expect("ba");
+    let toneless = parser
+        .parse_one_key(OptionBits::USE_TONE, b"18")
+        .expect("ba");
     assert_eq!(toneless.pinyin_string(), "ba");
     assert_eq!(toneless.tone, 0);
-    let toned = parser.parse_one_key(USE_TONE, b"183").expect("ba3");
+    let toned = parser
+        .parse_one_key(OptionBits::USE_TONE, b"183")
+        .expect("ba3");
     assert_eq!(toned.pinyin_string(), "ba3");
     assert_eq!(toned.zhuyin_string(), "ㄅㄚˇ");
 
-    assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"18"), None);
+    assert_eq!(
+        parser.parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"18"),
+        None
+    );
     assert!(
         parser
-            .parse_one_key(USE_TONE | FORCE_TONE, b"183")
+            .parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"183")
             .is_some()
     );
 }
@@ -287,9 +312,9 @@ fn chewing_one_key_law_on_standard() {
 #[test]
 fn chewing_one_key_incomplete_needs_its_bit() {
     let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
-    assert_eq!(parser.parse_one_key(0, b"1"), None);
+    assert_eq!(parser.parse_one_key(OptionBits::empty(), b"1"), None);
     let key = parser
-        .parse_one_key(ZHUYIN_INCOMPLETE, b"1")
+        .parse_one_key(OptionBits::ZHUYIN_INCOMPLETE, b"1")
         .expect("incomplete b");
     assert_eq!(key.pinyin_string(), "b");
 }
@@ -301,16 +326,16 @@ fn chewing_one_key_incomplete_needs_its_bit() {
 #[test]
 fn chewing_one_key_refuses_empty_and_dvorak() {
     let standard = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
-    assert_eq!(standard.parse_one_key(USE_TONE, b""), None);
-    assert_eq!(standard.parse_one_key(0, b""), None);
+    assert_eq!(standard.parse_one_key(OptionBits::USE_TONE, b""), None);
+    assert_eq!(standard.parse_one_key(OptionBits::empty(), b""), None);
     let dvorak = ZhuyinParser::with_scheme(ZhuyinScheme::StandardDvorak);
-    assert_eq!(dvorak.parse_one_key(0, b"18"), None);
+    assert_eq!(dvorak.parse_one_key(OptionBits::empty(), b"18"), None);
 }
 
 #[test]
 fn ms_parses_common_spellings() {
     let parser = DoublePinyinParser::new();
-    let parsed = parser.parse_with_options(b"nihao", PINYIN_INCOMPLETE);
+    let parsed = parser.parse_with_options(b"nihao", OptionBits::PINYIN_INCOMPLETE);
     assert_eq!(parsed.consumed(), 4);
     assert_eq!(parsed.full_pinyin(), "ni'ha");
 }
@@ -324,7 +349,7 @@ fn batch_parse_honours_use_tone_and_force_tone() {
     let parser = DoublePinyinParser::new();
 
     // USE_TONE: the three-byte key rides its tone.
-    let toned = parser.parse_with_options(b"ni3", USE_TONE);
+    let toned = parser.parse_with_options(b"ni3", OptionBits::USE_TONE);
     assert_eq!(toned.consumed(), 3);
     assert_eq!(toned.keys().len(), 1);
     assert_eq!(toned.keys()[0].key().text(), "ni");
@@ -332,28 +357,48 @@ fn batch_parse_honours_use_tone_and_force_tone() {
 
     // Without USE_TONE the three-byte key is refused and the walk
     // retries length two.
-    let toneless = parser.parse_with_options(b"ni3", 0);
+    let toneless = parser.parse_with_options(b"ni3", OptionBits::empty());
     assert_eq!(toneless.consumed(), 2);
     assert_eq!(toneless.keys()[0].tone(), 0);
 
     // A non-tone third byte is refused even under USE_TONE.
-    assert_eq!(parser.parse_with_options(b"nix", USE_TONE).consumed(), 2);
-    assert_eq!(parser.parse_with_options(b"ni0", USE_TONE).consumed(), 2);
+    assert_eq!(
+        parser
+            .parse_with_options(b"nix", OptionBits::USE_TONE)
+            .consumed(),
+        2
+    );
+    assert_eq!(
+        parser
+            .parse_with_options(b"ni0", OptionBits::USE_TONE)
+            .consumed(),
+        2
+    );
 
     // FORCE_TONE: a two-byte key is refused.
-    assert_eq!(parser.parse_with_options(b"ni", FORCE_TONE).consumed(), 0);
+    assert_eq!(
+        parser
+            .parse_with_options(b"ni", OptionBits::FORCE_TONE)
+            .consumed(),
+        0
+    );
 
     // FORCE_TONE without USE_TONE: the three-byte key passes the
     // length gate but the tone parse refuses it — nothing consumed.
-    assert_eq!(parser.parse_with_options(b"ni3", FORCE_TONE).consumed(), 0);
+    assert_eq!(
+        parser
+            .parse_with_options(b"ni3", OptionBits::FORCE_TONE)
+            .consumed(),
+        0
+    );
 
     // USE_TONE | FORCE_TONE: only an exactly-three-byte toned key.
-    let forced = parser.parse_with_options(b"ni3", USE_TONE | FORCE_TONE);
+    let forced = parser.parse_with_options(b"ni3", OptionBits::USE_TONE | OptionBits::FORCE_TONE);
     assert_eq!(forced.consumed(), 3);
     assert_eq!(forced.keys()[0].tone(), 3);
     assert_eq!(
         parser
-            .parse_with_options(b"ni3ha4", USE_TONE | FORCE_TONE)
+            .parse_with_options(b"ni3ha4", OptionBits::USE_TONE | OptionBits::FORCE_TONE)
             .consumed(),
         6
     );
@@ -362,11 +407,11 @@ fn batch_parse_honours_use_tone_and_force_tone() {
 #[test]
 fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
     let parser = ZhuyinParser::new();
-    let rejected = parser.parse_with_options(b"su ", USE_TONE);
+    let rejected = toned(&parser, b"su ");
     assert_eq!(rejected.consumed(), 0);
     assert!(rejected.keys().is_empty());
 
-    let legal = parser.parse_with_options(b"su6", USE_TONE);
+    let legal = toned(&parser, b"su6");
     assert_eq!(legal.consumed(), 3);
     assert_eq!(
         legal
@@ -378,7 +423,7 @@ fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
     );
     assert_eq!(legal.keys()[0].tone(), 2);
 
-    let untoned = parser.parse_with_options(b"su", USE_TONE);
+    let untoned = toned(&parser, b"su");
     assert_eq!(untoned.consumed(), 2);
     assert_eq!(
         untoned
@@ -394,7 +439,7 @@ fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
 #[test]
 fn tone_after_an_invalid_syllable_does_not_extend_a_valid_prefix() {
     let parser = ZhuyinParser::new();
-    let parsed = parser.parse_with_options(b"sux6", USE_TONE);
+    let parsed = toned(&parser, b"sux6");
     assert_eq!(parsed.consumed(), 2);
     assert_eq!(
         parsed
@@ -409,8 +454,8 @@ fn tone_after_an_invalid_syllable_does_not_extend_a_valid_prefix() {
 #[test]
 fn a_tone_key_alone_is_not_a_syllable() {
     let parser = ZhuyinParser::new();
-    assert_eq!(parser.parse_with_options(b"6", USE_TONE).consumed(), 0);
-    assert_eq!(parser.parse_with_options(b" ", USE_TONE).consumed(), 0);
+    assert_eq!(toned(&parser, b"6").consumed(), 0);
+    assert_eq!(toned(&parser, b" ").consumed(), 0);
 }
 
 #[test]
@@ -419,17 +464,17 @@ fn incomplete_keys_consume_zero_either_way() {
     // With the option off the row is gated at the index; with it on
     // the row matches and the post-match validity mask rejects it.
     // Both consume 0 at this pin — same outcome as upstream.
-    assert_eq!(parser.parse_with_options(b"1", USE_TONE).consumed(), 0);
+    assert_eq!(toned(&parser, b"1").consumed(), 0);
     assert_eq!(
         parser
-            .parse_with_options(b"1", USE_TONE | ZHUYIN_INCOMPLETE)
+            .parse_with_options(b"1", OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE)
             .consumed(),
         0
     );
-    assert_eq!(parser.parse_with_options(b"x", USE_TONE).consumed(), 0);
+    assert_eq!(toned(&parser, b"x").consumed(), 0);
     assert_eq!(
         parser
-            .parse_with_options(b"x", USE_TONE | ZHUYIN_INCOMPLETE)
+            .parse_with_options(b"x", OptionBits::USE_TONE | OptionBits::ZHUYIN_INCOMPLETE)
             .consumed(),
         0
     );
@@ -442,20 +487,43 @@ fn incomplete_keys_consume_zero_either_way() {
 fn with_fallback_suppressed_clears_only_the_fallback() {
     let zrm = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
     // ZRM "aa" goes through the fallback table.
-    assert_eq!(zrm.parse_with_options(b"aa", 0).consumed(), 2);
+    assert_eq!(
+        zrm.parse_with_options(b"aa", OptionBits::empty())
+            .consumed(),
+        2
+    );
     // ZRM "ni" (n+i) goes through shengmu/yunmu tables.
-    assert_eq!(zrm.parse_with_options(b"ni", 0).consumed(), 2);
+    assert_eq!(
+        zrm.parse_with_options(b"ni", OptionBits::empty())
+            .consumed(),
+        2
+    );
 
     let suppressed = zrm.with_fallback_suppressed();
     // Fallback is gone — "aa" no longer resolves.
-    assert_eq!(suppressed.parse_with_options(b"aa", 0).consumed(), 0);
+    assert_eq!(
+        suppressed
+            .parse_with_options(b"aa", OptionBits::empty())
+            .consumed(),
+        0
+    );
     // Shengmu/yunmu are intact — "ni" still works.
-    assert_eq!(suppressed.parse_with_options(b"ni", 0).consumed(), 2);
+    assert_eq!(
+        suppressed
+            .parse_with_options(b"ni", OptionBits::empty())
+            .consumed(),
+        2
+    );
 
     // set_scheme clears the suppressed flag.
     let mut parser = suppressed;
     assert!(parser.set_scheme(DoublePinyinScheme::Zrm));
-    assert_eq!(parser.parse_with_options(b"aa", 0).consumed(), 2);
+    assert_eq!(
+        parser
+            .parse_with_options(b"aa", OptionBits::empty())
+            .consumed(),
+        2
+    );
 }
 
 #[test]
@@ -463,7 +531,7 @@ fn luoma_parses_through_the_dp() {
     let parse = |input: &str| {
         parse_full_pinyin_index_with_options(
             input.as_bytes(),
-            OptionBits::from_bits(0),
+            OptionBits::empty(),
             luoma_pinyin_index(),
         )
         .expect("infallible parse")
@@ -504,7 +572,11 @@ fn index_parse_handles_tone_digits() {
     let parse = |input: &str, use_tone| {
         parse_full_pinyin_index_with_options(
             input.as_bytes(),
-            OptionBits::from_bits(if use_tone { USE_TONE } else { 0 }),
+            if use_tone {
+                OptionBits::USE_TONE
+            } else {
+                OptionBits::empty()
+            },
             secondary_zhuyin_index(),
         )
         .expect("infallible parse")
@@ -537,7 +609,7 @@ fn index_parse_bounds_each_key_by_its_runs_next_separator() {
     let parse = |input: &str| {
         parse_full_pinyin_index_with_options(
             input.as_bytes(),
-            OptionBits::from_bits(0),
+            OptionBits::empty(),
             luoma_pinyin_index(),
         )
         .expect("infallible parse")
@@ -578,7 +650,7 @@ fn dp_prefers_longest_coverage_then_fewest_keys() {
     let parse = |input: &str| {
         parse_full_pinyin_index_with_options(
             input.as_bytes(),
-            OptionBits::from_bits(0),
+            OptionBits::empty(),
             secondary_zhuyin_index(),
         )
         .expect("infallible parse")
@@ -596,13 +668,17 @@ fn force_tone_is_nested_under_use_tone_for_both_indexes() {
         (luoma_pinyin_index(), "shih"),
         (secondary_zhuyin_index(), "tsz"),
     ] {
-        for bits in [0, FORCE_TONE, USE_TONE, USE_TONE | FORCE_TONE] {
-            let options = OptionBits::from_bits(bits);
+        for options in [
+            OptionBits::empty(),
+            OptionBits::FORCE_TONE,
+            OptionBits::USE_TONE,
+            OptionBits::USE_TONE | OptionBits::FORCE_TONE,
+        ] {
             let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index)
                 .expect("infallible parse");
             assert_eq!(
                 plain.consumed(),
-                if bits == USE_TONE | FORCE_TONE {
+                if options == OptionBits::USE_TONE | OptionBits::FORCE_TONE {
                     0
                 } else {
                     input.len()
@@ -613,7 +689,7 @@ fn force_tone_is_nested_under_use_tone_for_both_indexes() {
                 .expect("infallible parse");
             assert_eq!(
                 parsed.consumed(),
-                if bits & USE_TONE != 0 {
+                if options.contains(OptionBits::USE_TONE) {
                     toned.len()
                 } else {
                     input.len()
@@ -621,7 +697,11 @@ fn force_tone_is_nested_under_use_tone_for_both_indexes() {
             );
             assert_eq!(
                 parsed.keys()[0].tone(),
-                if bits & USE_TONE != 0 { 4 } else { 0 }
+                if options.contains(OptionBits::USE_TONE) {
+                    4
+                } else {
+                    0
+                }
             );
         }
     }

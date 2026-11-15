@@ -153,23 +153,16 @@ mod tests {
     }
 
     /// The zhuyin init seed is `USE_TONE | FORCE_TONE` (the pin's
-    /// `zhuyin.cpp:273`), unlike `pinyin_init`'s `USE_TONE`. The
-    /// constant is the wire value the context stores.
+    /// `zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin), unlike
+    /// `pinyin_init`'s `USE_TONE`. The constant is the word the context
+    /// stores.
     #[test]
     fn zhuyin_default_options_is_use_tone_or_force_tone() {
-        assert_ne!(
-            super::state::ZHUYIN_DEFAULT_OPTIONS & oxpinyin_core::USE_TONE,
-            0
-        );
-        assert_ne!(
-            super::state::ZHUYIN_DEFAULT_OPTIONS & oxpinyin_core::FORCE_TONE,
-            0
-        );
-        // No ZHUYIN_INCOMPLETE is seeded.
-        assert_eq!(
-            super::state::ZHUYIN_DEFAULT_OPTIONS & oxpinyin_core::PINYIN_INCOMPLETE,
-            0
-        );
+        use oxpinyin_core::OptionBits;
+        let seed = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
+        assert!(seed.contains(OptionBits::USE_TONE | OptionBits::FORCE_TONE));
+        // No PINYIN_INCOMPLETE is seeded.
+        assert!(!seed.contains(OptionBits::PINYIN_INCOMPLETE));
     }
 
     /// The zhuyin twin of the pinyin crate's

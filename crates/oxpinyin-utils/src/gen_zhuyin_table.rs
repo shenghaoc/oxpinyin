@@ -3,7 +3,7 @@
 //! numbering are shared with `gen_pinyin_table` (:90-98, :197-237, :241-334).
 use crate::gen_pinyin_table::{Table, entries};
 use oxpinyin_core::parse_zhuyin_direct;
-use oxpinyin_core::{ChewingKey, FORCE_TONE, USE_TONE};
+use oxpinyin_core::{ChewingKey, OptionBits};
 use oxpinyin_input::tool::gen_pinyin_table as common;
 use oxpinyin_input::tool::gen_zhuyin_table as edge;
 use oxpinyin_input::tool::{self, LineReader, OptionValue, OutputStream};
@@ -23,7 +23,7 @@ fn parse_keys(bytes: &[u8]) -> Vec<ChewingKey> {
     } else {
         text.rfind([' ', '\'']).map_or("", |end| &text[..=end])
     };
-    parse_zhuyin_direct(text, USE_TONE | FORCE_TONE)
+    parse_zhuyin_direct(text, OptionBits::USE_TONE | OptionBits::FORCE_TONE)
         .into_iter()
         .filter_map(|(key, tone)| {
             ChewingKey::from_pinyin(key.text()).map(|key| key.with_tone(tone))

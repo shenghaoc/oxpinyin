@@ -383,7 +383,7 @@ where
         offset: usize,
         gate: bool,
     ) -> Result<Option<(u32, MergedGram)>, EngineError> {
-        if !self.settings.options.has_dynamic_adjust() {
+        if !self.settings.options.contains(OptionBits::DYNAMIC_ADJUST) {
             return Ok(None);
         }
         let Some(prev) = self.previous_token(offset) else {

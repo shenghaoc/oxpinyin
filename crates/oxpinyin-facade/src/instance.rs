@@ -272,7 +272,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// The current live option word.
     #[must_use]
     pub fn options(&self) -> OptionBits {
-        OptionBits::from_bits(self.live.options.get())
+        self.live.options.get()
     }
 
     /// The generalized lookup-offset law in the active parse mode's own

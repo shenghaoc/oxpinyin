@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
-use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
+use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::SessionSettings;
 use oxpinyin_runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
@@ -344,7 +344,7 @@ pub struct LiveOptionsInner {
     pub full_scheme: Cell<i32>,
     /// Live option word. The parsers read `FORCE_TONE`, `USE_TONE` and
     /// `PINYIN_INCOMPLETE` off it.
-    pub options: Cell<u32>,
+    pub options: Cell<OptionBits>,
 }
 
 impl core::ops::Deref for LiveOptions {
@@ -359,7 +359,7 @@ impl LiveOptions {
     /// caller's seed word, and the three schemes start at the header
     /// defaults both facades share (MS double, Standard zhuyin, Hanyu full).
     #[must_use]
-    pub(crate) fn new(option_word: u32) -> Self {
+    pub(crate) fn new(option_word: OptionBits) -> Self {
         Self(Rc::new(LiveOptionsInner {
             double_scheme: Cell::new(DoublePinyinScheme::Ms as i32),
             zhuyin_scheme: Cell::new(ZhuyinScheme::Standard as i32),
@@ -423,7 +423,7 @@ impl ContextCore {
     pub fn open(
         system_dir: &Path,
         user_dir: Option<&Path>,
-        option_word: u32,
+        option_word: OptionBits,
         law: UserConfLaw,
     ) -> Option<Self> {
         Self::try_open(system_dir, user_dir, option_word, law).ok()
@@ -439,7 +439,7 @@ impl ContextCore {
     pub fn try_open(
         system_dir: &Path,
         user_dir: Option<&Path>,
-        option_word: u32,
+        option_word: OptionBits,
         law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
         // The libraries whose file is absent load as unloaded and the open
@@ -472,9 +472,8 @@ impl ContextCore {
     /// setting follows the word so sessions opened later agree with
     /// sessions already allocated. The parsers read the option bits off
     /// the stored word.
-    pub fn set_options(&mut self, options: u32) {
-        let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
-        self.settings.incomplete_pinyin = enabled;
+    pub fn set_options(&mut self, options: OptionBits) {
+        self.settings.incomplete_pinyin = options.contains(OptionBits::PINYIN_INCOMPLETE);
         self.live.options.set(options);
     }
 

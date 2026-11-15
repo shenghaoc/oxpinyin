@@ -30,8 +30,9 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
     // The shared set_options law (stored word and incomplete setting);
-    // the zhuyin facade's setter runs the same body.
-    ctx.core.set_options(options);
+    // the zhuyin facade's setter runs the same body. Bits without a flag are kept.
+    ctx.core
+        .set_options(oxpinyin_core::OptionBits::from_bits_retain(options));
     true
 }
 
@@ -441,7 +442,7 @@ mod tests {
     use crate::sentence::pinyin_guess_candidates;
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
     use crate::types::GChar;
-    use oxpinyin_core::{PINYIN_INCOMPLETE, USE_TONE};
+    use oxpinyin_core::OptionBits;
 
     fn first_candidate_text(instance: *mut crate::types::PinyinInstance) -> String {
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
@@ -489,7 +490,10 @@ mod tests {
         assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
         assert_eq!(first_candidate_text(instance), "你");
 
-        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        assert!(pinyin_set_options(
+            context,
+            OptionBits::PINYIN_INCOMPLETE.bits()
+        ));
         assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 3);
 
         crate::instance::pinyin_free_instance(instance);
@@ -504,14 +508,20 @@ mod tests {
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
         let zai4 = cstr("zai4");
-        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
+        assert!(pinyin_set_options(
+            context,
+            OptionBits::PINYIN_INCOMPLETE.bits()
+        ));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
             3,
             "a toneless word leaves the digit unparsed"
         );
 
-        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE | USE_TONE));
+        assert!(pinyin_set_options(
+            context,
+            (OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE).bits()
+        ));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
             4,

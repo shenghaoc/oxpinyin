@@ -11,14 +11,13 @@ use oxpinyin_core::{
 /// perform the later scan-matrix resplit/divide steps: the pin disables its
 /// parser post-processing at `pinyin_parser2.cpp:377-379` (074a2219).
 #[must_use]
-pub fn parse_full(input: &[u8], options: u32) -> Parse {
+pub fn parse_full(input: &[u8], options: OptionBits) -> Parse {
     let input = full_input(input);
     let input = input.as_ref();
-    let options = OptionBits::from_bits(options);
     let Ok(graph) = SegmentGraph::build_with_options(input, options) else {
         return Parse::default();
     };
-    let path = graph.fewest_keys(options.has_incomplete());
+    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     selected_parse(input, &path)
 }
 
@@ -37,7 +36,7 @@ fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
 /// The physical matrix printed by the pin, including separator and terminal
 /// zero keys. These programs set neither resplit nor divided-table option.
 #[must_use]
-pub fn physical_matrix(parsed: &Parse, options: u32) -> Vec<Vec<Key>> {
+pub fn physical_matrix(parsed: &Parse, options: OptionBits) -> Vec<Vec<Key>> {
     use oxpinyin_core::{ChewingKey, SyllableKey};
     if parsed.keys.is_empty() {
         return Vec::new();
@@ -68,7 +67,7 @@ pub fn physical_matrix(parsed: &Parse, options: u32) -> Vec<Vec<Key>> {
         };
         let spelling = origin.key.with_tone(0).pinyin_string();
         if let Some(key) = SyllableKey::from_canonical_text(&spelling) {
-            for alternate in key.fuzzy_alternatives(OptionBits::from_bits(options)) {
+            for alternate in key.fuzzy_alternatives(options) {
                 column.push(Key {
                     key: alternate.chewing_key().with_tone(origin.key.tone),
                     span: origin.span.clone(),
@@ -101,11 +100,13 @@ pub struct PreparedLookup {
 ///
 /// # Errors
 /// Returns the existing graph's input error.
-pub fn prepare_lookup(input: &[u8], options: u32) -> Result<PreparedLookup, crate::EngineError> {
+pub fn prepare_lookup(
+    input: &[u8],
+    options: OptionBits,
+) -> Result<PreparedLookup, crate::EngineError> {
     let input = full_input(input);
-    let options = OptionBits::from_bits(options);
     let graph = SegmentGraph::build_with_options(input.as_ref(), options)?;
-    let path = graph.fewest_keys(options.has_incomplete());
+    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     let parsed = selected_parse(input.as_ref(), &path);
     let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
         &graph, &path, options, false,
@@ -191,10 +192,13 @@ fn full_input(input: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxpinyin_core::{PINYIN_INCOMPLETE, USE_TONE};
+    use oxpinyin_core::OptionBits;
     #[test]
     fn explicit_nul_spans_keep_the_pin_length_and_zero_pad_the_tail() {
-        for options in [PINYIN_INCOMPLETE, USE_TONE | PINYIN_INCOMPLETE] {
+        for options in [
+            OptionBits::PINYIN_INCOMPLETE,
+            OptionBits::USE_TONE | OptionBits::PINYIN_INCOMPLETE,
+        ] {
             let parsed = parse_full(b"ni\0'hao", options);
             assert_eq!(parsed.consumed, 7);
             assert_eq!(parsed.keys.len(), 1);

@@ -14,11 +14,15 @@ use oxpinyin_core::ChewingKey;
 /// `pinyin_index` (`:618-621,655`), not the wider `content_table`.
 #[must_use]
 pub(crate) fn parse(pinyin: &CStr) -> Vec<ChewingKey> {
-    oxpinyin_core::tool::parse_direct(pinyin.to_bytes(), oxpinyin_core::USE_TONE, false)
-        .keys
-        .into_iter()
-        .map(|key| key.key)
-        .collect()
+    oxpinyin_core::tool::parse_direct(
+        pinyin.to_bytes(),
+        oxpinyin_core::OptionBits::USE_TONE,
+        false,
+    )
+    .keys
+    .into_iter()
+    .map(|key| key.key)
+    .collect()
 }
 
 /// `ZhuyinDirectParser2::parse` with `USE_TONE | FORCE_TONE`
@@ -29,12 +33,13 @@ pub(crate) fn parse_zhuyin(pinyin: &CStr) -> Vec<ChewingKey> {
     let Ok(text) = std::str::from_utf8(pinyin.to_bytes()) else {
         return Vec::new();
     };
-    oxpinyin_core::parse_zhuyin_direct(text, oxpinyin_core::USE_TONE | oxpinyin_core::FORCE_TONE)
-        .into_iter()
-        .filter_map(|(key, tone)| {
-            ChewingKey::from_pinyin(key.text()).map(|key| key.with_tone(tone))
-        })
-        .collect()
+    oxpinyin_core::parse_zhuyin_direct(
+        text,
+        oxpinyin_core::OptionBits::USE_TONE | oxpinyin_core::OptionBits::FORCE_TONE,
+    )
+    .into_iter()
+    .filter_map(|(key, tone)| ChewingKey::from_pinyin(key.text()).map(|key| key.with_tone(tone)))
+    .collect()
 }
 
 /// The packed `ChewingKey` bytes of one pronunciation, as a phrase item

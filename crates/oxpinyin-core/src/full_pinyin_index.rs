@@ -145,14 +145,15 @@ fn parse_one_index_key(
     options: crate::OptionBits,
     index: FullPinyinIndex,
 ) -> Option<FullPinyinIndexKey> {
-    let use_tone = options.contains(crate::USE_TONE);
+    let use_tone = options.contains(crate::OptionBits::USE_TONE);
     let mut parsed_len = input.len();
     let mut tone = 0;
     if use_tone && parsed_len > 0 && matches!(input[parsed_len - 1], b'1'..=b'5') {
         tone = input[parsed_len - 1] - b'0';
         parsed_len -= 1;
     }
-    if parsed_len == 0 || (use_tone && options.contains(crate::FORCE_TONE) && tone == 0) {
+    if parsed_len == 0 || (use_tone && options.contains(crate::OptionBits::FORCE_TONE) && tone == 0)
+    {
         return None;
     }
 

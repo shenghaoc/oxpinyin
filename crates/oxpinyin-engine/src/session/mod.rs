@@ -63,17 +63,14 @@ impl Settings {
         // A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
         // USE_RESPLIT_TABLE` unless told otherwise: the table bits are
         // always on, and incomplete pinyin follows the settings.
-        let incomplete = settings.incomplete_pinyin;
-        let options = OptionBits::default()
-            .with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete)
-            .with(oxpinyin_core::USE_DIVIDED_TABLE, true)
-            .with(oxpinyin_core::USE_RESPLIT_TABLE, true);
+        let mut options = OptionBits::USE_DIVIDED_TABLE | OptionBits::USE_RESPLIT_TABLE;
+        options.set(OptionBits::PINYIN_INCOMPLETE, settings.incomplete_pinyin);
         Self { options }
     }
 
     /// Whether the `PINYIN_INCOMPLETE` bit is set.
     const fn incomplete(self) -> bool {
-        self.options.has_incomplete()
+        self.options.contains(OptionBits::PINYIN_INCOMPLETE)
     }
 }
 
@@ -580,12 +577,12 @@ pub(crate) fn build_scan_matrix(
     options: OptionBits,
     divided: bool,
 ) -> Vec<Vec<ScanKey>> {
-    let selected_edges = graph.fewest_keys(options.has_incomplete());
+    let selected_edges = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     build_scan_matrix_over(graph, &selected_edges, options, divided)
 }
 
 /// [`build_scan_matrix`] over the selected parse the caller already holds:
-/// `selected_edges` must be `graph.fewest_keys(options.has_incomplete())`.
+/// `selected_edges` must be `graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE))`.
 pub(crate) fn build_scan_matrix_over(
     graph: &SegmentGraph,
     selected_edges: &[Edge],
@@ -627,7 +624,7 @@ fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: boo
     // Gated on `USE_RESPLIT_TABLE` — upstream's `resplit_step` checks
     // `options & USE_RESPLIT_TABLE` (`phonetic_key_matrix.cpp:89`) and
     // returns false without it. At `0x0` neither table bit is set.
-    if divided && options.has_resplit_table() {
+    if divided && options.contains(OptionBits::USE_RESPLIT_TABLE) {
         resplit_step(columns);
     }
 
@@ -642,7 +639,7 @@ fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: boo
     // `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
     // returns false without it. At `0x0` the bit is clear, so `xian`'s
     // divided pairs (`xi` + `an`) are not in the inventory.
-    if divided && options.has_divided_table() {
+    if divided && options.contains(OptionBits::USE_DIVIDED_TABLE) {
         inner_split_step(columns);
     }
 
@@ -692,7 +689,7 @@ pub fn parse_time_keys(
             column.push(key);
         }
     }
-    if divided && options.has_resplit_table() {
+    if divided && options.contains(OptionBits::USE_RESPLIT_TABLE) {
         for index in 0..parsed_len {
             for slot in 0..columns[index].len() {
                 let key = columns[index][slot];
@@ -714,7 +711,7 @@ pub fn parse_time_keys(
             }
         }
     }
-    if divided && options.has_divided_table() {
+    if divided && options.contains(OptionBits::USE_DIVIDED_TABLE) {
         for index in 0..columns.len() {
             for slot in 0..columns[index].len() {
                 let key = columns[index][slot];
@@ -937,7 +934,7 @@ fn dynamic_adjust_bigram_possibility(
     gram: Option<&MergedGram>,
     token: u32,
 ) -> Result<f32, oxpinyin_core::GramFault> {
-    if !options.has_dynamic_adjust() {
+    if !options.contains(OptionBits::DYNAMIC_ADJUST) {
         return Ok(0.0);
     }
     let Some(row) = gram else {

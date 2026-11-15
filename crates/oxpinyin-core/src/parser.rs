@@ -1,6 +1,5 @@
 //! Full-pinyin single-key parsing.
 
-use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE};
 use crate::{CHEWING_ZERO_TONE, ChewingKey, OptionBits, SyllableKey};
 
 /// Whether a key is a complete syllable or an incomplete initial.
@@ -38,32 +37,31 @@ impl FullPinyinParser {
     /// buffer (class (b)) and answers `false`, as this does, and the C
     /// adapters return `false` for it too.
     #[must_use]
-    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
+    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         if input.contains(&b'\'') {
             return None;
         }
-        let bits = OptionBits::from_bits(options);
         let mut tone = CHEWING_ZERO_TONE;
         let mut core = input;
-        if bits.contains(USE_TONE) {
+        if options.contains(OptionBits::USE_TONE) {
             if let Some((&last, rest)) = input.split_last()
                 && (b'1'..=b'5').contains(&last)
             {
                 tone = last - b'0';
                 core = rest;
             }
-            if bits.contains(FORCE_TONE) && tone == CHEWING_ZERO_TONE {
+            if options.contains(OptionBits::FORCE_TONE) && tone == CHEWING_ZERO_TONE {
                 return None;
             }
         }
         let text = core::str::from_utf8(core).ok()?;
-        let syllable = SyllableKey::from_option_text(text, bits)?;
+        let syllable = SyllableKey::from_option_text(text, options)?;
         // `check_pinyin_options` (`pinyin_parser2.cpp:38-58` at 074a2219):
         // an index row flagged `PINYIN_INCOMPLETE` — an initial-only
         // spelling — answers `false` unless the option word carries the
         // bit (issue #547: `b`, `zh`, `m` under 0x0 or 0x20).
         if syllable.completeness() == crate::Completeness::Partial
-            && !bits.contains(PINYIN_INCOMPLETE)
+            && !options.contains(OptionBits::PINYIN_INCOMPLETE)
         {
             return None;
         }
@@ -76,7 +74,7 @@ impl FullPinyinParser {
 #[cfg(test)]
 mod tests {
     use super::FullPinyinParser;
-    use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
+    use crate::OptionBits;
 
     /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
     /// one spelling probe — multi-syllable and apostrophe inputs are
@@ -86,55 +84,66 @@ mod tests {
     fn full_pinyin_one_key_law() {
         let parser = FullPinyinParser;
 
-        let key = parser.parse_one_key(0, b"ni").expect("ni parses");
+        let key = parser
+            .parse_one_key(OptionBits::empty(), b"ni")
+            .expect("ni parses");
         assert_eq!(key.pinyin_string(), "ni");
 
         // The probe covers the whole input: no forward maximum match.
-        assert_eq!(parser.parse_one_key(0, b"nihao"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b"nihao"), None);
         // Apostrophes are refused (the pin asserts on them).
-        assert_eq!(parser.parse_one_key(0, b"ni'hao"), None);
-        assert_eq!(parser.parse_one_key(0, b""), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b"ni'hao"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b""), None);
 
         // Toneless without USE_TONE; tone carried with it.
-        let toned = parser.parse_one_key(USE_TONE, b"zai4").expect("zai4");
+        let toned = parser
+            .parse_one_key(OptionBits::USE_TONE, b"zai4")
+            .expect("zai4");
         assert_eq!(toned.pinyin_string(), "zai4");
-        assert_eq!(parser.parse_one_key(0, b"zai4"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b"zai4"), None);
 
         // FORCE_TONE is dead without USE_TONE, rejects the toneless
         // `zai` with it, and accepts the toned form.
-        assert!(parser.parse_one_key(FORCE_TONE, b"zai").is_some());
-        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"zai"), None);
         assert!(
             parser
-                .parse_one_key(USE_TONE | FORCE_TONE, b"zai4")
+                .parse_one_key(OptionBits::FORCE_TONE, b"zai")
+                .is_some()
+        );
+        assert_eq!(
+            parser.parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"zai"),
+            None
+        );
+        assert!(
+            parser
+                .parse_one_key(OptionBits::USE_TONE | OptionBits::FORCE_TONE, b"zai4")
                 .is_some()
         );
         // `6` is not a tone: the digit stays in the core and fails it.
-        assert_eq!(parser.parse_one_key(USE_TONE, b"zai6"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::USE_TONE, b"zai6"), None);
 
         // Initial-only keys are index rows flagged PINYIN_INCOMPLETE:
         // `check_pinyin_options` refuses them unless the option word
         // carries the bit (`pinyin_parser2.cpp:42-46`), so `b` parses
         // under PINYIN_INCOMPLETE and under nothing else (#547).
-        assert_eq!(parser.parse_one_key(0, b"b"), None);
-        assert_eq!(parser.parse_one_key(USE_TONE, b"b1"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b"b"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::USE_TONE, b"b1"), None);
         let b = parser
-            .parse_one_key(PINYIN_INCOMPLETE, b"b")
+            .parse_one_key(OptionBits::PINYIN_INCOMPLETE, b"b")
             .expect("initial-only under PINYIN_INCOMPLETE");
         assert_eq!(b.pinyin_string(), "b");
         assert_eq!(b.yunmu_string(), "");
         assert_eq!(
             parser
-                .parse_one_key(PINYIN_INCOMPLETE, b"zh")
+                .parse_one_key(OptionBits::PINYIN_INCOMPLETE, b"zh")
                 .map(|k| k.to_packed()),
             Some(0x0017)
         );
 
         // Correction aliases resolve through the option gate.
         let ang = parser
-            .parse_one_key(PINYIN_CORRECT_GN_NG, b"agn")
+            .parse_one_key(OptionBits::PINYIN_CORRECT_GN_NG, b"agn")
             .expect("agn corrects");
         assert_eq!(ang.pinyin_string(), "ang");
-        assert_eq!(parser.parse_one_key(0, b"agn"), None);
+        assert_eq!(parser.parse_one_key(OptionBits::empty(), b"agn"), None);
     }
 }

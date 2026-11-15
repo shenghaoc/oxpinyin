@@ -13,7 +13,7 @@
 
 use core::fmt;
 
-use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, USE_TONE};
+use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
 /// Largest input whose byte positions fit an [`Edge`].
 ///
@@ -534,8 +534,8 @@ fn emit_edges(
     // The pin always tries max_full_pinyin_length = 7 (including tone),
     // pinyin_parser2.cpp:82,269. A toneless span of seven bytes can still
     // parse when strcmp stops at an embedded NUL before its explicit end.
-    let use_tone = options.contains(USE_TONE);
-    let force_tone = use_tone && options.contains(crate::FORCE_TONE);
+    let use_tone = options.contains(OptionBits::USE_TONE);
+    let force_tone = use_tone && options.contains(OptionBits::FORCE_TONE);
     let max_span = MAX_SYLLABLE_LEN + 1;
     // Resolve each bounded span once. Classification needs the longest
     // complete key before emission, but a second lookup would repeat UTF-8
@@ -665,7 +665,7 @@ fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<(SyllableKey, u8
 #[cfg(test)]
 mod tests {
     use super::{Edge, EdgeKind, SegmentGraph};
-    use crate::{OptionBits, PINYIN_CORRECT_ON_ONG, SyllableKey, USE_TONE};
+    use crate::{OptionBits, SyllableKey};
 
     /// Renders the graph as `from-to:key:kind:tone` under `options`.
     fn rendered_with_options(input: &str, options: OptionBits) -> Vec<String> {
@@ -688,11 +688,11 @@ mod tests {
 
     /// `PINYIN_INCOMPLETE | USE_TONE` — the W15 tone profile.
     fn tone_options() -> OptionBits {
-        OptionBits::from_bits(crate::PINYIN_INCOMPLETE | USE_TONE)
+        OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE
     }
 
     fn force_tone_options() -> OptionBits {
-        OptionBits::from_bits(crate::PINYIN_INCOMPLETE | USE_TONE | crate::FORCE_TONE)
+        OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE | OptionBits::FORCE_TONE
     }
 
     #[test]
@@ -720,7 +720,7 @@ mod tests {
         // The check is nested inside the tone scan, so a word carrying
         // FORCE_TONE without USE_TONE (the harness's inert `0x1ca` shape)
         // parses exactly like the toneless profile.
-        let inert = OptionBits::from_bits(crate::PINYIN_INCOMPLETE | crate::FORCE_TONE);
+        let inert = OptionBits::PINYIN_INCOMPLETE | OptionBits::FORCE_TONE;
         let graph = SegmentGraph::build_with_options(b"nihao", inert).expect("valid");
         assert!(graph.fully_consumed());
     }
@@ -815,7 +815,7 @@ mod tests {
         // Incomplete edges are emitted unconditionally and filtered by the
         // walk (`fewest_keys(false)`, the session's `walk`), so the tone
         // rides an edge the incomplete-off profile drops whole.
-        let without_incomplete = OptionBits::from_bits(USE_TONE);
+        let without_incomplete = OptionBits::USE_TONE;
         let graph = SegmentGraph::build_with_options(b"n4", without_incomplete).expect("valid");
         assert_eq!(
             graph
@@ -945,11 +945,8 @@ mod tests {
 
     #[test]
     fn edge_distance_marks_alias_spellings_only() {
-        let graph = SegmentGraph::build_with_options(
-            b"chonga",
-            OptionBits::from_bits(PINYIN_CORRECT_ON_ONG),
-        )
-        .expect("valid");
+        let graph = SegmentGraph::build_with_options(b"chonga", OptionBits::PINYIN_CORRECT_ON_ONG)
+            .expect("valid");
         let distances: Vec<String> = graph
             .edges()
             .iter()

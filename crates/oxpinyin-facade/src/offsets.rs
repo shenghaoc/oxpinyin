@@ -219,7 +219,7 @@ pub fn zhuyin_lookup_session_offset(
 #[cfg(test)]
 mod tests {
     use oxpinyin_core::{
-        DoublePinyinParser, DoublePinyinScheme, USE_TONE, ZhuyinParser, ZhuyinScheme,
+        DoublePinyinParser, DoublePinyinScheme, OptionBits, ZhuyinParser, ZhuyinScheme,
     };
 
     use super::*;
@@ -230,7 +230,7 @@ mod tests {
     /// transformed key boundaries are 2 and 6 with the apostrophe at 2.
     fn nihao() -> ZhuyinParse {
         let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
-            .parse_with_options(b"su3cl3", USE_TONE);
+            .parse_with_options(b"su3cl3", OptionBits::USE_TONE);
         assert_eq!(parse.consumed(), 6);
         assert_eq!(parse.keys().len(), 2);
         assert_eq!(
@@ -344,8 +344,8 @@ mod tests {
     fn double_pinyin_mappers_round_trip_every_key_boundary() {
         // The scheme's own reading of the input is the fixture: whatever
         // keys ZRM produces, the two mappers must agree on their boundaries.
-        let parse =
-            DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm).parse_with_options(b"nihk", 0);
+        let parse = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm)
+            .parse_with_options(b"nihk", OptionBits::empty());
         assert!(!parse.keys().is_empty(), "ZRM parses `nihk`");
         let mut transformed = 0;
         for key in parse.keys() {
