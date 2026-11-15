@@ -1710,21 +1710,6 @@ impl UserStore {
             .or_else(|| self.with_appended_item(token, |item| item.n_pronunciations() as u32))
     }
 
-    /// The item's text, without decoding or collecting its readings.
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn phrase_text(&self, token: Token) -> Result<Option<Vec<u32>>, UserStoreError> {
-        Ok(self.with_user_item(token, |item| {
-            item.as_bytes()[6..6 + 4 * item.phrase_length()]
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect()
-        }))
-    }
-
     /// Whether this store owns the phrase, without materializing its fields.
     ///
     /// # Errors
@@ -1741,44 +1726,15 @@ impl UserStore {
         Ok(self.with_user_item(token, |item| item.phrase_length()))
     }
 
-    /// One reading's stored key words, as `get_nth_pronunciation` copies them
-    /// (074a2219 phrase_index.cpp:33-50): a session item hands out its packed
-    /// words verbatim, whether or not they name a syllable. Missing readings
-    /// answer `None`.
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn nth_pronunciation_words(
-        &self,
-        token: Token,
-        nth: usize,
-    ) -> Result<Option<Vec<u16>>, UserStoreError> {
-        Ok(self
-            .with_user_item(token, |item| {
-                let reading = item.pronunciation(nth)?;
-                Some(
-                    reading
-                        .keys
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-                        .collect(),
-                )
-            })
-            .flatten())
-    }
-
     /// One reading's stored key bytes, borrowed from a session-arena item.
     ///
     /// `read` runs while the item view is live and receives the item's stored
     /// length and the reading's packed little-endian words, or `None` when
     /// the item has no such reading. `None` is returned when no session item
-    /// backs `token`; callers then use [`Self::nth_pronunciation_words`],
-    /// which copies. This optional borrowed path keeps the
-    /// token getters' copy into the caller's array single for an
-    /// arena-resident reading, as the pin's `get_nth_pronunciation` copies
-    /// once (`phrase_index.cpp:33-50`).
+    /// backs `token`. A session item hands out its packed words verbatim,
+    /// whether or not they name a syllable, and the token getters copy them
+    /// once into the caller's array, as the pin's `get_nth_pronunciation`
+    /// does (074a2219 `phrase_index.cpp:33-50`).
     pub fn with_nth_pronunciation_words<R>(
         &self,
         token: Token,

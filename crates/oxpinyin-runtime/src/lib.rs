@@ -819,14 +819,9 @@ impl<'a> RuntimeDict<'a> {
                 if !self.library_visible(u32::from(library_of(token))) {
                     return None;
                 }
-                let store = self.user;
-                store
+                self.user
                     .with_user_item(token, |item| item.phrase_text())
-                    .unwrap_or_else(|| {
-                        store.phrase_text(token).ok().flatten().and_then(|words| {
-                            PhraseText::from_stored_words(words.into_iter().map(Some))
-                        })
-                    })
+                    .flatten()
             }
             _ => None,
         }
@@ -864,8 +859,7 @@ impl<'a> RuntimeDict<'a> {
                 if !self.library_visible(u32::from(library_of(token))) {
                     return None;
                 }
-                let store = self.user;
-                store
+                self.user
                     .with_user_item(token, |item| {
                         read(
                             item.phrase_length(),
@@ -873,13 +867,7 @@ impl<'a> RuntimeDict<'a> {
                             item.phrase_text(),
                         )
                     })
-                    .unwrap_or_else(|| {
-                        let words = store.phrase_text(token).ok().flatten()?;
-                        Some(TokenPhrase {
-                            phrase_length: words.len(),
-                            text: PhraseText::from_stored_words(words.into_iter().map(Some)),
-                        })
-                    })
+                    .flatten()
             }
             _ => None,
         }
@@ -907,10 +895,13 @@ impl<'a> RuntimeDict<'a> {
         }
     }
 
-    /// Read only the nth insertion-ordered key list and the stored length.
-    /// `None` means a missing item/library; a present item with no nth reading
-    /// retains its length for the existing class-(b) zero-key C result
-    /// (074a2219 `pinyin.cpp:2801-2818`, `zhuyin.cpp:1793-1810`).
+    /// Read only the nth insertion-ordered key list and the stored length of
+    /// a system item. `None` means a missing item/library; a present item
+    /// with no nth reading retains its length for the existing class-(b)
+    /// zero-key C result (074a2219 `pinyin.cpp:2801-2818`,
+    /// `zhuyin.cpp:1793-1810`). A `USER_FILE` item is read in place with
+    /// [`Self::with_user_nth_pronunciation_words`]; this answers `None` for
+    /// it.
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
         if self.is_system_library(library_of(token)) {
@@ -931,19 +922,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        match library_of(token) {
-            5..=7 => {
-                if !self.library_visible(u32::from(library_of(token))) {
-                    return None;
-                }
-                let store = self.user;
-                Some(TokenPronunciation {
-                    phrase_length: store.phrase_length(token).ok()??,
-                    keys: store.nth_pronunciation_words(token, nth).ok()?,
-                })
-            }
-            _ => None,
-        }
+        None
     }
 
     /// Read one `USER_FILE` reading's stored key words without copying them
@@ -953,7 +932,7 @@ impl<'a> RuntimeDict<'a> {
     /// packed little-endian words, or `None` when the item has no such
     /// reading (the pin's zeroed past-the-end result). `None` is returned
     /// when no visible `USER_FILE` item backs the token, so a caller falls
-    /// back to [`Self::token_nth_pronunciation`], which serves a row store.
+    /// back to [`Self::token_nth_pronunciation`], which serves a system item.
     pub fn with_user_nth_pronunciation_words<R>(
         &self,
         token: u32,

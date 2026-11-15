@@ -1119,14 +1119,20 @@ mod tests {
         );
         assert!(store.phrase_exists(token).unwrap());
         assert_eq!(store.phrase_length(token).unwrap(), Some(1));
+        let first = store
+            .with_nth_pronunciation_words(token, 0, |_, words| words.map(<[u8]>::to_vec))
+            .unwrap()
+            .unwrap();
+        let first: Vec<u16> = first
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| u16::from_le_bytes(*bytes))
+            .collect();
+        assert_eq!(packed_to_pinyin_keys(&first).unwrap(), keys);
         assert_eq!(
-            packed_to_pinyin_keys(&store.nth_pronunciation_words(token, 0).unwrap().unwrap())
-                .unwrap(),
-            keys
-        );
-        assert_eq!(
-            store.nth_pronunciation_words(token, usize::MAX).unwrap(),
-            None
+            store.with_nth_pronunciation_words(token, usize::MAX, |_, words| words.is_none()),
+            Some(true)
         );
         assert!(store.remove_user_phrase(token).unwrap());
         assert!(store.phrase(token).unwrap().is_none());
@@ -1174,8 +1180,8 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// A stored word no parser writes is handed out verbatim by both arena
-    /// readers, including the padding bit alone (`0x8000`). The pin copies
+    /// A stored word no parser writes is handed out verbatim by the arena
+    /// reader, including the padding bit alone (`0x8000`). The pin copies
     /// the item's words (074a2219 phrase_index.cpp:33-50), while
     /// `packed_to_pinyin_keys` has no key for this one.
     #[test]
@@ -1206,10 +1212,6 @@ mod tests {
                 .is_some()
         );
         assert_eq!(borrowed, Some((1, Some(vec![0x00, 0x80]))));
-        assert_eq!(
-            store.nth_pronunciation_words(token, 0).unwrap(),
-            Some(vec![0x8000])
-        );
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -2959,7 +2961,12 @@ mod tests {
             let (dir, mut store) = open_with_log("persisted-empty-add", &records);
             let token = 0x0100_0009;
             let observe = |store: &UserStore| {
-                assert_eq!(store.phrase_text(token).unwrap(), Some(vec![]));
+                assert_eq!(
+                    store.with_user_item(token, |item| item
+                        .phrase_codes()
+                        .collect::<Option<Vec<u32>>>()),
+                    Some(Some(vec![]))
+                );
                 assert_eq!(store.unigram_delta(token).unwrap(), 37);
                 assert_eq!(
                     store.system_item_override(token).unwrap(),
@@ -2971,8 +2978,9 @@ mod tests {
                 );
                 for (nth, _) in item.prons.iter().enumerate() {
                     assert_eq!(
-                        store.nth_pronunciation_words(token, nth).unwrap(),
-                        Some(vec![])
+                        store.with_nth_pronunciation_words(token, nth, |_, words| words
+                            .map(<[u8]>::to_vec)),
+                        Some(Some(vec![]))
                     );
                 }
             };

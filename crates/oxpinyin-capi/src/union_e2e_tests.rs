@@ -951,8 +951,10 @@ fn an_addon_item_with_a_non_scalar_word_is_promoted_as_stored() {
         // SAFETY: live instance; no guess since the choose.
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(
-            inst.core.user.phrase_text(promoted).expect("store read"),
-            Some(vec![0xD800, 0x4e8c]),
+            inst.core.user.with_user_item(promoted, |item| item
+                .phrase_codes()
+                .collect::<Option<Vec<u32>>>()),
+            Some(Some(vec![0xD800, 0x4e8c])),
             "the stored words, exactly"
         );
     }
