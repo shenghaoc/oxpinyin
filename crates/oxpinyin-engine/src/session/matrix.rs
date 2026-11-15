@@ -6,9 +6,16 @@
 
 use super::*;
 
+/// The placed topology of one parse: for each column up to the bound, the
+/// keys the pin's matrix holds there, and the zero-key columns. The keys
+/// are the scan matrix's own records, shared with it; this view holds only
+/// where each placed column starts.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ParsedMatrix {
-    pub(crate) columns: Vec<Vec<ScanKey>>,
+    keys: std::sync::Arc<[ScanKey]>,
+    /// `keys[starts[column]..starts[column + 1]]` is the placed column; one
+    /// more entry than there are columns, or none for the empty matrix.
+    starts: Vec<usize>,
     pub(crate) zeros: Vec<bool>,
     pub(crate) bound: usize,
 }
@@ -22,7 +29,7 @@ pub(crate) struct ParsedMatrix {
 /// order, which the key getters read as it stands.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ScanMatrix {
-    keys: Vec<ScanKey>,
+    keys: std::sync::Arc<[ScanKey]>,
     /// `keys[starts[column]..starts[column + 1]]` is the column; one more
     /// entry than there are columns, or none for the empty matrix.
     starts: Vec<usize>,
@@ -39,7 +46,10 @@ impl ScanMatrix {
             starts.push(keys.len());
         }
         debug_assert!(keys.is_sorted_by_key(|key| key.syllable_start));
-        Self { keys, starts }
+        Self {
+            keys: keys.into(),
+            starts,
+        }
     }
 
     /// Column `column`, or `None` past the last one.
@@ -73,13 +83,59 @@ pub(crate) struct RetainedParse {
 }
 
 impl ParsedMatrix {
+    /// Placed column `column`, or `None` past the bound.
+    pub(crate) fn get(&self, column: usize) -> Option<&[ScanKey]> {
+        let start = *self.starts.get(column)?;
+        let end = *self.starts.get(column + 1)?;
+        Some(&self.keys[start..end])
+    }
+
+    /// The number of placed columns: the bound and one more, or none.
+    pub(crate) fn len(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    /// Places the scan's keys without copying them. A key is placed at the
+    /// column its edge starts from, or, where the separators are physical
+    /// and the key rides over one, at the column its own text starts at.
+    /// The scan buffer is ordered by syllable start and, within one, by
+    /// column ([`ScanMatrix`]), so each placed column is one run of it in
+    /// the order the pin's matrix holds: the keys that ride in from earlier
+    /// columns, then the column's own. A key placed past the bound is in no
+    /// column.
     pub(crate) fn from_scan(scan: &ScanMatrix, bound: usize, physical: bool) -> Self {
-        let mut columns = vec![Vec::new(); bound + 1];
+        let placed = |key: &ScanKey| {
+            if physical && key.crosses_separator {
+                key.syllable_start
+            } else {
+                key.from
+            }
+        };
+        let mut starts = Vec::with_capacity(bound + 2);
+        let mut next = 0;
+        for column in 0..=bound {
+            while scan
+                .keys()
+                .get(next)
+                .is_some_and(|key| placed(key) < column)
+            {
+                next += 1;
+            }
+            starts.push(next);
+        }
+        while scan
+            .keys()
+            .get(next)
+            .is_some_and(|key| placed(key) <= bound)
+        {
+            next += 1;
+        }
+        starts.push(next);
+        debug_assert!(scan.keys()[..next].is_sorted_by_key(placed));
         let mut zeros = vec![false; bound + 1];
         let first = scan.keys().iter().map(|key| key.syllable_start).min();
         let mut last_end = 0;
-        for key in scan.iter().flatten().copied() {
-            let mut raw = key;
+        for key in scan.keys() {
             if physical && key.crosses_separator {
                 // A preceding real key is required: fill_matrix never fills
                 // before the first key, even for several leading separators.
@@ -92,14 +148,8 @@ impl ParsedMatrix {
                         *zero = true;
                     }
                 }
-                raw.from = key.syllable_start;
             }
-            raw.crosses_separator = false;
-            raw.syllable_start = raw.from;
-            if let Some(column) = columns.get_mut(raw.from) {
-                column.push(raw);
-            }
-            last_end = last_end.max(raw.to);
+            last_end = last_end.max(key.to);
         }
         if physical {
             for zero in zeros.iter_mut().take(bound + 1).skip(last_end) {
@@ -113,7 +163,8 @@ impl ParsedMatrix {
             zeros[bound] = true;
         }
         Self {
-            columns,
+            keys: std::sync::Arc::clone(&scan.keys),
+            starts,
             zeros,
             bound,
         }

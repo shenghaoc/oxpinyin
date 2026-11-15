@@ -967,9 +967,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     session.replace_raw("nihao").expect("parse");
     // Each complete path writes its pronunciation, even if identical
     // (phonetic_key_matrix.cpp:603-668). Duplicate the first placed edge.
-    let parse = &mut session.input.parsed.retained;
-    let first = parse.matrix.columns[0][0];
-    parse.matrix.columns[0].push(first);
+    duplicate_the_first_key(&mut session);
     session.constraints.resize(6);
     session
         .constraints
@@ -3488,14 +3486,17 @@ fn retained_matrix_keeps_leading_gaps_empty_and_follows_the_last_parse() {
     let mut session = session();
     session.replace_raw("'ni''hao'").expect("parsed input");
     let matrix = &session.input.parsed.retained.matrix;
-    assert!(matrix.columns[0].is_empty());
+    assert!(matrix.get(0).expect("a placed column").is_empty());
     assert!(!matrix.zeros[0], "leading gap cannot carry a zero-key hop");
     assert!(
-        !matrix.columns[1].is_empty(),
+        !matrix.get(1).expect("a placed column").is_empty(),
         "ni remains live at its own begin"
     );
     assert!(matrix.zeros[3] && matrix.zeros[4], "internal zero-key run");
-    assert!(!matrix.columns[5].is_empty(), "hao retains its raw begin");
+    assert!(
+        !matrix.get(5).expect("a placed column").is_empty(),
+        "hao retains its raw begin"
+    );
     assert!(
         matrix.zeros[8] && matrix.zeros[9],
         "tail and reserved column"
@@ -3504,7 +3505,7 @@ fn retained_matrix_keeps_leading_gaps_empty_and_follows_the_last_parse() {
     session.replace_raw("nihao").expect("replacement");
     let matrix = &session.input.parsed.retained.matrix;
     assert!(
-        !matrix.columns[0].is_empty(),
+        !matrix.get(0).expect("a placed column").is_empty(),
         "old leading gap must disappear"
     );
     assert!(
@@ -4276,8 +4277,11 @@ fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
         3,
         true,
     );
-    assert_eq!(placed.columns[0].len(), expected.len());
-    assert!(placed.columns[3].is_empty() && placed.zeros[3]);
+    assert_eq!(
+        placed.get(0).expect("a placed column").len(),
+        expected.len()
+    );
+    assert!(placed.get(3).expect("a placed column").is_empty() && placed.zeros[3]);
     assert!(!placed.zeros[0]);
     assert_eq!(
         parsed[0].key(),
@@ -4313,7 +4317,18 @@ fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
     assert_eq!(keys[1].key(), alternate);
     assert_eq!((keys[0].end(), keys[1].end()), (4, 4));
     assert_eq!(
-        training_readings(&scan, b"shun", 0, 4, 1).collect::<Vec<_>>(),
+        training_readings(
+            &super::matrix::ParsedMatrix::from_scan(
+                &super::matrix::ScanMatrix::from_columns(scan),
+                4,
+                true
+            ),
+            b"shun",
+            0,
+            4,
+            1
+        )
+        .collect::<Vec<_>>(),
         [vec![shun.chewing_key().with_tone(3)], vec![alternate]]
     );
 }
@@ -4375,6 +4390,30 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
     }
 }
 
+/// Appends a copy of the first key to its column in the retained parse: the
+/// matrix holds one path twice. The scan matrix and the placed topology
+/// read the same records, as the pin's one matrix does.
+fn duplicate_the_first_key<D, L>(session: &mut Session<D, L>)
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: std::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: std::fmt::Display,
+{
+    let physical = session.input.physical_separators();
+    let parse = &mut session.input.parsed.retained;
+    let mut columns = parse
+        .scan
+        .iter()
+        .map(<[ScanKey]>::to_vec)
+        .collect::<Vec<_>>();
+    let key = columns[0][0];
+    columns[0].push(key);
+    parse.scan = super::matrix::ScanMatrix::from_columns(columns);
+    parse.matrix =
+        super::matrix::ParsedMatrix::from_scan(&parse.scan, parse.matrix.bound, physical);
+}
+
 #[test]
 fn duplicated_matrix_paths_change_sentence_prices_but_not_ordinary_rows() {
     // The sentence uses the whole-span sum (:534-600); ordinary rows
@@ -4393,17 +4432,7 @@ fn duplicated_matrix_paths_change_sentence_prices_but_not_ordinary_rows() {
             .collect::<Vec<_>>()
     };
     let rows = ordinary(&mut session);
-    let parse = &mut session.input.parsed.retained;
-    let mut columns = parse
-        .scan
-        .iter()
-        .map(<[ScanKey]>::to_vec)
-        .collect::<Vec<_>>();
-    let key = columns[0][0];
-    columns[0].push(key);
-    parse.scan = super::matrix::ScanMatrix::from_columns(columns);
-    let key = parse.matrix.columns[0][0];
-    parse.matrix.columns[0].push(key);
+    duplicate_the_first_key(&mut session);
     session.guess_sentence().unwrap();
     assert!((session.sentence.rows[0].poss.unwrap() - before - 2.0_f32.ln()).abs() < 1e-6);
     assert_eq!(ordinary(&mut session), rows);

@@ -106,7 +106,7 @@ impl TrainingPlan<'_> {
             for (index, span) in row.spans.iter().enumerate() {
                 if let Some(end) = ends[index] {
                     let readings = training_readings(
-                        &parsed.columns,
+                        parsed,
                         self.state.input.as_bytes(),
                         span.start,
                         end,
@@ -265,7 +265,7 @@ where
         // span over the gap would silently read a filled column `:663`
         // refuses.
         let parsed = &self.retained_parse().matrix;
-        let matrix = &parsed.columns;
+        let matrix = parsed;
         let zeros = &parsed.zeros;
         // 074a2219 phonetic_lookup.h:921 tails the last span at
         // `constraints->length() - 1`, NOT the CURRENT matrix's last
@@ -808,8 +808,13 @@ where
 /// the end of each span it observes (`None` for one it only passes).
 type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, Vec<Option<usize>>);
 
-pub(crate) fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
-    matrix.get(offset).is_none_or(Vec::is_empty) && !zeros.get(offset).copied().unwrap_or(false)
+pub(crate) fn column_is_empty(
+    matrix: &super::matrix::ParsedMatrix,
+    zeros: &[bool],
+    offset: usize,
+) -> bool {
+    matrix.get(offset).is_none_or(<[ScanKey]>::is_empty)
+        && !zeros.get(offset).copied().unwrap_or(false)
 }
 
 /// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first
@@ -819,7 +824,7 @@ pub(crate) fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: u
 /// a forcing, walks the columns the same way, so
 /// [`crate::nbest::ConstraintSpelling`] reads its paths from here too.
 pub(crate) fn training_readings<'a>(
-    matrix: &'a [Vec<ScanKey>],
+    matrix: &'a super::matrix::ParsedMatrix,
     input: &'a [u8],
     start: usize,
     end: usize,
@@ -837,7 +842,7 @@ pub(crate) fn training_readings<'a>(
 }
 
 pub(crate) struct TrainingReadings<'a> {
-    matrix: &'a [Vec<ScanKey>],
+    matrix: &'a super::matrix::ParsedMatrix,
     input: &'a [u8],
     end: usize,
     length: usize,
@@ -874,7 +879,7 @@ impl Iterator for TrainingReadings<'_> {
             // already folded into the scan edge that follows them.
             if position < self.end
                 && self.input.get(position) == Some(&b'\'')
-                && self.matrix.get(position).is_some_and(Vec::is_empty)
+                && self.matrix.get(position).is_some_and(<[ScanKey]>::is_empty)
             {
                 if let Some(frame) = self.frames.last_mut() {
                     frame.0 += 1;
@@ -924,11 +929,15 @@ mod training_span_tests {
             crosses_separator: false,
             tone,
         };
-        let matrix = vec![
-            vec![edge(0, 1, 2), edge(0, 1, 3), edge(0, 2, 4)],
-            vec![edge(1, 2, 1)],
-            vec![],
-        ];
+        let matrix = super::super::matrix::ParsedMatrix::from_scan(
+            &super::super::matrix::ScanMatrix::from_columns(vec![
+                vec![edge(0, 1, 2), edge(0, 1, 3), edge(0, 2, 4)],
+                vec![edge(1, 2, 1)],
+                vec![],
+            ]),
+            2,
+            false,
+        );
         let readings: Vec<_> = training_readings(&matrix, b"xx", 0, 1, 1).collect();
         assert_eq!(
             readings.iter().map(|r| r[0].tone).collect::<Vec<_>>(),
@@ -937,7 +946,16 @@ mod training_span_tests {
         assert_eq!(training_readings(&matrix, b"xx", 0, 2, 2).count(), 2);
         assert_eq!(training_readings(&matrix, b"xx", 0, 2, 1).count(), 1);
         assert_eq!(training_readings(&matrix, b"xx", 2, 1, 1).count(), 0);
-        let trailing = vec![vec![edge(0, 1, 2)], vec![], vec![], vec![]];
+        let trailing = super::super::matrix::ParsedMatrix::from_scan(
+            &super::super::matrix::ScanMatrix::from_columns(vec![
+                vec![edge(0, 1, 2)],
+                vec![],
+                vec![],
+                vec![],
+            ]),
+            3,
+            false,
+        );
         assert_eq!(training_readings(&trailing, b"x''", 0, 3, 1).count(), 1);
         assert_eq!(training_readings(&trailing, b"xxx", 0, 3, 1).count(), 0);
     }

@@ -849,13 +849,13 @@ where
     let owned;
     let generation = if let Some(topology) = topology {
         GenerationView {
-            columns: &topology.columns,
+            columns: topology,
             zeros: &topology.zeros,
         }
     } else {
         owned = crate::session::matrix::ParsedMatrix::from_scan(matrix, bound, physical_separators);
         GenerationView {
-            columns: &owned.columns,
+            columns: &owned,
             zeros: &owned.zeros,
         }
     };
@@ -1000,7 +1000,7 @@ struct GenerationPath {
 /// separator by a zero-key hop, including every doubled/trailing byte.
 /// Exact-scheme formatting separators are not physical zero keys.
 struct GenerationView<'a> {
-    columns: &'a [Vec<ScanKey>],
+    columns: &'a ParsedMatrix,
     zeros: &'a [bool],
 }
 
@@ -1058,7 +1058,10 @@ impl GenerationView<'_> {
             return Ok(false);
         }
         // search_matrix's empty-end-column gate is independent of paths.
-        if end + 1 < self.columns.len() && self.columns[end].is_empty() && !self.zeros[end] {
+        if end + 1 < self.columns.len()
+            && self.columns.get(end).is_none_or(<[ScanKey]>::is_empty)
+            && !self.zeros[end]
+        {
             return Ok(true);
         }
         // A failed search leaves the scratch mid-path.
@@ -1271,7 +1274,7 @@ impl<'a> ConstraintSpelling<'a> {
             *last = Some(rows);
         }
         let parsed = self.parsed;
-        let columns = &parsed.columns;
+        let columns = parsed;
         if end >= columns.len()
             || column_is_empty(columns, &parsed.zeros, start)
             || column_is_empty(columns, &parsed.zeros, end)
@@ -1688,7 +1691,7 @@ mod tests {
             paths: Box::leak(Box::default()),
             memos: &[],
             generation: Box::leak(Box::new(super::GenerationView {
-                columns: &[],
+                columns: Box::leak(Box::default()),
                 zeros: &[],
             })),
             span: 0..0,
