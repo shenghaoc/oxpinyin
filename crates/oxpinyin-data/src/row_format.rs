@@ -151,7 +151,15 @@ pub mod pinyin_index {
         }
     }
 
-    /// Validates a whole row before yielding records without owning their keys.
+    /// Yields a row's whole records without owning their keys.
+    ///
+    /// A trailing partial record is dropped. The pin reads the row as
+    /// `IndexItem` pointers from `m_chunk.begin()` to `m_chunk.end()`
+    /// (`chewing_large_table2.h:145-150`, `:197-202` at 074a2219), and the
+    /// pointer difference counts whole records. For a stride of 8, 16 or 32
+    /// bytes (1, 2, 5, 6, 13 or 14 keys) that count is exact; for any other
+    /// stride it is undefined, and oxpinyin takes the same whole-record count
+    /// (compatibility policy row 128).
     pub(crate) fn item_views(
         value: &[u8],
         phrase_length: usize,
@@ -164,16 +172,7 @@ pub mod pinyin_index {
                     "phrase_length must be at least 1".to_owned(),
                 ));
             }
-            let stride = item2_stride(phrase_length);
-            if !value.len().is_multiple_of(stride) {
-                return Err(DictError::Parse(format!(
-                    "pinyin index value length {} is not a multiple of stride {} (L={})",
-                    value.len(),
-                    stride,
-                    phrase_length,
-                )));
-            }
-            (stride, 2 * phrase_length)
+            (item2_stride(phrase_length), 2 * phrase_length)
         };
         Ok(value
             .chunks_exact(stride)
@@ -245,9 +244,9 @@ pub mod pinyin_index {
     ///
     /// # Errors
     ///
-    /// Returns `DictError::Parse` if the value length is not a multiple
-    /// of the stride, or if any record is too short to contain its
-    /// fields.
+    /// Returns `DictError::Parse` for a non-empty value with a zero
+    /// `phrase_length`. A trailing partial record is dropped, as
+    /// `item_views` describes.
     pub fn decode_items(
         value: &[u8],
         phrase_length: usize,
@@ -559,9 +558,21 @@ mod tests {
     }
 
     #[test]
-    fn decode_items_rejects_misaligned_and_zero_length() {
-        use pinyin_index::decode_items;
-        assert!(decode_items(&[0; 7], 1).is_err());
+    fn decode_items_drops_a_partial_record_and_rejects_zero_length() {
+        use pinyin_index::{decode_items, encode_item};
+        let ni3 = ChewingKey::new(1, 0, 2, 3);
+        // An 8-byte stride (one key) and a 12-byte stride (three keys): the
+        // pin's pointer difference is exact for the first and undefined for
+        // the second (row 128); both keep the whole records.
+        for keys in [vec![ni3], vec![ni3; 3]] {
+            let mut row = encode_item(0x0100_0001, &keys);
+            row.extend_from_slice(&encode_item(0x0100_0002, &keys)[..4]);
+            let items = decode_items(&row, keys.len()).unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].token, 0x0100_0001);
+            assert_eq!(items[0].keys, keys);
+        }
+        assert!(decode_items(&[0; 7], 1).unwrap().is_empty());
         assert!(decode_items(&[0; 8], 0).is_err());
         assert!(decode_items(&[], 1).unwrap().is_empty());
     }

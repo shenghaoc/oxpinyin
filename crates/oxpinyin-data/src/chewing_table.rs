@@ -702,17 +702,6 @@ mod tests {
     }
 
     #[test]
-    fn search_refuses_a_truncated_row_before_filtering() {
-        let ba = ChewingKey::from_pinyin("ba").unwrap();
-        let query = [ba.with_tone(1)];
-        let mut value = crate::row_format::pinyin_index::encode_item(9, &[ba.with_tone(3)]);
-        value.push(0);
-        let dbm = MemoryDbm::new();
-        dbm.put(index_key(&query), value);
-        assert!(ChewingTable::new(dbm).search(&query).is_err());
-    }
-
-    #[test]
     fn search_miss_returns_none() {
         let table = table_with_ba();
         let zhong = ChewingKey::from_pinyin("zhong").unwrap();

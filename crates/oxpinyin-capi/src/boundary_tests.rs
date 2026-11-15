@@ -4706,3 +4706,38 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
         },
     );
 }
+
+/// A pinyin-table row with a trailing partial record keeps its whole
+/// records. The pin counts the `IndexItem`s between the row's begin and end
+/// (`chewing_large_table2.h:145-150` at 074a2219), so a guess over a row of
+/// one 8-byte record and 4 more bytes lists the record's 丙 and answers true
+/// (compatibility policy row 128).
+#[test]
+fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x4e19], &[0x1081], 100)],
+        100,
+    );
+    let mut row = 0x0100_0001_u32.to_le_bytes().to_vec();
+    row.extend(0x1081_u16.to_le_bytes());
+    row.extend([0; 2 + 4]);
+    craft_tree(
+        &system.join("pinyin_index.bin"),
+        &[((0x1081_u16 & 4095).to_le_bytes().to_vec(), row)],
+    );
+    let user = TempUserDir::new("misaligned-pinyin-row");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert_eq!(parse(instance, "ba"), 2);
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(
+        capture_rows(instance)
+            .iter()
+            .any(|(kind, text, _)| *kind == NORMAL && text == "丙")
+    );
+    close(context, instance);
+}
