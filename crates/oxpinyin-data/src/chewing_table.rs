@@ -74,8 +74,9 @@ pub trait ChewingDbm {
     /// `ChewingLargeTable2::search_internal`: every backend answers a failed
     /// first read as a miss (`chewing_large_table2_tkrzwdb.cpp:146-149`,
     /// `chewing_large_table2_bdb.cpp:182-184`,
-    /// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). The default
-    /// is [`Self::get`].
+    /// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). Kyoto
+    /// Cabinet's body read after a good size check aborts, as the pin's
+    /// `check_result` does (`:170-174`). The default is [`Self::get`].
     fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         self.get(key, value)
     }
@@ -271,7 +272,14 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
 
     fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
-            DbmState::Open(store) => failed_read_is_a_miss(store.get_raw(key, value), value),
+            DbmState::Open(store) => match store.get_pinyin_row_raw(key, value) {
+                // Kyoto Cabinet's body read after a good size check:
+                // `check_result(vsiz == m_db->get(...))`, an assert on every
+                // path through `search_internal`
+                // (`chewing_large_table2_kyotodb.cpp:170-174` at 074a2219).
+                Err(oxpinyin_store::StoreError::ReadAfterCheck) => std::process::abort(),
+                read => failed_read_is_a_miss(read, value),
+            },
             DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),
         }
     }

@@ -525,7 +525,7 @@ impl Db {
     }
 
     /// `check`'s value size, or `None` for a missing record.
-    fn check_size(&self, key: &[u8]) -> Result<Option<usize>, StoreError> {
+    pub(crate) fn check_size(&self, key: &[u8]) -> Result<Option<usize>, StoreError> {
         let key = region(key)?;
         // SAFETY: `region` bounds the key by MEMMAXSIZ.
         let size = unsafe { sys::check(&self.db, key) };

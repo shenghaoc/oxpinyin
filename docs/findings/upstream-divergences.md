@@ -529,6 +529,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | A user-bigram value under four bytes, at mask-out, removal, prediction, training, lookup or export (row 85) | `include/memory_chunk.h:390`, through `storage/ngram.cpp:48-51`, `:80`, `:62-70`, `:133-141`, `:165`, `:303-304`; `lookup/phonetic_lookup.h:884`, `:903` | `e2e_tests::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, `e2e_tests::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one`; `mask_out_aborts_on_a_short_bigram_value`; `e2e_tests::a_short_sentence_start_gram_aborts_the_guess_after_parsing` |
 | A system library that is a directory, from 8 bytes of reported size (row 96) | `include/memory_chunk.h:493`, through `pinyin.cpp:255`, `:289`, `:955`, `:1264`; `zhuyin.cpp:199`, `:588`, `:799` | `{init,save,mask_out,reload}_aborts_on_a_directory_library`, `addon_load_aborts_on_a_directory_library` |
 | A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `phrase::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
+| A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `boundary_tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
 
 ## Open
 
