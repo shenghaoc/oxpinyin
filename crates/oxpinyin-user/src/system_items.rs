@@ -143,6 +143,40 @@ impl SystemItems {
         }
     }
 
+    /// `FacadePhraseIndex::compact`'s copy of system library `nibble` gives
+    /// every slot its own body (074a2219 `phrase_index.cpp:208-217`,
+    /// `:648-675`): slots of a chunk with overlapping bodies stop sharing
+    /// bytes ([`ReplayedLibrary::unshare_bodies`]). A library with no live
+    /// buffer gets one only when its chunk holds such slots, found by one
+    /// sort of its readable item intervals.
+    pub(crate) fn unshare_bodies(&mut self, nibble: u8, original: SystemLibraryRef<'_>) {
+        if !self.replayed.contains_key(&nibble) {
+            let Some(mapped) = original.mapped else {
+                return;
+            };
+            let mut intervals: Vec<(usize, usize)> = (1..original.range_end)
+                .filter_map(|slot| {
+                    let offset = mapped.slot_offset_word(slot)? as usize;
+                    let len = mapped.item_at_slot(slot as usize)?.as_bytes().len();
+                    Some((offset, offset.checked_add(len)?))
+                })
+                .collect();
+            intervals.sort_unstable();
+            let mut furthest_end = 0;
+            if !intervals.into_iter().any(|(offset, end)| {
+                let overlaps = offset < furthest_end;
+                furthest_end = furthest_end.max(end);
+                overlaps
+            }) {
+                return;
+            }
+        }
+        let token = Token::from(nibble) << 24;
+        if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
+            library.unshare_bodies();
+        }
+    }
+
     /// The live sub-index of system library `nibble` for a save's diff: its
     /// buffer, or the shipped chunk where no write has made one.
     pub(crate) fn live_library<'a>(

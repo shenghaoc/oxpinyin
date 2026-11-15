@@ -469,7 +469,7 @@ and space, with two item reads per qualifying pair, as at the pin.
 | Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`) over `remember_walk` (`oxpinyin-engine/src/char_offset.rs`), the same walk over the parse-time matrix in every parse mode, with the pin's fuzzy alternatives (and, for the index-parsed full pinyin, its resplit and divided additions) built at the parse (register row 93) | same walk. The store conversion drops a [packed alternate](#remember-packed-alternate). |
 | Remove user phrase | `pinyin_remove_user_candidate` (`pinyin.cpp:3726`) | `remove_user_phrase` (`store.rs`), same order; the store returns `Ok(false)` where the pin asserts and the C adapter aborts (row 81) | same / follows |
 | Mask out | `pinyin_mask_out` masks user tables, reloads the system chunks and merges filtered journals (`pinyin.cpp:1224-1295`). | `ContextCore::mask_out` preflights faults and remaps libraries around the user-store mask (`oxpinyin-facade/src/context.rs:627-707`, `oxpinyin-user/src/store.rs:2379-2445`). | different / [defect](#mask-out-slot-bits) |
-| Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`) compacts and marks modified. | `ContextCore::end_import` calls `compact_libraries` and marks modified (`oxpinyin-facade/src/context.rs:905-910`, `oxpinyin-user/src/store.rs:1358-1407`). | different / defect ([slot zero](#compact-slot-zero), [system slot aliases](#compact-system-slot-aliases)) |
+| Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`) compacts and marks modified. | `ContextCore::end_import` calls `compact_libraries` and marks modified (`oxpinyin-facade/src/context.rs:905-910`, `oxpinyin-user/src/store.rs:1358-1407`). | different / defect ([slot zero](#compact-slot-zero), [system slot aliases, fixed](#compact-system-slot-aliases)) |
 | Export | Live token and pronunciation cursor and the bigram iterator with count greater than 68 (`pinyin.cpp:662-768,775-910`). | `PhraseExportCursor` and `BigramExportWalk` (`oxpinyin-facade/src/export_rows.rs:19-51,401-436,747-775`). | different / [defect](#export-packed-tone-assertion) |
 
 ## 7. Object model and persistence
@@ -1238,12 +1238,17 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   Rust retains it and its unigram remains readable
   (`oxpinyin-user/src/user_library.rs:178-185,474-485,533-542`).
   Start user compaction at slot 1.
-- <a id="compact-system-slot-aliases"></a>**Import-end compaction retains system slot aliases.** Source-derived.
-  For two slots sharing a body in a crafted system chunk, the pin's compaction copies
-  each body independently (`storage/phrase_index.cpp:208-217,648-675`).
-  Rust keeps the offsets, so a later unigram increment can reach both slots
-  (`oxpinyin-user/src/store.rs:1358-1402`, `oxpinyin-user/src/system_items.rs:135-143,223-229`).
-  Make system compaction separate the live bodies.
+- <a id="compact-system-slot-aliases"></a>**Import-end compaction retains system slot aliases — fixed.** Source-derived.
+  For slots with overlapping bodies in a crafted system chunk, the pin's compaction
+  copies each readable body independently (`storage/phrase_index.cpp:208-217,648-675`).
+  `SystemItems::unshare_bodies` and `ReplayedLibrary::unshare_bodies` sort readable
+  item intervals and track the furthest end. Each body that overlaps an earlier
+  interval gets its own copy. Non-overlapping bodies stay in place.
+  For N occupied slots and B bytes copied, time is O(N log N + B) and extra space
+  is O(N + B); the pin copies all item bytes in O(N + B) time and space.
+  The C API tests `import_end_compaction_gives_aliased_system_slots_their_own_body`
+  and `import_end_compaction_gives_overlapping_system_slots_their_own_body` hold
+  equal and distinct overlapping offsets. Before compaction, writes still share bytes.
 - <a id="export-packed-tone-assertion"></a>**Export skips the tone assertion on system items.** Source-derived.
   Exporting an otherwise readable system item's corrupt `ni` reading with tone 6
   aborts at the pin (`pinyin.cpp:721-733`, `storage/chewing_key.cpp:47-57`).

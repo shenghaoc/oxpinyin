@@ -4882,3 +4882,102 @@ fn addon_candidate_continuation_uses_its_row_read() {
         },
     );
 }
+
+/// `FacadePhraseIndex::compact` copies every readable item of a system
+/// sub-index into a fresh one, and `add_phrase_item` stores each at its own
+/// offset (`phrase_index.cpp:208-217`, `:648-675` at 074a2219). Slots 1 and
+/// 2 of `gb_char.bin` name one body. After the compaction at the end of an
+/// import (`pinyin.cpp:655-660`), an increment of token 1's unigram
+/// (`phrase_index.cpp:150-178`) leaves token 2's as it was.
+#[test]
+fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
+        1000,
+    );
+    // Point slot 2 at slot 1's body.
+    let chunk = system.join("gb_char.bin");
+    let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_one = offsets_start as usize + 4;
+    payload.copy_within(slot_one..slot_one + 4, slot_one + 4);
+    std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
+
+    let user = TempUserDir::new("system-aliased-slots");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert_eq!(unigram(instance, 0x0100_0002), (true, 100));
+    assert_eq!(import_batch(context, 7, &[]), [false; 0]);
+    assert!(pinyin_token_add_unigram_frequency(instance, 0x0100_0001, 5));
+    assert_eq!(unigram(instance, 0x0100_0001), (true, 105));
+    assert_eq!(unigram(instance, 0x0100_0002), (true, 100));
+    close(context, instance);
+}
+
+/// Compaction copies each readable item independently (`phrase_index.cpp:648-675`
+/// at 074a2219), including bodies at distinct offsets that overlap. Adding 256
+/// to the first unigram changes the second's low byte only before compaction.
+#[test]
+fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+
+    for write_before_compaction in [false, true] {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::test_support::items_system(
+            &system_dir(),
+            scratch.path(),
+            &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
+            1000,
+        );
+        let chunk = system.join("gb_char.bin");
+        let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
+        let offsets_start =
+            u32::from_le_bytes(payload[4..8].try_into().expect("offset header")) as usize;
+        let content_start =
+            u32::from_le_bytes(payload[8..12].try_into().expect("content header")) as usize;
+        let slot_one = offsets_start + 4;
+        let offset =
+            u32::from_le_bytes(payload[slot_one..slot_one + 4].try_into().expect("slot 1"));
+        payload[slot_one + 4..slot_one + 8].copy_from_slice(&(offset + 1).to_le_bytes());
+        let body = content_start + offset as usize;
+        // The first item has one character and one reading (16 bytes).
+        // The second starts one byte later, with one character and no readings
+        // (10 bytes). Both unigrams start at zero and both bodies are readable.
+        payload[body..body + 16].fill(0);
+        payload[body..body + 2].copy_from_slice(&[1, 1]);
+        std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
+
+        let user = TempUserDir::new("system-overlapping-slots");
+        let context = init_at(&system, &user.path);
+        assert!(!context.is_null());
+        let instance = alloc(context);
+        assert_eq!(unigram(instance, 0x0100_0001), (true, 0));
+        assert_eq!(unigram(instance, 0x0100_0002), (true, 0));
+        let (first, second) = if write_before_compaction {
+            assert!(pinyin_token_add_unigram_frequency(
+                instance,
+                0x0100_0001,
+                256
+            ));
+            assert_eq!(unigram(instance, 0x0100_0002), (true, 1));
+            (256, 1)
+        } else {
+            (0, 0)
+        };
+        assert_eq!(import_batch(context, 7, &[]), [false; 0]);
+        assert!(pinyin_token_add_unigram_frequency(
+            instance,
+            0x0100_0001,
+            256
+        ));
+        assert_eq!(unigram(instance, 0x0100_0001), (true, first + 256));
+        assert_eq!(unigram(instance, 0x0100_0002), (true, second));
+        close(context, instance);
+    }
+}

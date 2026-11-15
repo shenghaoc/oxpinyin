@@ -1401,6 +1401,8 @@ impl UserStore {
                 if current != original.total {
                     rebased.push((library, current));
                 }
+                // The compacted sub-index holds one body per slot.
+                items.unshare_bodies(library, original);
             }
         }
         for (library, total) in rebased {
