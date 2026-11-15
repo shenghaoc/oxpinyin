@@ -168,11 +168,14 @@ impl CapiContext {
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
 ///
-/// The row is sized to need (40 bytes): its text lives in the instance's
-/// [`CandidateSnapshot`] buffer and the row keeps the span, the type is
-/// one byte ([`CapiCandidate::candidate_type`]), and both ends of the
-/// selection span are `u32` because a graph position bounds the raw
-/// buffer.
+/// The row is sized to need (32 bytes): its text lives in the instance's
+/// [`CandidateSnapshot`] buffer, the type is one byte
+/// ([`CapiCandidate::candidate_type`]), and the span is the pin's two
+/// `guint16` bounds (`pinyin.cpp:103-104` at 074a2219).
+///
+/// A choose reads only the row's scalars and works on the choosing
+/// instance, whichever instance published the row, as the pin does
+/// (`pinyin.cpp:2501-2588`).
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: TextSpan,
@@ -189,23 +192,20 @@ pub struct CapiCandidate {
     /// which carry no token (the pin's `null_token`) and are not trained
     /// (§2: only pinned phrases train).
     pub(crate) token: Cell<Option<PhraseToken>>,
-    /// The row's own span, the pin's `m_begin` and `m_end` in session
-    /// coordinates, which a choose selects (`pinyin.cpp:2577-2590` at
-    /// 074a2219). Zero for a predicted row, as the pin's default
-    /// `lookup_candidate_t` (`:114`).
-    pub(crate) selection: oxpinyin_facade::SelectionSpan,
-    /// The pin's `m_end - m_begin` in the caller's coordinates, fixed at the
-    /// guess: `m_begin` is the guess's own offset and `m_end` the row's span
-    /// end there (`pinyin.cpp:2228-2252`). An accepted choose answers the
-    /// choose's offset plus this length (`:2582-2590`). Zero for a
-    /// predicted row.
-    pub(crate) span_len: u32,
+    /// The pin's `m_begin`: the guess offset in the active parse mode's
+    /// original coordinates, cut to the pin's `guint16` (`pinyin.cpp:103`,
+    /// `:2246`). Zero for a sentence, LONGER or predicted row, which the
+    /// pin leaves at its default (`:114`, `:1936-1950`).
+    pub(crate) begin: u16,
+    /// The pin's `m_end` in the same coordinates (`pinyin.cpp:104`,
+    /// `:2252`).
+    pub(crate) end: u16,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(core::mem::size_of::<CapiCandidate>() == 40);
+    assert!(core::mem::size_of::<CapiCandidate>() == 32);
     assert!(core::mem::align_of::<CapiCandidate>() == 8);
 };
 

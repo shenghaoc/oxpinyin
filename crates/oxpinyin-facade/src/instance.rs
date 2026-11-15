@@ -41,11 +41,11 @@ use crate::context::LiveOptions;
 /// row it never displayed.
 pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 
-/// A published row's chosen span in the session's store coordinates — the
-/// pin's `m_begin` and `m_end` (`lookup_candidate_t`, 074a2219
-/// `pinyin.cpp:97-105`), which its choose reads off the row alone
-/// (`:2577-2590`, `zhuyin.cpp:1646-1666`). Each snapshot row carries its
-/// own, so a choose needs no retained window.
+/// A window row's span in the session's store coordinates, as a guess
+/// places it. The pinyin facade maps its end back to the original
+/// coordinates to publish the pin's `m_end` (`lookup_candidate_t`,
+/// 074a2219 `pinyin.cpp:97-105`); a choose reads the published bounds
+/// ([`PublishedRow`]), not this span.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SelectionSpan {
     begin: u32,
@@ -81,18 +81,23 @@ impl SelectionSpan {
     }
 }
 
-/// What a choose reads off one published row.
+/// What a choose reads off one published row: the pin's `m_begin`,
+/// `m_end` and `m_token` (074a2219 `pinyin.cpp:97-105`, `:2577-2590`;
+/// `zhuyin.cpp:78-85`, `:1646-1666`). The bounds are the pin's `guint16`
+/// fields in the active parse mode's original coordinates, read against
+/// the choosing instance's current parse. The row's display text takes no
+/// part.
 #[derive(Clone, Copy, Debug)]
-pub struct PublishedRow<'a> {
-    /// The row's own span ([`SelectionSpan`]).
-    pub span: SelectionSpan,
+pub struct PublishedRow {
+    /// `m_begin`.
+    pub begin: u16,
+    /// `m_end`.
+    pub end: u16,
     /// The row's token as it stands, after any in-place promotion
     /// (`pinyin.cpp:2559-2561`).
-    pub token: Option<oxpinyin_core::PhraseToken>,
-    /// The n-best tail rank, for a sentence row only.
-    pub nbest_row: Option<u8>,
-    /// The row's text, stored words included.
-    pub text: &'a PhraseText,
+    pub token: oxpinyin_core::PhraseToken,
+    /// Where the recorded text comes from.
+    pub text: oxpinyin_engine::RowText,
 }
 
 /// State behind a facade's instance handle, minus the C parts: everything
@@ -474,38 +479,145 @@ impl<
         Ok(matched)
     }
 
-    /// Select a published null-string row through the pin's constraint path.
+    /// The normal choose of a published `row` on this instance: the pin's
+    /// `validate_constraint`, `add_constraint(m_begin, m_end, token)` and
+    /// `validate_constraint` (074a2219 `pinyin.cpp:2577-2590`,
+    /// `zhuyin.cpp:1646-1666`). The row may come from another instance:
+    /// the pin never checks which instance published it, and reads its
+    /// bounds against this instance's matrix.
     ///
-    /// # Errors
-    ///
-    /// Returns a lookup error from constraint validation.
-    pub fn choose_unreadable_step(
-        &mut self,
-        span: SelectionSpan,
-        token: PhraseToken,
-    ) -> Result<usize, EngineError> {
-        self.session
-            .choose_unreadable_step(span.begin(), span.end(), token)
-    }
-
-    /// Selects the published `row` by its own span, token, rank and text —
-    /// the pin's choose reads the row alone (`pinyin.cpp:2577-2590`,
-    /// `zhuyin.cpp:1646-1666`), so a repeat choose of the same row, after a
-    /// reparse or an accepted choose, forces the same span again. The
-    /// caller's choose offset takes no part in it.
+    /// `add_constraint` refuses an end past the store, which validation
+    /// sized to the matrix (`phonetic_lookup.cpp:64-65`): that is
+    /// [`Selection::Refused`], with both validations run. Otherwise the
+    /// bounds map onto this parse's store coordinates, the caller choosing
+    /// the transformed seams its facade can populate. A bound inside a key
+    /// names a matrix column no key fills, so the forcing does not survive
+    /// the second validation ([`oxpinyin_engine::Session::choose_unspellable_span`]).
+    /// The columns are the pin's own (`parse_matrix`), divided and resplit
+    /// keys included.
+    /// The caller's choose offset takes no part.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError`] from the engine's selection.
-    pub fn select_published(&mut self, row: &PublishedRow<'_>) -> Result<Selection, EngineError> {
-        let target = SelectionTarget {
-            span_start: row.span.begin(),
-            span_end: row.span.end(),
-            token: row.token,
-            nbest_row: row.nbest_row,
-            text: row.text,
+    pub fn select_published(
+        &mut self,
+        row: &PublishedRow,
+        map_double_pinyin: bool,
+        map_full_pinyin: bool,
+    ) -> Result<Selection, EngineError> {
+        let (begin, end) = (usize::from(row.begin), usize::from(row.end));
+        let size = if self.session.selection_capacity() == 0 {
+            0
+        } else {
+            self.parsed_len + 1
         };
-        self.session.select_target(&target)
+        if end > size {
+            return self.session.refuse_selection();
+        }
+        let (start, stop, spells) = match self.abi_key_images(map_double_pinyin, map_full_pinyin) {
+            Some(images) => {
+                // The pin's own columns (`fill_matrix`, `resplit_step`,
+                // `inner_split_step`; `phonetic_key_matrix.cpp:27-200`), in
+                // original coordinates, divided and resplit keys included.
+                // A `'` between two keys holds a zero key (`:67-79`), which a
+                // forcing may start on too.
+                let starts_a_key = self
+                    .parse_matrix
+                    .iter()
+                    .any(|key| key.syllable_start() == begin)
+                    || images
+                        .windows(2)
+                        .any(|pair| pair[0].begin_end.1 <= begin && begin < pair[1].begin_end.0);
+                let ends_a_key = self.parse_matrix.iter().any(|key| key.end() == end);
+                (
+                    session_bound(&images, begin, false),
+                    session_bound(&images, end, true),
+                    starts_a_key && ends_a_key,
+                )
+            }
+            None => (begin, end, true),
+        };
+        if spells {
+            self.session.select_row(start, stop, row.token, row.text)
+        } else {
+            self.session.choose_unspellable_span(start, stop)
+        }
+    }
+
+    /// The base keys of the active transformed parse, each with its
+    /// original span and its image in session coordinates, or `None` for
+    /// plain full pinyin, whose session coordinates are the original ones.
+    fn abi_key_images(
+        &self,
+        map_double_pinyin: bool,
+        map_full_pinyin: bool,
+    ) -> Option<Vec<KeyImage>> {
+        if let Some(parse) = self.zhuyin_parse.as_ref() {
+            return Some(key_images(
+                parse
+                    .keys()
+                    .iter()
+                    .map(|item| (item.start(), item.end(), item.key().text().len())),
+            ));
+        }
+        if map_double_pinyin && let Some(parse) = self.double_parse.as_ref() {
+            return Some(key_images(
+                parse
+                    .keys()
+                    .iter()
+                    .map(|item| (item.start(), item.end(), item.key().text().len())),
+            ));
+        }
+        if map_full_pinyin && let Some(parse) = self.full_parse.as_ref() {
+            return Some(key_images(
+                parse
+                    .keys()
+                    .iter()
+                    .map(|item| (item.start(), item.end(), item.canonical().len())),
+            ));
+        }
+        None
+    }
+
+    /// Builds one bound mapper for a publication pass. It owns the base
+    /// key images, so every candidate reuses the same allocation.
+    /// The original-coordinate bound a published row carries for the
+    /// session position `offset`, the inverse of the mapping
+    /// [`Self::select_published`] applies: a key's column maps to its
+    /// original start, a key's text end to its original end, and a
+    /// position inside a key, such as a divided or resplit column
+    /// (`phonetic_key_matrix.cpp:150-200`), to the same distance into the
+    /// key's original span.
+    pub fn publication_bound_mapper(
+        &self,
+        map_double_pinyin: bool,
+        map_full_pinyin: bool,
+    ) -> impl Fn(usize) -> usize + use<S, E> {
+        let images = self.abi_key_images(map_double_pinyin, map_full_pinyin);
+        move |offset| {
+            images
+                .as_ref()
+                .map_or(offset, |images| published_bound(images, offset))
+        }
+    }
+
+    /// Whether this instance's decoded results hold rank `rank` and row 0,
+    /// which the pin's NBEST choose asserts (074a2219 `pinyin.cpp:2516-2517`).
+    #[must_use]
+    pub fn has_nbest_rank(&self, rank: u8) -> bool {
+        self.session.has_nbest_rank(rank)
+    }
+
+    /// The pin's NBEST choose on this instance: its own results at `rank`
+    /// (074a2219 `pinyin.cpp:2515-2520`). The caller checks
+    /// [`Self::has_nbest_rank`] first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from the engine's selection.
+    pub fn select_nbest_rank(&mut self, rank: u8) -> Result<Selection, EngineError> {
+        self.session.select_nbest_row(rank)
     }
 
     /// Clears the constraint at `offset`, mapping the caller's original-input
@@ -517,15 +629,9 @@ impl<
         map_double_pinyin: bool,
         map_full_pinyin: bool,
     ) -> bool {
-        let session_offset = if let Some(parse) = self.zhuyin_parse.as_ref() {
-            crate::zhuyin_session_offset(parse, offset)
-        } else if map_double_pinyin && let Some(parse) = self.double_parse.as_ref() {
-            crate::double_session_offset(parse, offset)
-        } else if map_full_pinyin && let Some(parse) = self.full_parse.as_ref() {
-            crate::full_session_offset(parse, offset)
-        } else {
-            offset
-        };
+        let session_offset = self
+            .abi_key_images(map_double_pinyin, map_full_pinyin)
+            .map_or(offset, |images| session_bound(&images, offset, false));
         self.session.clear_constraint(session_offset)
     }
 
@@ -679,4 +785,94 @@ pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str
     };
     log(&format!("{name}: {message}"));
     true
+}
+
+/// One base key of a transformed parse: its original span, the session
+/// column its forcing starts at (0, or the `'` byte in front of it) and
+/// its canonical text's session span.
+struct KeyImage {
+    begin_end: (usize, usize),
+    column: usize,
+    text_start: usize,
+    text_end: usize,
+}
+
+/// The images of keys given as `(original start, original end, canonical
+/// text length)` in the `'`-joined session string.
+fn key_images(keys: impl Iterator<Item = (usize, usize, usize)>) -> Vec<KeyImage> {
+    let mut images = Vec::new();
+    let mut text_start = 0;
+    for (begin, end, len) in keys {
+        let column = if images.is_empty() { 0 } else { text_start - 1 };
+        images.push(KeyImage {
+            begin_end: (begin, end),
+            column,
+            text_start,
+            text_end: text_start + len,
+        });
+        text_start += len + 1; // the apostrophe between keys
+    }
+    images
+}
+
+/// The session position of the original bound `offset`. A key's start
+/// maps to its column and a key's end to its text end. A position inside
+/// a key maps the same distance into its text: the pin places a divided
+/// or resplit column at the key's start plus the new key's spelling
+/// length (`phonetic_key_matrix.cpp:150-200`), and the session string
+/// spells the key canonically. It stays inside the key's text, so a bound
+/// no column holds maps to no column either.
+fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
+    let exact = if is_end {
+        images
+            .iter()
+            .find(|image| image.begin_end.1 == offset)
+            .map(|image| image.text_end)
+    } else {
+        images
+            .iter()
+            .find(|image| image.begin_end.0 == offset)
+            .map(|image| image.column)
+    };
+    if let Some(position) = exact {
+        return position;
+    }
+    if let Some(image) = images
+        .iter()
+        .find(|image| image.begin_end.0 < offset && offset < image.begin_end.1)
+    {
+        let inside = image.text_start + (offset - image.begin_end.0);
+        return inside.clamp(
+            image.text_start + 1,
+            image.text_end.saturating_sub(1).max(image.text_start + 1),
+        );
+    }
+    if offset == 0 {
+        return 0;
+    }
+    images
+        .iter()
+        .find(|image| image.begin_end.0 > offset)
+        .map_or_else(
+            || images.last().map_or(0, |image| image.text_end),
+            |image| image.column,
+        )
+}
+
+/// Map one session bound through the publication pass's base key images.
+fn published_bound(images: &[KeyImage], offset: usize) -> usize {
+    if let Some(image) = images.iter().find(|image| image.text_end == offset) {
+        return image.begin_end.1;
+    }
+    if let Some(image) = images.iter().find(|image| image.column == offset) {
+        return image.begin_end.0;
+    }
+    if let Some(image) = images
+        .iter()
+        .find(|image| image.text_start < offset && offset < image.text_end)
+    {
+        let (begin, end) = image.begin_end;
+        return (begin + (offset - image.text_start)).min(end.saturating_sub(1).max(begin));
+    }
+    images.last().map_or(offset, |image| image.begin_end.1)
 }

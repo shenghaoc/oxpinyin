@@ -148,8 +148,8 @@ fn guess_predicted_result(
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
             token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
-            selection: oxpinyin_facade::SelectionSpan::default(),
-            span_len: 0,
+            begin: 0,
+            end: 0,
         });
         return Ok(true);
     }
@@ -184,8 +184,8 @@ fn guess_predicted_result(
             type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
             token: Cell::new(Some(oxpinyin_core::PhraseToken::new(item.token))),
-            selection: oxpinyin_facade::SelectionSpan::default(),
-            span_len: 0,
+            begin: 0,
+            end: 0,
         });
     }
     Ok(true)
@@ -313,8 +313,8 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag()),
             nbest_index: 0,
             token: Cell::new(None),
-            selection: oxpinyin_facade::SelectionSpan::default(),
-            span_len: 0,
+            begin: 0,
+            end: 0,
         });
     }
     inst.state.candidates.append(rest);
@@ -631,7 +631,7 @@ mod tests {
             .state
             .candidates
             .iter()
-            .any(|row| row.selection != oxpinyin_facade::SelectionSpan::default());
+            .any(|row| (row.begin, row.end) != (0, 0));
         assert!(prior_spans);
         let owned = cstr(prefix);
         let prefix = if borrowed {
@@ -667,7 +667,7 @@ mod tests {
             .state
             .candidates
             .iter()
-            .all(|row| row.selection == oxpinyin_facade::SelectionSpan::default());
+            .all(|row| (row.begin, row.end) == (0, 0));
         assert!(spanless);
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);

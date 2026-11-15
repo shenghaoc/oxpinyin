@@ -958,7 +958,9 @@ fn a_stored_phrase_trains_with_its_stored_length() {
 /// `PhraseText`: a stored phrase is never reduced to "", and an ordinary
 /// text's NUL suffix stops at the record. The pin's choose reads no text
 /// (074a2219 `pinyin.cpp:2577-2587`); its sentence converts each phrase
-/// from the stored words (`src/lookup/lookup.cpp:39-68`).
+/// from the stored words (`src/lookup/lookup.cpp:39-68`). The token is
+/// the fixture's 你, so the forcing spells its span and survives the
+/// choose's second validation (`pinyin.cpp:2585`).
 #[test]
 fn a_chosen_phrase_keeps_its_text_through_the_record() {
     let cases = [
@@ -981,7 +983,7 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
                 crate::CandidateKind::Phrase,
                 1,
                 2,
-                Some(PhraseToken::new(7)),
+                Some(PhraseToken::new(1)),
                 None,
             )]);
         session

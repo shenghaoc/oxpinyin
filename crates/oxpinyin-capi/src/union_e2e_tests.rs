@@ -736,7 +736,7 @@ fn packed_key(spelling: &str, tone: u8) -> u16 {
 
 /// A private system whose addon library 4 holds 二簧 with two toned
 /// readings, an item whose first word is the surrogate 0xD800, and 三次 indexed under `san ci` with no reading in its body.
-fn promotion_system(parent: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn promotion_system(parent: &std::path::Path) -> std::path::PathBuf {
     use crate::test_support::{AddonItem, addon_system, system_dir};
     let readings: [(&[u16], u32); 2] = [
         (&[packed_key("er", 2), packed_key("huang", 2)], 7),
