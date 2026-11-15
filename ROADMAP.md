@@ -41,7 +41,6 @@ They do not block the sweep.
 - Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
   Force it, then revalidate through `guess_sentence` and a replaced selection.
   Compare with the reference-cell oracle using a contract test.
-- Replace the `SEARCH_*` and `ERROR_*` integer codes in `oxpinyin-user/src/phrase_table.rs` with an enum or `Result`.
 
 ### Internal implementation
 
