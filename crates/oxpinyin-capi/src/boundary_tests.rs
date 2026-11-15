@@ -1330,6 +1330,39 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     close(context, instance);
 }
 
+/// A user pinyin-index row with a partial record at its end. The pin's
+/// `ChewingLargeTable2` reads the row as `IndexItem` pointers from the
+/// chunk's begin to its end (`chewing_large_table2.h:145-150` at
+/// `074a2219`): for the eight-byte stride of a two-key record the count
+/// truncates, the trailing four bytes are dropped and the whole record is
+/// found. Other strides are register row 129.
+#[test]
+fn a_user_index_row_with_a_partial_record_keeps_its_whole_records() {
+    let user = TempUserDir::new("user-index-partial-record");
+    let token = saved_user_phrase(&user.path);
+    let path = user.path.join("user_pinyin_index.bin");
+    let mut rows = crate::test_support::store_rows(&path, false);
+    let mut padded = 0;
+    for (_, value) in &mut rows {
+        if value.len() == 8 && value[..4] == token.to_le_bytes() {
+            value.extend_from_slice(&[0xff; 4]);
+            padded += 1;
+        }
+    }
+    assert_eq!(padded, 2, "both key projections hold the record");
+    craft_user_index(&path, &rows);
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(parse(instance, "dada"), 4);
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(
+        capture_rows(instance)
+            .iter()
+            .any(|(kind, text, _)| *kind == NORMAL && text == "龘龘"),
+        "the user phrase is listed"
+    );
+    close(context, instance);
+}
+
 /// A user gram item whose token has high bits set. The bigram rows keep
 /// the item's token and read its phrase through `get_phrase_item`, which
 /// masks the library and the slot (`pinyin.cpp:2352-2364`,

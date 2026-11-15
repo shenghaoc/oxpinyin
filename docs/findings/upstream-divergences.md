@@ -147,6 +147,14 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result. It needs a crafted chunk or user library; an import refuses a phrase of sixteen characters or more (`src/pinyin.cpp:643-644`).
 - **Tests:** `token_getters_return_a_phrase_longer_than_sixteen_whole` (`crates/oxpinyin-capi/src/boundary_tests.rs`, `crates/oxpinyin-zhuyin-capi/src/boundary_tests.rs`). Nothing runs on the pin: its result is undefined.
 
+### Shipped item with a reading past the content end (policy row 130, class (b))
+
+- **Pin:** `SubPhraseIndex::get_phrase_item` sets the item length from the header without checking the content end (`src/storage/phrase_index.cpp:180-205`). The nth pronunciation getter copies the reading from that view (`:33-44`; `src/pinyin.cpp:2801-2818`; `src/zhuyin.cpp:1793-1810`). A reading past the allocation is undefined.
+- **oxpinyin:** the getters return the available header fields, text and complete readings. The nth getter returns false for a reading past the content end.
+- **Decision:** accepted, class (b), for the out-of-bounds read. Reads within the content reproduce the pin.
+- **Rejected:** refusing the entire item in the getters also hides fields the pin reads within bounds.
+- **Tests:** `boundary_tests::a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` (`oxpinyin-capi`).
+
 ## Accepted divergences — store and data files
 
 ### The pinyin index DBMs carry uninitialized struct padding
@@ -239,6 +247,22 @@ An entry holds nothing else.
 - **oxpinyin:** On Berkeley DB, the KMM estimator closes failed handles and omits the `BDB1565` diagnostic in the existing-empty database and no-models cases.
 - **Decision:** accepted under the external API misuse ruling: Berkeley DB requires `DB->close` after a failed open.
 - **Tests:** `kmm_estimate_existing_empty`, `kmm_estimate_no_models` (`crates/oxpinyin-utils/tests/kmm_tools.rs`, Berkeley DB).
+
+### Pinyin-table row with a partial record (policy row 128, class (b))
+
+- **Pin:** search and suggestion pass the raw row bounds as `IndexItem` pointers to `std_lite::equal_range` (`src/storage/chewing_large_table2.h:145-150`, `:197-202`). The pin counts whole 8-, 16- and 32-byte records. The pointer difference is undefined for the other record sizes when the row has a partial tail.
+- **oxpinyin:** reads the whole records and drops the partial tail at every record size.
+- **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
+- **Rejected:** treating the whole row as a miss discards the complete records the pin can read.
+- **Tests:** `boundary_tests::a_misaligned_pinyin_table_row_keeps_its_whole_records` (`oxpinyin-capi`) and `decode_items_drops_a_partial_record_and_rejects_zero_length` (`oxpinyin-data`).
+
+### User pinyin-index row with a partial record (policy row 129, class (b))
+
+- **Pin:** the user table uses the same `ChewingLargeTable2` search and suggestion bounds as row 128 (`src/storage/facade_chewing_table2.h:125-126`, `:151-152`; `src/storage/chewing_large_table2.h:145-150`, `:197-202`). When a partial tail is present, the pin counts whole 8-, 16- and 32-byte records, and the pointer difference is undefined for the other sizes.
+- **oxpinyin:** search, suggestion and reading membership use the whole records at every size. Writes preserve the tail bytes.
+- **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
+- **Rejected:** reporting a miss for the entire row loses complete records.
+- **Tests:** `boundary_tests::a_user_index_row_with_a_partial_record_keeps_its_whole_records` (`oxpinyin-capi`) and `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin-user`).
 
 ## Accepted divergences — utilities
 
