@@ -2705,6 +2705,35 @@ fn a_failed_pinyin_table_read_is_a_miss() {
     );
 }
 
+/// Kyoto Cabinet sizes a pinyin-table row with `check` and reads its body
+/// under `check_result(vsiz == m_db->get(...))`, an assert
+/// (`chewing_large_table2_kyotodb.cpp:159-176`, `pinyin_utils.h:27-31` at
+/// 074a2219). With the check of the `ni` row good and its body read
+/// failing, the sentence guess aborts.
+#[cfg(feature = "kyotocabinet")]
+#[test]
+fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
+    assert_aborts(
+        "boundary_tests::a_pinyin_table_body_read_failure_after_the_check_aborts",
+        || {
+            let user = TempUserDir::new("kc-pinyin-body-read");
+            let (context, instance) = open_at(&user.path);
+            let mut key = 0_u16;
+            let text = cstr("ni");
+            assert!(pinyin_parse_full_pinyin(
+                instance,
+                text.as_ptr(),
+                (&raw mut key).cast()
+            ));
+            assert_eq!(parse(instance, "nihao"), 5);
+            // One read of the row passes: its size check.
+            oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 1);
+            pinyin_guess_sentence(instance);
+            close(context, instance);
+        },
+    );
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

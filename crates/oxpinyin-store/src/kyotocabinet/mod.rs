@@ -255,6 +255,37 @@ impl crate::RawReadStore for KcStore {
         self.db.get_bigram(key, value)
     }
 
+    fn get_pinyin_row_raw(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, crate::StoreError> {
+        value.clear();
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() && crate::read_faults::point_read(key).is_err() {
+            return Ok(false);
+        }
+        // `-1 == vsiz`: a miss and a failed check are one answer
+        // (`chewing_large_table2_kyotodb.cpp:160-163` at 074a2219).
+        let Some(size) = self.db.check_size(key).unwrap_or(None) else {
+            return Ok(false);
+        };
+        // `0 == vsiz`: the key continues the search and no body is read
+        // (`:166-168`).
+        if size == 0 {
+            return Ok(true);
+        }
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() && crate::read_faults::point_read(key).is_err() {
+            return Err(crate::StoreError::ReadAfterCheck);
+        }
+        // `check_result(vsiz == m_db->get(...))` (`:170-174`).
+        match self.db.get(key, value) {
+            Ok(true) if value.len() == size => Ok(true),
+            _ => Err(crate::StoreError::ReadAfterCheck),
+        }
+    }
+
     fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
         self.db.check(key)
     }
