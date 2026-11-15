@@ -104,8 +104,10 @@ pub use glib_sys::GArray;
 // ── Enums ────────────────────────────────────────────────────────────
 
 /// `lookup_candidate_type_t` from `pinyin.h`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
+)]
 #[expect(non_camel_case_types, reason = "upstream C identifier")]
 pub enum lookup_candidate_type_t {
     /// Best sentence-level match.
@@ -126,25 +128,22 @@ pub enum lookup_candidate_type_t {
     PREDICTED_PUNCTUATION_CANDIDATE = 8,
 }
 
+// The C headers expose a four-byte candidate enum on the supported targets.
+const _: () = {
+    assert!(size_of::<lookup_candidate_type_t>() == size_of::<c_uint>());
+    assert!(align_of::<lookup_candidate_type_t>() == align_of::<c_uint>());
+};
+
 impl lookup_candidate_type_t {
     /// The one byte a snapshot row stores the type in: the discriminant.
-    pub(crate) const fn tag(self) -> u8 {
-        self as u8
+    pub(crate) fn tag(self) -> u8 {
+        u32::from(self) as u8
     }
 
     /// The type [`Self::tag`] stored as `tag`. A row stores only tags of
     /// real types; any other byte reads as `NORMAL_CANDIDATE`.
-    pub(crate) const fn from_tag(tag: u8) -> Self {
-        match tag {
-            1 => Self::NBEST_MATCH_CANDIDATE,
-            3 => Self::ZOMBIE_CANDIDATE,
-            4 => Self::PREDICTED_BIGRAM_CANDIDATE,
-            5 => Self::PREDICTED_PREFIX_CANDIDATE,
-            6 => Self::ADDON_CANDIDATE,
-            7 => Self::LONGER_CANDIDATE,
-            8 => Self::PREDICTED_PUNCTUATION_CANDIDATE,
-            _ => Self::NORMAL_CANDIDATE,
-        }
+    pub(crate) fn from_tag(tag: u8) -> Self {
+        Self::try_from(u32::from(tag)).unwrap_or(Self::NORMAL_CANDIDATE)
     }
 }
 

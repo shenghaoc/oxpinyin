@@ -141,16 +141,11 @@ fn fixture_lines() -> Vec<CaptureLine> {
 /// mirrored here so the fixture drives the same keyboards. 7
 /// (`StandardDvorak`) is upstream's setter abort and never appears.
 fn scheme_for(value: u8) -> ZhuyinScheme {
-    match value {
-        1 => ZhuyinScheme::Standard,
-        2 => ZhuyinScheme::Hsu,
-        3 => ZhuyinScheme::Ibm,
-        4 => ZhuyinScheme::Ginyieh,
-        5 => ZhuyinScheme::Eten,
-        6 => ZhuyinScheme::Eten26,
-        8 => ZhuyinScheme::HsuDvorak,
-        9 => ZhuyinScheme::DachenCp26,
-        other => panic!("scheme {other} is outside the parseable keyboards"),
+    match ZhuyinScheme::try_from(i32::from(value)) {
+        Ok(ZhuyinScheme::StandardDvorak) | Err(_) => {
+            panic!("scheme {value} is outside the parseable keyboards")
+        }
+        Ok(scheme) => scheme,
     }
 }
 

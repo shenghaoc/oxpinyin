@@ -44,6 +44,7 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 workspace = true
 
 [dependencies]
+num_enum.workspace = true
 # Marshalling macros shared with oxpinyin-zhuyin-capi (macro-only, no
 # compiled code): the opaque-handle pointer casts and the char**-out
 # sentence writer expand into this crate, where the unsafe is allowed.

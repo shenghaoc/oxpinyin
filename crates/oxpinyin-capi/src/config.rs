@@ -108,30 +108,25 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
-    let scheme = match scheme {
-        1 => oxpinyin_core::DoublePinyinScheme::Zrm,
-        2 => oxpinyin_core::DoublePinyinScheme::Ms,
-        3 => oxpinyin_core::DoublePinyinScheme::Ziguang,
-        4 => oxpinyin_core::DoublePinyinScheme::Abc,
-        5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
-        6 => oxpinyin_core::DoublePinyinScheme::Xhe,
+    let scheme = match oxpinyin_core::DoublePinyinScheme::try_from(scheme) {
         // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
         // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
         // in memory only.
-        30 => std::process::abort(),
+        Ok(oxpinyin_core::DoublePinyinScheme::Customized) => std::process::abort(),
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
         // (`pinyin.cpp:1155-1159`).  Set the packed fallback-cleared bit.
-        _ => {
+        Err(_) => {
             let live = &ctx.core.live.double_scheme;
             live.set(live.get() | oxpinyin_facade::FALLBACK_CLEARED_BIT);
             return true;
         }
+        Ok(scheme) => scheme,
     };
     // A valid scheme (1-6) never has bit 30, so this store clears the
     // fallback-cleared flag implicitly.
-    ctx.core.live.double_scheme.set(scheme as i32);
+    ctx.core.live.double_scheme.set(i32::from(scheme));
     true
 }
 

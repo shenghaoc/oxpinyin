@@ -361,9 +361,9 @@ impl LiveOptions {
     #[must_use]
     pub(crate) fn new(option_word: OptionBits) -> Self {
         Self(Rc::new(LiveOptionsInner {
-            double_scheme: Cell::new(DoublePinyinScheme::Ms as i32),
-            zhuyin_scheme: Cell::new(ZhuyinScheme::Standard as i32),
-            full_scheme: Cell::new(FullPinyinScheme::Hanyu as i32),
+            double_scheme: Cell::new(i32::from(DoublePinyinScheme::Ms)),
+            zhuyin_scheme: Cell::new(i32::from(ZhuyinScheme::Standard)),
+            full_scheme: Cell::new(i32::from(FullPinyinScheme::Hanyu)),
             options: Cell::new(option_word),
         }))
     }
