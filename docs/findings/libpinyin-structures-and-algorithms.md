@@ -656,7 +656,7 @@ follows these types and conversion points in `f32` and `f64` (`expand_one`,
 Register row 11 classes std-maths precision differences as (a).
 Candidate and sentence rows carry no separate integer score.
 
-**Equivalence: failed** for unranged one-step tokens. The arithmetic
+The arithmetic
 is the pin's: `unigram_lambda` (`oxpinyin-data/src/lm/mod.rs:567`), the f64
 `elem` quotient (`:566`), the f32 bigram quotient and product (`:575-580`),
 the f64 product with the possibility and the widen, add and round
@@ -669,9 +669,6 @@ and [S3](compatibility-policy.md#s3-stable-descending-possibility) rulings.
 Steps price with the query tones (#1979) and the stored `USER_FILE`
 readings (#1983).
 
-An unranged `CONSTRAINT_ONESTEP` token is stepped differently
-([ONESTEP defect](#unranged-onestep-token)).
-
 Each prefix-token occurrence seeds its own node, including repeats
 (`lookup/phonetic_lookup.h:244-265`). The token index points to the last
 occurrence. `Trellis::with_seeds` preserves both rules. Initialization takes
@@ -680,6 +677,18 @@ space for u distinct tokens. The C prefix path supplies at most 65 seeds
 (one start and four tokens per suffix, up to sixteen suffixes); the beam
 still keeps 32. Held by `repeated_prefix_tokens_keep_duplicate_sentence_rows`
 in `oxpinyin-capi/src/boundary_tests/sentence.rs`.
+
+ONESTEP still requires a successful span search, but its forced token need
+not be in the returned ranges (`lookup/phonetic_lookup.h:552-554,601-612,
+776-788`). Pricing reads that token directly and sums its pronunciations
+over the existing matrix paths. The first path with the item's key count
+supplies its text-read keys. For P paths of at most L = 16 keys and R
+stored readings, pronunciation pricing takes O(P·R·L) time, plus item
+lookup costs. It adds one forced slot and one token sum, reuses the path
+inventory, and shares the sum across at most 32 beam predecessors.
+An unranged user item is read from its stored body. Held by
+`an_unranged_onestep_token_still_produces_a_sentence` in
+`oxpinyin-capi/src/boundary_tests/sentence.rs`, for system and user libraries.
 
 A zero stored tone compares equal to any query tone
 (`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
@@ -1197,14 +1206,6 @@ N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
 result supplies the tail; `changed` is set before each differing write;
 a zero return from `add_constraint` aborts at `:203`. The store is sized
 by guess-time validation (`:120-138`), not by the NBEST choose.
-
-### Defects from §11
-
-- <a id="unranged-onestep-token"></a>**An unranged `CONSTRAINT_ONESTEP` token is not stepped.** Source-derived.
-  The pin steps a `CONSTRAINT_ONESTEP` token even when the span's ranges do not hold it
-  (`lookup/phonetic_lookup.h:553,601-612`). Rust steps only a ranged token
-  (`oxpinyin-engine/src/nbest.rs:890-894`). It needs an item whose readings the pinyin table does not
-  index. Step the constraint token whether or not it is ranged.
 
 ### Removal candidates
 
