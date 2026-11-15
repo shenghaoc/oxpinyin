@@ -81,6 +81,16 @@ pub trait ChewingDbm {
         self.get(key, value)
     }
 
+    /// Read one phrase-table row with the shape of
+    /// `PhraseLargeTable3::search`: a failed read is a miss
+    /// (`phrase_large_table3_tkrzwdb.cpp:136-139`,
+    /// `phrase_large_table3_bdb.cpp:196-198`,
+    /// `phrase_large_table3_kyotodb.cpp:174-177` at 074a2219). The default
+    /// is [`Self::get`].
+    fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        self.get(key, value)
+    }
+
     /// Whether `key` exists, an empty marker included, with no value bytes
     /// copied — the `SEARCH_CONTINUED` probe and the suggestion walk's
     /// opening check (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`
@@ -284,11 +294,21 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
+    fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        match &self.state {
+            DbmState::Open(store) => failed_read_is_a_miss(store.get_raw(key, value), value),
+            DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),
+        }
+    }
+
     fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
         match &self.state {
-            DbmState::Open(store) => store
-                .contains_raw(key)
-                .map_err(|e| DictError::Table(e.into())),
+            // A failed existence read is a miss: the pin tests
+            // `Get(key, nullptr).IsOK()` and returns
+            // (`chewing_large_table2_tkrzwdb.cpp:511`,
+            // `phrase_large_table3_tkrzwdb.cpp:166` at 074a2219), as its
+            // Kyoto Cabinet `check` and Berkeley DB cursor do.
+            DbmState::Open(store) => Ok(store.contains_raw(key).unwrap_or(false)),
             DbmState::Unopened(db) => {
                 db.read(key);
                 Ok(false)
@@ -333,7 +353,12 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         if let Some(e) = failure {
             return Err(e);
         }
-        scan.map_err(|e| DictError::Table(e.into()))
+        // A cursor step that fails ends the walk with the rows read so far:
+        // the pin returns on a failed `Jump` or `Next` and leaves its loop
+        // on a failed cursor `Get`
+        // (`chewing_large_table2_tkrzwdb.cpp:516-524`,
+        // `phrase_large_table3_tkrzwdb.cpp:171-178` at 074a2219).
+        scan.or(Ok(()))
     }
 }
 

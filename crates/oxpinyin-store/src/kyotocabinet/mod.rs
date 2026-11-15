@@ -287,6 +287,10 @@ impl crate::RawReadStore for KcStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.check(key)
     }
 
@@ -294,8 +298,14 @@ impl crate::RawReadStore for KcStore {
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, crate::StoreError>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, crate::StoreError>,
     ) -> Result<(), crate::StoreError> {
+        #[cfg(feature = "test-hooks")]
+        let visit = {
+            crate::read_faults::scan_start(self.db.is_read_only(), lo)?;
+            crate::read_faults::scan_visitor(self.db.is_read_only(), visit)
+        };
+        let mut visit = visit;
         if self.db.is_ordered() {
             return self.walk_raw(lo, hi, visit);
         }

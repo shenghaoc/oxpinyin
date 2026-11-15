@@ -828,6 +828,10 @@ impl crate::RawReadStore for TkrzwStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.read_only {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.check(key)
     }
 
@@ -837,6 +841,11 @@ impl crate::RawReadStore for TkrzwStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
+        #[cfg(feature = "test-hooks")]
+        let visit = {
+            crate::read_faults::scan_start(self.read_only, lo)?;
+            crate::read_faults::scan_visitor(self.read_only, visit)
+        };
         // `scan_rows` over the file's bare keyspace, every stored key
         // verbatim.
         scan_rows(&self.db, lo, hi, visit)

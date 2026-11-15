@@ -82,7 +82,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
 
     fn search_key(&self, key: &[u8]) -> Result<Vec<u32>, DictError> {
         let mut value = Vec::new();
-        if !self.dbm.get(key, &mut value)? {
+        if !self.dbm.get_phrase_row(key, &mut value)? {
             return Ok(Vec::new());
         }
         decode_tokens(&value)
@@ -93,7 +93,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
     /// with an empty value included.
     pub(crate) fn present_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
         let mut value = Vec::new();
-        if !self.dbm.get(key, &mut value)? {
+        if !self.dbm.get_phrase_row(key, &mut value)? {
             return Ok(None);
         }
         Ok(Some(value))

@@ -318,6 +318,10 @@ impl RawReadStore for BdbStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        #[cfg(feature = "test-hooks")]
+        if self.db.is_read_only() {
+            crate::read_faults::point_read(key)?;
+        }
         self.db.exists(key)
     }
 
@@ -327,6 +331,11 @@ impl RawReadStore for BdbStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
+        #[cfg(feature = "test-hooks")]
+        let visit = {
+            crate::read_faults::scan_start(self.db.is_read_only(), lo)?;
+            crate::read_faults::scan_visitor(self.db.is_read_only(), visit)
+        };
         if self.db.is_hash() {
             self.range_raw_unordered(lo, hi, visit)
         } else {
