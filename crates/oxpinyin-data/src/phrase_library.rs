@@ -215,6 +215,19 @@ impl<'a> PhraseItemView<'a> {
         })
     }
 
+    /// The item that starts `bytes`, read field by field as the pin's token
+    /// getters read it: the view ends at the header-derived length or at the
+    /// end of `bytes`, whichever comes first, and each field read checks its
+    /// own bounds. `None` when the six header bytes are not all in `bytes`.
+    #[must_use]
+    pub fn fields(bytes: &'a [u8]) -> Option<Self> {
+        let header = bytes.get(..ITEM_HEADER_SIZE)?;
+        let total = PhraseItemView { bytes: header }.total_size()?;
+        Some(Self {
+            bytes: bytes.get(..total).unwrap_or(bytes),
+        })
+    }
+
     /// The item's bytes as `get_phrase_item` hands them out: the header-derived
     /// length from its offset, nothing beyond it.
     #[must_use]
@@ -252,6 +265,12 @@ impl PhraseItemView<'_> {
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         PhraseText::from_stored_words(self.phrase_codes())
+    }
+
+    /// Whether every declared word of the text lies inside the item's bytes.
+    #[must_use]
+    pub fn phrase_words_present(&self) -> bool {
+        self.phrase_codes().all(|word| word.is_some())
     }
 
     /// The phrase's stored UCS-4 words in order, `None` where the item's
@@ -728,6 +747,26 @@ impl PhraseLibrary {
         let content = self.payload().get(self.content.clone())?;
         content.get(offset)?;
         content.get(offset.checked_add(1)?).copied().map(u32::from)
+    }
+
+    /// The item behind `token` as the pin's token getters see it.
+    /// `SubPhraseIndex::get_phrase_item` checks the offset and the two
+    /// header bytes, then sets the item's chunk to the header-derived length
+    /// with no bound against the content (074a2219 `phrase_index.cpp:180-205`).
+    /// So the unigram, the text and each reading are read wherever their own
+    /// bytes lie inside the content, even when a later reading does not.
+    /// This view ends at the content end; each field read checks its own
+    /// bounds. A header that passes the content end answers `None`, and so
+    /// does a field past it, a read the pin leaves undefined (compatibility
+    /// policy row 130). Whole-item consumers use [`Self::item`].
+    #[must_use]
+    pub fn item_fields(&self, token: u32) -> Option<PhraseItemView<'_>> {
+        let offset = self.slot_offset((token & PHRASE_MASK) as usize)? as usize;
+        if offset == 0 {
+            return None;
+        }
+        let content = self.payload().get(self.content.clone())?;
+        PhraseItemView::fields(content.get(offset..)?)
     }
 
     /// The item behind a raw library-local slot.

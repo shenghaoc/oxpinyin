@@ -2639,6 +2639,20 @@ impl UserStore {
         self.inner.system_items.borrow().with_live(token, read)
     }
 
+    pub(crate) fn with_live_item_fields<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<Option<R>> {
+        if !self.has_system_items() {
+            return None;
+        }
+        self.inner
+            .system_items
+            .borrow()
+            .with_live_fields(token, read)
+    }
+
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.inner
             .system_items

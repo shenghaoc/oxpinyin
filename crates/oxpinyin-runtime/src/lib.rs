@@ -325,6 +325,17 @@ const fn library_of(token: u32) -> u8 {
     oxpinyin_user::phrase_index_library_index(token)
 }
 
+/// What `_token_get_phrase` reads from a present item (074a2219
+/// `pinyin.cpp:1627-1646`, `zhuyin.cpp:1096-1114`): the stored length and
+/// GLib's conversion of the stored words.
+pub struct TokenPhrase {
+    /// The stored `phrase_length`, which the pin writes to `*len`.
+    pub phrase_length: usize,
+    /// The text, `None` where `g_ucs4_to_utf8` answers NULL: a word at or
+    /// above 0x80000000 before the first zero. The pin still answers true.
+    pub text: Option<PhraseText>,
+}
+
 /// One token reading, without the text or any other reading's keys.
 pub struct TokenPronunciation {
     /// Stored character count, also used for the out-of-range C result.
@@ -827,6 +838,59 @@ impl<'a> RuntimeDict<'a> {
         }
     }
 
+    /// The stored length and text of the token's item, as the C token
+    /// getters read them (`_token_get_phrase`, 074a2219 `pinyin.cpp:1627-1646`,
+    /// `zhuyin.cpp:1096-1114`). `None` only when `get_phrase_item` fails, or
+    /// for a shipped item whose text passes the content end (compatibility
+    /// policy row 130). A shipped item is read through its header-bounded
+    /// view, so readings that pass the content end do not hide its text.
+    #[must_use]
+    pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
+        let read = |length: usize, words_present: bool, text: Option<PhraseText>| {
+            words_present.then_some(TokenPhrase {
+                phrase_length: length,
+                text,
+            })
+        };
+        if self.is_system_library(library_of(token)) {
+            return self
+                .live_items()
+                .read_fields(token, |item| {
+                    read(
+                        item.phrase_length(),
+                        item.phrase_words_present(),
+                        item.phrase_text(),
+                    )
+                })
+                .found()
+                .flatten();
+        }
+        match library_of(token) {
+            5..=7 => {
+                if !self.library_visible(u32::from(library_of(token))) {
+                    return None;
+                }
+                let store = self.user;
+                store
+                    .with_user_item(token, |item| {
+                        read(
+                            item.phrase_length(),
+                            item.phrase_words_present(),
+                            item.phrase_text(),
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        let words = store.phrase_text(token).ok().flatten()?;
+                        Some(TokenPhrase {
+                            phrase_length: words.len(),
+                            text: PhraseText::from_stored_words(words.into_iter().map(Some)),
+                        })
+                    })
+            }
+            _ => None,
+        }
+    }
+
     /// Whether the default facade owns this item. Missing/unloaded libraries
     /// and absent slots both answer false, as `get_phrase_item` does
     /// (074a2219 `phrase_index.h:646-652`, `phrase_index.cpp:180-205`).
@@ -856,15 +920,22 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
         if self.is_system_library(library_of(token)) {
+            // A reading at or past the count is the zero-key result; one
+            // below it whose bytes pass the content end answers no reading
+            // (compatibility policy row 130).
             return self
                 .live_items()
-                .read(token, |item| TokenPronunciation {
-                    phrase_length: item.phrase_length(),
-                    keys: item
+                .read_fields(token, |item| {
+                    let keys = item
                         .pronunciation(nth)
-                        .map(|reading| reading.keys.iter().collect()),
+                        .map(|reading| reading.keys.iter().collect());
+                    (keys.is_some() || nth >= item.n_pronunciations()).then(|| TokenPronunciation {
+                        phrase_length: item.phrase_length(),
+                        keys,
+                    })
                 })
-                .found();
+                .found()
+                .flatten();
         }
         match library_of(token) {
             5..=7 => {

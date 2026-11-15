@@ -515,6 +515,39 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
     close(context, instance);
 }
 
+/// A stored word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL,
+/// but `_token_get_phrase` still writes the stored length and answers true
+/// (`zhuyin.cpp:1104-1113`).
+#[test]
+fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-null-text");
+    write_user_conf(&user.path, &system_dir());
+    let item = ChunkItem {
+        phrase: vec![0x4f60, 0x8000_0000],
+        unigram: 17,
+        prons: vec![(vec![0x302b, 0x30a7], 5)],
+    };
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_chunk(&[(1, item)]).expect("one-item user chunk"),
+    )
+    .expect("write user.bin");
+
+    let (context, instance) = open_with_user(&user.path);
+    let mut length = UNTOUCHED;
+    let mut text = SEEDED as *mut c_char;
+    assert!(zhuyin_token_get_phrase(
+        instance,
+        0x0700_0001,
+        &raw mut length,
+        &raw mut text
+    ));
+    assert_eq!((length, text), (2, ptr::null_mut()));
+    close(context, instance);
+}
+
 /// A stored key word 0x8000 reads back verbatim (`phrase_index.cpp:33-50`).
 #[test]
 fn a_stored_key_word_reads_back_verbatim() {

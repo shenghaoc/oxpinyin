@@ -98,7 +98,9 @@ impl<'a> SystemItem<'a> {
         }
     }
 
-    /// Validated item bytes, borrowed only for this callback.
+    /// The item's bytes, borrowed only for this callback. Under
+    /// [`LiveSystemItems::read_fields`] a shipped item's bytes can end at the
+    /// content end, before the item's header-derived length.
     #[must_use]
     pub fn as_bytes(&self) -> &'a [u8] {
         self.view().as_bytes()
@@ -126,6 +128,12 @@ impl<'a> SystemItem<'a> {
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         self.view().phrase_text()
+    }
+
+    /// Whether every declared word of the text lies inside the item's bytes.
+    #[must_use]
+    pub fn phrase_words_present(&self) -> bool {
+        self.view().phrase_words_present()
     }
 
     /// Reading `nth` in stored order.
@@ -256,14 +264,11 @@ impl<'a> LiveSystemItems<'a> {
     /// not call store accessors from the callback; copy out what is needed
     /// and query the store after it returns. A callback borrowing the shipped
     /// chunk directly runs after those borrows have ended. Consumers: pricing
-    /// (`effective_possibility`), `token_text`, `token_nth_pronunciation`,
-    /// the export probe and row reads.
+    /// (`effective_possibility`), `token_text`, the export probe and row
+    /// reads.
     pub fn read<R>(&self, token: Token, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
-        if !self.is_system_library(crate::phrase::phrase_index_library_index(token)) {
-            return Lookup::Absent;
-        }
-        if !self.library_loaded(u32::from(crate::phrase::phrase_index_library_index(token))) {
-            return Lookup::Unloaded;
+        if let Some(gate) = self.gate(token) {
+            return gate;
         }
         let mut read = Some(read);
         let store = self.user;
@@ -294,6 +299,53 @@ impl<'a> LiveSystemItems<'a> {
             (Some(item), Some(f)) => Lookup::Found(f(SystemItem::Shipped(item))),
             _ => Lookup::Absent,
         }
+    }
+
+    /// [`Self::read`] for the token getters. `get_phrase_item` checks only
+    /// the offset and the two header bytes (074a2219 `phrase_index.cpp:180-205`)
+    /// and each getter reads its own field, so the item is read field by
+    /// field ([`PhraseItemView::fields`]): its unigram, text and in-buffer
+    /// readings stay readable when a later reading passes the end of the
+    /// buffer (compatibility policy row 130). A journal-written item row 107
+    /// rejected still answers no item. Consumers: `effective_unigram`,
+    /// `token_phrase`, `token_nth_pronunciation`.
+    pub fn read_fields<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(SystemItem<'_>) -> R,
+    ) -> Lookup<R> {
+        if let Some(gate) = self.gate(token) {
+            return gate;
+        }
+        let mut read = Some(read);
+        if let Some(live) = self.user.with_live_item_fields(token, |bytes| {
+            let view = PhraseItemView::fields(bytes)?;
+            let f = read.take()?;
+            Some(f(SystemItem::Replayed(view)))
+        }) {
+            return live.flatten().map_or(Lookup::Absent, Lookup::Found);
+        }
+        match (
+            self.libraries
+                .library(token)
+                .and_then(|library| library.item_fields(token)),
+            read,
+        ) {
+            (Some(item), Some(f)) => Lookup::Found(f(SystemItem::Shipped(item))),
+            _ => Lookup::Absent,
+        }
+    }
+
+    /// The answer for a token outside a loaded system library, or `None`.
+    fn gate<R>(&self, token: Token) -> Option<Lookup<R>> {
+        let library = crate::phrase::phrase_index_library_index(token);
+        if !self.is_system_library(library) {
+            return Some(Lookup::Absent);
+        }
+        if !self.library_loaded(u32::from(library)) {
+            return Some(Lookup::Unloaded);
+        }
+        None
     }
 
     /// The stored reading count of `token`'s effective item. A shipped item
@@ -328,12 +380,8 @@ impl<'a> LiveSystemItems<'a> {
     /// when the token is hidden or holds no item.
     #[must_use]
     pub fn effective_unigram(&self, token: Token) -> Option<u64> {
-        if !self.is_system_library(crate::phrase::phrase_index_library_index(token))
-            || !self.is_visible(token)
-        {
-            return None;
-        }
-        self.read(token, |item| u64::from(item.unigram())).found()
+        self.read_fields(token, |item| u64::from(item.unigram()))
+            .found()
     }
 
     /// The current sub-index's range end (phrase_index.cpp:610–646).

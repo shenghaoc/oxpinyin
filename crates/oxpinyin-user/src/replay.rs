@@ -1466,6 +1466,32 @@ impl ReplayedLibrary {
         self.content.item(offset, len)
     }
 
+    /// [`Self::item_bytes`] for the token getters. `get_phrase_item` checks
+    /// only the offset and the two header bytes (074a2219
+    /// `phrase_index.cpp:180-205`), and each getter reads its field where it
+    /// lies, so an item whose header-derived length passes the buffer keeps
+    /// the bytes up to the buffer's end (compatibility policy row 130). A
+    /// journal-written slot row 107 rejected answers no item, as it does to
+    /// every getter.
+    pub(crate) fn item_field_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
+        if self.rejected.binary_search(&slot).is_ok() {
+            return None;
+        }
+        let offset = self.content.slot_offset(slot)?;
+        if offset == 0 {
+            return None;
+        }
+        match self.content.header(offset as usize) {
+            Found::Item { offset, len } => self.content.item(offset, len),
+            Found::Past => {
+                let offset = offset as usize;
+                let len = self.content.buffer_capacity().checked_sub(offset)?;
+                self.content.item(offset, len)
+            }
+            Found::Failed => None,
+        }
+    }
+
     pub(crate) fn is_added_slot(&self, slot: u32) -> bool {
         self.content.loaded_slot_is_empty(slot)
     }
