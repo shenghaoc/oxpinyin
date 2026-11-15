@@ -2671,6 +2671,40 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
     );
 }
 
+/// A pinyin-table read that fails is a miss on every backend: the search
+/// answers `SEARCH_NONE` for that key and the lookup goes on
+/// (`chewing_large_table2_tkrzwdb.cpp:146-149`,
+/// `chewing_large_table2_bdb.cpp:182-184`,
+/// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). With the read
+/// of the `ni'hao` row failing, the guess still answers true and builds the
+/// sentence from the rows of `ni` and `hao`.
+#[test]
+fn a_failed_pinyin_table_read_is_a_miss() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_pinyin_table_read_is_a_miss",
+        |user| {
+            let (context, instance) = open_at(user);
+            let key = |text: &str| {
+                let mut key = 0_u16;
+                let text = cstr(text);
+                assert!(pinyin_parse_full_pinyin(
+                    instance,
+                    text.as_ptr(),
+                    (&raw mut key).cast()
+                ));
+                key.to_le_bytes()
+            };
+            // The complete index key: the packed keys, tones zero.
+            let row = [key("ni"), key("hao")].concat();
+            assert_eq!(parse(instance, "nihao"), 5);
+            oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
+            assert!(pinyin_guess_sentence(instance));
+            assert_eq!(sentence_out(instance, 0), (true, Some("你好".to_owned())));
+            close(context, instance);
+        },
+    );
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").

@@ -70,6 +70,16 @@ pub trait ChewingDbm {
         self.get(key, value)
     }
 
+    /// Read one pinyin-table row with the shape of
+    /// `ChewingLargeTable2::search_internal`: every backend answers a failed
+    /// first read as a miss (`chewing_large_table2_tkrzwdb.cpp:146-149`,
+    /// `chewing_large_table2_bdb.cpp:182-184`,
+    /// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). The default
+    /// is [`Self::get`].
+    fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        self.get(key, value)
+    }
+
     /// Whether `key` exists, an empty marker included, with no value bytes
     /// copied — the `SEARCH_CONTINUED` probe and the suggestion walk's
     /// opening check (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`
@@ -156,6 +166,35 @@ impl DefaultDbm {
     }
 }
 
+/// A point read whose failure the pin answers as a miss: the value is
+/// cleared and the key reads as absent. The one failure that stays an error
+/// is a body read after a good size check, where the pin asserts.
+fn failed_read_is_a_miss(
+    read: Result<bool, oxpinyin_store::StoreError>,
+    value: &mut Vec<u8>,
+) -> Result<bool, DictError> {
+    match read {
+        // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
+        // `:72`; `bdb_utils.h:61`, `:67`); a point read does not copy,
+        // so it never reaches here.
+        Err(
+            error @ (oxpinyin_store::StoreError::ReadAfterCheck
+            | oxpinyin_store::StoreError::FatalCopy),
+        ) => Err(DictError::Table(error.into())),
+        Err(
+            oxpinyin_store::StoreError::Io(_)
+            | oxpinyin_store::StoreError::Backend(_)
+            | oxpinyin_store::StoreError::ReadOnly
+            | oxpinyin_store::StoreError::InvalidInput(_)
+            | oxpinyin_store::StoreError::ShortArrayHeader,
+        ) => {
+            value.clear();
+            Ok(false)
+        }
+        Ok(found) => Ok(found),
+    }
+}
+
 impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn attachment_failed(&self) -> bool {
         matches!(self.state, DbmState::Unopened(_))
@@ -217,26 +256,7 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     /// (`ngram_kyotodb.cpp:138`).
     fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
-            DbmState::Open(store) => match store.get_bigram_raw(key, value) {
-                // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
-                // `:72`; `bdb_utils.h:61`, `:67`); a point read does not copy,
-                // so it never reaches here.
-                Err(
-                    error @ (oxpinyin_store::StoreError::ReadAfterCheck
-                    | oxpinyin_store::StoreError::FatalCopy),
-                ) => Err(DictError::Table(error.into())),
-                Err(
-                    oxpinyin_store::StoreError::Io(_)
-                    | oxpinyin_store::StoreError::Backend(_)
-                    | oxpinyin_store::StoreError::ReadOnly
-                    | oxpinyin_store::StoreError::InvalidInput(_)
-                    | oxpinyin_store::StoreError::ShortArrayHeader,
-                ) => {
-                    value.clear();
-                    Ok(false)
-                }
-                Ok(found) => Ok(found),
-            },
+            DbmState::Open(store) => failed_read_is_a_miss(store.get_bigram_raw(key, value), value),
             DbmState::Unopened(db) => {
                 value.clear();
                 db.read(key);
@@ -246,6 +266,13 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
                 value.clear();
                 Ok(false)
             }
+        }
+    }
+
+    fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        match &self.state {
+            DbmState::Open(store) => failed_read_is_a_miss(store.get_raw(key, value), value),
+            DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),
         }
     }
 
@@ -353,7 +380,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
             return Ok(Vec::new());
         }
         let mut value = Vec::new();
-        if !self.dbm.get(&index_key(keys), &mut value)? || value.is_empty() {
+        if !self.dbm.get_pinyin_row(&index_key(keys), &mut value)? || value.is_empty() {
             return Ok(Vec::new());
         }
         Ok(
@@ -383,7 +410,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         if keys.is_empty() {
             return Ok((false, Vec::new()));
         }
-        let present = self.dbm.get(&index_key(keys), value)?;
+        let present = self.dbm.get_pinyin_row(&index_key(keys), value)?;
         search_row(keys, present.then_some(value.as_slice()))
     }
 
