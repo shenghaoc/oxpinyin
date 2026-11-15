@@ -338,15 +338,12 @@ pub(crate) fn predicted_row(
 /// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): a predicted
 /// bigram is trained after the longest token of the prediction prefix, not
 /// after `sentence_start`.
-#[rstest::rstest]
-fn a_predicted_bigram_trains_from_the_prediction_prefix(#[values(false, true)] finalized: bool) {
+#[test]
+fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     use crate::predict::pinyin_guess_predicted_candidates;
 
     let user_dir = TempUserDir::new("predicted-prefix");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    if finalized {
-        crate::test_support::finalize_public_context(context, instance);
-    }
     let prefix = cstr("你");
     let ni = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
@@ -401,9 +398,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix(#[values(false, true)] f
     );
 
     crate::instance::pinyin_free_instance(instance);
-    if !finalized {
-        crate::context::pinyin_fini(context);
-    }
+    crate::context::pinyin_fini(context);
 }
 
 /// A sole missing prefix row still chooses. The facade total takes the

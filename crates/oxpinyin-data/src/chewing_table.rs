@@ -47,12 +47,13 @@ pub trait ChewingDbm {
         false
     }
 
-    /// Finalizes a retained failed native object once, at facade fini.
-    fn finish_failed_attachment(&self) {}
+    /// Closes the native attachment once, at facade fini: an open file or
+    /// a retained failed object (`pinyin.cpp:1205-1215`, `zhuyin.cpp:744-748`
+    /// at 074a2219). Every later read is a miss with no native call.
+    fn finish_attachment(&mut self) {}
 
-    /// Whether a retained failed native object has been finalized. `false`
-    /// for an open table, which retains nothing.
-    fn failed_attachment_finished(&self) -> bool {
+    /// Whether [`Self::finish_attachment`] has closed the native object.
+    fn attachment_finished(&self) -> bool {
         false
     }
 
@@ -116,6 +117,10 @@ pub struct RawChewingDbm<S> {
 enum DbmState<S> {
     Open(S),
     Unopened(oxpinyin_store::UnopenedSystemDbm),
+    /// The open file after facade fini: the handle is dropped, which closes
+    /// it and releases its lock. An instance or iterator that outlives the
+    /// context reads misses here (compatibility row 42).
+    Closed,
 }
 
 impl<S> RawChewingDbm<S> {
@@ -128,7 +133,7 @@ impl<S> RawChewingDbm<S> {
     fn store(&self) -> Option<&S> {
         match &self.state {
             DbmState::Open(store) => Some(store),
-            DbmState::Unopened(_) => None,
+            DbmState::Unopened(_) | DbmState::Closed => None,
         }
     }
 }
@@ -153,12 +158,12 @@ impl DefaultDbm {
 
 impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn attachment_failed(&self) -> bool {
-        self.store().is_none()
+        matches!(self.state, DbmState::Unopened(_))
     }
 
     fn failed_suggestion(&self, key: &[u8]) -> bool {
         match &self.state {
-            DbmState::Open(_) => {
+            DbmState::Open(_) | DbmState::Closed => {
                 let _ = key;
                 false
             }
@@ -169,17 +174,20 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
-    fn finish_failed_attachment(&self) {
+    fn finish_attachment(&mut self) {
         match &self.state {
-            DbmState::Open(_) => {}
+            // Dropping the store closes the native file.
+            DbmState::Open(_) => self.state = DbmState::Closed,
             DbmState::Unopened(db) => db.finish(),
+            DbmState::Closed => {}
         }
     }
 
-    fn failed_attachment_finished(&self) -> bool {
+    fn attachment_finished(&self) -> bool {
         match &self.state {
             DbmState::Open(_) => false,
             DbmState::Unopened(db) => db.is_finished(),
+            DbmState::Closed => true,
         }
     }
 
@@ -191,6 +199,10 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
             DbmState::Unopened(db) => {
                 value.clear();
                 db.read(key);
+                Ok(false)
+            }
+            DbmState::Closed => {
+                value.clear();
                 Ok(false)
             }
         }
@@ -230,6 +242,10 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
                 db.read(key);
                 Ok(false)
             }
+            DbmState::Closed => {
+                value.clear();
+                Ok(false)
+            }
         }
     }
 
@@ -242,6 +258,7 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
                 db.read(key);
                 Ok(false)
             }
+            DbmState::Closed => Ok(false),
         }
     }
 
@@ -303,12 +320,12 @@ impl<D: ChewingDbm> ChewingTable<D> {
         self.dbm.attachment_failed()
     }
 
-    pub(crate) fn finish_failed_attachment(&self) {
-        self.dbm.finish_failed_attachment();
+    pub(crate) fn finish_attachment(&mut self) {
+        self.dbm.finish_attachment();
     }
 
-    pub(crate) fn failed_attachment_finished(&self) -> bool {
-        self.dbm.failed_attachment_finished()
+    pub(crate) fn attachment_finished(&self) -> bool {
+        self.dbm.attachment_finished()
     }
 
     /// `ChewingLargeTable2::search` (`chewing_large_table2_kyotodb.cpp`)

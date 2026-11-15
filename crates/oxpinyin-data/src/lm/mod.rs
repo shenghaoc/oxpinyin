@@ -222,16 +222,17 @@ impl BigramTables {
         self.bigram.attachment_failed()
     }
 
-    /// Runs the failed system object's reset at facade fini.
-    pub fn finish_failed_attachment(&self) {
-        self.bigram.finish_failed_attachment();
+    /// Runs the system bigram's reset at facade fini: close and delete
+    /// (`pinyin.cpp:1208`; `ngram_tkrzwdb.cpp:40-46` and its BDB and KC
+    /// peers at 074a2219).
+    pub fn finish_attachment(&mut self) {
+        self.bigram.finish_attachment();
     }
 
-    /// Whether a retained failed system hash has been finalized; `true`
-    /// when the attach succeeded.
+    /// Whether the system hash is closed.
     #[must_use]
-    pub fn failed_attachment_finished(&self) -> bool {
-        !self.bigram.attachment_failed() || self.bigram.failed_attachment_finished()
+    pub fn attachment_finished(&self) -> bool {
+        self.bigram.attachment_finished()
     }
 
     /// Borrow all loaded phrase libraries for a model operation.

@@ -334,17 +334,17 @@ impl SystemTables {
         self.phrase.attachment_failed()
     }
 
-    /// Finalizes failed main indexes in the pin's pinyin/phrase order.
-    pub fn finish_failed_attachments(&self) {
-        self.pinyin.finish_failed_attachment();
-        self.phrase.finish_failed_attachment();
+    /// Closes the main indexes in the pin's pinyin/phrase order
+    /// (`pinyin.cpp:1205-1206`, `zhuyin.cpp:744-745` at 074a2219).
+    pub fn finish_attachments(&mut self) {
+        self.pinyin.finish_attachment();
+        self.phrase.finish_attachment();
     }
 
-    /// Whether every retained failed main index has been finalized.
+    /// Whether both main indexes are closed.
     #[must_use]
-    pub fn failed_attachments_finished(&self) -> bool {
-        (!self.pinyin.attachment_failed() || self.pinyin.failed_attachment_finished())
-            && (!self.phrase.attachment_failed() || self.phrase.failed_attachment_finished())
+    pub fn attachments_finished(&self) -> bool {
+        self.pinyin.attachment_finished() && self.phrase.attachment_finished()
     }
 
     /// Borrow these tables and the owner's phrase storage for one operation.
@@ -1043,13 +1043,14 @@ impl AddonDictionary {
         })
     }
 
-    /// Finalizes failed addon pinyin then phrase attachments.
-    pub fn finish_failed_attachments(&self) {
-        if let Some(table) = &self.pinyin {
-            table.finish_failed_attachment();
+    /// Closes the addon pinyin then phrase attachments
+    /// (`pinyin.cpp:1211-1212` at 074a2219).
+    pub fn finish_attachments(&mut self) {
+        if let Some(table) = &mut self.pinyin {
+            table.finish_attachment();
         }
-        if let Some(table) = &self.phrase {
-            table.finish_failed_attachment();
+        if let Some(table) = &mut self.phrase {
+            table.finish_attachment();
         }
     }
 
@@ -1072,15 +1073,16 @@ impl AddonDictionary {
             .is_some_and(PhraseTable::attachment_failed)
     }
 
-    /// Whether every retained failed addon index has been finalized.
+    /// Whether every addon index this facade holds is closed.
     #[must_use]
-    pub fn failed_attachments_finished(&self) -> bool {
-        let pinyin = self.pinyin.as_ref();
-        let phrase = self.phrase.as_ref();
-        pinyin.is_none_or(|table| !table.attachment_failed() || table.failed_attachment_finished())
-            && phrase.is_none_or(|table| {
-                !table.attachment_failed() || table.failed_attachment_finished()
-            })
+    pub fn attachments_finished(&self) -> bool {
+        self.pinyin
+            .as_ref()
+            .is_none_or(ChewingTable::attachment_finished)
+            && self
+                .phrase
+                .as_ref()
+                .is_none_or(PhraseTable::attachment_finished)
     }
 
     /// An addon facade with neither DBM nor libraries.
@@ -1297,12 +1299,12 @@ mod failed_addon_attachment_tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let addon = AddonDictionary::attach_with(&dir, &TableConf::stock()).unwrap();
+        let mut addon = AddonDictionary::attach_with(&dir, &TableConf::stock()).unwrap();
         assert!(addon.pinyin_attachment_failed());
         assert!(addon.phrase_attachment_failed());
-        assert!(!addon.failed_attachments_finished());
-        addon.finish_failed_attachments();
-        assert!(addon.failed_attachments_finished());
+        assert!(!addon.attachments_finished());
+        addon.finish_attachments();
+        assert!(addon.attachments_finished());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

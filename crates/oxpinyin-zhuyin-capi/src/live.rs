@@ -112,8 +112,11 @@ mod tests {
             weak.upgrade().is_some(),
             "the instance retains the same allocation"
         );
+        // Row 42: the system tables are closed, so every read is a miss. The
+        // guess completes over the retained in-memory state and decodes no
+        // sentence, and training has no sentence to train.
         assert!(crate::sentence::zhuyin_guess_sentence(instance));
-        assert!(crate::candidates::zhuyin_train(instance));
+        assert!(!crate::candidates::zhuyin_train(instance));
         assert!(crate::instance::zhuyin_reset(instance));
         crate::instance::zhuyin_free_instance(instance);
         assert!(
@@ -121,6 +124,53 @@ mod tests {
             "the last handle releases the allocation"
         );
         assert_eq!(std::fs::read(marker).ok(), at_fini);
+    }
+
+    /// The descriptors this process holds on files under `dir`.
+    // Linux only: /proc/self/fd.
+    #[cfg(target_os = "linux")]
+    fn open_descriptors(dir: &std::path::Path) -> usize {
+        let dir = dir.canonicalize().expect("system dir");
+        std::fs::read_dir("/proc/self/fd")
+            .expect("descriptor table")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                std::fs::read_link(entry.path()).is_ok_and(|target| target.starts_with(&dir))
+            })
+            .count()
+    }
+
+    /// `zhuyin_fini` deletes its tables, which closes their DBM files and
+    /// releases their locks, whether or not an instance is still allocated
+    /// (`zhuyin.cpp:744-748`, `ngram_tkrzwdb.cpp:40-46` at 074a2219). A
+    /// closed descriptor has released its `fcntl` lock.
+    // Linux only: /proc/self/fd.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fini_closes_the_system_files_while_an_instance_lives() {
+        // A private copy, so no other context holds these files.
+        let system = TempUserDir::new("fini-closes-system");
+        for entry in std::fs::read_dir(crate::test_support::system_dir()).expect("fixture dir") {
+            let entry = entry.expect("fixture entry");
+            if entry.file_type().expect("file type").is_file() {
+                std::fs::copy(entry.path(), system.path.join(entry.file_name()))
+                    .expect("copy fixture");
+            }
+        }
+        let user_dir = TempUserDir::new("fini-closes");
+        let system_c = crate::test_support::cstr(system.path.to_str().expect("UTF-8 path"));
+        let user_c = crate::test_support::cstr(user_dir.path.to_str().expect("UTF-8 path"));
+        let context = crate::context::zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+        assert!(!context.is_null());
+        let instance = crate::instance::zhuyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        assert!(
+            open_descriptors(&system.path) > 0,
+            "the attached tables hold their files"
+        );
+        crate::context::zhuyin_fini(context);
+        assert_eq!(open_descriptors(&system.path), 0);
+        crate::instance::zhuyin_free_instance(instance);
     }
 
     #[test]

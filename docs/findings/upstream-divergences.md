@@ -65,9 +65,9 @@ An entry holds nothing else.
 ### A guess on an instance whose context was finalised (policy row 42)
 
 - **Pin:** `pinyin_fini` deletes the context but not its instances (`src/pinyin.cpp:1194-1222`), and `pinyin_guess_sentence` then reads `instance->m_context->m_pinyin_lookup` (`:1372-1380`): a use after free.
-- **oxpinyin:** each instance holds its own handles to the shared engine state (`crates/oxpinyin-capi/src/state.rs`), so the guess completes and answers `true`.
-- **Decision:** accepted, class (b), by ruling: the use after free stays unreproduced.
-- **Tests:** `instance_outlives_context` (both C facades' `live.rs`).
+- **oxpinyin:** fini closes every native file attachment, as the pin's deletes do, and each instance keeps the context's in-memory state (`crates/oxpinyin-capi/src/state.rs`). A read through a closed attachment is a miss with no native call, as through a finished failed attachment. The guess completes, answers `true` and decodes no sentence; a following train answers `false`.
+- **Decision:** accepted, class (b), by ruling: the use after free stays unreproduced, and a closed attachment reads as a miss (maintainer ruling 2026-11-15).
+- **Tests:** `instance_outlives_context` and `fini_closes_the_system_files_while_an_instance_lives` (both C facades' `live.rs`).
 
 ### Zhuyin import into library index 16 (policy row 43)
 

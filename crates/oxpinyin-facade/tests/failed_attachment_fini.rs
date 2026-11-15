@@ -1,7 +1,7 @@
-//! Context finalization resets the retained failed system attachments while
+//! Context finalization closes the system attachments, open or failed, while
 //! an instance still holds the runtime (compatibility row 42): the pin's
 //! `pinyin_fini` deletes the tables' objects (`pinyin.cpp:1205-1215`) and a
-//! retained instance keeps only the context's remaining storage.
+//! retained instance keeps only the context's in-memory state.
 use std::path::PathBuf;
 
 use oxpinyin_facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
@@ -41,14 +41,14 @@ fn context_finish_finalizes_failed_attachments_while_an_instance_holds_the_runti
     {
         let runtime = &context.runtime;
         assert!(runtime.pinyin_attachment_failed());
-        assert!(!runtime.failed_attachments_finished());
+        assert!(!runtime.attachments_finished());
     }
     // Public context fini, with the instance still alive.
     context.finish();
-    assert!(context.runtime.failed_attachments_finished());
+    assert!(context.runtime.attachments_finished());
     // A second fini is inert.
     context.finish();
-    assert!(context.runtime.failed_attachments_finished());
+    assert!(context.runtime.attachments_finished());
     drop(instance);
     drop(context);
 }
