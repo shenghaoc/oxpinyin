@@ -665,7 +665,16 @@ impl UserStore {
     pub(super) fn mask_arena(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
         let mut phrases = self.inner.libpinyin.phrases_mut();
         for (&nibble, library) in &mut phrases.libraries {
-            let selected = |slot: u32| (((u32::from(nibble) << 24) | slot) & mask) == value;
+            // `FacadePhraseIndex::mask_out` tests the library through the
+            // four-bit index of the mask and the value, and the sub-index
+            // tests each token under their low 24 bits; bits 28 to 31 take
+            // no part (`novel_types.h:41-44`, `phrase_index.cpp:677-715` at
+            // 074a2219).
+            let library_mask = Token::from(phrase_index_library_index(mask));
+            let library_value = Token::from(phrase_index_library_index(value));
+            let in_library = Token::from(nibble) & library_mask == library_value;
+            let selected =
+                |slot: u32| in_library && slot & mask & PHRASE_MASK == value & PHRASE_MASK;
             // `FacadePhraseIndex::mask_out` takes the old sub-index total out
             // of the facade and the new one in (`phrase_index.cpp:699-718`):
             // each removed item's frequency leaves the totals.
