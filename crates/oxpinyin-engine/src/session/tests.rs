@@ -3340,8 +3340,8 @@ fn choosing_behind_the_composition_moves_the_record_back() {
 }
 
 /// One phrase stored as `ni3'hao3`:
-/// `lookup` is toneless, `trellis_records` applies the pin's tone match
-/// (`pinyin_compare_tone3`, `pinyin_phrase3.h:97-105`).
+/// `lookup` is toneless; `trellis_records` and the candidate search apply
+/// the pin's tone match (`pinyin_compare_tone3`, `pinyin_phrase3.h:97-105`).
 struct StoredTone3;
 
 impl Dictionary for StoredTone3 {
@@ -3372,6 +3372,17 @@ impl Dictionary for StoredTone3 {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    fn candidate_search_into(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+        _row: &mut Vec<u8>,
+    ) -> Result<(oxpinyin_core::UnreadableRows, bool), EngineError> {
+        *out = self.trellis_records(syllables, tones)?;
+        Ok((oxpinyin_core::UnreadableRows::default(), true))
     }
 }
 

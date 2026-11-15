@@ -286,16 +286,13 @@ impl AddonSet {
         self.dict.load_reporting(index, system_dir)
     }
 
-    fn lookup_into(
+    fn search_into(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        self.dict.lookup_into(syllables, out)
-    }
-
-    fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
-        self.dict.prefix_exists(syllables)
+        row: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        self.dict.search_into(syllables, out, row)
     }
 
     fn unigram_freq(&self, token: u32) -> Option<u64> {
@@ -380,11 +377,13 @@ impl<'a> RuntimeDict<'a> {
         syllables: &[SyllableKey],
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
-        let mut unreadable = self.system.lookup_with_live(
+        row: &mut Vec<u8>,
+    ) -> Result<(oxpinyin_core::UnreadableRows, bool), DictError> {
+        let (mut unreadable, system_present) = self.system.lookup_with_live(
             syllables,
             tones,
             out,
+            row,
             |token| self.library_visible(u32::from(library_of(token))),
             |token| {
                 self.live_items()
@@ -423,7 +422,7 @@ impl<'a> RuntimeDict<'a> {
             // mask keeps the monolithic tables resident but invisible.
             out.retain(|entry| self.library_visible_token(entry.token().value()));
         }
-        Ok(unreadable)
+        Ok((unreadable, system_present))
     }
 
     /// The user pinyin table's search for `syllables`, as the pin's
@@ -1119,17 +1118,8 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
-        self.fill_lookup(syllables, &[], out)
-            .map(|rows| rows.count != 0)
-    }
-
-    fn lookup_candidate_rows(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, Self::Error> {
-        self.fill_lookup(syllables, tones, out)
+        self.fill_lookup(syllables, &[], out, &mut Vec::new())
+            .map(|(rows, _)| rows.count != 0)
     }
 
     fn candidate_search_into(
@@ -1137,17 +1127,17 @@ impl Dictionary for RuntimeDict<'_> {
         syllables: &[Self::Syllable],
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<Option<(oxpinyin_core::UnreadableRows, bool)>, Self::Error> {
-        if !self.system.pinyin_attachment_failed() {
-            return Ok(None);
-        }
-        // One failed native get/check per search_matrix leaf. Tone and
-        // continuation probes must not make additional system reads.
-        let unreadable = self.fill_lookup(syllables, tones, out)?;
-        Ok(Some((
+        row: &mut Vec<u8>,
+    ) -> Result<(oxpinyin_core::UnreadableRows, bool), Self::Error> {
+        // One system get per path serves the tokens and `SEARCH_CONTINUED`,
+        // then the user table's search, with no early return
+        // (`facade_chewing_table2.h:109-129` at 074a2219). A failed
+        // attachment's get is a miss; its native read stays the only one.
+        let (unreadable, system_present) = self.fill_lookup(syllables, tones, out, row)?;
+        Ok((
             unreadable,
-            self.user_lookup().phrase_prefix_exists(syllables),
-        )))
+            system_present || self.user_lookup().phrase_prefix_exists(syllables),
+        ))
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
@@ -1217,25 +1207,17 @@ impl Dictionary for RuntimeDict<'_> {
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         let mut entries = Vec::new();
-        self.lookup_addon_into(syllables, &mut entries)?;
+        self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
         Ok(entries)
     }
 
-    fn lookup_addon_into(
+    fn search_addon_into(
         &self,
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
-        let addons = self.addons.borrow();
-        addons.lookup_into(syllables, out)
-    }
-
-    fn phrase_prefix_exists_addon(
-        &self,
-        syllables: &[Self::Syllable],
+        row: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        let addons = self.addons.borrow();
-        addons.prefix_exists(syllables)
+        self.addons.borrow().search_into(syllables, out, row)
     }
 
     /// `FacadeChewingTable2::search_suggestion`'s composition: the system

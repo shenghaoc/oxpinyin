@@ -4774,3 +4774,111 @@ fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
     );
     close(context, instance);
 }
+
+/// A failed point read contributes neither rows nor continuation
+/// (`chewing_large_table2_tkrzwdb.cpp:146-152`, `_bdb.cpp:182-187`,
+/// `_kyotodb.cpp:160-166` at 074a2219). The candidate scan widens on
+/// `SEARCH_NONE` (`pinyin.cpp:2231-2243`), so a failed `ni` search
+/// drops 你 but the following `ni'hao` search still lists 你好.
+#[test]
+fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
+    crate::test_support::run_in_child(
+        "boundary_tests::a_failed_candidate_table_read_keeps_searching_longer_spans",
+        |user| {
+            let (context, instance) = open_at(user);
+            let key = oxpinyin_core::ChewingKey::from_pinyin("ni")
+                .expect("ni")
+                .to_packed();
+            assert_eq!(parse(instance, "nihao"), 5);
+            let normal_rows = || {
+                assert!(pinyin_guess_candidates(
+                    instance,
+                    0,
+                    crate::test_support::DEFAULT_SORT
+                ));
+                capture_rows(instance)
+                    .into_iter()
+                    .filter_map(|(kind, text, _)| (kind == NORMAL).then_some(text))
+                    .collect::<Vec<_>>()
+            };
+            let before = normal_rows();
+            assert!(before.iter().any(|text| text == "你"));
+            assert!(before.iter().any(|text| text == "你好"));
+            oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
+            let after = normal_rows();
+            assert!(!after.iter().any(|text| text == "你"));
+            assert!(after.iter().any(|text| text == "你好"));
+            close(context, instance);
+        },
+    );
+}
+
+/// The pin ORs the default and addon searches before deciding to widen
+/// (`pinyin.cpp:2231-2256`, `phonetic_key_matrix.cpp:359-373` at
+/// 074a2219). The default `ba` read is a miss. The addon read finds 甲
+/// and sets `SEARCH_CONTINUED`, so the scan reaches 乙丙 at `ba'ma`.
+/// An extra read of `ba` would fail and lose that continuation bit.
+#[test]
+fn addon_candidate_continuation_uses_its_row_read() {
+    use crate::test_support::{AddonItem, addon_system};
+
+    crate::test_support::run_in_child(
+        "boundary_tests::addon_candidate_continuation_uses_its_row_read",
+        |user| {
+            let packed = |text| {
+                oxpinyin_core::ChewingKey::from_pinyin(text)
+                    .expect("complete key")
+                    .to_packed()
+            };
+            let short = [packed("ba")];
+            let long = [short[0], packed("ma")];
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = addon_system(
+                &system_dir(),
+                scratch.path(),
+                &[
+                    AddonItem {
+                        text: &[u32::from('甲')],
+                        readings: &[(&short, 5)],
+                        indexed_as: &short,
+                        unigram: 15,
+                    },
+                    AddonItem {
+                        text: &[u32::from('乙'), u32::from('丙')],
+                        readings: &[(&long, 5)],
+                        indexed_as: &long,
+                        unigram: 15,
+                    },
+                ],
+            );
+            let index = system.join("pinyin_index.bin");
+            std::fs::remove_file(&index).expect("unlink the default index");
+            craft_tree(&index, &[]);
+
+            let context = init_at(&system, user);
+            assert!(!context.is_null());
+            assert!(crate::config::pinyin_load_addon_phrase_library(context, 4));
+            let instance = alloc(context);
+            assert_eq!(parse(instance, "bama"), 4);
+            // One default get/check misses. The addon row needs one get,
+            // or a check and a body read on Kyoto Cabinet.
+            let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
+            oxpinyin_store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
+            assert!(pinyin_guess_candidates(
+                instance,
+                0,
+                crate::test_support::DEFAULT_SORT
+            ));
+            let rows = capture_rows(instance);
+            for expected in ["甲", "乙丙"] {
+                assert!(
+                    rows.iter().any(|(kind, text, _)| {
+                        *kind == lookup_candidate_type_t::ADDON_CANDIDATE && text == expected
+                    }),
+                    "missing addon candidate {expected}: {rows:?}"
+                );
+            }
+            close(context, instance);
+        },
+    );
+}

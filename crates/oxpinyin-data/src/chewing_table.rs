@@ -408,13 +408,34 @@ impl<D: ChewingDbm> ChewingTable<D> {
     /// * the surviving tokens, empty when the key is absent, an empty
     ///   marker, or no record matches. Upstream additionally requires the
     ///   record's library to be loaded; the dictionary layer applies that
-    ///   when it resolves tokens. Use [`Self::key_exists`] for the
-    ///   `SEARCH_CONTINUED` prefix probe, which needs no record decode.
+    ///   when it resolves tokens.
     pub(crate) fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
+        self.search_continued(keys, &mut Vec::new())
+            .map(|(_, tokens)| tokens)
+    }
+
+    /// [`Self::search`] with one DBM get into `value`, the caller's
+    /// buffer: `visit` receives each surviving token in stored order, and
+    /// the answer is whether the query's index key exists, an empty marker
+    /// included. That is the `SEARCH_CONTINUED` bit the same get sets
+    /// (`chewing_large_table2_bdb.cpp:180-187`,
+    /// `chewing_large_table2_tkrzwdb.cpp:146-152`,
+    /// `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219); a failed
+    /// read is a miss and sets nothing.
+    pub(crate) fn search_into(
+        &self,
+        keys: &[ChewingKey],
+        value: &mut Vec<u8>,
+        visit: impl FnMut(u32),
+    ) -> Result<bool, DictError> {
         if keys.is_empty() {
-            return Ok(Vec::new());
+            return Ok(false);
         }
-        Ok(self.search_continued(keys, &mut Vec::new())?.1)
+        let present = with_index_key(keys, |key| self.dbm.get_pinyin_row(key, value))?;
+        if present {
+            visit_matching_items(keys, value, visit)?;
+        }
+        Ok(present)
     }
 
     /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
@@ -429,11 +450,9 @@ impl<D: ChewingDbm> ChewingTable<D> {
         keys: &[ChewingKey],
         value: &mut Vec<u8>,
     ) -> Result<(bool, Vec<u32>), DictError> {
-        if keys.is_empty() {
-            return Ok((false, Vec::new()));
-        }
-        let present = self.dbm.get_pinyin_row(&index_key(keys), value)?;
-        search_row(keys, present.then_some(value.as_slice()))
+        let mut tokens = Vec::new();
+        let present = self.search_into(keys, value, |token| tokens.push(token))?;
+        Ok((present, tokens))
     }
 
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
@@ -520,6 +539,27 @@ pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
     }
 }
 
+/// [`index_key`] passed to `read` from a stack buffer. The pin's search
+/// keeps its index in a `ChewingKey[MAX_PHRASE_LENGTH]` array
+/// (`chewing_large_table2.cpp:161-172` at 074a2219); a longer query, which
+/// that search never takes, is encoded on the heap.
+fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
+    if keys.len() > MAX_INDEX_KEY_WORDS {
+        return read(&index_key(keys));
+    }
+    let incomplete = contains_incomplete(keys);
+    let mut buf = [0_u8; 2 * MAX_INDEX_KEY_WORDS];
+    for (word, key) in buf.as_chunks_mut::<2>().0.iter_mut().zip(keys) {
+        let indexed = if incomplete {
+            ChewingKey::new(key.initial, 0, 0, 0)
+        } else {
+            ChewingKey::new(key.initial, key.middle, key.final_, 0)
+        };
+        *word = indexed.to_packed().to_le_bytes();
+    }
+    read(&buf[..2 * keys.len()])
+}
+
 /// `pinyin_compare_with_tones(query, stored, len) == 0`
 /// (`pinyin_phrase3.h:108-144`, [`ChewingKey::matches_with_tones`] at every
 /// position) over the first `query.len()` syllables of `stored` —
@@ -555,18 +595,29 @@ pub fn search_row(
     let Some(value) = value else {
         return Ok((false, Vec::new()));
     };
-    if value.is_empty() {
-        return Ok((true, Vec::new()));
-    }
-    let tokens = crate::row_format::pinyin_index::item_views(value, keys.len())?
-        .filter(|item| {
-            keys.iter()
-                .zip(item.keys())
-                .all(|(query, stored)| query.matches_with_tones(stored))
-        })
-        .map(|item| item.token)
-        .collect();
+    let mut tokens = Vec::new();
+    visit_matching_items(keys, value, |token| tokens.push(token))?;
     Ok((true, tokens))
+}
+
+fn visit_matching_items(
+    keys: &[ChewingKey],
+    value: &[u8],
+    mut visit: impl FnMut(u32),
+) -> Result<(), DictError> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    for item in crate::row_format::pinyin_index::item_views(value, keys.len())? {
+        if keys
+            .iter()
+            .zip(item.keys())
+            .all(|(query, stored)| query.matches_with_tones(stored))
+        {
+            visit(item.token);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
