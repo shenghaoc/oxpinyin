@@ -34,8 +34,8 @@ They do not block the sweep.
 
 - Write the §11 equivalence arguments.
   Record each failed argument as a separate defect.
-- Argue each row of §§1–8 that is marked different or unverified.
-  Compare its time and space complexity with the pin.
+- §§1–8 have source arguments and complexity comparisons for the unverified rows.
+  The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md#open) lists the defects and removal candidates.
 - Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
   Force it, then revalidate through `guess_sentence` and a replaced selection.
   Compare with the reference-cell oracle using a contract test.
