@@ -85,15 +85,12 @@ impl Ord for PhraseItem {
                 (Uniphrase::Unconverted(lhs), Uniphrase::Unconverted(rhs)) => lhs.cmp(rhs),
                 (Uniphrase::Unconverted(_), Uniphrase::Converted(_)) => Ordering::Less,
                 (Uniphrase::Converted(_), Uniphrase::Unconverted(_)) => Ordering::Greater,
-                (Uniphrase::Converted(lhs), Uniphrase::Converted(rhs)) => {
-                    let bytes = |words: &[u32]| {
-                        words
-                            .iter()
-                            .flat_map(|word| word.to_ne_bytes())
-                            .collect::<Vec<u8>>()
-                    };
-                    bytes(lhs).cmp(&bytes(rhs))
-                }
+                // Word by word, each as its native bytes: the same order as
+                // `memcmp` over the whole buffer, with no copy.
+                (Uniphrase::Converted(lhs), Uniphrase::Converted(rhs)) => lhs
+                    .iter()
+                    .map(|word| word.to_ne_bytes())
+                    .cmp(rhs.iter().map(|word| word.to_ne_bytes())),
             })
     }
 }
