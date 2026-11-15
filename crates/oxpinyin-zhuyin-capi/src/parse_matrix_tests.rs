@@ -24,11 +24,21 @@ use crate::types::{ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
 
 const L_N: u32 = 1 << 15;
 
-/// The full-pinyin export fills the zhuyin matrix (`zhuyin.cpp:1017-1043`).
-/// Default FORCE_TONE refuses this untoned input (`pinyin_parser2.cpp:185-189`).
-fn full_pinyin_separator() -> Fixture {
+/// `text` parsed as full pinyin under `scheme` (1 Hanyu, 2 Luoma, 3
+/// secondary zhuyin). The full-pinyin export fills the zhuyin matrix
+/// (`zhuyin.cpp:1017-1043`). Default FORCE_TONE refuses this untoned input
+/// (`pinyin_parser2.cpp:185-189`). The Luoma and secondary-zhuyin index
+/// parses run the same parser over another index
+/// (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`), so the
+/// `'` holds the same zero-key column (`phonetic_key_matrix.cpp:52-79`).
+/// Secondary zhuyin spells 好 `hau`.
+fn scheme_separator(scheme: i32, text: &str) -> Fixture {
     let fixture = Fixture::new("full-pinyin-separator");
-    let input = cstr("ni'hao");
+    assert!(crate::config::zhuyin_set_full_pinyin_scheme(
+        fixture.context,
+        scheme
+    ));
+    let input = cstr(text);
     assert_eq!(
         zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()),
         0
@@ -48,9 +58,38 @@ fn full_pinyin_separator() -> Fixture {
 /// separator's zero key, so `_check_offset` asserts (`zhuyin.cpp:1440-1458`).
 #[test]
 fn a_full_pinyin_guess_after_the_separator_aborts() {
-    assert_aborts_after_setup(
+    guess_after_the_separator_aborts(
         "parse_matrix_tests::a_full_pinyin_guess_after_the_separator_aborts",
-        full_pinyin_separator,
+        1,
+        "ni'hao",
+    );
+}
+
+/// The Luoma twin of [`a_full_pinyin_guess_after_the_separator_aborts`].
+#[test]
+fn a_luoma_guess_after_the_separator_aborts() {
+    guess_after_the_separator_aborts(
+        "parse_matrix_tests::a_luoma_guess_after_the_separator_aborts",
+        2,
+        "ni'hao",
+    );
+}
+
+/// The secondary-zhuyin twin of
+/// [`a_full_pinyin_guess_after_the_separator_aborts`].
+#[test]
+fn a_secondary_zhuyin_guess_after_the_separator_aborts() {
+    guess_after_the_separator_aborts(
+        "parse_matrix_tests::a_secondary_zhuyin_guess_after_the_separator_aborts",
+        3,
+        "ni'hau",
+    );
+}
+
+fn guess_after_the_separator_aborts(name: &str, scheme: i32, text: &str) {
+    assert_aborts_after_setup(
+        name,
+        || scheme_separator(scheme, text),
         |fixture| {
             zhuyin_guess_candidates_after_cursor(fixture.instance, 3);
         },
@@ -61,8 +100,11 @@ fn a_full_pinyin_guess_after_the_separator_aborts() {
 /// (`zhuyin.cpp:1498-1509`); choose answers its end 6 (`:1649-1653`) and
 /// either clear reaches [2, 6) (`:1669-1675`, `phonetic_lookup.cpp:88-115`).
 #[rstest::rstest]
-fn a_full_pinyin_separator_forcing_clears_at_either_column(#[values(2, 3)] probe: usize) {
-    let fixture = full_pinyin_separator();
+fn a_full_pinyin_separator_forcing_clears_at_either_column(
+    #[values(2, 3)] probe: usize,
+    #[values((1, "ni'hao"), (2, "ni'hao"), (3, "ni'hau"))] scheme: (i32, &str),
+) {
+    let fixture = scheme_separator(scheme.0, scheme.1);
     let instance = fixture.instance;
     assert!(zhuyin_guess_candidates_after_cursor(instance, 2));
     let mut count = 0;

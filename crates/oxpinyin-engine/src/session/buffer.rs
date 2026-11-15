@@ -50,13 +50,15 @@ pub(super) struct InputBuffer {
     /// Whether apostrophes came from canonical formatting rather than typing.
     /// Used only by trellis generation, never by the ordinary scan or graph.
     formatting_separators: bool,
-    /// Pre-parsed exact syllables over `raw` — the scheme-parse seam
-    /// (zhuyin, double pinyin). Empty is the full-pinyin mode, where the
-    /// scan parses `raw` itself; non-empty pins the graph to exactly
-    /// these keys. Spans are absolute over `raw`, and `end() <= raw.len()`
-    /// holds for every segment.
+    /// Pre-parsed exact syllables over `raw` — the scheme-parse seams
+    /// (zhuyin, double pinyin, and the Luoma and secondary-zhuyin index
+    /// parses). Empty is the full-pinyin mode, where the scan parses `raw`
+    /// itself; non-empty pins the graph to exactly these keys. Spans are
+    /// absolute over `raw`, and `end() <= raw.len()` holds for every
+    /// segment.
     exact: Vec<ExactSegment>,
-    /// Pre-parsed full pinyin retains the full-pinyin matrix transforms.
+    /// The exact chain is an index parse of the typed full pinyin: it keeps
+    /// the full-pinyin matrix transforms, and its apostrophes are typed.
     parsed_full_pinyin: bool,
 }
 
@@ -99,7 +101,6 @@ impl InputBuffer {
     pub(super) fn set_full_pinyin(&mut self, segments: &[ExactSegment]) {
         self.set_exact(segments);
         self.parsed_full_pinyin = true;
-        self.formatting_separators = true;
     }
 
     /// Empties the buffer and the exact chain — `pinyin_reset`'s input
@@ -120,9 +121,12 @@ impl InputBuffer {
         self.formatting_separators = false;
     }
 
-    /// Separator provenance is observable only in trellis generation.
+    /// Whether a `'` in `raw` is a typed separator with its own zero-key
+    /// column: plain and index-parsed full pinyin, unless the replace seam
+    /// said the apostrophes were formatting. The zhuyin and double-pinyin
+    /// chains join their keys with apostrophes the input never had.
     pub(super) fn physical_separators(&self) -> bool {
-        !self.formatting_separators && self.exact.is_empty()
+        !self.formatting_separators && self.full_pinyin()
     }
 
     /// Stores separator provenance for the private trellis generation view.

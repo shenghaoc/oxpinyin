@@ -1,12 +1,13 @@
 //! The original↔session coordinate mappers over the stored parses.
 //!
-//! The transformed seams (double pinyin, the zhuyin keyboards, and the
-//! LUOMA / `SECONDARY_ZHUYIN` full-pinyin index) drive the decoder with a
-//! `'`-joined full-pinyin spelling while the caller's offsets live in the
-//! original input's coordinates — these six functions are the map between
-//! the two spaces, byte-identical across both C-ABI facades.
+//! The transformed seams (double pinyin and the zhuyin keyboards) drive
+//! the decoder with a `'`-joined full-pinyin spelling while the caller's
+//! offsets live in the original input's coordinates — these functions are
+//! the map between the two spaces, byte-identical across both C-ABI
+//! facades. The Luoma and secondary-zhuyin index parses drive it with the
+//! typed input itself, as plain full pinyin does, so they need no map.
 
-use oxpinyin_core::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
+use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
 /// Maps a byte offset in the transformed `'`-joined full-pinyin string
 /// back to the original double-pinyin input offset.
@@ -77,32 +78,6 @@ pub fn double_offset_is_mid_key(parse: &DoublePinyinParse, offset: usize) -> boo
         .any(|item| item.start() < offset && offset < item.end())
 }
 
-/// [`double_offset_is_mid_key`]'s Luoma/secondary-zhuyin sibling.
-#[must_use]
-pub fn full_offset_is_mid_key(parse: &FullPinyinIndexParse, offset: usize) -> bool {
-    parse
-        .keys()
-        .iter()
-        .any(|item| item.start() < offset && offset < item.end())
-}
-
-/// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
-/// transformed string is the `'`-joined canonical spellings, and each key
-/// remembers its original byte span (tone digit included).
-#[must_use]
-pub fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
-    let mut transformed = 0;
-    for item in parse.keys() {
-        let key_len = item.canonical().len();
-        let boundary = transformed + key_len;
-        if offset <= boundary {
-            return item.end();
-        }
-        transformed = boundary + 1; // apostrophe between keys
-    }
-    parse.consumed()
-}
-
 /// Maps an original-input offset to the transformed session offset — the
 /// inverse of [`double_original_offset`]: the matrix column of the first
 /// key whose original span ends past `offset`.
@@ -133,7 +108,7 @@ pub fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize 
     )
 }
 
-/// The shared walk behind the three `*_session_offset` mappers: over
+/// The shared walk behind the two `*_session_offset` mappers: over
 /// `(original end, transformed text length)` per key, the column of the
 /// first key whose original span ends past `offset` — 0, or the previous
 /// key's transformed end (its trailing apostrophe) — and past every key
@@ -161,18 +136,6 @@ pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
             .keys()
             .iter()
             .map(|item| (item.end(), item.key().text().len())),
-        offset,
-    )
-}
-
-/// [`double_session_offset`]'s Luoma/secondary-zhuyin sibling.
-#[must_use]
-pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
-    session_column(
-        parse
-            .keys()
-            .iter()
-            .map(|item| (item.end(), item.canonical().len())),
         offset,
     )
 }

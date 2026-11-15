@@ -10,6 +10,27 @@ fn n_candidate(instance: *mut ZhuyinInstance) -> (bool, u32) {
     (ret, count)
 }
 
+/// `'ni` leaves column 0 empty under every full-pinyin scheme: the Luoma
+/// and secondary-zhuyin index parses run the same parser
+/// (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`), and
+/// `fill_matrix` fills no zero key before the first key
+/// (`phonetic_key_matrix.cpp:52-79`). The beam never leaves column 0
+/// (`phonetic_lookup.h:753-771`), so the guess has no sentence.
+#[rstest::rstest]
+fn a_leading_separator_guess_has_no_sentence(#[values(1, 2, 3)] scheme: i32) {
+    let (context, spare) = open();
+    zhuyin_free_instance(spare);
+    assert!(crate::config::zhuyin_set_full_pinyin_scheme(
+        context, scheme
+    ));
+    let instance = full_pinyin(context, SEPARATOR_OPTIONS, "'ni");
+    assert_eq!(zhuyin_get_parsed_input_length(instance), 3);
+    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(sentence(instance), (false, None));
+    zhuyin_free_instance(instance);
+    zhuyin_fini(context);
+}
+
 /// The sentence getter resolves each kept token through the phrase index
 /// when the caller reads it (`convert_to_utf8`, `lookup/lookup.cpp:37-48`
 /// at 074a2219), and the candidate getter returns its saved string

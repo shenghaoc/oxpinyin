@@ -274,22 +274,26 @@ impl<
                 Ok(parsed) => parsed,
                 Err(_) => return 0,
             };
-            let full = parsed.full_pinyin();
-            let mut offset = 0;
+            // The session reads the consumed original bytes with each key
+            // at its own span, as plain full pinyin does: the parser is
+            // the Hanyu one over another index (`set_scheme`,
+            // `pinyin_parser2.cpp:383-401` at 074a2219), so `fill_matrix`
+            // places keys and `'` zero keys at the same original columns
+            // (`phonetic_key_matrix.cpp:52-79`).
+            let consumed = text.get(..parsed.consumed()).unwrap_or(text);
             let segments: Vec<_> = parsed
                 .keys()
                 .iter()
                 .filter_map(|key| {
-                    let start = offset;
-                    offset += key.canonical().len() + 1;
-                    SyllableKey::from_canonical_text(key.canonical())
-                        .map(|syllable| ExactSegment::new(start, offset - 1, syllable, key.tone()))
+                    SyllableKey::from_canonical_text(key.canonical()).map(|syllable| {
+                        ExactSegment::new(key.start(), key.end(), syllable, key.tone())
+                    })
                 })
                 .collect();
-            if !full.is_empty()
+            if !segments.is_empty()
                 && self
                     .session
-                    .replace_raw_full_pinyin(&full, &segments)
+                    .replace_raw_full_pinyin(consumed, &segments)
                     .is_err()
             {
                 return 0;

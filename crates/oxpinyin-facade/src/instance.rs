@@ -513,7 +513,6 @@ impl<
         &mut self,
         row: &PublishedRow,
         map_double_pinyin: bool,
-        map_full_pinyin: bool,
     ) -> Result<Selection, EngineError> {
         let (begin, end) = (usize::from(row.begin), usize::from(row.end));
         let size = if self.session.selection_capacity() == 0 {
@@ -524,7 +523,7 @@ impl<
         if end > size {
             return self.session.refuse_selection();
         }
-        let (start, stop, spells) = match self.abi_key_images(map_double_pinyin, map_full_pinyin) {
+        let (start, stop, spells) = match self.abi_key_images(map_double_pinyin) {
             Some(images) => {
                 // The pin's own columns (`fill_matrix`, `resplit_step`,
                 // `inner_split_step`; `phonetic_key_matrix.cpp:27-200`), in
@@ -556,12 +555,9 @@ impl<
 
     /// The base keys of the active transformed parse, each with its
     /// original span and its image in session coordinates, or `None` for
-    /// plain full pinyin, whose session coordinates are the original ones.
-    fn abi_key_images(
-        &self,
-        map_double_pinyin: bool,
-        map_full_pinyin: bool,
-    ) -> Option<Vec<KeyImage>> {
+    /// plain and index-parsed full pinyin, whose session coordinates are
+    /// the original ones.
+    fn abi_key_images(&self, map_double_pinyin: bool) -> Option<Vec<KeyImage>> {
         if let Some(parse) = self.zhuyin_parse.as_ref() {
             return Some(key_images(
                 parse
@@ -576,14 +572,6 @@ impl<
                     .keys()
                     .iter()
                     .map(|item| (item.start(), item.end(), item.key().text().len())),
-            ));
-        }
-        if map_full_pinyin && let Some(parse) = self.full_parse.as_ref() {
-            return Some(key_images(
-                parse
-                    .keys()
-                    .iter()
-                    .map(|item| (item.start(), item.end(), item.canonical().len())),
             ));
         }
         None
@@ -601,9 +589,8 @@ impl<
     pub fn publication_bound_mapper(
         &self,
         map_double_pinyin: bool,
-        map_full_pinyin: bool,
     ) -> impl Fn(usize) -> usize + use<S, E> {
-        let images = self.abi_key_images(map_double_pinyin, map_full_pinyin);
+        let images = self.abi_key_images(map_double_pinyin);
         move |offset| {
             images
                 .as_ref()
@@ -632,14 +619,9 @@ impl<
     /// Clears the constraint at `offset`, mapping the caller's original-input
     /// offset to the active parse mode's session coordinates first. The
     /// caller selects the transformed seams its facade can populate.
-    pub fn clear_abi_constraint(
-        &mut self,
-        offset: usize,
-        map_double_pinyin: bool,
-        map_full_pinyin: bool,
-    ) -> bool {
+    pub fn clear_abi_constraint(&mut self, offset: usize, map_double_pinyin: bool) -> bool {
         let session_offset = self
-            .abi_key_images(map_double_pinyin, map_full_pinyin)
+            .abi_key_images(map_double_pinyin)
             .map_or(offset, |images| session_bound(&images, offset, false));
         self.session.clear_constraint(session_offset)
     }

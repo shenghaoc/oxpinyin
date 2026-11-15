@@ -3,9 +3,6 @@
 
 use super::*;
 
-/// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
-const SEPARATOR_OPTIONS: u32 = 0x18a;
-
 /// The two string getters refuse the zero key that a separator column holds
 /// and render a real key (`zhuyin.cpp:1732-1760`).
 #[test]

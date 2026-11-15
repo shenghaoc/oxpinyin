@@ -326,7 +326,7 @@ consumed bytes.
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
 | Layout | `PhoneticKeyMatrix` pairs the key and rest arrays at each column (`storage/phonetic_key_matrix.h:65-168`). | `ScanMatrix` is an ordered key buffer with column offsets. `ParsedMatrix` shares that buffer and holds the placed column offsets and zero flags (`oxpinyin-engine/src/session/matrix.rs`). | different / argued ([matrix representation](#matrix-representation)) |
-| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` finds each placed column's run of the shared buffer, copying no key, and marks zero columns (`oxpinyin-engine/src/session/matrix.rs`). Index-parsed full pinyin also builds a decoder matrix over canonical spelling (`oxpinyin-facade/src/parse.rs:288-323`). | different / [open](#index-parse-separator-fill), shared cause with policy row 122 |
+| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` finds each placed column's run of the shared buffer, copying no key, and marks zero columns (`oxpinyin-engine/src/session/matrix.rs`). Index-parsed full pinyin (Luoma, secondary zhuyin) fills the same matrix over the typed input, with each key at its original span (`InstanceView::parse_full_more_with_splits`, `oxpinyin-facade/src/parse.rs`; policy row 122). | same / follows |
 | Resplit and inner split | `resplit_step` (`:87`), `inner_split_step` (`:169`); linear scans of the `special_table.h` tables | `resplit_step`, `inner_split_step` (`session/mod.rs`), same tables (`matrix-split-tables.md`) | same / follows |
 | Fuzzy | `fuzzy_syllable_step` (`:226-310`): an initials pass, then a finals pass over the grown column | `extend_matrix` and `parse_time_keys` run the two column passes; packed final alternates survive without a syllable-table row | same / follows |
 | Column multiplicity | `PhoneticTable::append` (`phonetic_key_matrix.h:92-100`): a column is a bag | both matrix builders append every entry in pass order, without collapse | same / follows |
@@ -339,8 +339,7 @@ offsets. The placed view represents each zero-only column as a hop to the
 next byte. Traversal keeps the pin's order and multiplicity, and the ABI
 reads the first key and rest as a pair. The empty, terminal and out-of-range
 checks are at the ABI consumers (`oxpinyin-facade/src/cursor.rs:382-395,513-527`,
-policy rows 63 and 66). The [index-parse fill](#index-parse-separator-fill)
-changes the columns supplied to the decoder.
+policy rows 63 and 66).
 
 ## 4. Sentence decoding
 
@@ -1335,16 +1334,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   (`oxpinyin-utils/src/storage/pinyin.rs:19-42`), so both `.bin` files and stderr differ. The stock
   model20 tables use none, so it needs crafted data. Use `oxpinyin_core::tool::parse_direct`
   (`oxpinyin-core/src/tool.rs:46-65`), and correct the module comment at `pinyin.rs:7`.
-
-### Existing separator issue
-
-- <a id="index-parse-separator-fill"></a>**Index-parse separator fill.** Source-derived follow-up to
-  [policy row 122](upstream-divergences.md#index-parse-separator-column-a-clear-at-the--after-a-guess-at-the-next-key-policy-row-122).
-  Luoma `'ni` with stock data leaves column 0 empty and produces no sentence at the pin
-  (`storage/pinyin_parser_table.h:906`, `storage/phonetic_key_matrix.cpp:46-79,410-418`,
-  `lookup/phonetic_lookup.h:753-771`). Rust decodes canonical `ni` and can produce a row
-  (`oxpinyin-facade/src/parse.rs:288-323`). Follow row 122's route to close by
-  giving index-parsed sessions the pin's separator columns and revisiting the #602 mapping.
 
 ### Removal candidates
 

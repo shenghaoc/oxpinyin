@@ -108,16 +108,6 @@ impl FullPinyinIndexParse {
     pub const fn consumed(&self) -> usize {
         self.consumed
     }
-
-    /// The keys as a `'`-joined canonical full-pinyin string.
-    #[must_use]
-    pub fn full_pinyin(&self) -> String {
-        self.keys
-            .iter()
-            .map(|key| key.canonical)
-            .collect::<Vec<_>>()
-            .join("'")
-    }
 }
 
 /// One dynamic-programming step of the pinned full-pinyin parse.

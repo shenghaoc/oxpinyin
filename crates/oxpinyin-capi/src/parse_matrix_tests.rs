@@ -183,3 +183,61 @@ fn the_key_rest_getter_reads_the_divided_column() {
     ));
     assert_eq!((begin, end), (2, 4));
 }
+
+/// `USE_RESPLIT_TABLE` (`pinyin.h`, bit 8).
+const RESPLIT: u32 = 1 << 8;
+
+/// `fangan` parses as `fan'gan`: at byte 6 the `fan` + `gan` step comes
+/// first and `fang` + `an` ties it on length, keys and distance, so it does
+/// not replace it (`pinyin_parser2.cpp:262-312`). The resplit table's
+/// `fan, gan` row then adds `fang` `[0, 4)` and `an` `[4, 6)`
+/// (`special_table.h`; `resplit_step`, `phonetic_key_matrix.cpp:87-167`),
+/// because `gan` starts on the column where `fan` ends. The Luoma and
+/// secondary-zhuyin indexes spell all four syllables as Hanyu does, and
+/// their parse fills the same matrix (`pinyin.cpp:1497-1525`), so the
+/// guess at 0 offers the imported 方案 under each scheme.
+#[rstest::rstest]
+fn a_resplit_key_pair_spells_a_phrase_under_every_scheme(#[values(1, 2, 3)] scheme: i32) {
+    let fixture = Fixture::new("resplit-scheme");
+    let import = pinyin_begin_add_phrases(fixture.context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        import,
+        cstr("方案").as_ptr(),
+        cstr("fang'an").as_ptr(),
+        1
+    ));
+    pinyin_end_add_phrases(import);
+    assert!(pinyin_set_options(fixture.context, 0x8 | RESPLIT));
+    assert!(pinyin_set_full_pinyin_scheme(fixture.context, scheme));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(fixture.instance, cstr("fangan").as_ptr()),
+        6
+    );
+    assert!(crate::sentence::pinyin_guess_candidates(
+        fixture.instance,
+        0,
+        crate::test_support::DEFAULT_SORT
+    ));
+    let mut count = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        fixture.instance,
+        &raw mut count
+    ));
+    let offered = (0..count).any(|index| {
+        let mut row = ptr::null_mut();
+        assert!(crate::candidates::pinyin_get_candidate(
+            fixture.instance,
+            index,
+            &raw mut row
+        ));
+        let mut text = ptr::null();
+        assert!(crate::candidates::pinyin_get_candidate_string(
+            fixture.instance,
+            row,
+            &raw mut text
+        ));
+        // SAFETY: the getter returns this live row's NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes() == "方案".as_bytes()
+    });
+    assert!(offered, "scheme {scheme}: the resplit keys spell 方案");
+}

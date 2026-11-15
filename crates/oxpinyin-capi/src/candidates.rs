@@ -490,7 +490,7 @@ pub extern "C" fn pinyin_choose_candidate(
         token,
         text,
     };
-    match inst.core.select_published(&published, true, true) {
+    match inst.core.select_published(&published, true) {
         // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
         Ok(oxpinyin_engine::Selection::Refused) => choose_answer(offset, 0),
         // The pin answers the caller's choose offset plus the length
@@ -580,7 +580,7 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    inst.core.clear_abi_constraint(offset, true, true)
+    inst.core.clear_abi_constraint(offset, true)
 }
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`

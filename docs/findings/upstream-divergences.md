@@ -367,14 +367,6 @@ An entry holds nothing else.
 - **Decision:** accepted under the [S1/S2 ruling](compatibility-policy.md#s1-and-s2-one-ordered-adjusted-score).
 - **Tests:** `nbest::tests::adjusted_score_rounds_product_then_difference_and_ties`, `nbest::tests::float_adjusted_comparison_is_a_strict_weak_order`.
 
-### Index-parse separator column: a clear at the `'` after a guess at the next key (policy row 122)
-
-- **Pin:** in `ni'hao` the `'` (byte 2) and the next key (byte 3) are two matrix columns. A guess at 3 gives every row `m_begin = 3`, the choose forces `[3, 6)`, and a clear at 2 answers false (`src/pinyin.cpp:2226-2252`, `:2582-2585`, `:2643-2649`; `src/lookup/phonetic_lookup.cpp:88-115`).
-- **oxpinyin:** under Luoma and secondary zhuyin the index-parse session puts the separator on the following segment (`SegmentGraph::build_exact`, `crates/oxpinyin-engine/src/session/matrix.rs:186`; `crates/oxpinyin-core/src/graph.rs:52-56`), so the forcing starts at the `'` column and a clear at 2 answers true. The choose cursor and a clear at 3 match; Hanyu and a guess at 2 match the pin.
-- **Decision:** POLICY-ACCEPTED, approved divergence (maintainer ruling 2026-11-15).
-- **To close:** give index-parse sessions the pin's separator columns, as plain full pinyin has; this reopens the #602 mapping.
-- **Tests:** `guess_offset_tests::a_guess_start_is_the_forcings_start_across_a_separator` (the matching cases).
-
 ### Pinyin tail sort — S3 repair
 
 - **Pin:** `trellis_value_compare` returns the negated `gfloat` difference as `gint` (`src/lookup/phonetic_lookup.h:174-178`) and is passed to `g_ptr_array_sort` (`:337`); its equality is not transitive, against the consistent total order a qsort-style comparator needs.

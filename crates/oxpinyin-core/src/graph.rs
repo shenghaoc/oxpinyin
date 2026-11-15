@@ -309,7 +309,8 @@ impl SegmentGraph {
     /// edge per [`ExactSegment`], and nothing else.
     ///
     /// This is the decoder input for schemes whose keys come from their own
-    /// parser — zhuyin and double pinyin. Upstream's decoder receives those
+    /// parser — zhuyin, double pinyin, and the Luoma and secondary-zhuyin
+    /// full-pinyin indexes. Upstream's decoder receives those
     /// exact `ChewingKey`s and never re-segments them, so the joined
     /// full-pinyin text must not go through [`Self::build_with_options`]:
     /// the pinyin inventory would re-split ambiguous spellings (`bie` into

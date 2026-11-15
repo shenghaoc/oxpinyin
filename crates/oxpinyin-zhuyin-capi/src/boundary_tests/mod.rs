@@ -70,6 +70,9 @@ fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinInstance {
     instance
 }
 
+/// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
+const SEPARATOR_OPTIONS: u32 = 0x18a;
+
 /// A fresh instance with `text` parsed as full pinyin under `options`.
 fn full_pinyin(context: *mut ZhuyinContext, options: u32, text: &str) -> *mut ZhuyinInstance {
     assert!(zhuyin_set_options(context, options));
