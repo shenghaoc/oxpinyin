@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 
 use oxpinyin_core::{ChewingKey, PhraseText, TrellisItem};
 
-use crate::chewing_table::key_matches;
 use crate::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
@@ -540,10 +539,9 @@ fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u6
                 .iter()
                 .zip(view.keys.as_chunks::<2>().0.iter())
                 .all(|(q, pair)| {
-                    key_matches(
-                        q,
-                        &ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])),
-                    )
+                    q.matches_with_tones(ChewingKey::from_packed(u16::from_le_bytes([
+                        pair[0], pair[1],
+                    ])))
                 })
         {
             matched = matched.saturating_add(u64::from(view.freq));
