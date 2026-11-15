@@ -3,6 +3,72 @@
 
 use super::*;
 
+/// Each prefix occurrence seeds a node (074a2219 pinyin.cpp:1415-1421,
+/// phonetic_lookup.h:244-265). Two strong 甲 paths occupy two result rows;
+/// with one seed, the weaker 乙 path occupies row 1 instead. The score
+/// gaps exceed one, so the pin's integer tail comparator orders them.
+#[test]
+fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532], &[0x1081], 1),
+            (&[0x4e59], &[0x1081], 1),
+            (&[0x4e19], &[0x1084], 999_998),
+        ],
+        1_000_000,
+    );
+    let config = system.join("table.conf");
+    let config_text = std::fs::read_to_string(&config).expect("configuration");
+    std::fs::remove_file(&config).expect("unlink fixture configuration");
+    std::fs::write(
+        &config,
+        config_text
+            .lines()
+            .map(|line| {
+                if line.starts_with("lambda parameter:") {
+                    "lambda parameter:0.5"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("configuration");
+    craft_hash(
+        &system.join("bigram.db"),
+        &[
+            (
+                1_u32.to_le_bytes().to_vec(),
+                gram_bytes(1000, &[(0x0100_0002, 10), (0x0100_0003, 990)]),
+            ),
+            (
+                0x0100_0003_u32.to_le_bytes().to_vec(),
+                gram_bytes(1000, &[(0x0100_0001, 1000)]),
+            ),
+        ],
+    );
+    let user = TempUserDir::new("repeated-prefix");
+    // The system row supplies the first occurrence; this user row adds
+    // the second without changing the item or its pronunciation.
+    set_phrase_table_row(&user.path, "丙", &[0x0100_0003]);
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert_eq!(parse(instance, "ba1"), 3);
+    assert!(crate::sentence::pinyin_guess_sentence_with_prefix(
+        instance,
+        c"丙".as_ptr()
+    ));
+    for (index, text) in [(0, "甲"), (1, "甲"), (2, "乙")] {
+        assert_eq!(sentence_out(instance, index), (true, Some(text.to_owned())));
+    }
+    close(context, instance);
+}
+
 /// A toned initial aborts the sentence guess.
 #[test]
 fn guess_sentence_aborts_on_a_toned_initial() {
