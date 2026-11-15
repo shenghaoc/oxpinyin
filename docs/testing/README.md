@@ -13,6 +13,11 @@ A behaviour is tested where it is implemented. A higher layer tests only the dec
 A test exists for a failure mechanism that no other test protects; different inputs or execution layers alone do not justify one.
 A new regression uses reduced input and explains any substantial fixture or runtime cost. It extends existing cases where that keeps the test clear, and a live comparison or a compact expectation replaces bulk observations where it suffices.
 
+The `boundary_tests` C-boundary tests of `oxpinyin-capi` and `oxpinyin-zhuyin-capi` live in `src/boundary_tests/<topic>.rs`, one module for each topic.
+A new test goes in the module for its topic.
+A helper that more than one module uses goes in `boundary_tests/mod.rs`; a helper that one module uses stays in that module.
+An abort test names itself by its full path, `boundary_tests::<topic>::<name>`.
+
 ## Candidate capture
 
 `fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate

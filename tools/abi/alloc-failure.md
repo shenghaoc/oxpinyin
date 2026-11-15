@@ -68,8 +68,8 @@ array of a caller only through `g_array_set_size` and
 `g_array_append_vals` of GLib, so the failure happens inside the `g_realloc` of GLib
 on both sides. These tests cover the part of oxpinyin, and return a real GLib-owned `GArray`:
 
-- `boundary_tests::lookup_tokens_resets_the_callers_array` in `oxpinyin-capi`;
-- `boundary_tests::caller_arrays_keep_their_metadata_and_clear_through_the_callback` in
+- `boundary_tests::token_getters::lookup_tokens_resets_the_callers_array` in `oxpinyin-capi`;
+- `boundary_tests::token_getters::caller_arrays_keep_their_metadata_and_clear_through_the_callback` in
   `oxpinyin-zhuyin-capi`.
 
 The full ABI
