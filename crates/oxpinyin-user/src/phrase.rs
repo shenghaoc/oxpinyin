@@ -116,29 +116,11 @@ pub const fn phrase_index_make_token(phrase_index: u8, token: Token) -> Token {
     (((phrase_index as Token) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
-/// Whether `index` is a default-facade `USER_FILE` nibble.
-///
-/// The three sub-indexes libpinyin persists to the user directory:
-/// [`ADDON_DICTIONARY`] (`addon.bin`, populated by choose-promotion),
-/// [`NETWORK_DICTIONARY`] (`network.bin`), and [`USER_DICTIONARY`]
-/// (`user.bin`) (`docs/findings/phrase-union.md` §3.2). A promoted addon
-/// phrase lands in nibble 5, so it must read back as a user-file token.
-#[must_use]
-pub const fn is_user_file_library(index: u8) -> bool {
-    index == ADDON_DICTIONARY || index == NETWORK_DICTIONARY || index == USER_DICTIONARY
-}
-
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
 /// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`, §3.2).
 #[must_use]
 pub const fn is_user_token(token: Token) -> bool {
     phrase_index_library_index(token) == USER_DICTIONARY
-}
-
-/// Whether `token` lives in a default-facade `USER_FILE` sub-index.
-#[must_use]
-pub const fn is_user_file_token(token: Token) -> bool {
-    is_user_file_library(phrase_index_library_index(token))
 }
 
 /// First token allocated in an empty user sub-index.
@@ -288,15 +270,6 @@ mod tests {
         assert_eq!(ADDON_DICTIONARY, 5);
         assert_eq!(NETWORK_DICTIONARY, 6);
         assert_eq!(USER_DICTIONARY, 7);
-        assert!(is_user_file_library(ADDON_DICTIONARY));
-        assert!(is_user_file_library(NETWORK_DICTIONARY));
-        assert!(is_user_file_library(USER_DICTIONARY));
-        // Everything below nibble 5 is a SYSTEM_FILE (or reserved), never a
-        // user-file library: 4 is MERGED_DICTIONARY, 0 is the reserved zero.
-        assert!(!is_user_file_library(0));
-        assert!(!is_user_file_library(1));
-        assert!(!is_user_file_library(4));
-        assert!(!is_user_file_library(8));
     }
 
     #[test]

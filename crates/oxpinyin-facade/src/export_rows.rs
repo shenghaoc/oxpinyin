@@ -7,9 +7,7 @@
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
-use oxpinyin_user::{
-    MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore, is_user_file_token,
-};
+use oxpinyin_user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 
 use std::collections::VecDeque;
 
@@ -555,19 +553,16 @@ impl ExportSource<'_> {
                 .found()
                 .flatten();
         }
-        if is_user_file_token(token) {
-            let phrase = self.user.phrase(token).ok().flatten()?;
-            let pinyins: Vec<String> = phrase
-                .pronunciations()
-                .iter()
-                .filter_map(UserPronunciation::render_pinyin)
-                .collect();
-            if pinyins.is_empty() {
-                return None;
-            }
-            return Some((phrase.phrase_text()?, pinyins));
+        let phrase = self.user.phrase(token).ok().flatten()?;
+        let pinyins: Vec<String> = phrase
+            .pronunciations()
+            .iter()
+            .filter_map(UserPronunciation::render_pinyin)
+            .collect();
+        if pinyins.is_empty() {
+            return None;
         }
-        None
+        Some((phrase.phrase_text()?, pinyins))
     }
 }
 /// One rendered §9 bigram-export row: the `'`-joined pronunciation of the
