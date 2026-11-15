@@ -18,6 +18,7 @@ oxpinyin-store = { workspace = true }
 # table.conf and user.conf go through the pin's own C library calls
 # (docs/findings/external-io-boundary.md, stage 1).
 oxpinyin-input = { workspace = true }
+thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

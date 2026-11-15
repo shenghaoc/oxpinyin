@@ -13,35 +13,17 @@
 //! carry one file per peer's extension so tests can exercise each
 //! independently.
 
-use std::fmt;
-
 use oxpinyin_store::StoreError;
 
 /// Errors that can occur when opening or querying a table.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TableError {
     /// The store file could not be opened (I/O error).
-    Io(std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[source] std::io::Error),
     /// The storage backend reported a non-I/O error.
-    Store(StoreError),
-}
-
-impl fmt::Display for TableError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "I/O error: {e}"),
-            Self::Store(e) => write!(f, "store error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for TableError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(e) => Some(e),
-            Self::Store(e) => Some(e),
-        }
-    }
+    #[error("store error: {0}")]
+    Store(#[source] StoreError),
 }
 
 impl From<StoreError> for TableError {
