@@ -1736,3 +1736,21 @@ fn a_step_prices_readings_with_the_query_tone() {
     assert_eq!(sentence(instance), (true, Some("乙".to_owned())));
     close(context, instance);
 }
+
+/// A step prices a user item from its own readings
+/// (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at 074a2219).
+/// Library 6's 甲 holds ㄅㄚˋ 3 and ㄉㄚˋ 9, so ㄅㄚˋ prices it at 3/12 and
+/// 乙 (unigram 6, one reading) outranks 甲 (unigram 9).
+#[test]
+fn a_step_prices_a_user_item_from_its_readings() {
+    let user = TempUserDir::new("user-item-step");
+    let (context, instance) = open_with_user(&user.path);
+    for (text, reading, count) in [("甲", "ㄅㄚˋ", 3), ("甲", "ㄉㄚˋ", 9), ("乙", "ㄅㄚˋ", 2)]
+    {
+        assert!(import(context, 6, text, reading.as_bytes(), count));
+    }
+    zhuyin_parse_more_chewings(instance, cstr("184").as_ptr());
+    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(sentence(instance), (true, Some("乙".to_owned())));
+    close(context, instance);
+}

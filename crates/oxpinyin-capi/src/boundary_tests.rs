@@ -3883,7 +3883,14 @@ fn segmented_token(instance: *mut PinyinInstance) -> (bool, u32) {
 fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
     let user = TempUserDir::new("stale-user-file-token");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(import_batch(context, 7, &[("龘", "ni", 0)]), [true]);
+    // The first import gives the unigram 0 and the reading count 0; the
+    // second adds 1 to that reading and nothing to the unigram
+    // (`phrase_index.cpp:73-84`, `pinyin.cpp:563-582`), so the step prices
+    // the reading at 1/1, not at the zero total's 0 (`phrase_index.h:155-157`).
+    assert_eq!(
+        import_batch(context, 7, &[("龘", "ni", 0), ("龘", "ni", 1)]),
+        [true, true]
+    );
     let token = lookup(instance, "龘")
         .into_iter()
         .find(|token| token >> 24 == 7)
@@ -4006,5 +4013,37 @@ fn a_step_prices_readings_with_the_query_tone() {
     assert_eq!(parse(instance, "ba4"), 3);
     assert!(pinyin_guess_sentence(instance));
     assert_eq!(sentence_out(instance, 0), (true, Some("乙".to_owned())));
+    close(context, instance);
+}
+
+/// A step prices a user item from its own readings
+/// (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at 074a2219).
+/// Library 6's 甲 holds `ba` 3 and `da` 9, so `ba` prices it at 3/12 and 乙
+/// (unigram 6, one reading) outranks 甲 (unigram 9). The second import adds
+/// the reading and no index row (`pinyin.cpp:563-582`), so `da` lists no
+/// 甲 row.
+#[test]
+fn a_step_prices_a_user_item_from_its_readings() {
+    let user = TempUserDir::new("user-item-step");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(
+        crate::e2e_tests::import_batch(
+            context,
+            6,
+            &[("甲", "ba", 3), ("甲", "da", 9), ("乙", "ba", 2)]
+        ),
+        [true; 3]
+    );
+    assert_eq!(parse(instance, "ba"), 2);
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (true, Some("乙".to_owned())));
+    assert_eq!(parse(instance, "da"), 2);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(
+        !capture_rows(instance)
+            .iter()
+            .any(|(kind, text, _)| *kind == NORMAL && text == "甲")
+    );
     close(context, instance);
 }
