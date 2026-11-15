@@ -145,9 +145,27 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
         .user_store_mut()
         .add_phrase(&"词".into(), &second, Some(9))
         .unwrap();
+    // A `USER_FILE` reading is read in place from the session arena.
+    let user_packed = |runtime: &Runtime, nth| {
+        runtime
+            .dict()
+            .with_user_nth_pronunciation_words(user, nth, |length, words| {
+                assert_eq!(length, 1);
+                words.map(|words| {
+                    words
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|bytes| u16::from_le_bytes(*bytes))
+                        .collect::<Vec<u16>>()
+                })
+            })
+            .expect("item")
+    };
+    assert!(runtime.dict().token_nth_pronunciation(user, 0).is_none());
     for (nth, tone) in [(0, 3), (1, 1)] {
         assert_eq!(
-            packed(&runtime, user, nth),
+            user_packed(&runtime, nth),
             Some(vec![
                 oxpinyin_core::ChewingKey::from_pinyin("ni")
                     .unwrap()
@@ -157,7 +175,7 @@ fn narrow_token_reads_preserve_item_order_and_visibility() {
         );
     }
     assert_eq!(runtime.dict().token_pronunciation_count(user), Some(2));
-    assert_eq!(packed(&runtime, user, 2), None);
+    assert_eq!(user_packed(&runtime, 2), None);
     for (library, token) in [(1, system), (7, user)] {
         assert!(runtime.dict().token_exists(token));
         assert_eq!(runtime.dict().phrase_length_for_token(token), Some(1));
