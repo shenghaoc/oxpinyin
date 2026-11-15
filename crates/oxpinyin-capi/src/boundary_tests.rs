@@ -4394,6 +4394,30 @@ fn a_failed_phrase_table_read_is_a_miss() {
     );
 }
 
+/// Kyoto Cabinet checks the phrase-table row size, answers a failed check
+/// as a miss, and asserts on a failed body read after a successful check
+/// (`phrase_large_table3_kyotodb.cpp:174-187`, `pinyin_utils.h:27-31` at
+/// 074a2219). The existing 你好 row passes its size check; importing that
+/// phrase must abort when its body read fails.
+#[cfg(feature = "kyotocabinet")]
+#[test]
+fn a_phrase_table_body_read_failure_after_the_check_aborts() {
+    assert_aborts(
+        "boundary_tests::a_phrase_table_body_read_failure_after_the_check_aborts",
+        || {
+            let user = TempUserDir::new("kc-phrase-body-read");
+            let (context, instance) = open_at(&user.path);
+            let row: Vec<u8> = "你好"
+                .chars()
+                .flat_map(|word| u32::from(word).to_le_bytes())
+                .collect();
+            oxpinyin_store::read_faults::fail_point_read_of(&row, 1);
+            import_batch(context, 7, &[("你好", "ni3'hao3", 5)]);
+            close(context, instance);
+        },
+    );
+}
+
 /// A failed existence read of a pinyin-table key is a miss too: the search
 /// for that key answers `SEARCH_NONE` and the candidate lookup goes on
 /// (`chewing_large_table2_tkrzwdb.cpp:146-149`, `:511` at 074a2219). With

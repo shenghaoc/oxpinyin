@@ -85,8 +85,9 @@ pub trait ChewingDbm {
     /// `PhraseLargeTable3::search`: a failed read is a miss
     /// (`phrase_large_table3_tkrzwdb.cpp:136-139`,
     /// `phrase_large_table3_bdb.cpp:196-198`,
-    /// `phrase_large_table3_kyotodb.cpp:174-177` at 074a2219). The default
-    /// is [`Self::get`].
+    /// `phrase_large_table3_kyotodb.cpp:174-182` at 074a2219). Kyoto
+    /// Cabinet aborts on a failed body read after a successful check
+    /// (`:187`). The default is [`Self::get`].
     fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         self.get(key, value)
     }
@@ -285,8 +286,9 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
             DbmState::Open(store) => match store.get_pinyin_row_raw(key, value) {
                 // Kyoto Cabinet's body read after a good size check:
                 // `check_result(vsiz == m_db->get(...))`, an assert on every
-                // path through `search_internal`
-                // (`chewing_large_table2_kyotodb.cpp:170-174` at 074a2219).
+                // path through either table search
+                // (`chewing_large_table2_kyotodb.cpp:170-174`,
+                // `phrase_large_table3_kyotodb.cpp:187` at 074a2219).
                 Err(oxpinyin_store::StoreError::ReadAfterCheck) => std::process::abort(),
                 read => failed_read_is_a_miss(read, value),
             },
@@ -295,10 +297,10 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     }
 
     fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        match &self.state {
-            DbmState::Open(store) => failed_read_is_a_miss(store.get_raw(key, value), value),
-            DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),
-        }
+        // Both tables use the same checked read on Kyoto Cabinet, including
+        // the abort after a successful check (`phrase_large_table3_kyotodb.cpp:
+        // 174-187` at 074a2219).
+        self.get_pinyin_row(key, value)
     }
 
     fn contains(&self, key: &[u8]) -> Result<bool, DictError> {

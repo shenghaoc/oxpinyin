@@ -726,13 +726,14 @@ pub trait RawReadStore {
         self.get_raw(key, value)
     }
 
-    /// Read a raw pinyin-table row the way libpinyin's
-    /// `ChewingLargeTable2::search_internal` does. The default is one
+    /// Read a raw pinyin- or phrase-table row the way libpinyin's
+    /// `ChewingLargeTable2::search_internal` and `PhraseLargeTable3::search` do. The default is one
     /// [`Self::get_raw`]. KC overrides it with the pin's size check, which
     /// answers a miss when it fails and a hit with no body read for an
     /// empty row, then the body read; a body read that fails or returns
     /// another size is [`StoreError::ReadAfterCheck`], the point where the
-    /// pin asserts (`chewing_large_table2_kyotodb.cpp:159-176` at 074a2219).
+    /// pin asserts (`chewing_large_table2_kyotodb.cpp:159-176`,
+    /// `phrase_large_table3_kyotodb.cpp:174-187` at 074a2219).
     ///
     /// # Errors
     ///
