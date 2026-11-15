@@ -47,10 +47,10 @@ pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 
 /// One pinyin key in a stored pronunciation.
 ///
-/// Opaque 16-bit id: the low [`KEY_TONE_SHIFT`] bits are a
-/// [`oxpinyin_core::SyllableKey`] index, the high three bits the key's
-/// `ChewingKey::m_tone` (0 = zero tone, 1..=5). A toneless key is the bare
-/// syllable index, so every toneless producer's ids are unchanged.
+/// The low [`KEY_TONE_SHIFT`] bits hold either a canonical syllable id
+/// ([`oxpinyin_core::SyllableKey`] index) or a tagged packed key with no
+/// syllable-table row. The high three bits hold the key's
+/// `ChewingKey::m_tone` (0 = zero tone, 1..=5).
 /// libpinyin stores the tone with the key (`PhraseItem::add_pronunciation`
 /// copies the parsed `ChewingKey`s, `phrase_index.cpp:56-91`); the import
 /// parser keeps it under `USE_TONE` (`pinyin.cpp:630`).
@@ -66,16 +66,53 @@ pub const KEY_SYLLABLE_MASK: PinyinKey = (1 << KEY_TONE_SHIFT) - 1;
 /// (`chewing_enum.h`, tones 0..=5).
 pub const MAX_KEY_TONE: u8 = 5;
 
+/// Marks syllable bits that are a packed `ChewingKey`'s initial, middle and
+/// final fields, not a dense id: a key with no syllable-table row. The pin
+/// appends such a fuzzy final alternate to the matrix with no table check
+/// and stores it like any key (`phonetic_key_matrix.cpp:285-306`,
+/// `pinyin.cpp:3594-3606`, `:3647-3663` at 074a2219). The dense ids end far
+/// below the tag.
+const KEY_PACKED_TAG: PinyinKey = 1 << 12;
+
+/// The packed field bits under [`KEY_PACKED_TAG`].
+const KEY_PACKED_FIELDS: PinyinKey = KEY_PACKED_TAG - 1;
+
+/// `SyllableKey::index`'s tag for the same packed form.
+const SYLLABLE_PACKED_TAG: usize = 0x8000;
+
 /// A [`PinyinKey`] for syllable index `syllable` carrying `tone`; `None`
 /// when the index does not fit the syllable bits or the tone is not
-/// 0..=[`MAX_KEY_TONE`].
+/// 0..=[`MAX_KEY_TONE`]. A [`SyllableKey`] index tagged as a packed key
+/// keeps its packed fields.
 #[must_use]
 pub fn toned_key(syllable: usize, tone: u8) -> Option<PinyinKey> {
-    let syllable = PinyinKey::try_from(syllable).ok()?;
+    let syllable = if syllable & SYLLABLE_PACKED_TAG == 0 {
+        PinyinKey::try_from(syllable).ok()?
+    } else {
+        KEY_PACKED_TAG | (PinyinKey::try_from(syllable).ok()? & KEY_PACKED_FIELDS)
+    };
     if syllable > KEY_SYLLABLE_MASK || tone > MAX_KEY_TONE {
         return None;
     }
     Some(syllable | (PinyinKey::from(tone) << KEY_TONE_SHIFT))
+}
+
+/// The `ChewingKey` that `key` names, tone included: a dense id's table
+/// row, or the packed fields of a key with no row. `None` when the id names
+/// no key, or the packed fields are zero or outside the table dimensions.
+#[must_use]
+pub(crate) fn key_chewing(key: PinyinKey) -> Option<oxpinyin_core::ChewingKey> {
+    let bits = key & KEY_SYLLABLE_MASK;
+    let fields = if bits & KEY_PACKED_TAG == 0 {
+        SyllableKey::from_index(usize::from(bits))?.chewing_key()
+    } else {
+        let packed = oxpinyin_core::ChewingKey::from_packed(bits & KEY_PACKED_FIELDS);
+        if bits & KEY_PACKED_FIELDS == 0 || !packed.elements_in_dims() {
+            return None;
+        }
+        packed
+    };
+    Some(fields.with_tone(key_tone(key)))
 }
 
 /// The syllable index of `key`, tone stripped.
@@ -96,7 +133,7 @@ pub const fn key_tone(key: PinyinKey) -> u8 {
 /// is out of range.
 #[must_use]
 pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
-    let text = SyllableKey::from_index(key_syllable(key))?.text();
+    let text = key_chewing(key)?.pinyin_spelling();
     match key_tone(key) {
         0 => Some(text.to_owned()),
         tone @ 1..=MAX_KEY_TONE => Some(format!("{text}{tone}")),

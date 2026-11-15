@@ -2734,6 +2734,65 @@ fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
     );
 }
 
+/// Remember stores the matrix's own key, with or without a syllable-table
+/// row. Under `USE_TONE | PINYIN_AMB_EN_ENG`, `shun3` puts the final
+/// alternate (sh, u, eng, tone 3) in the matrix with no table check
+/// (`phonetic_key_matrix.cpp:285-306` at 074a2219). 甲's only reading is
+/// that key, so the one matching path carries it to `_add_phrase`
+/// (`pinyin.cpp:3594-3606`, `:3647-3663`), which answers true and stores
+/// it. The nth-pronunciation getter returns the stored word
+/// (`pinyin.cpp:2801-2818`). The key has no `content_table` row:
+/// `get_pinyin_string` renders the empty row-zero spelling and the tone digit
+/// (`chewing_key.cpp:47-57`, `pinyin_parser_table.h:3977`).
+#[test]
+fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
+    let key_user = TempUserDir::new("remember-alternate-keys");
+    let (key_context, key_instance) = open_at(&key_user.path);
+    let key = |text: &str| {
+        let mut key = 0_u16;
+        let text = cstr(text);
+        assert!(pinyin_parse_full_pinyin(
+            key_instance,
+            text.as_ptr(),
+            (&raw mut key).cast()
+        ));
+        key
+    };
+    // The final field is bits 7 to 11 of the packed key.
+    let alternate = (key("shun3") & !0x0f80) | (key("sheng") & 0x0f80);
+    close(key_context, key_instance);
+
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x7532], &[alternate], 100)],
+        1000,
+    );
+    let user = TempUserDir::new("remember-alternate");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = alloc(context);
+    assert!(pinyin_set_options(
+        context,
+        oxpinyin_core::USE_TONE | oxpinyin_core::PINYIN_AMB_EN_ENG
+    ));
+    assert_eq!(parse(instance, "shun3"), 5);
+    let phrase = cstr("甲");
+    assert!(crate::user_data::pinyin_remember_user_input(
+        instance,
+        phrase.as_ptr(),
+        5
+    ));
+    let token = lookup(instance, "甲")
+        .into_iter()
+        .find(|&token| oxpinyin_user::is_user_token(token))
+        .expect("the remembered library-7 token");
+    assert_eq!(reading_bytes(instance, token, 0), alternate.to_le_bytes());
+    assert_eq!(export_rows_of(context, 7, "甲"), [("3".to_owned(), 5)]);
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").
