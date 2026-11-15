@@ -344,7 +344,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
                 .filter(|item| {
                     keys.iter()
                         .zip(item.keys())
-                        .all(|(q, s)| key_matches(q, &s))
+                        .all(|(q, s)| q.matches_with_tones(s))
                 })
                 .map(|item| item.token)
                 .collect(),
@@ -455,16 +455,8 @@ pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
 }
 
 /// `pinyin_compare_with_tones(query, stored, len) == 0`
-/// (`pinyin_phrase3.h:68-115`), syllable by syllable:
-///
-/// * `pinyin_compare_initial3`: initials must be equal;
-/// * `pinyin_compare_middle_and_final3`: equal middle and final, or
-///   either side has neither (an incomplete syllable matches any);
-/// * `pinyin_compare_tone3`: equal tones, or either side is zero.
-///
-/// Upstream compares all initials, then all middle/finals, then all
-/// tones, and returns at the first difference; equality is order
-/// independent, so this checks per syllable.
+/// (`pinyin_phrase3.h:108-144`): equal lengths and
+/// [`ChewingKey::matches_with_tones`] at every position.
 #[must_use]
 pub fn keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     query.len() == stored.len() && prefix_keys_match(query, stored)
@@ -479,17 +471,10 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     if stored.len() < query.len() {
         return false;
     }
-    query.iter().zip(stored).all(|(q, s)| key_matches(q, s))
-}
-
-/// [`keys_match`] for one syllable.
-#[must_use]
-pub fn key_matches(q: &ChewingKey, s: &ChewingKey) -> bool {
-    q.initial == s.initial
-        && ((q.middle == s.middle && q.final_ == s.final_)
-            || (q.middle == 0 && q.final_ == 0)
-            || (s.middle == 0 && s.final_ == 0))
-        && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+    query
+        .iter()
+        .zip(stored)
+        .all(|(q, s)| q.matches_with_tones(*s))
 }
 
 /// Decode the exact row that ChewingLargeTable2::search found, retaining stored

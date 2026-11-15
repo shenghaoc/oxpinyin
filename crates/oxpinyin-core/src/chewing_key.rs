@@ -60,6 +60,31 @@ impl ChewingKey {
         }
     }
 
+    /// Whether `pinyin_compare_with_tones` answers 0 for this query key
+    /// against one `stored` key (`src/storage/pinyin_phrase3.h:108-144` at
+    /// 074a2219): the per-syllable test of the phrase-table searches and the
+    /// pronunciation match.
+    ///
+    /// The pin makes three passes over the phrase (initials, then middle and
+    /// final pairs, then tones) and returns at the first non-zero
+    /// difference. It answers 0 only when every position passes all three
+    /// tests, so a multi-key comparison is this test at each position:
+    ///
+    /// * `pinyin_compare_initial3` (`:68-71`): equal initials;
+    /// * `pinyin_compare_middle_and_final3` (`:73-94`): equal middle and
+    ///   final, or a zero middle and final on either side, so an incomplete
+    ///   key matches any final;
+    /// * `pinyin_compare_tone3` (`:96-105`): equal tones, or a zero tone on
+    ///   either side.
+    #[must_use]
+    pub const fn matches_with_tones(self, stored: Self) -> bool {
+        self.initial == stored.initial
+            && ((self.middle == stored.middle && self.final_ == stored.final_)
+                || (self.middle == 0 && self.final_ == 0)
+                || (stored.middle == 0 && stored.final_ == 0))
+            && (self.tone == stored.tone || self.tone == 0 || stored.tone == 0)
+    }
+
     /// The key with `m_tone` set to `tone`.
     #[must_use]
     pub const fn with_tone(mut self, tone: u8) -> Self {
@@ -428,5 +453,36 @@ mod chewing_key_data_tests {
         assert_eq!(b.zhuyin_string(), "ㄅ");
         assert_eq!(b.luoma_pinyin_text().to_string(), "None");
         assert_eq!(b.secondary_zhuyin_text().to_string(), "None");
+    }
+}
+
+#[cfg(test)]
+mod compare_tests {
+    use super::ChewingKey;
+
+    fn key(spelling: &str) -> ChewingKey {
+        ChewingKey::from_pinyin(spelling).expect("a pinyin spelling")
+    }
+
+    #[test]
+    fn matches_with_tones_follows_the_three_upstream_comparisons() {
+        let ni = key("ni");
+        let ni3 = ni.with_tone(3);
+        let n = ChewingKey::new(ni.initial, 0, 0, 0);
+        let na = key("na");
+        assert!(ni.matches_with_tones(ni3), "zero tone matches any tone");
+        assert!(ni3.matches_with_tones(ni), "either side zero");
+        assert!(!ni3.with_tone(1).matches_with_tones(ni3), "tones differ");
+        assert!(
+            n.matches_with_tones(ni3),
+            "incomplete query matches any final"
+        );
+        assert!(ni3.matches_with_tones(n), "incomplete stored matches too");
+        assert!(!na.matches_with_tones(ni3), "finals differ");
+        assert!(!key("hao").matches_with_tones(ni), "initials differ");
+        assert!(
+            !n.with_tone(1).matches_with_tones(n.with_tone(2)),
+            "an incomplete key still compares tones"
+        );
     }
 }

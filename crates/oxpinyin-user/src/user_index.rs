@@ -629,23 +629,7 @@ impl UserIndex {
     }
 }
 
-/// Whether `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
-/// 074a2219) answers 0 for one position. Its three passes (initials, then
-/// middle/final pairs, then tones) answer 0 only when every position
-/// passes all three tests, so the passes reduce to this conjunction per
-/// position: equal initials (`pinyin_compare_initial3`, `:69-72`); equal
-/// middle and final, or a zero middle and final on either side
-/// (`pinyin_compare_middle_and_final3`, `:74-91`); equal tones, or a zero
-/// tone on either side (`pinyin_compare_tone3`, `:93-102`).
-fn key_matches_with_tones(query: ChewingKey, stored: ChewingKey) -> bool {
-    query.initial == stored.initial
-        && ((query.middle == stored.middle && query.final_ == stored.final_)
-            || (query.middle == 0 && query.final_ == 0)
-            || (stored.middle == 0 && stored.final_ == 0))
-        && (query.tone == stored.tone || query.tone == 0 || stored.tone == 0)
-}
-
-/// `pinyin_compare_with_tones` over the first `query.len()` packed words of
+/// [`ChewingKey::matches_with_tones`] over the first `query.len()` packed words of
 /// one `PinyinIndexItem2` record, read in place. Each word decodes through
 /// `from_packed`, padding bit 15 masked; the query's own fields are
 /// compared, never a packed copy that would truncate an out-of-range one.
@@ -653,7 +637,7 @@ fn key_matches_with_tones(query: ChewingKey, stored: ChewingKey) -> bool {
 fn record_matches_with_tones(query: &[ChewingKey], record: &[u8]) -> bool {
     let (words, _) = record[4..4 + 2 * query.len()].as_chunks::<2>();
     words.iter().zip(query).all(|(word, query)| {
-        key_matches_with_tones(*query, ChewingKey::from_packed(u16::from_le_bytes(*word)))
+        query.matches_with_tones(ChewingKey::from_packed(u16::from_le_bytes(*word)))
     })
 }
 
