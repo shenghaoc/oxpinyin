@@ -88,8 +88,12 @@ pub enum ExportAssert {
     NthPronunciation,
     /// `assert(m_tone < CHEWING_NUMBER_OF_TONES)` in `get_pinyin_string`
     /// (`chewing_key.cpp:48`, reached from `:728` for each key in turn): a
-    /// `USER_FILE` reading carries a tone past `MAX_KEY_TONE`.
+    /// reading carries a tone past `MAX_KEY_TONE`.
     KeyTone,
+    /// The initial, middle and final asserts of `get_table_index`
+    /// (`chewing_key.cpp:30-32`, reached from `:49` after the tone assert): a
+    /// key's field lies outside the table dimensions.
+    KeyFields,
     /// A tkrzw or Berkeley DB record copy failed where the pin's
     /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
     /// `bdb_utils.h:61`, `:67`). No export read copies, so the cursor never
@@ -153,11 +157,11 @@ fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
 pub struct ExportRow<'a>(RowSource<'a>);
 
 enum RowSource<'a> {
-    /// A system library's own item: the phrase as stored `ucs4_t` code
-    /// points, the pronunciation as packed `ChewingKey` bytes.
+    /// A system library's own item or a session arena's: the phrase as
+    /// stored `ucs4_t` code points, the pronunciation as packed `ChewingKey`
+    /// bytes.
     Mapped {
         item: PhraseItemView<'a>,
-        user: bool,
         keys: &'a [u8],
         count: u32,
     },
@@ -245,22 +249,26 @@ impl ExportRow<'_> {
     }
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
-    /// row's keys (`pinyin.cpp:728`), if any: a `USER_FILE` key with a tone
-    /// past `MAX_KEY_TONE`. A session key always names a syllable, so the
-    /// content-table assert has no site. A system item's packed keys are not
-    /// sites either: `oxpinyin-core` renders an invalid pattern through its
-    /// registered zero-row fallback.
+    /// row's keys (`pinyin.cpp:726-728`), if any. Each key in turn asserts
+    /// its tone (`chewing_key.cpp:48`) and then, in `get_table_index`, its
+    /// initial, middle and final (`:30-32`, from `:49`). The pin renders a
+    /// system item's keys and a user item's through the same call. A key
+    /// inside the dimensions with no table row is not a site: its index is
+    /// zero and the content-table assert (`:50`) holds.
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
             RowSource::User { keys, .. } => keys.iter().find_map(|&key| user_key_assert(key)),
-            RowSource::Mapped {
-                user: true, keys, ..
-            } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
+            RowSource::Mapped { keys, .. } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
                 let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
-                (key.tone > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
+                if key.tone > MAX_KEY_TONE {
+                    Some(ExportAssert::KeyTone)
+                } else if !key.elements_in_dims() {
+                    Some(ExportAssert::KeyFields)
+                } else {
+                    None
+                }
             }),
-            RowSource::Mapped { .. } => None,
         }
     }
 
@@ -336,7 +344,6 @@ impl ItemRef<'_> {
                 let pronunciation = item.pronunciation(nth)?;
                 RowSource::Mapped {
                     item: *item,
-                    user: matches!(self, Self::Arena(_)),
                     keys: pronunciation.keys,
                     count: pronunciation.freq,
                 }
