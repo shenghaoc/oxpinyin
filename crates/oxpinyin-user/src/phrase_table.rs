@@ -7,17 +7,6 @@
 
 use oxpinyin_store::StoreError;
 
-/// No matching enabled token or existing key.
-pub const SEARCH_NONE: i32 = 0;
-/// At least one enabled token was appended.
-pub const SEARCH_OK: i32 = 1;
-/// Successful entry operation.
-pub const ERROR_OK: i32 = 0;
-/// Insertion encountered the token before any greater token.
-pub const ERROR_INSERT_ITEM_EXISTS: i32 = 1;
-/// Removal did not find the token.
-pub const ERROR_REMOVE_ITEM_DONOT_EXISTS: i32 = 2;
-
 /// Encode phrase text as the pin's little-endian UCS-4 key.
 #[must_use]
 pub fn key(text: &str) -> Vec<u8> {
@@ -60,8 +49,11 @@ impl PhraseTableEntry {
         &self.bytes
     }
 
-    /// Insert before the first greater token; detect equality only before it.
-    pub fn add_index(&mut self, token: u32) -> i32 {
+    /// Insert before the first greater token. An equal token found before that
+    /// point ends the scan without insertion (`ERROR_INSERT_ITEM_EXISTS`).
+    /// Insertion corresponds to `ERROR_OK` (`novel_types.h:78-79`,
+    /// `phrase_large_table3.cpp:56-71`).
+    pub fn add_index(&mut self, token: u32) {
         let mut offset = self.bytes.len();
         for (index, existing) in self
             .bytes
@@ -72,7 +64,7 @@ impl PhraseTableEntry {
             .enumerate()
         {
             if existing == token {
-                return ERROR_INSERT_ITEM_EXISTS;
+                return;
             }
             if existing > token {
                 offset = index * 4;
@@ -80,11 +72,12 @@ impl PhraseTableEntry {
             }
         }
         self.bytes.splice(offset..offset, token.to_le_bytes());
-        ERROR_OK
     }
 
-    /// Remove the first occurrence only (`phrase_large_table3.cpp:73-88`).
-    pub fn remove_index(&mut self, token: u32) -> i32 {
+    /// Remove the first occurrence (`ERROR_OK`). Return early if the token is
+    /// absent (`ERROR_REMOVE_ITEM_DONOT_EXISTS`, `novel_types.h:78-80`,
+    /// `phrase_large_table3.cpp:73-89`).
+    pub fn remove_index(&mut self, token: u32) {
         let Some(index) = self
             .bytes
             .as_chunks::<4>()
@@ -93,10 +86,9 @@ impl PhraseTableEntry {
             .map(|word| decode(word))
             .position(|v| v == token)
         else {
-            return ERROR_REMOVE_ITEM_DONOT_EXISTS;
+            return;
         };
         self.bytes.drain(index * 4..index * 4 + 4);
-        ERROR_OK
     }
 
     /// Remove all matching tokens, preserving survivor order.
@@ -123,6 +115,9 @@ impl PhraseTableEntry {
 
 /// The pin's `PhraseTableEntry::search` over a stored record read in place, after
 /// [`PhraseTableEntry::from_bytes`]'s check, with no entry built.
+/// Append enabled tokens in stored order, including duplicates. The pin
+/// returns `SEARCH_OK` if it appended a token and `SEARCH_NONE` otherwise
+/// (`novel_types.h:71-72`, `phrase_large_table3.cpp:29-52`).
 ///
 /// # Errors
 /// Rejects incomplete tokens, as [`PhraseTableEntry::from_bytes`] does.
@@ -130,20 +125,18 @@ pub fn search_bytes(
     bytes: &[u8],
     tokens: &mut Vec<u32>,
     enabled: impl FnMut(u32) -> bool,
-) -> Result<i32, StoreError> {
+) -> Result<(), StoreError> {
     validate(bytes)?;
-    Ok(search_tokens(bytes, tokens, enabled))
+    search_tokens(bytes, tokens, enabled);
+    Ok(())
 }
 
-fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) -> i32 {
-    let mut result = SEARCH_NONE;
+fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) {
     for token in bytes.as_chunks::<4>().0.iter().map(|word| decode(word)) {
         if enabled(token) {
             tokens.push(token);
-            result |= SEARCH_OK;
         }
     }
-    result
 }
 
 pub(crate) fn validate(bytes: &[u8]) -> Result<(), StoreError> {

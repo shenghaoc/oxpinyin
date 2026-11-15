@@ -7,8 +7,6 @@
 
 use oxpinyin_store::StoreError;
 
-#[cfg(test)]
-use crate::phrase_table::ERROR_OK;
 use crate::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
 use crate::records::NativeTable;
 
@@ -54,23 +52,23 @@ impl UserPhraseTable {
 
     /// `PhraseTableEntry::add_index` for `words`; creates the key and its
     /// prefix markers when absent, as `PhraseLargeTable3::add_index` does.
-    pub(crate) fn add(&mut self, words: &[u32], token: u32) -> Result<i32, StoreError> {
+    pub(crate) fn add(&mut self, words: &[u32], token: u32) -> Result<(), StoreError> {
         let key = key_ucs4(words);
         if key.is_empty() {
             return Err(StoreError::InvalidInput("phrase table text is empty"));
         }
-        let (result, new) = match self.record(&key) {
+        let new = match self.record(&key) {
             Some(bytes) => {
                 let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-                let result = entry.add_index(token);
+                entry.add_index(token);
                 self.records.insert(&key, entry.as_bytes())?;
-                (result, false)
+                false
             }
             None => {
                 let mut entry = PhraseTableEntry::default();
-                let result = entry.add_index(token);
+                entry.add_index(token);
                 self.records.insert(&key, entry.as_bytes())?;
-                (result, true)
+                true
             }
         };
         if new {
@@ -82,7 +80,7 @@ impl UserPhraseTable {
                 self.records.insert(&prefix, &[])?;
             }
         }
-        Ok(result)
+        Ok(())
     }
 
     /// Fails exactly when [`Self::add`] would, without changing the table:
@@ -107,15 +105,16 @@ impl UserPhraseTable {
     }
 
     /// `PhraseTableEntry::remove_index` for `words` (first occurrence).
-    pub(crate) fn remove(&mut self, words: &[u32], token: u32) -> Result<i32, StoreError> {
+    /// An absent key returns early, where the pin returns
+    /// `ERROR_REMOVE_ITEM_DONOT_EXISTS` (`phrase_large_table3_tkrzwdb.cpp:253-256`).
+    pub(crate) fn remove(&mut self, words: &[u32], token: u32) -> Result<(), StoreError> {
         let key = key_ucs4(words);
         let Some(bytes) = self.record(&key) else {
-            return Ok(crate::phrase_table::ERROR_REMOVE_ITEM_DONOT_EXISTS);
+            return Ok(());
         };
         let mut entry = PhraseTableEntry::from_bytes(bytes)?;
-        let result = entry.remove_index(token);
-        self.records.insert(&key, entry.as_bytes())?;
-        Ok(result)
+        entry.remove_index(token);
+        self.records.insert(&key, entry.as_bytes())
     }
 
     /// The pin's mask walk: one pass over every record in key order, as
@@ -182,21 +181,27 @@ mod tests {
     #[test]
     fn add_remove_and_prefix_markers_match_the_entry_ops() {
         let mut table = UserPhraseTable::new();
-        assert_eq!(table.add(&[0x4f60], 7).unwrap(), ERROR_OK);
-        assert_eq!(table.add(&[0x4f60, 0x597d], 9).unwrap(), ERROR_OK);
+        let phrase = [0x4f60, 0x597d];
+        let key = key_ucs4(&phrase);
+        let stored_token = 9_u32.to_le_bytes();
+        table.add(&[0x4f60], 7).unwrap();
+        table.add(&phrase, 9).unwrap();
         assert_eq!(
             table.record(&key_ucs4(&[0x4f60])).as_deref(),
             Some(&[7, 0, 0, 0][..])
         );
-        assert_eq!(
-            table.record(&key_ucs4(&[0x4f60, 0x597d])).as_deref(),
-            Some(&[9, 0, 0, 0][..])
-        );
-        assert_eq!(table.remove(&[0x4f60, 0x597d], 9).unwrap(), ERROR_OK);
-        assert!(
-            table
-                .record(&key_ucs4(&[0x4f60, 0x597d]))
-                .is_some_and(|bytes| bytes.is_empty())
-        );
+        assert_eq!(table.record(&key).as_deref(), Some(stored_token.as_slice()));
+
+        table.add(&phrase, 9).unwrap();
+        assert_eq!(table.record(&key).as_deref(), Some(stored_token.as_slice()));
+
+        table.remove(&phrase, 8).unwrap();
+        assert_eq!(table.record(&key).as_deref(), Some(stored_token.as_slice()));
+
+        table.remove(&[0x597d], 9).unwrap();
+        assert_eq!(table.record(&key_ucs4(&[0x597d])), None);
+
+        table.remove(&phrase, 9).unwrap();
+        assert_eq!(table.record(&key).as_deref(), Some([].as_slice()));
     }
 }
