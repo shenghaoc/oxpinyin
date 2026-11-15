@@ -525,9 +525,7 @@ the tools. The decoder uses the scanned `gfloat` directly.
 
 ### oxpinyin's own values, by call path
 
-| Value | Where it acts | Parity path? | Status |
-| --- | --- | --- | --- |
-| `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does. (2) `lookup_finds_token` (`nbest.rs`), the constraint revalidation fallback for a dictionary that keeps no phrase items (the test doubles); the runtime's dictionaries read their items instead. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, which expands one key at a time, so the product never approaches the cap. | (1) no; (2) no; (3) yes, cap unreachable | off path or unreachable |
+oxpinyin adds no tuning value of its own on these call paths.
 
 oxpinyin has no input-length clamp. The pin's full-pinyin stop at 32767
 bytes comes from its `gint16` parse steps, a recorded language artefact
@@ -898,7 +896,7 @@ matrix and search costs. The pin also validates twice.
 ## Open
 
 - Sentence scoring artifacts: whether the compiler contracted any multiply-add in the pin's `libpinyin.so` (GCC may on aarch64; x86-64's baseline has no FMA), and whether `f64::ln` in oxpinyin's shipping build resolves to the same libm `log` rather than being folded, inlined or replaced. Rust documents `f64::ln` precision as unspecified, so this is settled per artifact. Both are open.
-- Constraint revalidation over a phrase of the pinned model whose abbreviation passes the expansion cap.
+- Constraint revalidation over a phrase of the pinned model forced over its abbreviation, one initial-only key per syllable.
 - The [§9](#9-constants) value inventory is not proven complete: limits written inline (a literal in an expression, a loop bound) are not covered.
 - Equivalence not argued: candidate dedup for malformed phrase text.
 - Equivalence not argued: the node store with `nstore = 1` against the `<1>` specialisation's empty check.

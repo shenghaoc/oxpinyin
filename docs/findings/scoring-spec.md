@@ -29,6 +29,5 @@ An incomplete key stands for every complete key with the same phonetic initial (
 String-prefix expansion is wrong: `n` must not reach zero-initial `ng`, and `z`, `c` and `s` must not reach `zh`, `ch` and `sh`.
 Example: `nih` offers `你好`, `霓虹`, `拟合` and other two-key phrases whose second syllable starts with `h`.
 
-The runtime dictionaries answer a partial-key query in one probe (`Dictionary::handles_partial_keys`).
-For a dictionary that does not, `oxpinyin_core::scoring::expand_keys` expands the keys as a Cartesian product.
-Above the caller's limit (`SCAN_EXPANSION_LIMIT`, 4,096, in `crates/oxpinyin-engine/src/session/mod.rs`), the expansion yields nothing rather than a truncated subset, so a caller cannot mistake a truncation for the whole answer.
+The dictionaries answer a query with an incomplete key in one probe of their incomplete-projected index, as the pin's `ChewingLargeTable2::search` does (`chewing_large_table2.cpp:161-172` at `074a2219`).
+A stored phrase matches when `pinyin_compare_with_tones` answers 0 (`ChewingKey::matches_with_tones`).

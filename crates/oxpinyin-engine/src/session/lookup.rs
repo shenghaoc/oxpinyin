@@ -627,34 +627,16 @@ where
         Ok(())
     }
 
-    /// The table search on one complete key-path, and the prefix probe that
+    /// The table search on one key-path, and the prefix probe that
     /// decides whether the window keeps widening.
     ///
-    /// A path with any incomplete syllable is looked up once when the
-    /// dictionary advertises [`Dictionary::handles_partial_keys`], routing
-    /// through its incomplete-projected index —
-    /// `ChewingTable::search` at
-    /// `crates/oxpinyin-data/src/chewing_table.rs:202-216` for the system
-    /// path, `UserLookup::lookup` for the user overlay — mirroring
-    /// upstream's `ChewingLargeTable2::search`
-    /// (`chewing_large_table2.cpp:161-172` at pin `074a2219`), which
-    /// selects the incomplete or complete index by
-    /// `contains_incomplete_pinyin` and issues one `search_internal`
-    /// either way. Previously this site enumerated completions via
-    /// [`expand_keys`] unconditionally, driving the measured fan-out
-    /// (~9× amplification from matrix path to probe); the
-    /// `gen_binary_files` already writes both keyspaces at
-    /// `crates/oxpinyin-data/src/table_entries.rs:95-98`, and the user store
-    /// now mirrors that with its `by_initial` index, so the expansion is
-    /// redundant against a dictionary that opts in.
-    ///
-    /// For dictionaries whose implementation is exact-key only —
-    /// fixture-backed doubles, mocks, non-DBM back-ends — the fallback
-    /// still enumerates completions through [`expand_keys`] and issues one
-    /// lookup per expansion. Those callers see behaviour unchanged from
-    /// before the fan-out fix; the seam grows by a defaulted-to-`false`
-    /// trait method rather than a partial-key contract every implementor
-    /// has to hold.
+    /// A path with an initial-only key is looked up once, as upstream's
+    /// `ChewingLargeTable2::search` (`chewing_large_table2.cpp:161-172` at
+    /// pin `074a2219`) selects the incomplete or complete index by
+    /// `contains_incomplete_pinyin` and issues one `search_internal` either
+    /// way. The dictionary answers it from its incomplete-projected index:
+    /// `ChewingTable::search` for the system path, `UserLookup::lookup` for
+    /// the user overlay.
     pub(super) fn search_scan_path(
         &self,
         buf: &mut ScanBuf<'_>,
@@ -713,32 +695,11 @@ where
                 })?;
             return Ok(());
         }
-        let has_incomplete = path
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial);
-
-        if has_incomplete && !self.dictionary.handles_partial_keys() {
-            for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                unreadable.append(
-                    self.lookup_and_append(
-                        sequence.as_slice(),
-                        tones,
-                        end,
-                        system,
-                        addon,
-                        entries,
-                    )?,
-                    *span_start,
-                    end,
-                );
-            }
-        } else {
-            unreadable.append(
-                self.lookup_and_append(path, tones, end, system, addon, entries)?,
-                *span_start,
-                end,
-            );
-        }
+        unreadable.append(
+            self.lookup_and_append(path, tones, end, system, addon, entries)?,
+            *span_start,
+            end,
+        );
 
         let can_extend = self
             .dictionary

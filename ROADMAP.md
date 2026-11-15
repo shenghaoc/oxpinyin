@@ -38,7 +38,7 @@ They do not block the sweep.
   Compare its time and space complexity with the pin.
 - Complete the §9 inventory of coefficients and limits on the parity path, each with its pin value.
 - Verify what the source does not settle for sentence scoring (§11, "Sentence scoring: gfloat and libm"): multiply-add contraction in the pin's `libpinyin.so`, and the `log` that `f64::ln` resolves to in the shipping build.
-- Run the constraint-revalidation acceptance case (§11): a pinned-model phrase whose abbreviation expands past 4096 keys.
+- Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
   Force it, then revalidate through `guess_sentence` and a replaced selection.
   Compare with the reference-cell oracle using a contract test.
 - Replace the `SEARCH_*` and `ERROR_*` integer codes in `oxpinyin-user/src/phrase_table.rs` with an enum or `Result`.

@@ -606,7 +606,6 @@ dependencies = [
  "phf",
  "phf_codegen",
  "proptest",
- "smallvec",
 ]
 
 [[package]]

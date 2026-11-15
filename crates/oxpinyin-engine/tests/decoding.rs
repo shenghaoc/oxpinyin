@@ -180,44 +180,11 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
 }
 
 #[test]
-fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
-    // `zh` expands to 19 complete syllables after the phonetic-initial fix,
-    // so a single initial expands (19 ≤ the default limit of 64) and reaches
-    // the phrases it spells — `zhuan` and `zhong` are both in the mini
-    // vocabulary, so `zhzh` gets candidates, led by 传. What it cannot get
-    // is a *two-key* dictionary phrase: 19 × 19 = 361 sequences,
-    // `expand_keys` returns empty rather than a subset, and no phrase is
-    // offered for that span.
-    let session = typed("zhzh");
-    let candidates = session.candidates();
-    assert!(!candidates.is_empty(), "one initial still expands");
-    assert_eq!(
-        candidates.iter().next().and_then(Candidate::text_str),
-        Some("传")
-    );
-
-    for candidate in candidates
-        .iter()
-        .filter(|candidate| candidate.kind() == CandidateKind::Phrase)
-    {
-        assert_eq!(
-            candidate.consumed_keys(),
-            1,
-            "{} is one dictionary phrase spanning two keys, so an \
-             over-limit expansion returned a subset",
-            candidate.text()
-        );
-    }
-}
-
-#[test]
-fn an_input_no_expansion_can_reach_falls_back_to_itself() {
-    // The other side of the same mechanism, and the path `refresh` takes when
-    // scoring yields nothing at all: `q` prefixes only syllables the mini
-    // vocabulary does not hold, so the one-key expansion finds no phrase, and
-    // every longer prefix is past the limit and returns empty. With no
-    // candidate from any span, the session must still offer the raw input
-    // rather than an empty list.
+fn an_input_no_phrase_can_reach_falls_back_to_itself() {
+    // The path `refresh` takes when scoring yields nothing at all: the mini
+    // vocabulary holds no `q`-initial syllable, so no span of these inputs
+    // finds a phrase. With no candidate from any span, the session must
+    // still offer the raw input rather than an empty list.
     for input in ["q", "qq", "qqq", "qqqq"] {
         let session = typed(input);
         let candidates = session.candidates();
