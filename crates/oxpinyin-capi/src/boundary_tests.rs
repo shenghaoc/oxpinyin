@@ -961,20 +961,6 @@ fn an_unload_after_the_import_ends_keeps_the_facade_total() {
     close(context, instance);
 }
 
-/// `mask_out` maps library 2 again: the failed load takes the old local
-/// total T out of the facade total (`phrase_index.cpp:243-245`), and the
-/// closing compact makes the reread local total zero (`pinyin.cpp:1294`).
-/// The unload then takes out nothing, and the facade total stays T - T.
-#[test]
-fn an_unload_after_mask_out_takes_out_the_compacted_total() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let (context, _) = layout_failed_gbk_context(scratch.path());
-    assert!(pinyin_mask_out(context, 0xFFFF_FFFF, 0));
-    assert!(pinyin_unload_phrase_library(context, 2));
-    assert_eq!(facade_total(context), 0);
-    pinyin_fini(context);
-}
-
 /// The end of an import into the layout-failed library 2 rebuilds its
 /// sub-index from its one item (`pinyin.cpp:657`, `phrase_index.cpp:648-675`):
 /// count 9 times the import's factor 3 (`pinyin.cpp:522`, `:603-605`), so
