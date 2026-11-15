@@ -554,12 +554,12 @@ impl UserIndex {
         let Some(value) = self.record(&query_key(keys)) else {
             return;
         };
-        if value.is_empty() || !value.len().is_multiple_of(item2_stride(len)) {
-            return;
-        }
-        let stride = item2_stride(len);
+        // `ChewingLargeTable2::search` reads `IndexItem` pointers from the
+        // chunk's begin to its end (`chewing_large_table2.h:145-150` at
+        // 074a2219), so a trailing partial record is never read (register
+        // row 129).
         value
-            .chunks_exact(stride)
+            .chunks_exact(item2_stride(len))
             .filter(|record| record_matches_with_tones(keys, record))
             .map(record_token)
             .for_each(visit);
@@ -591,13 +591,11 @@ impl UserIndex {
             let Some(value) = self.record(&key) else {
                 continue;
             };
-            let stride = item2_stride(len);
-            if !value.len().is_multiple_of(stride) {
-                continue;
-            }
+            // `search_suggestion` reads whole records the same way
+            // (`chewing_large_table2.h:182-200`).
             tokens.extend(
                 value
-                    .chunks_exact(stride)
+                    .chunks_exact(item2_stride(len))
                     .filter(|record| record_matches_with_tones(prefix, record))
                     .map(record_token),
             );
@@ -650,17 +648,16 @@ fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bo
     if value.is_empty() || len == 0 || packed.len() != len {
         return false;
     }
-    let stride = item2_stride(len);
-    value.len().is_multiple_of(stride)
-        && value.chunks_exact(stride).any(|record| {
-            u32::from_le_bytes([record[0], record[1], record[2], record[3]]) == token
-                && record[4..4 + 2 * len]
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|word| u16::from_le_bytes([word[0], word[1]]))
-                    .eq(packed.iter().copied())
-        })
+    // Whole records only, as `search` reads them.
+    value.chunks_exact(item2_stride(len)).any(|record| {
+        u32::from_le_bytes([record[0], record[1], record[2], record[3]]) == token
+            && record[4..4 + 2 * len]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|word| u16::from_le_bytes([word[0], word[1]]))
+                .eq(packed.iter().copied())
+    })
 }
 
 #[cfg(test)]
@@ -820,20 +817,31 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_stride_row_answers_nothing() {
+    fn a_misaligned_row_answers_its_whole_records() {
         let keys = pair(2, 3);
         let mut row = record(&[(7, &keys), (8, &keys)]);
         row.push(0);
         let longer = [key(2), key(3), key(4)];
         let mut longer_row = record(&[(9, &longer)]);
         longer_row.pop();
-        let index = index(&[
+        let mut index = index(&[
             (encode_complete_key(&keys), row),
             (encode_complete_key(&longer), longer_row),
         ]);
         assert!(index.has_record(&keys));
-        assert!(index.search(&keys).is_empty());
+        // The trailing byte is dropped; the two whole records stay.
+        assert_eq!(index.search(&keys), [7, 8]);
+        // One byte short of its only record: nothing whole to read.
         assert!(index.suggest(&keys).is_empty());
+
+        let suggestion = [key(2), key(3), key(5)];
+        let mut suggestion_row = record(&[(10, &suggestion)]);
+        suggestion_row.push(0);
+        index
+            .push_record(&encode_complete_key(&suggestion), &suggestion_row)
+            .unwrap();
+        assert_eq!(index.suggest(&keys), [10]);
+        assert!(index.contains_reading(10, &suggestion.map(ChewingKey::to_packed)));
     }
 
     #[test]
