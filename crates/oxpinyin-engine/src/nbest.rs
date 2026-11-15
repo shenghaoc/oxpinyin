@@ -772,6 +772,23 @@ where
         }
         Ok(None)
     }
+
+    /// ONESTEP reads the forced item, not its membership in the ranges
+    /// (074a2219 phonetic_lookup.h:552-554,601-612). Keep a path of the
+    /// item's length for its key count and final text; pricing still sums
+    /// every matrix path, including paths whose table search missed.
+    fn forced_slot(&self, token: u32) -> Result<Option<LazySlot>, EngineError> {
+        for path in 0..self.memos.len() {
+            let slot = LazySlot::new(u32::try_from(path).unwrap_or(u32::MAX));
+            if self
+                .price(&slot, token)?
+                .is_some_and(|entry| entry.keys == entry.chars)
+            {
+                return Ok(Some(slot));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// Computes the sentence rows for the input covered by `matrix`.
@@ -935,13 +952,13 @@ where
                     span: position..end,
                     sums: &found.sums,
                 };
-                let mut forced = PhraseIndexRanges::new();
-                forced.convert(pricing.first_priced(token.value())?.map(|entry| {
-                    let slot = LazySlot::new(entry.path);
-                    let _ = slot.priced.set(Some(entry.clone()));
-                    (entry.token, Some(slot))
-                }));
                 if found.ranges.iter().next().is_some() {
+                    let mut forced = PhraseIndexRanges::new();
+                    forced.convert(
+                        pricing
+                            .forced_slot(token.value())?
+                            .map(|slot| (token.value(), Some(slot))),
+                    );
                     let forced = Pricing {
                         ranges: &forced,
                         ..pricing

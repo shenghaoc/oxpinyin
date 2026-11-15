@@ -237,14 +237,15 @@ pub trait Dictionary {
         self.phrase_prefix_exists(syllables)
     }
 
-    /// What one trellis step prices of `token`, a token
-    /// [`Self::trellis_ranges`] ranged over `syllables` and `tones`
+    /// What one trellis step prices of `token`, either ranged by
+    /// [`Self::trellis_ranges`] or explicitly forced over `syllables` and `tones`
     /// (`get_phrase_item` and `compute_pronunciation_possibility`,
     /// `phonetic_lookup.h:646-684`); `None` when the token has no
     /// readable item there.
     ///
     /// The default reads the last of [`Self::trellis_records`]' entries
-    /// for the token.
+    /// for the token. Dictionaries with unindexed item readings override it
+    /// to read those items independently of their index membership.
     ///
     /// # Errors
     ///

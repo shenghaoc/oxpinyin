@@ -3,6 +3,47 @@
 
 use super::*;
 
+/// The second import adds a reading but no index entry (074a2219
+/// pinyin.cpp:563-582). Validation keeps that reading's constraint
+/// (phonetic_lookup.cpp:141-165), and any SEARCH_OK lets ONESTEP step
+/// its token without a range-membership test (phonetic_lookup.h:552-554,
+/// 601-612,776-788). The guess returns true with 甲, not an empty result.
+#[rstest::rstest]
+#[case::system(1)]
+#[case::user(6)]
+fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
+    let user = TempUserDir::new("unranged-onestep");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(
+        import_batch(
+            context,
+            library,
+            &[("甲", "ba4", 3), ("甲", "da4", 9), ("乙", "da4", 2)],
+        ),
+        [true; 3]
+    );
+    assert!(pinyin_set_options(context, 1 << 5));
+    assert_eq!(parse(instance, "ba4"), 3);
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    let chosen = row_with(instance, NORMAL, "甲");
+    assert_eq!(pinyin_choose_candidate(instance, 0, chosen), 3);
+    assert_eq!(parse(instance, "da4"), 3);
+    assert!(pinyin_guess_candidates(instance, 0, 0));
+    let rows = capture_rows(instance);
+    assert!(
+        rows.iter()
+            .any(|(kind, text, _)| *kind == NORMAL && text == "乙")
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|(kind, text, _)| *kind == NORMAL && text == "甲")
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert_eq!(sentence_out(instance, 0), (true, Some("甲".to_owned())));
+    close(context, instance);
+}
+
 /// A toned initial aborts the sentence guess.
 #[test]
 fn guess_sentence_aborts_on_a_toned_initial() {

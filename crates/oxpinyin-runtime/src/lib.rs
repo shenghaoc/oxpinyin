@@ -532,11 +532,10 @@ impl<'a> RuntimeDict<'a> {
         })
     }
 
-    /// What the ordinary lookup of `syllables` lists for `token`, which
-    /// is what a step prices: the last entry of its system-then-user
-    /// merge, the effective-item overlay applied, the library mask
-    /// respected. `None` when the lookup does not list it. The text is
-    /// built only when `want_text`.
+    /// The item a step prices for `token`, including an unranged ONESTEP
+    /// token. Ranged user entries retain their query text; otherwise read
+    /// the stored item. The effective-item overlay and library mask apply.
+    /// The text is built only when `want_text`.
     fn priced_token(
         &self,
         syllables: &[SyllableKey],
@@ -581,6 +580,26 @@ impl<'a> RuntimeDict<'a> {
                 },
                 text: want_text.then(|| TokenPhrase::from(entry.text().clone())),
             }
+        } else if let Some(priced) = self.user.with_user_item(token, |view| {
+            // A second imported reading need not have an index entry
+            // (074a2219 pinyin.cpp:563-582). ONESTEP still reads its item.
+            let pronunciation = path.keys.as_deref().map(|query| {
+                let (matched, total) =
+                    Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);
+                (u64::from(matched), u64::from(total))
+            });
+            PricedToken {
+                item: TrellisItem {
+                    chars: view.phrase_length() as u32,
+                    pronunciation,
+                },
+                text: want_text.then(|| TokenPhrase {
+                    phrase_length: view.phrase_length(),
+                    text: view.phrase_text(),
+                }),
+            }
+        }) {
+            priced
         } else {
             let live = self.live_items();
             // A text that does not convert keeps the item: the pin's

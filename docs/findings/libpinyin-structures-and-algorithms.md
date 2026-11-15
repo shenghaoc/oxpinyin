@@ -656,7 +656,7 @@ follows these types and conversion points in `f32` and `f64` (`expand_one`,
 Register row 11 classes std-maths precision differences as (a).
 Candidate and sentence rows carry no separate integer score.
 
-**Equivalence: failed** for repeated seeds and unranged one-step tokens. The arithmetic
+**Equivalence: failed** for repeated seeds. The arithmetic
 is the pin's: `unigram_lambda` (`oxpinyin-data/src/lm/mod.rs:567`), the f64
 `elem` quotient (`:566`), the f32 bigram quotient and product (`:575-580`),
 the f64 product with the possibility and the widen, add and round
@@ -669,9 +669,20 @@ and [S3](compatibility-policy.md#s3-stable-descending-possibility) rulings.
 Steps price with the query tones (#1979) and the stored `USER_FILE`
 readings (#1983).
 
-A repeated phrase-table token and an unranged `CONSTRAINT_ONESTEP` token
-are stepped differently ([seed defect](#repeated-token-seed-nodes),
-[ONESTEP defect](#unranged-onestep-token)).
+A repeated phrase-table token seeds differently
+([seed defect](#repeated-token-seed-nodes)).
+
+ONESTEP still requires a successful span search, but its forced token need
+not be in the returned ranges (`lookup/phonetic_lookup.h:552-554,601-612,
+776-788`). Pricing reads that token directly and sums its pronunciations
+over the existing matrix paths. The first path with the item's key count
+supplies its text-read keys. For P paths of at most L = 16 keys and R
+stored readings, pronunciation pricing takes O(P·R·L) time, plus item
+lookup costs. It adds one forced slot and one token sum, reuses the path
+inventory, and shares the sum across at most 32 beam predecessors.
+An unranged user item is read from its stored body. Held by
+`an_unranged_onestep_token_still_produces_a_sentence` in
+`oxpinyin-capi/src/boundary_tests/sentence.rs`, for system and user libraries.
 
 A zero stored tone compares equal to any query tone
 (`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
@@ -1198,11 +1209,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
   n-best results can change. Rust replaces the node in place (`oxpinyin-engine/src/nbest.rs:357-363`).
   It needs a crafted phrase table: `PhraseTableEntry::add_index` refuses a duplicate
   (`storage/phrase_large_table3.cpp:56-70`). Seed one node per occurrence.
-- <a id="unranged-onestep-token"></a>**An unranged `CONSTRAINT_ONESTEP` token is not stepped.** Source-derived.
-  The pin steps a `CONSTRAINT_ONESTEP` token even when the span's ranges do not hold it
-  (`lookup/phonetic_lookup.h:553,601-612`). Rust steps only a ranged token
-  (`oxpinyin-engine/src/nbest.rs:890-894`). It needs an item whose readings the pinyin table does not
-  index. Step the constraint token whether or not it is ranged.
 
 ### Removal candidates
 
