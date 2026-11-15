@@ -374,7 +374,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
     /// * key absent → `SEARCH_NONE`; present → `SEARCH_CONTINUED`;
     /// * a non-empty value's `PinyinIndexItem2` records are kept when
     ///   `pinyin_compare_with_tones(query, stored) == 0`
-    ///   ([`keys_match`]): initials equal, middle/final equal unless
+    ///   ([`ChewingKey::matches_with_tones`]): initials equal, middle/final equal unless
     ///   either side is incomplete, tones equal unless either side is
     ///   zero — so a tone-less query accepts every tone and an incomplete
     ///   syllable accepts every final;
@@ -387,25 +387,12 @@ impl<D: ChewingDbm> ChewingTable<D> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let mut value = Vec::new();
-        if !self.dbm.get_pinyin_row(&index_key(keys), &mut value)? || value.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(
-            crate::row_format::pinyin_index::item_views(&value, keys.len())?
-                .filter(|item| {
-                    keys.iter()
-                        .zip(item.keys())
-                        .all(|(q, s)| q.matches_with_tones(s))
-                })
-                .map(|item| item.token)
-                .collect(),
-        )
+        Ok(self.search_continued(keys, &mut Vec::new())?.1)
     }
 
     /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
     /// the query's index key exists (an empty marker counts), and the
-    /// surviving records. The index key zeroes tones, so a toned query and
+    /// surviving records' tokens, in stored order. The index key zeroes tones, so a toned query and
     /// its tone-less spelling name the same row.
     ///
     /// The value is read into `value`, the caller's buffer, which the
@@ -414,7 +401,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         &self,
         keys: &[ChewingKey],
         value: &mut Vec<u8>,
-    ) -> Result<(bool, Vec<PinyinIndexItem>), DictError> {
+    ) -> Result<(bool, Vec<u32>), DictError> {
         if keys.is_empty() {
             return Ok((false, Vec::new()));
         }
@@ -507,14 +494,8 @@ pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
 }
 
 /// `pinyin_compare_with_tones(query, stored, len) == 0`
-/// (`pinyin_phrase3.h:108-144`): equal lengths and
-/// [`ChewingKey::matches_with_tones`] at every position.
-#[must_use]
-pub fn keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
-    query.len() == stored.len() && prefix_keys_match(query, stored)
-}
-
-/// [`keys_match`] over the first `query.len()` syllables of `stored` —
+/// (`pinyin_phrase3.h:108-144`, [`ChewingKey::matches_with_tones`] at every
+/// position) over the first `query.len()` syllables of `stored` —
 /// `prefix_compare_with_tones` (`PrefixLessThanWithTones`,
 /// `chewing_large_table2.h`), the comparison the suggestion path applies
 /// to longer records.
@@ -529,8 +510,10 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
         .all(|(q, s)| q.matches_with_tones(*s))
 }
 
-/// Decode the exact row that ChewingLargeTable2::search found, retaining stored
-/// order and SEARCH_CONTINUED even for an empty prefix marker. Shared by the
+/// Filter the exact row that ChewingLargeTable2::search found, retaining stored
+/// order and SEARCH_CONTINUED even for an empty prefix marker. The whole row
+/// is validated before any record is compared; the matching records' tokens
+/// are collected and their keys are compared in place. Shared by the
 /// production reader and the standalone in-memory test programs.
 ///
 /// # Errors
@@ -538,7 +521,7 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
 pub fn search_row(
     keys: &[ChewingKey],
     value: Option<&[u8]>,
-) -> Result<(bool, Vec<PinyinIndexItem>), DictError> {
+) -> Result<(bool, Vec<u32>), DictError> {
     if keys.is_empty() {
         return Ok((false, Vec::new()));
     }
@@ -548,11 +531,15 @@ pub fn search_row(
     if value.is_empty() {
         return Ok((true, Vec::new()));
     }
-    let items = decode_items(value, keys.len())?
-        .into_iter()
-        .filter(|item| keys_match(keys, &item.keys))
+    let tokens = crate::row_format::pinyin_index::item_views(value, keys.len())?
+        .filter(|item| {
+            keys.iter()
+                .zip(item.keys())
+                .all(|(query, stored)| query.matches_with_tones(stored))
+        })
+        .map(|item| item.token)
         .collect();
-    Ok((true, items))
+    Ok((true, tokens))
 }
 
 #[cfg(test)]
@@ -623,11 +610,19 @@ mod tests {
     }
 
     #[test]
-    fn keys_match_follows_the_three_upstream_comparisons() {
+    fn the_row_filter_follows_the_three_upstream_comparisons() {
         let ni3 = ChewingKey::from_pinyin("ni").unwrap().with_tone(3);
         let ni = ChewingKey::from_pinyin("ni").unwrap();
         let n = ChewingKey::new(ni.initial, 0, 0, 0);
         let na = ChewingKey::from_pinyin("na").unwrap();
+        // Whether a one-record row of `stored` survives the filter for `query`.
+        let keys_match = |query: &[ChewingKey], stored: &[ChewingKey]| {
+            let row = encode_items(&[PinyinIndexItem {
+                token: 7,
+                keys: stored.to_vec(),
+            }]);
+            search_row(query, Some(&row)).unwrap() == (true, vec![7])
+        };
         assert!(keys_match(&[ni], &[ni3]), "zero tone matches any tone");
         assert!(keys_match(&[ni3], &[ni]), "either side zero");
         assert!(!keys_match(&[ni3.with_tone(1)], &[ni3]), "tones differ");
@@ -637,7 +632,6 @@ mod tests {
         );
         assert!(keys_match(&[ni3], &[n]), "incomplete stored matches too");
         assert!(!keys_match(&[na], &[ni3]), "finals differ");
-        assert!(!keys_match(&[ni, ni], &[ni3]), "length differs");
         assert!(prefix_keys_match(&[ni], &[ni3, na]));
         assert!(!prefix_keys_match(&[ni, ni], &[ni3]));
     }

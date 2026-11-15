@@ -780,12 +780,12 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             .enumerate()
             .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
             .collect();
-        let (continued, items) = self.pinyin.search_continued(&query, scratch)?;
+        let (continued, tokens) = self.pinyin.search_continued(&query, scratch)?;
         ranges.convert(
-            items
-                .iter()
-                .filter(|item| self.library_loaded(item.token) && visible(item.token))
-                .map(|item| (item.token, Some(()))),
+            tokens
+                .into_iter()
+                .filter(|&token| self.library_loaded(token) && visible(token))
+                .map(|token| (token, Some(()))),
         );
         Ok(continued)
     }

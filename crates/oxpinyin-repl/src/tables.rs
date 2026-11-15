@@ -62,22 +62,22 @@ impl Tables {
             tool::exit(tool::EINVAL);
         }
         let value = self.table.get(&index_key(keys));
-        let (continued, items) =
+        let (continued, tokens) =
             search_row(keys, value.as_deref()).unwrap_or_else(|_| tool::abort());
         let mut cursor: Option<(usize, Range<u32>)> = None;
-        for item in items {
-            if !self.enabled(item.token) {
+        for token in tokens {
+            if !self.enabled(token) {
                 continue;
             }
-            let library = oxpinyin_core::phrase_index_library(item.token);
+            let library = oxpinyin_core::phrase_index_library(token);
             // null_token marks an empty cursor even after consuming token 0.
             if cursor.as_ref().is_none_or(|(_, range)| range.start == 0) {
-                cursor = Some((library, item.token..item.token.wrapping_add(1)));
+                cursor = Some((library, token..token.wrapping_add(1)));
                 continue;
             }
             if let Some((index, range)) = &mut cursor
                 && *index == library
-                && range.end == item.token
+                && range.end == token
             {
                 range.end = range.end.wrapping_add(1);
                 continue;
@@ -85,7 +85,7 @@ impl Tables {
             if let Some((index, range)) = cursor.take() {
                 ranges[index].push(range);
             }
-            cursor = Some((library, item.token..item.token.wrapping_add(1)));
+            cursor = Some((library, token..token.wrapping_add(1)));
         }
         if let Some((index, range)) = cursor
             && range.start != 0

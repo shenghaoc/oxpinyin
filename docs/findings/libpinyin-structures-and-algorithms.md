@@ -155,7 +155,7 @@ The differences are deliberate:
 | Sub phrase index | `SubPhraseIndex` (`storage/phrase_index.h:257`): header (total freq), offset array indexed by `token & PHRASE_MASK`, content area; file `mmap`ped `PROT_READ\|PROT_WRITE, MAP_PRIVATE` (`include/memory_chunk.h:505-506`); O(1) token → item | `PhraseLibrary` (`phrase_library.rs`), `item`, `slot_offset`; the same files mapped read-only; O(1) token → item | same / follows (reads) |
 | Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | journal MODIFY writes into a separate `PhraseContent` private mapping; `SystemItems` retains completed replay views and caches `ChunkItem`s on first use; later imports/training use those decoded items and saves rebuild the pin's chunk format | different / argued (journal replay, below) |
 | Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438-451`): 16 sub-index pointers and a running `guint32` total | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs:54-69`): 16 slots and a baseline total, with live totals and a facade adjustment in `oxpinyin-user/src/system_items.rs:33-43` | different / [defect](#configured-user-file-dispatch) |
-| Pinyin key → tokens | `ChewingLargeTable2`: DBM keyed by projected packed `ChewingKey[len]`, values of `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:146-195`). The entry locates the projected range, filters the entries and compresses tokens (`storage/chewing_large_table2.h:91-152`). | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs:334-370,486-503`) probes the same key and filters in stored order. The sentence path reuses the DBM buffer and decodes owned records before range compression. A failed first read of a row is a miss, as at the pin (`ChewingDbm::get_pinyin_row`; `storage/chewing_large_table2_tkrzwdb.cpp:146-149`). On Kyoto Cabinet the row is sized with `check`, an empty row needs no body read, and a body read that disagrees with the check aborts (`KcStore::get_pinyin_row_raw`; `storage/chewing_large_table2_kyotodb.cpp:159-176`; [row 110](compatibility-policy.md#classification-table)). | different / follows |
+| Pinyin key → tokens | `ChewingLargeTable2`: DBM keyed by projected packed `ChewingKey[len]`, values of `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:146-195`). The entry locates the projected range, filters the entries and compresses tokens (`storage/chewing_large_table2.h:91-152`). | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs:334-370,486-503`) probes the same key and filters in stored order. The sentence path reuses the DBM buffer and filters the row's records in place before range compression (`search_row`). A failed first read of a row is a miss, as at the pin (`ChewingDbm::get_pinyin_row`; `storage/chewing_large_table2_tkrzwdb.cpp:146-149`). On Kyoto Cabinet the row is sized with `check`, an empty row needs no body read, and a body read that disagrees with the check aborts (`KcStore::get_pinyin_row_raw`; `storage/chewing_large_table2_kyotodb.cpp:159-176`; [row 110](compatibility-policy.md#classification-table)). | different / follows |
 | User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`) borrows the session's canonical `UserIndex`; packed records and independent prefix markers live in the backend’s ordered in-memory tree, written back at save | different / argued (lookup ownership, below) |
 | Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup and lookup ownership, below) |
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
@@ -879,9 +879,11 @@ pin searches in O(L log N + NL), with output range storage: every record of
 a row compares equal to the row's index item, so `equal_range` spans the
 whole row and `convert` (`chewing_large_table2.h:91-133`) compares all N.
 
-Rust `ChewingTable::search` keeps its linear filter and the owned DBM row
-buffer, but `pinyin_index::item_views` validates the row and borrows its keys.
-Only matching tokens are collected; `resolve_items` consumes those tokens.
+Rust `ChewingTable::search` and `search_continued`, the sentence search's
+fused read, share one filter (`search_row`). It keeps the linear scan and the
+owned DBM row buffer, but `pinyin_index::item_views` validates the row and
+borrows its keys. Only matching tokens are collected; `resolve_items` and the
+trellis ranges consume those tokens.
 Worst-case time is O(NL) and temporary space O(B + M), for B row bytes. No
 key vector is allocated per record, and no work moves into init. Other consumers that need owned pronunciations
 still use `decode_items`, over the same validated record views.
@@ -1341,10 +1343,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
 These source-derived candidates follow the
 [internal implementation and performance rule](../source-policy.md#internal-implementation-and-performance).
 
-- **Owned records in `search_continued`.** The pin filters packed records in place
-  (`storage/chewing_large_table2.h:91-152`). Rust allocates keys per record
-  (`oxpinyin-data/src/chewing_table.rs:486-503`, `oxpinyin-data/src/row_format.rs:251-260`).
-  Filter borrowed records in the same order.
 - **Duplicate full matrix records.** The pin stores one key and rest per entry
   (`storage/phonetic_key_matrix.h:123-155`). Rust retains a second full copy
   (`oxpinyin-engine/src/session/matrix.rs:10-119,157-175`).
