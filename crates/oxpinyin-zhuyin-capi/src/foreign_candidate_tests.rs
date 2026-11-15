@@ -102,7 +102,11 @@ fn a_best_match_row_answers_the_receivers_matrix_end(#[values(true, false)] same
 /// An after-cursor row forces its span on the receiver and answers its own
 /// `m_end`; the producer is untouched (`zhuyin.cpp:1649-1654`, `:1664-1666`).
 /// On a receiver whose parse is shorter than the span, `add_constraint`
-/// refuses it and the answer is still `m_end`.
+/// refuses it and the answer is still `m_end`. On a receiver whose keys the
+/// row cannot spell, the pin's second `validate_constraint` after
+/// `add_constraint` (`zhuyin.cpp:1662`, `phonetic_lookup.cpp:120-168`) drops
+/// the forcing: a one-key row `[0, 3)` on a receiver parsing `a83` (ㄇㄚˇ)
+/// answers its `m_end` and forces nothing.
 #[rstest::rstest]
 fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
     #[values(true, false)] same_context: bool,
@@ -135,6 +139,16 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
     assert_eq!(zhuyin_choose_candidate(short, 0, whole), 6);
     assert!(!zhuyin_clear_constraint(short, 0));
     zhuyin_free_instance(short);
+
+    let one_key = after[ends
+        .iter()
+        .position(|&end| end == 3)
+        .expect("a one-key row")];
+    let unspellable = zhuyin_alloc_instance(*pair.contexts.last().expect("a context"));
+    parse(unspellable, "a83");
+    assert_eq!(zhuyin_choose_candidate(unspellable, 0, one_key), 3);
+    assert!(!zhuyin_clear_constraint(unspellable, 0));
+    zhuyin_free_instance(unspellable);
 }
 
 /// A before-cursor row answers its own `m_begin` on the receiver
@@ -157,23 +171,4 @@ fn a_before_cursor_row_answers_its_begin(#[values(true, false)] same_context: bo
     );
     assert!(!zhuyin_clear_constraint(pair.producer, 0));
     assert!(!zhuyin_clear_constraint(pair.producer, 3));
-}
-
-/// The pin's second `validate_constraint` after `add_constraint`
-/// (`zhuyin.cpp:1662`, `phonetic_lookup.cpp:120-168`) drops a forcing
-/// whose token does not spell its span: an after-cursor 你 row `[0, 3)`
-/// (`su3`, ㄋㄧˇ) on a receiver parsing `a83` (ㄇㄚˇ) answers its `m_end`
-/// and forces nothing.
-#[rstest::rstest]
-fn a_forcing_the_receiver_cannot_spell_is_dropped(#[values(true, false)] same_context: bool) {
-    let pair = Pair::open(same_context);
-    parse(pair.producer, "su3");
-    assert!(zhuyin_guess_candidates_after_cursor(pair.producer, 0));
-    let (row, _) = rows(pair.producer)
-        .into_iter()
-        .find(|(_, kind)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR)
-        .expect("an after-cursor row");
-    parse(pair.receiver, "a83");
-    assert_eq!(zhuyin_choose_candidate(pair.receiver, 0, row), 3);
-    assert!(!zhuyin_clear_constraint(pair.receiver, 0));
 }

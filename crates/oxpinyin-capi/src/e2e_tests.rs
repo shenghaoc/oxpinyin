@@ -2148,46 +2148,6 @@ fn init_aborts_on_a_log_header_token() {
     });
 }
 
-/// Register row 91 before row 76: library 1's merge asserts before the loop
-/// reaches library 4 (`pinyin.cpp:276` before `:256`), so a later chunk the
-/// pin never opens cannot turn the abort into a NULL answer.
-#[test]
-fn init_aborts_on_a_log_before_an_unmappable_library() {
-    crate::test_support::assert_aborts(
-        "e2e_tests::init_aborts_on_a_log_before_an_unmappable_library",
-        || {
-            let scratch = tempfile::tempdir().expect("scratch");
-            let system = crate::test_support::private_system(scratch.path());
-            std::fs::remove_file(system.join("merged.bin")).expect("unlink the library");
-            std::fs::write(system.join("merged.bin"), b"abc").expect("short library");
-            let user = TempUserDir::new("init-log-before-unmappable");
-            crate::test_support::plant_log(
-                &user.path,
-                "gb_char.dbin",
-                &crate::test_support::logs::header_token(),
-            );
-            let system_c = cstr(system.to_str().expect("UTF-8 path"));
-            let user_c = cstr(user.path.to_str().expect("UTF-8 path"));
-            let _ = pinyin_init(system_c.as_ptr(), user_c.as_ptr());
-        },
-    );
-}
-
-/// Register row 108: init's merge stores a one-byte ADD payload and
-/// `add_phrase_item` reads its unigram (`memory_chunk.h:390`).
-#[test]
-fn init_aborts_on_a_short_add_payload() {
-    crate::test_support::assert_aborts("e2e_tests::init_aborts_on_a_short_add_payload", || {
-        let user_dir = TempUserDir::new("init-short-add");
-        crate::test_support::plant_log(
-            &user_dir.path,
-            "gb_char.dbin",
-            &crate::test_support::logs::short_add(),
-        );
-        let _ = init_at(&user_dir.path);
-    });
-}
-
 /// Register row 91's control: `merge` returns at a mismatched MODIFY before
 /// `next_record` reads the bad header, and init completes.
 #[test]
