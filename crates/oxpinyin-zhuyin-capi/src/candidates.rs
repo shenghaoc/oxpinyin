@@ -172,7 +172,9 @@ pub extern "C" fn zhuyin_get_candidate_string(
 /// this instance's.
 ///
 /// - `BEST_MATCH_CANDIDATE` answers this instance's `matrix.size() - 1`
-///   and leaves the constraints alone (`:1643-1644`). Unlike
+///   and leaves the constraints alone (`:1643-1644`): `parsed_len` after a
+///   parse that placed a key, and -1 after one that placed none, which
+///   leaves the matrix empty (`phonetic_key_matrix.cpp:34-38`). Unlike
 ///   `pinyin.cpp:2515-2520`, this facade does not diff the chosen row
 ///   against result 0; `zhuyin_train` always walks result 0
 ///   (`:1709-1713`).
@@ -209,7 +211,10 @@ pub extern "C" fn zhuyin_choose_candidate(
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
     if candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
-        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+        // An unreadable key list is an engine failure.
+        return inst.core.pin_matrix_columns().map_or(-1, |columns| {
+            c_int::try_from(columns).map_or(c_int::MAX, |columns| columns - 1)
+        });
     }
     let answer = match candidate_type {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR => end,
