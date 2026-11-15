@@ -91,7 +91,8 @@ impl CapiContext {
 /// instance's [`CandidateSnapshot`](oxpinyin_facade::CandidateSnapshot)
 /// buffer and the counts are `u32`. It carries only what this facade's
 /// getters and its choose read: the pin's choose reads the row's own
-/// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219).
+/// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219),
+/// on whichever instance a caller passes it to.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: oxpinyin_facade::TextSpan,
@@ -101,20 +102,20 @@ pub struct CapiCandidate {
     pub(crate) text_ptr: *const std::ffi::c_char,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
     /// Where the candidate's span starts, in original input coordinates —
-    /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
-    /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
-    pub(crate) span_begin: u32,
-    /// Original `m_end`, also returned when reparsing makes the span refuse.
-    pub(crate) span_end: u32,
+    /// upstream's `guint16 m_begin` (`zhuyin.cpp:83` at the pin), which
+    /// `zhuyin_choose_candidate` answers as the new cursor for a
+    /// before-cursor row (`:1660`).
+    pub(crate) span_begin: u16,
+    /// Original `guint16 m_end` (`zhuyin.cpp:84`), the after-cursor answer,
+    /// also returned when reparsing makes the span refuse.
+    pub(crate) span_end: u16,
     /// The row's scoring token, `m_token`, which a choose forces.
     pub(crate) token: Option<oxpinyin_core::PhraseToken>,
-    /// The row's span in session coordinates, which a choose selects.
-    pub(crate) selection: oxpinyin_facade::SelectionSpan,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 48);
+const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
 
 #[cfg(test)]
 impl CapiCandidate {

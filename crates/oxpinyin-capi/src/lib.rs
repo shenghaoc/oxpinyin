@@ -198,6 +198,8 @@ mod boundary_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod foreign_candidate_tests;
+#[cfg(test)]
 mod guess_offset_tests;
 #[cfg(test)]
 mod matrix_bound_tests;

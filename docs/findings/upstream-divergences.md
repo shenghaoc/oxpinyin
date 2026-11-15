@@ -133,6 +133,13 @@ An entry holds nothing else.
 - **Decision:** accepted: the freed-chunk write is class (b), and the live-item write is declined under the [unloaded-token pronunciation ruling](compatibility-policy.md#unloaded-token-pronunciation-cache).
 - **Tests:** `unloaded_library_tests` (`crates/oxpinyin-capi/src/candidates.rs`), `unloaded` (`crates/oxpinyin-user/src/store_libpinyin/unloaded.rs`).
 
+### An addon row chosen on a context whose addon dictionary has no item for its token (class (b))
+
+- **Pin:** the failed `get_phrase_item` leaves the default `PhraseItem` (`src/storage/phrase_index.h:81-84`, `:646-652`; `phrase_index.cpp:180-205`), and `pinyin_choose_candidate` calls `add_index(0, phrase, token)` (`src/pinyin.cpp:2541-2553`). Its prefix walk starts at `size_t len = phrase_length - 1`, which wraps to `SIZE_MAX`, and reads past the key buffer on every backend (`phrase_large_table3_tkrzwdb.cpp:215-218`, `phrase_large_table3_kyotodb.cpp:280-283`, `phrase_large_table3_bdb.cpp:298-305`). The empty-key branch that skips the walk is reachable only after an earlier promotion made that read.
+- **oxpinyin:** promotes nothing and rewrites nothing; the choose continues with the addon token and records no text (`try_promote_addon`, `crates/oxpinyin-capi/src/candidates.rs`). This covers a row from a context with other addon data and a same-instance row whose addon library was unloaded since the guess.
+- **Decision:** accepted, class (b): no part of the path has a defined pin result.
+- **Tests:** none for the undefined path.
+
 ## Accepted divergences — store and data files
 
 ### The pinyin index DBMs carry uninitialized struct padding
@@ -387,6 +394,14 @@ An entry holds nothing else.
 - **oxpinyin:** stores the positions `as u16`, as the pin does, but keeps the facade's columns at real offsets.
 - **Decision:** accepted under the [key-positions ruling](compatibility-policy.md#key-positions-past-byte-65535): no IME composition reaches 65536 bytes.
 - **Tests:** `cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap`, `oxpinyin-zhuyin-capi` `e2e_tests::key_rest_positions_past_byte_65535_wrap`.
+- **Candidate bounds:** a candidate's `m_begin` and `m_end` are `guint16` too (`src/pinyin.cpp:103-104`, `src/zhuyin.cpp:83-84`). oxpinyin stores them `as u16` and answers them from `zhuyin_choose_candidate` as the pin does, while a choose reads them against real-offset columns; the same ruling covers it.
+
+### A candidate pointer that is not a row of a live published list
+
+- **Pin:** `pinyin_choose_candidate` and `zhuyin_choose_candidate` dereference the candidate (`src/pinyin.cpp:2501-2588`, `src/zhuyin.cpp:1635-1666`). A pointer past a regenerated, shorter list reads a stale row only because `GArray` keeps its capacity when the list shrinks.
+- **oxpinyin:** both choose functions read the row directly, as the candidate getters do; a pointer that is not a row of a live instance's published list is a caller precondition violation.
+- **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): GLib's retained capacity is a library internal, and in Rust the read is undefined. A row of another live instance's list follows the pin.
+- **Tests:** `foreign_candidate_tests` (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) for rows of other instances; none for an invalid pointer.
 
 ### FlexibleBigram unsorted-record search
 
@@ -440,6 +455,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | `pinyin_train` past nonempty results (row 38) | `pinyin.cpp:2684` | `pinned_data_tests::training_one_past_the_nbest_results_aborts` |
 | `*_init` on an unknown `user.conf` database format (row 44) | `storage/table_info.cpp:132`, from `:353-354` | `boundary_tests::init_aborts_on_an_unknown_user_conf_database_format`, `boundary_tests::an_unknown_user_database_format_aborts_and_keeps_user_conf` |
 | `pinyin_choose_candidate` at a nonzero offset without sentence candidates (row 45) | `pinyin.cpp:2566` | `boundary_tests::choose_candidate_aborts_at_offset_one_without_a_sentence` |
+| `pinyin_choose_candidate` of an `NBEST_MATCH_CANDIDATE` row on an instance whose results hold no row 0 or no row at its rank | `pinyin.cpp:2516`, `:2517` | `foreign_candidate_tests::an_nbest_row_on_a_receiver_without_results_aborts` |
 | A searched phrase row with a zero facade total, before the dedup (row 61) | `pinyin.cpp:1859`; `zhuyin.cpp:1261` | `boundary_tests::guess_candidates_aborts_on_a_zero_facade_total`, `boundary_tests::predicted_bigram_rows_abort_on_a_zero_facade_total`, `boundary_tests::a_zero_facade_total_aborts_the_after_cursor_ranking` |
 | Pinyin library load at index 0 or 8; export iterator reads (row 62) | `pinyin.cpp:457`, `:709`, `:714`, `:721`, `:724`, `:902`; `storage/chewing_key.cpp:48`, `:50` | `boundary_tests::load_of_the_reserved_library_aborts`, `boundary_tests::bigram_get_next_aborts_on_an_empty_export`; `e2e_tests::export_iterator_aborts_on_a_reading_it_cannot_spell` |
 | Pinyin key getters on an empty matrix, below `SIZE_MAX`; auxiliary text (row 63) | `storage/phonetic_key_matrix.h:103`; `pinyin.cpp:3311`, `:3488` | `boundary_tests::key_rest_aborts_on_an_empty_matrix`, `boundary_tests::full_auxiliary_text_aborts_on_a_leading_apostrophe`, `boundary_tests::double_auxiliary_text_aborts_three_bytes_into_a_key`; `e2e_tests::the_key_getters_answer_false_at_size_max_on_an_empty_matrix` |
@@ -468,7 +484,10 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 
 ## Open
 
-- `pinyin_choose_candidate` with a candidate pointer outside the current list (oxpinyin returns `-1` before row 45's check): reading has not settled it.
+None.
+
 ## Resolved by source reading
+
+`pinyin_choose_candidate` and `zhuyin_choose_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance, as the pin does (`src/pinyin.cpp:2501-2588`, `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
 
 A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-input/src/{native,chunk}.rs`, `crates/oxpinyin-data/src/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.
