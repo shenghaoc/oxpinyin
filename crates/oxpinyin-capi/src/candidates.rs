@@ -234,10 +234,13 @@ pub extern "C" fn pinyin_is_user_candidate(
 /// lives in the user dictionary (upstream asserts both, and so the process
 /// aborts here, register row 64), then the phrase, its pronunciations, its bigram rows and
 /// its unigram delta are deleted. Does **not** arm `m_modified`, matching
-/// upstream's set-sites. Note: on the current ABI no user token ever
-/// surfaces in a candidate list (candidate collection reads the system
-/// dictionary only), so this resolves `false` through the ABI until user
-/// phrases join the candidate surface.
+/// upstream's set-sites.
+///
+/// The pin reads the candidate's type and token and removes from the
+/// receiving `instance`'s context, whichever instance published the row
+/// (`pinyin.cpp:3726-3768`); so does this. The handle must be a row of a
+/// live instance's published candidate list, valid for the whole call and
+/// not used elsewhere during it, as for [`pinyin_choose_candidate`].
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_remove_user_candidate(
     instance: *mut PinyinInstance,
@@ -247,23 +250,19 @@ pub extern "C" fn pinyin_remove_user_candidate(
         return false;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    // Identify the candidate by pointer equality over the snapshot.
-    let Some(index) = inst
-        .candidates
-        .iter()
-        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-    else {
-        return false;
+    // The row's scalars, copied before any view of `instance`.
+    let (candidate_type, token) = {
+        // SAFETY: `candidate` is non-null and is a row of a live published
+        // list (the export's precondition).
+        let row = unsafe { candidate_ref(candidate) };
+        (row.candidate_type(), row.token.get())
     };
     // Register row 64: `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`)
     // and `assert(USER_DICTIONARY == index)` (`:3738`).
-    if inst.state.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
+    if candidate_type != lookup_candidate_type_t::NORMAL_CANDIDATE {
         std::process::abort();
     }
-    let Some(token) = inst.state.candidates[index].token.get() else {
+    let Some(token) = token else {
         return false;
     };
     if !is_user_token(token.value()) {
@@ -664,8 +663,14 @@ unsafe fn try_promote_addon(
 /// bigram (`:2609-2612`, [`UserStoreError::UnigramTotalOverflow`]); otherwise
 /// `true`.
 ///
-/// Returns `false` for a candidate the snapshot does not hold, a candidate
-/// without a token, or a store failure.
+/// The pin reads the candidate's type and token and trains the receiving
+/// `instance`'s context with the receiver's own prefixes, whichever
+/// instance published the row (`pinyin.cpp:2591-2640`); so does this. The
+/// handle must be a row of a live instance's published candidate list,
+/// valid for the whole call and not used elsewhere during it, as for
+/// [`pinyin_choose_candidate`].
+///
+/// Returns `false` for a candidate without a token or a store failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_predicted_candidate(
     instance: *mut PinyinInstance,
@@ -675,21 +680,17 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         return false;
     }
 
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    // Identify the candidate by pointer equality over the snapshot.
-    let Some(index) = inst
-        .candidates
-        .iter()
-        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-    else {
-        return false;
+    // The row's scalars, copied before any view of `instance`.
+    let (candidate_type, token) = {
+        // SAFETY: `candidate` is non-null and is a row of a live published
+        // list (the export's precondition).
+        let row = unsafe { candidate_ref(candidate) };
+        (row.candidate_type(), row.token.get())
     };
     // Register row 64, `pinyin.cpp:2593`: only the three predicted row
     // types are chosen here; the pin asserts on any other.
     if !matches!(
-        inst.state.candidates[index].candidate_type(),
+        candidate_type,
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
@@ -697,22 +698,22 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         std::process::abort();
     }
     // "The punctuation candidate does not have the frequency."
-    if inst.state.candidates[index].candidate_type()
-        == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
-    {
+    if candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE {
         return true;
     }
-    let Some(token) = inst.state.candidates[index].token.get() else {
+    let Some(token) = token else {
         return false;
     };
-    // A sole missing prefix item is still selectable. The pin advances the
-    // loaded facade's total by 483 (wrapping) and ignores the failing
-    // sub-index write; the prefix branch then answers true without a bigram
-    // (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`; #1231 ruling).
-    // `text_ptr` is NULL only for the sole missing row built above.
-    if inst.state.candidates[index].candidate_type()
-        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-        && inst.state.candidates[index].text_ptr.is_null()
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`; the candidate view has ended.
+    let inst = unsafe { instance_mut(instance) };
+    // A prefix row whose item the receiver lacks is still selectable. The
+    // pin advances the loaded facade's total by 483 (wrapping) and ignores
+    // the failing sub-index write; the prefix branch then answers true
+    // without a bigram (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`;
+    // #1231 ruling). The receiver decides, not the row's display string.
+    if candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+        && !inst.core.dict.token_exists(token.value())
     {
         // An unloaded library has no sub-index: the pin returns
         // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
@@ -726,8 +727,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         return true;
     }
     let last = inst.core.session.prefix_predecessor().value();
-    let prefix = inst.state.candidates[index].candidate_type()
-        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
+    let prefix = candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
     // SAFETY: all candidate and prefix reads are complete; the retained owner
     // is exclusively borrowed for the prediction training write.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };

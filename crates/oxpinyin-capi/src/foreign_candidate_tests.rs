@@ -493,3 +493,116 @@ fn a_divided_column_row_forces_its_span(#[values(true, false)] same_instance: bo
         pinyin_fini(context);
     }
 }
+
+/// A user NORMAL row of `instance`'s list.
+fn user_row(instance: *mut PinyinInstance) -> *mut LookupCandidate {
+    let mut count = 0;
+    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    (0..count)
+        .find_map(|index| {
+            let mut row = std::ptr::null_mut();
+            assert!(pinyin_get_candidate(instance, index, &raw mut row));
+            crate::candidates::pinyin_is_user_candidate(instance, row).then_some(row)
+        })
+        .expect("the user phrase is a candidate")
+}
+
+/// `pinyin_remove_user_candidate` reads the row's type and token and
+/// removes from the receiving instance's context (`pinyin.cpp:3726-3768`):
+/// with two contexts, the producer's copy of the phrase stays.
+#[rstest::rstest]
+fn a_user_row_from_another_instance_is_removed_from_the_receivers_context(
+    #[values(true, false)] same_context: bool,
+) {
+    use crate::e2e_tests::{export_of, import_batch};
+    let pair = Pair::open(same_context);
+    for context in &pair.contexts {
+        assert_eq!(import_batch(*context, 7, &[("测侧", "ce'ce", 7)]), [true]);
+    }
+    parse(pair.producer, "cece");
+    assert!(pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT));
+    let row = user_row(pair.producer);
+
+    assert!(crate::candidates::pinyin_remove_user_candidate(
+        pair.receiver,
+        row
+    ));
+    assert!(export_of(pair.receiver_context(), 7).is_empty());
+    assert_eq!(export_of(pair.contexts[0], 7).is_empty(), same_context);
+}
+
+/// `pinyin_choose_predicted_candidate` reads the row's type and token and
+/// trains the receiving instance's context with the receiver's own
+/// prefixes (`pinyin.cpp:2591-2640`, `_get_previous_token`, `:1711-1740`):
+/// a prefix row raises the receiver's unigram by 483, and a bigram row
+/// also raises `(receiver's prefix → token)` by 69.
+#[rstest::rstest]
+fn a_predicted_row_from_another_instance_trains_the_receiver(
+    #[values(true, false)] same_context: bool,
+) {
+    use crate::candidates::pinyin_choose_predicted_candidate;
+    use crate::e2e_tests::{predicted_row, with_store};
+    use crate::predict::pinyin_guess_predicted_candidates;
+
+    let pair = Pair::open(same_context);
+    let ni = *lookup(pair.receiver, "你").first().expect("你");
+    let hao = *lookup(pair.receiver, "好").first().expect("好");
+    assert!(pinyin_guess_predicted_candidates(
+        pair.producer,
+        cstr("你").as_ptr()
+    ));
+    let (prefix_row, word) = predicted_row(
+        pair.producer,
+        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+    );
+    let (receiver_before, producer_before) =
+        (unigram(pair.receiver, word), unigram(pair.producer, word));
+    assert!(pinyin_choose_predicted_candidate(pair.receiver, prefix_row));
+    assert_eq!(unigram(pair.receiver, word), receiver_before + 483);
+    if !same_context {
+        assert_eq!(unigram(pair.producer, word), producer_before);
+    }
+
+    // Seed both predecessor buckets. The producer holds 你 and the
+    // receiver holds 好, including when they share one context.
+    for &instance in &[pair.producer, pair.receiver] {
+        // SAFETY: the live context has no reader retained across this write.
+        let context = unsafe { crate::state::instance_context_mut(instance) };
+        let store = context.core.user_store_mut();
+        store.set_bigram_count(ni, word, 10).unwrap();
+        store.set_bigram_count(hao, word, 20).unwrap();
+    }
+    assert!(pinyin_guess_predicted_candidates(
+        pair.producer,
+        cstr("你").as_ptr()
+    ));
+    let (bigram_row, bigram_word) = predicted_row(
+        pair.producer,
+        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
+    );
+    assert_eq!(bigram_word, word);
+    assert!(pinyin_guess_predicted_candidates(
+        pair.receiver,
+        cstr("好").as_ptr()
+    ));
+    let before = with_store(pair.receiver, |store| store.bigram_count(hao, word)).unwrap();
+    assert!(pinyin_choose_predicted_candidate(pair.receiver, bigram_row));
+    assert_eq!(
+        with_store(pair.receiver, |store| store.bigram_count(hao, word)).unwrap(),
+        before + 69
+    );
+    assert_eq!(
+        with_store(pair.receiver, |store| store.bigram_count(ni, word)).unwrap(),
+        10
+    );
+    if !same_context {
+        assert_eq!(
+            with_store(pair.producer, |store| store.bigram_count(ni, word)).unwrap(),
+            10
+        );
+        assert_eq!(
+            with_store(pair.producer, |store| store.bigram_count(hao, word)).unwrap(),
+            20
+        );
+    }
+}

@@ -76,7 +76,10 @@ use crate::types::{LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 use crate::user_data::pinyin_remember_user_input;
 
 /// Read the live store for one assertion; no storage reference escapes.
-fn with_store<R>(instance: *mut PinyinInstance, read: impl FnOnce(&UserStore) -> R) -> R {
+pub(crate) fn with_store<R>(
+    instance: *mut PinyinInstance,
+    read: impl FnOnce(&UserStore) -> R,
+) -> R {
     // SAFETY: tests call this only with a live instance, between serialized
     // C operations. The closure cannot return a borrow into the store.
     let inst = unsafe { instance_ref(instance) };
@@ -312,7 +315,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
 }
 
 /// The first snapshot row of `kind`, with its token.
-fn predicted_row(
+pub(crate) fn predicted_row(
     instance: *mut PinyinInstance,
     kind: lookup_candidate_type_t,
 ) -> (*mut LookupCandidate, u32) {
