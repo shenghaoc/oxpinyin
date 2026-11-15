@@ -117,8 +117,6 @@ Unit tests:
   and a short `.dbin`).
 - `a_save_skips_an_unloaded_user_library` and
   `library_transitions_keep_the_independent_index` in `crates/oxpinyin-user/src/store_libpinyin.rs`.
-- `an_undecodable_item_is_an_assert_site_and_a_store_failure_is_not` in
-  `crates/oxpinyin-facade/src/export_rows.rs`.
 
 Contract cases:
 

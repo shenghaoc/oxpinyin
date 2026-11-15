@@ -5,11 +5,10 @@
 //! types cross this boundary.
 
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
-use oxpinyin_core::{ChewingKey, PhraseText, SyllableKey};
+use oxpinyin_core::{ChewingKey, PhraseText};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
-    MAX_KEY_TONE, PinyinKey, SENTENCE_START, SystemItem, UserPhrase, UserPronunciation, UserStore,
-    UserStoreError, is_user_file_token, key_syllable, key_tone,
+    MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore, is_user_file_token,
 };
 
 use std::collections::VecDeque;
@@ -36,18 +35,16 @@ use crate::ContextCore;
 /// phrases in memory, in per-library arenas (policy row 62).
 ///
 /// What the store answers is held while its write generation stands still
-/// and re-read as soon as it moves: an arena's token end and the decoded
-/// arena item under the cursor. The pin re-reads
-/// its range and its item on every call because both are offset reads; the
-/// session store's are a borrow, a map probe or a range scan, and no write
-/// can change their answer without moving the generation.
+/// and re-read as soon as it moves: an arena's token end. The pin re-reads
+/// its range on every call because it is an offset read; the session
+/// store's is a range scan, and no write can change its answer without
+/// moving the generation. An item is read from the store on every call.
 #[derive(Default)]
 pub struct PhraseExportCursor {
     index: u8,
     next_token: u32,
     next_pronunciation: usize,
     memo: Memo,
-    current: Option<CurrentUserItem>,
 }
 
 /// Store answers valid at one write generation.
@@ -56,13 +53,6 @@ struct Memo {
     generation: Option<u64>,
     /// One past the highest token of a library backed by an arena.
     user_end: u32,
-}
-
-/// The `USER_FILE` item under the cursor's token, as of a phrase generation.
-struct CurrentUserItem {
-    token: u32,
-    generation: u64,
-    phrase: UserPhrase,
 }
 
 /// The assert sites `pinyin_iterator_get_next_phrase` reaches once the probe
@@ -77,15 +67,9 @@ pub enum ExportAssert {
     /// `assert(ERROR_OK == retval)` after `get_phrase_item` (`:709`): no
     /// item under the probed token, or no probed token at all.
     Item,
-    /// `check_result(item.get_phrase_string(phrase_ucs4))` (`:714`): the
-    /// item's stored text does not decode.
-    PhraseString,
     /// `assert(nth_pronun < n_pronuns)` (`:721`): the item no longer holds
     /// the pronunciation the previous call left the cursor at.
     Pronunciation,
-    /// `check_result(item.get_nth_pronunciation(nth_pronun, keys, freq))`
-    /// (`:724`): the pronunciation under the cursor cannot be read.
-    NthPronunciation,
     /// `assert(m_tone < CHEWING_NUMBER_OF_TONES)` in `get_pinyin_string`
     /// (`chewing_key.cpp:48`, reached from `:728` for each key in turn): a
     /// reading carries a tone past `MAX_KEY_TONE`.
@@ -94,12 +78,6 @@ pub enum ExportAssert {
     /// (`chewing_key.cpp:30-32`, reached from `:49` after the tone assert): a
     /// key's field lies outside the table dimensions.
     KeyFields,
-    /// A tkrzw or Berkeley DB record copy failed where the pin's
-    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
-    /// `bdb_utils.h:61`, `:67`). No export read copies, so the cursor never
-    /// answers it today; it keeps [`oxpinyin_user::UserStoreError::FatalCopy`]
-    /// from reading as a soft miss.
-    FatalCopy,
 }
 
 /// What one [`PhraseExportCursor::get_next_with`] call produced: a row, or
@@ -112,41 +90,6 @@ pub enum ExportStep<R> {
     /// One of the pin's assert sites; the cursor stays where it is, so a
     /// repeated call answers the same.
     Assert(ExportAssert),
-}
-
-/// Which assert site, if any, a `UserStore::phrase` failure stands for: a
-/// present item whose text or pronunciation row does not decode is read at
-/// the pin and dies at `:714` or `:724`. Only a standalone row store, which
-/// no C context holds, answers `phrase` from a database; a libpinyin
-/// session answers it from its arenas and never fails. A failed record copy
-/// is the pin's assert in `copy_tkrzwdb` / `copy_bdb`, never a soft miss;
-/// `phrase` does not copy, so it never reaches here.
-fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
-    match error {
-        UserStoreError::Decode => Some(ExportAssert::PhraseString),
-        UserStoreError::FatalCopy => Some(ExportAssert::FatalCopy),
-        UserStoreError::Io(_)
-        | UserStoreError::Store(_)
-        | UserStoreError::InvalidPhrase
-        | UserStoreError::Persistence(_)
-        | UserStoreError::UnknownDatabaseFormat
-        | UserStoreError::ChunkHeaderWrite(_)
-        | UserStoreError::LibraryChunkHeaderRead
-        | UserStoreError::SaveRemapFailed
-        | UserStoreError::SaveTooLarge
-        | UserStoreError::UnigramTotalOverflow
-        | UserStoreError::OverlongIndexKey
-        | UserStoreError::NonTokenUserBigramKey
-        | UserStoreError::ShortUserBigramValue
-        | UserStoreError::PartialUserBigramTail
-        | UserStoreError::ResidualUserBigramGram
-        | UserStoreError::Journal(_)
-        | UserStoreError::LibraryLoop(_)
-        | UserStoreError::TrainingSetFreqMiss
-        | UserStoreError::UserReadingRemoval
-        | UserStoreError::SessionSeed(_)
-        | UserStoreError::FailedUserBigramStore => None,
-    }
 }
 
 /// One row the cursor is reading, borrowed from its item: the phrase, one
@@ -165,12 +108,6 @@ enum RowSource<'a> {
         keys: &'a [u8],
         count: u32,
     },
-    /// A `USER_FILE` item.
-    User {
-        text: &'a [u32],
-        keys: &'a [PinyinKey],
-        count: u64,
-    },
 }
 
 /// The syllables of one pronunciation: each a spelling and the tone digit
@@ -178,7 +115,6 @@ enum RowSource<'a> {
 /// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
 enum Syllables<'a> {
     Packed(std::slice::Iter<'a, [u8; 2]>),
-    User(std::slice::Iter<'a, PinyinKey>),
 }
 
 impl Iterator for Syllables<'_> {
@@ -191,7 +127,6 @@ impl Iterator for Syllables<'_> {
                     pair[0], pair[1],
                 ])))
             }),
-            Self::User(keys) => keys.next().map(|&key| user_syllable(key)),
         }
     }
 }
@@ -207,36 +142,12 @@ fn chewing_syllable(key: ChewingKey) -> (&'static str, Option<u8>) {
     (key.pinyin_spelling(), digit)
 }
 
-/// A `USER_FILE` reading's syllable: `key_pinyin_string` without the
-/// allocation. The cursor renders a reading only after [`user_key_assert`]
-/// cleared every key of it; the fallbacks are never read.
-fn user_syllable(key: PinyinKey) -> (&'static str, Option<u8>) {
-    let spelling = SyllableKey::from_index(key_syllable(key)).map_or("", SyllableKey::text);
-    let digit = match key_tone(key) {
-        0 => None,
-        tone @ 1..=MAX_KEY_TONE => Some(b'0' + tone),
-        _ => None,
-    };
-    (spelling, digit)
-}
-
-/// The `get_pinyin_string` assert a `USER_FILE` key dies at, if any: the
-/// tone (`chewing_key.cpp:48`). The content-table index assert (`:50`) is
-/// out of reach: a session key always names a syllable, since every
-/// stored reading is a packed `ChewingKey` (`packed_to_pinyin_keys`).
-fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
-    (key_tone(key) > MAX_KEY_TONE).then_some(ExportAssert::KeyTone)
-}
-
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
     /// [`Self::with_text_bytes`].
     fn phrase_text(&self) -> Option<PhraseText> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
-            RowSource::User { text, .. } => {
-                PhraseText::from_stored_words(text.iter().copied().map(Some))
-            }
         }
     }
 
@@ -258,7 +169,6 @@ impl ExportRow<'_> {
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
-            RowSource::User { keys, .. } => keys.iter().find_map(|&key| user_key_assert(key)),
             RowSource::Mapped { keys, .. } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
                 let key = ChewingKey::from_packed(u16::from_le_bytes([bytes[0], bytes[1]]));
                 if key.tone > MAX_KEY_TONE {
@@ -286,14 +196,12 @@ impl ExportRow<'_> {
     pub fn count(&self) -> u64 {
         match &self.0 {
             RowSource::Mapped { count, .. } => u64::from(*count),
-            RowSource::User { count, .. } => *count,
         }
     }
 
     fn syllables(&self) -> Syllables<'_> {
         match &self.0 {
             RowSource::Mapped { keys, .. } => Syllables::Packed(keys.as_chunks::<2>().0.iter()),
-            RowSource::User { keys, .. } => Syllables::User(keys.iter()),
         }
     }
 }
@@ -302,7 +210,6 @@ impl ExportRow<'_> {
 enum ItemRef<'a> {
     Mapped(PhraseItemView<'a>),
     Arena(PhraseItemView<'a>),
-    User(&'a UserPhrase),
 }
 
 impl<'a> From<SystemItem<'a>> for ItemRef<'a> {
@@ -318,7 +225,6 @@ impl ItemRef<'_> {
     fn n_pronunciations(&self) -> usize {
         match self {
             Self::Mapped(item) | Self::Arena(item) => item.n_pronunciations(),
-            Self::User(phrase) => phrase.pronunciations().len(),
         }
     }
 
@@ -337,7 +243,7 @@ impl ItemRef<'_> {
     }
 
     /// Pronunciation `nth` of the item as a row: `get_nth_pronunciation`
-    /// (`pinyin.cpp:724`), `None` where the item does not hold it.
+    /// (`pinyin.cpp:724`), `None` for an `nth` at or past the item's count.
     fn row(&self, nth: usize) -> Option<ExportRow<'_>> {
         Some(ExportRow(match self {
             Self::Mapped(item) | Self::Arena(item) => {
@@ -346,14 +252,6 @@ impl ItemRef<'_> {
                     item: *item,
                     keys: pronunciation.keys,
                     count: pronunciation.freq,
-                }
-            }
-            Self::User(phrase) => {
-                let pronunciation = phrase.pronunciations().get(nth)?;
-                RowSource::User {
-                    text: phrase.words(),
-                    keys: pronunciation.keys(),
-                    count: pronunciation.count(),
                 }
             }
         }))
@@ -419,19 +317,21 @@ impl PhraseExportRead<'_> {
         }
         let nth = self.next_pronunciation;
         let step = self.with_item(token, |item| {
-            if nth >= item.n_pronunciations() {
-                return Err(ExportAssert::Pronunciation);
-            }
-            let row = item.row(nth).ok_or(ExportAssert::NthPronunciation)?;
+            // An item holds every reading below its count: its view is
+            // sized from its own length and count bytes, as the pin's chunk
+            // is (`phrase_index.cpp:199-203` at 074a2219). The row is
+            // missing only past the count, the pin's `:721` assert; its
+            // `:724` read cannot fail after that (`phrase_index.cpp:33-44`).
+            let row = item.row(nth).ok_or(ExportAssert::Pronunciation)?;
             if let Some(site) = row.key_assert() {
                 return Err(site);
             }
             Ok((read(&row), item.next_pronunciation(nth + 1)))
         });
         let (out, following) = match step {
-            Err(site) | Ok(Some(Err(site))) => return ExportStep::Assert(site),
-            Ok(None) => return ExportStep::Assert(ExportAssert::Item),
-            Ok(Some(Ok(pair))) => pair,
+            Some(Err(site)) => return ExportStep::Assert(site),
+            None => return ExportStep::Assert(ExportAssert::Item),
+            Some(Ok(pair)) => pair,
         };
         match following {
             Some(next) => self.next_pronunciation = next,
@@ -517,10 +417,9 @@ impl PhraseExportRead<'_> {
         let end = self.memo.user_end;
         let mut token = start;
         while token < end {
-            let found = match self.with_user_item(token, |item| item.first_pronunciation()) {
-                Ok(found) => found.flatten(),
-                Err(_) => Some(0),
-            };
+            let found = self
+                .with_user_item(token, |item| item.first_pronunciation())
+                .flatten();
             if let Some(nth) = found {
                 self.next_token = token;
                 self.next_pronunciation = nth;
@@ -532,69 +431,25 @@ impl PhraseExportRead<'_> {
 
     /// `get_phrase_item` for `token` (`phrase_index.cpp:180-206`): the
     /// session's replacement first, then the mapped chunk; a `USER_FILE`
-    /// token reads the session store. `Ok(None)` is `ERROR_NO_ITEM`; `Err` is
-    /// the assert site of a present item that does not decode.
-    fn with_item<R>(
-        &mut self,
-        token: u32,
-        read: impl FnOnce(ItemRef<'_>) -> R,
-    ) -> Result<Option<R>, ExportAssert> {
+    /// token reads the session store. `None` is `ERROR_NO_ITEM`.
+    fn with_item<R>(&mut self, token: u32, read: impl FnOnce(ItemRef<'_>) -> R) -> Option<R> {
         self.refresh();
         if self.user.originals().get(&self.index).is_some() {
-            return Ok(self
+            return self
                 .system
                 .live_items_ignoring_mask()
                 .read(token, |item| read(ItemRef::from(item)))
-                .found());
+                .found();
         }
         self.with_user_item(token, read)
     }
 
     /// The `USER_FILE` item under `token`: the session's arena item, or
-    /// else the item a system library's live buffer appended, held once per
-    /// token and generation. `Ok(None)` is no item; the `Err` arm is the
-    /// signature's, since a session's read cannot fail.
-    fn with_user_item<R>(
-        &mut self,
-        token: u32,
-        read: impl FnOnce(ItemRef<'_>) -> R,
-    ) -> Result<Option<R>, ExportAssert> {
-        let user = self.user;
-        let mut read = Some(read);
-        if let Some(out) = user
-            .with_user_item(token, |item| {
-                read.take().map(|read| read(ItemRef::Arena(item)))
-            })
-            .flatten()
-        {
-            return Ok(Some(out));
-        }
-        let Some(read) = read else {
-            return Ok(None);
-        };
-        let Some(generation) = self.memo.generation else {
-            return Ok(None);
-        };
-        let held = self
-            .current
-            .as_ref()
-            .is_some_and(|current| current.token == token && current.generation == generation);
-        if !held {
-            let phrase = match user.phrase(token) {
-                Ok(Some(phrase)) => phrase,
-                Ok(None) => return Ok(None),
-                Err(error) => return assert_for(&error).map_or(Ok(None), Err),
-            };
-            self.current = Some(CurrentUserItem {
-                token,
-                generation,
-                phrase,
-            });
-        }
-        let Some(current) = self.current.as_ref() else {
-            return Ok(None);
-        };
-        Ok(Some(read(ItemRef::User(&current.phrase))))
+    /// else the item a system library's live buffer appended, read from the
+    /// store on every call. `None` is no item; a session's read cannot fail.
+    fn with_user_item<R>(&self, token: u32, read: impl FnOnce(ItemRef<'_>) -> R) -> Option<R> {
+        self.user
+            .with_user_item(token, |item| read(ItemRef::Arena(item)))
     }
 }
 
@@ -610,7 +465,6 @@ impl ContextCore {
             next_token: NULL_TOKEN,
             next_pronunciation: 0,
             memo: Memo::default(),
-            current: None,
         };
         // `range.m_range_begin`: tokens start at 1 (`phrase_index.cpp:642`).
         cursor.read(self).probe_from((u32::from(index) << 24) | 1);
@@ -1191,11 +1045,9 @@ mod tests {
 
 #[cfg(test)]
 mod phrase_cursor_tests {
-    use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor, assert_for};
+    use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor};
     use oxpinyin_core::{ChewingKey, SyllableKey};
-    use oxpinyin_user::{
-        KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw, UserStoreError, toned_key,
-    };
+    use oxpinyin_user::{KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw, toned_key};
 
     /// A transient context over the committed mini tables of whichever
     /// backend this build carries (a NULL user directory: imports work, the
@@ -1416,22 +1268,6 @@ mod phrase_cursor_tests {
                 ExportStep::Assert(ExportAssert::KeyTone)
             ));
         }
-    }
-
-    /// A present item the store cannot decode is read at the pin and dies
-    /// at `:714` (its text) or `:724` (a pronunciation row); any other
-    /// failure of a standalone row store is no assert site, and the cursor
-    /// reads it as no item (a libpinyin session's read cannot fail).
-    #[test]
-    fn an_undecodable_item_is_an_assert_site_and_a_store_failure_is_not() {
-        assert_eq!(
-            assert_for(&UserStoreError::Decode),
-            Some(ExportAssert::PhraseString)
-        );
-        assert_eq!(
-            assert_for(&UserStoreError::Io(std::io::Error::other("unreadable"))),
-            None
-        );
     }
 
     /// `pinyin.cpp:748-767`: every `get_next_phrase` re-reads the range
