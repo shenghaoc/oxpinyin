@@ -2810,6 +2810,43 @@ fn mask_out_ignores_the_bits_above_the_library_index() {
     close(context, instance);
 }
 
+/// The compaction at the end of an import copies the tokens of the range
+/// `[1, end)` into a fresh sub-index, so an item at the reserved slot 0 is
+/// dropped (`pinyin.cpp:655-660`, `phrase_index.cpp:624-675` at 074a2219).
+/// Before the compaction the item is readable: `get_phrase_item` has no
+/// slot-0 exclusion (`phrase_index.cpp:180-206`).
+#[test]
+fn import_end_compaction_drops_the_reserved_slot() {
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-slot-zero");
+    write_user_conf(&user.path, &system_dir());
+    let item = ChunkItem {
+        phrase: vec![u32::from('你')],
+        unigram: 17,
+        prons: vec![(vec![0x302b], 5)],
+    };
+    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    // Move the item's offset word from slot 1 to slot 0.
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_zero = offsets_start as usize;
+    payload.copy_within(slot_zero + 4..slot_zero + 8, slot_zero);
+    payload[slot_zero + 4..slot_zero + 8].fill(0);
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(unigram(instance, 0x0700_0000), (true, 17));
+    assert_eq!(import_batch(context, 7, &[]), [false; 0]);
+    assert_eq!(unigram(instance, 0x0700_0000), (false, 0));
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").
