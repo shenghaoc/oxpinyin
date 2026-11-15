@@ -336,8 +336,8 @@ pub struct TokenPronunciation {
 }
 
 /// The pin's query keys for `syllables`.
-fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-    Some(syllables.iter().map(|key| key.chewing_key()).collect())
+fn chewing_query(syllables: &[SyllableKey]) -> Vec<oxpinyin_core::ChewingKey> {
+    syllables.iter().map(|key| key.chewing_key()).collect()
 }
 
 // ── Merged backends ─────────────────────────────────────────────────────
@@ -433,22 +433,16 @@ impl<'a> RuntimeDict<'a> {
     }
 
     /// The query's toned keys: each syllable's key with the tone at its
-    /// index, `0` past the end of `tones`. Always `Some`; the `Option`
-    /// keeps the callers' signature.
-    fn trellis_query(
-        syllables: &[SyllableKey],
-        tones: &[u8],
-    ) -> Option<Vec<oxpinyin_core::ChewingKey>> {
-        Some(
-            syllables
-                .iter()
-                .enumerate()
-                .map(|(index, key)| {
-                    key.chewing_key()
-                        .with_tone(tones.get(index).copied().unwrap_or(0))
-                })
-                .collect(),
-        )
+    /// index, `0` past the end of `tones`.
+    fn trellis_query(syllables: &[SyllableKey], tones: &[u8]) -> Vec<oxpinyin_core::ChewingKey> {
+        syllables
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                key.chewing_key()
+                    .with_tone(tones.get(index).copied().unwrap_or(0))
+            })
+            .collect()
     }
 
     /// Whether a ranged `token` is loaded and visible to the library mask.
@@ -566,12 +560,10 @@ impl<'a> RuntimeDict<'a> {
             // one (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at
             // 074a2219). The user lookup lists only tokens with a session
             // item, which `with_user_item` reads.
-            let pronunciation = path.keys.as_deref().and_then(|query| {
-                self.user.with_user_item(token, |view| {
-                    let (matched, total) =
-                        Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);
-                    (u64::from(matched), u64::from(total))
-                })
+            let pronunciation = self.user.with_user_item(token, |view| {
+                let (matched, total) =
+                    Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+                (u64::from(matched), u64::from(total))
             });
             PricedToken {
                 item: TrellisItem {
@@ -583,11 +575,9 @@ impl<'a> RuntimeDict<'a> {
         } else if let Some(priced) = self.user.with_user_item(token, |view| {
             // A second imported reading need not have an index entry
             // (074a2219 pinyin.cpp:563-582). ONESTEP still reads its item.
-            let pronunciation = path.keys.as_deref().map(|query| {
-                let (matched, total) =
-                    Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);
-                (u64::from(matched), u64::from(total))
-            });
+            let (matched, total) =
+                Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+            let pronunciation = Some((u64::from(matched), u64::from(total)));
             PricedToken {
                 item: TrellisItem {
                     chars: view.phrase_length() as u32,
@@ -629,9 +619,8 @@ impl<'a> RuntimeDict<'a> {
         };
         // The effective-item overlay prices against the same keys, when
         // the store holds system items.
-        if let Some(query) = path.keys.as_deref()
-            && self.live_items().has_overlay()
-            && let Some((matched, total)) = self.effective_possibility(query, token)
+        if self.live_items().has_overlay()
+            && let Some((matched, total)) = self.effective_possibility(&path.keys, token)
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
         }
@@ -958,7 +947,7 @@ pub struct PathPricing {
     /// The user table's lookup of the path.
     user: Vec<PhraseEntry>,
     /// The path's toned keys ([`RuntimeDict::trellis_query`]).
-    keys: Option<Vec<oxpinyin_core::ChewingKey>>,
+    keys: Vec<oxpinyin_core::ChewingKey>,
 }
 
 /// One token as the ordinary lookup prices it.
@@ -1014,9 +1003,7 @@ impl Dictionary for RuntimeDict<'_> {
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), Self::Error> {
-        let Some(query) = Self::trellis_query(syllables, tones) else {
-            return Ok(());
-        };
+        let query = Self::trellis_query(syllables, tones);
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
         self.note_user_search(syllables);
@@ -1035,10 +1022,7 @@ impl Dictionary for RuntimeDict<'_> {
         ranges: &mut PhraseIndexRanges<()>,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        let Some(query) = Self::trellis_query(syllables, tones) else {
-            self.trellis_ranges(syllables, tones, ranges)?;
-            return self.phrase_prefix_exists(syllables);
-        };
+        let query = Self::trellis_query(syllables, tones);
         let loaded = |token: u32| self.token_ranged(token);
         let system_extends = self
             .system

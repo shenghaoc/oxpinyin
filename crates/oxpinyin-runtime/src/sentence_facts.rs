@@ -82,11 +82,9 @@ impl RuntimeDict<'_> {
             phrase_length: view.phrase_length(),
             text: view.phrase_text(),
         });
-        let pronunciation = path.keys.as_deref().map(|query| {
-            let (matched, total) =
-                Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), query);
-            (u64::from(matched), u64::from(total))
-        });
+        let (matched, total) =
+            Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+        let pronunciation = Some((u64::from(matched), u64::from(total)));
         let result = PricedToken {
             item: TrellisItem {
                 chars: saved.chars,
