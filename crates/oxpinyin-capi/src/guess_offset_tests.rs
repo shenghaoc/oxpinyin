@@ -409,3 +409,38 @@ fn a_guess_at_a_mid_syllable_offset_answers_the_empty_column() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// A guess's start is every row's `m_begin` (`pinyin.cpp:2226-2252`), and
+/// a choose forces from it (`add_constraint(m_begin, m_end, token)` and
+/// the second validation, `:2582-2585`). In `ni'hao` the `'` at byte 2 is
+/// a zero-key column of its own, so a guess at 3 forces 好 over `[3, 6)`
+/// and a guess at 2 over `[2, 6)`; `pinyin_clear_constraint` answers false
+/// for a free cell (`:2643-2649`, `phonetic_lookup.cpp:88-115`). Under the
+/// Luoma index parse a guess at 2 matches too; a guess at 3 there is the
+/// registered "Index-parse separator column" difference.
+#[rstest::rstest]
+#[case::hanyu_guess_at_the_key(1, 3, [false, true])]
+#[case::hanyu_guess_at_the_separator(1, 2, [true, true])]
+#[case::luoma_guess_at_the_separator(2, 2, [true, true])]
+fn a_guess_start_is_the_forcings_start_across_a_separator(
+    #[case] scheme: std::ffi::c_int,
+    #[case] guess: usize,
+    #[case] cleared: [bool; 2],
+) {
+    for (probe, expected) in [2, 3].into_iter().zip(cleared) {
+        let user_dir = TempUserDir::new("separator-start");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_full_pinyin_scheme(context, scheme));
+        assert_eq!(parse(instance, "ni'hao"), 6);
+        assert!(pinyin_guess_candidates(instance, guess, DEFAULT_SORT));
+        let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+        assert_eq!(pinyin_choose_candidate(instance, guess, hao), 6);
+        assert_eq!(
+            pinyin_clear_constraint(instance, probe),
+            expected,
+            "scheme {scheme}, guess at {guess}, clear at {probe}"
+        );
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
