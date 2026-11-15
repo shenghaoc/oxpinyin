@@ -964,8 +964,7 @@ impl Dictionary for RuntimeDict<'_> {
     }
 
     /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] with one
-    /// system DBM get. A live library mask keeps the two calls: the
-    /// visibility walk behind its probe is a different read.
+    /// system DBM get.
     fn trellis_ranges_continued(
         &self,
         syllables: &[Self::Syllable],
@@ -977,10 +976,6 @@ impl Dictionary for RuntimeDict<'_> {
             self.trellis_ranges(syllables, tones, ranges)?;
             return self.phrase_prefix_exists(syllables);
         };
-        if self.library_mask.get() != 0 && !self.system.pinyin_attachment_failed() {
-            self.trellis_ranges(syllables, tones, ranges)?;
-            return self.phrase_prefix_exists(syllables);
-        }
         let loaded = |token: u32| self.token_ranged(token);
         let system_extends = self
             .system
@@ -1112,33 +1107,14 @@ impl Dictionary for RuntimeDict<'_> {
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
-        // A live library mask must hide unloaded entries from the widen
-        // probe too — the CR finding on PR #234. Without this the n-best
-        // decoder keeps extending paths that lead only to invisible
-        // tokens (`pinyin_unload_phrase_library(2)` leaves the underlying
-        // rows resident; only the visibility mask changes). With the
-        // mask clear, the plain probe's fast path stays.
-        // A journal REMOVE does not reach this answer: `SEARCH_CONTINUED` comes
-        // from the pinyin table's DB get alone (`chewing_large_table2_bdb.cpp:182-187`
-        // at 074a2219), and the removal clears only the sub-index. The removed item
-        // leaves where `get_phrase_item` is read, so the walk below sees the library
-        // mask and nothing else.
-        let system_extends = if self.library_mask.get() == 0 {
-            self.system.phrase_prefix_exists(syllables)?
-        } else {
-            self.system
-                .phrase_prefix_exists_visible(syllables, |token| {
-                    self.library_visible(u32::from(library_of(token)))
-                        && self
-                            .system
-                            .libraries()
-                            .library(token)
-                            .is_some_and(|library| {
-                                !library.is_detached()
-                                    || self.live_items().read(token, |_| ()).found().is_some()
-                            })
-                })?
-        };
+        // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
+        // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
+        // `chewing_large_table2_bdb.cpp:182-187`,
+        // `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219). A library mask
+        // only drops a token at `convert`'s NULL range
+        // (`chewing_large_table2.h:107-111`), and a journal REMOVE clears only the
+        // sub-index, so neither reaches this answer.
+        let system_extends = self.system.phrase_prefix_exists(syllables)?;
         // The pin searches the system table and then the user table with no
         // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
         // the user lookup and its search note come before the answer.

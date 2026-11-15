@@ -156,26 +156,6 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
-/// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether
-/// some phrase whose pinyin equals or extends `keys` has a token
-/// `visible` accepts and a loaded library item.
-fn visible_extension_exists(
-    table: &ChewingTable,
-    libraries: &PhraseLibraries,
-    keys: &[ChewingKey],
-    visible: impl Fn(u32) -> bool,
-) -> Result<bool, DictError> {
-    table.walk_extensions(keys, |_, items| {
-        Ok(items.iter().any(|item| {
-            prefix_keys_match(keys, &item.keys)
-                && visible(item.token)
-                && libraries.library(item.token).is_some_and(|library| {
-                    library.is_detached() || library.item(item.token).is_some()
-                })
-        }))
-    })
-}
-
 // ── the phrase DBM alone ─────────────────────────────────────────
 
 /// The phrase DBM alone (`phrase_index.bin`), as
@@ -639,31 +619,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
     pub fn suggestion_tokens(&self, prefix: &[u32]) -> Result<Vec<u32>, DictError> {
         self.phrase.search_suggestion(prefix)
-    }
-
-    /// The `SEARCH_CONTINUED` probe with a per-token visibility filter:
-    /// whether a phrase `visible` accepts has a pinyin equal to or
-    /// extending `syllables`. Routed by the runtime once a library has
-    /// been unloaded, so the n-best widen probe never extends a path that
-    /// only invisible phrases could complete. Costs a bounded walk over the
-    /// prefix's extensions; the plain [`Dictionary::phrase_prefix_exists`]
-    /// stays a point read.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn phrase_prefix_exists_visible(
-        &self,
-        syllables: &[SyllableKey],
-        visible: impl Fn(u32) -> bool,
-    ) -> Result<bool, DictError> {
-        if syllables.is_empty() {
-            return Ok(true);
-        }
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
-        visible_extension_exists(&self.pinyin, self.libraries(), &keys, visible)
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the default facade's
