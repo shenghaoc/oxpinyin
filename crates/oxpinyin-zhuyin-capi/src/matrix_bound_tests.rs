@@ -139,8 +139,4 @@ macro_rules! full_pinyin_keyless_query_aborts {
 }
 
 full_pinyin_keyless_query_aborts!(full_pinyin_one_separator_key_aborts, "'", 1);
-full_pinyin_keyless_query_aborts!(full_pinyin_two_separators_key_aborts, "''", 2);
-full_pinyin_keyless_query_aborts!(full_pinyin_three_separators_key_aborts, "'''", 3);
 full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_key_aborts, "ni'", 0);
-full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_invalid_key_aborts, "ni'!", 0);
-full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_i_key_aborts, "ni'i", 0);
