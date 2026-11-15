@@ -2430,6 +2430,47 @@ fn a_sentence_prefix_above_unicode_is_converted() {
     close(context, instance);
 }
 
+/// A system library whose only item is 你 with the one packed reading `key`,
+/// and the export of that library.
+fn export_a_system_reading(key: u16) {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::test_support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x4f60], &[key], 100)],
+        1000,
+    );
+    let user = TempUserDir::new("export-system-key");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    export_rows_of(context, 1, "你");
+}
+
+/// `pinyin_iterator_get_next_phrase` renders every key of the row with
+/// `get_pinyin_string`, which asserts the tone, for a system item as for a
+/// user item (`pinyin.cpp:721-733`, `chewing_key.cpp:47-57` at 074a2219).
+/// A stored tone 6 on a system item's reading aborts the export.
+#[test]
+fn export_aborts_on_a_system_reading_with_a_tone_past_the_tones() {
+    assert_aborts(
+        "boundary_tests::export_aborts_on_a_system_reading_with_a_tone_past_the_tones",
+        // `ba` with tone 6: the tone is bits 12 to 14 of the packed key.
+        || export_a_system_reading(0x0081 | (6 << 12)),
+    );
+}
+
+/// After the tone, `get_pinyin_string` calls `get_table_index`, which
+/// asserts the initial, middle and final against the table dimensions
+/// (`chewing_key.cpp:29-36`, from `:49`). Initial 31 is outside the 24
+/// initials, so the export aborts.
+#[test]
+fn export_aborts_on_a_system_reading_with_a_field_outside_the_table() {
+    assert_aborts(
+        "boundary_tests::export_aborts_on_a_system_reading_with_a_field_outside_the_table",
+        || export_a_system_reading(0x009f | (1 << 12)),
+    );
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").
