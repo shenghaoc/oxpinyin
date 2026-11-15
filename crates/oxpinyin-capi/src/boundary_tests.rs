@@ -2793,6 +2793,23 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     close(context, instance);
 }
 
+/// `FacadePhraseIndex::mask_out` tests a `USER_FILE` library through the
+/// four-bit library index of the mask and the value, and
+/// `SubPhraseIndex::mask_out` tests each token under their low 24 bits
+/// (`novel_types.h:41-44`, `phrase_index.cpp:677-715`, `pinyin.cpp:1288-1291`
+/// at 074a2219). The mask and value 0x10000000 have a zero library index
+/// and zero low bits, so every item of the user library is removed.
+#[test]
+fn mask_out_ignores_the_bits_above_the_library_index() {
+    let user = TempUserDir::new("mask-high-bits");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(import_batch(context, 7, &[("测测", "ce4'ce4", 5)]), [true]);
+    assert!(unigram(instance, 0x0700_0001).0);
+    assert!(pinyin_mask_out(context, 0x1000_0000, 0x1000_0000));
+    assert_eq!(unigram(instance, 0x0700_0001), (false, 0));
+    close(context, instance);
+}
+
 /// The punctuation prediction on a candidate's own borrowed string answers true
 /// with no row and leaves the sentence (docs/findings/upstream-divergences.md,
 /// "Aliased prediction prefix use-after-free").
