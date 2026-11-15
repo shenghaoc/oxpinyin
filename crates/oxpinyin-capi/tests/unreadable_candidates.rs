@@ -15,7 +15,7 @@ use pinyin_capi::{
 };
 use pinyin_capi::{
     pinyin_choose_candidate, pinyin_fini, pinyin_get_candidate, pinyin_get_candidate_string,
-    pinyin_get_n_candidate, pinyin_init,
+    pinyin_get_n_candidate, pinyin_init, pinyin_unload_phrase_library,
 };
 
 fn check_row(case: fixture::Case, sort: u32) {
@@ -104,6 +104,48 @@ fn a_readable_candidate_displaces_an_unreadable_candidate() {
     check_row(fixture::Case::Mixed, 0x1f);
 }
 
+/// The widen probe reads no extension row, library mask or not. The pin
+/// sets `SEARCH_CONTINUED` once the key's DB read succeeds, before any
+/// token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
+/// `chewing_large_table2_bdb.cpp:182-187`,
+/// `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219); the mask only
+/// drops a token at `convert`'s NULL range (`chewing_large_table2.h:107-111`).
+/// For `ni` alone the guess searches only `ni` (`pinyin.cpp:2229-2280`), so
+/// the malformed `ni'hao` row is never read. Unloaded, the GBK token is
+/// hidden; loaded, it is row 106's sole row with a NULL string.
+#[test]
+fn a_library_mask_does_not_read_extension_rows() {
+    for (unload, expected) in [(false, 1), (true, 0)] {
+        let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
+        let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
+        let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
+        let context = pinyin_init(path.as_ptr(), user_path.as_ptr());
+        assert!(!context.is_null());
+        if unload {
+            assert!(pinyin_unload_phrase_library(context, 2));
+        }
+        let instance = pinyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()), 2);
+        assert!(
+            pinyin_guess_candidates(instance, 0, 0x1f),
+            "unload {unload}"
+        );
+        let mut count = u32::MAX;
+        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert_eq!(count, expected, "unload {unload}");
+        if count == 1 {
+            let mut row = ptr::null_mut();
+            assert!(pinyin_get_candidate(instance, 0, &raw mut row));
+            let mut string = c"sentinel".as_ptr();
+            assert!(pinyin_get_candidate_string(instance, row, &raw mut string));
+            assert!(string.is_null());
+        }
+        pinyin_free_instance(instance);
+        pinyin_fini(context);
+    }
+}
+
 #[path = "../../oxpinyin-data/tests/support/mod.rs"]
 mod chunk_fixture;
 
@@ -121,6 +163,7 @@ mod fixture {
         #[cfg_attr(not(unix), allow(dead_code))]
         ChooseToZero,
         Fallback,
+        MaskedExtension,
         #[cfg(unix)]
         Zero,
     }
@@ -185,10 +228,16 @@ mod fixture {
         } else {
             dir.path().join("pinyin_index.bin")
         };
-        let mut value = encode_item(0x0100_0010, &[key.with_tone(3)]);
+        let token = if matches!(case, Case::MaskedExtension) {
+            0x0200_0001
+        } else {
+            0x0100_0010
+        };
+        let mut value = encode_item(token, &[key.with_tone(3)]);
         if matches!(case, Case::Pair | Case::Mixed) {
             value.extend(encode_item(0x0100_0011, &[key.with_tone(3)]));
         }
+        let extension = encode_complete_key(&[key, ChewingKey::from_pinyin("hao").unwrap()]);
         let key = encode_complete_key(&[key]);
         if matches!(case, Case::Fallback) {
             DefaultStore::write_user_index(&index_path, |sink| sink(&key, &value)).unwrap();
@@ -197,6 +246,11 @@ mod fixture {
             index
                 .write(|txn| {
                     txn.put_raw(&key, &value)?;
+                    if matches!(case, Case::MaskedExtension) {
+                        // Too short for one record: only a decode of this
+                        // row fails.
+                        txn.put_raw(&extension, &[1, 2, 3])?;
+                    }
                     if matches!(case, Case::ChooseToZero) {
                         let hao = ChewingKey::from_pinyin("hao").unwrap();
                         txn.put_raw(

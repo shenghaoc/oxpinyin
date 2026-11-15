@@ -379,39 +379,6 @@ impl<D: ChewingDbm> ChewingTable<D> {
         self.dbm.contains(&index_key(keys))
     }
 
-    /// Every row whose key extends the query's index key (the key itself
-    /// included), in ascending key order — the rows a longer phrase with
-    /// this pinyin prefix can live under. Each row is handed over as
-    /// `(syllable count, records)`; empty markers are skipped. A visitor
-    /// `Ok(true)` terminates the scan itself, not merely the visit loop.
-    ///
-    /// This is the widen probe's visibility walk: upstream's
-    /// `SEARCH_CONTINUED` says only that *some* longer key exists, and a
-    /// caller that must know whether a *visible* phrase extends the
-    /// prefix has to read the extensions.
-    pub(crate) fn walk_extensions(
-        &self,
-        keys: &[ChewingKey],
-        mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
-    ) -> Result<bool, DictError> {
-        if keys.is_empty() {
-            return Ok(false);
-        }
-        let encoded = index_key(keys);
-        let upper = prefix_upper_bound(&encoded);
-        let mut found = false;
-        self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
-            if value.is_empty() || !key.len().is_multiple_of(2) {
-                return Ok(false);
-            }
-            let phrase_length = key.len() / 2;
-            let items = decode_items(value, phrase_length)?;
-            found = visit(phrase_length, &items)?;
-            Ok(found)
-        })?;
-        Ok(found)
-    }
-
     /// Whether some row extending the query's index key is past
     /// [`MAX_INDEX_KEY_WORDS`] words — the key the pin's
     /// `ChewingLargeTable2::search_suggestion` reads with `phrase_length =
@@ -789,53 +756,6 @@ mod tests {
     }
 
     #[test]
-    fn walk_extensions_visits_the_longer_keys_in_the_same_space() {
-        let dbm = MemoryDbm::new();
-        let ni = ChewingKey::from_pinyin("ni").unwrap();
-        let hao = ChewingKey::from_pinyin("hao").unwrap();
-        let men = ChewingKey::from_pinyin("men").unwrap();
-        dbm.put(encode_complete_key(&[ni]), Vec::new());
-        dbm.put(
-            encode_complete_key(&[ni, hao]),
-            encode_items(&[PinyinIndexItem {
-                token: 0x0100_0099,
-                keys: vec![ni.with_tone(3), hao.with_tone(3)],
-            }]),
-        );
-        dbm.put(
-            encode_complete_key(&[ni, men]),
-            encode_items(&[PinyinIndexItem {
-                token: 0x0200_0001,
-                keys: vec![ni.with_tone(3), men.with_tone(0)],
-            }]),
-        );
-        // A neighbour outside the prefix range.
-        dbm.put(
-            encode_complete_key(&[hao]),
-            encode_items(&[PinyinIndexItem {
-                token: 0x0100_0011,
-                keys: vec![hao.with_tone(3)],
-            }]),
-        );
-        let table = ChewingTable::new(dbm);
-        let mut seen = Vec::new();
-        let found = table
-            .walk_extensions(&[ni], |len, items| {
-                seen.push((len, items[0].token));
-                Ok(false)
-            })
-            .unwrap();
-        assert!(!found);
-        assert_eq!(seen.len(), 2, "two non-empty extensions, marker skipped");
-        assert!(seen.iter().all(|(len, _)| *len == 2));
-        // Early exit on the first accepted row.
-        let found = table
-            .walk_extensions(&[ni], |_, items| Ok(items[0].token >> 24 == 2))
-            .unwrap();
-        assert!(found);
-    }
-
-    #[test]
     fn has_overlong_extension_reads_keys_past_sixteen_words_under_the_query() {
         let ni = ChewingKey::from_pinyin("ni").unwrap();
         let hao = ChewingKey::from_pinyin("hao").unwrap();
@@ -927,22 +847,26 @@ mod tests {
                     Ok(false)
                 })
                 .unwrap();
-            // The uncached path: the existence probe, the key-length scan and
-            // the extension walk, each on its own.
+            // The uncached path: the existence probe and the key-length scan,
+            // each on its own.
             let exists = table.key_exists(&[ni]).unwrap();
             let separate_overlong = exists && table.has_overlong_extension(&[ni]).unwrap();
             assert_eq!(fused_overlong, separate_overlong, "case {case}");
             if !separate_overlong {
-                let mut separate = Vec::new();
-                if exists {
-                    table
-                        .walk_extensions(&[ni], |len, items| {
-                            separate.push((len, items.to_vec()));
-                            Ok(false)
-                        })
-                        .unwrap();
-                }
-                assert_eq!(fused, separate, "case {case}");
+                // The rows a suggestion walk visits: the `ni'hao` record when
+                // the query's own key exists, nothing otherwise.
+                let expected = if case == 1 {
+                    vec![(
+                        2,
+                        vec![PinyinIndexItem {
+                            token: 0x0100_0099,
+                            keys: vec![ni.with_tone(3), hao.with_tone(3)],
+                        }],
+                    )]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(fused, expected, "case {case}");
             }
         }
     }

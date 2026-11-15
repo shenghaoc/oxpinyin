@@ -210,31 +210,6 @@ fn phrase_prefix_exists_follows_search_continued() {
 }
 
 #[test]
-fn visible_prefix_probe_hides_unloaded_libraries() {
-    let fix = Fixture::new();
-    let dict = fix.dict();
-    // 你们 (nibble 2) is the only extension of "ni,men"; its library is
-    // absent, so no visible phrase extends the prefix even though the
-    // key exists.
-    assert!(dict.phrase_prefix_exists(&syls("ni,men")).unwrap());
-    assert!(
-        !dict
-            .phrase_prefix_exists_visible(&syls("ni,men"), |_| true)
-            .unwrap()
-    );
-    // "ni" extends to 你好 (nibble 1): visible unless nibble 1 is masked.
-    assert!(
-        dict.phrase_prefix_exists_visible(&syls("ni"), |_| true)
-            .unwrap()
-    );
-    assert!(
-        !dict
-            .phrase_prefix_exists_visible(&syls("ni"), |token| token >> 24 != 1)
-            .unwrap()
-    );
-}
-
-#[test]
 fn token_surface_resolves_through_the_chunk_file() {
     let fix = Fixture::new();
     let dict = fix.dict();

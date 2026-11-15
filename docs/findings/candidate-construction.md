@@ -30,7 +30,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
    - A path with an initial-only key goes to the dictionary as one projected-index lookup.
      The runtime dictionaries advertise `Dictionary::handles_partial_keys` and answer it in one probe.
      A dictionary that does not handle partial keys gets the key sequences from the table's wildcard expansion (`expand_keys`; [scoring](scoring-spec.md#incomplete-keys)).
-   - Widening is prefix-driven: `SEARCH_CONTINUED` means that a stored phrase can extend the sequence.
+   - Widening is prefix-driven: `SEARCH_CONTINUED` means that the sequence's index key exists, with or without a library mask (`chewing_large_table2_tkrzwdb.cpp:146-152`).
      The scan skips consecutive apostrophe bytes.
      The key sequence is capped at 16 keys.
    - Cross-segmentation pooling is a result of the scan.

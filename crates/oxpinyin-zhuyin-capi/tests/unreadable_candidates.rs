@@ -13,6 +13,7 @@ use zhuyin_capi::{zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_
 unsafe extern "C" {
     fn zhuyin_alloc_instance(context: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     fn zhuyin_free_instance(instance: *mut std::ffi::c_void);
+    fn zhuyin_unload_phrase_library(context: *mut std::ffi::c_void, index: u8) -> bool;
     fn zhuyin_parse_more_chewings(
         instance: *mut std::ffi::c_void,
         input: *const std::ffi::c_char,
@@ -102,6 +103,57 @@ fn a_readable_candidate_displaces_an_unreadable_candidate() {
     check_row(fixture::Case::Mixed, false);
 }
 
+/// The zhuyin twin of the pinyin facade's
+/// `a_library_mask_does_not_read_extension_rows`. `zhuyin_unload_phrase_library`
+/// unloads any library but TSI (`zhuyin.cpp:379-390` at 074a2219), and the
+/// after-cursor loop searches `ni` alone for one syllable
+/// (`zhuyin.cpp:1496-1513`), whose `SEARCH_CONTINUED` comes from the key's
+/// DB read before any token or library check
+/// (`chewing_large_table2_tkrzwdb.cpp:146-152`,
+/// `chewing_large_table2_bdb.cpp:182-187`,
+/// `chewing_large_table2_kyotodb.cpp:160-166`). The malformed `ni'hao` row
+/// is never read.
+#[test]
+fn a_library_mask_does_not_read_extension_rows() {
+    for (unload, expected) in [(false, 1), (true, 0)] {
+        let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
+        let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
+        let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
+        let context = zhuyin_init(path.as_ptr(), user_path.as_ptr());
+        assert!(!context.is_null());
+        if unload {
+            // SAFETY: context is a live C API handle.
+            assert!(unsafe { zhuyin_unload_phrase_library(context.cast(), 2) });
+        }
+        // SAFETY: context is a live C API handle.
+        let instance = unsafe { zhuyin_alloc_instance(context.cast()) };
+        assert!(!instance.is_null());
+        assert_eq!(
+            // SAFETY: the instance is live and the input is NUL-terminated.
+            unsafe { zhuyin_parse_more_chewings(instance, c"su3".as_ptr()) },
+            3
+        );
+        let instance = instance.cast();
+        assert!(
+            zhuyin_guess_candidates_after_cursor(instance, 0),
+            "unload {unload}"
+        );
+        let mut count = u32::MAX;
+        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert_eq!(count, expected, "unload {unload}");
+        if count == 1 {
+            let mut row = ptr::null_mut();
+            assert!(zhuyin_get_candidate(instance, 0, &raw mut row));
+            let mut string = c"sentinel".as_ptr();
+            assert!(zhuyin_get_candidate_string(instance, row, &raw mut string));
+            assert!(string.is_null());
+        }
+        // SAFETY: the C API instance is live and freed exactly once.
+        unsafe { zhuyin_free_instance(instance.cast()) };
+        zhuyin_fini(context);
+    }
+}
+
 #[path = "../../oxpinyin-data/tests/support/mod.rs"]
 mod chunk_fixture;
 
@@ -117,6 +169,7 @@ mod fixture {
         Pair,
         Mixed,
         Fallback,
+        MaskedExtension,
         #[cfg(unix)]
         Zero,
     }
@@ -174,16 +227,32 @@ mod fixture {
         } else {
             dir.path().join("pinyin_index.bin")
         };
-        let mut value = encode_item(0x0100_0010, &[key.with_tone(3)]);
+        let token = if matches!(case, Case::MaskedExtension) {
+            0x0200_0001
+        } else {
+            0x0100_0010
+        };
+        let mut value = encode_item(token, &[key.with_tone(3)]);
         if matches!(case, Case::Pair | Case::Mixed) {
             value.extend(encode_item(0x0100_0011, &[key.with_tone(3)]));
         }
+        let extension = encode_complete_key(&[key, ChewingKey::from_pinyin("hao").unwrap()]);
         let key = encode_complete_key(&[key]);
         if matches!(case, Case::Fallback) {
             DefaultStore::write_user_index(&index_path, |sink| sink(&key, &value)).unwrap();
         } else {
             let index = DefaultStore::create(&index_path).unwrap();
-            index.write(|txn| txn.put_raw(&key, &value)).unwrap();
+            index
+                .write(|txn| {
+                    txn.put_raw(&key, &value)?;
+                    if matches!(case, Case::MaskedExtension) {
+                        // Too short for one record: only a decode of this
+                        // row fails.
+                        txn.put_raw(&extension, &[1, 2, 3])?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
         }
         (dir, user)
     }
