@@ -694,10 +694,13 @@ Cost: per span the pin recomputes `compute_pronunciation_possibility` for
 each of up to 32 predecessors and each yielded token, O(B·K·P·R·L) for B
 predecessors, K tokens, P paths, R readings and L keys; its heap selection
 is O(n + k log n) and its space O(steps × tokens × nstore). Rust caches
-the price per slot, O(S·P·C) for S slots and per-leaf cost C, selects in
-O(m + k log k), and adds O(P·L) span paths per span and a text map of
-O(tokens·L) key copies. The repeated per-slot walk is a
-[removal candidate](#removal-candidates).
+each token's pronunciation sum and phrase length for the span
+(`Pricing::price` in `oxpinyin-engine/src/nbest.rs`). Each slot keeps
+its path and key count. For P paths and k slots that range a token at
+the same phrase length, pricing takes O(P + k) item reads and one map
+entry per priced token. A different phrase length recomputes the sum.
+Rust selects in O(m + k log k) and adds O(P·L) span paths per span and
+a text map of O(tokens·L) key copies.
 
 ### Constraint revalidation
 
@@ -1361,10 +1364,6 @@ These source-derived candidates follow the
   (`oxpinyin-engine/src/session/lookup.rs:704-712`). Toned paths filter a
   second search and sort it in O(M log M) (`lookup.rs:738-747`), although the
   lookup already applies tones (`oxpinyin-runtime/src/lib.rs:382-417`).
-- **Per-slot trellis pricing.** A token ranged on k paths repeats an O(P)
-  pricing walk k times, but the sum does not depend on the slot. Price once
-  per token per span and keep only the path and keys per slot
-  (`oxpinyin-engine/src/nbest.rs:638-711`).
 - **`NbestRow.poss`.** Only tests read it (`oxpinyin-engine/src/nbest.rs:968`).
 - **Zhuyin index columns.** Store the content key index instead of the pinyin
   text and its perfect-hash lookups. Render from the key instead of the

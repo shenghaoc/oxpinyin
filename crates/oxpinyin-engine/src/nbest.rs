@@ -602,6 +602,9 @@ struct SpanRanges<M> {
     ranges: PhraseIndexRanges<LazySlot>,
     paths: SpanPaths,
     memos: Vec<M>,
+    /// Each token's pronunciation sum over the span, from its first priced
+    /// slot (see [`Pricing::sums`]).
+    sums: RefCell<TokenMap<TokenSum>>,
 }
 
 impl<M> Default for SpanRanges<M> {
@@ -610,6 +613,7 @@ impl<M> Default for SpanRanges<M> {
             ranges: PhraseIndexRanges::default(),
             paths: SpanPaths::default(),
             memos: Vec::new(),
+            sums: RefCell::default(),
         }
     }
 }
@@ -619,6 +623,7 @@ impl<M: Default> SpanRanges<M> {
         self.ranges.clear();
         self.paths.clear();
         self.memos.clear();
+        self.sums.get_mut().clear();
     }
 
     /// Records a key path and files a fresh memo for it; the id indexes both.
@@ -626,6 +631,14 @@ impl<M: Default> SpanRanges<M> {
         self.memos.push(M::default());
         self.paths.push(keys, tones)
     }
+}
+
+/// A token's pronunciation sum over a span, kept with the phrase length the
+/// walk filtered paths by.
+#[derive(Clone, Copy)]
+struct TokenSum {
+    chars: u32,
+    pronunciation: f32,
 }
 
 /// Prices a [`LazySlot`] through the dictionary, once per slot.
@@ -639,6 +652,11 @@ struct Pricing<'a, D: Dictionary> {
     facts: &'a RefCell<SentenceFacts>,
     generation: &'a GenerationView<'a>,
     span: std::ops::Range<usize>,
+    /// The pin computes the pronunciation sum on each predecessor step
+    /// that reaches pricing (`lookup/phonetic_lookup.h:655,683`). The sum
+    /// depends only on the token's item and the span's paths. Slots for the
+    /// same token and phrase length in the span share the cached sum.
+    sums: &'a RefCell<TokenMap<TokenSum>>,
 }
 
 impl<'a, D> Pricing<'a, D>
@@ -668,7 +686,22 @@ where
             None => self.dictionary.trellis_item(keys, tones, token),
         }
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        let entry = if let Some(item) = item {
+        let cached = item.and_then(|item| {
+            self.sums
+                .borrow()
+                .get(&token)
+                .filter(|sum| sum.chars == item.chars)
+                .map(|sum| sum.pronunciation)
+        });
+        let entry = if let (Some(item), Some(pronunciation)) = (item, cached) {
+            Some(SpanEntry {
+                token,
+                path: slot.path,
+                keys: keys.len().try_into().unwrap_or(u32::MAX),
+                chars: item.chars,
+                pronunciation,
+            })
+        } else if let Some(item) = item {
             let mut path = 0_u32;
             let pronunciation = self.generation.sum_paths(
                 self.span.start,
@@ -710,6 +743,13 @@ where
                     }))
                 },
             )?;
+            self.sums.borrow_mut().insert(
+                token,
+                TokenSum {
+                    chars: item.chars,
+                    pronunciation,
+                },
+            );
             Some(SpanEntry {
                 token,
                 path: slot.path,
@@ -895,6 +935,7 @@ where
                     facts: &facts,
                     generation: &generation,
                     span: position..end,
+                    sums: &found.sums,
                 };
                 let mut forced = PhraseIndexRanges::new();
                 forced.convert(pricing.first_priced(token.value())?.map(|entry| {
@@ -1197,6 +1238,7 @@ where
             facts: env.facts,
             generation: env.generation,
             span: position..end,
+            sums: &found.sums,
         };
         expand_entries(&pricing, beam, position..end, env.model, trellis, None)?;
         end += 1;
@@ -1695,7 +1737,107 @@ mod tests {
                 zeros: &[],
             })),
             span: 0..0,
+            sums: Box::leak(Box::default()),
         }
+    }
+
+    #[test]
+    fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
+        use std::cell::Cell;
+
+        struct SpanDictionary {
+            short_item_key: SyllableKey,
+            reads: Cell<usize>,
+        }
+
+        impl Dictionary for SpanDictionary {
+            type Syllable = SyllableKey;
+            type Error = std::convert::Infallible;
+            type PathMemo = ();
+
+            fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
+                self.reads.set(self.reads.get() + 1);
+                // Give one path a different item length for the same token
+                // to exercise the length check on a populated cache.
+                let (text, total) = match syllables {
+                    [_] => ("西安", 5),
+                    [key, _] if *key == self.short_item_key => ("先", 7),
+                    [_, _] => ("西安", 3),
+                    _ => return Ok(Vec::new()),
+                };
+                Ok(vec![
+                    PhraseEntry::new(PhraseToken::new(1), text)
+                        .with_pronunciation_possibility(1, total),
+                ])
+            }
+        }
+
+        let edge = |text, from, to| ScanKey {
+            key: SyllableKey::from_text(text).unwrap(),
+            from,
+            to,
+            syllable_start: from,
+            crosses_separator: false,
+            tone: 0,
+        };
+        // The paths in walk order are xian, xi + an, and xia + n.
+        let scan = ScanMatrix::from_columns(vec![
+            vec![edge("xian", 0, 4), edge("xi", 0, 2), edge("xia", 0, 3)],
+            vec![],
+            vec![edge("an", 2, 4)],
+            vec![edge("n", 3, 4)],
+        ]);
+        let columns = super::ParsedMatrix::from_scan(&scan, 4, false);
+        let generation = super::GenerationView {
+            columns: &columns,
+            zeros: &columns.zeros,
+        };
+        let dictionary = SpanDictionary {
+            short_item_key: SyllableKey::from_text("xia").unwrap(),
+            reads: Cell::new(0),
+        };
+        let mut found = super::SpanRanges::default();
+        generation
+            .search(
+                0,
+                4,
+                &dictionary,
+                &mut super::GenerationPath::default(),
+                &mut found,
+            )
+            .unwrap();
+        let pricing = super::Pricing {
+            ranges: &found.ranges,
+            paths: &found.paths,
+            memos: &found.memos,
+            sums: &found.sums,
+            facts: &RefCell::default(),
+            dictionary: &dictionary,
+            generation: &generation,
+            span: 0..4,
+        };
+        // The uncached walk for length two sums the two split paths in
+        // matrix order. The walk for length one prices only the direct path.
+        let split_sum = 1.0_f32 / 3.0 + 1.0_f32 / 7.0;
+        let expected = [
+            (0, 1, 2, split_sum),
+            (1, 2, 2, split_sum),
+            (2, 2, 1, 1.0 / 5.0),
+        ];
+        let mut slots = pricing.ranges.walk_tokens();
+        for (path, keys, chars, sum) in expected {
+            let (token, slot) = slots.next().unwrap();
+            assert_eq!(token, 1);
+            dictionary.reads.set(0);
+            let entry = pricing.price(slot, token).unwrap().unwrap();
+            assert_eq!((entry.path, entry.keys, entry.chars), (path, keys, chars));
+            assert_eq!(entry.pronunciation.to_bits(), sum.to_bits(), "path {path}");
+            if path == 1 {
+                // The cache hit reads only this slot's item.
+                assert_eq!(dictionary.reads.get(), 1);
+            }
+        }
+        assert!(slots.next().is_none());
     }
 
     fn loses_to(left: &Value, right: &Value) -> bool {
