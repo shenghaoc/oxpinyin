@@ -137,9 +137,9 @@ fn a_programmatic_choice_retains_the_chosen_phrase() {
         session.selected_text()
     );
 
-    // Completing the rest and resetting is covered by the decoding
-    // suite (`choosing_advances_the_composition_...`); this port stops at
-    // the single-choice invariant the chewing test protects.
+    // Completing the rest and resetting is covered by the session replay
+    // suite (`recorded_candidate_scenarios_use_direct_operations`); this
+    // port stops at the single-choice invariant the chewing test protects.
     assert!(session.is_composing());
 }
 

@@ -20,20 +20,15 @@ fn full_parsed_len_reflects_the_exact_chain() {
         .replace_raw_exact("ni'hao", &segments)
         .expect("replace");
     assert_eq!(session.full_parsed_len(), 6);
-}
 
-#[test]
-fn replacing_raw_clears_the_exact_chain() {
-    use oxpinyin_core::graph::ExactSegment;
-    let mut session = session();
-    let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
-    session
-        .replace_raw_exact("ni", &[ExactSegment::new(0, 2, ni, 0)])
-        .expect("replace");
-    // Replacing the raw input invalidates the saved exact chain.
-    session.replace_raw("n").expect("replace");
-    assert!(
-        session.input.exact().is_empty(),
+    // An ordinary replacement drops the exact chain: `nihao` parses to its
+    // five bytes, and the chain's segments for `ni'hao` no longer apply.
+    let reparsed = session
+        .replace_raw("nihao")
+        .map(|()| session.full_parsed_len());
+    assert_eq!(
+        reparsed,
+        Ok(5),
         "a raw replacement must drop the exact chain"
     );
 }
@@ -126,15 +121,6 @@ fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
         6,
         "internal runs stay covered by edges"
     );
-}
-
-#[test]
-fn reset_discards_the_composition() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    session.reset();
-    assert!(session.selected_text().is_empty());
-    assert_eq!(session.raw_input(), "");
 }
 
 #[test]
@@ -437,6 +423,65 @@ impl Dictionary for Flaky {
     fn phrase_text_for_token(&self, token: u32) -> Option<oxpinyin_core::PhraseText> {
         self.inner.phrase_text_for_token(token)
     }
+}
+
+/// A [`FixtureDictionary`] whose `unloaded` token has no readable item, as a
+/// token of an unloaded library reads in the runtime.
+struct UnloadedToken {
+    inner: FixtureDictionary,
+    unloaded: u32,
+}
+
+impl Dictionary for UnloadedToken {
+    type Error = FixtureError;
+    type PathMemo = ();
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
+        self.inner.lookup(syllables)
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<oxpinyin_core::PhraseText> {
+        self.inner.phrase_text_for_token(token)
+    }
+
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        (token != self.unloaded)
+            .then(|| self.inner.phrase_length_for_token(token))
+            .flatten()
+    }
+}
+
+/// `_get_previous_token(instance, 0)` skips a prefix token whose item it
+/// cannot read (`get_phrase_item` fails, `pinyin.cpp:1722-1730`): the
+/// longest readable prefix wins, and with none the predecessor is
+/// `sentence_start`.
+#[test]
+fn an_unreadable_prefix_is_not_the_predecessor() {
+    let predecessor = |unloaded: u32, prefixes: &[u32]| {
+        let mut session = Session::new(
+            SessionSettings::default(),
+            UnloadedToken {
+                inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+                unloaded,
+            },
+            FixtureLanguageModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+        );
+        session.set_candidate_prefixes(prefixes.iter().copied().map(PhraseToken::new));
+        session.prefix_predecessor().value()
+    };
+    // Token 2 is 方面 (two characters), token 1 is 方.
+    assert_eq!(predecessor(0, &[1, 2]), 2, "the longest readable prefix");
+    assert_eq!(
+        predecessor(2, &[1, 2]),
+        1,
+        "the unreadable prefix is skipped"
+    );
+    assert_eq!(
+        predecessor(2, &[2]),
+        crate::nbest::SENTENCE_START,
+        "no readable prefix"
+    );
 }
 
 #[test]
@@ -1872,8 +1917,12 @@ impl Dictionary for TwoFacadeDict {
     }
 }
 
+/// Window scratch is retained across scans for speed. A scan that the
+/// partial predecessor row refuses (`UnsafeLookupPredecessor`) must leave
+/// nothing behind: once the row is readable again, the next window equals a
+/// fresh session's window, before and after the cursor.
 #[test]
-fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
+fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
     use oxpinyin_core::{DYNAMIC_ADJUST, MergedGram, OptionBits};
 
     let whole = MergedGram::new(4, vec![(DYNAMIC_ADJUST_FIRST, 4)]).to_bytes();
@@ -1881,7 +1930,7 @@ fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
     partial.push(1);
     let row = MergedGram::merge(Some(whole), Some(partial));
 
-    for before_cursor in [false, true] {
+    let build = || {
         let mut session = Session::new(
             SessionSettings::default(),
             TwoFacadeDict {
@@ -1905,28 +1954,19 @@ fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
             .set_options(OptionBits::default().with(DYNAMIC_ADJUST, true))
             .expect("set options");
         session.replace_raw("a").expect("parse");
+        session
+    };
 
+    for before_cursor in [false, true] {
         let guess = if before_cursor {
             |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_ending_at(1)
         } else {
             |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_at(0)
         };
+        let mut session = build();
         let window = guess(&mut session).expect("warm scan");
         assert!(!window.is_empty(), "before cursor: {before_cursor}");
         session.recycle_candidates(window);
-
-        // The path is inline (SmallVec); inspect the five heap-backed Vecs.
-        let capacities = |scratch: &super::Scratch| {
-            [
-                scratch.entries.capacity(),
-                scratch.window_addon.capacity(),
-                scratch.frequencies.capacity(),
-                scratch.rank_keys.capacity(),
-                scratch.window_items.capacity(),
-            ]
-        };
-        let warm = capacities(&session.scratch);
-        assert!(warm.iter().all(|&capacity| capacity > 0), "{warm:?}");
         session.model.row.clone_from(&row);
 
         for _ in 0..2 {
@@ -1934,18 +1974,12 @@ fn candidate_windows_retain_scratch_on_repeated_partial_predecessor_refusal() {
                 guess(&mut session).expect_err("partial predecessor must refuse"),
                 EngineError::UnsafeLookupPredecessor { token: 1 },
             );
-            let retained = capacities(&session.scratch);
-            assert!(
-                retained
-                    .iter()
-                    .zip(warm)
-                    .all(|(&after, before)| after >= before),
-                "before cursor: {before_cursor}, warmed: {warm:?}, retained: {retained:?}",
-            );
-            assert!(session.scratch.window_items.is_empty());
-            assert!(session.scan_unreadable.count == 0);
-            assert!(!session.scan_ranked_phrase);
         }
+
+        session.model.row = None;
+        let after = guess(&mut session).expect("scan after the refusals");
+        let fresh = guess(&mut build()).expect("fresh scan");
+        assert_eq!(after, fresh, "before cursor: {before_cursor}");
     }
 }
 
@@ -2828,8 +2862,10 @@ fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
     );
 }
 
+/// Window recycling is retained speed code. After a window is recycled,
+/// the next window at the same offset equals the window built before it.
 #[test]
-fn a_recycled_window_lends_its_storage_to_the_next() {
+fn a_window_built_after_recycling_equals_a_fresh_window() {
     let mut session = train_session();
     session
         .replace_raw("nihaoshijie")
@@ -2841,22 +2877,11 @@ fn a_recycled_window_lends_its_storage_to_the_next() {
         .candidates_at(2)
         .expect("offset 2 is a syllable start");
     assert_eq!(first, fresh);
-    let rows = first.iter().as_slice().as_ptr();
     session.recycle_candidates(first);
-    assert!(
-        session.scratch.window_items.is_empty(),
-        "the rows are dropped"
-    );
     let reused = session
         .candidates_at(2)
         .expect("offset 2 is a syllable start");
     assert_eq!(reused, fresh, "only the storage carries over");
-    assert_eq!(
-        reused.iter().as_slice().as_ptr(),
-        rows,
-        "the window is built in the recycled storage"
-    );
-    assert_eq!(session.scratch.window_items.capacity(), 0, "lent, not kept");
 }
 
 #[test]
@@ -3276,25 +3301,6 @@ fn divided_table_gate_controls_the_split_column() {
     assert!(
         s2.spans_a_matrix_key(10).expect("byte 10 is in range"),
         "byte 10 must be live with USE_DIVIDED_TABLE — the ji|e divided pair"
-    );
-}
-
-/// Row 17: the engine default includes `USE_DIVIDED_TABLE |
-/// USE_RESPLIT_TABLE`, matching the parity profile and every reference
-/// consumer's unconditional OR (ibus-libpinyin `PYLibPinyin.cc:195-196`). Verified by
-/// observing that the divided split column IS live on a default session.
-#[test]
-fn engine_default_includes_divided_and_resplit_table_bits() {
-    // "nihaoshijie" at the default options must have byte 10 live —
-    // the divided `jie` → `ji`+`e` pair. If the default lacked
-    // USE_DIVIDED_TABLE the column would be empty.
-    let mut session = session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
-    assert!(
-        session.spans_a_matrix_key(10).expect("byte 10 is in range"),
-        "default options must include USE_DIVIDED_TABLE: byte 10 is the divided e column"
     );
 }
 

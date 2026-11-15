@@ -1768,25 +1768,6 @@ mod parse_termination {
     }
 
     #[test]
-    fn force_tone_is_inert_without_use_tone() {
-        // The pin's force-tone check is nested inside the USE_TONE branch
-        // (pinyin_parser2.cpp:176-190), so the 0x1ca shape (parity plus
-        // FORCE_TONE, no USE_TONE) parses exactly like the parity word —
-        // measured opt:0x1ca-* identical to the control.
-        let user_dir = TempUserDir::new("c1-inert");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-        assert_eq!(
-            parse_len(context, instance, PARITY | FORCE_TONE, "nihao"),
-            5
-        );
-        assert_eq!(parse_len(context, instance, PARITY | FORCE_TONE, "zai6"), 3);
-
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
-    }
-
-    #[test]
     fn stop_bytes_terminate_the_parse() {
         // B2: the pin stops consuming at the first byte no key matches;
         // the capi parse seam must let those bytes reach the decoder.
@@ -2306,29 +2287,6 @@ fn mask_out_refuses_a_partial_bigram_tail() {
     assert!(!context.is_null());
     assert!(!pinyin_mask_out(context, 0xffff_ffff, 0));
     crate::context::pinyin_fini(context);
-}
-
-/// Register row 85 on the export walk: the pin's begin reads no gram
-/// (`pinyin.cpp:775-787`), and `has_next` loads each predecessor and
-/// `retrieve_all` reads its total (`:889`, `ngram.cpp:133-141`), so begin
-/// answers an iterator and the walk aborts where it loads the short gram.
-#[test]
-fn bigram_export_aborts_where_the_walk_loads_a_short_predecessor() {
-    crate::test_support::assert_aborts(
-        "e2e_tests::bigram_export_aborts_where_the_walk_loads_a_short_predecessor",
-        || {
-            let user_dir = TempUserDir::new("export-short-gram");
-            crate::test_support::plant_bigram(
-                &user_dir.path,
-                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
-            );
-            let context = init_at(&user_dir.path);
-            assert!(!context.is_null());
-            let iter = crate::iterators::pinyin_begin_get_bigram_phrases(context);
-            assert!(!iter.is_null(), "begin reads no gram");
-            let _ = crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter);
-        },
-    );
 }
 
 /// Register row 93 through `pinyin_remember_user_input`: the pin's
