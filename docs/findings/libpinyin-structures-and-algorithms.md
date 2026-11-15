@@ -476,7 +476,7 @@ and space, with two item reads per qualifying pair, as at the pin.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Context and instance | The context owns the tables and lookup scratch, which instances borrow (`pinyin.cpp:39-95`). | Instances and iterators retain the context allocation through `Rc`. The instance owns composition state (`oxpinyin-capi/src/state.rs:259-283,333`, §0 above). | different / [boundary defect](#fini-native-handles) |
+| Context and instance | The context owns the tables and lookup scratch, which instances borrow (`pinyin.cpp:39-95`). | Instances and iterators retain the context allocation through `Rc`. The instance owns composition state (`oxpinyin-capi/src/state.rs:259-283,333`, §0 above). Fini closes every native file attachment (`Runtime::finish`, `oxpinyin-runtime/src/lib.rs`); the in-memory state stays with the surviving owners, whose reads through a closed attachment are misses ([row 42](compatibility-policy.md#classification-table)). | different / follows |
 | Edits between saves | Mutations of in-memory chunks and DBs. Updating an imported reading removes and reinserts its item (`pinyin.cpp:563-582`). | Packed user arenas, live system items and native bigram storage. An exact reading update can write its count in place (`oxpinyin-user/src/user_library.rs:323-375`). | different / [defect](#import-aliased-reading-edit) |
 | Init's library loop | Each default row in index order: judge it (`pinyin.cpp:388`), map the chunk (`:254-256`), merge the log (`:268-276`) or read the `USER_FILE` chunk (`:303-318`), then the next row; the bigram attaches after the loop (`:394-397`). `zhuyin.cpp:318-334`, `:198-220`, `:336-339` likewise. O(rows) steps, each linear in its chunk and log | `library_loop::run` over `TableConf::default_row_steps`, with the first fault in `LibraryLoopStop`. Same order and complexity; on a fault nothing past that row is touched | same / follows |
 | Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_reporting` (`oxpinyin-user/src/persistence.rs`) with the pin's file set and rename order | same / follows |
@@ -1209,12 +1209,6 @@ by guess-time validation (`:120-138`), not by the NBEST choose.
 
 ### Defects from §§1–8
 
-- <a id="fini-native-handles"></a>**Boundary, highest priority — native handles outlive fini.** Source-derived.
-  The pin closes successful attachments at fini (`pinyin.cpp:1194-1222`,
-  `zhuyin.cpp:741-757`). Rust retains them until the last owner drops
-  (`oxpinyin-capi/src/context.rs:141-161`, `oxpinyin-runtime/src/lib.rs:1506-1519`).
-  A second-process lock check with stock tkrzw data is a proposed witness.
-  Close native resources at fini and preserve memory that surviving Rust owners still use.
 - <a id="configured-user-file-dispatch"></a>**Configured `USER_FILE` dispatch.** Source-derived.
   In a custom valid configuration with `GB_DICTIONARY` as `USER_FILE`,
   the pin reads a present slot and accepts a new import

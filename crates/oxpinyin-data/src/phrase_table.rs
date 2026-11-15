@@ -47,12 +47,12 @@ impl<D: ChewingDbm> PhraseTable<D> {
         self.dbm.attachment_failed()
     }
 
-    pub(crate) fn finish_failed_attachment(&self) {
-        self.dbm.finish_failed_attachment();
+    pub(crate) fn finish_attachment(&mut self) {
+        self.dbm.finish_attachment();
     }
 
-    pub(crate) fn failed_attachment_finished(&self) -> bool {
-        self.dbm.failed_attachment_finished()
+    pub(crate) fn attachment_finished(&self) -> bool {
+        self.dbm.attachment_finished()
     }
 
     /// Looks up tokens for an exact phrase text.

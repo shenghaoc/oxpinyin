@@ -112,8 +112,11 @@ mod tests {
             weak.upgrade().is_some(),
             "the instance retains the same allocation"
         );
+        // Row 42: the system tables are closed, so every read is a miss. The
+        // guess completes over the retained in-memory state and decodes no
+        // sentence, and training has no sentence to train.
         assert!(crate::sentence::pinyin_guess_sentence(instance));
-        assert!(crate::candidates::pinyin_train(instance, 0));
+        assert!(!crate::candidates::pinyin_train(instance, 0));
         assert!(crate::instance::pinyin_reset(instance));
         crate::instance::pinyin_free_instance(instance);
         assert!(
@@ -124,6 +127,45 @@ mod tests {
             std::fs::read(marker).expect("marker after release"),
             at_fini
         );
+    }
+
+    /// The descriptors this process holds on files under `dir`.
+    // Linux only: /proc/self/fd.
+    #[cfg(target_os = "linux")]
+    fn open_descriptors(dir: &std::path::Path) -> usize {
+        let dir = dir.canonicalize().expect("system dir");
+        std::fs::read_dir("/proc/self/fd")
+            .expect("descriptor table")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                std::fs::read_link(entry.path()).is_ok_and(|target| target.starts_with(&dir))
+            })
+            .count()
+    }
+
+    /// `pinyin_fini` deletes its tables, which closes their DBM files and
+    /// releases their locks, whether or not an instance is still allocated
+    /// (`pinyin.cpp:1205-1215`, `ngram_tkrzwdb.cpp:40-46` at 074a2219). A
+    /// closed descriptor has released its `fcntl` lock.
+    // Linux only: /proc/self/fd.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fini_closes_the_system_files_while_an_instance_lives() {
+        let system = crate::test_support::TempSystemDir::new("fini-closes");
+        let user_dir = TempUserDir::new("fini-closes");
+        let system_c = crate::test_support::cstr(system.path.to_str().expect("UTF-8 path"));
+        let user_c = crate::test_support::cstr(user_dir.path.to_str().expect("UTF-8 path"));
+        let context = crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr());
+        assert!(!context.is_null());
+        let instance = crate::instance::pinyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        assert!(
+            open_descriptors(&system.path) > 0,
+            "the attached tables hold their files"
+        );
+        crate::context::pinyin_fini(context);
+        assert_eq!(open_descriptors(&system.path), 0);
+        crate::instance::pinyin_free_instance(instance);
     }
 
     #[test]

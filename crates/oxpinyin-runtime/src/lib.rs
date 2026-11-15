@@ -1569,28 +1569,30 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Perform context fini effects once without releasing storage retained by
-    /// orphan instances or iterators (compatibility row 42).
+    /// Perform context fini effects once: write the marker and close every
+    /// native file attachment, as the pin's fini deletes its tables. The
+    /// in-memory state stays for instances and iterators that outlive the
+    /// context; their reads through a closed attachment are misses with no
+    /// native call (compatibility row 42).
     pub fn finish(&mut self) {
-        // pinyin.cpp:1200 writes the marker before deleting failed attachments.
+        // pinyin.cpp:1200 writes the marker before deleting the tables.
         self.user.finish();
-        // pinyin.cpp:1205-1215 and zhuyin.cpp:744-748: the failed objects
-        // are reset in the pin's member order on every backend; a second
-        // finish finds them gone.
-        self.system.finish_failed_attachments();
-        self.model.finish_failed_attachment();
-        self.addons.borrow().dict.finish_failed_attachments();
-        self.punct.finish_failed_attachment();
+        // pinyin.cpp:1205-1215 and zhuyin.cpp:744-748: the open files and
+        // the failed objects are closed in the pin's member order on every
+        // backend; a second finish finds them gone.
+        self.system.finish_attachments();
+        self.model.finish_attachment();
+        self.addons.borrow_mut().dict.finish_attachments();
+        self.punct.finish_attachment();
     }
 
-    /// Whether every retained failed system attachment has been finalized
-    /// by [`Self::finish`]; `true` when none failed.
+    /// Whether [`Self::finish`] has closed every native file attachment.
     #[must_use]
-    pub fn failed_attachments_finished(&self) -> bool {
-        self.system.failed_attachments_finished()
-            && self.model.failed_attachment_finished()
-            && self.addons.borrow().dict.failed_attachments_finished()
-            && (!self.punct.retains_failed_attachment() || self.punct.failed_attachment_finished())
+    pub fn attachments_finished(&self) -> bool {
+        self.system.attachments_finished()
+            && self.model.attachment_finished()
+            && self.addons.borrow().dict.attachments_finished()
+            && self.punct.attachment_finished()
     }
 
     /// Whether the main pinyin index is a retained failed attachment.

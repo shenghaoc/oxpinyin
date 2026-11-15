@@ -55,28 +55,21 @@ impl<D: ChewingDbm> PunctTable<D> {
             .is_some_and(|dbm| !dbm.attachment_failed())
     }
 
-    /// Resets the retained failed object once at facade fini.
-    pub fn finish_failed_attachment(&self) {
-        if let Some(dbm) = self.dbm.as_ref() {
-            dbm.finish_failed_attachment();
+    /// Closes the table's native object once at facade fini
+    /// (`pinyin.cpp:1215` at 074a2219).
+    pub fn finish_attachment(&mut self) {
+        if let Some(dbm) = self.dbm.as_mut() {
+            dbm.finish_attachment();
         }
     }
 
-    /// Whether this table holds the retained native object of a failed
-    /// attach, as the pin's `PunctTable` does after `attach` returns false
-    /// (`punct_table_tkrzwdb.cpp:70-72` at 074a2219). An empty table holds
-    /// none.
+    /// Whether the native object is closed; `true` for an empty table,
+    /// which holds none.
     #[must_use]
-    pub fn retains_failed_attachment(&self) -> bool {
-        self.dbm.as_ref().is_some_and(|dbm| dbm.attachment_failed())
-    }
-
-    /// Whether the retained failed object has been finalized.
-    #[must_use]
-    pub fn failed_attachment_finished(&self) -> bool {
+    pub fn attachment_finished(&self) -> bool {
         self.dbm
             .as_ref()
-            .is_some_and(|dbm| dbm.failed_attachment_finished())
+            .is_none_or(ChewingDbm::attachment_finished)
     }
 
     /// Punctuations stored for `token`, in table order, as stored words
@@ -139,12 +132,11 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let table = super::PunctTable::attach(&dir.join("punct.bin")).unwrap();
-        assert!(table.retains_failed_attachment());
+        let mut table = super::PunctTable::attach(&dir.join("punct.bin")).unwrap();
         assert!(!table.is_open());
-        assert!(!table.failed_attachment_finished());
-        table.finish_failed_attachment();
-        assert!(table.failed_attachment_finished());
+        assert!(!table.attachment_finished());
+        table.finish_attachment();
+        assert!(table.attachment_finished());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
