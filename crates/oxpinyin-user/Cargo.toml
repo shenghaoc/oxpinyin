@@ -24,6 +24,8 @@ oxpinyin-input = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
+# The derive of the store's error type, as in oxpinyin-engine and oxpinyin-data.
+thiserror.workspace = true
 
 [features]
 tools = []

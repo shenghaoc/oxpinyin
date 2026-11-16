@@ -47,6 +47,45 @@ fn existing_phrase_token(
     Ok(tokens.first().copied())
 }
 
+/// The live item of `token` with the reading `packed` merged into it, for
+/// the existing-phrase path of `buffer_add_phrase`. It reads the buffer and
+/// changes nothing.
+///
+/// # Errors
+///
+/// [`UserStoreError::InvalidPhrase`] when the shipped chunk holds the item
+/// (the caller merges those; only an item the buffer added is held here),
+/// when a detached library's live slot is not the buffer's own addition,
+/// or when the live item is absent or spells another phrase.
+/// [`UserStoreError::Persistence`] when the reading cannot be merged.
+fn merged_live_item(
+    items: &crate::system_items::SystemItems,
+    original: crate::persistence::SystemLibraryRef<'_>,
+    token: Token,
+    words: &[u32],
+    packed: &[u16],
+    delta: u32,
+) -> Result<Vec<u8>, UserStoreError> {
+    if original.contains_item(token & PHRASE_MASK)
+        || (original.mapped.is_some_and(|library| library.is_detached())
+            && !items.is_added(token)
+            && items.with_live(token, |_| ()).is_some())
+    {
+        return Err(UserStoreError::InvalidPhrase);
+    }
+    items
+        .with_live(token, |bytes| {
+            let view = PhraseItemView::from_bytes(bytes)?;
+            if view.as_bytes()[6..6 + 4 * view.phrase_length()] != phrase_table::key_ucs4(words) {
+                return None;
+            }
+            Some(UserLibrary::merged_reading(view, packed, delta))
+        })
+        .flatten()
+        .ok_or(UserStoreError::InvalidPhrase)?
+        .map_err(UserStoreError::Persistence)
+}
+
 impl UserStore {
     /// `SubPhraseIndex::m_total_freq` of `library`: a system library's live
     /// scalar, or a user library's items sum plus the stored total's
@@ -455,28 +494,7 @@ impl UserStore {
             return Err(UserStoreError::InvalidPhrase);
         }
         if let Some(token) = existing {
-            // The shipped chunk's own items are merged by the caller; only an
-            // item the buffer added is held here.
-            if original.contains_item(token & PHRASE_MASK)
-                || (original.mapped.is_some_and(|library| library.is_detached())
-                    && !items.is_added(token)
-                    && items.with_live(token, |_| ()).is_some())
-            {
-                return Err(UserStoreError::InvalidPhrase);
-            }
-            let merged = items
-                .with_live(token, |bytes| {
-                    let view = PhraseItemView::from_bytes(bytes)?;
-                    if view.as_bytes()[6..6 + 4 * view.phrase_length()]
-                        != phrase_table::key_ucs4(words)
-                    {
-                        return None;
-                    }
-                    Some(UserLibrary::merged_reading(view, &packed, delta))
-                })
-                .flatten()
-                .ok_or(UserStoreError::InvalidPhrase)?
-                .map_err(UserStoreError::Persistence)?;
+            let merged = merged_live_item(&items, original, token, words, &packed, delta)?;
             items.remove_item(original, token);
             let overwrote = items.add_item(original, token, &merged);
             drop(items);
