@@ -68,57 +68,76 @@ enum SeedPolicy {
 }
 
 /// Errors from opening or updating the user store.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum UserStoreError {
     /// The store file could not be opened (I/O error).
-    Io(std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[source] std::io::Error),
     /// The storage backend reported an error.
-    Store(StoreError),
+    #[error("store error: {0}")]
+    Store(#[source] StoreError),
     /// A stored value could not be decoded (corrupt or incompatible).
+    #[error("stored value could not be decoded")]
     Decode,
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
+    #[error("invalid phrase (empty, too long, or key count mismatch)")]
     InvalidPhrase,
     /// The libpinyin user-dir persistence failed (I/O, container, or a
     /// byte stream that does not parse).
+    #[error("libpinyin user-dir persistence: {0}")]
     Persistence(String),
     /// `user.conf` names a database format upstream's mapper does not
     /// know — the point `to_table_database_format_type` `abort()`s on
     /// (`table_info.cpp:122-133`). Returned before anything is cleaned or
     /// written; the C adapters abort.
+    #[error("user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)")]
     UnknownDatabaseFormat,
     /// A library chunk's `MemoryChunk::save` header write failed
     /// (`memory_chunk.h:543`/`:547`) — the pin `assert`s and dies of
     /// SIGABRT. The save stops there; the C adapters abort.
+    #[error(
+        "user chunk header write failed ({}; upstream asserts, \
+                 memory_chunk.h:543/547)",
+        .0.assert_expression()
+    )]
     ChunkHeaderWrite(ChunkHeaderField),
     /// A loaded system library's file, mapped again where the save's
     /// library loop reaches it, is a directory whose header read the pin's
     /// `MemoryChunk::mmap` asserts on (`pinyin.cpp:955`, `zhuyin.cpp:588`,
     /// `memory_chunk.h:493`; register row 96). The save stopped there with
     /// the earlier libraries' files written; the C adapters abort.
+    #[error(
+        "a system library is a directory whose chunk header cannot be read \
+                 (upstream asserts, memory_chunk.h:493)"
+    )]
     LibraryChunkHeaderRead,
     /// `MemoryChunk::mmap` refused a loaded system library's file where the
     /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`;
     /// register row 76). The save stopped at that library: the earlier
     /// libraries' files stand as written, nothing later was written or
     /// renamed, no marker was written, and the session stays dirty.
+    #[error("a system library's file cannot be mapped again for the save (upstream: mmap failed!)")]
     SaveRemapFailed,
     /// A bulk copy of the save reaches the pin's unsafe size
     /// (`memory_chunk.h:95-98`; register row 112, #1514). The save stops at
     /// that copy: the earlier files stay as written (libpinyin's staged
     /// `.tmp` files, libzhuyin's completed renames), nothing later happens,
     /// no marker is written, the session stays dirty and a later save retries.
+    #[error("a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)")]
     SaveTooLarge,
     /// A tkrzw or Berkeley DB record copy of a load or a save failed where
     /// the pin's `copy_tkrzwdb` or `copy_bdb` asserts
     /// (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`). The load or
     /// save stopped there: no later rename and no marker. The C adapters
     /// abort.
+    #[error("{}", StoreError::FatalCopy)]
     FatalCopy,
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
     /// returns `false` before it trains the bigram (`pinyin.cpp:2609-2612`).
+    #[error("unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)")]
     UnigramTotalOverflow,
     /// `pinyin_mask_out` / `zhuyin_mask_out` met a `user_pinyin_index.bin`
     /// key past `MAX_PHRASE_LENGTH` syllables, or with no whole syllable
@@ -127,45 +146,66 @@ pub enum UserStoreError {
     /// `switch`'s `default: abort()` fires on the key
     /// (`chewing_large_table2_bdb.cpp:529`). Returned before the mask
     /// changes anything; the C adapters abort.
+    #[error(
+        "user pinyin index key past MAX_PHRASE_LENGTH syllables or without a whole \
+                 syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)"
+    )]
     OverlongIndexKey,
     /// A `user_bigram.db` key is not a four-byte `phrase_token_t`:
     /// `Bigram::get_all_items` asserts `key.size == sizeof(phrase_token_t)`
     /// (`ngram_bdb.cpp:199`), and the pin's `mask_out` and
     /// `pinyin_begin_get_bigram_phrases` both drive that walk. Returned
     /// where the pin's walk meets the key; the C adapters abort.
+    #[error("user bigram key is not a phrase_token_t (upstream aborts, ngram_bdb.cpp:199)")]
     NonTokenUserBigramKey,
     /// A `user_bigram.db` value is shorter than a `guint32` `total_freq`:
     /// the pin's `get_total_freq` asserts on it (`memory_chunk.h:390`,
     /// through `ngram.cpp:49`; register row 85). Returned where the pin's
     /// walk reads that total; the C adapters abort on it.
+    #[error(
+        "user bigram value shorter than a guint32 total_freq (upstream asserts, \
+                 memory_chunk.h:390)"
+    )]
     ShortUserBigramValue,
     /// A `user_bigram.db` value has an incomplete eight-byte item after
     /// its total: the pin's `cur != end` walks read past it
     /// (`ngram.cpp:76-86`, `:190`, `:241`, `:261`; register rows 98 and
     /// 100, class (b)). The mask, removal and predicted-training facades
     /// refuse it with one warning.
+    #[error(
+        "user bigram value with a partial item tail (upstream reads past it, \
+                 ngram.cpp:76-86)"
+    )]
     PartialUserBigramTail,
     /// A `user_bigram.db` gram's `total_freq` is not covered by its items
     /// and a mask removes every item, leaving a residual total:
     /// `Bigram::mask_out` then asks `SingleGram::get_length`, whose assert
     /// dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`). Returned before the
     /// mask changes anything; the C adapters abort.
+    #[error("masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)")]
     ResidualUserBigramGram,
     /// A system library's user `.dbin` replay reached a pin assertion
     /// ([`crate::JournalFault`]): at init's and a reload's `merge`, or at
     /// `mask_out`'s `merge_with_mask`. The pin dies there; the C adapters
     /// abort on it.
-    Journal(crate::JournalFault),
+    #[error("journal replay: {0}")]
+    Journal(#[source] crate::JournalFault),
     /// Init's library loop died at a row ([`crate::LibraryLoopStop`]).
-    LibraryLoop(crate::LibraryLoopStop),
+    #[error("library loop: {0}")]
+    LibraryLoop(#[source] crate::LibraryLoopStop),
     /// A training step's `set_freq` misses the item its `insert_freq` just
     /// added: on an unsorted gram the second `lower_bound` can land past
     /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
     /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`; register row
     /// 85). Returned before anything is stored; the C adapters abort.
+    #[error(
+        "a training step's set_freq misses the item insert_freq added \
+                 (upstream asserts, phonetic_lookup.h:903)"
+    )]
     TrainingSetFreqMiss,
     /// A user reading cannot be removed from both pinyin index projections;
     /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
+    #[error("user reading removal failed (upstream asserts, pinyin.cpp:3759)")]
     UserReadingRemoval,
     /// The open could not build the session once the system libraries
     /// were handed to it: a loaded item's encoding or its placement, or
@@ -173,6 +213,10 @@ pub enum UserStoreError {
     /// pin's counterparts die: an allocation that throws `std::bad_alloc`,
     /// or the asserts of its in-memory loads (`ngram_bdb.cpp:51-52`,
     /// `bdb_utils.h:61`, `tkrzwdb_utils.h:45`). The C adapters abort.
+    #[error(
+        "the session could not be built after the system libraries were handed \
+                 over (upstream dies): {0}"
+    )]
     SessionSeed(String),
     /// A training step would store its gram in the failed Berkeley DB user
     /// bigram container ([`oxpinyin_store::UserBigramDb::is_failed`]): its
@@ -180,125 +224,11 @@ pub enum UserStoreError {
     /// `check_result(m_user_bigram->store(last_token, user))` dies
     /// (`phonetic_lookup.h:904`). Returned before anything is stored; the
     /// C adapters abort.
-    FailedUserBigramStore,
-}
-
-impl fmt::Display for UserStoreError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "I/O error: {e}"),
-            Self::Store(e) => write!(f, "store error: {e}"),
-            Self::Decode => write!(f, "stored value could not be decoded"),
-            Self::InvalidPhrase => {
-                write!(f, "invalid phrase (empty, too long, or key count mismatch)")
-            }
-            Self::Persistence(message) => {
-                write!(f, "libpinyin user-dir persistence: {message}")
-            }
-            Self::UnknownDatabaseFormat => write!(
-                f,
-                "user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)"
-            ),
-            Self::ChunkHeaderWrite(field) => write!(
-                f,
-                "user chunk header write failed ({}; upstream asserts, \
-                 memory_chunk.h:543/547)",
-                field.assert_expression()
-            ),
-            Self::LibraryChunkHeaderRead => write!(
-                f,
-                "a system library is a directory whose chunk header cannot be read \
-                 (upstream asserts, memory_chunk.h:493)"
-            ),
-            Self::SaveRemapFailed => write!(
-                f,
-                "a system library's file cannot be mapped again for the save (upstream: mmap failed!)"
-            ),
-            Self::SaveTooLarge => write!(
-                f,
-                "a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)"
-            ),
-            Self::FatalCopy => write!(f, "{}", StoreError::FatalCopy),
-            Self::UnigramTotalOverflow => write!(
-                f,
-                "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
-            ),
-            Self::OverlongIndexKey => write!(
-                f,
-                "user pinyin index key past MAX_PHRASE_LENGTH syllables or without a whole \
-                 syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)"
-            ),
-            Self::NonTokenUserBigramKey => write!(
-                f,
-                "user bigram key is not a phrase_token_t (upstream aborts, ngram_bdb.cpp:199)"
-            ),
-            Self::ShortUserBigramValue => write!(
-                f,
-                "user bigram value shorter than a guint32 total_freq (upstream asserts, \
-                 memory_chunk.h:390)"
-            ),
-            Self::PartialUserBigramTail => write!(
-                f,
-                "user bigram value with a partial item tail (upstream reads past it, \
-                 ngram.cpp:76-86)"
-            ),
-            Self::ResidualUserBigramGram => write!(
-                f,
-                "masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)"
-            ),
-            Self::Journal(fault) => write!(f, "journal replay: {fault}"),
-            Self::LibraryLoop(stop) => write!(f, "library loop: {stop}"),
-            Self::TrainingSetFreqMiss => write!(
-                f,
-                "a training step's set_freq misses the item insert_freq added \
-                 (upstream asserts, phonetic_lookup.h:903)"
-            ),
-            Self::UserReadingRemoval => write!(
-                f,
-                "user reading removal failed (upstream asserts, pinyin.cpp:3759)"
-            ),
-            Self::SessionSeed(cause) => write!(
-                f,
-                "the session could not be built after the system libraries were handed \
-                 over (upstream dies): {cause}"
-            ),
-            Self::FailedUserBigramStore => write!(
-                f,
-                "a training step stores into the failed user bigram container \
+    #[error(
+        "a training step stores into the failed user bigram container \
                  (upstream asserts, phonetic_lookup.h:904)"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for UserStoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(e) => Some(e),
-            Self::Store(e) => Some(e),
-            Self::Decode
-            | Self::InvalidPhrase
-            | Self::Persistence(_)
-            | Self::UnknownDatabaseFormat
-            | Self::ChunkHeaderWrite(_)
-            | Self::LibraryChunkHeaderRead
-            | Self::SaveRemapFailed
-            | Self::SaveTooLarge
-            | Self::FatalCopy
-            | Self::UnigramTotalOverflow
-            | Self::OverlongIndexKey
-            | Self::NonTokenUserBigramKey
-            | Self::ShortUserBigramValue
-            | Self::PartialUserBigramTail
-            | Self::ResidualUserBigramGram
-            | Self::TrainingSetFreqMiss
-            | Self::UserReadingRemoval
-            | Self::SessionSeed(_)
-            | Self::FailedUserBigramStore => None,
-            Self::Journal(fault) => Some(fault),
-            Self::LibraryLoop(stop) => Some(stop),
-        }
-    }
+    )]
+    FailedUserBigramStore,
 }
 
 impl UserStoreError {

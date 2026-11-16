@@ -737,6 +737,7 @@ dependencies = [
  "proptest",
  "smallvec",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]
