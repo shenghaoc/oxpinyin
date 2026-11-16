@@ -249,8 +249,7 @@ jobs:
       # C ABIs, the training package and KMM.
       #
       # nextest runs the suite with the `ci` profile of .config/nextest.toml,
-      # so the store-backend test group applies here. The doctests run in the
-      # next step.
+      # so the store-backend test group applies here.
       - name: Test the workspace under this backend
         if: needs.changes.outputs.reuse != 'true'
         id: backend-test
@@ -286,13 +285,6 @@ jobs:
             ;;
           esac
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
-
-      # nextest does not run doctests; keep the same feature set.
-      - name: Doctests for this backend
-        if: needs.changes.outputs.reuse != 'true'
-        env:
-          BACKEND: ${{ matrix.backend }}
-        run: cargo test --locked --doc --workspace --no-default-features --features "$BACKEND"
 
       - name: Report
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}

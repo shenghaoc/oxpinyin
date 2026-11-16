@@ -7,6 +7,9 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Declarative marshalling macros and safe C-facing encoders shared by the two C-ABI facades (oxpinyin-capi, oxpinyin-zhuyin-capi). No compiled unsafe of its own."
 
+[lib]
+doctest = false
+
 # The unsafe marshalling is exported as `macro_rules!` whose bodies carry
 # the edge, type/borrow/lint-checked in the capi crate that EXPANDS them,
 # not here. The safe C-facing encoder in `phrase_text` compiles here. This

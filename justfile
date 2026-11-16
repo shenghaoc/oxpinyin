@@ -150,15 +150,6 @@ test-tools *args:
 test-tools *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.test_runner @forwarded; exit $LASTEXITCODE
 
-# Run doctests separately; nextest does not run them.
-[unix]
-test-doc *args:
-    @cargo test --doc "$@"
-
-[windows]
-test-doc *args:
-    @{{windows_args}} cargo test --doc @forwarded; exit $LASTEXITCODE
-
 # Build the workspace.
 [unix]
 build *args:

@@ -277,8 +277,7 @@ The native Rust test entry point uses cargo-nextest at or above the
 needs it); `just doctor` reports it. `cargo install
 cargo-nextest --locked` (or the prebuilt release) installs it. `just test` runs `cargo nextest run --profile local`
 with the given arguments, which take the same crate and
-feature selection as cargo test (see [backend selection](backends.md)). `--profile ci` selects the CI limits. `just test-doc` runs
-`cargo test --doc`.
+feature selection as cargo test (see [backend selection](backends.md)). `--profile ci` selects the CI limits.
 
 `just packaging install` and `just measure compare` build the shipping library
 with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
@@ -504,7 +503,7 @@ toolchain automatically. Editors and debuggers use this same native MSVC
 environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
-`cargo nextest run --profile ci` and the doctests over the portable
+`cargo nextest run --profile ci` over the portable
 workspace on the [default backend](backends.md). It also runs the tools Python
 harness (`just test-tools`).
 
