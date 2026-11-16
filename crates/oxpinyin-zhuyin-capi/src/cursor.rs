@@ -39,10 +39,9 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
 };
 
 /// Whether the parse placed a key. The pin's matrix is empty (size 0) for a
-/// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`); an
-/// unreadable parse is left to the callers' own refusals.
+/// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`).
 pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys().unwrap_or(true)
+    inst.core.mode_has_keys()
 }
 
 /// Register row 66, `phonetic_key_matrix.h:103`: on an empty matrix (a
@@ -282,12 +281,7 @@ pub extern "C" fn zhuyin_get_zhuyin_offset(
     // consumed bytes but placed no key (apostrophes only) leaves the matrix
     // empty (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`), and the first
     // read asserts (`phonetic_key_matrix.h:103`; register row 66).
-    if inst
-        .core
-        .pin_matrix_columns()
-        .is_ok_and(|columns| columns == 0)
-        && cursor.min(inst.core.pin_parsed_len()) >= 1
-    {
+    if inst.core.pin_matrix_columns() == 0 && cursor.min(inst.core.pin_parsed_len()) >= 1 {
         std::process::abort();
     }
     let Ok(normalized) = inst.core.lookup_offset(cursor) else {
@@ -308,11 +302,7 @@ pub extern "C" fn zhuyin_get_zhuyin_offset(
 /// stopped early, and none while it placed no key; the process aborts for a
 /// column outside it (register row 66).
 fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
-    if inst
-        .core
-        .pin_matrix_columns()
-        .is_ok_and(|columns| index >= columns)
-    {
+    if index >= inst.core.pin_matrix_columns() {
         std::process::abort();
     }
 }

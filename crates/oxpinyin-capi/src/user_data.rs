@@ -87,10 +87,8 @@ pub extern "C" fn pinyin_remember_user_input(
     // wraps for an empty matrix (a fresh instance, or a parse that placed no
     // key); `get_column_size(0)` then asserts
     // (`phonetic_key_matrix.h:102`, register row 66).
-    let columns = match inst.core.matrix_columns() {
-        Ok(Some(columns)) => columns,
-        Ok(None) => std::process::abort(),
-        Err(_) => return false,
+    let Some(columns) = inst.core.matrix_columns() else {
+        std::process::abort()
     };
     // The walk alternates dictionary reads with the store writes of
     // `_add_phrase`, so each call re-derives its own borrow and ends it

@@ -390,12 +390,7 @@ pub extern "C" fn pinyin_get_pinyin_offset(
     // consumed bytes but placed no key (apostrophes only) leaves the matrix
     // empty (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`), and the first
     // read asserts (`phonetic_key_matrix.h:103`; register row 66).
-    if inst
-        .core
-        .pin_matrix_columns()
-        .is_ok_and(|columns| columns == 0)
-        && cursor.min(inst.core.pin_parsed_len()) >= 1
-    {
+    if inst.core.pin_matrix_columns() == 0 && cursor.min(inst.core.pin_parsed_len()) >= 1 {
         std::process::abort();
     }
     let Ok(normalized) = inst.core.lookup_offset(cursor) else {
@@ -416,11 +411,7 @@ pub extern "C" fn pinyin_get_pinyin_offset(
 /// stopped early, and none while it placed no key; the process aborts for a
 /// column outside it (register row 66).
 fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
-    if inst
-        .core
-        .pin_matrix_columns()
-        .is_ok_and(|columns| index >= columns)
-    {
+    if index >= inst.core.pin_matrix_columns() {
         std::process::abort();
     }
 }

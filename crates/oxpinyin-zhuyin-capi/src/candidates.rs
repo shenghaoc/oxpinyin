@@ -211,10 +211,8 @@ pub extern "C" fn zhuyin_choose_candidate(
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
     if candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
-        // An unreadable key list is an engine failure.
-        return inst.core.pin_matrix_columns().map_or(-1, |columns| {
-            c_int::try_from(columns).map_or(c_int::MAX, |columns| columns - 1)
-        });
+        return c_int::try_from(inst.core.pin_matrix_columns())
+            .map_or(c_int::MAX, |columns| columns - 1);
     }
     let answer = match candidate_type {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR => end,

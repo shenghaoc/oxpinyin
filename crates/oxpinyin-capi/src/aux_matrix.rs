@@ -85,7 +85,7 @@ impl SharedMatrix {
         let keys = if inst.core.double_parse.is_some() {
             Vec::new()
         } else {
-            inst.core.mode_key_list().ok()?
+            inst.core.mode_key_list()
         };
         Self::of_keys(&inst.read(), &keys)
     }
