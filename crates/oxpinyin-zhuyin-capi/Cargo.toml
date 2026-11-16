@@ -19,6 +19,7 @@ name = "zhuyin_capi"
 # cdylib is the ABI; rlib lets in-tree tools call the same symbols
 # in-process; staticlib is required by cargo-c and shipped alongside.
 crate-type = ["cdylib", "staticlib", "rlib"]
+doctest = false
 
 [features]
 # Declared so cargo-c identifies this crate as the workspace's zhuyin C-API

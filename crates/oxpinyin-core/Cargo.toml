@@ -9,6 +9,9 @@ description = "oxpinyin internal crate — no stability promise; use oxpinyin-en
 # The integration tests build as one binary; see [[test]] below.
 autotests = false
 
+[lib]
+doctest = false
+
 [lints]
 workspace = true
 

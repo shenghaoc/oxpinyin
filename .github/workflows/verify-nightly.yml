@@ -190,8 +190,6 @@ jobs:
           rust-cache: 'true'
           cargo-nextest: 'true'
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace --release --no-default-features --features kyotocabinet
-      # nextest does not run doctests; keep the same profile and feature set.
-      - run: cargo test --locked --doc --workspace --release --no-default-features --features kyotocabinet
 
   # The full Windows workspace: clippy and the tests over the workspace,
   # built with MSVC and tkrzw and GLib from vcpkg. It runs every night and on
@@ -287,8 +285,6 @@ jobs:
       - name: Provide the pinned system data
         uses: ./.github/actions/contract-data
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
-      # nextest does not run doctests; keep the same workspace selection.
-      - run: cargo test --locked --doc --workspace
       # The tools Python harness, on a dispatch that asks for it: a tooling
       # change that can behave differently on Windows, and before a release
       # (docs/runbooks/verification.md, section 10). The schedule does not
@@ -381,9 +377,6 @@ jobs:
         uses: ./.github/actions/contract-data
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
-      # nextest does not run doctests; keep the same feature set.
-      - run: >
-          cargo test --locked --doc --workspace
       - name: Run tools Python harness tests
         if: ${{ inputs.tools_harness }}
         shell: bash

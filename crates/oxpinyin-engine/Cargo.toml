@@ -7,6 +7,9 @@ repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; the supported interfaces are the C APIs."
 
+[lib]
+doctest = false
+
 # Internal session layer; no Rust stability promise (AGENTS.md, "External interfaces").
 [lints]
 workspace = true

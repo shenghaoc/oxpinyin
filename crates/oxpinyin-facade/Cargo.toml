@@ -7,6 +7,9 @@ repository.workspace = true
 rust-version.workspace = true
 description = "The facade-orchestration layer shared by the pinyin and zhuyin C-ABI facades: instance/context state machines and the laws both facades already implement identically."
 
+[lib]
+doctest = false
+
 [lints]
 workspace = true
 

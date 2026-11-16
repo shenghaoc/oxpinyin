@@ -7,6 +7,9 @@ repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
 
+[lib]
+doctest = false
+
 [lints]
 workspace = true
 

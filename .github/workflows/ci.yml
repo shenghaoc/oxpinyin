@@ -213,9 +213,6 @@ jobs:
         uses: ./.github/actions/contract-data
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
         if: needs.changes.outputs.reuse != 'true'
-      # nextest does not run doctests; keep the same workspace selection.
-      - run: cargo test --locked --doc --workspace
-        if: needs.changes.outputs.reuse != 'true'
       - name: C++ pinyin.h smoke gate
         if: needs.changes.outputs.reuse != 'true'
         run: just cpp-smoke

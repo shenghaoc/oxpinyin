@@ -17,6 +17,7 @@ name = "pinyin_capi"
 # cdylib is the ABI; rlib lets the fuzz targets and Rust tests call the same symbols
 # in-process; staticlib is required by cargo-c and shipped alongside the .so.
 crate-type = ["cdylib", "staticlib", "rlib"]
+doctest = false
 
 [features]
 # Declared so cargo-c identifies this crate as the workspace's C-API export

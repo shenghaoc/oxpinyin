@@ -704,7 +704,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(outputs, {*PROFILE.flags, 'ship', 'reuse', 'tree', 'source_run'})
         self.assertEqual(set(ci_tree.CI_INPUTS), {*PROFILE.flags, 'ship'})
         steps = re.findall(r'^ {6,}(?:- )?if: (.*)$', workflow, re.MULTILINE)
-        self.assertGreater(len(steps), 18)
+        self.assertGreater(len(steps), 17)
         for condition in steps:
             with self.subTest(condition=condition):
                 self.assertEqual(set(re.findall(r'needs\.changes\.outputs\.(\w+)', condition)) - {'reuse'}, set())

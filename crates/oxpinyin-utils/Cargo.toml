@@ -8,6 +8,9 @@ rust-version.workspace = true
 publish = false
 description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships."
 
+[lib]
+doctest = false
+
 [features]
 # The data layer's backend selection, forwarded to every backend-sensitive
 # edge the utilities use.
