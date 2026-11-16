@@ -290,12 +290,6 @@ impl Chunk {
         }
     }
 
-    /// The bytes a write of `len` at `offset` is about to replace in the
-    /// shipped mapping.
-    fn shipped_range(&self, shipped: &[u8], offset: usize, len: usize) -> Vec<u8> {
-        shipped[offset..offset + len].to_vec()
-    }
-
     /// Whether a write of `len` bytes at `offset` lands in the mapping.
     fn hits_mapping(&self, offset: usize, len: usize) -> bool {
         self.owned.is_none()
@@ -473,10 +467,9 @@ impl Content {
         let in_place = at
             .checked_add(payload.len())
             .is_some_and(|end| end <= self.data_len());
-        let old = (in_place && self.content_write_hits_mapping(at, payload.len())).then(|| {
-            self.items
-                .shipped_range(self.backing.bytes(Area::Content), at, payload.len())
-        });
+        // The bytes the write is about to replace in the shipped mapping.
+        let old = (in_place && self.content_write_hits_mapping(at, payload.len()))
+            .then(|| self.backing.bytes(Area::Content)[at..at + payload.len()].to_vec());
         if old.is_some() {
             self.write_shipped(at, payload);
         } else {
