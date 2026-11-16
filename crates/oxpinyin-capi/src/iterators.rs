@@ -9,8 +9,8 @@ use std::ptr;
 
 use oxpinyin_core::OptionBits;
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep, plan_add};
-use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, toned_key};
+use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
+use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
@@ -101,12 +101,6 @@ struct ImportHandle {
     owner: Option<ContextOwner>,
 }
 
-pub(crate) struct ImportRead<'a> {
-    pub(crate) index: u8,
-    pub(crate) user: &'a UserStore,
-    pub(crate) dict: oxpinyin_runtime::RuntimeDict<'a>,
-}
-
 /// Begin adding phrases to an index.
 ///
 /// # C signature
@@ -192,7 +186,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     let plan = {
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
         let context = unsafe { owner_ref(owner) };
-        plan_import(&import_read(handle, context), phrase, pinyin)
+        plan_import(&context.core, handle.index, phrase, pinyin)
     };
     let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
@@ -215,21 +209,9 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
     let context = unsafe { owner_mut(owner) };
-    let dict = context.core.runtime.dict();
-    let is_system = dict.is_system_library(handle.index);
-    if is_system && !dict.library_visible(u32::from(handle.index)) {
-        return false;
-    }
-    let user = context.core.user_store_mut();
-    if is_system {
-        // The selected token comes from the combined phrase-table search,
-        // including prior imported system-library items.
-        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
-            .is_ok()
-    } else {
-        user.add_phrase_in(handle.index, &phrase, &keys, count)
-            .is_ok()
-    }
+    context
+        .core
+        .commit_import(handle.index, &phrase, &keys, original, count)
 }
 
 /// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
@@ -238,19 +220,9 @@ pub(crate) use oxpinyin_facade::ImportPlan;
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
-fn import_read<'a>(
-    handle: &ImportHandle,
-    context: &'a crate::state::CapiContext,
-) -> ImportRead<'a> {
-    ImportRead {
-        index: handle.index,
-        user: context.core.user_store(),
-        dict: context.core.runtime.dict(),
-    }
-}
-
 fn plan_import(
-    handle: &ImportRead<'_>,
+    core: &oxpinyin_facade::ContextCore,
+    index: u8,
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> ImportPlan {
@@ -263,17 +235,11 @@ fn plan_import(
     let pinyin = oxpinyin_capi_marshal::input::parser_prefix(
         oxpinyin_capi_marshal::borrow_c_string!(pinyin),
     );
-    let user = handle.user;
     let Some(keys) = parse_import_pinyin(&pinyin) else {
         return ImportPlan::Refuse;
     };
-    // The iterator validates the phrase/key lengths before _add_phrase:
-    // 074a2219 pinyin.cpp:639-646 / zhuyin.cpp:525-532.
-    let length = phrase.phrase_length();
-    if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
-        return ImportPlan::Refuse;
-    }
-    plan_add(handle.index, &handle.dict, user, phrase, keys)
+    // The facade checks the phrase/key lengths, then plans the add.
+    core.plan_import(index, phrase, keys)
 }
 
 /// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
@@ -300,7 +266,7 @@ pub fn oxpinyin_import_aborts(
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
         let context = unsafe { owner_ref(owner) };
         matches!(
-            plan_import(&import_read(handle, context), phrase, pinyin),
+            plan_import(&context.core, handle.index, phrase, pinyin),
             ImportPlan::Abort
         )
     }

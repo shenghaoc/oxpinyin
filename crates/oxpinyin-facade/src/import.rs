@@ -1,9 +1,12 @@
-//! Shared import-iterator planning: the phrase-table search and the pin's
-//! assertions before a phrase is added, for both C-ABI facades.
+//! Shared import-iterator planning and adds for both C-ABI facades: the
+//! iterator's length gate, the phrase-table search, the pin's assertions
+//! before a phrase is added, and the add calls.
 
 use oxpinyin_core::PhraseText;
 use oxpinyin_runtime::RuntimeDict;
-use oxpinyin_user::{PinyinKey, UserStore};
+use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
+
+use crate::ContextCore;
 
 /// What an import add does with one phrase/reading pair before it writes.
 pub enum ImportPlan {
@@ -28,11 +31,64 @@ pub enum ImportPlan {
     },
 }
 
+impl ContextCore {
+    /// Plans one import-iterator add, after the facade has parsed the
+    /// reading: the iterator's length gate, then [`Self::plan_add`].
+    ///
+    /// The iterator checks the lengths before `_add_phrase`: the phrase's
+    /// character count must equal the key count, `0 < len < 16` (074a2219
+    /// `pinyin.cpp:639-646`, `zhuyin.cpp:525-532`).
+    #[must_use]
+    pub fn plan_import(&self, index: u8, phrase: PhraseText, keys: Vec<PinyinKey>) -> ImportPlan {
+        let length = phrase.phrase_length();
+        if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
+            return ImportPlan::Refuse;
+        }
+        self.plan_add(index, phrase, keys)
+    }
+
+    /// Plans one add against this context's loaded phrase tables: the
+    /// shared half of `_add_phrase` up to its add calls. Reads only.
+    #[must_use]
+    pub fn plan_add(&self, index: u8, phrase: PhraseText, keys: Vec<PinyinKey>) -> ImportPlan {
+        plan_add(index, &self.runtime.dict(), self.user_store(), phrase, keys)
+    }
+
+    /// The add calls of `_add_phrase` for a planned [`ImportPlan::Add`]:
+    /// `false` for a system library that is not visible, otherwise the add
+    /// into that system library (with the phrase table's same-library
+    /// token, if any) or into the `USER_FILE` library. Adds commit at once;
+    /// there is no rollback.
+    pub fn commit_import(
+        &mut self,
+        index: u8,
+        phrase: &PhraseText,
+        keys: &[PinyinKey],
+        original: Option<u32>,
+        count: Option<u64>,
+    ) -> bool {
+        let dict = self.runtime.dict();
+        let is_system = dict.is_system_library(index);
+        if is_system && !dict.library_visible(u32::from(index)) {
+            return false;
+        }
+        let user = self.user_store_mut();
+        if is_system {
+            // The selected token comes from the combined phrase-table search,
+            // including prior imported system-library items.
+            user.add_system_phrase_in(index, original, phrase, keys, count)
+                .is_ok()
+        } else {
+            user.add_phrase_in(index, phrase, keys, count).is_ok()
+        }
+    }
+}
+
 /// Plans one add against the loaded phrase tables: the shared half of
 /// `_add_phrase`, after the facade has parsed the reading and checked its
 /// length.
 #[must_use]
-pub fn plan_add(
+fn plan_add(
     index: u8,
     dict: &RuntimeDict<'_>,
     user: &UserStore,
@@ -108,3 +164,6 @@ fn phrase_table_tokens(
     oxpinyin_core::sort_tokens_by_library(&mut tokens);
     Ok(tokens)
 }
+
+#[cfg(test)]
+mod tests;
