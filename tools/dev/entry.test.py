@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Subprocess tests for the managed tooling UTF-8 guard."""
 import os
 from pathlib import Path

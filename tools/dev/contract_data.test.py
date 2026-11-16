@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """The pinned contract system data: package extraction and the identity digest."""
 import io
 import os

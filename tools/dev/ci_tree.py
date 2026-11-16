@@ -97,8 +97,9 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 
 
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
+# pyproject.toml is the uv project that every `uv run` of repository Python enters.
 SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
-          "justfile", "uv.toml", ".python-version")
+          "justfile", "uv.toml", ".python-version", "pyproject.toml")
 RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
@@ -113,7 +114,7 @@ RUST_READS = (
 SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/codegen/string_tables.rs", "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
-        "justfile", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
+        "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
 # compares, so a change to one selects the harness. The same test holds this list to the generator's.
@@ -133,8 +134,11 @@ GENERATED_TABLES = (
     "crates/oxpinyin-engine/src/session/split_tables.rs",
 )
 CI_INPUTS = {
-    # cargo fmt and the compile-only fuzz check read the fuzz workspace.
-    "lint": Inputs((*RUST, "fuzz"), PYTHON_ONLY,
+    # cargo fmt and the compile-only fuzz check read the fuzz workspace. The
+    # complexity check runs Lizard from a dependency group, so the lockfile is
+    # an input. A job that runs no group syncs an empty environment, and the
+    # lockfile cannot affect it.
+    "lint": Inputs((*RUST, "fuzz", "uv.lock"), PYTHON_ONLY,
                    (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
     # cargo deny reads the manifests and lockfiles only.
@@ -145,11 +149,13 @@ CI_INPUTS = {
     # the manifests and the lockfile, the files directly in each crate's
     # directory (version scripts, headers, allocator registers, build scripts),
     # the generated Rust tables, the fixtures, the table-conf template, the
-    # sanitizer nightly and the call-site TSV. No harness test reads any other Rust source, so the files
+    # sanitizer nightly, the call-site TSV, and the lockfile of the dependency groups that
+    # hold Ruff and the clang bindings. No harness test reads any other Rust source, so the files
     # under a crate's src, tests, examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
-    "harness": Inputs((*SHARED, ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
+    "harness": Inputs((*SHARED, "uv.lock",
+                       ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
                        "crates", "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "docs/findings/glib-libc-call-sites.tsv"),
                       ("crates/*/src/*.rs", "crates/*/tests/*.rs", "crates/*/examples/*.rs",

@@ -140,7 +140,7 @@ Provisioning can keep or install the development tools for you. From the
 repository root, after `uv python install`:
 
 ```sh
-uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --dev-tools
+uv run --managed-python python -X utf8 -m tools.dev.provision --dev-tools
 ```
 
 `--dev-tools` keeps each of just, cargo-nextest, cargo-c and the rust-analyzer
@@ -162,17 +162,17 @@ root `justfile`. `just` enforces this itself, and `just doctor` reports it.
 just comes through the route of the host: `brew install just` on macOS, the
 distribution package on Linux, or `cargo install just --locked`.
 
-`just python` provisions the interpreter. It runs `uv python install --quiet`,
-which reads `.python-version` and does nothing when that interpreter is present.
-A plain version request prefers the GIL-enabled build, and the check below rejects
-a free-threaded build. Every other Python recipe depends on `just python`, so a recipe
-run on a bare host provisions the interpreter itself. `just doctor` installs
-nothing, and names `just python` when the interpreter is missing. Then verify
-the interpreter:
+The first `uv run` provisions the interpreter. uv reads `.python-version` and,
+when that interpreter is missing, downloads it; `uv.toml` permits only managed
+interpreters. A plain version request prefers the GIL-enabled build, and the
+check below rejects a free-threaded build. No recipe runs `uv python install`.
+On Windows, that command deletes and creates uv's minor-version junction again
+at every call, and a Python that starts through the junction in that moment
+cannot import its standard library. `just doctor` installs nothing, and names
+`uv python install` when the interpreter is missing. Verify the interpreter:
 
 ```bash
-just python
-uv run --no-project --managed-python python -X utf8 - <<'PYTHON'
+uv run --managed-python python -X utf8 - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
@@ -181,24 +181,44 @@ assert sys.implementation.name == "cpython"
 assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
+# The base installation is compared, not the executable: in the project's
+# virtual environment the executable is a link or a separate launcher.
 managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python"],
+    ["uv", "python", "find", "--managed-python", "--system"],
     text=True).strip()
-assert Path(sys.executable).resolve() == Path(managed).resolve()
+managed_prefix = subprocess.check_output(
+    [managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"],
+    text=True).strip()
+assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
 PYTHON
 ```
 
-`.python-version` is the one place where the interpreter version is written.
-Inside the checkout, `uv run --no-project --managed-python python` and
+`.python-version` is the one place where the interpreter request is written.
+Inside the checkout, `uv run --managed-python python` and
 `uv python find --managed-python` read it. A script that changes directory
 first, or a container build, copies the file in or passes its contents on; it
-does not write the version again. `tools/dev/python-request.test.py` fails
-when a version request appears anywhere else, outside `docs/findings/`.
+does not write the version again. `pyproject.toml` declares the minimum
+supported version in its `requires-python` field; uv refuses to run when the
+request does not satisfy it. `tools/dev/python-request.test.py` fails when a
+version request or a second declaration appears anywhere else, outside
+`docs/findings/`.
 A `tools.dev` module runs from the checkout with the managed interpreter and
 the invocation in the `justfile`.
 
-Only this interpreter is used: no system Python, virtual environment,
-`pyproject.toml` or `uv.lock`. Commands use `-X utf8`.
+Only this interpreter is used: no system Python. Commands use `-X utf8`.
+
+The repository's Python tooling is one uv project with one lockfile.
+`pyproject.toml` names the third-party tools in dependency groups, each with
+its minimum version. `uv.lock` records the exact version of each tool and of
+its transitive dependencies. The project is not built or installed: uv
+installs only the dependencies, into `.venv` in the checkout. `uv.toml` is
+the only uv configuration file.
+
+Two alternatives are rejected:
+
+- `uv run --with`: it locks no transitive dependencies.
+- A PEP 723 lockfile for each script: one lockfile per tool, and no
+  Dependabot updates.
 
 `just build`, `just clippy` and `just fmt` pass Cargo arguments to
 Cargo unchanged ([limit parallel builds](verification.md#8-builds) with
@@ -371,8 +391,8 @@ checkout therefore stays where it is; a moved checkout needs the port reinstalle
 builds from source and never restores the library of another root from
 vcpkg's binary cache.
 
-Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, run
-`brew install just`, then run `just python`.
+Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, then
+run `brew install just`.
 Then, if rustup is absent, install it with the Linux rustup commands above,
 and run:
 
@@ -474,7 +494,7 @@ Repository Python tooling on Windows runs through the pwsh recipes.
 The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
 Job Object lifetime, fuzz, coverage and full tooling acceptance stay unverified.
 Install uv with its native Windows installer, then just (`cargo install just
---locked`), then run `just python`. The interpreter rule of the Linux section applies unchanged.
+--locked`). The interpreter rule of the Linux section applies unchanged.
 
 These two packages link and run natively without a DBM library or container.
 Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
@@ -537,8 +557,8 @@ PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names a
 
 | Task | Command |
 | --- | --- |
-| Build and verify the oracle image | `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image` |
-| Verify an oracle image | `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image verify-image --engine wslc IMAGE` |
+| Build and verify the oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image build-image` |
+| Verify an oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image verify-image --engine wslc IMAGE` |
 | Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
 | Provision the oracle cells in the performance image | `just provision-oracle` |
 | Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
@@ -551,7 +571,7 @@ commands unchanged. These `wslc` limits apply:
   host architecture in any case ([container runtimes](#container-runtimes)).
 - **`inspect` prints JSON only.** It has no Go templates, so
   `Architecture` and `Id` are read from the JSON record
-  (`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-field`).
+  (`uv run --managed-python python -X utf8 -m tools.oracle.image image-field`).
 - **No top-level `cp` and no `rm`.** `verify-image` runs `wslc export` and
   extracts only `opt/pinyin-oracle` from the tar. Containers are removed with
   `wslc remove -f`.

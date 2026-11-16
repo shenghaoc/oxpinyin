@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Smoke tests of the justfile under the real just: argument transport, exit statuses and the doctor diagnostic."""
 import json
 import os
@@ -74,7 +73,7 @@ class RealJustSmokeTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(),
                              'cpp-smoke is unsupported on Windows: it needs readelf, ldd and an ELF .so.')
 
-    def test_doctor_without_the_interpreter_names_just_python_and_installs_nothing(self):
+    def test_doctor_without_the_interpreter_names_uv_python_install_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'
             write_fake_uv(Path(directory), log)
@@ -83,7 +82,7 @@ class RealJustSmokeTests(unittest.TestCase):
             result = subprocess.run(['just', '--justfile', str(ROOT / 'justfile'), 'doctor'],
                                     cwd=ROOT, capture_output=True, text=True, timeout=30, env=env)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('the managed interpreter in .python-version is not installed: run `just python`', result.stderr)
+            self.assertIn('the managed interpreter in .python-version is not installed: run `uv python install`', result.stderr)
             self.assertEqual(log.read_text().splitlines(),
                              ['python find --managed-python'])
 

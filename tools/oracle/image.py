@@ -58,6 +58,8 @@ the host's (linux/amd64 on x86_64, linux/arm64 on aarch64), and any other is ref
 
 ARCHITECTURES = {'x86_64': 'amd64', 'AMD64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64', 'ARM64': 'arm64'}
 REGISTRY = 'ghcr.io/shenghaoc/oxpinyin-oracle'
+# Where a container that mounts the checkout read-only keeps the uv project's environment.
+CONTAINER_VENV = '/tmp/oxpinyin-venv'
 
 
 def host_system():
@@ -667,7 +669,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
     if quiet([runtime, 'image', 'inspect', reference], environment):
         if run(runtime_command([runtime, 'pull', '--platform', selected, reference]), env=environment, check=False):
             fail(f'FAIL: {reference} is unavailable; build it with: '
-                 'uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image')
+                 'uv run --managed-python python -X utf8 -m tools.oracle.image build-image')
     actual = image_field(runtime, 'Architecture', reference, env=environment, platform=selected)
     if actual != architecture:
         fail(f'FAIL: {reference} is {actual}, expected native {architecture}')
@@ -808,14 +810,16 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, 
     On rootful docker the run is the invoking user (run_user), so the cache it writes stays theirs;
     podman maps the user already, as for the capture run, and Apple's container keeps the run its
     macOS lane verified. uv then needs a writable HOME and cache, in /tmp; the managed interpreter
-    under /opt/uv/python is world-readable (Dockerfile.oracle)."""
+    under /opt/uv/python is world-readable (Dockerfile.oracle). The checkout is read-only, so the
+    uv project's environment goes to CONTAINER_VENV."""
     user = [] if Path(engine).name.startswith('podman') or is_apple(engine) else run_user()
     home = ['-e', 'HOME=/tmp', '-e', 'UV_CACHE_DIR=/tmp/uv-cache'] if user else []
     return [engine, 'run', '--rm', '--platform', selected_platform, *performance_resources(engine), *user,
             '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{Path(cache).resolve()}:/provision',
             '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
-            '-e', 'PYTHONDONTWRITEBYTECODE=1', *home, '-w', '/repo', tag,
-            'uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'utf8',
+            '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={CONTAINER_VENV}', *home,
+            '-w', '/repo', tag,
+            'uv', 'run', '--managed-python', 'python', '-X', 'utf8',
             '-m', 'tools.dev.provision', 'oracle', '--cache-dir', '/provision', *argv]
 
 
@@ -898,7 +902,8 @@ def performance(argv, *, root=ROOT):
                                 '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{cache}:/performance',
                                 '-e', 'CARGO_TARGET_DIR=/performance/target', '-e', 'TMPDIR=/performance/tmp',
                                 '-e', 'OXPINYIN_CACHE=/performance/cache',
-                                '-e', 'PYTHONDONTWRITEBYTECODE=1', '-w', '/repo', tag, *(command or ['bash'])]),
+                                '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={CONTAINER_VENV}',
+                                '-w', '/repo', tag, *(command or ['bash'])]),
                check=False)
 
 

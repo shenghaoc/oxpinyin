@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Capture the pin's proposed observations into a staging directory.
 
     pin_capture.py capture RUN --prefix PREFIX --data DATA --provision-cache CACHE --model-dir MODEL

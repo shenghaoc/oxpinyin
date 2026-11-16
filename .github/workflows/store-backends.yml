@@ -122,7 +122,7 @@ jobs:
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree evidence store
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence store
       - name: Compute the path-gate flag
         id: gate
         # The event's base: the PR base sha, or the previous pushed head. The
@@ -144,7 +144,8 @@ jobs:
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
           # store-features runs nextest, which reads .config/nextest.toml.
-          uv run --no-project --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
+          # Every Python step enters the uv project in pyproject.toml.
+          uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
             --also crates/oxpinyin-utils/ \
@@ -164,6 +165,7 @@ jobs:
             --also rust-toolchain.toml \
             --also fuzz/rust-toolchain.toml \
             --also .config/nextest.toml \
+            --also pyproject.toml \
             "$BASE" >> "$GITHUB_OUTPUT"
 
   store-features:
@@ -332,7 +334,7 @@ jobs:
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         env:
           BACKEND: ${{ matrix.backend }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh store-features --backend "$BACKEND"
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh store-features --backend "$BACKEND"
 
   store-backends-gate:
     # Aggregate checked by the caller's required ci-aggregate. It builds and
@@ -366,7 +368,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree aggregate store
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate store
 
   tkrzw-sanitizers:
     needs: changes
@@ -421,7 +423,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -456,7 +458,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -520,7 +522,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -543,7 +545,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -602,7 +604,7 @@ jobs:
       - name: Select the sanitizer nightly
         run: |
           set -euo pipefail
-          toolchain=$(uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
+          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
           echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
@@ -625,7 +627,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report

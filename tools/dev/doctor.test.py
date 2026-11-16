@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Unit tests for tools.dev.doctor."""
 from pathlib import Path
 import json
@@ -91,6 +90,21 @@ class DoctorTests(unittest.TestCase):
                             for line in lines), lines)
         self.assertTrue(any(re.fullmatch(r'uv: \d+\.\d+\.\d+.*', line) for line in lines), lines)
         self.assertTrue(any(line.startswith('executable: ') for line in lines))
+
+    def test_identity_compares_the_base_installation_not_the_executable(self):
+        # A virtual environment's executable is not the managed file on every platform.
+        with mock.patch.object(doctor.sys, 'executable', str(Path(tempfile.gettempdir()) / 'venv' / 'python')):
+            self.assertTrue(doctor.identity()['managed'])
+        with mock.patch.object(doctor.sys, 'base_prefix', tempfile.gettempdir()):
+            with self.assertRaisesRegex(doctor.DoctorError, 'not the managed one'):
+                doctor.identity()
+
+    def test_identity_rejects_an_ancestor_of_the_managed_installation(self):
+        # Sharing an ancestor does not make two interpreter installations the same.
+        ancestor = str(Path(sys.base_prefix).resolve().parent)
+        with mock.patch.object(doctor.sys, 'base_prefix', ancestor):
+            with self.assertRaisesRegex(doctor.DoctorError, 'not the managed one'):
+                doctor.identity()
 
     def test_free_threaded_build_is_rejected(self):
         original = doctor.sysconfig.get_config_var

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Unit tests for tools.dev.host."""
 from pathlib import Path
 import subprocess

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Native measurement contracts, using synthetic inputs rather than product measurements."""
 import contextlib
 import io

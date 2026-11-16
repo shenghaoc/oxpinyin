@@ -188,8 +188,8 @@ def build_env(source: Path, target: Path, cell: str) -> dict[str, str]:
 def revision_recipe(revision: str, source: Path, recipe: Sequence[str | Path], env: dict[str, str]) -> None:
     """Run a just recipe of REVISION from its extracted SOURCE.
 
-    The revision's own justfile starts its tooling: its recipe and the `python`
-    recipe that it depends on choose the interpreter (`.python-version` and
+    The revision's own justfile starts its tooling: its recipe, and any recipe
+    that it depends on, choose the interpreter (`.python-version` and
     `uv.toml` in SOURCE), install it and pass the startup flags. This module
     names no interpreter and no flag of another revision.
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Contract of the model20 fetch: options, refusals, verification, extraction and the cache marker."""
 import contextlib
 import hashlib

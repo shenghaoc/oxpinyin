@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for the Valgrind recipes' input preparation: prepared pin prefixes are reused only when
 every recorded input still matches, and are rebuilt otherwise."""
 import contextlib

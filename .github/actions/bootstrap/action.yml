@@ -95,6 +95,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Require the repository Python lock
+      shell: bash
+      run: echo 'UV_LOCKED=1' >> "$GITHUB_ENV"
+
     # Container jobs run as root over a root-owned checkout, so any later
     # git invocation would die on dubious ownership (this affected
     # tracked-path probes in local tooling scripts during development).
@@ -134,13 +138,13 @@ runs:
     # The one install and build check for every job that takes uv. The frozen
     # references contain the process name python3.14:, and a free-threaded
     # interpreter must fail here rather than as a behaviour difference later.
+    # uv run installs the interpreter, as it does for every recipe.
     - name: Set up pinned repository Python
       if: inputs.uv == 'true'
       shell: bash
       run: |
         set -euo pipefail
-        uv python install
-        uv run --no-project --managed-python python -X utf8 - <<'PYTHON'
+        uv run --managed-python python -X utf8 - <<'PYTHON'
         from pathlib import Path
         import subprocess
         import sys
@@ -149,10 +153,15 @@ runs:
         assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
         assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
         assert sys._is_gil_enabled()
+        # The base installation is compared, not the executable: in the project's
+        # virtual environment the executable is a link or a separate launcher.
         managed = subprocess.check_output(
-            ["uv", "python", "find", "--managed-python"],
+            ["uv", "python", "find", "--managed-python", "--system"],
             text=True).strip()
-        assert Path(sys.executable).resolve() == Path(managed).resolve()
+        managed_prefix = subprocess.check_output(
+            [managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"],
+            text=True).strip()
+        assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
         PYTHON
 
     # The install-action tools, each written once, here. just and cargo-deny

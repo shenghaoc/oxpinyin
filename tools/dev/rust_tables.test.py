@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Pinned scripts2 sources, offline regeneration, value identity and drift rejection."""
 import contextlib
 import io

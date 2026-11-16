@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for the GLib/libc call-site generator."""
 import ctypes
 import importlib.util
@@ -109,10 +108,11 @@ class RowTests(unittest.TestCase):
 
     def test_every_missing_homebrew_tool_is_named(self):
         with tempfile.TemporaryDirectory() as directory:
-            for name in driver.FORMULAE:
+            for name in (*driver.FORMULAE, "llvm@99"):
                 if name not in ("bear", "tkrzw"):
                     (Path(directory) / "opt" / name).mkdir(parents=True)
             with mock.patch.object(driver.sys, "platform", "darwin"), \
+                    mock.patch.object(driver, "llvm_major", return_value="99"), \
                     mock.patch.dict(os.environ, {"HOMEBREW_PREFIX": directory}):
                 self.assertEqual(driver.missing_tools(), ["bear", "tkrzw"])
 
@@ -130,7 +130,6 @@ class RecipeTests(unittest.TestCase):
                     f'#!{sys.executable}\n'
                     'import json, sys\n'
                     'if sys.argv[1:3] == ["python", "install"]: sys.exit(0)\n'
-                    f'if sys.argv[-1] == "--print-clang-requirement": print({driver.CLANG_REQUIREMENT!r}); sys.exit(0)\n'
                     'print(json.dumps(sys.argv[1:]))\n')
                 uv.chmod(0o755)
                 result = subprocess.run(
@@ -138,8 +137,8 @@ class RecipeTests(unittest.TestCase):
                     env=dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH']),
                     capture_output=True, text=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads(result.stdout)[-10:], [
-                    'run', '--no-project', '--managed-python', '--with', driver.CLANG_REQUIREMENT,
+                self.assertEqual(json.loads(result.stdout), [
+                    'run', '--locked', '--only-group', 'audit', '--managed-python',
                     'python', '-X', 'utf8', 'tools/audit/glib_call_sites.py', str(pin)])
 
     if os.name == 'nt':
@@ -179,13 +178,21 @@ UNPLACED = [
 ]
 
 
+def audit_llvm_major():
+    """The LLVM major as CI gets it: from the clang bindings of the audit dependency group."""
+    return subprocess.check_output(
+        ["uv", "run", "--project", str(ROOT), "--locked", "--only-group", "audit", "--managed-python",
+         "python", "-X", "utf8", str(Path(__file__).with_name("glib_call_sites.py")), "--print-llvm-major"],
+        text=True, timeout=300).strip()
+
+
 def end_to_end_missing():
-    """The tools this end-to-end test needs and does not have, by name."""
-    missing = [name for name in ("uv", "c++", "c++filt", "pkg-config", "ld")
+    """The tools this end-to-end test needs and does not have, by name; driver.llvm_major is answered."""
+    missing = [name for name in ("c++", "c++filt", "pkg-config", "ld")
                if shutil.which(name) is None]
     if sys.platform == "darwin":
         opt = driver.brew_opt()
-        missing += [name for name in ("glib", f"llvm@{driver.LLVM_MAJOR}")
+        missing += [name for name in ("glib", f"llvm@{driver.llvm_major()}")
                     if not (opt / name).exists()]
         if shutil.which("xcrun") is None:
             missing.append("xcrun")
@@ -193,12 +200,12 @@ def end_to_end_missing():
                        if "xcrun" not in missing else dict(os.environ))
     else:
         environment = dict(os.environ)
-        library = f"libclang-{driver.LLVM_MAJOR}.so.1"
+        library = f"libclang-{driver.llvm_major()}.so.1"
         try:
             ctypes.CDLL(library)
         except OSError:
             missing.append(library)
-        resource = f"/usr/lib/llvm-{driver.LLVM_MAJOR}/lib/clang/{driver.LLVM_MAJOR}"
+        resource = f"/usr/lib/llvm-{driver.llvm_major()}/lib/clang/{driver.llvm_major()}"
         if not Path(resource).is_dir():
             missing.append(resource)
     if "pkg-config" not in missing and subprocess.run(
@@ -212,6 +219,14 @@ if sys.platform in ("linux", "darwin"):
         """Clang and the platform linker on a small tree: the fixture stands for the pin."""
 
         def setUp(self):
+            if shutil.which("uv") is None:
+                self.fail("missing tools: uv")
+            # This process runs outside the audit group, so the group's command answers for it.
+            major = audit_llvm_major()
+            self.assertRegex(major, r"^\d+$")
+            patch = mock.patch.object(driver, "llvm_major", return_value=major)
+            patch.start()
+            self.addCleanup(patch.stop)
             missing = end_to_end_missing()
             if missing:
                 self.fail("missing tools: " + ", ".join(missing))
@@ -266,7 +281,7 @@ if sys.platform in ("linux", "darwin"):
                 "rows, missing = driver.generate(Path(sys.argv[2]), ['bdb'], table)\n"
                 "print(json.dumps([driver.render(driver.build_rows(rows, table)), missing]))\n")
             return subprocess.run(
-                ["uv", "run", "--no-project", "--managed-python", "--with", driver.CLANG_REQUIREMENT,
+                ["uv", "run", "--project", str(ROOT), "--locked", "--only-group", "audit", "--managed-python",
                  "python", "-X", "utf8", "-c", program,
                  str(Path(__file__).with_name("glib_call_sites.py")), str(work), str(families)],
                 capture_output=True, text=True, timeout=300, check=False)

@@ -1,0 +1,9 @@
+[project]
+name = "oxpinyin-tools"
+version = "0"
+requires-python = ">=3.14"
+
+[dependency-groups]
+audit = ["clang>=21.1.7"]
+complexity = ["lizard>=1.26.0"]
+lint = ["ruff>=0.17.3"]

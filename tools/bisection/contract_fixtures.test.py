@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Regressions for the fixture builders the cross-open cases share (#1175)."""
 
 from pathlib import Path

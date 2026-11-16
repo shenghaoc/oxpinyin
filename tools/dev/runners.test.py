@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Portable runner policy tests with explicit command and host observations."""
 from contextlib import suppress
 from pathlib import Path

@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Synthetic provisioning fixtures with fake host processes."""
 import contextlib
 import io
@@ -39,7 +38,7 @@ def shell_or_skip(case, shell):
                       f'installs zsh and sets {REQUIRE_ZSH}=1')
     case.fail(f'{shell} is required for the environment-file source test')
 # The documented provisioning command after `uv python install`, run from the repository root.
-PROVISION_COMMAND = ('uv', 'run', '--no-project', '--managed-python', 'python', '-X', 'utf8', '-m', 'tools.dev.provision')
+PROVISION_COMMAND = ('uv', 'run', '--managed-python', 'python', '-X', 'utf8', '-m', 'tools.dev.provision')
 
 
 def copy_entrypoint_tree(root):
@@ -1006,7 +1005,8 @@ class RuntimeProvisionTests(unittest.TestCase):
         libs, data, remove = self.commands()
         self.assertEqual(libs[:3], ['wslc', 'run', '--rm'])
         self.assertIn(f'{service.oracle_root}:/opt/pinyin-oracle:ro', libs)
-        self.assertEqual(libs[libs.index('deps:tag'):], ['deps:tag', 'uv', 'run', '--no-project', '--managed-python', 'python',
+        self.assertIn(f'UV_PROJECT_ENVIRONMENT={provision.images.CONTAINER_VENV}', libs)
+        self.assertEqual(libs[libs.index('deps:tag'):], ['deps:tag', 'uv', 'run', '--managed-python', 'python',
                                                          '-X', 'utf8', '-m', 'tools.dev.provision',
                                                          'prefix-check', 'libs', 'tkrzw',
                                                          '/opt/pinyin-oracle/tkrzw', '/run/oracle-pin.txt'])

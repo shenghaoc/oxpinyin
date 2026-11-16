@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tree identity, provenance, incomplete evidence and aggregate regressions."""
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -662,6 +661,11 @@ class GateTests(unittest.TestCase):
             'Cargo.lock': {'lint', 'test', 'deny', 'harness', 'ship'},
             'rust-toolchain.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.python-version': {'lint', 'test', 'harness'},
+            # Every job that runs repository Python enters the uv project.
+            'pyproject.toml': {'lint', 'test', 'harness', 'ship'},
+            # Only the jobs that run a dependency group read the lockfile: Lizard in lint, Ruff and
+            # the clang bindings in the harness.
+            'uv.lock': {'lint', 'harness'},
             'justfile': {'lint', 'test', 'harness', 'ship'},
             'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness'},
             '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
