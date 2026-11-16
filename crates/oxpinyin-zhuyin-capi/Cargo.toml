@@ -51,7 +51,6 @@ oxpinyin-core.workspace = true
 oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
-oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
 

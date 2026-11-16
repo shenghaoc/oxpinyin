@@ -69,6 +69,9 @@ pub use parse::{PinyinCorrections, ToneForwarding, double_scheme, full_scheme, z
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 
+/// The runtime's open error, which [`OpenFailure::Runtime`] carries.
+pub use oxpinyin_runtime::OpenError;
+
 /// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
 /// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing
 /// default: incomplete OFF, tone digits consumed.
