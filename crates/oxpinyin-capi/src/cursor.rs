@@ -449,38 +449,19 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
     }
     let result = match inst.core.left_offset(offset) {
         Ok(result) => result,
-        // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3035`,
-        // `:3057`; an offset past the matrix asserts in its
-        // `get_column_size` (`phonetic_key_matrix.h:103`).
-        Err(
-            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
-        ) => std::process::abort(),
-        // A graph failure the pin has no counterpart for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
-            return false;
+        Err(error) => {
+            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
+            {
+                // Register row 14: `assert(_check_offset(...))`,
+                // `pinyin.cpp:3035`, `:3057`; an offset past the matrix asserts in
+                // its `get_column_size` (`phonetic_key_matrix.h:103`).
+                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                // A graph failure the pin has no counterpart for.
+                oxpinyin_facade::CursorFault::Unreadable => {
+                    crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
+                    return false;
+                }
+            }
         }
     };
     if !left.is_null() {
@@ -533,37 +514,19 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
             abort_on_empty_matrix(&inst.read());
             return false;
         }
-        // Register row 14: `assert(_check_offset(...))`, `pinyin.cpp:3067`,
-        // `:3092`, and the matrix's own index assert past its end.
-        Err(
-            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
-        ) => std::process::abort(),
-        // A graph failure the pin has no counterpart for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
-            return false;
+        Err(error) => {
+            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
+            {
+                // Register row 14: `assert(_check_offset(...))`,
+                // `pinyin.cpp:3067`, `:3092`, and the matrix's own index assert
+                // past its end.
+                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                // A graph failure the pin has no counterpart for.
+                oxpinyin_facade::CursorFault::Unreadable => {
+                    crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
+                    return false;
+                }
+            }
         }
     };
     if !right.is_null() {

@@ -334,39 +334,20 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     }
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
-        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`, via
-        // `:1998` and `:2020`), and its `get_column_size` past the matrix
-        // (`phonetic_key_matrix.h:103`).
-        Err(
-            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
-        ) => std::process::abort(),
-        // A parse the facade cannot read, which the pin has no counterpart
-        // for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
-            return false;
+        Err(error) => {
+            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
+            {
+                // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
+                // via `:1998` and `:2020`), and its `get_column_size` past the
+                // matrix (`phonetic_key_matrix.h:103`).
+                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                // A parse the facade cannot read, which the pin has no counterpart
+                // for.
+                oxpinyin_facade::CursorFault::Unreadable => {
+                    crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
+                    return false;
+                }
+            }
         }
     };
     if !left.is_null() {
@@ -406,39 +387,20 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
         Ok(Some(result)) => result,
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).
         Ok(None) => return false,
-        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`, via
-        // `:2030` and `:2055`), and its `get_column_size` past the matrix
-        // (`phonetic_key_matrix.h:103`).
-        Err(
-            oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. },
-        ) => std::process::abort(),
-        // A parse the facade cannot read, which the pin has no counterpart
-        // for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
-            return false;
+        Err(error) => {
+            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
+            {
+                // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
+                // via `:2030` and `:2055`), and its `get_column_size` past the
+                // matrix (`phonetic_key_matrix.h:103`).
+                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                // A parse the facade cannot read, which the pin has no counterpart
+                // for.
+                oxpinyin_facade::CursorFault::Unreadable => {
+                    crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
+                    return false;
+                }
+            }
         }
     };
     if !right.is_null() {
