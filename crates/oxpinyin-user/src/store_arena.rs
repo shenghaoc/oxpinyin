@@ -230,7 +230,7 @@ impl UserStore {
         token: Token,
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
-    ) -> Result<(), UserStoreError> {
+    ) {
         let mut phrases = self.inner.libpinyin.phrases_mut();
         // The unloaded sub-index owns no item. The pin instead uses its
         // stale context cache here (phonetic_lookup.h:924-927); the
@@ -239,7 +239,7 @@ impl UserStore {
             .unloaded
             .contains(&phrase_index_library_index(token))
         {
-            return Ok(());
+            return;
         }
         if phrases.item(token).is_some() {
             if let Some(library) = phrases.item_mut(token) {
@@ -247,7 +247,7 @@ impl UserStore {
             }
             drop(phrases);
             self.mark_committed_write(true);
-            return Ok(());
+            return;
         }
         drop(phrases);
         // Any system item is trained in place in its library's live buffer; a
@@ -266,7 +266,6 @@ impl UserStore {
         }
         drop(items);
         self.mark_committed_write(true);
-        Ok(())
     }
 
     /// Borrow a live user item directly from the session arena. The callback
@@ -660,7 +659,7 @@ impl UserStore {
         Ok(true)
     }
 
-    pub(super) fn mask_arena(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+    pub(super) fn mask_arena(&self, mask: Token, value: Token) {
         let mut phrases = self.inner.libpinyin.phrases_mut();
         for (&nibble, library) in &mut phrases.libraries {
             // `FacadePhraseIndex::mask_out` tests the library through the
@@ -686,6 +685,5 @@ impl UserStore {
             }
             library.remove_matching(selected);
         }
-        Ok(())
     }
 }
