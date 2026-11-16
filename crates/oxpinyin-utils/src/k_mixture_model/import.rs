@@ -172,38 +172,7 @@ impl<R: BufRead> Converter<'_, R> {
             self.model.check_read(self.input.c_str());
             match self.model.line_type {
                 GRAM_2_ITEM_LINE => {
-                    let token1 = self.model.token(0) as u32;
-                    let word1 = self.model.phrase(1).to_owned();
-                    if !self
-                        .phrases
-                        .validate_token_with_string(token1, word1.to_bytes())
-                    {
-                        std::process::abort();
-                    }
-                    let token2 = self.model.token(2) as u32;
-                    let word2 = self.model.phrase(3).to_owned();
-                    if !self
-                        .phrases
-                        .validate_token_with_string(token2, word2.to_bytes())
-                    {
-                        std::process::abort();
-                    }
-
-                    let count = tool::atol(self.model.value(b"count"));
-                    let t = tool::atol(self.model.value(b"T"));
-                    if count != t {
-                        std::process::abort();
-                    }
-                    let n_n_0 = tool::atol(self.model.value(b"N_n_0"));
-                    let n_1 = tool::atol(self.model.value(b"n_1"));
-                    let mr = tool::atol(self.model.value(b"Mr"));
-
-                    let array_item = KMixtureModelArrayItem {
-                        m_wc: count as u32,
-                        m_n_n_0: n_n_0 as u32,
-                        m_n_1: n_1 as u32,
-                        m_mr: mr as u32,
-                    };
+                    let (token1, token2, array_item) = self.bigram_item();
 
                     if last_token != token1 {
                         if last_token != NULL_TOKEN
@@ -244,5 +213,44 @@ impl<R: BufRead> Converter<'_, R> {
         }
 
         self.model.tags.pop_state();
+    }
+
+    /// One `\\item` line of the 2-gram section: its two tokens and its array
+    /// item. A token that does not spell its phrase, or a `count` that
+    /// differs from `T`, aborts, as the pin's asserts do.
+    fn bigram_item(&self) -> (u32, u32, KMixtureModelArrayItem) {
+        let token1 = self.model.token(0) as u32;
+        let word1 = self.model.phrase(1).to_owned();
+        if !self
+            .phrases
+            .validate_token_with_string(token1, word1.to_bytes())
+        {
+            std::process::abort();
+        }
+        let token2 = self.model.token(2) as u32;
+        let word2 = self.model.phrase(3).to_owned();
+        if !self
+            .phrases
+            .validate_token_with_string(token2, word2.to_bytes())
+        {
+            std::process::abort();
+        }
+
+        let count = tool::atol(self.model.value(b"count"));
+        let t = tool::atol(self.model.value(b"T"));
+        if count != t {
+            std::process::abort();
+        }
+        let n_n_0 = tool::atol(self.model.value(b"N_n_0"));
+        let n_1 = tool::atol(self.model.value(b"n_1"));
+        let mr = tool::atol(self.model.value(b"Mr"));
+
+        let array_item = KMixtureModelArrayItem {
+            m_wc: count as u32,
+            m_n_n_0: n_n_0 as u32,
+            m_n_1: n_1 as u32,
+            m_mr: mr as u32,
+        };
+        (token1, token2, array_item)
     }
 }

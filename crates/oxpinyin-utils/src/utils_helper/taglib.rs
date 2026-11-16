@@ -217,56 +217,100 @@ impl TagLib {
 /// the line's NUL.
 fn split_line(line: &CStr) -> Result<Option<Vec<CString>>, Undefined> {
     const QUOTE: u32 = '"' as u32;
-    const BACKSLASH: u32 = '\\' as u32;
-    let bytes = line.to_bytes_with_nul();
-    // `*cur`, inside the string or undefined.
-    let at = |cur: usize| bytes.get(cur).copied().ok_or(Undefined::PastLineEnd);
-    // `g_utf8_get_char(cur)`, called only where `*cur` was just read.
-    let get_char = |cur: usize| tool::utf8_get_char_at(line, cur).ok_or(Undefined::PastLineEnd);
-    let next = |cur: usize| cur + tool::utf8_next_char_step(bytes[cur]);
-    let token = |begin: usize, end: usize| CString::new(&bytes[begin..end]).unwrap_or_default();
-
+    let line = LineCursor {
+        line,
+        bytes: line.to_bytes_with_nul(),
+    };
     let mut tokens = Vec::new();
     let mut cur = 0;
-    while at(cur)? != 0 {
-        let unichar = get_char(cur)?;
+    while line.at(cur)? != 0 {
+        let unichar = line.get_char(cur)?;
         let mut begin = cur;
         if tool::unichar_isspace(unichar) {
-            cur = next(cur);
+            cur = line.next(cur);
             continue;
         } else if unichar == QUOTE {
-            cur = next(cur);
+            cur = line.next(cur);
             begin = cur;
-            while at(cur)? != 0 {
-                let unichar = get_char(cur)?;
-                if unichar == BACKSLASH {
-                    cur = next(cur);
-                    // g_return_val_if_fail(*cur, NULL) (`:137`).
-                    if at(cur)? == 0 {
-                        return Ok(None);
-                    }
-                } else if unichar == QUOTE {
-                    break;
-                }
-                cur = next(cur);
-            }
-            tokens.push(token(begin, cur));
+            let Some(end) = line.quoted_end(cur)? else {
+                return Ok(None);
+            };
+            cur = end;
+            tokens.push(line.token(begin, cur));
         } else {
-            while at(cur)? != 0 {
-                if tool::unichar_isgraph(get_char(cur)?) {
-                    cur = next(cur);
-                } else {
-                    break;
-                }
-            }
-            tokens.push(token(begin, cur));
+            cur = line.graph_end(cur)?;
+            tokens.push(line.token(begin, cur));
         }
-        if at(cur)? == 0 {
+        if line.at(cur)? == 0 {
             break;
         }
-        cur = next(cur);
+        cur = line.next(cur);
     }
     Ok(Some(tokens))
+}
+
+/// The pin's `cur` pointer over one line of `split_line`.
+struct LineCursor<'a> {
+    line: &'a CStr,
+    /// The line's bytes with its NUL.
+    bytes: &'a [u8],
+}
+
+impl LineCursor<'_> {
+    /// `*cur`, inside the string or undefined.
+    fn at(&self, cur: usize) -> Result<u8, Undefined> {
+        self.bytes.get(cur).copied().ok_or(Undefined::PastLineEnd)
+    }
+
+    /// `g_utf8_get_char(cur)`, called only where `*cur` was just read.
+    fn get_char(&self, cur: usize) -> Result<u32, Undefined> {
+        tool::utf8_get_char_at(self.line, cur).ok_or(Undefined::PastLineEnd)
+    }
+
+    /// `g_utf8_next_char(cur)`.
+    fn next(&self, cur: usize) -> usize {
+        cur + tool::utf8_next_char_step(self.bytes[cur])
+    }
+
+    /// The token of the bytes from `begin` to `end`.
+    fn token(&self, begin: usize, end: usize) -> CString {
+        CString::new(&self.bytes[begin..end]).unwrap_or_default()
+    }
+
+    /// The end of the quoted token that starts at `cur`: its closing quote
+    /// or the line's NUL. A backslash takes the next character with it;
+    /// `None` where a backslash ends the line, the pin's NULL.
+    fn quoted_end(&self, mut cur: usize) -> Result<Option<usize>, Undefined> {
+        const QUOTE: u32 = '"' as u32;
+        const BACKSLASH: u32 = '\\' as u32;
+        while self.at(cur)? != 0 {
+            let unichar = self.get_char(cur)?;
+            if unichar == BACKSLASH {
+                cur = self.next(cur);
+                // g_return_val_if_fail(*cur, NULL) (`:137`).
+                if self.at(cur)? == 0 {
+                    return Ok(None);
+                }
+            } else if unichar == QUOTE {
+                break;
+            }
+            cur = self.next(cur);
+        }
+        Ok(Some(cur))
+    }
+
+    /// The end of the unquoted token that starts at `cur`: its run of
+    /// graphic characters.
+    fn graph_end(&self, mut cur: usize) -> Result<usize, Undefined> {
+        while self.at(cur)? != 0 {
+            if tool::unichar_isgraph(self.get_char(cur)?) {
+                cur = self.next(cur);
+            } else {
+                break;
+            }
+        }
+        Ok(cur)
+    }
 }
 
 #[cfg(test)]
