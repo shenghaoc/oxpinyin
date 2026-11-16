@@ -338,6 +338,77 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     candidate_guess_answer(outcome)
 }
 
+/// The candidate window of one guess, searched on this call: the spans
+/// ending at `session_offset` before the cursor, the spans starting at it
+/// after the cursor. A refused lookup clears the published rows; an error
+/// the pin asserts on aborts.
+fn lookup_window(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    session_offset: usize,
+    before_cursor: bool,
+    abort_on_unreadable: bool,
+) -> Result<oxpinyin_engine::CandidateList, CandidateGuessRefusal> {
+    let looked_up = if before_cursor {
+        inst.core
+            .session
+            .candidates_ending_at_for_abi(session_offset, abort_on_unreadable)
+    } else {
+        inst.core
+            .session
+            .candidates_at_for_abi(session_offset, abort_on_unreadable)
+    };
+    let window = match looked_up {
+        Ok(window) => window,
+        Err(
+            oxpinyin_engine::EngineError::TonedIncompleteKey
+            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+        ) => std::process::abort(),
+        Err(
+            error @ (oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_)),
+        ) => {
+            inst.state.candidates.clear();
+            return Err(CandidateGuessRefusal::Lookup(error));
+        }
+    };
+    // Register rows 61 and 66, `zhuyin.cpp:1261`: `assert (0 < total_freq)`
+    // while ranking a searched row, with the facade total wrapped to zero by
+    // `zhuyin_token_add_unigram_frequency`. libzhuyin's
+    // `_compute_frequency_of_items` skips no row type and runs on the freshly
+    // searched rows (`:1526`; per `len` slice before the cursor, `:1607`),
+    // before the sentence prepend and the phrase-string dedup (`:1533-1537`,
+    // `:1626-1630`): the engine reports whether that list held a row, so a
+    // row the dedup removes still counts. A lookup strictly inside a key
+    // searches nothing at the pin, and so does a before-cursor lookup at an
+    // offset no key ends at (the composition start, inside a key): the pin's
+    // spans end on that offset's empty column, while the session window,
+    // whose rows all end at `session_offset`, answers the spans ending
+    // elsewhere. The process aborts there, before the phrase strings are
+    // read (`:1535`, `:1628`).
+    if abort_on_unreadable && window.ranked_phrase_row() {
+        std::process::abort();
+    }
+    Ok(window)
+}
+
 fn guess_candidates_result(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     offset: usize,
@@ -416,47 +487,7 @@ fn guess_candidates_result(
                 oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
             }));
     let abort_on_unreadable = searched_here && facade_total_is_zero(&inst.read());
-    let looked_up = if before_cursor {
-        inst.core
-            .session
-            .candidates_ending_at_for_abi(session_offset, abort_on_unreadable)
-    } else {
-        inst.core
-            .session
-            .candidates_at_for_abi(session_offset, abort_on_unreadable)
-    };
-    let window_owned: oxpinyin_engine::CandidateList = match looked_up {
-        Ok(window) => window,
-        Err(
-            oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
-        ) => std::process::abort(),
-        Err(
-            error @ (oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_)),
-        ) => {
-            inst.state.candidates.clear();
-            return Err(CandidateGuessRefusal::Lookup(error));
-        }
-    };
+    let window_owned = lookup_window(inst, session_offset, before_cursor, abort_on_unreadable)?;
     // Every snapshot row below carries its own span in this window, which a
     // later `zhuyin_choose_candidate` selects; the window's storage then
     // goes back to the session.
@@ -465,23 +496,6 @@ fn guess_candidates_result(
     } else {
         session_offset
     };
-    // Register rows 61 and 66, `zhuyin.cpp:1261`: `assert (0 < total_freq)`
-    // while ranking a searched row, with the facade total wrapped to zero by
-    // `zhuyin_token_add_unigram_frequency`. libzhuyin's
-    // `_compute_frequency_of_items` skips no row type and runs on the freshly
-    // searched rows (`:1526`; per `len` slice before the cursor, `:1607`),
-    // before the sentence prepend and the phrase-string dedup (`:1533-1537`,
-    // `:1626-1630`): the engine reports whether that list held a row, so a
-    // row the dedup removes still counts. A lookup strictly inside a key
-    // searches nothing at the pin, and so does a before-cursor lookup at an
-    // offset no key ends at (the composition start, inside a key): the pin's
-    // spans end on that offset's empty column, while the session window,
-    // whose rows all end at `session_offset`, answers the spans ending
-    // elsewhere. The process aborts there, before the phrase strings are
-    // read (`:1535`, `:1628`).
-    if abort_on_unreadable && window_owned.ranked_phrase_row() {
-        std::process::abort();
-    }
     let before_end = if before_cursor {
         Some(normalized)
     } else {

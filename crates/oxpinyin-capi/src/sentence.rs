@@ -1,11 +1,9 @@
 //! Sentence guessing and retrieval.
 
-use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
-use std::cell::Cell;
 use std::os::raw::c_char;
 
-use crate::state::{CapiCandidate, instance_mut, instance_ref};
-use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
+use crate::state::{instance_mut, instance_ref};
+use crate::types::{GUint, PinyinInstance};
 
 /// Guess a sentence from saved pinyin keys.
 ///
@@ -296,6 +294,152 @@ pub extern "C" fn pinyin_get_character_offset(
     true
 }
 
+/// The coordinates of one `pinyin_guess_candidates` call.
+#[derive(Clone, Copy)]
+pub(crate) struct GuessFrame {
+    /// The caller's offset, in the active parse mode's original input
+    /// coordinates: a normal row's `m_begin`.
+    pub(crate) offset: usize,
+    /// The matrix column the lookup searches, in the session's coordinates.
+    pub(crate) session_offset: usize,
+    /// The lookup is strictly inside a key: only the prepended rows are kept.
+    pub(crate) sentence_rows_only: bool,
+    /// The facade total is zero and the lookup searches: ranking a searched
+    /// row aborts (register row 61).
+    pub(crate) abort_on_unreadable: bool,
+}
+
+impl GuessFrame {
+    /// The frame of a lookup at `offset`, which `validated_lookup_offset`
+    /// normalized to `normalized`.
+    fn of(inst: &crate::state::CapiInstanceMut<'_>, offset: usize, normalized: usize) -> Self {
+        // Search on every guess, including the composition offset: library
+        // visibility can change without a parse (074a2219 pinyin.cpp:2193,
+        // :2224-2262). The session's cached list predates such a change.
+        //
+        // The caller's offset lives in the active parse mode's ORIGINAL input
+        // coordinates — the pin's matrix keeps each key at its key rest's
+        // `m_raw_begin` (`phonetic_key_matrix.cpp:52-56`) for every scheme —
+        // while the double-pinyin and chewing sessions are driven with the
+        // `'`-joined full-pinyin spelling. Those seams map the offset across to
+        // the matrix column of the key it starts (`*_session_offset`: 0, or the
+        // apostrophe in front of the key, the column a forcing there spells
+        // under); plain and index-parsed full pinyin are the identity.
+        let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
+            oxpinyin_facade::double_session_offset(parse, normalized)
+        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_session_offset(parse, normalized)
+        } else {
+            normalized
+        };
+        // A lookup strictly inside a key of the active transformed parse: the
+        // pin's matrix column there is empty (keys sit on their key rests'
+        // `m_raw_begin` only), so the search finds nothing and the list is the
+        // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
+        // The rows keep their spans at the containing key for a later choose,
+        // as in the zhuyin facade (issue #577); only its sentence rows are
+        // snapshot.
+        let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
+            oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
+        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
+        } else {
+            false
+        };
+        let abort_on_unreadable = !sentence_rows_only && facade_total_is_zero(&inst.read());
+        Self {
+            offset,
+            session_offset,
+            sentence_rows_only,
+            abort_on_unreadable,
+        }
+    }
+}
+
+/// The candidate window of one guess: the engine's lookup at the frame's
+/// column, searched on this call. `None` is a refused lookup, with the
+/// published rows cleared; an error the pin asserts on aborts.
+fn lookup_window(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    frame: &GuessFrame,
+) -> Option<oxpinyin_engine::CandidateList> {
+    let window = match inst
+        .core
+        .session
+        .candidates_at_for_abi(frame.session_offset, frame.abort_on_unreadable)
+    {
+        Ok(window) => window,
+        // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
+        // `:269`, tkrzw `:252`): the suggestion walk reached an index key
+        // past MAX_PHRASE_LENGTH syllables that extends this path, and the
+        // pin's `search_suggestion` switch falls to `default: abort()`.
+        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => std::process::abort(),
+        // Register row 4, `pinyin_phrase3.h:152`: a table search of the
+        // guess (the span loop from `offset`, `pinyin.cpp:2224-2262`, or
+        // the LONGER suggestion walk, `:2292-2293`) met a key path whose
+        // first initial-only key carries a tone.
+        Err(oxpinyin_engine::EngineError::TonedIncompleteKey) => std::process::abort(),
+        // Register rows 85 and 98: the DYNAMIC_ADJUST merge or read of the
+        // previous token's grams asserts on a short user value, and the
+        // process aborts in `refuse_lookup_gram`, or reads past a partial
+        // one (class (b), one warning; `pinyin.cpp:2214`, `:1848-1849`).
+        // Row 110: the `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after
+        // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
+        // the process aborts in `refuse_lookup_gram` too.
+        Err(
+            oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+        ) => std::process::abort(),
+        Err(error @ oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }) => {
+            inst.state.candidates.clear();
+            refuse_lookup_gram("pinyin_guess_candidates", &error);
+            return None;
+        }
+        Err(
+            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_engine::EngineError::UserModel(_)
+            | oxpinyin_engine::EngineError::Graph(_)
+            | oxpinyin_engine::EngineError::Scoring(_),
+        ) => {
+            // Unreachable for a well-formed lookup: the offset-shaped
+            // contracts are refused by `validate_lookup_offset` and
+            // `candidates_at`'s own range/char-boundary checks, and a
+            // mid-syllable byte is not an error — the window answers the
+            // pin's empty-column law. The arm remains for genuine backend
+            // failures during the re-anchored scan.
+            inst.state.candidates.clear();
+            return None;
+        }
+    };
+    // Register row 61, `pinyin.cpp:1859`: `assert (0 < total_freq)` while
+    // ranking a searched row, with the facade total wrapped to zero by
+    // `pinyin_token_add_unigram_frequency`. `_compute_frequency_of_items`
+    // runs on the freshly searched rows (`:2283`), before the sort, the
+    // LONGER and sentence prepends and the phrase-string dedup (`:2300`), and
+    // skips addon rows, which it scores against the addon total
+    // (`:1828-1840`); the engine reports whether that list held such a row,
+    // so a row the dedup removes still counts. A lookup strictly inside a
+    // key searches nothing at the pin. The process aborts there, before the
+    // phrase strings are read.
+    if frame.abort_on_unreadable && window.ranked_phrase_row() {
+        std::process::abort();
+    }
+    Some(window)
+}
+
 /// Guess candidates at the given offset with sort option.
 ///
 /// # C signature
@@ -389,228 +533,17 @@ pub extern "C" fn pinyin_guess_candidates(
         Err(oxpinyin_facade::CursorFault::PinAssert) => std::process::abort(),
         Err(oxpinyin_facade::CursorFault::Unreadable) => return false,
     };
-    // Search on every guess, including the composition offset: library
-    // visibility can change without a parse (074a2219 pinyin.cpp:2193,
-    // :2224-2262). The session's cached list predates such a change.
-    //
-    // The caller's offset lives in the active parse mode's ORIGINAL input
-    // coordinates — the pin's matrix keeps each key at its key rest's
-    // `m_raw_begin` (`phonetic_key_matrix.cpp:52-56`) for every scheme —
-    // while the double-pinyin and chewing sessions are driven with the
-    // `'`-joined full-pinyin spelling. Those seams map the offset across to
-    // the matrix column of the key it starts (`*_session_offset`: 0, or the
-    // apostrophe in front of the key, the column a forcing there spells
-    // under); plain and index-parsed full pinyin are the identity.
-    let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_session_offset(parse, normalized)
-    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_session_offset(parse, normalized)
-    } else {
-        normalized
-    };
-    // A lookup strictly inside a key of the active transformed parse: the
-    // pin's matrix column there is empty (keys sit on their key rests'
-    // `m_raw_begin` only), so the search finds nothing and the list is the
-    // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
-    // The rows keep their spans at the containing key for a later choose,
-    // as in the zhuyin facade (issue #577); only its sentence rows are
-    // snapshot.
-    let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
-    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
-    } else {
-        false
-    };
-    let abort_on_unreadable = !sentence_rows_only && facade_total_is_zero(&inst.read());
+    let frame = GuessFrame::of(&inst, offset, normalized);
     // Publish each row of the re-anchored window with its own span: a
     // session's selection records against the cached (composition-anchored)
     // list, but the row the caller saw came from the offset-anchored window
     // — an index into the cached list would select a different row whenever
     // the two differ. A later `pinyin_choose_candidate` selects the row's
     // span, as the pin's reads `m_begin` and `m_end` off the row.
-    let window = match inst
-        .core
-        .session
-        .candidates_at_for_abi(session_offset, abort_on_unreadable)
-    {
-        Ok(window) => window,
-        // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
-        // `:269`, tkrzw `:252`): the suggestion walk reached an index key
-        // past MAX_PHRASE_LENGTH syllables that extends this path, and the
-        // pin's `search_suggestion` switch falls to `default: abort()`.
-        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => std::process::abort(),
-        // Register row 4, `pinyin_phrase3.h:152`: a table search of the
-        // guess (the span loop from `offset`, `pinyin.cpp:2224-2262`, or
-        // the LONGER suggestion walk, `:2292-2293`) met a key path whose
-        // first initial-only key carries a tone.
-        Err(oxpinyin_engine::EngineError::TonedIncompleteKey) => std::process::abort(),
-        // Register rows 85 and 98: the DYNAMIC_ADJUST merge or read of the
-        // previous token's grams asserts on a short user value, and the
-        // process aborts in `refuse_lookup_gram`, or reads past a partial
-        // one (class (b), one warning; `pinyin.cpp:2214`, `:1848-1849`).
-        // Row 110: the `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after
-        // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
-        // the process aborts in `refuse_lookup_gram` too.
-        Err(
-            oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
-        ) => std::process::abort(),
-        Err(error @ oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }) => {
-            inst.state.candidates.clear();
-            refuse_lookup_gram("pinyin_guess_candidates", &error);
-            return false;
-        }
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            // Unreachable for a well-formed lookup: the offset-shaped
-            // contracts are refused by `validate_lookup_offset` and
-            // `candidates_at`'s own range/char-boundary checks, and a
-            // mid-syllable byte is not an error — the window answers the
-            // pin's empty-column law. The arm remains for genuine backend
-            // failures during the re-anchored scan.
-            inst.state.candidates.clear();
-            return false;
-        }
+    let Some(window) = lookup_window(&mut inst, &frame) else {
+        return false;
     };
-    // Register row 61, `pinyin.cpp:1859`: `assert (0 < total_freq)` while
-    // ranking a searched row, with the facade total wrapped to zero by
-    // `pinyin_token_add_unigram_frequency`. `_compute_frequency_of_items`
-    // runs on the freshly searched rows (`:2283`), before the sort, the
-    // LONGER and sentence prepends and the phrase-string dedup (`:2300`), and
-    // skips addon rows, which it scores against the addon total
-    // (`:1828-1840`); the engine reports whether that list held such a row,
-    // so a row the dedup removes still counts. A lookup strictly inside a
-    // key searches nothing at the pin. The process aborts there, before the
-    // phrase strings are read.
-    if abort_on_unreadable && window.ranked_phrase_row() {
-        std::process::abort();
-    }
-    let candidates = &window;
-    // One row vector and one text buffer, each sized once for the window
-    // (rows the loop skips leave a little slack, never a second growth).
-    // The size is the texts' encoded length, so each text is encoded once,
-    // by the loop.
-    inst.state.candidates.reserve(
-        candidates.len(),
-        candidates
-            .iter()
-            .map(|cand| phrase_text_len(cand.text()) + 1)
-            .sum(),
-    );
-    let unreadable = candidates.sole_unreadable_candidate().filter(|_| {
-        !sentence_rows_only
-            && candidates
-                .iter()
-                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
-            && !abort_on_unreadable
-    });
-    let published_bound = inst.core.publication_bound_mapper(true);
-    for (cand, missing) in candidates
-        .iter()
-        .map(|row| (row, false))
-        .chain(unreadable.iter().map(|row| (row, true)))
-    {
-        // The engine's remaining-raw-input `Fallback` row is the
-        // session-API affordance (`session-api.md`: it keeps `select`
-        // meaningful when no phrase is found) —
-        // the pin has no raw-input fallback: an empty matrix answers
-        // false (`pinyin.cpp:2193`), an empty result answers true
-        // with no rows. The C ABI translates the engine shape, it
-        // does not surface it.
-        if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
-            continue;
-        }
-        // §9: a LONGER row is the engine's token-carrying row with the
-        // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
-        // never set for the type) — a normal phrase row always covers at
-        // least one key, so `token && consumed_bytes == 0` names the type
-        // uniquely on this surface. The RAW span decides the type, under a
-        // transform (double pinyin, the zhuyin keyboards) too.
-        // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
-        // the row and ibus maps it (`CANDIDATE_LONGER`/
-        // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
-        let is_longer = cand.token().is_some() && cand.consumed_bytes() == 0;
-        // A lookup strictly inside a key: the pin's column there is empty,
-        // so the span loop finds no phrase row, but its two prepends still
-        // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
-        // the LONGER row beneath them (row 65). Keep exactly those kinds.
-        if sentence_rows_only
-            && cand.kind() != oxpinyin_engine::CandidateKind::Sentence
-            && !is_longer
-        {
-            continue;
-        }
-        let text = if missing {
-            oxpinyin_facade::TextSpan::NULL
-        } else {
-            let bytes = phrase_text_bytes(cand.text());
-            let Some(text) = inst.state.candidates.intern(&bytes) else {
-                continue;
-            };
-            text
-        };
-        // The pin's `m_begin` and `m_end`: `m_begin` is the caller's guess
-        // offset itself (`start = offset`, `pinyin.cpp:2228`, `:2246`), and
-        // `m_end` the span end in the same coordinates, both `guint16`
-        // (`:103-104`). A sentence or LONGER row keeps the default zero
-        // span (`:114`; `_prepend_sentence_candidates`, `:1936-1950`).
-        let (begin, end) = if is_longer || cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
-            (0, 0)
-        } else {
-            let selection = oxpinyin_facade::SelectionSpan::of_candidate(cand, session_offset);
-            (offset as u16, published_bound(selection.end()) as u16)
-        };
-        if cand.text().outward_bytes().is_none() {
-            inst.state.candidates.keep_stored_text(cand.text().clone());
-        }
-        inst.state.candidates.push(CapiCandidate {
-            text,
-            text_ptr: std::ptr::null(),
-            type_tag: Cell::new(
-                match cand.kind() {
-                    oxpinyin_engine::CandidateKind::Sentence => {
-                        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-                    }
-                    oxpinyin_engine::CandidateKind::Addon => {
-                        lookup_candidate_type_t::ADDON_CANDIDATE
-                    }
-                    oxpinyin_engine::CandidateKind::Phrase
-                    | oxpinyin_engine::CandidateKind::Fallback
-                        if is_longer =>
-                    {
-                        lookup_candidate_type_t::LONGER_CANDIDATE
-                    }
-                    oxpinyin_engine::CandidateKind::Phrase
-                    | oxpinyin_engine::CandidateKind::Fallback => {
-                        lookup_candidate_type_t::NORMAL_CANDIDATE
-                    }
-                }
-                .tag(),
-            ),
-            nbest_index: cand.nbest_index(),
-            token: Cell::new(cand.token()),
-            begin,
-            end,
-        });
-    }
+    crate::candidates::snapshot_candidates(&mut inst, &window, &frame);
     // Every row now carries its span; the window's storage goes back to
     // the session for the next guess.
     inst.core.publish_window(window);
