@@ -52,26 +52,27 @@ pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'stati
     correction_canonical(text, options).or_else(|| ambiguity_canonical(text, options))
 }
 
+/// The suffix corrections: the option, the wrong suffix and the correct
+/// one, in the pin's row order (`auto_correct`, `scripts2/options.py:23-32`).
+/// The pin's last row, `on` for `ong`, has its own length rule below.
+const SUFFIX_CORRECTIONS: [(OptionBits, &str, &str); 6] = [
+    (OptionBits::PINYIN_CORRECT_GN_NG, "gn", "ng"),
+    (OptionBits::PINYIN_CORRECT_MG_NG, "mg", "ng"),
+    (OptionBits::PINYIN_CORRECT_IOU_IU, "iou", "iu"),
+    (OptionBits::PINYIN_CORRECT_UEI_UI, "uei", "ui"),
+    (OptionBits::PINYIN_CORRECT_UEN_UN, "uen", "un"),
+    (OptionBits::PINYIN_CORRECT_UE_VE, "ue", "ve"),
+];
+
 fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     let bytes = text.as_bytes();
 
-    if options.contains(OptionBits::PINYIN_CORRECT_GN_NG) && text.ends_with("gn") {
-        return checked_canonical(text, 2, "ng");
-    }
-    if options.contains(OptionBits::PINYIN_CORRECT_MG_NG) && text.ends_with("mg") {
-        return checked_canonical(text, 2, "ng");
-    }
-    if options.contains(OptionBits::PINYIN_CORRECT_IOU_IU) && text.ends_with("iou") {
-        return checked_canonical(text, 3, "iu");
-    }
-    if options.contains(OptionBits::PINYIN_CORRECT_UEI_UI) && text.ends_with("uei") {
-        return checked_canonical(text, 3, "ui");
-    }
-    if options.contains(OptionBits::PINYIN_CORRECT_UEN_UN) && text.ends_with("uen") {
-        return checked_canonical(text, 3, "un");
-    }
-    if options.contains(OptionBits::PINYIN_CORRECT_UE_VE) && text.ends_with("ue") {
-        return checked_canonical(text, 2, "ve");
+    // The first row that matches decides, also when its replacement is not
+    // a syllable.
+    for (option, wrong, correct) in SUFFIX_CORRECTIONS {
+        if options.contains(option) && text.ends_with(wrong) {
+            return checked_canonical(text, wrong.len(), correct);
+        }
     }
     if options.contains(OptionBits::PINYIN_CORRECT_V_U)
         && bytes.len() >= 2

@@ -1110,7 +1110,57 @@ impl ZhuyinParser {
             return ZhuyinParse::default();
         };
 
-        let (maximum_len, probe) = match keyboard {
+        let (maximum_len, probe) =
+            self.batch_probe(keyboard, input, use_tone, force_tone, allow_incomplete);
+
+        // max_chewing_dachen26_length = 12 for CP26,
+        // max_chewing_length = 4 for every other keyboard.
+        let max_key_len = if matches!(keyboard, Keyboard::Cp26(_)) {
+            12
+        } else {
+            4
+        };
+
+        let mut keys = Vec::new();
+        let mut parsed_len = 0;
+        while parsed_len < maximum_len {
+            let remaining = &input[parsed_len..maximum_len];
+            let try_len = remaining.len().min(max_key_len);
+            let Some((key, tone, len)) = probe.longest_key(remaining, try_len) else {
+                break;
+            };
+            // Same stop as upstream `:256-257`: do not retry a shorter key.
+            if !is_valid_zhuyin(key, tone) {
+                break;
+            }
+            keys.push(ZhuyinKey {
+                key,
+                start: parsed_len,
+                end: parsed_len + len,
+                tone,
+            });
+            parsed_len += len;
+        }
+
+        ZhuyinParse {
+            keys,
+            consumed: parsed_len,
+        }
+    }
+
+    /// The batch parse's probe for `keyboard`, and the length of the prefix
+    /// of `input` whose bytes are in the keyboard's scheme. The probe takes
+    /// the batch path's own option word: the keyboard's correction bits,
+    /// plus `ZHUYIN_INCOMPLETE` when `allow_incomplete`.
+    fn batch_probe(
+        &self,
+        keyboard: Keyboard,
+        input: &[u8],
+        use_tone: bool,
+        force_tone: bool,
+        allow_incomplete: bool,
+    ) -> (usize, KeyProbe) {
+        match keyboard {
             Keyboard::Simple(tables) => {
                 let options = if allow_incomplete {
                     OptionBits::ZHUYIN_CORRECT_SHUFFLE | OptionBits::ZHUYIN_INCOMPLETE
@@ -1181,49 +1231,6 @@ impl ZhuyinParser {
                     },
                 )
             }
-        };
-
-        // max_chewing_dachen26_length = 12 for CP26,
-        // max_chewing_length = 4 for every other keyboard.
-        let max_key_len = if matches!(keyboard, Keyboard::Cp26(_)) {
-            12
-        } else {
-            4
-        };
-
-        let mut keys = Vec::new();
-        let mut parsed_len = 0;
-        while parsed_len < maximum_len {
-            let remaining = &input[parsed_len..maximum_len];
-            let try_len = remaining.len().min(max_key_len);
-            let mut matched = None;
-            for len in (1..=try_len).rev() {
-                if let Some((key, tone)) = probe.parse_one_key(&input[parsed_len..parsed_len + len])
-                {
-                    matched = Some((key, tone, len));
-                    break;
-                }
-            }
-
-            let Some((key, tone, len)) = matched else {
-                break;
-            };
-            // Same stop as upstream `:256-257`: do not retry a shorter key.
-            if !is_valid_zhuyin(key, tone) {
-                break;
-            }
-            keys.push(ZhuyinKey {
-                key,
-                start: parsed_len,
-                end: parsed_len + len,
-                tone,
-            });
-            parsed_len += len;
-        }
-
-        ZhuyinParse {
-            keys,
-            consumed: parsed_len,
         }
     }
 
@@ -1294,6 +1301,15 @@ enum KeyProbe {
 }
 
 impl KeyProbe {
+    /// The longest key at the start of `input`, tried from `max_len` bytes
+    /// down to one: the key, its tone and its length.
+    fn longest_key(&self, input: &[u8], max_len: usize) -> Option<(SyllableKey, u8, usize)> {
+        (1..=max_len).rev().find_map(|len| {
+            let (key, tone) = self.parse_one_key(&input[..len])?;
+            Some((key, tone, len))
+        })
+    }
+
     fn parse_one_key(&self, input: &[u8]) -> Option<(SyllableKey, u8)> {
         match *self {
             Self::Simple {
@@ -1495,18 +1511,77 @@ fn parse_one_discrete_key(
 /// ㄧㄚ only through the `u` triple-tap. The upstream `#if 0`
 /// partial-input block (`:752-785`) is dead code at the pin and is not
 /// ported.
+/// `count_same_chars` (`:560-573`): the length of the run of `input[0]`
+/// (always ≥ 1).
+fn count_same_chars(input: &[u8]) -> usize {
+    input.iter().take_while(|&&byte| byte == input[0]).count()
+}
+
+/// The CP26 symbol of the run of one key at the start of `run`, and the
+/// run's length: a run cycles a dual key's two rows, the first row on an odd
+/// length. `None` when `table` does not hold the key.
+fn cycled_symbol(
+    table: &'static [(u8, &'static str)],
+    run: &[u8],
+) -> Option<(&'static str, usize)> {
+    let count = count_same_chars(run);
+    let (first, second) = two_symbols(table, run[0])?;
+    let symbol = second.map_or(first, |second| {
+        if (count - 1).is_multiple_of(2) {
+            first
+        } else {
+            second
+        }
+    });
+    Some((symbol, count))
+}
+
+/// The CP26 middle probe over the run of one key at the start of `run`: the
+/// middle, the final that a `u` or `m` special sets, and the bytes consumed.
+/// `u`, `m` and `j` have repeat-count specials; the table lookup then
+/// validates and consumes the run.
+fn cp26_middle(
+    middles: &'static [(u8, &'static str)],
+    run: &[u8],
+) -> (&'static str, &'static str, usize) {
+    let mut middle = "";
+    let mut final_ = "";
+    let count = count_same_chars(run);
+    let byte = run[0];
+    if byte == b'u' {
+        match (count - 1) % 3 {
+            0 => middle = "ㄧ",
+            1 => final_ = "ㄚ",
+            _ => {
+                middle = "ㄧ";
+                final_ = "ㄚ";
+            }
+        }
+    }
+    if byte == b'm' {
+        if (count - 1).is_multiple_of(2) {
+            middle = "ㄩ";
+        } else {
+            final_ = "ㄡ";
+        }
+    }
+    if byte == b'j' {
+        middle = "ㄨ";
+    }
+    let consumed = if two_symbols(middles, byte).is_some() {
+        count
+    } else {
+        0
+    };
+    (middle, final_, consumed)
+}
+
 fn parse_one_cp26_key(
     input: &[u8],
     use_tone: bool,
     options: OptionBits,
     tables: Cp26Tables,
 ) -> Option<(SyllableKey, u8)> {
-    /// `count_same_chars` (`:560-573`): the length of the run of
-    /// `input[0]` (always ≥ 1).
-    fn count_same_chars(input: &[u8]) -> usize {
-        input.iter().take_while(|&&byte| byte == input[0]).count()
-    }
-
     if input.is_empty() {
         return None;
     }
@@ -1527,62 +1602,24 @@ fn parse_one_cp26_key(
     let mut middle = "";
     let mut final_ = "";
 
-    // probe initial: a run cycles a dual key's two rows.
-    let count = count_same_chars(&input[index..]);
-    if let Some((first, second)) = two_symbols(tables.initials, input[index]) {
+    // probe initial
+    if let Some((symbol, count)) = cycled_symbol(tables.initials, &input[index..]) {
         index += count;
-        initial = second.map_or(first, |second| {
-            if (count - 1).is_multiple_of(2) {
-                first
-            } else {
-                second
-            }
-        });
+        initial = symbol;
     }
 
     if index != len {
-        // probe middle: u/m/j have repeat-count specials; the table
-        // lookup then validates and consumes the run.
-        let count = count_same_chars(&input[index..]);
-        let byte = input[index];
-        if byte == b'u' {
-            match (count - 1) % 3 {
-                0 => middle = "ㄧ",
-                1 => final_ = "ㄚ",
-                _ => {
-                    middle = "ㄧ";
-                    final_ = "ㄚ";
-                }
-            }
-        }
-        if byte == b'm' {
-            if (count - 1).is_multiple_of(2) {
-                middle = "ㄩ";
-            } else {
-                final_ = "ㄡ";
-            }
-        }
-        if byte == b'j' {
-            middle = "ㄨ";
-        }
-        if two_symbols(tables.middles, byte).is_some() {
-            index += count;
-        }
+        // probe middle
+        let consumed;
+        (middle, final_, consumed) = cp26_middle(tables.middles, &input[index..]);
+        index += consumed;
     }
 
     if index != len && final_.is_empty() {
-        // probe final (skipped when a u/m special already set it): a run
-        // cycles a dual key's two rows.
-        let count = count_same_chars(&input[index..]);
-        if let Some((first, second)) = two_symbols(tables.finals, input[index]) {
+        // probe final (skipped when a u/m special already set it)
+        if let Some((symbol, count)) = cycled_symbol(tables.finals, &input[index..]) {
             index += count;
-            final_ = second.map_or(first, |second| {
-                if (count - 1).is_multiple_of(2) {
-                    first
-                } else {
-                    second
-                }
-            });
+            final_ = symbol;
         }
     }
 

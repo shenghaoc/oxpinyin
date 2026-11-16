@@ -372,6 +372,21 @@ impl TableConf {
     fn read(mut input: SystemTableInfoReader) -> Result<Self, TableConfError> {
         // Each early return drops `input`: the pin's `fclose`, without its
         // closing `setlocale` (`:209-224`).
+        let mut conf = Self::read_header(&mut input)?;
+        // `:254-287`, each row's checks in the pin's order.
+        while !input.eof() {
+            let Some(row) = input.table_row() else {
+                continue;
+            };
+            conf.apply_row(row)?;
+        }
+        input.finish();
+        Ok(conf)
+    }
+
+    /// The header of `table.conf`: the two versions, the lambda and the two
+    /// format directives, with every table row unused.
+    fn read_header(input: &mut SystemTableInfoReader) -> Result<Self, TableConfError> {
         let binary_format_version = input
             .binary_format_version()
             .assigned()
@@ -400,7 +415,7 @@ impl TableConf {
             .and_then(DatabaseFormat::from_token)
             .ok_or(TableConfError::Abort(TableConfSite::DatabaseFormat))?;
 
-        let mut conf = Self {
+        Ok(Self {
             binary_format_version,
             model_data_version,
             lambda,
@@ -408,51 +423,52 @@ impl TableConf {
             database_format,
             default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
             addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
-        };
+        })
+    }
 
-        // `:254-287`, each row's checks in the pin's order.
-        while !input.eof() {
-            let Some([target, index, table, system, user, file_type]) = input.table_row() else {
-                continue;
-            };
-            let is_default = match target.to_bytes() {
-                b"default" => true,
-                b"addon" => false,
-                _ => return Err(TableConfError::Abort(TableConfSite::Target)),
-            };
-            let index = if is_default {
-                default_index(index.to_bytes())
-                    .ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
-            } else {
-                // `to_index_of_addon_tables` returns `atoi` as a `guint8`.
-                usize::from(oxpinyin_input::config::atoi(index) as u8)
-            };
-            if index >= PHRASE_INDEX_LIBRARY_COUNT {
-                return Err(TableConfError::Abort(TableConfSite::AddonIndex));
-            }
-            let file_type = match file_type.to_bytes() {
-                b"NOT_USED" => FileType::NotUsed,
-                b"SYSTEM_FILE" => FileType::SystemFile,
-                b"DICTIONARY" => FileType::Dictionary,
-                b"USER_FILE" => FileType::UserFile,
-                _ => return Err(TableConfError::Abort(TableConfSite::FileType)),
-            };
-            let slot = if is_default {
-                conf.default.get_mut(index)
-            } else {
-                conf.addon.get_mut(index)
-            };
-            if let Some(slot) = slot {
-                *slot = TableRow::named(
-                    table.to_bytes(),
-                    system.to_bytes(),
-                    user.to_bytes(),
-                    file_type,
-                );
-            }
+    /// One table row, with its checks in the pin's order (`:254-287`): the
+    /// target, the index, the index bound and the file type, then the write
+    /// of the row.
+    fn apply_row(
+        &mut self,
+        [target, index, table, system, user, file_type]: [&CStr; 6],
+    ) -> Result<(), TableConfError> {
+        let is_default = match target.to_bytes() {
+            b"default" => true,
+            b"addon" => false,
+            _ => return Err(TableConfError::Abort(TableConfSite::Target)),
+        };
+        let index = if is_default {
+            default_index(index.to_bytes())
+                .ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
+        } else {
+            // `to_index_of_addon_tables` returns `atoi` as a `guint8`.
+            usize::from(oxpinyin_input::config::atoi(index) as u8)
+        };
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+            return Err(TableConfError::Abort(TableConfSite::AddonIndex));
         }
-        input.finish();
-        Ok(conf)
+        let file_type = match file_type.to_bytes() {
+            b"NOT_USED" => FileType::NotUsed,
+            b"SYSTEM_FILE" => FileType::SystemFile,
+            b"DICTIONARY" => FileType::Dictionary,
+            b"USER_FILE" => FileType::UserFile,
+            _ => return Err(TableConfError::Abort(TableConfSite::FileType)),
+        };
+        let slot = if is_default {
+            self.default.get_mut(index)
+        } else {
+            self.addon.get_mut(index)
+        };
+        if let Some(slot) = slot {
+            *slot = TableRow::named(
+                table.to_bytes(),
+                system.to_bytes(),
+                user.to_bytes(),
+                file_type,
+            );
+        }
+        Ok(())
     }
 
     /// [`Self::load`] of `path`.
