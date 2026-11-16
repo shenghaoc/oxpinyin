@@ -1244,9 +1244,9 @@ mod tests {
             let token = 0x0100_0001;
             store.reset_system_library(1);
             let before = store.unigram_total();
-            assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
+            assert!(!store.add_system_unigram_frequency(token, 7));
             assert_eq!(
-                store.add_unigram_outcome(token, 483).unwrap(),
+                store.add_unigram_outcome(token, 483),
                 crate::UnigramAdd::Missing
             );
             assert_eq!(store.observe_selection(1, token).unwrap(), 69);
@@ -1262,7 +1262,7 @@ mod tests {
             assert_eq!(store.count_delta(Some(1), token).unwrap().bigram_count, 69);
             assert!(store.is_modified());
             store.load_system_libraries(originals()).unwrap();
-            assert!(store.add_system_unigram_frequency(token, 7).unwrap());
+            assert!(store.add_system_unigram_frequency(token, 7));
             assert_eq!(store.system_unigram(token), Some(107));
             drop(store);
             std::fs::remove_dir_all(dir).unwrap();
@@ -1292,11 +1292,11 @@ mod tests {
                 token: 1
             })
         ));
-        assert!(!store.add_system_unigram_frequency(0x0100_0001, 7).unwrap());
+        assert!(!store.add_system_unigram_frequency(0x0100_0001, 7));
         assert!(!store.has_system_items());
         std::fs::remove_file(dir.join("gb_char.dbin")).unwrap();
         store.load_system_libraries(originals()).unwrap();
-        assert!(store.add_system_unigram_frequency(0x0100_0001, 7).unwrap());
+        assert!(store.add_system_unigram_frequency(0x0100_0001, 7));
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1762,7 +1762,7 @@ mod tests {
                 .expect("item")
             };
             if prior_add {
-                assert!(store.add_system_unigram_frequency(second, 2).expect("add"));
+                assert!(store.add_system_unigram_frequency(second, 2));
             }
             let total = crate::test_session::library_total(&store, 1);
             let facade = 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32);
@@ -2759,7 +2759,7 @@ mod tests {
             .expect("the log is not read");
         assert_eq!(slot_state(&store), (None, None));
         assert_eq!(
-            store.add_unigram_outcome(0x0100_0002, 7).expect("add"),
+            store.add_unigram_outcome(0x0100_0002, 7),
             crate::UnigramAdd::Missing
         );
         drop(store);
@@ -3716,11 +3716,7 @@ mod tests {
                 ),
                 (Some(100), Some(100), Some(70))
             );
-            assert!(
-                store
-                    .add_system_unigram_frequency(a, 5)
-                    .expect("add through a")
-            );
+            assert!(store.add_system_unigram_frequency(a, 5));
             // Live reads: the second slot shows the first slot's write.
             assert_eq!(
                 (
@@ -3730,11 +3726,7 @@ mod tests {
                 ),
                 (Some(105), Some(105), Some(70))
             );
-            assert!(
-                store
-                    .add_system_unigram_frequency(c, 7)
-                    .expect("add through c")
-            );
+            assert!(store.add_system_unigram_frequency(c, 7));
             assert_eq!(store.system_unigram(c), Some(77));
             store.mark_modified();
             store.save_reporting().expect("save");

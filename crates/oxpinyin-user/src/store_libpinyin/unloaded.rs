@@ -45,11 +45,7 @@ fn totals(store: &UserStore) -> (u64, Option<u32>) {
 fn an_increment_into_an_unloaded_library_moves_nothing() {
     let (_profile, mut store) = unloaded("increment");
     let before = totals(&store);
-    assert!(
-        !store
-            .add_system_unigram_frequency(LIBRARY | 1, 3)
-            .expect("answer")
-    );
+    assert!(!store.add_system_unigram_frequency(LIBRARY | 1, 3));
     assert_eq!(totals(&store), before);
 }
 

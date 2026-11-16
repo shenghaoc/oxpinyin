@@ -1272,15 +1272,8 @@ impl UserStore {
     /// sub-index takes it only when it holds the item and its `guint32` total
     /// can. The caller checks library visibility. This does not mark the
     /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn add_system_unigram_frequency(
-        &mut self,
-        token: Token,
-        delta: u32,
-    ) -> Result<bool, UserStoreError> {
-        Ok(self.add_unigram_outcome(token, delta)?.is_accepted())
+    pub fn add_system_unigram_frequency(&mut self, token: Token, delta: u32) -> bool {
+        self.add_unigram_outcome(token, delta).is_accepted()
     }
 
     /// Apply a unigram increment to the default phrase index. A loaded
@@ -1288,24 +1281,18 @@ impl UserStore {
     /// sub-index leaves the facade total alone (074a2219
     /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
     /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
-    ///
-    /// # Errors
-    /// None: the `Result` is the callers' signature.
-    pub fn add_unigram_outcome(
-        &mut self,
-        token: Token,
-        delta: u32,
-    ) -> Result<UnigramAdd, UserStoreError> {
+    #[must_use]
+    pub fn add_unigram_outcome(&mut self, token: Token, delta: u32) -> UnigramAdd {
         let library = phrase_index_library_index(token);
         if self.originals.get(&library).is_none() && !self.has_user_library(library) {
-            return Ok(UnigramAdd::Missing);
+            return UnigramAdd::Missing;
         }
         let (outcome, has_sub_index) = self.arena_add_unigram_outcome(token, delta);
         // Even a missing item or refused increment can change the facade total.
         if has_sub_index && delta != 0 {
             self.advance_write_generation();
         }
-        Ok(outcome)
+        outcome
     }
 
     /// What the user side adds to the facade's unigram total: everything of
@@ -2892,7 +2879,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
+            store.add_unigram_outcome(0x0100_0001, 7),
             UnigramAdd::Refused
         );
         assert_eq!(store.unigram_total(), 7);
@@ -3964,11 +3951,7 @@ mod tests {
                         store.mark_modified();
                     }
                     let token = 0x0100_0001;
-                    assert!(
-                        store
-                            .add_system_unigram_frequency(token, 2)
-                            .expect("near bound")
-                    );
+                    assert!(store.add_system_unigram_frequency(token, 2));
                     let before = (
                         store.system_unigram(token),
                         store.unigram_total(),
@@ -3991,11 +3974,7 @@ mod tests {
                         ),
                         before
                     );
-                    assert!(
-                        !store
-                            .add_system_unigram_frequency(token, 4)
-                            .expect("refusal")
-                    );
+                    assert!(!store.add_system_unigram_frequency(token, 4));
                     assert_eq!(store.system_unigram(token), Some(102));
                     assert_eq!(
                         (store.unigram_total() as u32)
@@ -4038,7 +4017,7 @@ mod tests {
         let token = 0x0100_0001;
         let mut last = 0;
         for _ in 0..2000 {
-            assert!(store.add_system_unigram_frequency(token, 1).unwrap());
+            assert!(store.add_system_unigram_frequency(token, 1));
             let live = u64::from(
                 store
                     .count_delta(None, token)
