@@ -132,6 +132,7 @@ macro_rules! full_pinyin_keyless_query_aborts {
                     $length
                 );
                 let mut key = ptr::null_mut();
+                let _slots = crate::test_support::key_slot_guard();
                 crate::cursor::zhuyin_get_zhuyin_key(instance, 0, &raw mut key);
             });
         }

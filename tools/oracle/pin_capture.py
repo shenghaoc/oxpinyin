@@ -620,6 +620,62 @@ def zhuyin_separator_constraint(facade, case):
     raise CaptureError('the after-cursor 好 row is absent')
 
 
+# Constraint revalidation: a phrase forced over its abbreviation, one initial-only key per syllable.
+
+def forced_abbreviation(facade, case):
+    """Under OPTIONS, force PHRASE over TEXT and revalidate it (lookup/phonetic_lookup.cpp:120-167
+    at 074a2219): through the next guess; through a parse of SHORTER and of TEXT again with no guess
+    between, which leaves the constraints alone (pinyin.cpp:1497-1525, zhuyin.cpp:1017-1043); and
+    through a guess on SHORTER, which the forcing overruns (phonetic_lookup.cpp:145-148).
+
+    Both facades parse TEXT as full pinyin: pinyin decodes with PhoneticLookup<2, 3>
+    (pinyin.cpp:406) and zhuyin with PhoneticLookup<1, 1> (zhuyin.cpp:348). The chewing parsers
+    refuse an initial-only key (zhuyin_parser2.cpp:256-257), so libzhuyin's abbreviation is its
+    full-pinyin parse. The forced row is the first NORMAL row (after the cursor, for zhuyin) of
+    that text at offset 0."""
+    options, text, phrase, shorter = case
+    prefix = facade.facade
+    pinyin = prefix == 'pinyin'
+
+    def reparse(value):
+        facade.call(f'{prefix}_parse_more_full_pinyins', value)
+        facade.call(f'{prefix}_get_parsed_input_length')
+
+    def decode():
+        facade.call(f'{prefix}_guess_sentence')
+        facade.call(f'{prefix}_get_sentence', *([0] if pinyin else []))
+
+    def window():
+        if pinyin:
+            facade.call('pinyin_guess_candidates', 0, DEFAULT_SORT)
+        else:
+            facade.call('zhuyin_guess_candidates_after_cursor', 0)
+
+    facade.call(f'{prefix}_set_options', options)
+    (key_walk if pinyin else zhuyin_key_walk)(facade, text)
+    decode()
+    window()
+    count = facade.call(f'{prefix}_get_n_candidate')[1]
+    for index in range(count):
+        row = read_row(facade, index, prefix)
+        # NORMAL_CANDIDATE (pinyin.h:45) and NORMAL_CANDIDATE_AFTER_CURSOR (zhuyin.h:42) are both 2.
+        if row and row[:2] == (NORMAL, phrase):
+            facade.call(f'{prefix}_choose_candidate', 0)
+            break
+    else:
+        raise CaptureError(f'no NORMAL row {phrase} over {text}')
+    decode()
+    window()
+    rows(facade, 3, prefix)
+    reparse(shorter)
+    reparse(text)
+    decode()
+    reparse(shorter)
+    decode()
+    reparse(text)
+    decode()
+
+
 def oversized_journal_system(source, system, shape):
     """Replace gb_char.bin with a one-item library for policy row 123."""
     for file in source.iterdir():
@@ -736,6 +792,10 @@ OBSERVATIONS = {
     'zhuyin-import/run': Api(zhuyin_import, ['你好', "ㄋㄧˇ' ㄏㄠˇ "], 'zhuyin'),
     'zhuyin-import/leading': Api(zhuyin_import, ['你好', ' ㄋㄧˇ ㄏㄠˇ'], 'zhuyin'),
     'zhuyin-import/initial': Api(zhuyin_import, ['你', 'ㄋ'], 'zhuyin'),
+    # Constraint revalidation. Zhuyin's word is PINYIN_INCOMPLETE alone: its default FORCE_TONE
+    # refuses an untoned full pinyin (pinyin_parser2.cpp:185-189).
+    'constraint-revalidation/pinyin/zhg-整个': Api(forced_abbreviation, [PARITY_OPTIONS, 'zhg', '整个', 'zh']),
+    'constraint-revalidation/zhuyin/zhg-整个': Api(forced_abbreviation, [0x8, 'zhg', '整个', 'zh'], 'zhuyin'),
 }
 
 # docs/runbooks/pin-captures.md, the `utility` family: the utility runs of the frozen utility cases.
@@ -924,6 +984,9 @@ class Pin:
             return [ok, self.text(text.value)]
         if base in ('get_full_pinyin_auxiliary_text', 'get_sentence'):
             text = P()
+            if name == 'zhuyin_get_sentence':  # No index: zhuyin.cpp:983-984.
+                ok = bool(self.fn(name, B, P, C.POINTER(P))(inst, C.byref(text)))
+                return [ok, self.text(text.value)]
             index = U8 if base == 'get_sentence' else Z
             ok = bool(self.fn(name, B, P, index, C.POINTER(P))(inst, args[0], C.byref(text)))
             return [ok, self.text(text.value)]

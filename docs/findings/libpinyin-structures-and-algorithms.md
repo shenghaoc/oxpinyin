@@ -17,7 +17,7 @@ separate questions:
   - **argued** — the structure differs and an equivalence argument is
     written, here or in the cited finding;
   - **unverified** — the structure differs and equivalence is believed
-    but not yet argued (listed under [Open](#open));
+    but not yet argued; no row is unverified now;
   - **class (a)** or **(b)**, **S1**–**S3**, or a named record — a difference the
     [compatibility policy](compatibility-policy.md#the-default-is-the-pin) permits;
   - **defect** — known to differ with no permission to cover it;
@@ -30,9 +30,10 @@ they write, and the offline tools whose output is promised identical
 to the pin's (`oxpinyin-utils`' pin-named utilities and the system files
 they write).
 
-A row is a survey result, not a proof of equivalence. Rows whose
-behaviour is unverified, and the open gaps, are listed under [Open](#open);
-the [roadmap](../../ROADMAP.md) tracks the work that closes them.
+A row is a survey result, not a proof of equivalence. A row whose
+behaviour is unverified, or an open gap, goes under [Open](#open), and
+the [roadmap](../../ROADMAP.md) tracks the work that closes it. The record
+has no open item now.
 
 ## 0. Components and modularisation
 
@@ -430,7 +431,7 @@ guess.
 | Frequency | `_compute_frequency_of_items` (`:1810`), `BIGRAM_FREQUENCY_DISCOUNT 0.1f` (`:33`), f32 expression truncated to `guint32` (`:1862`) | `candidate_frequencies` (`session/lookup.rs`), `amplified_frequency_with_bigram` (`session/mod.rs`) | same / follows, bit for bit |
 | Sort | `compare_item_with_sort_option` (`:1678`) under GLib's stable sort | `rank_candidates` (`session/mod.rs`) over `rank_by_frequency`, under the [candidate-frequency comparator ruling](compatibility-policy.md#no-ported-external-library-internals) | same / follows |
 | Longer candidate | `_prepend_longer_candidates` (`pinyin.cpp:1870-1928`), library-first reduction (`phrase_large_table3.h:77-97`) | `longer_candidate` (`session/lookup.rs`) keeps the maximum unigram; ties keep the earlier library, then the earlier path/token within that library | same / follows |
-| Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text ([argument](addon-choose-promotion.md), section 5); malformed text is [open](#open) |
+| Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text ([argument](addon-choose-promotion.md), section 5); argued for malformed text with non-NULL strings, and class (b) for a NULL string among two or more rows ([compatibility policy](compatibility-policy.md#classification-table) rows 80 and 106; [argument](#candidate-dedup-over-malformed-phrase-text)) |
 | Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
 
 Offset-zero dynamic ranking retains the prefix tokens independently of
@@ -762,7 +763,8 @@ removed collapse took O(k²). The split passes and dictionary-call costs are
 unchanged. Net wall time, peak RSS and allocation effects are unknown.
 
 **Equivalence: argued**, given that the parse's columns are the pin's
-`fill_matrix` columns. `ConstraintSpelling::spells` (`nbest.rs:1213-1319`)
+`fill_matrix` columns, and measured on the pin for the abbreviation case
+below. `ConstraintSpelling::spells` (`nbest.rs:1213-1319`)
 and `ConstraintStore::validate` (`oxpinyin-engine/src/session/constraint.rs:220-262`)
 follow `validate_constraint` (`lookup/phonetic_lookup.cpp:120-169`):
 
@@ -782,13 +784,35 @@ follow `validate_constraint` (`lookup/phonetic_lookup.cpp:120-169`):
 - a zero-length run is kept (`phonetic_lookup.cpp:88-118`;
   `constraint.rs:253-258`).
 
-A phrase forced over its abbreviation, one initial-only key per syllable
-(中国 over `zhg`), takes the incomplete disjunct on both sides with no
-expansion and no cap (`pinyin_phrase3.h:81-83`; `nbest.rs:1332`); the case
-is held by `oxpinyin-engine/src/session/tests.rs:4054-4090`. A read never
-fails: `UserStore::phrase` always returns `Ok`
-(`oxpinyin-user/src/store.rs:1800-1806`), and so does the system source
-(`oxpinyin-data/src/dict.rs:989-994`).
+A phrase forced over its abbreviation, one initial-only key per syllable,
+takes the incomplete disjunct on both sides with no expansion and no cap
+(`pinyin_phrase3.h:81-83`; `nbest.rs:1332`). The engine tests
+`a_forcing_over_a_wide_abbreviation_survives_the_next_guess` and
+`a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile`
+(`oxpinyin-engine/src/session/tests.rs`) hold the wide case.
+
+**Measured on the pin** for 整个 forced over `zhg` on the reference cell:
+observations `constraint-revalidation/pinyin/zhg-整个`
+(`PhoneticLookup<2, 3>`, `pinyin.cpp:406`) and
+`constraint-revalidation/zhuyin/zhg-整个` (`PhoneticLookup<1, 1>`,
+`zhuyin.cpp:348`; the node store with `nstore = 1`), two identical capture
+runs. Each records the keys of the `fill_matrix` columns, the forcing,
+its survival through the next guess and through a shorter parse that no
+guess sees, and its clearing by a guess on the shorter parse. oxpinyin gives
+the same value at every call; the test
+`a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does` in
+`pinned_data_tests.rs` of `oxpinyin-capi` and of `oxpinyin-zhuyin-capi`
+holds each leg. The zhuyin leg parses `zhg` as full pinyin, because the
+chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
+
+A read never fails: `UserStore::phrase` (`crates/oxpinyin-user/src/store.rs`)
+always returns `Ok`, and so does the system source's phrase read,
+`phrase_item_pronunciations` (`crates/oxpinyin-data/src/dict.rs`).
+
+N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
+result supplies the tail; `changed` is set before each differing write;
+a zero return from `add_constraint` aborts at `:203`. The store is sized
+by guess-time validation (`:120-138`), not by the NBEST choose.
 
 ### Persisted empty items through arena reconstruction
 
@@ -845,13 +869,12 @@ from content (`src/storage/zhuyin_parser2.cpp:44-101`), asserting at most
 one match (`:71-101`). `hsu_zhuyin_index` (`pinyin_parser_table.h:2988`,
 500 rows) and `eten26_zhuyin_index` (`:3491`, 482 rows) have the same shape.
 
-oxpinyin holds each table as a `StringTable<3>` of spans into one UTF-8
-blob plus a `u32` flag array (`oxpinyin-core/src/zhuyin_map.rs:17-35,73-108`;
-`oxpinyin-core/src/static_strings.rs:29-81`). `search_zhuyin_index`
-(`oxpinyin-core/src/scheme.rs:768-791`) runs `partition_point` over the bytes,
-checks equality, gates `ZHUYIN_CORRECT_ALL | PINYIN_AMB_ALL`, and builds the
-key from the row's pinyin text (`SyllableKey::from_canonical_text`,
-`vocab.rs:88-103`).
+oxpinyin holds each table as a `ZhuyinIndex`: a `StringTable<1>` of input
+spellings in one UTF-8 blob, a `u16` content key array and a `u32` flag
+array (`oxpinyin-core/src/zhuyin_map.rs`; `oxpinyin-core/src/static_strings.rs`).
+`search_zhuyin_index` (`oxpinyin-core/src/scheme.rs`) finds the row with
+`StringTable::position`, gates `ZHUYIN_INCOMPLETE` and
+`ZHUYIN_CORRECT_ALL | PINYIN_AMB_ALL`, and returns the row's key.
 
 **Equivalence: argued.** Every generated row equals the pin's row, joined
 through `content_table` (`pinyin_parser_table.h:3976`), in spelling,
@@ -867,12 +890,10 @@ Each `m_pinyin_str` is unique among the 441 content rows, so the key is the
 content key, and the canonical column is the `m_zhuyin_str` that
 `get_zhuyin_string` prints (`chewing_key.cpp:74-89`).
 
-Both search in O(L log n) byte comparisons. The pin then reads the key in
-O(1); Rust takes one to four perfect-hash lookups, repeats the equality test
-(`scheme.rs:776`, `static_strings.rs:80`) and allocates a `String` for the
-canonical spelling (`scheme.rs:1408,1476,1602`). Both store about 16 bytes
-a row plus the strings; Rust's blob also holds the canonical and pinyin
-columns. These costs are [removal candidates](#removal-candidates).
+Both search in O(L log n) byte comparisons and then read the key in O(1).
+Since #1986 each Rust row stores its content key: the perfect-hash lookups,
+the repeated equality test, the per-key `String` and the canonical and
+pinyin columns are gone.
 
 ### Table-file scanning
 
@@ -1025,8 +1046,8 @@ fewest keys, then lowest distance, then first found. All 662
 `PINYIN_INCOMPLETE` exactly when its key is initial-only. The zhuyin
 direct walk stops at the same segment as the pin (`direct.rs:9-31`): a pin
 segment matches an index row only when its bytes are valid UTF-8.
-`PhraseItem::cmp` allocates two vectors per comparison
-(`gen_pinyin_table.rs:89-95`), a [removal candidate](#removal-candidates).
+Since #1978 `PhraseItem::cmp` (`gen_pinyin_table.rs`) compares the words
+in place and allocates nothing.
 
 ### Upstream test programs
 
@@ -1073,10 +1094,8 @@ attempted slot (`phrase_index.h:628-634`), and a rejected load or merge
 subtracts without adding (`phrase_index.cpp:237-248,291-296`). The check
 macro's message before SIGABRT is
 [policy-accepted](upstream-divergences.md#utility-check-macros-write-no-message).
-`repl` `pinyin_main` builds the physical matrix and a separate scan
-matrix from one parse (`lookup.rs:122`;
-`oxpinyin-engine/src/session/tool.rs:110-112`), a
-[removal candidate](#removal-candidates).
+Since #2013 `repl` `pinyin_main` prints and decodes one matrix from one
+parse (`lookup.rs`); the second physical matrix is gone.
 
 ### Candidate strings across reparsing
 
@@ -1217,10 +1236,4 @@ in O(1).
 
 ## Open
 
-- Constraint revalidation and the node store with `nstore = 1` assume that the parse's columns are the pin's `fill_matrix` columns ([§11](#constraint-revalidation)).
-- The constraint-revalidation case of a phrase forced over its abbreviation is argued from source ([§11](#constraint-revalidation)); the oracle acceptance run in the roadmap is not done.
-
-N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
-result supplies the tail; `changed` is set before each differing write;
-a zero return from `add_constraint` aborts at `:203`. The store is sized
-by guess-time validation (`:120-138`), not by the NBEST choose.
+The record has no open item.
