@@ -1617,6 +1617,56 @@ fn replay_logs(
     Ok(())
 }
 
+/// One library's log payload for the replay: the bytes the mask pre-read
+/// took, else the file's. `None` is an empty log: an absent or unreadable
+/// `.dbin` (`MemoryChunk::load` fails and leaves the chunk empty, and the
+/// merge reads nothing). An unreadable one also records a skip note.
+fn read_log_payload(
+    dir: &Path,
+    file: &FileName,
+    nibble: u8,
+    preread: Option<&mut MaskLogs>,
+    loaded: &mut Loaded,
+) -> Option<Vec<u8>> {
+    let read = preread
+        .and_then(|logs| logs.0.remove(&nibble))
+        .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
+    match read {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            let name = file.display();
+            record_skip(&mut loaded.skip_notes(), format_args!("{name}: {e}"));
+            None
+        }
+    }
+}
+
+/// Record what one library's finished merge leaves in the load: its
+/// retained buffer, its total, and an override without an item for each
+/// slot that answers none.
+fn record_merge(
+    merge: Merge<'_, '_>,
+    loaded: &mut Loaded,
+    replayed: &mut crate::LibraryTable<ReplayedLibrary>,
+    nibble: u8,
+    name: &impl std::fmt::Display,
+) {
+    let (total, gone, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
+    if let Some(retained) = retained {
+        replayed.insert(nibble, retained);
+    }
+    if let Some(total) = total {
+        loaded.library_totals.insert(nibble, total);
+    }
+    // An empty override set and an absent one are the same state. A slot that
+    // answers no item is an override without an item.
+    if !gone.is_empty() {
+        let overrides = gone.into_iter().map(|slot| (slot, None)).collect();
+        loaded.state.system_overrides.insert(nibble, overrides);
+    }
+}
+
 /// One library's turn in [`replay_logs`]: `FacadePhraseIndex::merge`, or with
 /// `mask`, `merge_with_mask`. Init's loop calls it for each library right
 /// after mapping that library ([`crate::library_loop`]).
@@ -1644,18 +1694,8 @@ fn replay_log(
         return Ok(());
     }
     let name = file.display();
-    // An absent or unreadable `.dbin` is an empty log: `MemoryChunk::load`
-    // fails and leaves the chunk empty, and the merge reads nothing.
-    let read = preread
-        .and_then(|logs| logs.0.remove(&nibble))
-        .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
-    let bytes = match read {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => {
-            record_skip(&mut loaded.skip_notes(), format_args!("{name}: {e}"));
-            return Ok(());
-        }
+    let Some(bytes) = read_log_payload(dir, file, nibble, preread, loaded) else {
+        return Ok(());
     };
     if mask.is_some_and(|(mask, value)| {
         (nibble & crate::phrase::phrase_index_library_index(mask))
@@ -1721,19 +1761,7 @@ fn replay_log(
             )?;
         }
     }
-    let (total, gone, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
-    if let Some(retained) = retained {
-        replayed.insert(nibble, retained);
-    }
-    if let Some(total) = total {
-        loaded.library_totals.insert(nibble, total);
-    }
-    // An empty override set and an absent one are the same state. A slot that
-    // answers no item is an override without an item.
-    if !gone.is_empty() {
-        let overrides = gone.into_iter().map(|slot| (slot, None)).collect();
-        loaded.state.system_overrides.insert(nibble, overrides);
-    }
+    record_merge(merge, loaded, replayed, nibble, &name);
     Ok(())
 }
 
@@ -1830,8 +1858,53 @@ fn masked_log(
     value: u32,
     library: u8,
 ) -> Result<Option<Vec<LogRecord<&[u8]>>>, JournalFault> {
-    let (mask, value) = (mask & PHRASE_MASK, value & PHRASE_MASK);
-    let kept = |token: u32| (token & mask) != value;
+    let mask = TokenMask {
+        mask: mask & PHRASE_MASK,
+        value: value & PHRASE_MASK,
+    };
+    let (records, end) = read_log(payload, library)?;
+    let Some(old_total) = sole_header(&records, library)? else {
+        return Ok(None);
+    };
+    // `_peek_header` ended on a record type it does not know: `m_error`
+    // survives both rewinds (`phrase_index_logger.h:128-129`, `:141-144`),
+    // so `_compute_new_header` and `_mask_out_records` read nothing
+    // (`phrase_index.cpp:851-869`) and the new logger is the header alone,
+    // its total unchanged.
+    if end == Some(LogEnd::UnknownType) {
+        return Ok(Some(vec![LogRecord::ModifyHeader {
+            old_total,
+            new_total: old_total,
+        }]));
+    }
+    let new_total = masked_total(&records, old_total, mask, library)?;
+    retained_records(records, old_total, new_total, mask, library).map(Some)
+}
+
+/// The mask of `mask_out_phrase_index_logger`, over the token's slot bits.
+#[derive(Clone, Copy)]
+struct TokenMask {
+    mask: u32,
+    value: u32,
+}
+
+impl TokenMask {
+    /// Whether the mask keeps a record of `token` in the new logger.
+    const fn keeps(self, token: u32) -> bool {
+        (token & self.mask) != self.value
+    }
+}
+
+/// A log's records and how its walk ended.
+type LogWalk<'a> = (Vec<LogRecord<&'a [u8]>>, Option<LogEnd>);
+
+/// `_peek_header`'s walk: every record up to the log's end or a payload past
+/// it, and how the walk ended.
+///
+/// # Errors
+///
+/// [`JournalFault::HeaderToken`] for a header record with a non-null token.
+fn read_log(payload: &[u8], library: u8) -> Result<LogWalk<'_>, JournalFault> {
     let mut records = Vec::new();
     let mut walk = log_records(payload);
     for record in walk.by_ref() {
@@ -1843,6 +1916,15 @@ fn masked_log(
             Err(LogFault::OverRead) => break,
         }
     }
+    Ok((records, walk.end()))
+}
+
+/// The old total of the log's one header; `None` when it has no header.
+///
+/// # Errors
+///
+/// [`JournalFault::MultipleHeaders`] for more than one header.
+fn sole_header(records: &[LogRecord<&[u8]>], library: u8) -> Result<Option<u32>, JournalFault> {
     let mut headers = records.iter().filter_map(|record| {
         if let LogRecord::ModifyHeader { old_total, .. } = record {
             Some(*old_total)
@@ -1856,17 +1938,21 @@ fn masked_log(
     if headers.next().is_some() {
         return Err(JournalFault::MultipleHeaders { library });
     }
-    // `_peek_header` ended on a record type it does not know: `m_error`
-    // survives both rewinds (`phrase_index_logger.h:128-129`, `:141-144`),
-    // so `_compute_new_header` and `_mask_out_records` read nothing
-    // (`phrase_index.cpp:851-869`) and the new logger is the header alone,
-    // its total unchanged.
-    if walk.end() == Some(LogEnd::UnknownType) {
-        return Ok(Some(vec![LogRecord::ModifyHeader {
-            old_total,
-            new_total: old_total,
-        }]));
-    }
+    Ok(Some(old_total))
+}
+
+/// `_compute_new_header`: the old total moved by every record the mask keeps.
+///
+/// # Errors
+///
+/// [`JournalFault::ShortMaskedItem`] for the first kept payload under six
+/// bytes, in record order.
+fn masked_total(
+    records: &[LogRecord<&[u8]>],
+    old_total: u32,
+    mask: TokenMask,
+    library: u8,
+) -> Result<u32, JournalFault> {
     let unigram = |item: &[u8], token: u32| {
         if item.len() < 6 {
             Err(JournalFault::ShortMaskedItem { library, token })
@@ -1875,19 +1961,19 @@ fn masked_log(
         }
     };
     let mut new_total = old_total;
-    for record in &records {
+    for record in records {
         match *record {
-            LogRecord::Add { token, new_item } if kept(token) => {
+            LogRecord::Add { token, new_item } if mask.keeps(token) => {
                 new_total = new_total.wrapping_add(unigram(new_item, token)?);
             }
-            LogRecord::Remove { token, old_item } if kept(token) => {
+            LogRecord::Remove { token, old_item } if mask.keeps(token) => {
                 new_total = new_total.wrapping_sub(unigram(old_item, token)?);
             }
             LogRecord::Modify {
                 token,
                 old_item,
                 new_item,
-            } if kept(token) => {
+            } if mask.keeps(token) => {
                 new_total = new_total.wrapping_sub(unigram(old_item, token)?);
                 new_total = new_total.wrapping_add(unigram(new_item, token)?);
             }
@@ -1897,23 +1983,40 @@ fn masked_log(
             | LogRecord::ModifyHeader { .. } => {}
         }
     }
+    Ok(new_total)
+}
+
+/// `_mask_out_records`: the new logger's records, the header first and then
+/// each kept MODIFY record.
+///
+/// # Errors
+///
+/// [`JournalFault::SurvivingRecord`] for the first kept ADD or REMOVE record,
+/// in record order.
+fn retained_records(
+    records: Vec<LogRecord<&[u8]>>,
+    old_total: u32,
+    new_total: u32,
+    mask: TokenMask,
+    library: u8,
+) -> Result<Vec<LogRecord<&[u8]>>, JournalFault> {
     let mut masked = vec![LogRecord::ModifyHeader {
         old_total,
         new_total,
     }];
     for record in records {
         match record {
-            LogRecord::Add { token, .. } | LogRecord::Remove { token, .. } if kept(token) => {
+            LogRecord::Add { token, .. } | LogRecord::Remove { token, .. } if mask.keeps(token) => {
                 return Err(JournalFault::SurvivingRecord { library, token });
             }
-            LogRecord::Modify { token, .. } if kept(token) => masked.push(record),
+            LogRecord::Modify { token, .. } if mask.keeps(token) => masked.push(record),
             LogRecord::Add { .. }
             | LogRecord::Remove { .. }
             | LogRecord::Modify { .. }
             | LogRecord::ModifyHeader { .. } => {}
         }
     }
-    Ok(Some(masked))
+    Ok(masked)
 }
 
 /// An item serialised as the pin stores it (`PhraseItem`: the two length
@@ -2202,6 +2305,81 @@ fn log_payload(
     encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))
 }
 
+/// The current-on-disk baseline of one `SYSTEM_FILE` library's journal:
+/// the caller's hook, else the remap of a detached library's current chunk.
+/// `None` diffs against the open-time original.
+fn log_baseline<B: FnMut(u8) -> SaveBaseline>(
+    hook: Option<&mut B>,
+    originals: &impl OriginalLibraries,
+    nibble: u8,
+) -> Option<SaveBaseline> {
+    hook.map(|hook| hook(nibble)).or_else(|| {
+        let original = originals.get(&nibble)?;
+        let mapped = original.mapped?;
+        if !mapped.is_detached() {
+            return None;
+        }
+        let path = mapped.source_path()?;
+        Some(match PhraseLibrary::open_retaining_layout(path) {
+            Ok(current) => SaveBaseline::Changed(SystemLibrary::from_library(current)),
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => SaveBaseline::ChunkHeaderRead,
+            Err(
+                LibraryError::Io(_)
+                | LibraryError::Format(_)
+                | LibraryError::Layout(_)
+                | LibraryError::Unmappable { .. }
+                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+            ) => SaveBaseline::Unmappable,
+        })
+    })
+}
+
+/// The chunk bytes of one `USER_FILE` library.
+///
+/// # Errors
+///
+/// [`PersistenceError::SaveTooLarge`] where `SubPhraseIndex::store` would
+/// copy the compacted content into a fresh chunk in one call (register row
+/// 112): the save stops here, after the earlier files, as row 76's stop does.
+fn user_library_chunk(
+    libraries: &crate::user_library::SessionPhrases,
+    nibble: u8,
+) -> Result<Vec<u8>, PersistenceError> {
+    let empty = UserLibrary::default();
+    let library = libraries.libraries.get(&nibble).unwrap_or(&empty);
+    if library.store_copy_is_unsafe() {
+        return Err(PersistenceError::SaveTooLarge);
+    }
+    library.store().map_err(PersistenceError::Codec)
+}
+
+/// The chunk bytes of one `SYSTEM_FILE` library's journal.
+///
+/// # Errors
+///
+/// [`PersistenceError::SaveTooLarge`] where `PhraseIndexLogger::store` would
+/// copy the whole journal into a fresh chunk in one call.
+fn log_chunk(
+    live: &crate::system_items::SystemItems,
+    compacted: &[u8],
+    original: SystemLibraryRef<'_>,
+    nibble: u8,
+    baseline: Option<&SaveBaseline>,
+) -> Result<Vec<u8>, PersistenceError> {
+    // A layout-failed library's save compact rebuilds its sub-index from the
+    // items the session added (074a2219 `pinyin.cpp:1139`,
+    // `phrase_index.cpp:648-675`), and the journal's header takes that total
+    // (`phrase_index.cpp:395-400`): the readable item sum.
+    let new_total = compacted
+        .contains(&nibble)
+        .then(|| live.compacted_total(nibble, original));
+    let payload = log_payload(live, nibble, original, baseline, new_total)?;
+    if payload.len() as u64 >= crate::user_library::copy_limit() {
+        return Err(PersistenceError::SaveTooLarge);
+    }
+    build_memory_chunk(&payload).map_err(PersistenceError::from)
+}
+
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.
 fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
@@ -2233,35 +2411,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             // written. The hook maps it and, for a layout fault, emits the
             // critical here.
             let baseline = match kind {
-                LibraryFile::Log => reporting
-                    .baseline
-                    .as_mut()
-                    .map(|hook| hook(nibble))
-                    .or_else(|| {
-                        let original = originals.get(&nibble)?;
-                        let mapped = original.mapped?;
-                        if !mapped.is_detached() {
-                            return None;
-                        }
-                        let path = mapped.source_path()?;
-                        Some(match PhraseLibrary::open_retaining_layout(path) {
-                            Ok(current) => {
-                                SaveBaseline::Changed(SystemLibrary::from_library(current))
-                            }
-                            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
-                                SaveBaseline::ChunkHeaderRead
-                            }
-                            Err(
-                                LibraryError::Io(_)
-                                | LibraryError::Format(_)
-                                | LibraryError::Layout(_)
-                                | LibraryError::Unmappable { .. }
-                                | LibraryError::Row(
-                                    RowFault::NotDictionary | RowFault::NullChunkName,
-                                ),
-                            ) => SaveBaseline::Unmappable,
-                        })
-                    }),
+                LibraryFile::Log => log_baseline(reporting.baseline.as_mut(), originals, nibble),
                 LibraryFile::User => None,
             };
             if matches!(baseline, Some(SaveBaseline::Unloaded)) {
@@ -2280,36 +2430,10 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 return Err(PersistenceError::LibraryChunkHeaderRead);
             }
             let bytes = match kind {
-                LibraryFile::User => {
-                    let empty = UserLibrary::default();
-                    let library = libraries.libraries.get(&nibble).unwrap_or(&empty);
-                    // `SubPhraseIndex::store` copies the compacted content
-                    // into a fresh chunk in one call (register row 112):
-                    // the save stops here, after the earlier files, as row
-                    // 76's stop does.
-                    if library.store_copy_is_unsafe() {
-                        return Err(PersistenceError::SaveTooLarge);
-                    }
-                    library.store().map_err(PersistenceError::Codec)?
-                }
+                LibraryFile::User => user_library_chunk(libraries, nibble)?,
                 LibraryFile::Log => {
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
-                    // A layout-failed library's save compact rebuilds its
-                    // sub-index from the items the session added
-                    // (074a2219 `pinyin.cpp:1139`, `phrase_index.cpp:648-675`),
-                    // and the journal's header takes that total
-                    // (`phrase_index.cpp:395-400`): the readable item sum.
-                    let new_total = compacted
-                        .contains(&nibble)
-                        .then(|| live.compacted_total(nibble, original));
-                    let payload =
-                        log_payload(live, nibble, original, baseline.as_ref(), new_total)?;
-                    // `PhraseIndexLogger::store` copies the whole journal
-                    // into a fresh chunk in one call.
-                    if payload.len() as u64 >= crate::user_library::copy_limit() {
-                        return Err(PersistenceError::SaveTooLarge);
-                    }
-                    build_memory_chunk(&payload).map_err(PersistenceError::from)?
+                    log_chunk(live, compacted, original, nibble, baseline.as_ref())?
                 }
             };
             tolerate(stage_chunk(dir, name, &bytes, staged))?;
