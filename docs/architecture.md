@@ -46,6 +46,7 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 ### Facades
 
 Both C-ABI facades consume `oxpinyin-facade`.
+`oxpinyin-zhuyin-capi` reaches runtime only through it; `oxpinyin-capi` also depends on runtime directly.
 `oxpinyin-facade` depends on core, engine, runtime and user.
 It holds the concrete dictionary, language-model and user handles of runtime by value.
 For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
