@@ -192,6 +192,14 @@ mod fixture {
         }
 
         let key = ChewingKey::from_pinyin("ni").unwrap();
+        write_libraries(dir.path(), case, total, key);
+        write_index(dir.path(), user.path(), case, key);
+        (dir, user)
+    }
+
+    /// Write the four library chunks into `dir`: `gb_char.bin` with the
+    /// case's total and item, the others empty.
+    fn write_libraries(dir: &Path, case: Case, total: u32, key: ChewingKey) {
         // Keep the library loaded independently of the indexed slots.
         for (name, total) in [
             ("gb_char.bin", total),
@@ -213,20 +221,24 @@ mod fixture {
                     vec![(reading.with_tone(3).to_packed().to_le_bytes().to_vec(), 1)],
                 );
             }
-            fs::write(dir.path().join(name), chunk.build()).unwrap();
+            fs::write(dir.join(name), chunk.build()).unwrap();
         }
+    }
 
+    /// Write the case's pinyin index: the user index in `user` for
+    /// `Fallback`, else the system index in `dir` with the case's rows.
+    fn write_index(dir: &Path, user: &Path, case: Case, key: ChewingKey) {
         let index_path = if matches!(case, Case::Fallback) {
-            let conf = oxpinyin_data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
+            let conf = oxpinyin_data::table_info::TableConf::load_from_dir(dir).unwrap();
             let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
             fs::write(
-                user.path().join("user.conf"),
+                user.join("user.conf"),
                 oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
             )
             .unwrap();
-            user.path().join("user_pinyin_index.bin")
+            user.join("user_pinyin_index.bin")
         } else {
-            dir.path().join("pinyin_index.bin")
+            dir.join("pinyin_index.bin")
         };
         let token = if matches!(case, Case::MaskedExtension) {
             0x0200_0001
@@ -262,7 +274,6 @@ mod fixture {
                 })
                 .unwrap();
         }
-        (dir, user)
     }
 }
 

@@ -472,57 +472,72 @@ where
     /// Returns [`StoreError`] when the read fails or the header bytes do
     /// not decode.
     pub fn get_magic_header(&self) -> Result<Option<S::MagicHeader>, StoreError> {
-        let header_len = <S::MagicHeader as FixedRecord>::LEN;
-        #[cfg(feature = "bdb")]
-        {
-            // `DB_DBT_PARTIAL` at offset 4: an over-long record answers the
-            // header bytes, as the pin's BDB partial read does.
-            let Some(value) =
-                self.read_partial(&MAGIC_KEY, MAGIC_NUMBER_LEN as u32, header_len as u32)?
-            else {
-                return Ok(None);
-            };
-            if value.len() != header_len {
-                return Ok(None);
-            }
-            Ok(Some(S::MagicHeader::decode(&value)?))
+        self.read_magic_header(<S::MagicHeader as FixedRecord>::LEN)
+    }
+
+    /// The Berkeley DB read of the magic header: a partial read at the
+    /// header's offset, so an over-long record answers the header bytes and
+    /// a short one answers `None` (`flexible_ngram_bdb.h:302-328`).
+    #[cfg(feature = "bdb")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        // `DB_DBT_PARTIAL` at offset 4: an over-long record answers the
+        // header bytes, as the pin's BDB partial read does.
+        let Some(value) =
+            self.read_partial(&MAGIC_KEY, MAGIC_NUMBER_LEN as u32, header_len as u32)?
+        else {
+            return Ok(None);
+        };
+        if value.len() != header_len {
+            return Ok(None);
         }
-        #[cfg(feature = "kyotocabinet")]
-        {
-            let Some(db) = self.db.as_ref() else {
-                return Ok(None);
-            };
-            let mut value = vec![0; MAGIC_NUMBER_LEN + header_len];
-            let size = db
-                .get_raw_bounded(&MAGIC_KEY, &mut value)
-                .unwrap_or_else(|_| std::process::abort());
-            if size != Some(value.len()) {
-                if size != Some(MAGIC_NUMBER_LEN) {
-                    std::process::abort();
-                }
-                return Ok(None);
-            }
-            if !self.matches_magic(&value) {
+        Ok(Some(S::MagicHeader::decode(&value)?))
+    }
+
+    /// The Kyoto Cabinet read of the magic header: a read bounded to the
+    /// magic number and the header. A record of the magic number alone
+    /// answers `None`; a failed read, any other size and a wrong magic
+    /// number abort, as the pin's asserts do
+    /// (`flexible_ngram_kyotodb.h:282-309`).
+    #[cfg(feature = "kyotocabinet")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(None);
+        };
+        let mut value = vec![0; MAGIC_NUMBER_LEN + header_len];
+        let size = db
+            .get_raw_bounded(&MAGIC_KEY, &mut value)
+            .unwrap_or_else(|_| std::process::abort());
+        if size != Some(value.len()) {
+            if size != Some(MAGIC_NUMBER_LEN) {
                 std::process::abort();
             }
-            Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+            return Ok(None);
         }
-        #[cfg(feature = "tkrzw")]
-        {
-            let Some(value) = self.read_value(&MAGIC_KEY)? else {
-                return Ok(None);
-            };
-            if value.len() != MAGIC_NUMBER_LEN + header_len {
-                if value.len() != MAGIC_NUMBER_LEN {
-                    std::process::abort();
-                }
-                return Ok(None);
-            }
-            if !self.matches_magic(&value) {
+        if !self.matches_magic(&value) {
+            std::process::abort();
+        }
+        Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+    }
+
+    /// The tkrzw read of the magic header: the complete value. A record of
+    /// the magic number alone answers `None`; any other size and a wrong
+    /// magic number abort, as the pin's asserts do
+    /// (`flexible_ngram_tkrzwdb.h:292-323`).
+    #[cfg(feature = "tkrzw")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        let Some(value) = self.read_value(&MAGIC_KEY)? else {
+            return Ok(None);
+        };
+        if value.len() != MAGIC_NUMBER_LEN + header_len {
+            if value.len() != MAGIC_NUMBER_LEN {
                 std::process::abort();
             }
-            Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+            return Ok(None);
         }
+        if !self.matches_magic(&value) {
+            std::process::abort();
+        }
+        Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
     }
 
     #[cfg(feature = "bdb")]

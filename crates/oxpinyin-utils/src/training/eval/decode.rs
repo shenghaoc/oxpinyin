@@ -247,29 +247,8 @@ where
         let last = (i + MAX_PHRASE_KEYS).min(nstep - 1);
         for m in i + 1..=last {
             let span = &keys[i..m];
-            // search_matrix: the phrases spelled exactly by this key span.
-            let mut entries = dictionary
-                .lookup(span)
-                .map_err(|error| EvalError::Backend {
-                    detail: error.to_string(),
-                })?;
+            let entries = priced_entries(dictionary, span)?;
             if !entries.is_empty() {
-                // Library-then-token order (`prepare_ranges` walk): token
-                // ascending, so ties resolve as the pin's do.
-                entries.sort_by_key(|entry| entry.token().value());
-                // The search carries tokens only; each step prices its item
-                // (`compute_pronunciation_possibility`,
-                // `phonetic_lookup.h:646-656`).
-                for entry in &mut entries {
-                    let item = dictionary
-                        .trellis_item(span, &[], entry.token().value())
-                        .map_err(|error| EvalError::Backend {
-                            detail: error.to_string(),
-                        })?;
-                    if let Some((matched, total)) = item.and_then(|item| item.pronunciation) {
-                        entry.set_pronunciation_possibility(matched, total);
-                    }
-                }
                 search_bigram2(&mut steps, i, m, &topresults, &entries, &ctx);
                 search_unigram2(&mut steps, i, m, &topresults[0], &entries, &ctx);
             }
@@ -286,6 +265,43 @@ where
         }
     }
 
+    extract_result(&steps, keys.len())
+}
+
+/// `search_matrix` for one key span: the phrases the span spells exactly, in
+/// token order, each priced with its pronunciation possibility.
+fn priced_entries<D>(dictionary: &D, span: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EvalError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+{
+    let mut entries = dictionary
+        .lookup(span)
+        .map_err(|error| EvalError::Backend {
+            detail: error.to_string(),
+        })?;
+    // Library-then-token order (`prepare_ranges` walk): token ascending, so
+    // ties resolve as the pin's do.
+    entries.sort_by_key(|entry| entry.token().value());
+    // The search carries tokens only; each step prices its item
+    // (`compute_pronunciation_possibility`, `phonetic_lookup.h:646-656`).
+    for entry in &mut entries {
+        let item = dictionary
+            .trellis_item(span, &[], entry.token().value())
+            .map_err(|error| EvalError::Backend {
+                detail: error.to_string(),
+            })?;
+        if let Some((matched, total)) = item.and_then(|item| item.pronunciation) {
+            entry.set_pronunciation_possibility(matched, total);
+        }
+    }
+    Ok(entries)
+}
+
+/// `get_tails` and `extract_result` over the steps of `keys` keys: the tokens
+/// of the path that ends at the last step's best node.
+fn extract_result(steps: &[Step], keys: usize) -> Result<Vec<PhraseToken>, EvalError> {
+    let nstep = steps.len();
     // get_tails: the best node of the last step (nbest = 1), then
     // extract_result backtracks it. No tail means no phrase cover: upstream
     // `assert(1 == results.size())`s, so it is a data error here, not a
@@ -294,7 +310,7 @@ where
         .top_results(1)
         .first()
         .copied()
-        .ok_or(EvalError::Undecodable { keys: keys.len() })?;
+        .ok_or(EvalError::Undecodable { keys })?;
     let mut result = vec![NULL_TOKEN; nstep];
     let mut cursor = tail;
     loop {
@@ -304,7 +320,7 @@ where
         };
         result[index] = cursor.token;
         let Some(previous) = steps.get(index).and_then(|step| step.get(cursor.prev)) else {
-            return Err(EvalError::Undecodable { keys: keys.len() });
+            return Err(EvalError::Undecodable { keys });
         };
         cursor = *previous;
     }

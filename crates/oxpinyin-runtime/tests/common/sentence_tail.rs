@@ -13,7 +13,7 @@ use std::path::Path;
 use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
 use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 
-use crate::sentence_fixture::{SENTENCE_FIXTURE, load_fixture, load_residuals};
+use crate::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
 pub struct PortSession {
@@ -221,6 +221,99 @@ impl SentenceTailReport {
     pub const fn distinct_set_match(&self) -> usize {
         self.list_ordered_match + self.list_distinct_extra
     }
+
+    /// Record whether the port's surface is the expected one, and whether
+    /// its guess answer agrees with the oracle's.
+    fn record_surface(&mut self, line: &OracleLine, expected: &OracleLine, port: &PortSurface) {
+        if port.guessed != expected.guessed
+            || port.sentences != expected.sentences
+            || port.rows != expected.rows
+        {
+            self.unexpected_surfaces.push(format!(
+                "input={:?}\tguessed={}\tsentences={:?}\trows={:?}\texpected={expected:?}",
+                line.input, port.guessed, port.sentences, port.rows,
+            ));
+        }
+        if port.guessed != line.guessed {
+            self.guessed_disagree += 1;
+        }
+    }
+
+    /// Row 0: the decoded 1-best.
+    fn record_row0(&mut self, line: &OracleLine, port: &PortSurface) {
+        if port.sentences.first() == line.sentences.first() {
+            self.row0_match += 1;
+        } else {
+            self.row0_misses.push(format!(
+                "input={:?}\toracle0={:?}\tport0={:?}",
+                line.input,
+                line.sentences.first(),
+                port.sentences.first(),
+            ));
+        }
+    }
+
+    /// The full sentence list.
+    fn record_list(&mut self, line: &OracleLine, port: &PortSurface) {
+        if port.sentences == line.sentences {
+            self.list_ordered_match += 1;
+        } else {
+            let order_only = as_multiset(&port.sentences) == as_multiset(&line.sentences);
+            if order_only {
+                self.list_order_only += 1;
+            } else {
+                self.list_set_diff += 1;
+            }
+            let distinct_same = distinct_set(&port.sentences) == distinct_set(&line.sentences);
+            if distinct_same {
+                self.list_distinct_extra += 1;
+            }
+            match first_divergent_rank(&port.sentences, &line.sentences) {
+                Some(0) => self.list_diff_at_row0 += 1,
+                Some(1) => self.list_diff_at_row1 += 1,
+                // Rank ≥ 2 (content or a shorter list first missing a rank-2
+                // tail); `None` cannot occur here — the lists already differ.
+                _ => self.list_diff_at_row2 += 1,
+            }
+            self.list_diffs.push(format!(
+                "input={:?}\t{}{}\tfirst@{:?}\toracle={:?}\tport={:?}",
+                line.input,
+                if order_only { "order-only" } else { "SET-DIFF" },
+                if distinct_same { " DISTINCT-SAME" } else { "" },
+                first_divergent_rank(&port.sentences, &line.sentences),
+                line.sentences,
+                port.sentences,
+            ));
+        }
+    }
+
+    /// The first six candidate rows.
+    fn record_rows(&mut self, line: &OracleLine, port: &PortSurface) {
+        if port.rows == line.rows {
+            self.rows_match += 1;
+        } else {
+            let order_only = as_multiset(&port.rows) == as_multiset(&line.rows);
+            if order_only {
+                self.rows_order_only += 1;
+            } else {
+                self.rows_set_diff += 1;
+            }
+            let phrase_window = phrase_rows(&port.rows) != phrase_rows(&line.rows);
+            if phrase_window {
+                self.rows_phrase_window += 1;
+            } else if sentence_rows(&port.rows) != sentence_rows(&line.rows) {
+                self.rows_sentence_only += 1;
+            }
+            self.rows_diffs.push(format!(
+                "input={:?}\t{}{}\toracle={:?}\tport={:?}",
+                line.input,
+                if order_only { "order-only" } else { "SET-DIFF" },
+                if phrase_window { " phrase-window" } else { "" },
+                line.rows,
+                port.rows,
+            ));
+        }
+    }
 }
 
 /// Measures the port session against the frozen oracle fixture at
@@ -247,88 +340,10 @@ pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailRep
 
         let port = observe_port(session, &line.input)?;
         let expected = residuals.get(&line.input).unwrap_or(line);
-        if port.guessed != expected.guessed
-            || port.sentences != expected.sentences
-            || port.rows != expected.rows
-        {
-            report.unexpected_surfaces.push(format!(
-                "input={:?}\tguessed={}\tsentences={:?}\trows={:?}\texpected={expected:?}",
-                line.input, port.guessed, port.sentences, port.rows,
-            ));
-        }
-        if port.guessed != line.guessed {
-            report.guessed_disagree += 1;
-        }
-
-        // Row 0 — decoded 1-best.
-        if port.sentences.first() == line.sentences.first() {
-            report.row0_match += 1;
-        } else {
-            report.row0_misses.push(format!(
-                "input={:?}\toracle0={:?}\tport0={:?}",
-                line.input,
-                line.sentences.first(),
-                port.sentences.first(),
-            ));
-        }
-
-        // Full sentence list.
-        if port.sentences == line.sentences {
-            report.list_ordered_match += 1;
-        } else {
-            let order_only = as_multiset(&port.sentences) == as_multiset(&line.sentences);
-            if order_only {
-                report.list_order_only += 1;
-            } else {
-                report.list_set_diff += 1;
-            }
-            let distinct_same = distinct_set(&port.sentences) == distinct_set(&line.sentences);
-            if distinct_same {
-                report.list_distinct_extra += 1;
-            }
-            match first_divergent_rank(&port.sentences, &line.sentences) {
-                Some(0) => report.list_diff_at_row0 += 1,
-                Some(1) => report.list_diff_at_row1 += 1,
-                // Rank ≥ 2 (content or a shorter list first missing a rank-2
-                // tail); `None` cannot occur here — the lists already differ.
-                _ => report.list_diff_at_row2 += 1,
-            }
-            report.list_diffs.push(format!(
-                "input={:?}\t{}{}\tfirst@{:?}\toracle={:?}\tport={:?}",
-                line.input,
-                if order_only { "order-only" } else { "SET-DIFF" },
-                if distinct_same { " DISTINCT-SAME" } else { "" },
-                first_divergent_rank(&port.sentences, &line.sentences),
-                line.sentences,
-                port.sentences,
-            ));
-        }
-
-        // First-6 candidate rows.
-        if port.rows == line.rows {
-            report.rows_match += 1;
-        } else {
-            let order_only = as_multiset(&port.rows) == as_multiset(&line.rows);
-            if order_only {
-                report.rows_order_only += 1;
-            } else {
-                report.rows_set_diff += 1;
-            }
-            let phrase_window = phrase_rows(&port.rows) != phrase_rows(&line.rows);
-            if phrase_window {
-                report.rows_phrase_window += 1;
-            } else if sentence_rows(&port.rows) != sentence_rows(&line.rows) {
-                report.rows_sentence_only += 1;
-            }
-            report.rows_diffs.push(format!(
-                "input={:?}\t{}{}\toracle={:?}\tport={:?}",
-                line.input,
-                if order_only { "order-only" } else { "SET-DIFF" },
-                if phrase_window { " phrase-window" } else { "" },
-                line.rows,
-                port.rows,
-            ));
-        }
+        report.record_surface(line, expected, &port);
+        report.record_row0(line, &port);
+        report.record_list(line, &port);
+        report.record_rows(line, &port);
     }
 
     Ok(report)
