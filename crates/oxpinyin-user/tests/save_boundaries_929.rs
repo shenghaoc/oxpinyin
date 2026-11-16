@@ -170,10 +170,7 @@ fn interruption_after_user_chunks_keeps_indexes_and_bigram_at_previous_save() {
         assert_eq!(reopened.bigram_count(0x0700_0001, 0x0600_0001).unwrap(), 0);
         for library in 5..=6_u8 {
             assert_eq!(
-                reopened
-                    .phrase((u32::from(library) << 24) | 1)
-                    .unwrap()
-                    .is_some(),
+                reopened.phrase((u32::from(library) << 24) | 1).is_some(),
                 law == UserConfLaw::Zhuyin
             );
         }
@@ -217,7 +214,6 @@ fn interruption_after_save_or_fini_retains_every_saved_data_byte() {
                 assert_eq!(
                     reopened
                         .phrase((library << 24) | 1)
-                        .unwrap()
                         .unwrap()
                         .phrase_text()
                         .unwrap(),

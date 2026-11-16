@@ -290,7 +290,7 @@ mod tests {
         assert!(lookup.lookup(&[key("ni")]).is_empty());
         assert!(!lookup.phrase_prefix_exists(&[key("ni")]));
         assert_eq!(lookup.lookup(&[key("hao"), key("hao")]).len(), 1);
-        assert_eq!(store.phrases().unwrap().len(), 1);
+        assert_eq!(store.phrases().len(), 1);
     }
 
     /// `lookup` with an incomplete syllable at the head of the query must

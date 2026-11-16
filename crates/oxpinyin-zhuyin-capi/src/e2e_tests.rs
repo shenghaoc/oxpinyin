@@ -311,7 +311,7 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
         0,
     ));
     zhuyin_end_add_phrases(iter);
-    let token = with_store(instance, |store| store.phrases().unwrap()[0].token());
+    let token = with_store(instance, |store| store.phrases()[0].token());
     assert_eq!(token >> 24, u32::from(USER_DICTIONARY));
     let mut freq = u32::MAX;
     assert!(zhuyin_token_get_unigram_frequency(
@@ -1348,11 +1348,7 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
             "{reading:?}"
         );
         zhuyin_end_add_phrases(iter);
-        let rows = with_store(instance, |store| {
-            store
-                .export_phrases_in(USER_DICTIONARY)
-                .expect("export the user index")
-        });
+        let rows = with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY));
         let expected: Vec<oxpinyin_user::ExportedPhrase> = if added {
             vec![oxpinyin_user::ExportedPhrase {
                 text: phrase.chars().map(u32::from).collect(),

@@ -168,7 +168,7 @@ fn mask_out_zero_clears_every_recorded_item() {
     store.observe_selection(SENTENCE_START, a).unwrap();
     store.observe_selection(a, b).unwrap();
     assert!(store.bigram_total(a).unwrap() > 0);
-    assert!(store.unigram_total().unwrap() > 0);
+    assert!(store.unigram_total() > 0);
 
     store.mask_out(0, 0).unwrap();
     assert_eq!(store.bigram_count(a, b).unwrap(), 0);
@@ -176,7 +176,7 @@ fn mask_out_zero_clears_every_recorded_item() {
     // `FacadePhraseIndex::mask_out` swaps the user sub-index's total out
     // of and back into the facade (`phrase_index.cpp:713-715`); with both
     // items gone the user side holds nothing.
-    assert_eq!(store.unigram_total().unwrap(), 0);
+    assert_eq!(store.unigram_total(), 0);
 }
 
 #[test]
@@ -265,10 +265,7 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
 
     {
         let mut store = session_in(dir.path());
-        let phrase = store
-            .phrase(token)
-            .unwrap()
-            .expect("persists across sessions");
+        let phrase = store.phrase(token).expect("persists across sessions");
         assert_eq!(phrase.phrase_text().unwrap(), "测试");
         assert_eq!(phrase.pronunciations().len(), 1);
 
@@ -283,7 +280,7 @@ fn add_lookup_remove_roundtrip_and_persists_across_handles() {
         store.token_for_phrase(&text).unwrap().is_none(),
         "a fresh session must see the removal"
     );
-    assert!(store.phrase(token).unwrap().is_none());
+    assert!(store.phrase(token).is_none());
 }
 
 /// The `user-store-ops` crash input `22d` (`crash-c249fd86…`): add `词` under
@@ -310,13 +307,13 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
         .add_phrase(&oxpinyin_core::PhraseText::from(text), &chong, Some(9))
         .unwrap();
 
-    let phrase: UserPhrase = store.phrase(token).unwrap().expect("stored");
+    let phrase: UserPhrase = store.phrase(token).expect("stored");
     assert_eq!(phrase.pronunciations().len(), 2, "both readings stored");
 
     store
         .add_phrase(&oxpinyin_core::PhraseText::from(text), &zhong, Some(3))
         .unwrap();
-    let phrase = store.phrase(token).unwrap().expect("stored");
+    let phrase = store.phrase(token).expect("stored");
     let zhong_count = phrase
         .pronunciations()
         .iter()
@@ -335,7 +332,7 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
         store.remove_user_phrase(token),
         Err(UserStoreError::UserReadingRemoval)
     ));
-    assert!(store.phrase(token).unwrap().is_some());
+    assert!(store.phrase(token).is_some());
 }
 /// An initial-only reading names one key in both index spaces, so
 /// `ChewingLargeTable2::remove_index` removes it once and then answers
@@ -353,7 +350,7 @@ fn an_initial_only_reading_answers_the_pins_reading_removal_assert() {
     let token = store
         .add_phrase(&oxpinyin_core::PhraseText::from("词"), &reading, Some(50))
         .unwrap();
-    let phrase = store.phrase(token).unwrap().expect("stored");
+    let phrase = store.phrase(token).expect("stored");
     assert!(
         phrase.pronunciations()[0].indexed(),
         "the reading is indexed; the refusal is the double removal"
@@ -362,7 +359,7 @@ fn an_initial_only_reading_answers_the_pins_reading_removal_assert() {
         store.remove_user_phrase(token),
         Err(UserStoreError::UserReadingRemoval)
     ));
-    assert!(store.phrase(token).unwrap().is_some());
+    assert!(store.phrase(token).is_some());
 }
 
 #[test]
@@ -383,7 +380,7 @@ fn readings_keep_insertion_order_tones_and_only_the_first_is_indexed() {
         .unwrap();
     store.add_phrase(&"测验".into(), &toned, Some(1)).unwrap();
 
-    let phrase = store.phrase(token).unwrap().expect("stored");
+    let phrase = store.phrase(token).expect("stored");
     let rows: Vec<(Option<String>, u64, bool)> = phrase
         .pronunciations()
         .iter()
@@ -408,10 +405,10 @@ fn a_reading_add_that_would_overflow_the_running_total_changes_nothing() {
         .add_phrase(&"测试".into(), &reading, Some(u64::from(u32::MAX - 1)))
         .unwrap();
     store.add_phrase(&"测试".into(), &reading, Some(2)).unwrap();
-    let phrase = store.phrase(token).unwrap().expect("stored");
+    let phrase = store.phrase(token).expect("stored");
     assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX - 1));
     store.add_phrase(&"测试".into(), &reading, Some(1)).unwrap();
-    let phrase = store.phrase(token).unwrap().expect("stored");
+    let phrase = store.phrase(token).expect("stored");
     assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX));
 }
 
@@ -426,8 +423,8 @@ fn the_same_reading_on_different_texts_yields_distinct_tokens() {
     let b = store.add_phrase(&"策士".into(), &reading, None).unwrap();
     assert_ne!(a, b, "distinct texts allocate distinct tokens");
 
-    let phrase_a = store.phrase(a).unwrap().expect("stored");
-    let phrase_b = store.phrase(b).unwrap().expect("stored");
+    let phrase_a = store.phrase(a).expect("stored");
+    let phrase_b = store.phrase(b).expect("stored");
     assert_eq!(phrase_a.phrase_text().unwrap(), "测试");
     assert_eq!(phrase_b.phrase_text().unwrap(), "策士");
     assert_eq!(phrase_a.pronunciations().len(), 1);
@@ -449,7 +446,7 @@ fn phrase_length_ceiling_rejects_sixteen_characters() {
             None,
         )
         .unwrap();
-    assert!(store.phrase(token).unwrap().is_some());
+    assert!(store.phrase(token).is_some());
 
     let too_long: String = "测".repeat(16);
     assert!(matches!(

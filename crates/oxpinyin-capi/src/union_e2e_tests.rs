@@ -215,10 +215,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         Some(promoted),
         "the promoted phrase resolves under nibble 5"
     );
-    let phrase = store
-        .phrase(promoted)
-        .expect("store read")
-        .expect("promoted phrase exists");
+    let phrase = store.phrase(promoted).expect("promoted phrase exists");
     assert_eq!(
         phrase.words(),
         text.chars().map(u32::from).collect::<Vec<_>>()
@@ -759,7 +756,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             token,
             cand.text_str().expect("addon text").to_owned(),
             keys,
-            store.unigram_total().unwrap(),
+            store.unigram_total(),
         )
     };
     let mut cand = std::ptr::null_mut();
@@ -786,8 +783,8 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
                 .is_empty()
         );
         assert!(store.lookup().lookup(&keys).is_empty());
-        assert!(store.phrases().unwrap().is_empty());
-        assert_eq!(store.unigram_total().unwrap(), total);
+        assert!(store.phrases().is_empty());
+        assert_eq!(store.unigram_total(), total);
         assert!(!store.is_modified());
     }
     assert!(!crate::context::pinyin_save(context));

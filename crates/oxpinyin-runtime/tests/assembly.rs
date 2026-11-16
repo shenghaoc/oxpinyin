@@ -409,10 +409,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // Language-model seam: user counts must reach the overlay — the
     // merged answer and the LM total must move by exactly the store's
     // own delta.
-    let store_before = runtime
-        .user_store_mut()
-        .unigram_total()
-        .expect("store total");
+    let store_before = runtime.user_store_mut().unigram_total();
     // Capture the overlay total *before* the observation so the branch
     // below measures the delta the observation causes.
     let lm_before = LanguageModel::unigram_total(&runtime.lm()).expect("total query");
@@ -420,10 +417,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
         .user_store_mut()
         .observe_selection(SENTENCE_START, FIRST_USER_TOKEN)
         .expect("observe a selection");
-    let store_after = runtime
-        .user_store_mut()
-        .unigram_total()
-        .expect("store total");
+    let store_after = runtime.user_store_mut().unigram_total();
     assert!(
         store_after > store_before,
         "observing must grow the store's unigram total: {store_before} -> {store_after}"
