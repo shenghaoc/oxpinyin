@@ -1,7 +1,9 @@
 //! Candidate access, selection, and training.
 
+use std::cell::Cell;
 use std::os::raw::c_int;
 
+use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use oxpinyin_core::PhraseToken;
 use oxpinyin_engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
 use oxpinyin_user::{UnigramAdd, is_user_token};
@@ -332,6 +334,180 @@ pub extern "C" fn pinyin_remove_user_candidate(
     }
 }
 
+/// The sole unreadable row of the window, which is published with null
+/// text: only when the lookup searched, every row is the engine's fallback
+/// row, and the facade total is not zero.
+fn sole_unreadable_row(
+    window: &oxpinyin_engine::CandidateList,
+    frame: &crate::sentence::GuessFrame,
+) -> Option<oxpinyin_engine::Candidate> {
+    window.sole_unreadable_candidate().filter(|_| {
+        !frame.sentence_rows_only
+            && window
+                .iter()
+                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+            && !frame.abort_on_unreadable
+    })
+}
+
+/// The published type of a window row; `is_longer` names the LONGER row.
+fn row_type(cand: &oxpinyin_engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
+    match cand.kind() {
+        oxpinyin_engine::CandidateKind::Sentence => lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
+        oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
+        oxpinyin_engine::CandidateKind::Phrase | oxpinyin_engine::CandidateKind::Fallback
+            if is_longer =>
+        {
+            lookup_candidate_type_t::LONGER_CANDIDATE
+        }
+        oxpinyin_engine::CandidateKind::Phrase | oxpinyin_engine::CandidateKind::Fallback => {
+            lookup_candidate_type_t::NORMAL_CANDIDATE
+        }
+    }
+}
+
+/// Fill the instance's candidate snapshot from the window of one guess.
+///
+/// Each row carries its own span in the caller's original coordinates and
+/// its text in the snapshot's buffer, so no row borrows from `window`: the
+/// caller returns the window to the session afterwards.
+pub(crate) fn snapshot_candidates(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    window: &oxpinyin_engine::CandidateList,
+    frame: &crate::sentence::GuessFrame,
+) {
+    // One row vector and one text buffer, each sized once for the window
+    // (rows the loop skips leave a little slack, never a second growth).
+    // The size is the texts' encoded length, so each text is encoded once,
+    // by the loop.
+    inst.state.candidates.reserve(
+        window.len(),
+        window
+            .iter()
+            .map(|cand| phrase_text_len(cand.text()) + 1)
+            .sum(),
+    );
+    let unreadable = sole_unreadable_row(window, frame);
+    let published_bound = inst.core.publication_bound_mapper(true);
+    for (cand, missing) in window
+        .iter()
+        .map(|row| (row, false))
+        .chain(unreadable.iter().map(|row| (row, true)))
+    {
+        // The engine's remaining-raw-input `Fallback` row is the
+        // session-API affordance (`session-api.md`: it keeps `select`
+        // meaningful when no phrase is found) —
+        // the pin has no raw-input fallback: an empty matrix answers
+        // false (`pinyin.cpp:2193`), an empty result answers true
+        // with no rows. The C ABI translates the engine shape, it
+        // does not surface it.
+        if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
+            continue;
+        }
+        // §9: a LONGER row is the engine's token-carrying row with the
+        // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
+        // never set for the type) — a normal phrase row always covers at
+        // least one key, so `token && consumed_bytes == 0` names the type
+        // uniquely on this surface. The RAW span decides the type, under a
+        // transform (double pinyin, the zhuyin keyboards) too.
+        // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
+        // the row and ibus maps it (`CANDIDATE_LONGER`/
+        // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
+        let is_longer = cand.token().is_some() && cand.consumed_bytes() == 0;
+        // A lookup strictly inside a key: the pin's column there is empty,
+        // so the span loop finds no phrase row, but its two prepends still
+        // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
+        // the LONGER row beneath them (row 65). Keep exactly those kinds.
+        if frame.sentence_rows_only
+            && cand.kind() != oxpinyin_engine::CandidateKind::Sentence
+            && !is_longer
+        {
+            continue;
+        }
+        let text = if missing {
+            oxpinyin_facade::TextSpan::NULL
+        } else {
+            let bytes = phrase_text_bytes(cand.text());
+            let Some(text) = inst.state.candidates.intern(&bytes) else {
+                continue;
+            };
+            text
+        };
+        // The pin's `m_begin` and `m_end`: `m_begin` is the caller's guess
+        // offset itself (`start = offset`, `pinyin.cpp:2228`, `:2246`), and
+        // `m_end` the span end in the same coordinates, both `guint16`
+        // (`:103-104`). A sentence or LONGER row keeps the default zero
+        // span (`:114`; `_prepend_sentence_candidates`, `:1936-1950`).
+        let (begin, end) = if is_longer || cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
+            (0, 0)
+        } else {
+            let selection =
+                oxpinyin_facade::SelectionSpan::of_candidate(cand, frame.session_offset);
+            (frame.offset as u16, published_bound(selection.end()) as u16)
+        };
+        if cand.text().outward_bytes().is_none() {
+            inst.state.candidates.keep_stored_text(cand.text().clone());
+        }
+        inst.state.candidates.push(CapiCandidate {
+            text,
+            text_ptr: std::ptr::null(),
+            type_tag: Cell::new(row_type(cand, is_longer).tag()),
+            nbest_index: cand.nbest_index(),
+            token: Cell::new(cand.token()),
+            begin,
+            end,
+        });
+    }
+}
+
+/// The normal leg of `pinyin_choose_candidate`: write the row's constraint
+/// and answer the caller's offset plus the length written. `token` and
+/// `text` are the row's, after any addon promotion.
+fn choose_phrase_row(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    offset: usize,
+    row: &RowArgs,
+    token: Option<PhraseToken>,
+    text: oxpinyin_engine::RowText,
+) -> c_int {
+    // A row with no token reaching the normal branch is a predicted
+    // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
+    // writes `add_constraint(0, 0, null_token)` between its two validations
+    // and answers `offset + 0` (`:2577-2590`; `phonetic_lookup.cpp:61-86`):
+    // a zero-length null-token cell at 0 that blocks every later sentence
+    // decode until a reset clears it or a later non-empty forcing at 0
+    // overwrites it. After a reset the write lands in the empty array's
+    // terminator slot and changes nothing observable (GLib 2.84.4
+    // `garray.c:349-354`, `:1051-1079`).
+    let Some(token) = token else {
+        return match inst.core.session.choose_null_step() {
+            Ok(()) => choose_answer(offset, 0),
+            Err(_) => -1,
+        };
+    };
+    let published = oxpinyin_facade::PublishedRow {
+        begin: row.begin,
+        end: row.end,
+        token,
+        text,
+    };
+    match inst.core.select_published(&published, true) {
+        // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
+        Ok(oxpinyin_engine::Selection::Refused) => choose_answer(offset, 0),
+        // The pin answers the caller's choose offset plus the length
+        // `add_constraint` wrote, `m_end - m_begin` of the row's own span
+        // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever
+        // offset the caller passes.
+        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {
+            choose_answer(
+                offset,
+                usize::from(row.end).wrapping_sub(usize::from(row.begin)),
+            )
+        }
+        Err(_) => -1,
+    }
+}
+
 /// Choose a candidate at an offset, returning the new cursor position.
 ///
 /// # C signature
@@ -467,42 +643,7 @@ pub extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
     }
-    // A row with no token reaching the normal branch is a predicted
-    // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
-    // writes `add_constraint(0, 0, null_token)` between its two validations
-    // and answers `offset + 0` (`:2577-2590`; `phonetic_lookup.cpp:61-86`):
-    // a zero-length null-token cell at 0 that blocks every later sentence
-    // decode until a reset clears it or a later non-empty forcing at 0
-    // overwrites it. After a reset the write lands in the empty array's
-    // terminator slot and changes nothing observable (GLib 2.84.4
-    // `garray.c:349-354`, `:1051-1079`).
-    let Some(token) = token else {
-        return match inst.core.session.choose_null_step() {
-            Ok(()) => choose_answer(offset, 0),
-            Err(_) => -1,
-        };
-    };
-    let published = oxpinyin_facade::PublishedRow {
-        begin: row.begin,
-        end: row.end,
-        token,
-        text,
-    };
-    match inst.core.select_published(&published, true) {
-        // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
-        Ok(oxpinyin_engine::Selection::Refused) => choose_answer(offset, 0),
-        // The pin answers the caller's choose offset plus the length
-        // `add_constraint` wrote, `m_end - m_begin` of the row's own span
-        // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever
-        // offset the caller passes.
-        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {
-            choose_answer(
-                offset,
-                usize::from(row.end).wrapping_sub(usize::from(row.begin)),
-            )
-        }
-        Err(_) => -1,
-    }
+    choose_phrase_row(&mut inst, offset, &row, token, text)
 }
 
 /// The scalars the pin's choose reads off a candidate (`pinyin.cpp:97-105`),

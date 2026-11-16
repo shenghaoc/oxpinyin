@@ -295,6 +295,23 @@ fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
     }
 }
 
+/// The sole unreadable row of the window, which is published with null
+/// text: only when the lookup searched, every row is the engine's fallback
+/// row, and the facade total is not zero.
+fn sole_unreadable_row(
+    inst: &crate::state::CapiInstanceMut<'_>,
+    window: &oxpinyin_engine::CandidateList,
+    sentence_rows_only: bool,
+) -> Option<oxpinyin_engine::Candidate> {
+    window.sole_unreadable_candidate().filter(|_| {
+        !sentence_rows_only
+            && window
+                .iter()
+                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+            && !crate::sentence::facade_total_is_zero(&inst.read())
+    })
+}
+
 /// Fill the instance's candidate snapshot from a `CandidateList`.
 ///
 /// `before_cursor` selects the zhuyin enum tag for the normal rows. When
@@ -320,23 +337,12 @@ pub fn snapshot_candidates(
     } else {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
     };
-    let offsets = inst.core.zhuyin_parse.as_ref().map(|parse| {
-        let mut transformed = 0;
-        let ends: Vec<_> = parse
-            .keys()
-            .iter()
-            .map(|key| {
-                let boundary = transformed + key.key().text().len();
-                transformed = boundary + 1;
-                (boundary, key.end())
-            })
-            .collect();
-        (ends, parse.consumed())
-    });
+    // A row's offsets are in the session's `'`-joined coordinates under a
+    // zhuyin keyboard parse; the caller's are in the original input's.
+    let parse = inst.core.zhuyin_parse.as_ref();
     let original_end = |offset| {
-        offsets.as_ref().map_or(offset, |(ends, consumed)| {
-            let index = ends.partition_point(|&(boundary, _)| boundary < offset);
-            ends.get(index).map_or(*consumed, |&(_, end)| end)
+        parse.map_or(offset, |parse| {
+            oxpinyin_facade::zhuyin_original_offset(parse, offset)
         })
     };
     // One row vector and one text buffer, each sized once for the window.
@@ -349,13 +355,7 @@ pub fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    let unreadable = window.sole_unreadable_candidate().filter(|_| {
-        !sentence_rows_only
-            && window
-                .iter()
-                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
-            && !crate::sentence::facade_total_is_zero(&inst.read())
-    });
+    let unreadable = sole_unreadable_row(inst, window, sentence_rows_only);
     for (cand, missing) in window
         .iter()
         .map(|row| (row, false))
@@ -384,7 +384,7 @@ pub fn snapshot_candidates(
             continue;
         }
         let span_begin_session = anchor.saturating_add(cand.span_start());
-        let span_begin = if offsets.is_some() {
+        let span_begin = if parse.is_some() {
             span_begin_session.checked_sub(1).map_or(0, original_end)
         } else {
             span_begin_session
