@@ -454,6 +454,21 @@ where
                 .add(constraint_start, constraint_end, token, text);
             return self.settle_written_forcing();
         }
+        self.record_row_choice(target, &text, constraint_end)
+    }
+
+    /// The row path of [`Self::select_target`], for an n-best row or a
+    /// choose without a token: record the chosen text and the token
+    /// history, constrain the phrases where an n-best row differs from the
+    /// best one, move the composition offset to `constraint_end` and
+    /// refresh.
+    fn record_row_choice(
+        &mut self,
+        target: &SelectionTarget<'_>,
+        text: &PhraseText,
+        constraint_end: usize,
+    ) -> Result<Selection, EngineError> {
+        let span_start = target.span_start;
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
         // (span start > composition offset) they would otherwise be dropped
@@ -480,11 +495,11 @@ where
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way.
-            state.record.set_selected(&text);
+            state.record.set_selected(text);
         } else {
-            state.record.append_selected(gap, &text);
+            state.record.append_selected(gap, text);
         }
-        if let Some(token) = token {
+        if let Some(token) = target.token {
             state.record.push_token(token);
         } else if let Some(rank) = target.nbest_row {
             // A prepended n-best row records its whole token path —

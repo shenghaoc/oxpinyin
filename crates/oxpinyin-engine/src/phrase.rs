@@ -200,7 +200,7 @@ where
     F: FnMut(usize, usize) -> (Vec<PhraseToken>, bool),
 {
     let null = PhraseToken::new(0);
-    let mut result = vec![null; n];
+    let result = vec![null; n];
 
     let mut steps: Vec<Step> = vec![Step::default(); n + 1];
     steps[0].relax(Node {
@@ -234,54 +234,80 @@ where
                 }
                 continue;
             }
-            let mut unigrams = Vec::new();
-            for node in predecessors {
-                // The predecessor's merged row, loaded at its first phrase
-                // in this span: `search_bigram2` loads and merges it on
-                // every `SEARCH_OK` (`phrase_lookup.cpp:268-276`), and
-                // nothing writes the grams within the call, so one load
-                // serves the span.
-                let mut row = NbestStepRow::default();
-                for &token in &tokens {
-                    let costs = step_costs(model, node.token, token, &mut row)?;
-                    // Bigram branch: every node of the from-step.
-                    if let Some(blended) = costs.blended {
-                        step.relax(Node {
-                            token,
-                            prev: node.token,
-                            last_step: i,
-                            poss: (f64::from(node.poss) + blended.ln()) as f32,
-                        });
-                    }
-                    // Unigram branch: the from-step's best node only.
-                    if let Some(from) = &uni_from
-                        && from.token == node.token
-                        && let Some(unigram) = costs.unigram
-                    {
-                        unigrams.push((token, unigram * f64::from(costs.unigram_lambda)));
-                    }
-                }
-            }
-            for (token, probability) in unigrams {
-                if let Some(from) = &uni_from {
-                    step.relax(Node {
-                        token,
-                        prev: from.token,
-                        last_step: i,
-                        poss: (f64::from(from.poss) + probability.ln()) as f32,
-                    });
-                }
-            }
+            relax_span(model, step, predecessors, uni_from.as_ref(), &tokens, i)?;
             if !continued {
                 break;
             }
         }
     }
 
+    Ok(backtrack(&steps, n, result))
+}
+
+/// Relax one span's phrases `tokens` into the span's end step: the bigram
+/// branch from every node of the from-step, per node in token order, and
+/// then the unigram branch from the from-step's best node `uni_from`.
+fn relax_span<L>(
+    model: &L,
+    step: &mut Step,
+    predecessors: &[Node],
+    uni_from: Option<&Node>,
+    tokens: &[PhraseToken],
+    from_step: usize,
+) -> Result<(), EngineError>
+where
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let mut unigrams = Vec::new();
+    for node in predecessors {
+        // The predecessor's merged row, loaded at its first phrase
+        // in this span: `search_bigram2` loads and merges it on
+        // every `SEARCH_OK` (`phrase_lookup.cpp:268-276`), and
+        // nothing writes the grams within the call, so one load
+        // serves the span.
+        let mut row = NbestStepRow::default();
+        for &token in tokens {
+            let costs = step_costs(model, node.token, token, &mut row)?;
+            // Bigram branch: every node of the from-step.
+            if let Some(blended) = costs.blended {
+                step.relax(Node {
+                    token,
+                    prev: node.token,
+                    last_step: from_step,
+                    poss: (f64::from(node.poss) + blended.ln()) as f32,
+                });
+            }
+            // Unigram branch: the from-step's best node only.
+            if let Some(from) = uni_from
+                && from.token == node.token
+                && let Some(unigram) = costs.unigram
+            {
+                unigrams.push((token, unigram * f64::from(costs.unigram_lambda)));
+            }
+        }
+    }
+    for (token, probability) in unigrams {
+        if let Some(from) = uni_from {
+            step.relax(Node {
+                token,
+                prev: from.token,
+                last_step: from_step,
+                poss: (f64::from(from.poss) + probability.ln()) as f32,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `final_step`: backtrack from the last step's best node into `result`,
+/// which is sized and null-filled. `false` when the last step holds no node
+/// or the chain breaks.
+fn backtrack(steps: &[Step], n: usize, mut result: Vec<PhraseToken>) -> (bool, Vec<PhraseToken>) {
     // final_step: the array is already sized and null-filled; find the
     // last step's best node and backtrack.
     let Some(best) = steps[n].best() else {
-        return Ok((false, result));
+        return (false, result);
     };
     let mut cursor = best.clone();
     loop {
@@ -296,11 +322,11 @@ where
         else {
             // A broken chain — upstream returns `false` mid-backtrack
             // with whatever the walk wrote so far.
-            return Ok((false, result));
+            return (false, result);
         };
         cursor = node;
     }
-    Ok((true, result))
+    (true, result)
 }
 
 #[cfg(test)]

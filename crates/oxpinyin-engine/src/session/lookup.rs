@@ -10,6 +10,20 @@ use oxpinyin_core::phrase_index_library;
 
 use super::*;
 
+/// The LONGER winner law (`pinyin.cpp:1904-1917`): a strictly greater
+/// unigram replaces the winner, and an equal one only from an earlier
+/// library, because `reduce_tokens` concatenates the libraries first.
+fn beats_longer_winner(
+    token: PhraseToken,
+    unigram: u64,
+    best_token: PhraseToken,
+    best: u64,
+) -> bool {
+    unigram > best
+        || (unigram == best
+            && phrase_index_library(token.value()) < phrase_index_library(best_token.value()))
+}
+
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -147,8 +161,49 @@ where
         let mut path = SuggestionPath::default();
         self.collect_suggestion_paths(matrix, 0, end, max_keys, &mut path, &mut paths);
 
+        let winner = self.longer_winner(&paths, prefix_len, gate_overlong)?;
+        let Some((token, unigram, text)) = winner else {
+            return Ok(None);
+        };
+        let total = self
+            .model
+            .unigram_total()
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .unwrap_or(0);
+        // LONGER has no bigram term (`pinyin.cpp:1916-1927`). Its zero
+        // span marks the C-facing row as LONGER. The final dedup reads
+        // its frequency even when the sort word suppresses sentence rows.
+        let phrase_length = text.phrase_length();
+        let key = RankKey::for_sort_word(
+            phrase_length,
+            0,
+            amplified_frequency(unigram, total, self.model.amplification_lambda()),
+            self.lookup.sort_word,
+        );
+        Ok(Some((
+            key,
+            Candidate::new(text, CandidateKind::Phrase, 0, 0, Some(token), None),
+        )))
+    }
+
+    /// The winner of the LONGER row among the suggestion `paths`: the
+    /// maximum-unigram token whose phrase is within the character cap of
+    /// `prefix_len`, with its unigram and text. Ties follow
+    /// [`beats_longer_winner`].
+    ///
+    /// # Errors
+    ///
+    /// The dictionary walk's or a model read's failure; with
+    /// `gate_overlong`, the toned incomplete key and the over-long user
+    /// index key that the pin's suggestion walk dies on.
+    fn longer_winner(
+        &self,
+        paths: &[SuggestionPath],
+        prefix_len: usize,
+        gate_overlong: bool,
+    ) -> Result<Option<(PhraseToken, u64, PhraseText)>, EngineError> {
         let mut winner: Option<(PhraseToken, u64, PhraseText)> = None;
-        for SuggestionPath { keys, tones } in &paths {
+        for SuggestionPath { keys, tones } in paths {
             // `search_suggestion` asserts on a toned first initial-only key
             // before its walk (`chewing_large_table2_bdb.cpp:560`, kc `:534`,
             // tkrzw `:504`; `pinyin_phrase3.h:152`). Only the explicit guess
@@ -209,37 +264,13 @@ where
                     })?
                     .unwrap_or(0);
                 if winner.as_ref().is_none_or(|(best_token, best, _)| {
-                    unigram > *best
-                        || (unigram == *best
-                            && phrase_index_library(token.value())
-                                < phrase_index_library(best_token.value()))
+                    beats_longer_winner(token, unigram, *best_token, *best)
                 }) {
                     winner = Some((token, unigram, text));
                 }
             }
         }
-        let Some((token, unigram, text)) = winner else {
-            return Ok(None);
-        };
-        let total = self
-            .model
-            .unigram_total()
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
-            .unwrap_or(0);
-        // LONGER has no bigram term (`pinyin.cpp:1916-1927`). Its zero
-        // span marks the C-facing row as LONGER. The final dedup reads
-        // its frequency even when the sort word suppresses sentence rows.
-        let phrase_length = text.phrase_length();
-        let key = RankKey::for_sort_word(
-            phrase_length,
-            0,
-            amplified_frequency(unigram, total, self.model.amplification_lambda()),
-            self.lookup.sort_word,
-        );
-        Ok(Some((
-            key,
-            Candidate::new(text, CandidateKind::Phrase, 0, 0, Some(token), None),
-        )))
+        Ok(winner)
     }
 
     /// The suggestion walk's path enumeration: every key-path from `node`
