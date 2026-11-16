@@ -914,6 +914,13 @@ where
     let facts = RefCell::new(SentenceFacts::default());
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
+    let env = NbestEnv {
+        generation: &generation,
+        facts: &facts,
+        bound,
+        dictionary,
+        model,
+    };
     let mut position = 0_usize;
     while position < bound {
         if matches!(cell_at(position), Some(Cell::NoSearch { .. })) {
@@ -933,50 +940,13 @@ where
             // entered on any `SEARCH_OK` (`phonetic_lookup.h:775-788`) —
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
-                let mut found = SpanRanges::default();
-                generation.search(position, end, dictionary, &mut scratch, &mut found)?;
-                let pricing = Pricing {
-                    ranges: &found.ranges,
-                    dictionary,
-                    paths: &found.paths,
-                    memos: &found.memos,
-                    facts: &facts,
-                    generation: &generation,
-                    span: position..end,
-                    sums: &found.sums,
-                };
-                if found.ranges.iter().next().is_some() {
-                    let mut forced = PhraseIndexRanges::new();
-                    forced.convert(
-                        pricing
-                            .forced_slot(token.value())?
-                            .map(|slot| (token.value(), Some(slot))),
-                    );
-                    let forced = Pricing {
-                        ranges: &forced,
-                        ..pricing
-                    };
-                    expand_entries(
-                        &forced,
-                        &beam,
-                        position..end,
-                        model,
-                        &mut trellis,
-                        Some(token.value()),
-                    )?;
-                }
+                let span = position..end;
+                expand_forced_span(&env, token, span, &beam, &mut scratch, &mut trellis)?;
             }
             position += 1;
             continue;
         }
 
-        let env = NbestEnv {
-            generation: &generation,
-            facts: &facts,
-            bound,
-            dictionary,
-            model,
-        };
         widen_free_span(
             &env,
             constraints,
@@ -988,12 +958,74 @@ where
         position += 1;
     }
 
+    nbest_rows(&mut trellis, dictionary, &facts, bound)
+}
+
+/// One span search to a forced step's fixed end, for the forced token only:
+/// `search_bigram2`/`search_unigram2`'s ONESTEP branches, entered on any
+/// `SEARCH_OK` (`phonetic_lookup.h:775-788`). No widening follows, and no
+/// other token starts at the span's start.
+fn expand_forced_span<D, L>(
+    env: &NbestEnv<'_, D, L>,
+    token: PhraseToken,
+    span: std::ops::Range<usize>,
+    beam: &[BeamEntry],
+    scratch: &mut GenerationPath,
+    trellis: &mut Trellis,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let mut found = SpanRanges::default();
+    env.generation
+        .search(span.start, span.end, env.dictionary, scratch, &mut found)?;
+    let pricing = Pricing {
+        ranges: &found.ranges,
+        dictionary: env.dictionary,
+        paths: &found.paths,
+        memos: &found.memos,
+        facts: env.facts,
+        generation: env.generation,
+        span: span.clone(),
+        sums: &found.sums,
+    };
+    if found.ranges.iter().next().is_some() {
+        let mut forced = PhraseIndexRanges::new();
+        forced.convert(
+            pricing
+                .forced_slot(token.value())?
+                .map(|slot| (token.value(), Some(slot))),
+        );
+        let forced = Pricing {
+            ranges: &forced,
+            ..pricing
+        };
+        expand_entries(&forced, beam, span, env.model, trellis, Some(token.value()))?;
+    }
+    Ok(())
+}
+
+/// The n-best rows of a finished walk over `bound` columns: one row per
+/// trellis tail whose every span has a present phrase item.
+fn nbest_rows<D>(
+    trellis: &mut Trellis,
+    dictionary: &D,
+    facts: &RefCell<SentenceFacts>,
+    bound: usize,
+) -> Result<Vec<NbestRow>, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+{
     let span = bound;
     let mut rows = Vec::new();
     let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let text = trellis.text(dictionary, &mut texts, &spans, &facts)?;
+        let text = trellis.text(dictionary, &mut texts, &spans, facts)?;
         // Each span needs a present item. It keeps the stored length for
         // constraint writes and training even if its text does not convert.
         let Some(phrase_spans) = spans
@@ -1468,26 +1500,8 @@ where
             }
         } else {
             // Models without row traversal retain their existing scalar path.
-            for (token, slot) in entries.walk_tokens() {
-                let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry))
-                else {
-                    continue;
-                };
-                let branch = Branch::Bigram(None);
-                expand_one(
-                    entry,
-                    StepCtx {
-                        paths: pricing.paths,
-                        span: span.clone(),
-                        model,
-                        facts: pricing.facts,
-                    },
-                    predecessor,
-                    row,
-                    trellis,
-                    branch,
-                )?;
-            }
+            let branch = Branch::Bigram(None);
+            expand_span_entries(pricing, &span, model, predecessor, row, trellis, branch)?;
         }
         if index == 0 {
             head_row = loaded;
@@ -1497,25 +1511,46 @@ where
     // (search_unigram2, phonetic_lookup.h:560-572).
     if let Some(predecessor) = beam.first() {
         let row = &mut head_row;
-        for (token, slot) in entries.walk_tokens() {
-            let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry)) else {
-                continue;
-            };
-            let branch = Branch::Unigram;
-            expand_one(
-                entry,
-                StepCtx {
-                    paths: pricing.paths,
-                    span: span.clone(),
-                    model,
-                    facts: pricing.facts,
-                },
-                predecessor,
-                row,
-                trellis,
-                branch,
-            )?;
-        }
+        let branch = Branch::Unigram;
+        expand_span_entries(pricing, &span, model, predecessor, row, trellis, branch)?;
+    }
+    Ok(())
+}
+
+/// One trellis step on `branch` from `predecessor` for each eligible entry
+/// of the span, in library and range order.
+fn expand_span_entries<D, L>(
+    pricing: &Pricing<'_, D>,
+    span: &std::ops::Range<usize>,
+    model: &L,
+    predecessor: &BeamEntry,
+    row: &mut oxpinyin_core::NbestStepRow,
+    trellis: &mut Trellis,
+    branch: Branch,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    for (token, slot) in pricing.ranges.walk_tokens() {
+        let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry)) else {
+            continue;
+        };
+        expand_one(
+            entry,
+            StepCtx {
+                paths: pricing.paths,
+                span: span.clone(),
+                model,
+                facts: pricing.facts,
+            },
+            predecessor,
+            row,
+            trellis,
+            branch,
+        )?;
     }
     Ok(())
 }
