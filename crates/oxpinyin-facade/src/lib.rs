@@ -55,7 +55,7 @@ pub use export_rows::{
     BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
     GramLoadFault, PhraseExportCursor,
 };
-pub use import::{ImportPlan, plan_add};
+pub use import::ImportPlan;
 pub use instance::{
     BEFORE_CURSOR_ANCHOR, InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView,
     PublishedRow, SelectionSpan, TrainingRefusal, refuse_lookup_gram, training_answer,

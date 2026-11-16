@@ -6,10 +6,9 @@ use oxpinyin_core::Dictionary;
 use oxpinyin_engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
 use oxpinyin_user::{PinyinKey, toned_key};
 
-use crate::iterators::{ImportPlan, ImportRead};
+use crate::iterators::ImportPlan;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::PinyinInstance;
-use oxpinyin_facade::plan_add;
 
 /// Remember a user-provided phrase with its current pinyin context.
 ///
@@ -148,24 +147,15 @@ fn add_remembered_path(
     // SAFETY: `instance` is live; every earlier reader has ended and the C
     // caller grants exclusive access to the runtime for this call.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let phrase = {
-        let read = ImportRead {
-            index: oxpinyin_user::USER_DICTIONARY,
-            user: ctx.core.user_store(),
-            dict: ctx.core.runtime.dict(),
-        };
-        match plan_add(
-            read.index,
-            &read.dict,
-            read.user,
-            phrase.clone(),
-            keys.clone(),
-        ) {
+    let phrase =
+        match ctx
+            .core
+            .plan_add(oxpinyin_user::USER_DICTIONARY, phrase.clone(), keys.clone())
+        {
             ImportPlan::Abort => std::process::abort(),
             ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
             ImportPlan::Add { phrase, .. } => phrase,
-        }
-    };
+        };
     let user = ctx.core.user_store_mut();
     // `if (-1 == count) count = default_count;` otherwise the `gint` is
     // used as the `guint32` it becomes (`pinyin.cpp:520-524`, the same
