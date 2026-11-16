@@ -361,9 +361,7 @@ pub fn snapshot_candidates(
         .map(|row| (row, false))
         .chain(unreadable.iter().map(|row| (row, true)))
     {
-        if cand.kind() == CandidateKind::Sentence && !before_cursor {
-            // BEST_MATCH row stays at the head.
-        }
+        // The rows keep the window's order, so a BEST_MATCH row stays at the head.
         if cand.kind() == CandidateKind::Fallback {
             continue;
         }

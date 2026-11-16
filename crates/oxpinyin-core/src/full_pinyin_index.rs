@@ -125,6 +125,18 @@ struct Step {
     key: Option<FullPinyinIndexKey>,
 }
 
+impl Step {
+    /// Whether this proposed step replaces `existing` at its destination:
+    /// the destination is not reached yet, or the proposal covers more
+    /// input, or it covers the same input with fewer keys. An equal
+    /// proposal does not replace, so the earlier path stays.
+    const fn replaces(&self, existing: &Self) -> bool {
+        !existing.reached
+            || self.parsed_len > existing.parsed_len
+            || (self.parsed_len == existing.parsed_len && self.num_keys < existing.num_keys)
+    }
+}
+
 /// `FullPinyinParser2::parse_one_key` over an index
 /// (`pinyin_parser2.cpp:155-205`): under `use_tone` a trailing digit
 /// 1..5 is the tone and is consumed with the match; the whole substring
@@ -215,10 +227,7 @@ pub fn parse_full_pinyin_index_with_options(
                     parsed_len: previous.parsed_len + 1,
                     key: None,
                 };
-                if !next.reached
-                    || value.parsed_len > next.parsed_len
-                    || (value.parsed_len == next.parsed_len && value.num_keys < next.num_keys)
-                {
+                if value.replaces(next) {
                     *next = value;
                 }
             }
@@ -254,10 +263,7 @@ pub fn parse_full_pinyin_index_with_options(
                 }),
             };
             let next = &mut steps[end];
-            if !next.reached
-                || value.parsed_len > next.parsed_len
-                || (value.parsed_len == next.parsed_len && value.num_keys < next.num_keys)
-            {
+            if value.replaces(next) {
                 *next = value;
             }
         }

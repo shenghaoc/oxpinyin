@@ -1346,29 +1346,28 @@ fn zhuyin_parse_one_key(
     let options = options - OptionBits::PINYIN_AMB_ALL;
     let use_tone = options.contains(OptionBits::USE_TONE);
     let force_tone = options.contains(OptionBits::FORCE_TONE);
-    let (syllable, tone) = match scheme.keyboard()? {
-        Keyboard::Simple(tables) => {
-            let (key, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
-            if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
-                return None;
-            }
-            (key, tone)
-        }
-        Keyboard::Discrete(tables) => {
-            let (key, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
-            if force_tone && tone == CHEWING_ZERO_TONE {
-                return None;
-            }
-            (key, tone)
-        }
-        Keyboard::Cp26(tables) => {
-            let (key, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
-            if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
-                return None;
-            }
-            (key, tone)
-        }
+    // The probe takes this path's own option word, not the batch parse's.
+    let probe = match scheme.keyboard()? {
+        Keyboard::Simple(tables) => KeyProbe::Simple {
+            tables,
+            use_tone,
+            options,
+            force_tone,
+        },
+        Keyboard::Discrete(tables) => KeyProbe::Discrete {
+            tables,
+            use_tone,
+            options,
+            force_tone,
+        },
+        Keyboard::Cp26(tables) => KeyProbe::Cp26 {
+            tables,
+            use_tone,
+            options,
+            force_tone,
+        },
     };
+    let (syllable, tone) = probe.parse_one_key(input)?;
     Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
 }
 

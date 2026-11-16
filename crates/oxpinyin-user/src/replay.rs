@@ -1563,6 +1563,11 @@ impl ReplayedLibrary {
     }
 }
 
+/// What a finished merge leaves: the library's total when it has an original,
+/// the slots that answer no item (removed, or not readable), and the buffer
+/// when the replay left anything in it.
+pub(crate) type Finished = (Option<u32>, BTreeSet<u32>, Option<ReplayedLibrary>);
+
 impl<'a> Merge<'a, '_> {
     /// Validate one slot for the lazy view. Returns whether the slot stays in
     /// the replayed view; `next` receives the original slots its over-length
@@ -1572,25 +1577,24 @@ impl<'a> Merge<'a, '_> {
     fn finish_slot(
         &mut self,
         slot: u32,
-        typed: &mut BTreeMap<u32, Option<ChunkItem>>,
+        gone: &mut BTreeSet<u32>,
         skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
         next: &mut Vec<u32>,
-        retain_adds: bool,
     ) -> bool {
         let relocated = self.relocated(slot);
         let offset = self.slot_offset(slot);
         if offset == 0 {
-            typed.insert(slot, None);
+            gone.insert(slot);
             return false;
         }
         match self.content.header(offset as usize) {
             Found::Failed => {
-                typed.insert(slot, None);
+                gone.insert(slot);
                 false
             }
             Found::Past => {
-                typed.insert(slot, None);
+                gone.insert(slot);
                 record_skip(
                     skipped,
                     format_args!("{name}: item {slot} ends past the phrase content"),
@@ -1624,22 +1628,11 @@ impl<'a> Merge<'a, '_> {
                     }
                 },
                 None => {
-                    if retain_adds {
-                        if let Some(bytes) = self.content.item(offset, len) {
-                            match validate_phrase_item(&bytes) {
-                                Ok(()) => {
-                                    self.has_added_items = true;
-                                    return true;
-                                }
-                                Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
-                            }
-                        }
-                        return false;
-                    }
                     if let Some(bytes) = self.content.item(offset, len) {
-                        match decode_phrase_item(&bytes) {
-                            Ok(item) => {
-                                typed.insert(slot, Some(item));
+                        match validate_phrase_item(&bytes) {
+                            Ok(()) => {
+                                self.has_added_items = true;
+                                return true;
                             }
                             Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
                         }
@@ -1654,15 +1647,14 @@ impl<'a> Merge<'a, '_> {
     #[inline(never)]
     fn finish_overreach(
         &mut self,
-        typed: &mut BTreeMap<u32, Option<ChunkItem>>,
+        gone: &mut BTreeSet<u32>,
         skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
-        retain_adds: bool,
     ) {
         let mut slots = std::mem::take(&mut self.touched);
         let mut processed: BTreeSet<u32> = slots.iter().copied().collect();
         let mut extra = Vec::new();
-        slots.retain(|&slot| self.finish_slot(slot, typed, skipped, name, &mut extra, retain_adds));
+        slots.retain(|&slot| self.finish_slot(slot, gone, skipped, name, &mut extra));
         extra.sort_unstable();
         extra.dedup();
         extra.retain(|slot| processed.insert(*slot));
@@ -1670,7 +1662,7 @@ impl<'a> Merge<'a, '_> {
         while !extra.is_empty() {
             let mut next = Vec::new();
             for slot in extra {
-                if self.finish_slot(slot, typed, skipped, name, &mut next, retain_adds) {
+                if self.finish_slot(slot, gone, skipped, name, &mut next) {
                     slots.push(slot);
                     added = true;
                 }
@@ -1686,44 +1678,21 @@ impl<'a> Merge<'a, '_> {
         self.touched = slots;
     }
 
-    /// Keep original live slots as one private view. Added and removed slots
-    /// still use the session's existing value/index/removal paths.
-    #[cfg(test)]
-    pub(crate) fn finish_lazy(
-        self,
-        skipped: &mut Option<&mut Vec<String>>,
-        name: &impl std::fmt::Display,
-    ) -> (
-        Option<u32>,
-        BTreeMap<u32, Option<ChunkItem>>,
-        Option<ReplayedLibrary>,
-    ) {
-        self.finish_lazy_impl(skipped, name, false)
-    }
-
     /// Retain ADD bodies as views too; the session seeds their rows through
     /// the same conversion as USER_FILE items.
     pub(crate) fn finish_views(
         self,
         skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
-    ) -> (
-        Option<u32>,
-        BTreeMap<u32, Option<ChunkItem>>,
-        Option<ReplayedLibrary>,
-    ) {
-        self.finish_lazy_impl(skipped, name, true)
+    ) -> Finished {
+        self.finish_lazy_impl(skipped, name)
     }
 
     fn finish_live_owner(
         mut self,
         skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
-    ) -> (
-        Option<u32>,
-        BTreeMap<u32, Option<ChunkItem>>,
-        Option<ReplayedLibrary>,
-    ) {
+    ) -> Finished {
         let mut touched = std::mem::take(&mut self.touched);
         touched.sort_unstable();
         touched.dedup();
@@ -1773,41 +1742,36 @@ impl<'a> Merge<'a, '_> {
             removed,
         };
         // Session reads, including removed slots and ADDs, use `retained`.
-        // They no longer need a separate typed override map.
-        (total, BTreeMap::new(), Some(retained))
+        // They need no separate set of slots.
+        (total, BTreeSet::new(), Some(retained))
     }
 
     fn finish_lazy_impl(
         mut self,
         skipped: &mut Option<&mut Vec<String>>,
         name: &impl std::fmt::Display,
-        retain_adds: bool,
-    ) -> (
-        Option<u32>,
-        BTreeMap<u32, Option<ChunkItem>>,
-        Option<ReplayedLibrary>,
-    ) {
+    ) -> Finished {
         if self.live_owner {
             return self.finish_live_owner(skipped, name);
         }
         self.sort_touched();
-        let mut typed = BTreeMap::new();
+        let mut gone = BTreeSet::new();
         if !self.overreach {
             self.touched.retain(|&slot| {
                 let offset = self.content.slot_offset(slot).unwrap_or(0);
                 if offset == 0 {
-                    typed.insert(slot, None);
+                    gone.insert(slot);
                     return false;
                 }
                 match self.content.header(offset as usize) {
                     Found::Failed => {
-                        typed.insert(slot, None);
+                        gone.insert(slot);
                         false
                     }
                     Found::Past => {
                         // Row 107, option 1: the read leaves the buffer, so the
                         // item answers no item. The other changes stay.
-                        typed.insert(slot, None);
+                        gone.insert(slot);
                         record_skip(
                             skipped,
                             format_args!("{name}: item {slot} ends past the phrase content"),
@@ -1839,39 +1803,29 @@ impl<'a> Merge<'a, '_> {
                             return true;
                         }
                         if let Some(bytes) = self.content.item(offset, len) {
-                            if retain_adds {
-                                return match validate_phrase_item(&bytes) {
-                                    Ok(()) => {
-                                        self.has_added_items = true;
-                                        true
-                                    }
-                                    Err(error) => {
-                                        record_skip(skipped, format_args!("{name}: {error}"));
-                                        false
-                                    }
-                                };
-                            }
-                            match decode_phrase_item(&bytes) {
-                                Ok(item) => {
-                                    typed.insert(slot, Some(item));
+                            return match validate_phrase_item(&bytes) {
+                                Ok(()) => {
+                                    self.has_added_items = true;
+                                    true
                                 }
-                                Err(error) => record_skip(skipped, format_args!("{name}: {error}")),
-                            }
+                                Err(error) => {
+                                    record_skip(skipped, format_args!("{name}: {error}"));
+                                    false
+                                }
+                            };
                         }
                         false
                     }
                 }
             });
         } else {
-            self.finish_overreach(&mut typed, skipped, name, retain_adds);
+            self.finish_overreach(&mut gone, skipped, name);
         }
         self.touched.shrink_to_fit();
         let total = self.has_original.then_some(self.content.total);
         // A buffer is kept when the replay left anything in it: a slot, a
         // total that moved, or an item of the chunk taken out.
-        let removed = typed
-            .iter()
-            .any(|(&slot, item)| item.is_none() && self.original_item(slot).is_some());
+        let removed = gone.iter().any(|&slot| self.original_item(slot).is_some());
         let retained = (!self.touched.is_empty()
             || self.content.total != self.initial_total
             || removed)
@@ -1883,7 +1837,7 @@ impl<'a> Merge<'a, '_> {
                 rejected: Vec::new(),
                 removed,
             });
-        (total, typed, retained)
+        (total, gone, retained)
     }
 }
 
@@ -2047,7 +2001,7 @@ mod tests {
     fn an_unrecorded_overlapped_slot_is_visible_and_seeded() {
         let original = library();
         let merge = over_length_merge(&original);
-        let (_, _, view) = merge.finish_lazy(&mut None, &"test");
+        let (_, _, view) = merge.finish_views(&mut None, &"test");
         let view = view.expect("retained originals");
         assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
         assert!(view.contains(2));
@@ -2059,7 +2013,7 @@ mod tests {
     fn an_over_length_item_reports_the_borrowed_keys() {
         let original = library();
         let merge = over_length_merge(&original);
-        let (_, _, view) = merge.finish_lazy(&mut None, &"test");
+        let (_, _, view) = merge.finish_views(&mut None, &"test");
         let view = view.expect("retained originals");
         let item = view.item(1).expect("over-length item");
         assert_eq!(item.prons[0].0, [0x0000, 0x0201]);
@@ -2115,7 +2069,7 @@ mod tests {
         changed[2..6].copy_from_slice(&170_u32.to_le_bytes());
         assert!(merge.apply_owned(modify(2, two(), changed)).is_ok());
         let mut skipped = Vec::new();
-        let (_, _, retained) = merge.finish_lazy(&mut Some(&mut skipped), &"test");
+        let (_, _, retained) = merge.finish_views(&mut Some(&mut skipped), &"test");
         let retained = retained.expect("the over-length item stays");
         assert!(retained.contains(2));
         assert_eq!(retained.item(2).expect("two").unigram, 170);
@@ -2255,7 +2209,8 @@ mod tests {
                 break;
             }
         }
-        let (total, mut overrides, retained) = merge.finish_lazy(&mut None, &"test");
+        let (total, gone, retained) = merge.finish_views(&mut None, &"test");
+        let mut overrides: BTreeMap<_, _> = gone.into_iter().map(|slot| (slot, None)).collect();
         if let Some(retained) = retained {
             overrides.extend(retained.slots().map(|slot| (slot, retained.item(slot))));
         }

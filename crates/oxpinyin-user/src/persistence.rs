@@ -1721,15 +1721,17 @@ fn replay_log(
             )?;
         }
     }
-    let (total, overrides, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
+    let (total, gone, retained) = merge.finish_views(&mut loaded.skip_notes(), &name);
     if let Some(retained) = retained {
         replayed.insert(nibble, retained);
     }
     if let Some(total) = total {
         loaded.library_totals.insert(nibble, total);
     }
-    // An empty override set and an absent one are the same state.
-    if !overrides.is_empty() {
+    // An empty override set and an absent one are the same state. A slot that
+    // answers no item is an override without an item.
+    if !gone.is_empty() {
+        let overrides = gone.into_iter().map(|slot| (slot, None)).collect();
         loaded.state.system_overrides.insert(nibble, overrides);
     }
     Ok(())
