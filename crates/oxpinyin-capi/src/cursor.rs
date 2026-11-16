@@ -22,7 +22,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::ffi::{key_text, strdup};
-use crate::state::{instance_mut, instance_ref};
+use crate::state::instance_ref;
 use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 
 /// The slot `pinyin_get_pinyin_key` hands out: the pin's function-local
@@ -82,12 +82,13 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     }
 
     // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    // `pinyin_alloc_instance`; this call only reads the instance and writes
+    // only the process-wide key slot.
+    let inst = unsafe { instance_ref(instance) };
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            abort_on_empty_matrix_below(&inst.read(), offset);
+            abort_on_empty_matrix_below(&inst, offset);
             return false;
         }
         Err(_) => {
@@ -578,12 +579,13 @@ pub extern "C" fn pinyin_get_pinyin_key(
     }
 
     // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    // `pinyin_alloc_instance`; this call only reads the instance and writes
+    // only the process-wide key slot.
+    let inst = unsafe { instance_ref(instance) };
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
         Ok(None) => {
-            abort_on_empty_matrix_below(&inst.read(), offset);
+            abort_on_empty_matrix_below(&inst, offset);
             return false;
         }
         Err(_) => {

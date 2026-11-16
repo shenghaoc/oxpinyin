@@ -849,8 +849,9 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         return false;
     };
     // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`; the candidate view has ended.
-    let inst = unsafe { instance_mut(instance) };
+    // `pinyin_alloc_instance`; the candidate view has ended, and this shared
+    // view ends before either exclusive context borrow below.
+    let inst = unsafe { instance_ref(instance) };
     // A prefix row whose item the receiver lacks is still selectable. The
     // pin advances the loaded facade's total by 483 (wrapping) and ignores
     // the failing sub-index write; the prefix branch then answers true

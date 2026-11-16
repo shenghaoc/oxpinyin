@@ -9,7 +9,7 @@
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
 
-use crate::state::{instance_mut, instance_ref};
+use crate::state::instance_ref;
 use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinInstance};
 
 /// The slot `zhuyin_get_zhuyin_key` hands out: the pin's function-local
@@ -101,9 +101,10 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     }
 
     // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    abort_on_empty_matrix_below(&inst.read(), offset);
+    // `zhuyin_alloc_instance`; this call only reads the instance and writes
+    // only the process-wide key slot.
+    let inst = unsafe { instance_ref(instance) };
+    abort_on_empty_matrix_below(&inst, offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
@@ -230,9 +231,10 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     }
 
     // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
-    abort_on_empty_matrix_below(&inst.read(), offset);
+    // `zhuyin_alloc_instance`; this call only reads the instance and writes
+    // only the process-wide key slot.
+    let inst = unsafe { instance_ref(instance) };
+    abort_on_empty_matrix_below(&inst, offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
