@@ -281,7 +281,7 @@ jobs:
       # action, so its pkgconf install reads the cache too.
       - name: Compute the vcpkg binary cache key
         id: vcpkg-cache-key
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"
+        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"
       - name: Restore the vcpkg binary cache
         id: vcpkg-cache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -295,9 +295,9 @@ jobs:
         env:
           REQUESTED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
           MATCHED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-matched-key }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg cache-report
+        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-report
       - name: Install tkrzw and GLib (vcpkg)
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet x64-windows --packages "$VCPKG_PACKAGES"
+        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet x64-windows --packages "$VCPKG_PACKAGES"
       - name: Save the vcpkg binary cache
         if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -358,7 +358,7 @@ jobs:
       # vcpkg overlay port, first on PKG_CONFIG_PATH.
       - name: Install GLib, pkg-config and the call-site LLVM (Homebrew)
         run: |
-          llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
+          llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           brew install glib pkgconf "llvm@${llvm_major}"
       # vcpkg's binary cache, as in the Windows job above. The key also names
       # the vcpkg root: the installed libtkrzw records its own path there as
@@ -367,7 +367,7 @@ jobs:
       # VCPKG_ROOT, VCPKG_BINARY_SOURCES and the key.
       - name: Compute the vcpkg binary cache key
         id: vcpkg-cache-key
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet "$VCPKG_TRIPLET"
+        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet "$VCPKG_TRIPLET"
       - name: Restore the vcpkg binary cache
         id: vcpkg-cache-restore
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -379,7 +379,7 @@ jobs:
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
       # Installs the overlay port, then publishes PKG_CONFIG_PATH and the tools directory.
       - name: Install tkrzw (vcpkg)
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet "$VCPKG_TRIPLET"
+        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet "$VCPKG_TRIPLET"
       - name: Save the vcpkg binary cache
         if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

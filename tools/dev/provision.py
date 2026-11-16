@@ -1,7 +1,7 @@
 """Cloud provisioning and the shell-readable oracle environment.
 
 Run from the repository root after `uv python install`:
-`uv run --no-project --managed-python python -X utf8 -m tools.dev.provision`.
+`uv run --managed-python python -X utf8 -m tools.dev.provision`.
 uv enforces its own floor (uv.toml required-version). Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
@@ -449,9 +449,10 @@ class Provision:
         prefix = Path(prefix)
         return run(runtime_command([
             self.ctr, 'run', '--rm', '--platform', self.platform, '--network', 'none',
-            '-e', 'PYTHONDONTWRITEBYTECODE=1', '-v', f'{self.root}:/repo:ro',
+            '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}',
+            '-v', f'{self.root}:/repo:ro',
             '-v', f'{prefix.parent}:/opt/pinyin-oracle:ro', '-v', f'{self.pin}:/run/oracle-pin.txt:ro',
-            '-w', '/repo', self.deps_image, 'uv', 'run', '--no-project', '--managed-python', 'python',
+            '-w', '/repo', self.deps_image, 'uv', 'run', '--managed-python', 'python',
             '-X', 'utf8', '-m', 'tools.dev.provision', 'prefix-check', check, cell,
             f'/opt/pinyin-oracle/{prefix.name}', '/run/oracle-pin.txt', *([str(prefix)] if check == 'summary' else [])]),
             env=self.env, check=False)

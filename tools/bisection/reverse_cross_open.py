@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Local-only cross-open checks for the user profile formats.
 
     reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX --data DIR \

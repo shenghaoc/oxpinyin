@@ -305,8 +305,10 @@ def identity(environ=None):
     """Validate the running managed CPython and return its identity record.
 
     Reject interpreter overrides, unsupported versions, disabled GIL, or a
-    resolved executable differing from uv python find. Run uv subprocesses
-    and raise DoctorError when these acceptance checks fail.
+    base installation that is not the one uv python find answers. The
+    executable itself is not compared: in a virtual environment it is a link
+    to the base interpreter, or on Windows a separate launcher. Run uv
+    subprocesses and raise DoctorError when these acceptance checks fail.
     """
     environ = os.environ if environ is None else environ
     reject_overrides(environ)
@@ -322,16 +324,23 @@ def identity(environ=None):
     gil_enabled = getattr(sys, '_is_gil_enabled', lambda: True)()
     if not gil_enabled:
         raise DoctorError('the running CPython has the GIL disabled')
-    result = _run(['uv', 'python', 'find', '--managed-python', MANAGED_REQUEST], environ)
+    # --system: the managed installation, not the project environment built on it.
+    result = _run(['uv', 'python', 'find', '--managed-python', '--system', MANAGED_REQUEST], environ)
     if result is None or result.returncode != 0 or not result.stdout.strip():
         raise DoctorError(f'the running interpreter is not a uv-managed {MANAGED_REQUEST} build')
     managed = Path(result.stdout.strip()).resolve()
+    result = _run([str(managed), '-X', 'utf8', '-c', 'import sys; print(sys.prefix)'], environ)
+    if result is None or result.returncode != 0 or not result.stdout.strip():
+        raise DoctorError(f'cannot read the managed installation root: {managed}')
+    managed_prefix = Path(result.stdout.strip()).resolve()
     executable = Path(sys.executable).resolve()
-    if managed != executable:
-        raise DoctorError(f'the running interpreter is not the managed one: {executable} (managed: {managed})')
+    base = Path(sys.base_prefix).resolve()
+    if base != managed_prefix:
+        raise DoctorError(f'the running interpreter is not the managed one: {executable}, '
+                          f'installed in {base} (managed: {managed_prefix})')
     return dict(implementation=implementation, version=version,
                 gil_enabled=bool(gil_enabled), gil_disabled=bool(gil_disabled),
-                executable=str(executable), managed=bool(managed == executable),
+                executable=str(executable), managed=True,
                 uv=uv_version(environ))
 
 

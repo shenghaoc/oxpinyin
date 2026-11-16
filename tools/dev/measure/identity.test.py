@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for the host identity readers in tools.dev.measure.identity."""
 import os
 from pathlib import Path

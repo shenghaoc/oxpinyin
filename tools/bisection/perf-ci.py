@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """perf-ci.py — medians with percentile-bootstrap CIs over bisect --perf captures.
 
 `bisect --perf` writes one JSON object per process; the `perf-matrix` and
@@ -27,9 +26,9 @@ file — or into one file per size, all passed at once — tabulates directly.
 Deterministic: the resampler is seeded (--seed, default 20260907), so a rerun
 over the same capture reproduces the same interval bit for bit.
 
-Usage:
-    perf-ci.py speed.jsonl [more.jsonl ...] [--metric steady] [--resamples N]
-    perf-ci.py out-n*/speed.jsonl --format md > table.md
+Usage, with CMD = uv run --managed-python python -X utf8 tools/bisection/perf-ci.py:
+    CMD speed.jsonl [more.jsonl ...] [--metric steady] [--resamples N]
+    CMD out-n*/speed.jsonl --format md > table.md
 """
 
 import argparse

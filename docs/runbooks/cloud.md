@@ -76,7 +76,7 @@ root, run these two commands. They are the same in sh, zsh and pwsh:
 
 ```sh
 uv python install
-uv run --no-project --managed-python python -X utf8 -m tools.dev.provision
+uv run --managed-python python -X utf8 -m tools.dev.provision
 ```
 
 The first installs the interpreter that `.python-version` names, and does nothing
@@ -107,8 +107,8 @@ without the oracle setup:
 
 ```sh
 uv python install
-uv run --no-project --managed-python python -X utf8 -m tools.dev.provision --python-only
-uv run --no-project --managed-python python -X utf8 -m tools.dev.doctor
+uv run --managed-python python -X utf8 -m tools.dev.provision --python-only
+uv run --managed-python python -X utf8 -m tools.dev.doctor
 ```
 
 This mode runs the Linux platform checks, then the same managed-CPython
@@ -117,7 +117,7 @@ interpreter verification as full setup
 and the ext4 path report, and exits successfully after Python provisioning.
 It does not touch a container runtime, Valgrind, backend utilities, oracle
 libraries, model data or the oracle environment file. On a host that has
-`just`, `just python` provisions the same interpreter.
+`just`, the first `uv run` of any Python recipe provisions the same interpreter.
 
 `--python-only` cannot be combined with `--cells`, `--jobs`
 or `--no-pull`; these combinations fail with exit 2 before
@@ -252,7 +252,7 @@ the same implementation. A refusal is a failed run, never MATCH or SKIP.
 The loader fixtures run with:
 
 ```sh
-uv run --no-project --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
+uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
 ```
 
 ## What it does
@@ -288,7 +288,7 @@ uv run --no-project --managed-python python -B -X utf8 tools/tkrzw/runtime.test.
    Each prefix records their built hashes and installed versions.
    - If `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
      `<tag>-arm64` for arm64, setup pulls it and copies the cells out of it.
-     `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`
+     `uv run --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`
      (pin, base image tag and a hash of the recipe and `oracle-pin.txt`).
    - Setup discards a cell whose pin/recipe stamp or recorded bytes fail validation, and builds it
      instead. It builds every cell when no image exists. For the build, it builds the
@@ -447,7 +447,7 @@ side.
 ### Provisioning implementation and fixture checks
 
 `tools.dev.provision` is the single provisioning service. `just provision` runs
-`just python` and then the same module.
+the same module through `uv run`, which provisions the interpreter first.
 
 The synthetic provisioning fixtures run through normal Python discovery:
 

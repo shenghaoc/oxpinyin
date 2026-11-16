@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Host-loader fixtures for runtime identity, refusal and launch behavior."""
 import os
 from pathlib import Path

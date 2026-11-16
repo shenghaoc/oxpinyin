@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Select the verification cells for a diff: docs/runbooks/verification.md, rule 2.
 
 Runs rule 2's three checks on BASE...HEAD and prints the cells to run, which check
@@ -32,12 +31,12 @@ Exit status: 0 when the checks ran, whichever cells they selected; 1 when git fa
 BASE is not a commit here, or the directory is not in a git work tree; 2 for a usage
 error. Standard library only.
 
-Usage:
-    cells-for-diff.py                  # origin/main...HEAD
-    cells-for-diff.py BASE             # BASE...HEAD
-    cells-for-diff.py --limit 0 BASE   # list every match, not the first 10 per check
-    cells-for-diff.py --run-flag --also tools/bdb BASE   # run=true or run=false
-    cells-for-diff.py --run-flag --run-without-base BASE # run=true when BASE gives no diff
+Usage, with CMD = uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py:
+    CMD                                          # origin/main...HEAD
+    CMD BASE                                     # BASE...HEAD
+    CMD --limit 0 BASE                           # list every match, not the first 10 per check
+    CMD --run-flag --also tools/bdb BASE         # run=true or run=false
+    CMD --run-flag --run-without-base BASE       # run=true when BASE gives no diff
 """
 import argparse
 import os

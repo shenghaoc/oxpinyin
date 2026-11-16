@@ -80,7 +80,7 @@ No utility port in this inventory is missing; the trainer's own Python scripts s
 After the build above, the explicit real-tool integration test runs from the same Python test file:
 
 ```sh
-uv run --no-project --managed-python python -X utf8 tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
+uv run --managed-python python -X utf8 tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
 ```
 
 It checks every reached path and runs `../utils/training/gen_unigram --help` from the created `data/`.
@@ -92,7 +92,7 @@ A missing tool fails this test; the test does not substitute fixtures.
 `oxpinyin-capi` is a `cdylib` that must be installed like any other C library: a versioned `.so`, an unversioned linker symlink, `pinyin.h` and a `pkg-config` file.
 `cargo cbuild` and `cargo cinstall` derive the install layout and SONAME from Cargo metadata.
 cargo-c cannot produce a complete libpinyin `.pc` ([Locating the model data](#locating-the-model-data-pkgdatadir)), so `just packaging install` wraps `cargo cinstall`.
-It runs from the checkout with the [ordinary native setup](runbooks/setup.md); `just python` provisions its managed interpreter.
+It runs from the checkout with the [ordinary native setup](runbooks/setup.md); its first `uv run` provisions its managed interpreter.
 The packaging commands supervise builds, relinks and package builders, with cancellation handling.
 
 ## Metadata on `oxpinyin-capi`

@@ -30,79 +30,69 @@ cache-root:
 # Compare scripts2-derived Rust tables offline; pass --write to regenerate.
 [unix]
 rust-tables *args:
-    @uv run --offline --no-python-downloads --no-project --managed-python python -X utf8 -m tools.dev.rust_tables "$@"
+    @uv run --offline --no-python-downloads --managed-python python -X utf8 -m tools.dev.rust_tables "$@"
 
 [windows]
 rust-tables *args:
-    @{{windows_args}} uv run --offline --no-python-downloads --no-project --managed-python python -X utf8 -m tools.dev.rust_tables @forwarded; exit $LASTEXITCODE
+    @{{windows_args}} uv run --offline --no-python-downloads --managed-python python -X utf8 -m tools.dev.rust_tables @forwarded; exit $LASTEXITCODE
 
 # Data-only transport target for the real-just smoke tests; never starts work.
 [unix]
 [private]
-_test-argv status *args: python
-    @uv run --no-project --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
+_test-argv status *args:
+    @uv run --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
 
 [windows]
 [private]
-_test-argv status *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
+_test-argv status *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
 
-
-# Provision the interpreter .python-version names, the one place the version is
-# stated. uv reads the file itself and does nothing when the interpreter is there.
-[unix]
-python:
-    @uv python install --quiet
-
-[windows]
-python:
-    @uv python install --quiet; exit $LASTEXITCODE
 
 # Cloud provisioning after `uv python install`; uv itself must already be installed.
 [unix]
-provision *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.provision "$@"
+provision *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.provision "$@"
 
 [windows]
-provision *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.provision @forwarded; exit $LASTEXITCODE
+provision *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision @forwarded; exit $LASTEXITCODE
 
 # Fetch, verify and extract the pinned model20 archive into the cache root.
 [unix]
-fetch-model *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.model "$@"
+fetch-model *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.model "$@"
 
 [windows]
-fetch-model *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.model @forwarded; exit $LASTEXITCODE
+fetch-model *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.model @forwarded; exit $LASTEXITCODE
 
 # Fetch, verify and extract the pinned libpinyin-data package (the contract system data) into the cache root.
 [unix]
-fetch-contract-data *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.contract_data "$@"
+fetch-contract-data *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.contract_data "$@"
 
 [windows]
-fetch-contract-data *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.contract_data @forwarded; exit $LASTEXITCODE
+fetch-contract-data *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.contract_data @forwarded; exit $LASTEXITCODE
 
 # Report native capabilities and the managed interpreter identity. Doctor
-# installs nothing: it names `just python` when the interpreter is missing.
+# installs nothing: it names `uv python install` when the interpreter is missing.
 [unix]
 doctor:
     @command -v uv >/dev/null 2>&1 || { echo 'uv is not installed: see docs/runbooks/setup.md' >&2; exit 1; }
-    @uv python find --managed-python >/dev/null 2>&1 || { echo 'the managed interpreter in .python-version is not installed: run `just python`' >&2; exit 1; }
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.doctor
+    @uv python find --managed-python >/dev/null 2>&1 || { echo 'the managed interpreter in .python-version is not installed: run `uv python install`' >&2; exit 1; }
+    @uv run --managed-python python -X utf8 -m tools.dev.doctor
 
 [windows]
 doctor:
     @{{windows_args}} if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('uv is not installed: see docs/runbooks/setup.md'); exit 1 }
-    @{{windows_args}} uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `just python`'); exit 1 }
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.doctor; exit $LASTEXITCODE
+    @{{windows_args}} uv python find --managed-python *> $null; if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('the managed interpreter in .python-version is not installed: run `uv python install`'); exit 1 }
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.doctor; exit $LASTEXITCODE
 
 # Install, validate and assemble drop-in packages through the shared service.
 [unix]
-packaging *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging "$@"
+packaging *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.packaging "$@"
 
 [windows]
 packaging *args:
@@ -111,13 +101,13 @@ packaging *args:
 
 # Nonshipping interactive modes use disposable W3 data. Linux and macOS only.
 [unix]
-repl mode *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.repl "$@"
+repl mode *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.repl "$@"
 
 # Stage built utilities in the tree expected by epico/trainer.
 [unix]
-trainer-layout target *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging trainer-layout "$@"
+trainer-layout target *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.packaging trainer-layout "$@"
 
 [windows]
 trainer-layout target *args:
@@ -125,22 +115,22 @@ trainer-layout target *args:
     @{{windows_args}} exit 1
 
 [unix]
-check backend="": python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.check "$1"
+check backend="":
+    @uv run --managed-python python -X utf8 -m tools.dev.check "$1"
 
 [windows]
-check backend="": python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.check @forwarded; exit $LASTEXITCODE
+check backend="":
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.check @forwarded; exit $LASTEXITCODE
 
 
 # Native source-revision comparison and xctrace profiling.
 [unix]
-measure *args: python
-    @uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' "$@"
+measure *args:
+    @uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' "$@"
 
 [windows]
-measure *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
+measure *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest.
 [unix]
@@ -153,12 +143,12 @@ test *args:
 
 # Run the CI Python harness discovery and exclusions (Linux, macOS and Windows).
 [unix]
-test-tools *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.test_runner "$@"
+test-tools *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.test_runner "$@"
 
 [windows]
-test-tools *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.test_runner @forwarded; exit $LASTEXITCODE
+test-tools *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.test_runner @forwarded; exit $LASTEXITCODE
 
 # Run doctests separately; nextest does not run them.
 [unix]
@@ -189,8 +179,8 @@ fmt *args:
 
 # Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 [unix]
-audit-glib-call-sites pin *args: python
-    @uv run --no-project --managed-python --with "$(uv run --no-project --managed-python python -X utf8 tools/audit/glib_call_sites.py --print-clang-requirement)" python -X utf8 tools/audit/glib_call_sites.py "$@"
+audit-glib-call-sites pin *args:
+    @uv run --locked --only-group audit --managed-python python -X utf8 tools/audit/glib_call_sites.py "$@"
 
 # The audit needs bear, make and Unix linker options.
 [windows]
@@ -210,12 +200,24 @@ clippy *args:
 # Check tools/ Python with ruff's pyflakes rules (F) only. upstream/ holds
 # unmodified pin copies (tools/scripts2/README.md), so it is excluded.
 [unix]
-ruff: python
-    @uv run --no-project --managed-python --with 'ruff>=0.17.3' ruff check --select F --extend-exclude tools/scripts2/upstream tools
+ruff:
+    @uv run --locked --only-group lint --managed-python ruff check --select F --extend-exclude tools/scripts2/upstream tools
 
 [windows]
-ruff: python
-    @{{windows_args}} uv run --no-project --managed-python --with 'ruff>=0.17.3' ruff check --select F --extend-exclude tools/scripts2/upstream tools; exit $LASTEXITCODE
+ruff:
+    @{{windows_args}} uv run --locked --only-group lint --managed-python ruff check --select F --extend-exclude tools/scripts2/upstream tools; exit $LASTEXITCODE
+
+# Check the per-function cyclomatic complexity (CCN) of the Rust crates with the
+# Lizard that uv.lock names. The first run reports the functions above CCN 15
+# and never fails; the second fails when a function is above CCN 40.
+[unix]
+complexity:
+    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w -i -1
+    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 40 -w
+
+[windows]
+complexity:
+    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w -i -1; if ($LASTEXITCODE) { exit $LASTEXITCODE }; uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 40 -w; exit $LASTEXITCODE
 
 # Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin-core
 # Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.
@@ -271,35 +273,35 @@ coverage *args:
 # (docs/runbooks/pin-captures.md). The runtime is the platform's default; OXPINYIN_CAPTURE_RUNTIME
 # or OXPINYIN_CONTAINER names another.
 [unix]
-capture-pin run: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.oracle.image capture-pin "$1"
+capture-pin run:
+    @uv run --managed-python python -X utf8 -m tools.oracle.image capture-pin "$1"
 
 [windows]
-capture-pin run: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.oracle.image capture-pin @forwarded; exit $LASTEXITCODE
+capture-pin run:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image capture-pin @forwarded; exit $LASTEXITCODE
 
 # Provision the oracle cells into the provisioning cache `just provision` also uses
 # (the pin's entry of the cache root), running `provision oracle` in the
 # performance image through the selected runtime (docs/runbooks/pin-captures.md).
 [unix]
-provision-oracle *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.oracle.image provision-oracle "$@"
+provision-oracle *args:
+    @uv run --managed-python python -X utf8 -m tools.oracle.image provision-oracle "$@"
 
 [windows]
-provision-oracle *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.oracle.image provision-oracle @forwarded; exit $LASTEXITCODE
+provision-oracle *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image provision-oracle @forwarded; exit $LASTEXITCODE
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
-sanitize backend="" sanitizer="address": python
-    @uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
+sanitize backend="" sanitizer="address":
+    @uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # Darwin uses Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and tkrzw from the
 # vcpkg overlay port's install. The recipe selects Darwin paths and omits Linux
 # setarch. The tkrzw gate certifies the host library by the library its
 # tkrzw_dbm_util loads, so that install's tkrzw_dbm_util goes first on PATH.
 [macos]
-sanitize backend="" sanitizer="address": python
+sanitize backend="" sanitizer="address":
     @env \
         SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1 \
         SYSTEM_DEPS_BDB_LIB=db \
@@ -309,7 +311,7 @@ sanitize backend="" sanitizer="address": python
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
         PATH="{{macos_tkrzw}}/tools/tkrzw/bin:$PATH" \
-        uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
+        uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # The gates are Linux/Darwin native builds; Windows sanitizers are unsupported.
 [windows]
@@ -319,8 +321,8 @@ sanitize backend="" sanitizer="address":
 
 # Compile and run the C++ pinyin.h smoke gate.
 [unix]
-cpp-smoke: python
-    @uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.runners import cpp_smoke; raise SystemExit(cpp_smoke(sys.argv[1:]))'
+cpp-smoke:
+    @uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.runners import cpp_smoke; raise SystemExit(cpp_smoke(sys.argv[1:]))'
 
 [windows]
 cpp-smoke:
@@ -328,40 +330,40 @@ cpp-smoke:
     @{{windows_args}} exit 1
 
 [unix]
-abi *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.abi "$@"
+abi *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.abi "$@"
 
 [windows]
-abi *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.abi @forwarded; exit $LASTEXITCODE
+abi *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.abi @forwarded; exit $LASTEXITCODE
 
 # Build or describe the registry's selected cell artifacts.
 [unix]
-cell-artifacts *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.dev.cell "$@"
+cell-artifacts *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.cell "$@"
 
 [windows]
-cell-artifacts *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.dev.cell @forwarded; exit $LASTEXITCODE
+cell-artifacts *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.cell @forwarded; exit $LASTEXITCODE
 
 # Run Valgrind recipes under the shared cancellation and failure handlers.
 [linux]
-measure-callgrind-control *args: python
-    @uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import callgrind_control; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_control))' "$@"
+measure-callgrind-control *args:
+    @uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import callgrind_control; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_control))' "$@"
 
 [linux]
-measure-callgrind-differential *args: python
-    @uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import callgrind_differential; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_differential, pin_comparison=True))' "$@"
+measure-callgrind-differential *args:
+    @uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import callgrind_differential; from tools.dev.measure.recipes import run; raise SystemExit(run(callgrind_differential, pin_comparison=True))' "$@"
 
 [linux]
-measure-system-import-profile *args: python
-    @uv run --no-project --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import system_import_profile; from tools.dev.measure.recipes import run; raise SystemExit(run(system_import_profile, pin_comparison=True))' "$@"
+measure-system-import-profile *args:
+    @uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import system_import_profile; from tools.dev.measure.recipes import run; raise SystemExit(run(system_import_profile, pin_comparison=True))' "$@"
 
 # Build and enter the local oracle-based performance environment on the host architecture.
 [unix]
-performance *args: python
-    @uv run --no-project --managed-python python -X utf8 -m tools.oracle.image performance "$@"
+performance *args:
+    @uv run --managed-python python -X utf8 -m tools.oracle.image performance "$@"
 
 [windows]
-performance *args: python
-    @{{windows_args}} uv run --no-project --managed-python python -X utf8 -m tools.oracle.image performance @forwarded; exit $LASTEXITCODE
+performance *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image performance @forwarded; exit $LASTEXITCODE

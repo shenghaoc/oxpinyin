@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Shipping-size recipe key, export check, report and orchestration; no builds."""
 import contextlib
 import io

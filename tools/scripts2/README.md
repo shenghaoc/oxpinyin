@@ -6,7 +6,8 @@ if any committed output differs. To regenerate the tables, run `just rust-tables
 `--check` is an explicit spelling of the default.
 
 - Both modes use the
-  managed Python selected by `.python-version`. Provision it with `just python`.
+  managed Python selected by `.python-version`. The first `uv run` of any
+  other Python recipe provisions it.
 - The table recipe
   passes `--offline --no-python-downloads` to uv and does not bootstrap Python. A
   missing interpreter is an error.

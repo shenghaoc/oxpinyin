@@ -20,7 +20,7 @@ The three checks are:
 3. A changed line in a `Cargo.toml` names a backend.
 
 Check 2 excludes Markdown because documentation quotes these patterns.
-`tools/bisection/cells-for-diff.py [base]` applies the checks to `base...HEAD`.
+`uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py [base]` applies the checks to `base...HEAD`.
 The default base is `origin/main`.
 The command prints the selected cells, the check that selected them, and the matching paths and lines.
 Rule 7's documentation and comments case needs no backend-selection run.
@@ -61,7 +61,7 @@ Before a push for review or merge and after each rebase, one `cargo clippy --loc
   - `cargo deny --locked --log-level error check`
   - `cargo deny --locked --all-features --log-level error check`
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
-- Lizard when Rust functions changed: the `run` command of the "Lizard complexity limit" step in [the CI workflow](../../.github/workflows/ci.yml), which pins the release. CCN 40 is the limit. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
+- `just complexity` when Rust functions changed: Lizard, at the release that `uv.lock` records. CCN 40 is the limit; the recipe also reports each function above CCN 15. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
 - `just test-tools` when `tools/` changed.
 - `just ruff` when Python under `tools/` changed.
 

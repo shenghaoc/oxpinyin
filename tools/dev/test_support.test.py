@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Unit tests for the shared assertions that never print a call's arguments."""
 from pathlib import Path
 import os

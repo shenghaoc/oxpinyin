@@ -25,7 +25,7 @@ The model20 archive is not redistributable
 ([model provenance](../findings/model-provenance.md)). No CI job fetches it, and nothing
 below that needs it runs on GitHub-hosted runners. The oracle never runs on GitHub Actions. No workflow in this
 repository builds the reference image. A host builds it with
-`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image build-image`.
+`uv run --managed-python python -X utf8 -m tools.oracle.image build-image`.
 The image holds the libraries only and ships no model-derived data (section 2a).
 
 ## Pin identity
@@ -166,7 +166,7 @@ To build libzhuyin as well, add `--enable-libzhuyin`. The zhuyin,
 candidate-assembly, two-context and open-counter differentials need it.
 
 ```sh
-uv run --no-project --managed-python python -X utf8 tools/oracle/build.py --prefix ~/.local/opt/pinyin-oracle --model-dir "$PINYIN_MODEL_DIR"
+uv run --managed-python python -X utf8 tools/oracle/build.py --prefix ~/.local/opt/pinyin-oracle --model-dir "$PINYIN_MODEL_DIR"
 ```
 
 To select another cell, use `--dbm bdb` or `--dbm kc` and a separate `--prefix`.
@@ -198,7 +198,7 @@ The requirements are:
   `LDFLAGS` through. Unset `CFLAGS` and `CXXFLAGS` become autoconf's
   `-g -O2`. An empty value stays empty.
 
-`uv run --no-project --managed-python python -X utf8 tools/oracle/build.py --help` lists every option.
+`uv run --managed-python python -X utf8 tools/oracle/build.py --help` lists every option.
 The last stdout line is the path of the built `libpinyin.so`.
 
 The builder writes the prefix's `oracle-pin.txt` last. The differential
@@ -221,7 +221,7 @@ arm64 (see [native arm64](#native-arm64)). The amd64 image is
     ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
 
 and arm64 publishes the siblings `<tag>-arm64` and `<tag>-deps-arm64`.
-`uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`.
+`uv run --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`.
 The tag holds:
 
 - the libpinyin commit and the base image tag, both from `oracle-pin.txt`;
@@ -237,7 +237,7 @@ image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
 step below before any differential can use it.
 
 ```sh
-tag=$(uv run --no-project --managed-python python -X utf8 -m tools.oracle.image image-tag)
+tag=$(uv run --managed-python python -X utf8 -m tools.oracle.image image-tag)
 platform=linux/amd64                       # or linux/arm64
 suffix=
 [[ $platform == linux/amd64 ]] || suffix=-arm64
@@ -263,7 +263,7 @@ done
 ```
 
 Check the image's current pin/recipe stamp and its own recorded library hashes
-with `uv run --no-project --managed-python python -X utf8 -m tools.oracle.image verify-image --platform "$platform" "$img"`.
+with `uv run --managed-python python -X utf8 -m tools.oracle.image verify-image --platform "$platform" "$img"`.
 
 ### Native arm64
 
@@ -366,7 +366,7 @@ ELF build ID is omitted. The libraries then hash the same for any work
 directory, given the same toolchain and `--prefix`. Inside `just performance`, run:
 
 ```sh
-uv run --no-project --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
+uv run --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
 ```
 
 This command builds each cell twice in different work directories, with the same install
@@ -377,7 +377,7 @@ library bytes and absence of model-derived data.
 To provision the oracle alone inside the same container, as `just provision-oracle` does from the host, run:
 
 ```sh
-uv run --no-project --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 ## 3. Produce the export

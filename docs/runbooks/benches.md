@@ -29,7 +29,7 @@ oracle is never built or run on GitHub Actions.
 ```sh
 just performance
 # Inside the shell:
-uv run --no-project --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
+uv run --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
 ```
 
 These rules apply to the `performance` shell:
@@ -267,7 +267,7 @@ It is a disposable workload input, not a committed fixture or profile
 capture:
 
 ```sh
-uv run --no-project --managed-python python -X utf8 - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+uv run --managed-python python -X utf8 - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
 import hashlib
 import subprocess
 import sys

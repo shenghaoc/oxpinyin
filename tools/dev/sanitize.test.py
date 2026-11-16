@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Sanitizer selection, backend flags and host-runtime fixtures."""
 import io
 import os

@@ -7,15 +7,15 @@ pin, so it changes only when the pin, the generator or the family table changes.
 
 ## Tools
 
-The audit runs natively on macOS. The shebang of the script pins the clang bindings, and
-`--print-llvm-major` prints the matching LLVM major. These tools come from Homebrew:
+The audit runs natively on macOS. The `audit` dependency group provides the clang bindings, and
+`--print-llvm-major`, run in that group, prints their LLVM major. These tools come from Homebrew:
 
 ```bash
-llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
+llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
 brew install "llvm@${llvm_major}" bear glib gettext autoconf automake libtool tkrzw kyoto-cabinet berkeley-db@5
 ```
 
-The libclang is the `llvm@<major>` one that matches the script's pinned bindings. `berkeley-db@5` is the major
+The libclang is the `llvm@<major>` one that matches the locked bindings. `berkeley-db@5` is the major
 version that the configure of libpinyin asks for. The recipe checks for each tool and names any
 tool that is missing. It installs nothing itself.
 

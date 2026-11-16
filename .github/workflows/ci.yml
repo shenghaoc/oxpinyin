@@ -83,18 +83,18 @@ jobs:
           uv: 'true'
       - name: Compute the path-gate flags
         id: gate
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree gate
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree gate
       # Every tracked file is an input of this rule, so it runs here on every
       # change. The file's other test class runs with the harness.
       - name: Python version request is written once
-        run: uv run --no-project --managed-python python -X utf8 tools/dev/python-request.test.py RequestLiteralTests
+        run: uv run --managed-python python -X utf8 tools/dev/python-request.test.py RequestLiteralTests
       # After the gate: evidence must cover every lane the gate selects.
       - name: Look up successful PR evidence for this tree
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}
           GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree evidence ci
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence ci
 
   lint:
     needs: changes
@@ -126,6 +126,7 @@ jobs:
           rust-cache-key: lint-job
           # Every run: the tkrzw action and the cache refresh run on reuse too.
           uv: 'true'
+          just: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action installs the overlay port with vcpkg and
@@ -144,15 +145,15 @@ jobs:
       # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
+        run: uv run --managed-python python -X utf8 -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
       - name: Crate cfg-placement gate
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
+        run: uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record. The full
       # installed-tree diff (just packaging check-pc-metadata) needs the
       # pin-built libpinyin, which CI does not have.
-      - run: uv run --no-project --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
+      - run: uv run --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
@@ -167,16 +168,14 @@ jobs:
       - name: Compile all fuzz targets
         working-directory: fuzz
         run: cargo check --locked --bins
-      # Complexity limit: no function may exceed CCN 40. -w prints only the
-      # functions over the limit; the exit status is the same. This step is
-      # the one place that pins the Lizard release: the release the limit
-      # was checked against. docs/runbooks/verification.md refers here.
+      # Complexity limit: no function may exceed CCN 40. The recipe states
+      # the policy; pyproject.toml and uv.lock name the Lizard release.
       - name: Lizard complexity limit
         if: needs.changes.outputs.reuse != 'true'
-        run: uv run --no-project --managed-python --with lizard==1.24.0 python -X utf8 -m lizard crates/ -l rust -C 40 -w
+        run: just complexity
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh lint
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh lint
 
   test:
     needs: changes
@@ -253,7 +252,7 @@ jobs:
         run: just abi alloc-pairing
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree refresh test
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh test
 
   # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
   # holds the policy. The bootstrap action installs a released binary, so
@@ -329,7 +328,7 @@ jobs:
         # Valgrind for the end-to-end Linux comparison on the stub library.
         # zsh: the oracle environment file is sourced under sh, dash and zsh.
         run: |
-          llvm_major=$(uv run --no-project --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
+          llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
       # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
       # the lint job does not run for Python-only paths such as tools/audit.
@@ -453,7 +452,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: uv run --no-project --managed-python python -X utf8 -m tools.dev.ci_tree aggregate ci
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate ci
 
   # The marker says the aggregate passed: every lane the gate selected
   # succeeded and every other lane was skipped. A later run reads the lanes'

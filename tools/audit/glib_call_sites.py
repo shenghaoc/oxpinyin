@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --with clang==21.1.7 python -X utf8
 """Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
 
 The checkout must be at 074a2219c90feaf962d0d24f034514033ece5f99. Each DBM
@@ -13,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import importlib.metadata
 import io
 import json
@@ -27,22 +27,28 @@ from pathlib import Path
 
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 ROOT = Path(__file__).resolve().parents[2]
-SHEBANG = Path(__file__).read_text(encoding="utf-8").splitlines()[0]
-clang_pin = re.search(r"--with\s+(clang==\S+)", SHEBANG)
-if clang_pin is None:
-    raise RuntimeError("the shebang must pin clang with --with clang==VERSION")
-CLANG_REQUIREMENT = clang_pin.group(1)
-LLVM_MAJOR = CLANG_REQUIREMENT.removeprefix("clang==").split(".", 1)[0]
+
+
+@functools.cache
+def llvm_major() -> str:
+    """The LLVM major of the installed clang bindings; the `audit` dependency group provides them."""
+    try:
+        return importlib.metadata.version("clang").split(".", 1)[0]
+    except importlib.metadata.PackageNotFoundError:
+        raise RuntimeError("the clang bindings are not installed: run this script in the audit "
+                           "dependency group (uv run --locked --only-group audit)") from None
+
+
 FAMILIES = ROOT / "tools/audit/glib_call_sites.families.tsv"
 OUTPUT = ROOT / "docs/findings/glib-libc-call-sites.tsv"
 HEADER = ("family", "library", "facade", "backend", "pin_site", "pin_call",
           "call")
 FAMILIES_HEADER = ("function", "family")
 CELLS = {"bdb": "BerkeleyDB", "kc": "KyotoCabinet", "tkrzw": "Tkrzw"}
-# Homebrew keg names; the LLVM keg matches the bindings pin, and libpinyin's
+# Homebrew keg names besides the LLVM keg, which matches the clang bindings; libpinyin's
 # configure asks for Berkeley DB 5.
 FORMULAE = ("autoconf", "automake", "bear", "berkeley-db@5", "gettext", "glib",
-            "kyoto-cabinet", "libtool", f"llvm@{LLVM_MAJOR}", "tkrzw")
+            "kyoto-cabinet", "libtool", "tkrzw")
 LINUX_COMMANDS = ("autoreconf", "automake", "bear", "c++filt", "g++", "libtoolize",
                   "make", "pkg-config")
 LINUX_PACKAGES = ("glib-2.0", "kyotocabinet", "tkrzw")
@@ -78,14 +84,14 @@ def missing_tools() -> list[str]:
     """The tools this platform's run needs and does not have, by name."""
     if sys.platform == "darwin":
         opt = brew_opt()
-        return [name for name in FORMULAE if not (opt / name).exists()]
+        return [name for name in sorted((*FORMULAE, f"llvm@{llvm_major()}")) if not (opt / name).exists()]
     missing = [name for name in LINUX_COMMANDS if shutil.which(name) is None]
-    library = f"libclang-{LLVM_MAJOR}.so.1"
+    library = f"libclang-{llvm_major()}.so.1"
     try:
         ctypes.CDLL(library)
     except OSError:
         missing.append(library)
-    resource = f"/usr/lib/llvm-{LLVM_MAJOR}/lib/clang/{LLVM_MAJOR}"
+    resource = f"/usr/lib/llvm-{llvm_major()}/lib/clang/{llvm_major()}"
     if not Path(resource).is_dir():
         missing.append(resource)
     if shutil.which("pkg-config"):
@@ -100,7 +106,7 @@ def toolchain() -> Toolchain:
     """Paths and flags for this platform; the tools are already checked."""
     if sys.platform == "darwin":
         opt = brew_opt()
-        llvm = opt / f"llvm@{LLVM_MAJOR}"
+        llvm = opt / f"llvm@{llvm_major()}"
         sdk = subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()
         kegs = ("glib", "gettext", "berkeley-db@5", "kyoto-cabinet", "tkrzw")
         includes = " ".join(f"-I{opt / keg}/include" for keg in kegs)
@@ -109,7 +115,7 @@ def toolchain() -> Toolchain:
         path = f"{opt / 'libtool'}/libexec/gnubin:{os.environ['PATH']}"
         return Toolchain(
             str(llvm / "lib/libclang.dylib"),
-            str(llvm / f"lib/clang/{LLVM_MAJOR}"),
+            str(llvm / f"lib/clang/{llvm_major()}"),
             ("-isysroot", sdk, "-stdlib=libc++"),
             # Tkrzw's headers need C++17, GCC's default and not Apple clang's.
             "-O0 -std=gnu++17",
@@ -120,8 +126,8 @@ def toolchain() -> Toolchain:
             "_",
             "-g -O2 -std=gnu++17")
     return Toolchain(
-        f"libclang-{LLVM_MAJOR}.so.1",
-        f"/usr/lib/llvm-{LLVM_MAJOR}/lib/clang/{LLVM_MAJOR}",
+        f"libclang-{llvm_major()}.so.1",
+        f"/usr/lib/llvm-{llvm_major()}/lib/clang/{llvm_major()}",
         (),
         "-O0 -ffunction-sections",
         "-Wl,--gc-sections -Wl,-Map=$@.map",
@@ -418,9 +424,6 @@ class Parser:
 
     def __init__(self, root: Path, families: dict[str, str], tools: Toolchain):
         import clang.cindex as cindex
-        bindings = importlib.metadata.version("clang")
-        if bindings.split(".")[0] != LLVM_MAJOR:
-            raise ValueError(f"clang bindings {bindings} do not match LLVM {LLVM_MAJOR}")
         try:
             if not cindex.Config.loaded:
                 cindex.Config.set_library_file(tools.libclang)
@@ -870,9 +873,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pin", type=Path, nargs="?", help="libpinyin checkout at the pin")
     parser.add_argument("--print-llvm-major", action="store_true",
-                        help="print the LLVM major from the clang pin in the shebang")
-    parser.add_argument("--print-clang-requirement", action="store_true",
-                        help="print the clang bindings pin from the shebang")
+                        help="print the LLVM major of the installed clang bindings")
     parser.add_argument("--families", type=Path, default=FAMILIES)
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--work", type=Path, default=ROOT / "target/glib-call-sites",
@@ -886,10 +887,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="compare with --output instead of writing it")
     args = parser.parse_args(argv)
     if args.print_llvm_major:
-        print(LLVM_MAJOR)
-        return 0
-    if args.print_clang_requirement:
-        print(CLANG_REQUIREMENT)
+        print(llvm_major())
         return 0
     if args.pin is None:
         parser.error("the following arguments are required: pin")

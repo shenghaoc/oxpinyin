@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """Tests for tools/dev/pool.py: the plan arithmetic, the pool loop with a
 fake launcher, callable units under the same loop, and a real SIGTERM against the CLI (POSIX only:
 Windows has no signal delivery to a process or process groups). /proc and CPU affinity are faked, and

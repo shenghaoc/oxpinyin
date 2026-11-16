@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --no-project --managed-python python -X utf8
 """tools/oracle/image.py: the oracle image tag, pin fields, image verification and runtime selection."""
 import contextlib
 import hashlib
@@ -641,6 +640,8 @@ class ProvisionOracleTests(unittest.TestCase):
                 else:
                     self.assertIn(f'{ROOT.resolve()}:/repo:ro', launch)
                 self.assertIn(f'{self.cache.resolve()}:/provision', launch)
+                # The checkout is read-only, so the uv project's environment is outside it.
+                self.assertIn(f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}', launch)
                 # The guest receives the host's cache root at a path of its own, never the host path.
                 self.assertIn(f'{self.root.resolve()}:/cache', launch)
                 self.assertIn('OXPINYIN_CACHE=/cache', launch)
@@ -682,6 +683,7 @@ class ProvisionOracleTests(unittest.TestCase):
         launch = [str(part) for part in run.call_args_list[-1].args[0]]
         self.assertIn('oxpinyin-performance-amd64:/performance', launch)
         self.assertIn('OXPINYIN_CACHE=/performance/cache', launch)
+        self.assertIn(f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}', launch)
 
     def test_other_options_ci_and_foreign_architectures_are_refused_before_any_runtime_call(self):
         for argv, env, machine in ((['--cache-dir', '/x'], {}, 'x86_64'), (['--cells'], {}, 'x86_64'),
@@ -929,7 +931,7 @@ class CaptureLauncherTests(unittest.TestCase):
               mock.patch.object(images, 'quiet', return_value=1), mock.patch.object(images, 'run', fail_pull),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(images.Finished)):
             images.capture_pin(['1'], root=ROOT, env=self.env)
-        self.assertIn('is unavailable; build it with: uv run --no-project --managed-python python -X utf8 '
+        self.assertIn('is unavailable; build it with: uv run --managed-python python -X utf8 '
                       '-m tools.oracle.image build-image', error.getvalue())
 
     def test_a_missing_provision_or_model_cache_is_refused_before_any_runtime_call(self):
