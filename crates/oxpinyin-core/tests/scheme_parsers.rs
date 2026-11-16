@@ -544,7 +544,6 @@ fn luoma_parses_through_the_dp() {
             OptionBits::empty(),
             luoma_pinyin_index(),
         )
-        .expect("infallible parse")
     };
 
     // Longest coverage wins; the canonical spelling is what the
@@ -589,7 +588,6 @@ fn index_parse_handles_tone_digits() {
             },
             secondary_zhuyin_index(),
         )
-        .expect("infallible parse")
     };
 
     // Under USE_TONE the trailing digit rides the key (secondary
@@ -622,7 +620,6 @@ fn index_parse_bounds_each_key_by_its_runs_next_separator() {
             OptionBits::empty(),
             luoma_pinyin_index(),
         )
-        .expect("infallible parse")
     };
     let spans = |input: &str| {
         parse(input)
@@ -660,7 +657,6 @@ fn dp_prefers_longest_coverage_then_fewest_keys() {
             OptionBits::empty(),
             secondary_zhuyin_index(),
         )
-        .expect("infallible parse")
     };
     assert_eq!(canonical(&parse("shian")), "xian");
 
@@ -681,8 +677,7 @@ fn force_tone_is_nested_under_use_tone_for_both_indexes() {
             OptionBits::USE_TONE,
             OptionBits::USE_TONE | OptionBits::FORCE_TONE,
         ] {
-            let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index)
-                .expect("infallible parse");
+            let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index);
             assert_eq!(
                 plain.consumed(),
                 if options == OptionBits::USE_TONE | OptionBits::FORCE_TONE {
@@ -692,8 +687,7 @@ fn force_tone_is_nested_under_use_tone_for_both_indexes() {
                 }
             );
             let toned = format!("{input}4");
-            let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index)
-                .expect("infallible parse");
+            let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index);
             assert_eq!(
                 parsed.consumed(),
                 if options.contains(OptionBits::USE_TONE) {

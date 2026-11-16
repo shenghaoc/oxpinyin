@@ -178,19 +178,9 @@ fn parse_one_index_key(
 /// pin 074a2219 `pinyin_parser2.cpp:176-190`. Other option bits do not
 /// gate these plain index rows.
 ///
-/// # Errors
-/// The parser currently has no error cases: a rejected key ends the parsed
-/// prefix. The error type is [`core::convert::Infallible`].
+/// The parser has no error cases: a rejected key ends the parsed prefix.
 #[must_use]
 pub fn parse_full_pinyin_index_with_options(
-    input: &[u8],
-    options: crate::OptionBits,
-    index: FullPinyinIndex,
-) -> Result<FullPinyinIndexParse, core::convert::Infallible> {
-    Ok(parse_index(input, options, index))
-}
-
-fn parse_index(
     input: &[u8],
     options: crate::OptionBits,
     index: FullPinyinIndex,

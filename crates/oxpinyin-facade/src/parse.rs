@@ -266,7 +266,7 @@ impl<
         if let Some(scheme) = full_scheme(self.live.full_scheme.get())
             && let Some(index) = scheme.index()
         {
-            let Ok(parsed) =
+            let parsed =
                 parse_full_pinyin_index_with_options(text.as_bytes(), self.options(), index);
             // The session reads the consumed original bytes with each key
             // at its own span, as plain full pinyin does: the parser is
