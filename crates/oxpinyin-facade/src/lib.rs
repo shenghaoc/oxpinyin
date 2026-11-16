@@ -50,7 +50,7 @@ pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, InitRefusal, LibraryLoadFault, LibraryRowAssert,
     LiveOptions, LiveOptionsInner, MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
 };
-pub use cursor::{KeyAt, ModeKeys, SpanSource};
+pub use cursor::{CursorFault, CursorLaw, KeyAt, ModeKeys, SpanSource};
 pub use export_rows::{
     BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
     GramLoadFault, PhraseExportCursor,

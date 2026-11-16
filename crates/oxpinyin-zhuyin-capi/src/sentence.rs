@@ -235,41 +235,22 @@ pub extern "C" fn zhuyin_get_character_offset(
             }
             return false;
         }
-        // Register row 19: the recursion's `assert(size > 0)`
-        // (`zhuyin.cpp:2110`), the entry's `assert(offset < matrix.size())`
-        // (`:2158`) and `_check_offset` (`:1453` via `:2159`); and
-        // `_pre_compute_tokens`' `reduce_tokens` count assert (`:2080`,
-        // `phrase_large_table3.h:95`).
-        Err(
-            oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. },
-        ) => std::process::abort(),
-        // A graph or dictionary failure the pin has no counterpart for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => {
-            crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
-            return false;
-        }
+        Err(error) => match oxpinyin_facade::CursorFault::of(
+            &error,
+            oxpinyin_facade::CursorLaw::CharacterOffset,
+        ) {
+            // Register row 19: the recursion's `assert(size > 0)`
+            // (`zhuyin.cpp:2110`), the entry's `assert(offset <
+            // matrix.size())` (`:2158`) and `_check_offset` (`:1453` via
+            // `:2159`); and `_pre_compute_tokens`' `reduce_tokens` count
+            // assert (`:2080`, `phrase_large_table3.h:95`).
+            oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+            // A graph or dictionary failure the pin has no counterpart for.
+            oxpinyin_facade::CursorFault::Unreadable => {
+                crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
+                return false;
+            }
+        },
     };
     if !length.is_null() {
         // SAFETY: Null-checked above.
@@ -336,58 +317,6 @@ fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
     }
 }
 
-/// The normalized lookup offset, or the refusal to diagnose at the boundary.
-///
-/// The pin's matrix holds `parsed_len + 1` columns, the last a reserved slot
-/// holding a lone zero key, and `zhuyin.cpp`'s `_check_offset` asserts
-/// `zero_key != key` on the column before the offset (`:1441-1456`, via
-/// `:1495` and `:1558`): an offset just past a separator or one past the
-/// reserved slot aborts there, and any further out aborts in that read's
-/// `get_column_size` (`phonetic_key_matrix.h:103`). So does this facade
-/// (register row 66).
-fn validated_lookup_offset(
-    inst: &crate::state::CapiInstanceRead<'_>,
-    offset: usize,
-) -> Result<usize, CandidateGuessRefusal> {
-    // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
-    // when the parse stopped early; `_check_offset` reads column
-    // `offset - 1`, and past the last column `get_column_size` asserts.
-    if offset > inst.core.pin_matrix_columns() {
-        std::process::abort();
-    }
-    match inst.core.validate_abi_lookup_offset(offset, true) {
-        Ok(normalized) => Ok(normalized),
-        Err(
-            oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. },
-        ) => std::process::abort(),
-        // A parse the facade cannot read, which the pin has no counterpart
-        // for.
-        Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
-        ) => Err(CandidateGuessRefusal::InvalidOffset),
-    }
-}
-
 /// Whether the facade's `guint32` unigram total is zero: the loaded
 /// libraries' sum, the user store's deltas and the accepted
 /// `zhuyin_token_add_unigram_frequency` deltas, wrapped.
@@ -427,7 +356,19 @@ fn guess_candidates_result(
     if !inst.core.session.is_composing() {
         return Ok(false);
     }
-    let normalized = validated_lookup_offset(&inst.read(), offset)?;
+    // `zhuyin.cpp`'s `_check_offset` asserts `zero_key != key` on the column
+    // before the offset (`:1441-1456`, via `:1495` and `:1558`), and
+    // `get_column_size` asserts past the matrix (`phonetic_key_matrix.h:103`;
+    // register row 66).
+    let normalized = match inst.core.abi_candidate_offset(offset, true) {
+        Ok(normalized) => normalized,
+        Err(oxpinyin_facade::CursorFault::PinAssert) => std::process::abort(),
+        // A parse the facade cannot read, which the pin has no counterpart
+        // for.
+        Err(oxpinyin_facade::CursorFault::Unreadable) => {
+            return Err(CandidateGuessRefusal::InvalidOffset);
+        }
+    };
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's
     // `search_matrix` walk over `(start, offset)`); the after-cursor

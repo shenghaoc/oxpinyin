@@ -357,7 +357,7 @@ within the column. The flat buffer records empty columns with equal adjacent
 offsets. The placed view represents each zero-only column as a hop to the
 next byte. Traversal keeps the pin's order and multiplicity, and the ABI
 reads the first key and rest as a pair. The empty, terminal and out-of-range
-checks are at the ABI consumers (`oxpinyin-facade/src/cursor.rs:382-395,513-527`,
+checks are at the ABI consumers (`oxpinyin-facade/src/cursor.rs:450-456,571-593`,
 policy rows 63 and 66).
 
 ## 4. Sentence decoding

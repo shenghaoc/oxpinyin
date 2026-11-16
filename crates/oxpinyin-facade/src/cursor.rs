@@ -24,6 +24,76 @@ use crate::instance::{InstanceState, InstanceView};
 /// `ChewingKey` spelling, which the pin's tests treat alike).
 type AbiItem = (u16, usize, usize);
 
+/// The pin law that an [`EngineError`] of a cursor or lookup call comes
+/// from. Each law asserts at its own sites, so the same error can be an
+/// assert under one law and a refusal under another.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorLaw {
+    /// The `_check_offset` laws: the left and right moves and the
+    /// candidate-lookup offset. The pin asserts in `_check_offset`
+    /// (`pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `zhuyin.cpp:1453`
+    /// via `:1998`, `:2020`, `:2030`, `:2055`) and in `get_column_size`
+    /// past the matrix (`phonetic_key_matrix.h:103`).
+    CheckOffset,
+    /// The `get_character_offset` law. The pin also asserts in the
+    /// recursion and at the entry (`pinyin.cpp:3147`, `:3161`, `:3203`,
+    /// `:3204`; `zhuyin.cpp:2110`, `:2158`) and in `_pre_compute_tokens`'
+    /// `reduce_tokens` count (`pinyin.cpp:3117`, `zhuyin.cpp:2080`,
+    /// `phrase_large_table3.h:95`).
+    CharacterOffset,
+}
+
+/// How a C entry point answers an error of a cursor or lookup law. The C
+/// layer acts on it: it aborts the process or refuses the call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorFault {
+    /// One of the pin's asserts. The C layer aborts the process
+    /// (register rows 14, 19 and 66).
+    PinAssert,
+    /// A parse or dictionary failure that the pin has no counterpart
+    /// for. The C layer refuses the call.
+    Unreadable,
+}
+
+impl CursorFault {
+    /// Classifies `error` under `law`.
+    ///
+    /// The match names every [`EngineError`] variant, so a new variant
+    /// gets a decision here.
+    #[must_use]
+    pub fn of(error: &EngineError, law: CursorLaw) -> Self {
+        match error {
+            EngineError::LookupOffsetOutOfRange { .. } | EngineError::ZeroKeyOffsetCheck { .. } => {
+                Self::PinAssert
+            }
+            EngineError::MatrixColumnAssert { .. } | EngineError::ReduceTokensCount { .. } => {
+                match law {
+                    CursorLaw::CharacterOffset => Self::PinAssert,
+                    CursorLaw::CheckOffset => Self::Unreadable,
+                }
+            }
+            EngineError::CandidateIndexOutOfRange { .. }
+            | EngineError::LookupOffsetPastSeparator { .. }
+            | EngineError::LookupOffsetInsideCharacter { .. }
+            | EngineError::SelectionAnchorBeforeComposition { .. }
+            | EngineError::StaleTrainingConstraint { .. }
+            | EngineError::UnsafeTrainingPredecessor { .. }
+            | EngineError::ShortTrainingPredecessor { .. }
+            | EngineError::ShortLookupPredecessor { .. }
+            | EngineError::UnsafeLookupPredecessor { .. }
+            | EngineError::ReadAfterCheck { .. }
+            | EngineError::TrainingSetFreqMiss { .. }
+            | EngineError::FailedUserBigramStore { .. }
+            | EngineError::StaleTrainingSpan { .. }
+            | EngineError::OverlongUserIndexKey { .. }
+            | EngineError::TonedIncompleteKey
+            | EngineError::UserModel(_)
+            | EngineError::Graph(_)
+            | EngineError::Scoring(_) => Self::Unreadable,
+        }
+    }
+}
+
 /// The active parse mode's span source: the coordinate input bytes, its
 /// parsed length, the key spans `(start, end)`, and whether `'` is a
 /// zero-key separator in that mode.
@@ -556,6 +626,42 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         self.validate_lookup_offset_impl(offset)
     }
 
+    /// The candidate-guess lookup offset of both facades, normalized, or
+    /// the fault for the C layer.
+    ///
+    /// The pin's matrix holds `parsed_len + 1` columns, the last a
+    /// reserved slot. `_check_offset` reads the column before the offset,
+    /// and `get_column_size` asserts past the last column
+    /// (`phonetic_key_matrix.h:103`). The two pins differ on that read:
+    ///
+    /// - Pinyin ignores `_check_offset`'s answer (`pinyin.cpp:2226`). An
+    ///   offset one past the reserved slot is an ordinary lookup that
+    ///   finds nothing, answered as the end-of-input lookup, and a
+    ///   zero-key column before the offset is refused.
+    /// - Zhuyin asserts `zero_key != key` there (`zhuyin.cpp:1441-1456`,
+    ///   via `:1495` and `:1558`), so both abort.
+    ///
+    /// # Errors
+    ///
+    /// [`CursorFault::PinAssert`] where the pin asserts, and
+    /// [`CursorFault::Unreadable`] where the lookup is refused.
+    pub fn abi_candidate_offset(&self, offset: usize, zhuyin: bool) -> Result<usize, CursorFault> {
+        if offset > self.pin_matrix_columns() {
+            return Err(CursorFault::PinAssert);
+        }
+        match self.validate_abi_lookup_offset(offset, zhuyin) {
+            Ok(normalized) => Ok(normalized),
+            Err(EngineError::LookupOffsetOutOfRange { offset, len })
+                if !zhuyin && offset == len + 1 =>
+            {
+                self.validate_lookup_offset(len)
+                    .map_err(|_| CursorFault::Unreadable)
+            }
+            Err(EngineError::ZeroKeyOffsetCheck { .. }) if !zhuyin => Err(CursorFault::Unreadable),
+            Err(error) => Err(CursorFault::of(&error, CursorLaw::CheckOffset)),
+        }
+    }
+
     /// Facade-specific left movement, retaining zhuyin.cpp:2019's typo.
     ///
     /// # Errors
@@ -634,3 +740,6 @@ pub(crate) fn matrix_keys_of(keys: &[KeyAt]) -> Vec<MatrixKey> {
         .map(|k| MatrixKey::from_chewing(k.chewing, k.begin, k.end))
         .collect()
 }
+
+#[cfg(test)]
+mod tests;
