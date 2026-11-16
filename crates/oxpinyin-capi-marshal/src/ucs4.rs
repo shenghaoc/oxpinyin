@@ -40,22 +40,17 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
             position += 1;
             continue;
         }
-        let (width, minimum) = match first {
-            0xc2..=0xdf => (2, 0x80),
-            0xe0..=0xef => (3, 0x800),
-            0xf0..=0xf7 => (4, 0x1_0000),
-            0xf8..=0xfb => (5, 0x20_0000),
-            0xfc..=0xfd => (6, 0x400_0000),
+        // The sequence width, its least value and the lead byte's payload bits.
+        let (width, minimum, mask) = match first {
+            0xc2..=0xdf => (2, 0x80, 0x1f),
+            0xe0..=0xef => (3, 0x800, 0x0f),
+            0xf0..=0xf7 => (4, 0x1_0000, 0x07),
+            0xf8..=0xfb => (5, 0x20_0000, 0x03),
+            0xfc..=0xfd => (6, 0x400_0000, 0x01),
             _ => return Err(Ucs4Error),
         };
         let tail = bytes.get(position + 1..position + width).ok_or(Ucs4Error)?;
-        let mut word = u32::from(match width {
-            2 => first & 0x1f,
-            3 => first & 0x0f,
-            4 => first & 0x07,
-            5 => first & 0x03,
-            _ => first & 0x01,
-        });
+        let mut word = u32::from(first & mask);
         for &byte in tail {
             if byte & 0xc0 != 0x80 {
                 return Err(Ucs4Error);

@@ -14,6 +14,39 @@ fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
     crate::store_libpinyin::pinyin_keys_to_packed(keys).ok_or(UserStoreError::InvalidPhrase)
 }
 
+/// `_add_phrase`'s search of the phrase table before any change
+/// (`pinyin.cpp:536-542` at 074a2219): the token that `library` already holds
+/// for the phrase `words`, or `selected` when the caller chose one.
+///
+/// # Errors
+///
+/// A record the search would read past (register row 101) is refused first,
+/// before any commit. More than one token of the library for the phrase is
+/// [`UserStoreError::InvalidPhrase`].
+fn existing_phrase_token(
+    table: &crate::user_phrase_table::UserPhraseTable,
+    library: u8,
+    words: &[u32],
+    selected: Option<Option<Token>>,
+) -> Result<Option<Token>, UserStoreError> {
+    table
+        .check_add(words)
+        .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+    if let Some(token) = selected {
+        return Ok(token);
+    }
+    let tokens: Vec<_> = table
+        .tokens(&phrase_table::key_ucs4(words))
+        .map_err(|error| UserStoreError::Persistence(error.to_string()))?
+        .into_iter()
+        .filter(|token| phrase_index_library_index(*token) == library)
+        .collect();
+    if tokens.len() > 1 {
+        return Err(UserStoreError::InvalidPhrase);
+    }
+    Ok(tokens.first().copied())
+}
+
 impl UserStore {
     /// `SubPhraseIndex::m_total_freq` of `library`: a system library's live
     /// scalar, or a user library's items sum plus the stored total's
@@ -327,29 +360,7 @@ impl UserStore {
         let packed = packed(keys)?;
         let offsets = self.offsets();
         let mut phrases = target.phrases_mut();
-        // `_add_phrase` searches the phrase table before any change
-        // (`pinyin.cpp:536-542` at 074a2219); a record that search would read
-        // past (register row 101) is refused here, before any commit.
-        phrases
-            .phrase_table
-            .check_add(words)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        let existing = match selected {
-            Some(token) => token,
-            None => {
-                let tokens: Vec<_> = phrases
-                    .phrase_table
-                    .tokens(&phrase_table::key_ucs4(words))
-                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?
-                    .into_iter()
-                    .filter(|token| phrase_index_library_index(*token) == library)
-                    .collect();
-                if tokens.len() > 1 {
-                    return Err(UserStoreError::InvalidPhrase);
-                }
-                tokens.first().copied()
-            }
-        };
+        let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
         if let Some(token) = existing {
             let Some(item) = phrases.item(token) else {
                 return Err(UserStoreError::InvalidPhrase);
@@ -436,30 +447,7 @@ impl UserStore {
             .ok_or(UserStoreError::InvalidPhrase)?;
         let packed = packed(keys)?;
         let mut phrases = target.phrases_mut();
-        // `_add_phrase` searches the phrase table before any change
-        // (`pinyin.cpp:536-542`); a record that search would read past (register
-        // row 101) is refused here, before any commit.
-        phrases
-            .phrase_table
-            .check_add(words)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-        let existing = match selected {
-            Some(token) => token,
-            None => {
-                let tokens = phrases
-                    .phrase_table
-                    .tokens(&phrase_table::key_ucs4(words))
-                    .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
-                let tokens: Vec<_> = tokens
-                    .into_iter()
-                    .filter(|token| phrase_index_library_index(*token) == library)
-                    .collect();
-                if tokens.len() > 1 {
-                    return Err(UserStoreError::InvalidPhrase);
-                }
-                tokens.first().copied()
-            }
-        };
+        let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
         let mut items = self.inner.system_items.borrow_mut();
         // An unloaded library has no sub-index: `get_range` fails and
         // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).

@@ -226,10 +226,6 @@ fn remember_recur<E>(
     let Some(column) = columns.columns.get(start) else {
         return Ok(false);
     };
-    // `size <= 0`: "assume pinyin parsers will filter invalid keys."
-    if column.real.is_empty() && column.zero_end.is_none() {
-        return Ok(false);
-    }
     let mut result = false;
     for key in &column.real {
         // `cached_keys->len >= phrase_length`.
@@ -253,6 +249,8 @@ fn remember_recur<E>(
         }
         return remember_recur(columns, phrase_length, zero_end, path, pronounces, add);
     }
+    // An empty column also ends here, with `false` and no callback (`size <= 0`:
+    // "assume pinyin parsers will filter invalid keys.").
     Ok(result)
 }
 
