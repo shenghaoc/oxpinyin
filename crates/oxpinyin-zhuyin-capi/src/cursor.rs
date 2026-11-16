@@ -38,20 +38,15 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
     end: AtomicU16::new(0),
 };
 
-/// Whether the parse placed a key. The pin's matrix is empty (size 0) for a
-/// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`).
-pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys()
-}
-
 /// Register row 66, `phonetic_key_matrix.h:103`: on an empty matrix (a
 /// fresh or keyless instance: `fill_matrix` leaves it at size 0 when the
 /// parse placed no key, `phonetic_key_matrix.cpp:37`) the pin's first
 /// `get_column_size` asserts — the key accessors' after `matrix.size() - 1`
-/// wraps (`zhuyin.cpp:1892-1895`, `:1914-1917`), the right move's in its
-/// loop (`:2037-2038`) — and the process aborts.
+/// wraps (`zhuyin.cpp:1892-1895`, `:1914-1917`) — and the process aborts.
+/// The right move's assert in its loop (`:2037-2038`) is
+/// [`abort_past_matrix`]'s: an empty matrix has no column.
 fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
-    if !matrix_has_keys(&inst.read()) {
+    if !inst.core.mode_has_keys() {
         std::process::abort();
     }
 }
@@ -379,9 +374,9 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    abort_on_empty_matrix(&inst.read());
     // The loop reads column `offset` and `_check_offset` column `offset - 1`
-    // (`pinyin.cpp:3067`, `zhuyin.cpp:1556`).
+    // (`pinyin.cpp:3067`, `zhuyin.cpp:1556`). An empty matrix has no column,
+    // so this also aborts there (register row 66).
     abort_past_matrix(&inst.read(), offset);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,

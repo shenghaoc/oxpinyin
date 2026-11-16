@@ -29,7 +29,12 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    let matrix_has_keys = matrix_has_keys(&inst.read());
+    // `get_nbest_match` answers `false` before it clears anything when the
+    // matrix has no step (`0 == nstep`, `phonetic_lookup.h:743-745`), and
+    // `fill_matrix` leaves the matrix empty for a parse without keys
+    // (`phonetic_key_matrix.cpp:34-38`): `"'"` and `"!"` consume a byte or
+    // none and place nothing.
+    let matrix_has_keys = inst.core.mode_has_keys();
     match inst.core.guess_sentence_with_matrix(matrix_has_keys) {
         Ok(found) => found,
         Err(error) => {
@@ -58,15 +63,6 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
 /// `pinyin_token_add_unigram_frequency` deltas, wrapped.
 fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.lm.amplified_total() == 0
-}
-
-/// Whether the parse placed a key. `get_nbest_match` answers `false` before
-/// it clears anything when the matrix has no step (`0 == nstep`,
-/// `phonetic_lookup.h:743-745`), and `fill_matrix` leaves the matrix empty
-/// for a parse without keys (`phonetic_key_matrix.cpp:34-38`): `"'"` and
-/// `"!"` consume a byte or none and place nothing.
-pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys()
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -107,7 +103,7 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     else {
         std::process::abort();
     };
-    let matrix_has_keys = matrix_has_keys(&inst.read());
+    let matrix_has_keys = inst.core.mode_has_keys();
     match inst
         .core
         .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys)
