@@ -690,44 +690,64 @@ pub fn parse_time_keys(
         }
     }
     if divided && options.contains(OptionBits::USE_RESPLIT_TABLE) {
-        for index in 0..parsed_len {
-            for slot in 0..columns[index].len() {
-                let key = columns[index][slot];
-                let Some(next_len) = columns.get(key.end()).map(Vec::len) else {
-                    continue;
-                };
-                for next_slot in 0..next_len {
-                    let next = columns[key.end()][next_slot];
-                    if key.tone() != 0 || next.tone() != 0 || next.syllable_start() != key.end() {
-                        continue;
-                    }
-                    if let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(a, b, _, _)| {
-                        oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key())
-                            && oxpinyin_core::ChewingKey::from_pinyin(b) == Some(next.key())
-                    }) {
-                        append_matrix_split(&mut columns, key, next.end(), left, right);
-                    }
-                }
-            }
-        }
+        matrix_resplit_pass(&mut columns, parsed_len);
     }
     if divided && options.contains(OptionBits::USE_DIVIDED_TABLE) {
-        for index in 0..columns.len() {
-            for slot in 0..columns[index].len() {
-                let key = columns[index][slot];
-                if key.tone() != 0 {
+        matrix_divided_pass(&mut columns);
+    }
+    matrix_fuzzy_pass(&mut columns, options);
+    columns.into_iter().flatten().collect()
+}
+
+/// The resplit pass of [`parse_time_keys`] over the columns before
+/// `parsed_len`: a toneless key and a toneless key that starts at its end,
+/// when the resplit table holds the pair, append the pair's other split.
+fn matrix_resplit_pass(columns: &mut [Vec<crate::cursor::MatrixKey>], parsed_len: usize) {
+    for index in 0..parsed_len {
+        for slot in 0..columns[index].len() {
+            let key = columns[index][slot];
+            let Some(next_len) = columns.get(key.end()).map(Vec::len) else {
+                continue;
+            };
+            for next_slot in 0..next_len {
+                let next = columns[key.end()][next_slot];
+                if key.tone() != 0 || next.tone() != 0 || next.syllable_start() != key.end() {
                     continue;
                 }
-                if let Some((_, left, right)) = DIVIDED_TABLE
-                    .iter()
-                    .find(|(a, _, _)| oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key()))
-                {
-                    append_matrix_split(&mut columns, key, key.end(), left, right);
+                if let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(a, b, _, _)| {
+                    oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key())
+                        && oxpinyin_core::ChewingKey::from_pinyin(b) == Some(next.key())
+                }) {
+                    append_matrix_split(columns, key, next.end(), left, right);
                 }
             }
         }
     }
-    for column in &mut columns {
+}
+
+/// The divided pass of [`parse_time_keys`] over every column: a toneless
+/// key that the divided table holds appends its two halves.
+fn matrix_divided_pass(columns: &mut [Vec<crate::cursor::MatrixKey>]) {
+    for index in 0..columns.len() {
+        for slot in 0..columns[index].len() {
+            let key = columns[index][slot];
+            if key.tone() != 0 {
+                continue;
+            }
+            if let Some((_, left, right)) = DIVIDED_TABLE
+                .iter()
+                .find(|(a, _, _)| oxpinyin_core::ChewingKey::from_pinyin(a) == Some(key.key()))
+            {
+                append_matrix_split(columns, key, key.end(), left, right);
+            }
+        }
+    }
+}
+
+/// The fuzzy pass of [`parse_time_keys`], per column: the initial swaps read
+/// the column as it is, and the final swaps then read the grown column.
+fn matrix_fuzzy_pass(columns: &mut [Vec<crate::cursor::MatrixKey>], options: OptionBits) {
+    for column in columns {
         for swap in [
             oxpinyin_core::fuzzy_chewing_initials,
             oxpinyin_core::fuzzy_chewing_finals,
@@ -744,7 +764,6 @@ pub fn parse_time_keys(
             }
         }
     }
-    columns.into_iter().flatten().collect()
 }
 
 fn append_matrix_split(
