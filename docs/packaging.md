@@ -408,7 +408,7 @@ A second full build on every PR is the largest cost, so the base result is cache
 The cache key is `ship-sizes-v1-` plus a hash of two things:
 
 - the Git tree ids of every input that can change a library byte;
-- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`), and for tkrzw the `pkg-config --modversion` of the overlay install.
+- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`), and for tkrzw the SHA-256 of the overlay install's vcpkg ABI record (`share/tkrzw/vcpkg_abi_info.txt` under the prefix that pkg-config reports), which changes when the build changes at the same version.
 
 The key names no commit.
 Every main commit with the same inputs shares one result.
