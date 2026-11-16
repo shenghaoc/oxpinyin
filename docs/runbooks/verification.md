@@ -61,7 +61,7 @@ Before a push for review or merge and after each rebase, one `cargo clippy --loc
   - `cargo deny --locked --log-level error check`
   - `cargo deny --locked --all-features --log-level error check`
   - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
-- `just complexity` when Rust functions changed: Lizard, at the release that `uv.lock` records. CCN 40 is the limit; the recipe also reports each function above CCN 15. A function above CCN 15 is worth a second look in review; it is not a refactoring target.
+- `just complexity` when Rust functions changed: the [complexity limit](#complexity-limit).
 - `just test-tools` when `tools/` changed.
 - `just ruff` when Python under `tools/` changed.
 
@@ -70,6 +70,25 @@ WIP checkpoint pushes: `cargo fmt --all --check` only.
 The WIP-checkpoint rule and [verification scope and precedence](#verification-scope-and-precedence), which covers documentation and source comments, override the pre-push requirement above.
 
 CI is the full gate. These local checks cover only the cfg arms and backend features of the host. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
+
+### Complexity limit
+
+A function stays at or below Lizard CCN 15, as `just complexity` measures it.
+`uv.lock` records the Lizard release.
+
+CCN counts the linearly independent paths through a function: the number of test cases that basis-path testing needs. It indicates testing effort; it does not count the tests that are sufficient, and it does not show correctness.
+A split does not remove a path; it only spreads the paths over more functions.
+A split helps only when each part can be understood alone.
+
+An exception is a `#lizard forgives(cyclomatic_complexity)` comment in the function, with a one-sentence reason.
+The reason is one of these: the function's paths are one ordered operation, an exhaustive mapping, or mutually exclusive implementations.
+In each case, a split would increase what a reader must hold to follow the function.
+The comment waives only the function that contains it, and only CCN.
+
+Two alternatives are rejected:
+
+- A limit with no exceptions: some splits would serve the metric, not the reader.
+- An allowed count of warnings: a new violation could replace an old one without failing.
 
 ### Rebases and stacks
 

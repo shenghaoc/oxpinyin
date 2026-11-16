@@ -207,17 +207,12 @@ ruff:
 ruff:
     @{{windows_args}} uv run --locked --only-group lint --managed-python ruff check --select F --extend-exclude tools/scripts2/upstream tools; exit $LASTEXITCODE
 
-# Check the per-function cyclomatic complexity (CCN) of the Rust crates with the
-# Lizard that uv.lock names. The first run reports the functions above CCN 15
-# and never fails; the second fails when a function is above CCN 40.
-[unix]
+# Fail when a Rust function is above cyclomatic complexity (CCN) 15, with the
+# Lizard that uv.lock names. A function's own `#lizard forgives` comment is
+# the one exception (docs/runbooks/verification.md#complexity-limit).
+# One definition serves every shell: the command takes no arguments.
 complexity:
-    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w -i -1
-    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 40 -w
-
-[windows]
-complexity:
-    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w -i -1; if ($LASTEXITCODE) { exit $LASTEXITCODE }; uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 40 -w; exit $LASTEXITCODE
+    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w
 
 # Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin-core
 # Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.
