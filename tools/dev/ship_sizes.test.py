@@ -82,6 +82,38 @@ class KeyTests(unittest.TestCase):
                 self.repo.git('reset', '-q', '--hard', 'HEAD~1')
                 self.assertEqual(self.key(), key, before)
 
+    def test_tkrzw_abi_record_changes_the_key_at_the_same_version(self):
+        revision = self.repo.commit({'crates/oxpinyin-core/lib': 'a\n'})
+        prefix = self.repo.root / 'installed tkrzw'
+        record = prefix / 'share/tkrzw/vcpkg_abi_info.txt'
+        record.parent.mkdir(parents=True)
+        run = ship_sizes.run
+
+        def fake_run(argv, **kwargs):
+            if argv[0] == 'git':
+                return run(argv, **kwargs)
+            if argv == ['pkg-config', '--variable=prefix', 'tkrzw']:
+                return str(prefix) + '\n'
+            if argv == ['pkg-config', '--modversion', 'tkrzw']:
+                return '1.0.34\n'
+            return 'unchanged\n'
+
+        with mock.patch.object(ship_sizes, 'run', side_effect=fake_run), \
+                mock.patch.object(ship_sizes, 'reference_cell', return_value=cell.Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}, ROOT)):
+            # The record is opaque bytes; only the installed build changes.
+            record.write_bytes(b'first build\n\xff')
+            key = self.key(revision, ship_sizes.environment(self.repo.root))
+            record.write_bytes(b'second build\n\xfe')
+            self.assertNotEqual(self.key(revision, ship_sizes.environment(self.repo.root)), key)
+
+            record.unlink()
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = ship_sizes.main(['key', '--commit', revision])
+            self.assertEqual(status, 1)
+            self.assertEqual(out.getvalue(), '')
+            self.assertIn(str(record), err.getvalue())
+
 
 class ExportTests(unittest.TestCase):
     def test_missing_and_extra_symbols_fail(self):

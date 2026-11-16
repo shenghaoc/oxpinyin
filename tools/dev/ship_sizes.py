@@ -100,8 +100,18 @@ def environment(root: Path = ROOT) -> dict[str, str]:
              'strip': first_line(['strip', '--version'], root),
              'cargo-c': first_line(['cargo', 'cinstall', '--version'], root)}
     if reference_cell(root).feature == 'tkrzw':
-        # The overlay install that pkg-config selects, not a distribution package.
-        facts['tkrzw'] = first_line(['pkg-config', '--modversion', 'tkrzw'], root)
+        # Both revisions link this install, whose build can change at the same version.
+        try:
+            prefix = run(['pkg-config', '--variable=prefix', 'tkrzw'], cwd=root).strip()
+        except (Failure, OSError) as error:
+            raise Failure(f'could not locate installed tkrzw with pkg-config: {error}') from error
+        if not prefix:
+            raise Failure('pkg-config returned no prefix for installed tkrzw')
+        record = Path(prefix) / 'share/tkrzw/vcpkg_abi_info.txt'
+        try:
+            facts['tkrzw-abi'] = hashlib.sha256(record.read_bytes()).hexdigest()
+        except OSError as error:
+            raise Failure(f'could not read installed tkrzw ABI record {record}: {error}') from error
     if shutil.which('dpkg-query'):
         for package in (*PACKAGES, *backend_packages(root)):
             facts['dpkg:' + package] = first_line(['dpkg-query', '-W', '-f', '${Version}', package], root)
