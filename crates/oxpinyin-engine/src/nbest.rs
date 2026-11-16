@@ -854,12 +854,6 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let GenerationInput {
-        matrix,
-        bound,
-        physical_separators,
-        topology,
-    } = input;
     // The sentence path's single-seed law: the constrained decode seeds
     // the virtual start; the free walk seeds the history's last token.
     let seed = match constraints {
@@ -867,12 +861,7 @@ where
         None => history.last().map_or(SENTENCE_START, |token| token.value()),
     };
     nbest_sentences_with_seeds_generation(
-        GenerationInput {
-            matrix,
-            bound,
-            physical_separators,
-            topology,
-        },
+        input,
         dictionary,
         model,
         &[PhraseToken::new(seed)],
