@@ -238,13 +238,6 @@ fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
     answered
 }
 
-/// Whether the parse placed a key: the pin's matrix is empty otherwise
-/// (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`) and every auxiliary-text
-/// function answers `false` with an empty string.
-fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys()
-}
-
 /// Get auxiliary text for full pinyin display.
 ///
 /// # C signature
@@ -275,7 +268,7 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         return write_aux(aux_text, None);
     }
     let text = if let Some(parse) = inst.core.full_parse.as_ref() {
-        if !matrix_has_keys(&inst.read()) {
+        if !inst.core.mode_has_keys() {
             return write_aux(aux_text, None);
         }
         abort_on_full_walk(&inst.read(), cursor);
@@ -324,7 +317,7 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     let inst = unsafe { instance_ref(instance) };
     // Upstream returns false with an allocated empty string when
     // the matrix is empty (pinyin.cpp:3442-3445).
-    if !matrix_has_keys(&inst.read()) {
+    if !inst.core.mode_has_keys() {
         return write_aux(aux_text, None);
     }
     // The pin renders the shared matrix whichever parser filled it
@@ -358,7 +351,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    if !matrix_has_keys(&inst.read()) {
+    if !inst.core.mode_has_keys() {
         return write_aux(aux_text, None);
     }
     let text = match inst.core.zhuyin_parse.as_ref() {

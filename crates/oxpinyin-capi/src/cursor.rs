@@ -121,7 +121,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
 /// asserts, so the process aborts. A matrix with keys is the graceful
 /// `false`.
 fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
-    if !crate::sentence::matrix_has_keys(&inst.read()) {
+    if !inst.core.mode_has_keys() {
         std::process::abort();
     }
 }
@@ -507,13 +507,10 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     abort_past_matrix(&inst.read(), offset);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
-        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`, except
-        // on an empty matrix, where the loop's `get_column_size` asserts
-        // first.
-        Ok(None) => {
-            abort_on_empty_matrix(&inst.read());
-            return false;
-        }
+        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`. An empty
+        // matrix, where the loop's `get_column_size` asserts first, has no
+        // column, so `abort_past_matrix` above has already aborted.
+        Ok(None) => return false,
         Err(error) => {
             match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
             {
