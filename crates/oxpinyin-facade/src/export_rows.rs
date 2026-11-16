@@ -551,7 +551,7 @@ impl ExportSource<'_> {
                 .found()
                 .flatten();
         }
-        let phrase = self.user.phrase(token).ok().flatten()?;
+        let phrase = self.user.phrase(token)?;
         let pinyins: Vec<String> = phrase
             .pronunciations()
             .iter()
@@ -1218,9 +1218,7 @@ mod phrase_cursor_tests {
             )
             .unwrap();
         assert_eq!(
-            ctx.user_store()
-                .user_unigram_frequency(0x0500_0001)
-                .unwrap(),
+            ctx.user_store().user_unigram_frequency(0x0500_0001),
             Some(9)
         );
         let mut cursor = ctx.phrase_export_cursor(5);

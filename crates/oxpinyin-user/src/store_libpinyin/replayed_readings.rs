@@ -172,7 +172,7 @@ fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100), "unchanged");
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(70), "changed");
     assert_eq!(store.system_unigram(LIBRARY | 3), Some(25), "restored");
-    assert_eq!(store.unigram_delta(LIBRARY | 5).expect("added"), 11);
+    assert_eq!(store.unigram_delta(LIBRARY | 5), 11);
     assert_eq!(
         Some(crate::test_session::library_total(&store, 1)),
         Some(971)
@@ -239,7 +239,7 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
         Some(crate::test_session::library_total(&store, 1)),
         Some(150)
     );
-    assert_eq!(store.unigram_total().expect("total"), 0);
+    assert_eq!(store.unigram_total(), 0);
 
     // One accepted path adds the seed to the matching live reading alone.
     // Session training no longer writes pronunciation rows.
@@ -511,9 +511,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     // Both the user arena and the replayed item own their reading counts.
     assert_eq!(counts(&store, 1), [130]);
     assert_eq!(view, user_view(&dir));
-    let phrases = store
-        .export_phrases_in(crate::USER_DICTIONARY)
-        .expect("export");
+    let phrases = store.export_phrases_in(crate::USER_DICTIONARY);
     assert_eq!(phrases.len(), 1);
     assert_eq!(
         (phrases[0].text.as_slice(), phrases[0].count),
@@ -618,7 +616,7 @@ fn mixed_view(store: &UserStore, base: &SystemOriginals, tokens: &[u32]) -> Stri
     out.push_str(&format!(
         "{:?} {:?} {:?}\n",
         state.system_overrides,
-        store.phrases().expect("user phrases"),
+        store.phrases(),
         state.phrase_table
     ));
     out
@@ -660,7 +658,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     assert_eq!(counts(&store, 3), [33]);
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(120));
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
-    assert_eq!(store.unigram_delta(LIBRARY | 3).expect("delta"), 33);
+    assert_eq!(store.unigram_delta(LIBRARY | 3), 33);
 
     // A user library with a removed phrase, grams over the three items, and
     // training and imports onto the shipped and the appended item.
@@ -735,13 +733,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
             .expect("lookup"),
         Some(kept)
     );
-    assert_eq!(
-        store
-            .export_phrases_in(crate::USER_DICTIONARY)
-            .expect("export")
-            .len(),
-        1
-    );
+    assert_eq!(store.export_phrases_in(crate::USER_DICTIONARY).len(), 1);
     assert!(store.bigram_row(LIBRARY | 1).expect("gram").is_some());
     // Again, from the reopened profile.
     train(&mut store, 1, key("ni", 3), 1);
@@ -765,7 +757,7 @@ fn reads(store: &UserStore, tokens: &[u32]) -> String {
     for &token in tokens {
         out.push_str(&format!(
             "{token:#x} {:?} {:?} {:?}\n",
-            store.unigram_delta(token).ok(),
+            Some(store.unigram_delta(token)),
             store.count_delta(Some(LIBRARY | 1), token).ok(),
             store.count_delta(None, token).ok(),
         ));
@@ -906,7 +898,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
         Some(crate::test_session::library_total(&store, 1)),
         Some(176)
     );
-    assert_eq!(store.unigram_total().expect("extra"), 0);
+    assert_eq!(store.unigram_total(), 0);
 
     // A reading onto the appended item, onto a shipped one, and onto the new
     // phrase: each is removed, takes the reading and is added back in the

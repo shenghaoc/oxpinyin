@@ -431,9 +431,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             }
             // Any other sub-index the pin holds is a `USER_FILE` row's
             // (`pinyin.cpp:303-321`); one it does not hold has no item.
-            _ if self.dict.library_visible(nibble) => {
-                self.user.user_unigram_frequency(token).ok().flatten()
-            }
+            _ if self.dict.library_visible(nibble) => self.user.user_unigram_frequency(token),
             _ => None,
         }
     }

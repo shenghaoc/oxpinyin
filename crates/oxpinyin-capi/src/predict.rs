@@ -527,7 +527,7 @@ fn predicted_frequency(
     total: u64,
     lambda: f32,
 ) -> u32 {
-    let store_count = || user.unigram_delta(token).unwrap_or(0);
+    let store_count = || user.unigram_delta(token);
     // Read the system item or the user arena's count.
     let unigram = dict
         .live_items()
@@ -540,7 +540,7 @@ fn predicted_frequency(
 }
 
 fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
-    if let Ok(Some(phrase)) = store.phrase(token) {
+    if let Some(phrase) = store.phrase(token) {
         return phrase.phrase_text();
     }
     dict.token_text(token)

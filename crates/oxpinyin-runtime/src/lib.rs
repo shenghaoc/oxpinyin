@@ -873,8 +873,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .is_some();
         }
-        self.library_visible(u32::from(library_of(token)))
-            && self.user.phrase_exists(token).unwrap_or(false)
+        self.library_visible(u32::from(library_of(token))) && self.user.phrase_exists(token)
     }
 
     /// Read only the nth insertion-ordered key list and the stored length of
@@ -1201,8 +1200,7 @@ impl Dictionary for RuntimeDict<'_> {
     }
 
     fn phrase_span_continues(&self, words: &[u32]) -> bool {
-        !self.system.phrase_attachment_failed()
-            || self.user.phrase_table_contains_ucs4(words).unwrap_or(false)
+        !self.system.phrase_attachment_failed() || self.user.phrase_table_contains_ucs4(words)
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
@@ -1283,11 +1281,7 @@ impl Dictionary for RuntimeDict<'_> {
             return Some(text);
         }
         let store = self.user;
-        store
-            .phrase(token)
-            .ok()
-            .flatten()
-            .and_then(|phrase| phrase.phrase_text())
+        store.phrase(token).and_then(|phrase| phrase.phrase_text())
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
@@ -1300,7 +1294,7 @@ impl Dictionary for RuntimeDict<'_> {
         if !self.library_visible(u32::from(library_of(token))) {
             return None;
         }
-        self.user.phrase_length(token).ok().flatten()
+        self.user.phrase_length(token)
     }
 
     /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):
@@ -1410,13 +1404,9 @@ impl LanguageModel for RuntimeLm<'_> {
         let live = self.user.system_unigram(token.value());
         let extra = if live.is_some() && self.inner.is_visible(library_of(token.value())) {
             // The model uses only the live field on this branch.
-            // A live value also implies a libpinyin session,
-            // where unigram_delta is infallible: skipping it loses no error.
             0
         } else {
-            self.user
-                .unigram_delta(token.value())
-                .map_err(|error| LmError::User(error.to_string()))?
+            self.user.unigram_delta(token.value())
         };
         Ok(Some(self.inner.unigram_freq_with_user_delta(
             token.value(),
@@ -2357,13 +2347,13 @@ mod tests {
             assert!(runtime.unload_library(library));
             assert!(runtime.unload_library(library));
             let store = runtime.user_store_mut();
-            let total = store.unigram_total().unwrap();
+            let total = store.unigram_total();
             assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
             assert_eq!(
                 store.add_unigram_outcome(token, 7).unwrap(),
                 UnigramAdd::Missing
             );
-            assert_eq!(store.unigram_total().unwrap(), total);
+            assert_eq!(store.unigram_total(), total);
             assert!(runtime.load_library(library));
             assert!(!runtime.load_library(library));
             assert!(
@@ -2399,14 +2389,14 @@ mod tests {
             assert!(runtime.unload_library(u32::from(library)));
             assert!(runtime.load_library(u32::from(library)));
             let store = runtime.user_store_mut();
-            assert!(store.phrase(saved).unwrap().is_none());
+            assert!(store.phrase(saved).is_none());
             store.mark_modified();
             store.save_reporting().unwrap();
             assert_eq!(std::fs::read(&chunk).unwrap(), original);
             assert!(!dir.path().join("user.bin.tmp").exists());
 
             store.load_user_library(library);
-            assert!(store.phrase(saved).unwrap().is_some());
+            assert!(store.phrase(saved).is_some());
             let added = store
                 .add_phrase_in(library, &"鱻".into(), &keys, Some(30))
                 .unwrap();
@@ -2415,7 +2405,7 @@ mod tests {
             // marker: the store still owns its items and must save them.
             assert!(runtime.unload_library(u32::from(library)));
             let store = runtime.user_store_mut();
-            assert!(store.phrase(added).unwrap().is_some());
+            assert!(store.phrase(added).is_some());
             store.mark_modified();
             store.save_reporting().unwrap();
             let updated = std::fs::read(&chunk).unwrap();
@@ -2441,12 +2431,12 @@ mod tests {
             assert!(!runtime.libraries().is_loaded(1));
             assert!(runtime.unload_library(1));
             let store = runtime.user_store_mut();
-            let total = store.unigram_total().unwrap();
+            let total = store.unigram_total();
             assert_eq!(
                 store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
                 UnigramAdd::Missing
             );
-            assert_eq!(store.unigram_total().unwrap(), total);
+            assert_eq!(store.unigram_total(), total);
         }
     }
 
@@ -2501,7 +2491,7 @@ mod tests {
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         let library = runtime.libraries().library(token).unwrap();
         assert!(library.is_detached());
-        assert_eq!(runtime.user_store().unigram_delta(token).unwrap(), 0);
+        assert_eq!(runtime.user_store().unigram_delta(token), 0);
         let initial = runtime.user_store().system_unigram(token).unwrap();
         assert!(initial > 0);
 
@@ -2511,7 +2501,7 @@ mod tests {
             }
             // A session keeps no delta for a system item: the increment is in
             // the live field.
-            assert_eq!(runtime.user_store().unigram_delta(token).unwrap(), 0);
+            assert_eq!(runtime.user_store().unigram_delta(token), 0);
             assert_eq!(
                 runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
                 Some(u64::from(initial) + delta),

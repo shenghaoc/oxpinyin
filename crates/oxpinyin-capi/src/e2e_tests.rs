@@ -89,7 +89,6 @@ pub(crate) fn with_store<R>(
 fn next_user_token(store: &UserStore) -> u32 {
     store
         .phrases()
-        .expect("phrases")
         .iter()
         .map(|phrase| phrase.token())
         .max()
@@ -732,7 +731,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
             with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
             with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
             with_store(instance, |store| store.system_unigram(t1)),
-            with_store(instance, |store| store.unigram_total()).unwrap(),
+            with_store(instance, |store| store.unigram_total()),
         )
     };
 
@@ -768,7 +767,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
             counts.2
         );
         assert_eq!(
-            with_store(instance2, |store| store.unigram_total()).unwrap(),
+            with_store(instance2, |store| store.unigram_total()),
             counts.3
         );
     }
@@ -1332,12 +1331,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
                 .live_items()
                 .effective_unigram(token.value())
                 .unwrap_or(0)
-                + inst
-                    .core
-                    .user
-                    .unigram_delta(token.value())
-                    .ok()
-                    .unwrap_or(0);
+                + inst.core.user.unigram_delta(token.value());
             let text = c.text_str().expect("candidate text is UTF-8").to_owned();
             // A predicted row shows the phrase after the prefix; the
             // phrase table keys the whole stored phrase.

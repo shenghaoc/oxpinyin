@@ -250,9 +250,9 @@ fn training_after_a_soft_rename_failure_saves_the_full_profile() {
             session.save_reporting().unwrap();
             assert!(!session.is_modified());
         }
-        let phrases = store.export_phrases_in(7).unwrap();
+        let phrases = store.export_phrases_in(7);
         let system_unigram = store.system_unigram(SYSTEM).expect("live system item");
-        let unigram = store.user_unigram_frequency(USER).unwrap();
+        let unigram = store.user_unigram_frequency(USER);
         let gram = store.bigram_row(SYSTEM).unwrap();
         drop(store);
         drop(uninterrupted);
@@ -267,14 +267,14 @@ fn training_after_a_soft_rename_failure_saves_the_full_profile() {
                 .map(|prev| (prev, session.bigram_row(prev).unwrap()))
                 .collect();
             (
-                session.phrases().unwrap(),
-                [5, 6, 7].map(|library| session.export_phrases_in(library).unwrap()),
+                session.phrases(),
+                [5, 6, 7].map(|library| session.export_phrases_in(library)),
                 grams,
-                session.unigram_total().unwrap(),
+                session.unigram_total(),
                 session
                     .system_unigram(SYSTEM)
                     .expect("reopened system item"),
-                session.user_unigram_frequency(USER).unwrap(),
+                session.user_unigram_frequency(USER),
             )
         };
         assert_eq!(load(dir.path()), load(control.path()), "{law:?}");
@@ -284,9 +284,9 @@ fn training_after_a_soft_rename_failure_saves_the_full_profile() {
                 .all(|path| { path.is_file() && !staged_path(path).exists() })
         );
         let reopened = open(dir.path(), law);
-        assert_eq!(reopened.export_phrases_in(7).unwrap(), phrases);
+        assert_eq!(reopened.export_phrases_in(7), phrases);
         assert_eq!(reopened.system_unigram(SYSTEM), Some(system_unigram));
-        assert_eq!(reopened.user_unigram_frequency(USER).unwrap(), unigram);
+        assert_eq!(reopened.user_unigram_frequency(USER), unigram);
         assert_eq!(reopened.bigram_row(SYSTEM).unwrap(), gram);
         assert_eq!(reopened.token_for_phrase("你").unwrap(), Some(USER));
     }

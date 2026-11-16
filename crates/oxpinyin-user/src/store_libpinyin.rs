@@ -1102,22 +1102,16 @@ mod tests {
         store
             .train_pronunciations(token, std::iter::once(vec![ni]), 7)
             .unwrap();
-        assert_eq!(
-            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
-            12
-        );
+        assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
         store.mark_modified();
         store.save_reporting().unwrap();
         store.unload_user_library(crate::USER_DICTIONARY);
-        assert!(store.phrase(token).unwrap().is_none());
+        assert!(store.phrase(token).is_none());
         store.load_user_library(crate::USER_DICTIONARY);
         assert_eq!(store.user_pronunciation_count(token), Some(1));
-        assert_eq!(
-            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
-            12
-        );
-        assert!(store.phrase_exists(token).unwrap());
-        assert_eq!(store.phrase_length(token).unwrap(), Some(1));
+        assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
+        assert!(store.phrase_exists(token));
+        assert_eq!(store.phrase_length(token), Some(1));
         let first = store
             .with_nth_pronunciation_words(token, 0, |_, words| words.map(<[u8]>::to_vec))
             .unwrap()
@@ -1134,8 +1128,8 @@ mod tests {
             Some(true)
         );
         assert!(store.remove_user_phrase(token).unwrap());
-        assert!(store.phrase(token).unwrap().is_none());
-        assert!(!store.phrase_exists(token).unwrap());
+        assert!(store.phrase(token).is_none());
+        assert!(!store.phrase_exists(token));
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1151,9 +1145,9 @@ mod tests {
             .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
             .unwrap();
         assert!(store.with_user_item(token, |_| ()).is_some());
-        let delta = store.unigram_delta(token).unwrap();
+        let delta = store.unigram_delta(token);
         let library = crate::test_session::library_total(&store, crate::USER_DICTIONARY);
-        let total = store.unigram_total().unwrap();
+        let total = store.unigram_total();
         assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
         // 3a's token read reaches the same arena item the predicted-prefix
         // write trained (`with_nth_pronunciation_words`), so the unigram
@@ -1169,12 +1163,12 @@ mod tests {
         // `add_unigram_frequency(token, 69 * 7)` reaches the live item
         // (`pinyin.cpp:2609`), and the item's library and the facade total
         // take the same 483.
-        assert_eq!(store.unigram_delta(token).unwrap(), delta + 483);
+        assert_eq!(store.unigram_delta(token), delta + 483);
         assert_eq!(
             crate::test_session::library_total(&store, crate::USER_DICTIONARY),
             library + 483
         );
-        assert_eq!(store.unigram_total().unwrap(), total + 483);
+        assert_eq!(store.unigram_total(), total + 483);
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1249,7 +1243,7 @@ mod tests {
                 crate::test_session::open(&dir, originals(), versions(), law).expect("session");
             let token = 0x0100_0001;
             store.reset_system_library(1);
-            let before = store.unigram_total().expect("facade extra");
+            let before = store.unigram_total();
             assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
             assert_eq!(
                 store.add_unigram_outcome(token, 483).unwrap(),
@@ -1263,7 +1257,7 @@ mod tests {
                     69,
                 )
                 .unwrap();
-            assert_eq!(store.unigram_total().unwrap(), before);
+            assert_eq!(store.unigram_total(), before);
             assert!(!store.has_system_items());
             assert_eq!(store.count_delta(Some(1), token).unwrap().bigram_count, 69);
             assert!(store.is_modified());
@@ -3010,7 +3004,7 @@ mod tests {
                         .collect::<Option<Vec<u32>>>()),
                     Some(Some(vec![]))
                 );
-                assert_eq!(store.unigram_delta(token).unwrap(), 37);
+                assert_eq!(store.unigram_delta(token), 37);
                 assert_eq!(
                     store.system_item_override(token).unwrap(),
                     Some(item.clone())
@@ -3032,14 +3026,14 @@ mod tests {
             // compact rebuilds it from the items.
             let facade = |store: &UserStore| {
                 u64::from(crate::test_session::library_total(store, 1))
-                    .wrapping_add(store.unigram_total().unwrap())
+                    .wrapping_add(store.unigram_total())
             };
             observe(&store);
             assert_eq!(
                 Some(crate::test_session::library_total(&store, 1)),
                 Some(174)
             );
-            assert_eq!(store.unigram_total().unwrap(), 0);
+            assert_eq!(store.unigram_total(), 0);
             store.unload_system_libraries(originals());
             assert!(store.with_user_item(token, |_| ()).is_none());
             assert!(store.system_item_override(token).unwrap().is_none());
@@ -3077,7 +3071,6 @@ mod tests {
             let count = store.user_pronunciation_count(token);
             let decoded = store
                 .phrase(token)
-                .expect("phrase")
                 .map(|phrase| phrase.pronunciations().len() as u32);
             assert_eq!(count, decoded, "token {token:#x}");
             count
@@ -3140,7 +3133,6 @@ mod tests {
         let readings = |store: &UserStore| {
             store
                 .phrases()
-                .expect("phrases")
                 .iter()
                 .map(|phrase| {
                     phrase
@@ -3205,7 +3197,6 @@ mod tests {
         let readings = |store: &UserStore| {
             store
                 .phrases()
-                .expect("phrases")
                 .iter()
                 .map(|phrase| {
                     phrase
@@ -3275,8 +3266,8 @@ mod tests {
             "nothing staged for the unloaded library"
         );
         store.load_user_library(crate::USER_DICTIONARY);
-        assert!(store.phrase(saved).expect("read").is_some());
-        assert!(store.phrase(unsaved).expect("read").is_none());
+        assert!(store.phrase(saved).is_some());
+        assert!(store.phrase(unsaved).is_none());
         // Loaded again, it is saved again.
         store.mark_modified();
         store.save_reporting().expect("save");
@@ -3368,7 +3359,7 @@ mod tests {
         let store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
         for (token, (_, spelling)) in tokens.into_iter().zip(cases) {
-            let phrase = store.phrase(token).expect("phrase").expect("present");
+            let phrase = store.phrase(token).expect("present");
             let spellings: Vec<_> = phrase
                 .pronunciations()
                 .iter()
@@ -3426,7 +3417,6 @@ mod tests {
         let readings_of = |store: &UserStore, token| {
             store
                 .phrase(token)
-                .expect("phrase")
                 .expect("present")
                 .pronunciations()
                 .iter()
@@ -3448,7 +3438,7 @@ mod tests {
                     .expect("reading within the 255 limit");
             }
             assert_eq!(store.user_pronunciation_count(token), Some(255));
-            unigram = store.unigram_delta(token).expect("unigram");
+            unigram = store.unigram_delta(token);
             assert_eq!(unigram, 15);
             store
                 .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(readings[255]), Some(5))
@@ -3458,7 +3448,7 @@ mod tests {
                 Some(0)
             );
             assert!(readings_of(&store, token).is_empty());
-            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            assert_eq!(store.unigram_delta(token), unigram);
             store.mark_modified();
             store.save_reporting().expect("save");
         }
@@ -3467,7 +3457,7 @@ mod tests {
                 crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("reopen");
             assert!(readings_of(&store, token).is_empty());
-            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            assert_eq!(store.unigram_delta(token), unigram);
             store
                 .add_system_phrase_in(1, Some(token), &"拟".into(), &dense(readings[256]), Some(9))
                 .expect("the 257th reading");
@@ -3591,12 +3581,7 @@ mod tests {
                 Some(81)
             );
             assert_eq!(
-                store
-                    .phrase(token)
-                    .expect("phrase")
-                    .expect("present")
-                    .pronunciations()[0]
-                    .count(),
+                store.phrase(token).expect("present").pronunciations()[0].count(),
                 81
             );
             store.save_reporting().expect("save");
@@ -3650,44 +3635,20 @@ mod tests {
                 .add_system_phrase_in(1, None, &"拟".into(), &first, Some(5))
                 .expect("append");
             assert_eq!(token & 0x00ff_ffff, 2, "beyond mapped offset table");
-            assert_eq!(
-                store
-                    .phrase(token)
-                    .expect("read appended")
-                    .unwrap()
-                    .pronunciations()
-                    .len(),
-                1
-            );
+            assert_eq!(store.phrase(token).unwrap().pronunciations().len(), 1);
             assert_eq!(
                 store
                     .add_system_phrase_in(1, Some(token), &"拟".into(), &second, Some(7))
                     .expect("second import"),
                 token
             );
-            assert_eq!(
-                store
-                    .phrase(token)
-                    .expect("read merged")
-                    .unwrap()
-                    .pronunciations()
-                    .len(),
-                2
-            );
+            assert_eq!(store.phrase(token).unwrap().pronunciations().len(), 2);
             store.mark_modified();
             store.save_reporting().expect("save");
         }
         let store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
-        assert_eq!(
-            store
-                .phrase(token)
-                .expect("read reopened")
-                .unwrap()
-                .pronunciations()
-                .len(),
-            2
-        );
+        assert_eq!(store.phrase(token).unwrap().pronunciations().len(), 2);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
         std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
@@ -3903,12 +3864,12 @@ mod tests {
                 .token_for_phrase("你好")
                 .expect("token")
                 .expect("present");
-            let phrase = store.phrase(token).expect("phrase").expect("row");
+            let phrase = store.phrase(token).expect("row");
             assert_eq!(phrase.phrase_text().unwrap(), "你好");
             let pron = &phrase.pronunciations()[0];
             assert_eq!(pron.count(), crate::phrase::DEFAULT_PHRASE_COUNT);
             assert_eq!(
-                store.unigram_delta(token).expect("delta"),
+                store.unigram_delta(token),
                 crate::phrase::DEFAULT_PHRASE_COUNT * crate::phrase::ADD_PHRASE_UNIGRAM_FACTOR
             );
 
@@ -4053,10 +4014,10 @@ mod tests {
             for (&library, items) in &state.libraries {
                 for (&slot, expected) in items {
                     let token = u32::from(library) << 24 | slot;
-                    let phrase = store.phrase(token).expect("read").expect("retained item");
+                    let phrase = store.phrase(token).expect("retained item");
                     assert_eq!(phrase.words(), expected.phrase);
                     assert_eq!(phrase.pronunciations()[0].count(), 10);
-                    assert_eq!(store.unigram_delta(token).expect("unigram"), 100);
+                    assert_eq!(store.unigram_delta(token), 100);
                     let text = phrase.phrase_text().expect("outward text");
                     assert_eq!(text.phrase_length(), 3);
                     let outward = expected
@@ -4126,7 +4087,7 @@ mod tests {
             .expect("token")
             .expect("present");
         assert_eq!(token, 0x0700_0001);
-        assert_eq!(store.unigram_delta(token).expect("delta"), 15);
+        assert_eq!(store.unigram_delta(token), 15);
         // Training continues from the loaded counts: the next seed
         // doubles the stored count (§2.1's repeat rule).
         let mut store = store;

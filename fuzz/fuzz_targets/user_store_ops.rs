@@ -161,15 +161,12 @@ fn check_totals(store: &UserStore, lefts: &[u32]) {
 /// The phrase index inverse law, in full for small stores and on the
 /// freshest row once the store grows (keeping per-op cost bounded).
 fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
-    let phrases = store.phrases().expect("phrase export");
+    let phrases = store.phrases();
     if phrases.len() <= 128 {
         for phrase in &phrases {
             let token = phrase.token();
             let words = phrase.words();
-            let back = store
-                .phrase(token)
-                .expect("phrase lookup")
-                .expect("live row");
+            let back = store.phrase(token).expect("live row");
             assert_eq!(
                 back.words(),
                 words,
@@ -189,7 +186,7 @@ fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
             }
         }
     } else if let Some(token) = freshest {
-        if let Some(row) = store.phrase(token).expect("phrase lookup") {
+        if let Some(row) = store.phrase(token) {
             if let Some(text) = row
                 .phrase_text()
                 .and_then(|text| text.as_str().map(str::to_owned))
@@ -228,7 +225,6 @@ fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
         [] => false,
         [token] => !store
             .phrase(*token)
-            .expect("phrase lookup")
             .is_some_and(|row| row.words() == words.as_slice()),
         _ => true,
     }
@@ -307,7 +303,6 @@ fuzz_target!(|data: &[u8]| {
                     // pin's reading-removal assert.
                     let removable = store
                         .phrase(token)
-                        .expect("phrase lookup")
                         .is_some_and(|row| row.pronunciations().iter().all(|p| p.indexed()));
                     // `pinyin_remove_user_candidate` asserts
                     // `ERROR_OK == retval` for every stored reading
@@ -350,7 +345,7 @@ fuzz_target!(|data: &[u8]| {
                         );
                     }
                     // A refusal keeps the phrase, so the token stays tracked.
-                    if removed || store.phrase(token).expect("phrase lookup").is_none() {
+                    if removed || store.phrase(token).is_none() {
                         added.retain(|&other| other != token);
                     }
                 }

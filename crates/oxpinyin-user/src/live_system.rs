@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(live.effective_unigram(untouched), Some(30));
         assert_eq!(
             live.effective_unigram(replayed),
-            Some(u64::from(100_u32) + store.unigram_delta(replayed).expect("delta"))
+            Some(u64::from(100_u32) + store.unigram_delta(replayed))
         );
         assert_eq!(live.effective_unigram(removed), None);
         assert_eq!(live.effective_unigram(absent), None);
