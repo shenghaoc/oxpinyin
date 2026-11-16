@@ -1419,6 +1419,10 @@ impl UserStore {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
+        // #lizard forgives(cyclomatic_complexity): the training and
+        // predicted-selection policies meet at four shared steps with a
+        // different failure sequence at each; a split by policy duplicates
+        // the steps, and a split by step hides which policy fails where.
         let row = self.gram_in(last)?;
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,

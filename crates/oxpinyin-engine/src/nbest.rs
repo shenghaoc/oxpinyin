@@ -1439,6 +1439,10 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
+    // #lizard forgives(cyclomatic_complexity): the predecessor loop (row load,
+    // fault check, forced or ranged selection) and the unigram pass after it
+    // are one ordered walk of the decoder; a further split would leave the
+    // same paths to test and make the order harder to follow.
     let entries = pricing.ranges;
     // Entered on `SEARCH_OK` only; the predecessors' rows are loaded and
     // merged then even when no ranged item can step.

@@ -168,8 +168,8 @@ jobs:
       - name: Compile all fuzz targets
         working-directory: fuzz
         run: cargo check --locked --bins
-      # Complexity limit: no function may exceed CCN 40. The recipe states
-      # the policy; pyproject.toml and uv.lock name the Lizard release.
+      # Complexity limit: the recipe states it; pyproject.toml and uv.lock
+      # name the Lizard release.
       - name: Lizard complexity limit
         if: needs.changes.outputs.reuse != 'true'
         run: just complexity
