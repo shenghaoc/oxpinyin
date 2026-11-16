@@ -337,9 +337,7 @@ fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
             .unwrap();
         let mut store = open(Path::new(&dir), law);
         for index in 1..=4_u32 {
-            store
-                .add_system_unigram_frequency((index << 24) | 1, 17)
-                .unwrap();
+            store.add_system_unigram_frequency((index << 24) | 1, 17);
         }
         store.mark_modified();
         store

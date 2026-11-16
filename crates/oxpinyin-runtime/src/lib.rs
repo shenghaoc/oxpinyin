@@ -2026,9 +2026,7 @@ impl Runtime {
         let Ok(delta) = u32::try_from(delta) else {
             return UnigramAdd::Missing;
         };
-        self.user
-            .add_unigram_outcome(token, delta)
-            .unwrap_or(UnigramAdd::Missing)
+        self.user.add_unigram_outcome(token, delta)
     }
 
     /// Publish dictionary remaps while retaining any unreplaced journal originals.
@@ -2348,11 +2346,8 @@ mod tests {
             assert!(runtime.unload_library(library));
             let store = runtime.user_store_mut();
             let total = store.unigram_total();
-            assert!(!store.add_system_unigram_frequency(token, 7).unwrap());
-            assert_eq!(
-                store.add_unigram_outcome(token, 7).unwrap(),
-                UnigramAdd::Missing
-            );
+            assert!(!store.add_system_unigram_frequency(token, 7));
+            assert_eq!(store.add_unigram_outcome(token, 7), UnigramAdd::Missing);
             assert_eq!(store.unigram_total(), total);
             assert!(runtime.load_library(library));
             assert!(!runtime.load_library(library));
@@ -2360,7 +2355,6 @@ mod tests {
                 runtime
                     .user_store_mut()
                     .add_system_unigram_frequency(token, 7)
-                    .unwrap()
             );
         }
     }
@@ -2433,7 +2427,7 @@ mod tests {
             let store = runtime.user_store_mut();
             let total = store.unigram_total();
             assert_eq!(
-                store.add_unigram_outcome(0x0100_0001, 7).unwrap(),
+                store.add_unigram_outcome(0x0100_0001, 7),
                 UnigramAdd::Missing
             );
             assert_eq!(store.unigram_total(), total);
