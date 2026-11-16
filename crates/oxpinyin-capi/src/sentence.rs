@@ -77,9 +77,7 @@ fn validated_lookup_offset(
     // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
     // when the parse stopped early: `_check_offset` reads column
     // `offset - 1`, and past the last column `get_column_size` asserts.
-    if let Ok(columns) = inst.core.pin_matrix_columns()
-        && offset > columns
-    {
+    if offset > inst.core.pin_matrix_columns() {
         std::process::abort();
     }
     match inst.core.validate_abi_lookup_offset(offset, false) {
@@ -120,10 +118,9 @@ fn validated_lookup_offset(
 /// it clears anything when the matrix has no step (`0 == nstep`,
 /// `phonetic_lookup.h:743-745`), and `fill_matrix` leaves the matrix empty
 /// for a parse without keys (`phonetic_key_matrix.cpp:34-38`): `"'"` and
-/// `"!"` consume a byte or none and place nothing. An unreadable parse is
-/// left to the session.
+/// `"!"` consume a byte or none and place nothing.
 pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys().unwrap_or(true)
+    inst.core.mode_has_keys()
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -308,10 +305,8 @@ pub extern "C" fn pinyin_get_character_offset(
     let inst = unsafe { instance_ref(instance) };
     // `assert(offset < matrix.size())` (`pinyin.cpp:3205`) follows the
     // empty-matrix `false`, before the phrase is converted.
-    if let Ok(columns) = inst.core.pin_matrix_columns()
-        && columns > 0
-        && offset >= columns
-    {
+    let columns = inst.core.pin_matrix_columns();
+    if columns > 0 && offset >= columns {
         std::process::abort();
     }
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
@@ -436,8 +431,8 @@ pub extern "C" fn pinyin_guess_candidates(
     //
     // The pin answers `false` for a matrix without a step before it
     // stores the sort word (`pinyin.cpp:2195-2198`); a keyless parse is
-    // such a matrix. An unreadable key list is left to the session.
-    if matches!(inst.core.mode_has_keys(), Ok(false)) {
+    // such a matrix.
+    if !inst.core.mode_has_keys() {
         return false;
     }
     let options = inst.core.options();
@@ -1022,10 +1017,7 @@ mod parse_time_matrix_tests {
         let lengths = || {
             // SAFETY: `instance` is live; no mutation overlaps this read.
             let inst = unsafe { crate::state::instance_ref(instance) };
-            (
-                inst.core.pin_parsed_len(),
-                inst.core.pin_matrix_columns().expect("columns"),
-            )
+            (inst.core.pin_parsed_len(), inst.core.pin_matrix_columns())
         };
         let input = cstr("nih");
         assert!(pinyin_set_options(

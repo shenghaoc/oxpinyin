@@ -3193,12 +3193,12 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     assert!(
-        session.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        session.spans_a_matrix_key(10),
         "byte 10 is the ji|e divided-split column"
     );
     for offset in [3usize, 4, 6] {
         assert!(
-            !session.spans_a_matrix_key(offset).expect("in range"),
+            !session.spans_a_matrix_key(offset),
             "byte {offset} is an empty column"
         );
     }
@@ -3225,13 +3225,10 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
     let mut session = split_session();
     session.replace_raw("fangan").expect("typing cannot fail");
     assert!(
-        session.spans_a_matrix_key(4).expect("byte 4 is in range"),
+        session.spans_a_matrix_key(4),
         "byte 4 is the fang|an resplit column"
     );
-    assert!(
-        !session.spans_a_matrix_key(5).expect("in range"),
-        "byte 5 is an empty column"
-    );
+    assert!(!session.spans_a_matrix_key(5), "byte 5 is an empty column");
     let window = session.candidates_at(5).expect("byte 5 is in range");
     assert!(
         window
@@ -3264,7 +3261,7 @@ fn divided_table_gate_controls_the_split_column() {
     // but byte 10 (the divided e half) must NOT be a live matrix column
     // because USE_DIVIDED_TABLE is clear.
     assert!(
-        !s.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        !s.spans_a_matrix_key(10),
         "byte 10 must not be live without USE_DIVIDED_TABLE"
     );
 
@@ -3277,7 +3274,7 @@ fn divided_table_gate_controls_the_split_column() {
         .expect("set_options cannot fail on an empty session");
     s2.replace_raw("nihaoshijie").expect("typing cannot fail");
     assert!(
-        s2.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        s2.spans_a_matrix_key(10),
         "byte 10 must be live with USE_DIVIDED_TABLE — the ji|e divided pair"
     );
 }
@@ -3424,7 +3421,7 @@ fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input(
         .replace_raw_full_pinyin("sh", &[ExactSegment::new(0, 2, sh, 0)])
         .expect("parsed key");
     assert_eq!(session.full_parsed_len(), 2);
-    assert!(session.spans_a_matrix_key(0).expect("column"));
+    assert!(session.spans_a_matrix_key(0));
     session.replace_raw("sh").expect("ordinary input");
     assert_eq!(session.full_parsed_len(), 0);
 }
@@ -3617,7 +3614,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     let (pinyin_keys, parsed) = spans(&session);
     assert_eq!(parsed, 4);
     assert!(pinyin_keys.contains(&(2, 4)), "the divided `an` is a key");
-    assert!(session.spans_a_matrix_key(2).expect("span"));
+    assert!(session.spans_a_matrix_key(2));
 
     session.set_collapse_sentence_rows_to_best(true);
     session.replace_raw("xian").expect("zhuyin parse");
@@ -3628,13 +3625,13 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
         [(0, 4)],
         "no divided pair in the zhuyin matrix"
     );
-    assert!(!session.spans_a_matrix_key(2).expect("span"));
+    assert!(!session.spans_a_matrix_key(2));
     assert_eq!(session.full_parsed_len(), 4);
 
     session.set_collapse_sentence_rows_to_best(false);
     session.replace_raw("xian").expect("pinyin parse");
     assert_eq!(spans(&session).0, pinyin_keys, "pinyin topology returns");
-    assert!(session.spans_a_matrix_key(2).expect("span"));
+    assert!(session.spans_a_matrix_key(2));
 }
 
 #[test]

@@ -196,10 +196,8 @@ pub extern "C" fn zhuyin_get_character_offset(
     let inst = unsafe { instance_ref(instance) };
     // `assert(offset < matrix.size())` follows the empty-matrix `false`,
     // before the phrase is converted.
-    if let Ok(columns) = inst.core.pin_matrix_columns()
-        && columns > 0
-        && offset >= columns
-    {
+    let columns = inst.core.pin_matrix_columns();
+    if columns > 0 && offset >= columns {
         std::process::abort();
     }
     // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
@@ -354,9 +352,7 @@ fn validated_lookup_offset(
     // The matrix has `parsed_len + 1` columns, fewer than the input has bytes
     // when the parse stopped early; `_check_offset` reads column
     // `offset - 1`, and past the last column `get_column_size` asserts.
-    if let Ok(columns) = inst.core.pin_matrix_columns()
-        && offset > columns
-    {
+    if offset > inst.core.pin_matrix_columns() {
         std::process::abort();
     }
     match inst.core.validate_abi_lookup_offset(offset, true) {

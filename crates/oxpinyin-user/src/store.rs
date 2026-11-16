@@ -330,32 +330,28 @@ impl From<StoreError> for UserStoreError {
 /// `add_index` would write for this reading: tone-zeroed complete keys, or
 /// initial-only keys when any syllable is incomplete
 /// (`compute_chewing_index` / `compute_incomplete_chewing_index`,
-/// `src/storage/pinyin_phrase3.h:160-178` at the pin). Always `Some`: every
-/// `SyllableKey` has a `ChewingKey`; the `Option` keeps the callers'
-/// signature.
-fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
+/// `src/storage/pinyin_phrase3.h:160-178` at the pin).
+fn index_projection(syllables: &[SyllableKey]) -> Vec<u16> {
     let incomplete = syllables
         .iter()
         .any(|key| key.completeness() == Completeness::Partial);
-    Some(
-        syllables
-            .iter()
-            .map(|key| {
-                let full = key.chewing_key();
-                if incomplete {
-                    // `compute_incomplete_chewing_index` sets only
-                    // `m_initial`, so a vowel-initial syllable and `ng`
-                    // project to the zero initial
-                    // (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
-                    // key. Building the packed word directly keeps those
-                    // zeros representable.
-                    ChewingKey::new(full.initial, 0, 0, 0).to_packed()
-                } else {
-                    full.with_tone(0).to_packed()
-                }
-            })
-            .collect(),
-    )
+    syllables
+        .iter()
+        .map(|key| {
+            let full = key.chewing_key();
+            if incomplete {
+                // `compute_incomplete_chewing_index` sets only
+                // `m_initial`, so a vowel-initial syllable and `ng`
+                // project to the zero initial
+                // (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
+                // key. Building the packed word directly keeps those
+                // zeros representable.
+                ChewingKey::new(full.initial, 0, 0, 0).to_packed()
+            } else {
+                full.with_tone(0).to_packed()
+            }
+        })
+        .collect()
 }
 
 /// [`ADD_PHRASE_UNIGRAM_FACTOR`] as `_add_phrase`'s `guint32`
@@ -1051,9 +1047,7 @@ impl UserStore {
     /// an error instead.
     #[must_use]
     pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
-        let Some(projection) = index_projection(syllables) else {
-            return false;
-        };
+        let projection = index_projection(syllables);
         let target = &self.inner.libpinyin;
         let projection_bytes: Vec<u8> = projection
             .iter()
@@ -1470,7 +1464,8 @@ impl UserStore {
         readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         seed: u64,
     ) -> Result<(), UserStoreError> {
-        self.arena_train(token, readings, seed as u32)
+        self.arena_train(token, readings, seed as u32);
+        Ok(())
     }
 
     /// Record an accepted *predicted* candidate `cur` after `last` (the
@@ -2395,7 +2390,7 @@ impl UserStore {
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
-        self.mask_arena(mask, value)?;
+        self.mask_arena(mask, value);
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
         // `zhuyin.cpp:765`).
         let grams_left = self.mask_container_over(container_keys, mask, value)?;

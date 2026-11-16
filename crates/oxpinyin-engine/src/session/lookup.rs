@@ -298,19 +298,14 @@ where
     /// byte is an empty column. Exact mode has no pin counterpart, so its
     /// columns stay the exact segments, and its inputs' apostrophes are all
     /// in-span by construction (`build_exact` rejects any other gap).
-    ///
-    /// # Errors
-    ///
-    /// [`EngineError::Graph`] when the composition cannot be represented
-    /// as a segment graph.
-    pub(super) fn spans_a_matrix_key(&self, offset: usize) -> Result<bool, EngineError> {
+    pub(super) fn spans_a_matrix_key(&self, offset: usize) -> bool {
         if !self.input.full_pinyin() {
-            return Ok(self.input.as_bytes().get(offset) == Some(&b'\'')
+            return self.input.as_bytes().get(offset) == Some(&b'\'')
                 || self
                     .input
                     .exact()
                     .iter()
-                    .any(|segment| segment.start() == offset));
+                    .any(|segment| segment.start() == offset);
         }
         // The retained scan carries the split alternates exactly when the
         // window scan does (`scan_divided`), and exact keys never gain them.
@@ -321,12 +316,12 @@ where
             .flatten()
             .any(|key| key.syllable_start == offset)
         {
-            return Ok(true);
+            return true;
         }
         let first = matrix.iter().flatten().map(|key| key.syllable_start).min();
-        Ok(offset < retained.matrix.bound
+        offset < retained.matrix.bound
             && first.is_some_and(|start| offset >= start)
-            && self.input.as_bytes().get(offset) == Some(&b'\''))
+            && self.input.as_bytes().get(offset) == Some(&b'\'')
     }
 
     /// The previous token at `offset`, as upstream's `_get_previous_token`
@@ -1023,7 +1018,7 @@ where
             });
         }
         self.build_window(|session, items| {
-            if offset < session.input.len() && !session.spans_a_matrix_key(offset)? {
+            if offset < session.input.len() && !session.spans_a_matrix_key(offset) {
                 items.push(Candidate::new(
                     compact_str::CompactString::from(&session.input.as_str()[offset..]),
                     CandidateKind::Fallback,
