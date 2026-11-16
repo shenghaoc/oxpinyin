@@ -27,7 +27,7 @@ def git(status, stdout=b''):
 
 def tools(command):
     """Answer the two probes of a Linux key: the checkout revision and the compiler."""
-    return SimpleNamespace(status=0, stdout=b'abc123\n' if command[0] == 'git' else b'c++ (Debian 15.2.0) 15.2.0\n')
+    return SimpleNamespace(status=0, stdout=b'abc123\n' if command[0] == 'git' else b'c++ (Ubuntu 15.2.0-5ubuntu1) 15.2.0\n')
 
 
 def job(name):
@@ -118,19 +118,19 @@ class RunnerCheckout(unittest.TestCase):
                                               run=lambda command, **options: None)['environment'],
                          {'PKG_CONFIG_PATH': own})
 
-    def test_linux_key_names_the_container_toolchain_and_checkout_not_the_runner_image(self):
+    def test_linux_key_names_the_toolchain_release_and_checkout_not_the_runner_image(self):
         release = self.root.parent / 'os-release'
-        release.write_text('ID=debian\nVERSION_CODENAME=forky\n')
-        env = {'RUNNER_TEMP': self.env['RUNNER_TEMP'], 'VCPKG_ROOT': str(self.root)}
+        release.write_text('ID=ubuntu\nVERSION_CODENAME=resolute\n')
+        env = {'RUNNER_TEMP': self.env['RUNNER_TEMP'], 'VCPKG_INSTALLATION_ROOT': str(self.root)}
         selected = vcpkg.binary_cache(env, LINUX, capture=tools, os_release=release)
-        identity = hashlib.sha256(b'c++ (Debian 15.2.0) 15.2.0\n' + release.read_bytes()
+        identity = hashlib.sha256(b'c++ (Ubuntu 15.2.0-5ubuntu1) 15.2.0\n' + release.read_bytes()
                                   + (self.root.as_posix() + '\n').encode()).hexdigest()[:16]
         self.assertEqual(selected['outputs'], {
             'dir': (self.root.parent / 'tmp/vcpkg-binary-cache').as_posix(),
             'prefix': f'vcpkg-bin-Linux-{LINUX}-', 'key': f'vcpkg-bin-Linux-{LINUX}-abc123-{identity}',
             'installed': (self.root / 'installed' / LINUX).as_posix()})
         self.assertEqual(selected['environment']['VCPKG_ROOT'], self.root.as_posix())
-        release.write_text('ID=debian\nVERSION_CODENAME=next\n')
+        release.write_text('ID=ubuntu\nVERSION_CODENAME=next\n')
         self.assertNotEqual(vcpkg.binary_cache(env, LINUX, capture=tools, os_release=release)['outputs']['key'],
                             selected['outputs']['key'])
         with self.assertRaisesRegex(ValueError, 'c\\+\\+ --version failed'):
@@ -157,24 +157,6 @@ class RunnerCheckout(unittest.TestCase):
                             'LD_LIBRARY_PATH': str(installed / 'lib'), 'OXPINYIN_TKRZW_PREFIX': str(installed)},
             'path': [(installed / 'tools/tkrzw/bin').as_posix()]})
         self.assertEqual(result['environment']['PKG_CONFIG_PATH'], selected['PKG_CONFIG_PATH'])
-
-    def test_bootstrap_fetches_the_pinned_revision_and_publishes_the_root(self):
-        calls = []
-        files = {name: self.root.parent / name for name in ('GITHUB_ENV',)}
-        env = {'RUNNER_TEMP': str(self.root.parent / 'runner'), 'GITHUB_ENV': str(files['GITHUB_ENV'])}
-        status = vcpkg.main(['bootstrap'], env, run=lambda command, **options: calls.append((command, options)))
-        self.assertEqual(status, 0)
-        destination = self.root.parent / 'runner/vcpkg'
-        self.assertEqual([command for command, _ in calls], [
-            ['git', 'init', str(destination)],
-            ['git', 'fetch', '--depth=1', 'https://github.com/microsoft/vcpkg.git', vcpkg.REVISION],
-            ['git', 'checkout', '--detach', 'FETCH_HEAD'],
-            ['bash', str(destination / 'bootstrap-vcpkg.sh'), '-disableMetrics']])
-        self.assertEqual([options['cwd'] for _, options in calls], [ROOT, destination, destination, destination])
-        self.assertEqual(files['GITHUB_ENV'].read_text(), f'VCPKG_ROOT={destination.as_posix()}\n')
-        with contextlib.redirect_stderr(io.StringIO()) as errors:
-            self.assertEqual(vcpkg.main(['bootstrap'], {}, run=self.fail), 1)
-        self.assertIn('::error::runner variable RUNNER_TEMP is unset', errors.getvalue())
 
     def test_checkout_without_git_metadata_is_keyed_on_its_baseline(self):
         digest = hashlib.sha256(b'{"default": {}}').hexdigest()[:40]
@@ -259,17 +241,11 @@ class Workflow(unittest.TestCase):
 
     def test_linux_action_delegates_to_this_module(self):
         text = (ROOT / '.github/actions/tkrzw/action.yml').read_text(encoding='utf-8')
-        for command in ('bootstrap', f'cache-key --triplet {LINUX}', f'install --triplet {LINUX}'):
+        for command in (f'cache-key --triplet {LINUX}', f'install --triplet {LINUX}'):
             self.assertIn(f'      run: uv run --managed-python python -X utf8'
                           f' -m tools.dev.vcpkg {command}\n', text)
         for shell in ('run: |', 'set -euo', 'sha256sum', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'git -C', 'git init'):
             self.assertNotIn(shell, text)
-
-    def test_ci_commands_need_only_the_standard_library(self):
-        # The container jobs run them with the image's Python: no managed-interpreter guard, no process service.
-        source = (ROOT / 'tools/dev/vcpkg.py').read_text(encoding='utf-8')
-        self.assertNotIn('require_utf8_mode', source)
-        self.assertEqual(source.count('from .process import run'), 1)
 
 
 class EnvironmentTests(unittest.TestCase):

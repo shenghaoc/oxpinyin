@@ -42,14 +42,17 @@ KEY_PREFIX = 'ship-sizes-v1-'
 # same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
 INPUTS = ('crates', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
           'tools/codegen/string_tables.rs',
-          'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt')
+          'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt',
+          'vcpkg-overlays', 'triplets')
 
 PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev')
 # Distribution packages each backend's build needs, beside the common set above.
+# tkrzw comes from the repository's vcpkg overlay port, never from the
+# distribution: Ubuntu's libtkrzw is defective (docs/findings/tkrzw-distro-compat.md).
 BACKEND_PACKAGES = {
     'bdb': ('libdb-dev',),
     'kyotocabinet': ('libkyotocabinet-dev',),
-    'tkrzw': ('libtkrzw-dev', 'liblzma-dev', 'liblz4-dev', 'libzstd-dev', 'zlib1g-dev'),
+    'tkrzw': (),
 }
 
 
@@ -96,6 +99,9 @@ def environment(root: Path = ROOT) -> dict[str, str]:
     facts = {'backend': reference_cell(root).feature, 'rustc': rustc, 'cc': first_line(['cc', '--version'], root),
              'strip': first_line(['strip', '--version'], root),
              'cargo-c': first_line(['cargo', 'cinstall', '--version'], root)}
+    if reference_cell(root).feature == 'tkrzw':
+        # The overlay install that pkg-config selects, not a distribution package.
+        facts['tkrzw'] = first_line(['pkg-config', '--modversion', 'tkrzw'], root)
     if shutil.which('dpkg-query'):
         for package in (*PACKAGES, *backend_packages(root)):
             facts['dpkg:' + package] = first_line(['dpkg-query', '-W', '-f', '${Version}', package], root)
@@ -223,7 +229,7 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
     """
     source, stage = work / 'src', work / 'stage'
     if platform_system() != 'Linux':
-        raise Failure('the size build is the Linux release recipe; run it in the Linux reference container')
+        raise Failure('the size build is the Linux release recipe; run it on Linux')
     cell = reference_cell(root)
     extract(revision, source, root)
     shutil.rmtree(stage, ignore_errors=True)

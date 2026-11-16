@@ -223,8 +223,8 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
 Linux development and CI use the repository's vcpkg overlay port.
 `tools.dev.provision` installs it and writes the library path and certification
-prefix. Debian release packaging, shipping-size measurements and oracle/reference
-images retain Debian's library. Ubuntu's packaged library is not a development route.
+prefix. Debian release packaging and oracle/reference images retain Debian's
+library. Ubuntu's packaged library is not a development route.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.
@@ -292,3 +292,7 @@ These rules govern the CI gates. This section is the only place that states them
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.
    The Python version request rule reads every tracked file, so it runs on every change.
    A later run of the same tree reuses a pull request run only when that run passed every job the later run selects, within 24 hours.
+6. **Linux CI runs natively.** Every Linux job of `ci.yml`, `store-backends.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
+   System packages come from Ubuntu's apt, except tkrzw, which comes from the vcpkg overlay port ([rule 9](#9-sound-tkrzw-library)).
+   Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.
+   Rejected: Linux CI in a Debian testing container.

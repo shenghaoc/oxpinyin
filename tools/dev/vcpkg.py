@@ -4,15 +4,11 @@ Development: `install` puts the overlay port into an explicit or managed
 checkout, and `environment` selects that install for compilation, execution
 and certification.
 
-CI: `bootstrap` fetches the pinned checkout where the runner has none (the
-Debian container jobs). `cache-key` finds the checkout, names its revision and
+CI: `cache-key` finds the runner image's checkout, names its revision and
 publishes the binary cache location and key. `install` installs the requested
 packages with the repository overlay and publishes where pkg-config, the loader
 and PATH find them. `cache-report` prints what the cache restore matched. A
 workflow keeps only the cache restore and save actions between these commands.
-
-The CI commands use the standard library only: the container jobs run them with
-the image's own Python, before any managed interpreter exists.
 """
 import argparse
 import errno
@@ -128,7 +124,7 @@ def install(env, root, *, jobs):
 
 
 def runner_checkout(env, *, which=shutil.which):
-    """A CI job's vcpkg checkout: the image's named root, the bootstrapped one, or the `vcpkg` on PATH."""
+    """A CI job's vcpkg checkout: the image's named root, an explicit VCPKG_ROOT, or the `vcpkg` on PATH."""
     named = env.get('VCPKG_INSTALLATION_ROOT') or env.get('VCPKG_ROOT')
     if named:
         root = Path(named)
@@ -156,13 +152,13 @@ def binary_cache(env, triplet, packages='', *, capture, which=shutil.which, os_r
     """The environment and step outputs that select the binary cache for TRIPLET.
 
     The key changes with the checkout revision and with the toolchain. On a
-    hosted Windows or macOS runner the image names the toolchain. A Linux
-    container job names its own compiler and distribution: a rolling image
-    changes them without changing the runner image. A macOS or Linux key also
-    names the checkout path, which the installed libtkrzw and tkrzw.pc record,
-    so an archive built under another root is not reused. PACKAGES, the
-    space-separated specs a job installs, adds a `packages` output for the
-    workflow to append: a different request is a different cache entry.
+    hosted Windows or macOS runner the image names the toolchain. A Linux key
+    names the compiler and the distribution release instead. A macOS or Linux
+    key also names the checkout path, which the installed libtkrzw and
+    tkrzw.pc record, so an archive built under another root is not reused.
+    PACKAGES, the space-separated specs a job installs, adds a `packages`
+    output for the workflow to append: a different request is a different
+    cache entry.
     Paths are published with forward slashes; the Windows steps run in bash.
     """
     linux = 'linux' in triplet
@@ -256,18 +252,14 @@ def main(argv=None, env=None, *, run=_run, capture=_capture):
     # Not a copy: on Windows only os.environ itself finds ImageOS under that spelling.
     env = os.environ if env is None else env
     parser = argparse.ArgumentParser(prog='python -m tools.dev.vcpkg')
-    parser.add_argument('command', choices=('bootstrap', 'cache-key', 'install', 'cache-report'))
+    parser.add_argument('command', choices=('cache-key', 'install', 'cache-report'))
     parser.add_argument('--triplet')
     parser.add_argument('--packages', default='', help='space-separated port[features]:triplet specs')
     args = parser.parse_args(argv)
     if args.command in ('cache-key', 'install') and not args.triplet:
         parser.error(f'{args.command} requires --triplet')
     try:
-        if args.command == 'bootstrap':
-            destination = Path(env['RUNNER_TEMP']) / 'vcpkg'
-            fetch_checkout(destination, env, run=run, cwd=ROOT)
-            publish(env['GITHUB_ENV'], {'VCPKG_ROOT': destination.as_posix()})
-        elif args.command == 'cache-key':
+        if args.command == 'cache-key':
             selected = binary_cache(env, args.triplet, args.packages, capture=capture)
             Path(selected['outputs']['dir']).mkdir(parents=True, exist_ok=True)
             publish(env['GITHUB_ENV'], selected['environment'])

@@ -23,7 +23,7 @@
 See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
 Development and CI install tkrzw from the vcpkg overlay port on all three platforms.
-Debian release packages, shipping-size measurements and oracle/reference images retain Debian's library.
+Debian release packages and oracle/reference images retain Debian's library.
 The peer matrix remains on Linux.
 
 The data generators in `oxpinyin-utils` use `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `chunk_format`.

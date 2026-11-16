@@ -1,10 +1,11 @@
 name: 'bootstrap'
 description: |-
   Shared post-checkout bootstrap cluster for this repository's
-  workflows: the checkout registered as a git safe.directory (container
-  jobs run as root over a root-owned checkout), an optional
-  pinned-rustup install (the toolchain and components that
-  rust-toolchain.toml names, minimal profile), optional CI tools (uv
+  workflows: the checkout registered as a git safe.directory (the
+  release-packages.yml distro-container jobs run as root over a root-owned
+  checkout), an optional rustup install for those container jobs, an
+  optional install of the toolchain and components that
+  rust-toolchain.toml names (minimal profile), optional CI tools (uv
   through astral-sh/setup-uv, with the managed Python and its build
   check; just,
   cargo-nextest and cargo-deny through
@@ -28,15 +29,24 @@ inputs:
   safe-directory:
     description: >-
       Register the checkout as a git safe.directory. Required in the
-      container jobs, which run as root over a root-owned checkout.
+      release-packages.yml distro-container jobs, which run as root over a
+      root-owned checkout.
       String 'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
   rustup:
     description: >-
       Install rustup from sh.rustup.rs with the minimal profile, then the
-      toolchain and components that rust-toolchain.toml names. String
-      'true'/'false' (composite-action inputs are strings).
+      toolchain and components that rust-toolchain.toml names. For the
+      release-packages.yml distro-container jobs, whose images have no
+      rustup. String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-toolchain:
+    description: >-
+      Install the toolchain and components that rust-toolchain.toml names
+      with the runner's own rustup. String 'true'/'false' (composite-action
+      inputs are strings).
     required: false
     default: 'false'
   uv:
@@ -99,7 +109,7 @@ runs:
       shell: bash
       run: echo 'UV_LOCKED=1' >> "$GITHUB_ENV"
 
-    # Container jobs run as root over a root-owned checkout, so any later
+    # The distro-container jobs run as root over a root-owned checkout, so any later
     # git invocation would die on dubious ownership (this affected
     # tracked-path probes in local tooling scripts during development).
     - name: Register the checkout as a git safe.directory
@@ -120,10 +130,10 @@ runs:
       run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
 
     # From the repository root, rustup reads the channel and the components
-    # (clippy, rustfmt) from rust-toolchain.toml. No default toolchain is set,
-    # so a command run outside the checkout has no toolchain.
+    # (clippy, rustfmt) from rust-toolchain.toml. In a container job no
+    # default toolchain is set, so a command run outside the checkout has none.
     - name: Install the pinned Rust toolchain
-      if: inputs.rustup == 'true'
+      if: inputs.rustup == 'true' || inputs.rust-toolchain == 'true'
       shell: bash
       run: rustup toolchain install
 

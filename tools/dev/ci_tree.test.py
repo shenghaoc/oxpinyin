@@ -618,11 +618,11 @@ class GateTests(unittest.TestCase):
 
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
-            'vcpkg-overlays/tkrzw/pin.json': {'lint', 'test', 'harness'},
-            'vcpkg-overlays/tkrzw/vcpkg.json': {'lint', 'test', 'harness'},
-            'vcpkg-overlays/tkrzw/portfile.cmake': {'lint', 'test', 'harness'},
-            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'lint', 'test', 'harness'},
-            'vcpkg-overlays/tkrzw/usage': {'lint', 'test', 'harness'},
+            'vcpkg-overlays/tkrzw/pin.json': {'lint', 'test', 'harness', 'ship'},
+            'vcpkg-overlays/tkrzw/vcpkg.json': {'lint', 'test', 'harness', 'ship'},
+            'vcpkg-overlays/tkrzw/portfile.cmake': {'lint', 'test', 'harness', 'ship'},
+            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'lint', 'test', 'harness', 'ship'},
+            'vcpkg-overlays/tkrzw/usage': {'lint', 'test', 'harness', 'ship'},
             'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
             'docs/findings/glib-libc-call-sites.tsv': {'harness'},
@@ -667,7 +667,7 @@ class GateTests(unittest.TestCase):
             # the clang bindings in the harness.
             'uv.lock': {'lint', 'harness'},
             'justfile': {'lint', 'test', 'harness', 'ship'},
-            'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness'},
+            'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness', 'ship'},
             '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             'scripts/new.sh': set(),

@@ -17,7 +17,7 @@ runs:
         key: contract-data-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/oracle/libpinyin-data.json') }}
     - name: Fetch and verify the pinned data
       shell: bash
-      # GITHUB_WORKSPACE is the checkout as this job sees it, in a container job too.
+      # GITHUB_WORKSPACE is the checkout as this job sees it.
       run: |
         export OXPINYIN_CACHE="$GITHUB_WORKSPACE/target"
         echo "OXPINYIN_CACHE=$OXPINYIN_CACHE" >> "$GITHUB_ENV"
