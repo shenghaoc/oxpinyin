@@ -72,16 +72,14 @@ jobs:
         with:
           # The tkrzw action runs on the managed CPython.
           uv: 'true'
+          # One nightly toolchain serves both cargo-fuzz's build and the runs.
+          # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
+          # file for a command run in fuzz/, so each cargo step below runs
+          # there and no step names the nightly.
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
-      # One nightly toolchain serves both cargo-fuzz's build and the runs
-      # (cargo install works on nightly; no second toolchain needed).
-      # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
-      # file for a command run in fuzz/, so each cargo step below runs there
-      # and no step names the nightly. The runner's rustup installs it.
-      - name: Install the pinned nightly with Rust sources
-        working-directory: fuzz
-        run: rustup toolchain install
       # Exact on purpose: cargo-fuzz passes unstable flags to the pinned nightly above, so the two move together.
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
         working-directory: fuzz
@@ -226,6 +224,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          rust-toolchain: 'true'
           rust-cache: 'true'
           cargo-nextest: 'true'
           uv: 'true'
@@ -325,6 +324,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          rust-toolchain: 'true'
           rust-cache: 'true'
           uv: 'true'
           just: 'true'

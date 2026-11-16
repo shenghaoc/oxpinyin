@@ -205,7 +205,6 @@ jobs:
           uv: 'true'
           # Only the test step runs nextest, and a reuse run skips that step.
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
-
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
         # self-contained regardless of scheduling order; the marginal apt
@@ -378,22 +377,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The nightly toolchain below stays bespoke (sanitizer builds need
-      # nightly, not the pinned channel), and rust-cache stays off on
-      # purpose — see the note above the gate step.
+      # Sanitizer builds need the one pinned nightly, which
+      # fuzz/rust-toolchain.toml names; tools.dev.test_runner runs cargo
+      # +<nightly> from that file. rust-cache stays off on purpose (below).
       - uses: ./.github/actions/bootstrap
         with:
           uv: 'true'
-
-      # The sanitizer nightly is declared once in fuzz/rust-toolchain.toml and
-      # read through tools.dev.test_runner.sanitize_toolchain. RUSTUP_TOOLCHAIN beats
-      # rust-toolchain.toml's channel pin for this job only.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
         # libasan ships with gcc and is not a separate package.
         # libclang-dev is bindgen's runtime dependency.
@@ -405,13 +396,6 @@ jobs:
       # OXPINYIN_TKRZW_PREFIX; the loader finds it through LD_LIBRARY_PATH.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
-
-      # The runner's rustup installs the nightly that RUSTUP_TOOLCHAIN names.
-      - name: Install nightly Rust (sanitizer support)
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-          rustc --version
 
       # No rust-cache here on purpose: the store crate compiles in seconds;
       # a separate sanitizer-flavored cache entry would be pure book-keeping.
@@ -470,17 +454,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same nightly as the tkrzw lane above.
       - uses: ./.github/actions/bootstrap
         with:
           uv: 'true'
-
-      # Same nightly source as the tkrzw lane above.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
         # backend binds (and whose db.h bindgen reads); libclang-dev is
@@ -488,13 +467,6 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
-
-      # The runner's rustup installs the nightly that RUSTUP_TOOLCHAIN names.
-      - name: Install nightly Rust (sanitizer support)
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-          rustc --version
 
       - name: Run the bdb sanitizer gate
         id: sanitize-tests
@@ -542,17 +514,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same nightly as the tkrzw lane above.
       - uses: ./.github/actions/bootstrap
         with:
           uv: 'true'
-
-      # Same nightly source as the tkrzw lane above.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library this backend links and the
         # headers its cxx bridge compiles against with g++; no bindgen, so
@@ -560,13 +527,6 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev
-
-      # The runner's rustup installs the nightly that RUSTUP_TOOLCHAIN names.
-      - name: Install nightly Rust (sanitizer support)
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-          rustc --version
 
       - name: Run the kc sanitizer gate
         id: sanitize-tests

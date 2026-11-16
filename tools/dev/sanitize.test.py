@@ -86,14 +86,10 @@ class ToolchainTests(unittest.TestCase):
             self.assertEqual((imported.returncode, imported.stdout.strip()),
                              (0, str(missing)), imported.stderr)
             # --check never runs a gate.
-            for operation, args in (('sanitize_toolchain', []), ('sanitize', ['--check', 'bdb'])):
-                with self.subTest(operation=operation):
-                    call = 'sanitize(sys.argv[1:])' if args else 'sanitize_toolchain()'
-                    result = python('-c', f'import sys; from tools.dev.test_runner import {operation}; '
-                                          f'raise SystemExit({call})', *args)
-                    self.assertEqual((result.returncode, result.stdout), (1, ''), result.stderr)
-                    self.assertEqual(result.stderr, f'{operation.replace('_', '-')}: {missing} is missing; '
-                                                    'it names the sanitizer nightly.\n')
+            result = python('-c', 'import sys; from tools.dev.test_runner import sanitize; '
+                                  'raise SystemExit(sanitize(sys.argv[1:]))', '--check', 'bdb')
+            self.assertEqual((result.returncode, result.stdout), (1, ''), result.stderr)
+            self.assertEqual(result.stderr, f'sanitize: {missing} is missing; it names the sanitizer nightly.\n')
 
 
 class SelectionTests(unittest.TestCase):

@@ -44,11 +44,17 @@ inputs:
     default: 'false'
   rust-toolchain:
     description: >-
-      Install the toolchain and components that rust-toolchain.toml names
-      with the runner's own rustup. String 'true'/'false' (composite-action
-      inputs are strings).
+      Install the toolchain and components that the rust-toolchain.toml in
+      rust-toolchain-dir names, with the rustup already on PATH (the hosted
+      runners'). String 'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
+  rust-toolchain-dir:
+    description: >-
+      The directory whose rust-toolchain.toml names the toolchain: the
+      repository root by default, `fuzz` for the one pinned nightly.
+    required: false
+    default: '.'
   uv:
     description: >-
       Install uv with astral-sh/setup-uv, then install and check the managed
@@ -129,12 +135,13 @@ runs:
       shell: bash
       run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
 
-    # From the repository root, rustup reads the channel and the components
-    # (clippy, rustfmt) from rust-toolchain.toml. In a container job no
-    # default toolchain is set, so a command run outside the checkout has none.
+    # rustup reads the channel and the components from the rust-toolchain.toml
+    # of the working directory. In a container job no default toolchain is
+    # set, so a command run outside the checkout has none.
     - name: Install the pinned Rust toolchain
       if: inputs.rustup == 'true' || inputs.rust-toolchain == 'true'
       shell: bash
+      working-directory: ${{ inputs.rust-toolchain-dir }}
       run: rustup toolchain install
 
     # Pinned to the v10.3.3 tag commit. No version input: setup-uv reads
