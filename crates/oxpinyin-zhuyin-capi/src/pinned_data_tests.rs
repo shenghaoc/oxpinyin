@@ -479,3 +479,151 @@ fn a_stored_phrase_above_unicode_is_chosen_and_trained_byte_for_byte() {
     }
     close(context, instance);
 }
+
+/// A caller-owned GLib string, taken and freed.
+fn take_text(text: *mut c_char) -> String {
+    let value = String::from_utf8(bytes_at(text)).expect("UTF-8");
+    // SAFETY: the facade handed over a GLib string, freed once.
+    unsafe { glib_sys::g_free(text.cast()) };
+    value
+}
+
+/// The key at `offset` as `tools/oracle/pin_capture.py`'s `zhuyin_key_walk` reads it: the packed
+/// word, the raw span of its key rest and its zhuyin string; `None` when both queries answer false.
+fn key_at(instance: *mut ZhuyinInstance, offset: usize) -> Option<(u16, (u16, u16), String)> {
+    use crate::cursor::{
+        zhuyin_get_zhuyin_key, zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_positions,
+    };
+    // The key and its rest are read from the pin's process-wide key slots.
+    let _slots = crate::test_support::key_slot_guard();
+    let mut key: *mut crate::types::ChewingKey = ptr::null_mut();
+    let found = zhuyin_get_zhuyin_key(instance, offset, &raw mut key);
+    let mut rest: *mut crate::types::ChewingKeyRest = ptr::null_mut();
+    assert_eq!(
+        zhuyin_get_zhuyin_key_rest(instance, offset, &raw mut rest),
+        found
+    );
+    assert_eq!((key.is_null(), rest.is_null()), (!found, !found));
+    if !found {
+        return None;
+    }
+    let (mut begin, mut end) = (0_u16, 0_u16);
+    assert!(zhuyin_get_zhuyin_key_rest_positions(
+        instance,
+        rest,
+        &raw mut begin,
+        &raw mut end
+    ));
+    // SAFETY: a true answer points `key` at the instance's key slot.
+    let packed = unsafe { (*key).packed };
+    let mut text: *mut c_char = ptr::null_mut();
+    assert!(crate::keys::zhuyin_get_zhuyin_string(
+        instance,
+        key,
+        &raw mut text
+    ));
+    Some((packed, (begin, end), take_text(text)))
+}
+
+/// Guesses and answers the sentence.
+fn guessed(instance: *mut ZhuyinInstance) -> String {
+    assert!(zhuyin_guess_sentence(instance));
+    let mut sentence: *mut c_char = ptr::null_mut();
+    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    take_text(sentence)
+}
+
+/// Parses `text` as full pinyin; the parse and the parsed length are its byte length.
+fn parse_full(instance: *mut ZhuyinInstance, text: &str) {
+    assert_eq!(
+        zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()),
+        text.len()
+    );
+    assert_eq!(
+        crate::parse::zhuyin_get_parsed_input_length(instance),
+        text.len()
+    );
+}
+
+/// The first three rows of the window after offset 0, and the row count.
+fn leading_rows(
+    instance: *mut ZhuyinInstance,
+) -> (
+    usize,
+    Vec<(lookup_candidate_type_t, String)>,
+    *mut LookupCandidate,
+) {
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    let rows = candidate_rows(instance);
+    let third = rows[2].0;
+    let leading = rows[..3]
+        .iter()
+        .map(|(_, kind, text)| (*kind, String::from_utf8(text.clone()).expect("UTF-8")))
+        .collect();
+    (rows.len(), leading, third)
+}
+
+/// Constraint revalidation on `PhoneticLookup<1, 1>` (`zhuyin.cpp:348`): 整个 forced over its
+/// abbreviation `zhg`, one initial-only key per syllable, parsed as full pinyin under
+/// `PINYIN_INCOMPLETE` alone. Observation `constraint-revalidation/zhuyin/zhg-整个` of the pin
+/// capture of 2026-11-16 (runs 1 and 2 identical), at 074a2219. The chewing parsers refuse an
+/// initial-only key (`zhuyin_parser2.cpp:256-257`), and the default `FORCE_TONE` refuses an
+/// untoned full pinyin (`pinyin_parser2.cpp:185-189`).
+///
+/// `fill_matrix` puts `zh` at column 0 and `g` at column 2 (`phonetic_key_matrix.cpp:30-84`;
+/// `zhuyin.cpp:1017-1043`). The choose answers the row's end (`zhuyin.cpp:1650-1655`;
+/// `lookup/phonetic_lookup.cpp:61-86`). `validate_constraint` keeps the forcing at the next guess
+/// (`zhuyin.cpp:886-910`; `phonetic_lookup.cpp:120-167`), because an incomplete key matches any
+/// final (`pinyin_phrase3.h:80-86`). A parse never touches the constraints, so the forcing
+/// survives `zh` and `zhg` parsed with no guess between. A guess on `zh` shrinks the store to 3
+/// and clears the forcing that ends at 3 (`phonetic_lookup.cpp:136-138,145-148`).
+#[test]
+fn a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does() {
+    const BEST: lookup_candidate_type_t = lookup_candidate_type_t::BEST_MATCH_CANDIDATE;
+    const AFTER: lookup_candidate_type_t = lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR;
+    let row = |kind, text: &str| (kind, text.to_owned());
+    let user_dir = TempUserDir::new("constraint-revalidation");
+    let (context, instance) = open_on(&contract_data_dir(), &user_dir.path);
+    assert!(zhuyin_set_options(context, 0x8));
+    parse_full(instance, "zhg");
+    assert_eq!(
+        (0..=3)
+            .map(|offset| key_at(instance, offset))
+            .collect::<Vec<_>>(),
+        [
+            Some((23, (0, 2), "ㄓ".to_owned())),
+            None,
+            Some((7, (2, 3), "ㄍ".to_owned())),
+            None,
+        ]
+    );
+    assert_eq!(guessed(instance), "中国");
+    let (count, rows, third) = leading_rows(instance);
+    assert_eq!(count, 2025);
+    assert_eq!(
+        rows,
+        [row(BEST, "中国"), row(AFTER, "这个"), row(AFTER, "整个")]
+    );
+    assert_eq!(zhuyin_choose_candidate(instance, 0, third), 3);
+
+    // Revalidated by the guess.
+    assert_eq!(guessed(instance), "整个");
+    let (count, rows, _) = leading_rows(instance);
+    assert_eq!(count, 2025);
+    assert_eq!(
+        rows,
+        [row(BEST, "整个"), row(AFTER, "中国"), row(AFTER, "这个")]
+    );
+
+    // A replaced selection: no guess sees the shorter parse.
+    parse_full(instance, "zh");
+    parse_full(instance, "zhg");
+    assert_eq!(guessed(instance), "整个");
+
+    // A guess on the shorter parse clears the forcing.
+    parse_full(instance, "zh");
+    assert_eq!(guessed(instance), "中");
+    parse_full(instance, "zhg");
+    assert_eq!(guessed(instance), "中国");
+    close(context, instance);
+}

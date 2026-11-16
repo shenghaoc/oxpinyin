@@ -29,13 +29,7 @@ The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 
 ### Open items in the algorithm record
 
-The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md) lists these gaps.
-They do not block the sweep.
-
-- The [§11 defects](docs/findings/libpinyin-structures-and-algorithms.md#defects-from-11) cover repeated seeds and unranged one-step tokens.
-- Run the constraint-revalidation acceptance case (§11): a pinned-model phrase forced over its abbreviation, one initial-only key per syllable.
-  Force it, then revalidate through `guess_sentence` and a replaced selection.
-  Compare with the reference-cell oracle using a contract test.
+The [algorithm record](docs/findings/libpinyin-structures-and-algorithms.md#open) has no open item.
 
 ### Internal implementation
 
