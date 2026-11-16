@@ -35,8 +35,8 @@ use std::collections::hash_map::Entry;
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_POSITION};
 use oxpinyin_core::scoring::ScoringError;
 use oxpinyin_core::{
-    ChewingKey, Dictionary, LanguageModel, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-    PhraseText, PhraseToken, PronunciationRows, SyllableKey, TokenPhrase,
+    ChewingKey, Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges,
+    PhraseItemRead, PhraseText, PhraseToken, PronunciationRows, SyllableKey, TokenPhrase,
 };
 use smallvec::SmallVec;
 
@@ -1408,7 +1408,6 @@ where
     L::Error: core::fmt::Display,
 {
     let entries = pricing.ranges;
-    let eligible = |entry: &SpanEntry| entry.pronunciation >= f32::EPSILON;
     // Entered on `SEARCH_OK` only; the predecessors' rows are loaded and
     // merged then even when no ranged item can step.
     if one_step.is_none() && entries.iter().next().is_none() {
@@ -1420,7 +1419,7 @@ where
     // from `lower_bound(range_begin)`, one step per yielded item with that
     // item's own frequency, duplicates included.
     let mut items: Vec<(u32, u32)> = Vec::new();
-    let mut selected: Vec<(&SpanEntry, (u32, u32))> = Vec::new();
+    let mut selected: Vec<Selected<'_>> = Vec::new();
     // The best predecessor's row, which the unigram pass below hands to the
     // model again.
     let mut head_row = oxpinyin_core::NbestStepRow::default();
@@ -1440,55 +1439,12 @@ where
             None => false,
             Some(NbestSuccessors::Miss) => true,
             Some(NbestSuccessors::Row(gram)) => {
-                let refuse = |fault| EngineError::lookup_gram(prev, fault);
                 if let Some(fault) = gram.fault() {
-                    return Err(refuse(fault));
+                    return Err(EngineError::lookup_gram(prev, fault));
                 }
-                if let Some(token) = one_step {
-                    if let Some(freq) = gram.get_freq(token).map_err(refuse)? {
-                        let total = gram.total().map_err(refuse)?;
-                        for (ranged, slot) in entries.walk_tokens() {
-                            if ranged != token {
-                                continue;
-                            }
-                            if let Some(entry) = pricing.price(slot, ranged)?
-                                && eligible(entry)
-                            {
-                                selected.push((entry, (freq, total)));
-                            }
-                        }
-                    }
-                } else {
-                    for range in entries.iter() {
-                        items.clear();
-                        gram.search_into(range.first(), range.last(), &mut items)
-                            .map_err(refuse)?;
-                        if items.is_empty() {
-                            continue;
-                        }
-                        let total = gram.total().map_err(refuse)?;
-                        // The walk checks the range end only (ngram.cpp:167-
-                        // 173): out of order, it can yield a token below the
-                        // range's first. The pin steps any yielded token whose
-                        // phrase spells this span (`bigram_gen_next_step`'s
-                        // `get_phrase_item` and pronunciation check), so such
-                        // a token takes this span's entry for it, if any.
-                        for &(token, freq) in &items {
-                            let own = match entries.entry(range, token) {
-                                Some(slot) => pricing.price(slot, token)?,
-                                None => None,
-                            };
-                            let found = match own {
-                                Some(entry) => Some(entry),
-                                None => pricing.first_priced(token)?,
-                            };
-                            if let Some(entry) = found
-                                && eligible(entry)
-                            {
-                                selected.push((entry, (freq, total)));
-                            }
-                        }
-                    }
+                match one_step {
+                    Some(token) => select_forced(pricing, gram, prev, token, &mut selected)?,
+                    None => select_ranged(pricing, gram, prev, &mut items, &mut selected)?,
                 }
                 true
             }
@@ -1559,6 +1515,96 @@ where
                 trellis,
                 branch,
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// One bigram step that a predecessor's merged row selects: the span entry
+/// and the item's `(freq, total)`.
+type Selected<'a> = (&'a SpanEntry, (u32, u32));
+
+/// Whether the pin steps this entry: its pronunciation possibility is not
+/// below `FLT_EPSILON`.
+fn eligible(entry: &SpanEntry) -> bool {
+    entry.pronunciation >= f32::EPSILON
+}
+
+/// The forced token's steps from one predecessor row `gram`: the row's
+/// frequency for `token` (`get_freq`), then every eligible entry of the span
+/// for that token, in library and range order.
+fn select_forced<'a, D>(
+    pricing: &Pricing<'a, D>,
+    gram: &MergedGram,
+    prev: u32,
+    token: u32,
+    selected: &mut Vec<Selected<'a>>,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+{
+    let refuse = |fault| EngineError::lookup_gram(prev, fault);
+    let Some(freq) = gram.get_freq(token).map_err(refuse)? else {
+        return Ok(());
+    };
+    let total = gram.total().map_err(refuse)?;
+    for (ranged, slot) in pricing.ranges.walk_tokens() {
+        if ranged != token {
+            continue;
+        }
+        if let Some(entry) = pricing.price(slot, ranged)?
+            && eligible(entry)
+        {
+            selected.push((entry, (freq, total)));
+        }
+    }
+    Ok(())
+}
+
+/// The ranged steps from one predecessor row `gram`: per library and range
+/// in append order, the row's items in the range (`search_into`), each with
+/// its own frequency, duplicates included. `items` is scratch.
+fn select_ranged<'a, D>(
+    pricing: &Pricing<'a, D>,
+    gram: &MergedGram,
+    prev: u32,
+    items: &mut Vec<(u32, u32)>,
+    selected: &mut Vec<Selected<'a>>,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+{
+    let refuse = |fault| EngineError::lookup_gram(prev, fault);
+    let entries = pricing.ranges;
+    for range in entries.iter() {
+        items.clear();
+        gram.search_into(range.first(), range.last(), items)
+            .map_err(refuse)?;
+        if items.is_empty() {
+            continue;
+        }
+        let total = gram.total().map_err(refuse)?;
+        // The walk checks the range end only (ngram.cpp:167-173): out of
+        // order, it can yield a token below the range's first. The pin steps
+        // any yielded token whose phrase spells this span
+        // (`bigram_gen_next_step`'s `get_phrase_item` and pronunciation
+        // check), so such a token takes this span's entry for it, if any.
+        for &(token, freq) in items.iter() {
+            let own = match entries.entry(range, token) {
+                Some(slot) => pricing.price(slot, token)?,
+                None => None,
+            };
+            let found = match own {
+                Some(entry) => Some(entry),
+                None => pricing.first_priced(token)?,
+            };
+            if let Some(entry) = found
+                && eligible(entry)
+            {
+                selected.push((entry, (freq, total)));
+            }
         }
     }
     Ok(())
