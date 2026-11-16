@@ -55,7 +55,7 @@ impl RuntimeDict<'_> {
         token: u32,
         want_text: bool,
         facts: &mut SentenceFacts,
-    ) -> Result<Option<PricedToken>, DictError> {
+    ) -> Option<PricedToken> {
         if !facts.validate(self.user.generation()) {
             return self.priced_on_path(path, token, want_text);
         }
@@ -92,7 +92,7 @@ impl RuntimeDict<'_> {
             },
             text,
         };
-        Ok(Some(result))
+        Some(result)
     }
 }
 
@@ -144,11 +144,8 @@ mod tests {
             .unwrap()
     }
     fn price(runtime: &Runtime, path: &PathPricing, token: u32, facts: &mut SentenceFacts) {
-        let old = runtime.dict().priced_on_path(path, token, true).unwrap();
-        let new = runtime
-            .dict()
-            .priced_with_facts(path, token, true, facts)
-            .unwrap();
+        let old = runtime.dict().priced_on_path(path, token, true);
+        let new = runtime.dict().priced_with_facts(path, token, true, facts);
         assert_eq!(
             old.as_ref()
                 .map(|p| (p.item.chars, p.item.pronunciation, p.text.clone())),
@@ -210,12 +207,10 @@ mod tests {
         let ni = runtime
             .dict()
             .priced_with_facts(&path(&runtime, "ni"), token, false, &mut facts)
-            .unwrap()
             .unwrap();
         let hao = runtime
             .dict()
             .priced_with_facts(&path(&runtime, "hao"), token, false, &mut facts)
-            .unwrap()
             .unwrap();
         assert_ne!(ni.item.pronunciation, hao.item.pronunciation);
         assert_eq!(std::mem::size_of::<TokenFacts>(), 32);

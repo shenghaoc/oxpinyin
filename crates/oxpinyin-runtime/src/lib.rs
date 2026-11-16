@@ -455,7 +455,7 @@ impl<'a> RuntimeDict<'a> {
         &self,
         query: &[oxpinyin_core::ChewingKey],
         ranges: &mut PhraseIndexRanges<()>,
-    ) -> Result<(), DictError> {
+    ) {
         let tokens = self.user_lookup().search_toned(query);
         ranges.convert(
             tokens
@@ -463,7 +463,6 @@ impl<'a> RuntimeDict<'a> {
                 .filter(|token| self.token_ranged(*token))
                 .map(|token| (token, Some(()))),
         );
-        Ok(())
     }
 
     /// `(matched, total)` of `token`'s effective system item over `query`,
@@ -540,7 +539,7 @@ impl<'a> RuntimeDict<'a> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        self.priced_on_path(&self.path_pricing(syllables, tones)?, token, want_text)
+        Ok(self.priced_on_path(&self.path_pricing(syllables, tones)?, token, want_text))
     }
 
     /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
@@ -549,7 +548,7 @@ impl<'a> RuntimeDict<'a> {
         path: &PathPricing,
         token: u32,
         want_text: bool,
-    ) -> Result<Option<PricedToken>, DictError> {
+    ) -> Option<PricedToken> {
         let user = path
             .user
             .iter()
@@ -595,7 +594,7 @@ impl<'a> RuntimeDict<'a> {
             // A text that does not convert keeps the item: the pin's
             // `convert_to_utf8` drops only that phrase from the sentence
             // (`lookup/lookup.cpp:58-65` at 074a2219).
-            let Some((chars, text)) = live
+            let (chars, text) = live
                 .read(token, |item| {
                     (
                         u32::try_from(item.phrase_length()).unwrap_or(u32::MAX),
@@ -605,10 +604,7 @@ impl<'a> RuntimeDict<'a> {
                         }),
                     )
                 })
-                .found()
-            else {
-                return Ok(None);
-            };
+                .found()?;
             PricedToken {
                 item: TrellisItem {
                     chars,
@@ -625,9 +621,9 @@ impl<'a> RuntimeDict<'a> {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
         }
         if self.token_filter_active() && !self.library_visible_token(token) {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(priced))
+        Some(priced)
     }
 
     fn user_lookup(&self) -> UserLookup<'_> {
@@ -1010,7 +1006,8 @@ impl Dictionary for RuntimeDict<'_> {
         let loaded = |token: u32| self.token_ranged(token);
         self.system
             .trellis_ranges_with(syllables, tones, ranges, loaded)?;
-        self.user_trellis_ranges(&query, ranges)
+        self.user_trellis_ranges(&query, ranges);
+        Ok(())
     }
 
     /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] with one
@@ -1027,7 +1024,7 @@ impl Dictionary for RuntimeDict<'_> {
         let system_extends = self
             .system
             .trellis_ranges_continued_with(syllables, tones, ranges, loaded, scratch)?;
-        self.user_trellis_ranges(&query, ranges)?;
+        self.user_trellis_ranges(&query, ranges);
         let user = self.user_lookup();
         self.note_user_search(syllables);
         if system_extends {
@@ -1061,7 +1058,7 @@ impl Dictionary for RuntimeDict<'_> {
         }
         let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
         Ok(self
-            .priced_on_path(path, token, false)?
+            .priced_on_path(path, token, false)
             .map(|priced| priced.item))
     }
 
@@ -1078,7 +1075,7 @@ impl Dictionary for RuntimeDict<'_> {
         }
         let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
         Ok(self
-            .priced_with_facts(path, token, false, facts)?
+            .priced_with_facts(path, token, false, facts)
             .map(|priced| priced.item))
     }
 
@@ -1093,7 +1090,7 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(None);
         }
         Ok(self
-            .priced_with_facts(&self.path_pricing(syllables, tones)?, token, true, facts)?
+            .priced_with_facts(&self.path_pricing(syllables, tones)?, token, true, facts)
             .and_then(|priced| priced.text))
     }
 
@@ -1421,9 +1418,11 @@ impl LanguageModel for RuntimeLm<'_> {
                 .unigram_delta(token.value())
                 .map_err(|error| LmError::User(error.to_string()))?
         };
-        Ok(self
-            .inner
-            .unigram_freq_with_user_delta(token.value(), live, extra))
+        Ok(Some(self.inner.unigram_freq_with_user_delta(
+            token.value(),
+            live,
+            extra,
+        )))
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {

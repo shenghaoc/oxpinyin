@@ -459,24 +459,24 @@ impl<
     }
 
     /// The item unigram of `token` plus a user delta, or the live field when
-    /// there is one. `Some(0)` is a token
+    /// there is one. `0` is a token
     /// with no item that the user overlay did not raise; the chunk items
-    /// are the real frequency table, so this is never `None`.
+    /// are the real frequency table.
     #[must_use]
     pub fn unigram_freq_with_user_delta(
         &self,
         token: u32,
         live: Option<u32>,
         user_delta: u64,
-    ) -> Option<u64> {
-        Some(self.live_unigram_count(
+    ) -> u64 {
+        self.live_unigram_count(
             token,
             &UserCountDelta {
                 unigram_delta: user_delta,
                 unigram_live: live,
                 ..UserCountDelta::ZERO
             },
-        ))
+        )
     }
 
     /// [`LanguageModel::nbest_step_costs`] with an explicit §5 user-count
