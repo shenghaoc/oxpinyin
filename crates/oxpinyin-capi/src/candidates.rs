@@ -423,10 +423,8 @@ pub extern "C" fn pinyin_choose_candidate(
         if inst.core.select_nbest_rank(row.nbest_index).is_err() {
             return -1;
         }
-        // An unreadable key list is an engine failure.
-        return inst.core.pin_matrix_columns().map_or(-1, |columns| {
-            c_int::try_from(columns).map_or(c_int::MAX, |columns| columns - 1)
-        });
+        return c_int::try_from(inst.core.pin_matrix_columns())
+            .map_or(c_int::MAX, |columns| columns - 1);
     }
     if row.candidate_type == lookup_candidate_type_t::LONGER_CANDIDATE {
         let Some(token) = row.token else {

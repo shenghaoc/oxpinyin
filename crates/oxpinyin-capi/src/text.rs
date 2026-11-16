@@ -242,7 +242,7 @@ fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
 /// (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`) and every auxiliary-text
 /// function answers `false` with an empty string.
 fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.mode_has_keys().unwrap_or(false)
+    inst.core.mode_has_keys()
 }
 
 /// Get auxiliary text for full pinyin display.

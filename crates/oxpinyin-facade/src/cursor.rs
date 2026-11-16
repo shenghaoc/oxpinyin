@@ -348,24 +348,18 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
 
     /// The active parse mode's keys, copied out of
     /// [`Self::mode_key_source`].
-    ///
-    /// # Errors
-    ///
-    /// Forwards [`EngineError`] from the session's matrix read.
-    pub fn mode_key_list(&self) -> Result<Vec<KeyAt>, EngineError> {
-        Ok(self.mode_key_source()?.iter().collect())
+    #[must_use]
+    pub fn mode_key_list(&self) -> Vec<KeyAt> {
+        self.mode_key_source().iter().collect()
     }
 
     /// Whether the active parse placed a key in a non-empty input — the
     /// pin's non-empty matrix (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`),
     /// answered without copying the keys.
-    ///
-    /// # Errors
-    ///
-    /// Forwards [`EngineError`] from the session's matrix read.
-    pub fn mode_has_keys(&self) -> Result<bool, EngineError> {
-        let keys = self.mode_key_source()?;
-        Ok(!(self.mode_input().0.is_empty() || keys.is_empty()))
+    #[must_use]
+    pub fn mode_has_keys(&self) -> bool {
+        let keys = self.mode_key_source();
+        !(self.mode_input().0.is_empty() || keys.is_empty())
     }
 
     /// The bytes the active parse consumed: the pin's `m_parsed_len`
@@ -382,15 +376,12 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// while it is empty (`phonetic_key_matrix.cpp:34-38`). The pin's
     /// `PhoneticTable::get_column_size` asserts `index < columns`
     /// (`phonetic_key_matrix.h:103`), so a read at or past this count aborts.
-    ///
-    /// # Errors
-    ///
-    /// Forwards [`EngineError`] from the session's matrix read.
-    pub fn pin_matrix_columns(&self) -> Result<usize, EngineError> {
-        if self.mode_has_keys()? {
-            Ok(self.pin_parsed_len() + 1)
+    #[must_use]
+    pub fn pin_matrix_columns(&self) -> usize {
+        if self.mode_has_keys() {
+            self.pin_parsed_len() + 1
         } else {
-            Ok(0)
+            0
         }
     }
 
@@ -414,18 +405,15 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// builds once per input and option word; the index-parsed full pinyin,
     /// double pinyin and chewing modes read the matrix kept with the parse
     /// (`parse_matrix`), with the pin's fuzzy, resplit and divided additions.
-    ///
-    /// # Errors
-    ///
-    /// Forwards [`EngineError`] from the session's matrix read.
-    pub fn mode_key_source(&self) -> Result<ModeKeys<'_>, EngineError> {
+    #[must_use]
+    pub fn mode_key_source(&self) -> ModeKeys<'_> {
         // The three parsed modes keep the matrix the pin built at the parse,
         // with its fuzzy, resplit and divided additions, as plain full
         // pinyin's session does.
         if self.zhuyin_parse.is_some() || self.double_parse.is_some() || self.full_parse.is_some() {
-            return Ok(ModeKeys::Matrix(&self.parse_matrix));
+            return ModeKeys::Matrix(&self.parse_matrix);
         }
-        Ok(ModeKeys::Session(self.session.matrix_keys()))
+        ModeKeys::Session(self.session.matrix_keys())
     }
 
     /// Lookup byte offset → character count within `phrase` in the
@@ -465,17 +453,14 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// The pin's matrix columns for the active parse mode, for
     /// `_remember_phrase_recur`'s walk; `None` is the empty matrix (a fresh
     /// instance, or a parse that placed no key).
-    ///
-    /// # Errors
-    ///
-    /// Forwards [`EngineError`] from the session's matrix read.
-    pub fn matrix_columns(&self) -> Result<Option<oxpinyin_engine::MatrixColumns>, EngineError> {
+    #[must_use]
+    pub fn matrix_columns(&self) -> Option<oxpinyin_engine::MatrixColumns> {
         let (input, separators) = self.mode_input();
         let parsed = self.pin_parsed_len();
         // The index-parsed full pinyin, double pinyin and chewing modes keep
         // the matrix the pin built at the parse, with its fuzzy alternatives;
         // plain full pinyin reads the session's scan matrix, which has them.
-        Ok(if self.span_source().is_some() {
+        if self.span_source().is_some() {
             oxpinyin_engine::matrix_columns(
                 input,
                 parsed,
@@ -489,13 +474,12 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
                 self.session.matrix_keys().iter(),
                 separators,
             )
-        })
+        }
     }
 
     /// The original-coordinate column table over the mode's keys.
-    fn abi_columns(&self) -> Result<AbiColumns<'_>, EngineError> {
-        let keys = self.mode_key_source()?;
-        Ok(self.abi_columns_over(keys))
+    fn abi_columns(&self) -> AbiColumns<'_> {
+        self.abi_columns_over(self.mode_key_source())
     }
 
     /// [`Self::abi_columns`] over keys already taken from
@@ -515,7 +499,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// # Errors
     /// Returns the pin's zhuyin zero-column assertion as an error.
     pub fn abi_key_at(&self, offset: usize, zhuyin: bool) -> Result<Option<AbiItem>, EngineError> {
-        let columns = self.abi_columns()?;
+        let columns = self.abi_columns();
         if offset >= columns.len().saturating_sub(1) {
             return Ok(None);
         }
@@ -547,8 +531,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         offset: usize,
         zhuyin: bool,
     ) -> Result<usize, EngineError> {
-        let keys = self.mode_key_source()?;
-        self.validate_abi_lookup_offset_in(keys, offset, zhuyin)
+        self.validate_abi_lookup_offset_in(self.mode_key_source(), offset, zhuyin)
     }
 
     fn validate_abi_lookup_offset_in(
@@ -581,7 +564,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         if !zhuyin {
             return self.left_offset_impl(offset);
         }
-        let columns = self.abi_columns()?;
+        let columns = self.abi_columns();
         oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if offset > 0 && columns.packs_zero(offset - 1) {
             return Err(EngineError::ZeroKeyOffsetCheck { offset });
@@ -610,7 +593,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         if packed == 0 {
             return None;
         }
-        let keys = self.mode_key_source().ok()?;
+        let keys = self.mode_key_source();
         let found = (keys.first_at_or_after(begin)..keys.len())
             .map(|index| keys.get(index))
             .take_while(|key| key.begin == begin)
