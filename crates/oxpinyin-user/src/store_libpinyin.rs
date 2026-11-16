@@ -500,14 +500,14 @@ pub(crate) struct SeedTotals {
     pub(crate) facade_extra: u64,
 }
 
-fn seed_totals(
+/// The unigrams seeded per library, as the facade would sum them: the
+/// state's libraries, the overrides that add an item, the user libraries'
+/// views, and what the decoded overrides add on top of an original.
+fn seeded_mass(
     state: &UserState,
     originals: &impl crate::persistence::OriginalLibraries,
-    library_totals: &crate::LibraryTable<u32>,
-    replayed: &crate::LibraryTable<crate::replay::ReplayedLibrary>,
     user_libraries: &crate::LibraryTable<crate::user_library::UserLibrary>,
-) -> SeedTotals {
-    // The unigrams seeded per library, as the facade would sum them.
+) -> crate::LibraryTable<u32> {
     let mut seeded: crate::LibraryTable<u32> = crate::LibraryTable::new();
 
     // ADD records own text/index rows just like USER_FILE items. MODIFY
@@ -553,6 +553,17 @@ fn seed_totals(
     }
 
     system_override_mass(state, originals, &mut seeded);
+    seeded
+}
+
+fn seed_totals(
+    state: &UserState,
+    originals: &impl crate::persistence::OriginalLibraries,
+    library_totals: &crate::LibraryTable<u32>,
+    replayed: &crate::LibraryTable<crate::replay::ReplayedLibrary>,
+    user_libraries: &crate::LibraryTable<crate::user_library::UserLibrary>,
+) -> SeedTotals {
+    let seeded = seeded_mass(state, originals, user_libraries);
 
     // The facade total is the sum of the loaded libraries' totals
     // (`phrase_index.cpp:237-248`). A system library's is its own scalar; a
