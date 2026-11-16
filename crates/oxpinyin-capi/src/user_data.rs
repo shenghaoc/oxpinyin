@@ -7,7 +7,7 @@ use oxpinyin_engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
 use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::iterators::ImportPlan;
-use crate::state::{instance_mut, instance_ref};
+use crate::state::instance_ref;
 use crate::types::PinyinInstance;
 
 /// Remember a user-provided phrase with its current pinyin context.
@@ -65,8 +65,10 @@ pub extern "C" fn pinyin_remember_user_input(
         return false;
     }
     // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_mut(instance) };
+    // `pinyin_alloc_instance`; this shared view ends before the walk's
+    // per-step `instance_ref` and the exclusive context borrow in
+    // `add_remembered_path`.
+    let inst = unsafe { instance_ref(instance) };
     // 074a2219 pinyin.cpp:3098-3130, 3685-3695: _pre_compute_tokens runs
     // next, before anything reads the matrix. Each character's search, in
     // order, goes through `get_first_token`, whose validating
