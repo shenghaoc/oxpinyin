@@ -52,6 +52,15 @@ A downstream package's build-time and runtime dependencies are in
 
 ## Discovery and overrides
 
+The `glib-sys` build script asks `system-deps` for `glib-2.0` and
+`gobject-2.0`. If pkg-config is unavailable or cannot find them, set
+`SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG=1` and
+`SYSTEM_DEPS_GOBJECT_2_0_NO_PKG_CONFIG=1`. Set
+`SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE` and
+`SYSTEM_DEPS_GOBJECT_2_0_SEARCH_NATIVE` to their library directories, and
+`SYSTEM_DEPS_GLIB_2_0_LIB` and `SYSTEM_DEPS_GOBJECT_2_0_LIB` to their
+library names.
+
 `system-deps` finds every backend from `[package.metadata.system-deps]` in
 `crates/oxpinyin-store/Cargo.toml`, as the `configure.ac` of libpinyin does.
 
