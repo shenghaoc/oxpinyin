@@ -25,7 +25,7 @@
 # each is itself the unsafe edge and the constitution's unsafe allowlist
 # reaches only the two C-ABI crates. (The doc-light boilerplate above the
 # allocator — the handle casts and the `char **`-out sentence writer — is
-# macro-stamped from `oxpinyin-capi-marshal` since 2026-09-10; the
+# macro-stamped from `oxpinyin-core`; the
 # allocator boundary these registers describe is not.) The two registers
 # are therefore checked separately rather than shared.
 #

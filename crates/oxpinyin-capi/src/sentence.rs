@@ -101,7 +101,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+    let prefix = oxpinyin_core::marshal::ucs4::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -161,7 +161,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if crate::predict::clear_borrowed_prefix(&mut inst, prefix) {
         return true;
     }
-    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+    let prefix = oxpinyin_core::marshal::ucs4::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -238,7 +238,7 @@ pub unsafe extern "C" fn pinyin_get_sentence(
 // The `char **`-out sentence writer, stamped from the shared marshalling
 // macro (byte-identical to the zhuyin facade's). `crate::ffi::sentence_text`
 // makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
+oxpinyin_core::write_owned_sentence!(crate::ffi::sentence_text);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    let text = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+    let text = oxpinyin_core::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },

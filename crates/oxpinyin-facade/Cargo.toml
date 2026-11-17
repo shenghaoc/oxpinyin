@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 oxpinyin-core.workspace = true
-oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal", version = "=0.1.0-alpha.1" }
 # The boundary predicate for a directory row the chunk loader opens.
 oxpinyin-input.workspace = true
 # The workspace table carries default-features = false for the

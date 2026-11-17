@@ -138,7 +138,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Lookup, and the output logic in `pinyin.cpp` | `oxpinyin-core` |
 | Wiring done in `pinyin_init` | `oxpinyin-facade` |
 | Context and instance state shared by both APIs | `oxpinyin-facade` |
-| `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
+| `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-core` |
 | `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries and the `k_mixture_model` operations) |
 
 The differences are deliberate:
@@ -1177,7 +1177,7 @@ a word at or above 0x80000000 before the first zero. Equality and hash
 cover the words before the first zero (`:282-302,337-358`).
 `dedup_ranked_by_text` (`oxpinyin-core/src/engine/session/mod.rs:1104-1128`)
 keeps the first row of each text. `phrase_text_bytes` renders GLib's
-forms (`oxpinyin-capi-marshal/src/phrase_text.rs:20-25,57-101`).
+forms (`oxpinyin-core/src/marshal/phrase_text.rs:20-25,57-101`).
 
 **Equivalence: argued** for non-NULL strings. N-best rows omit phrases
 that fail conversion and keep empty text (#1996). GLib's encoding of nonzero words

@@ -235,7 +235,7 @@ It is not an oxpinyin defect, and it needs no new ruling.
 
 - External file, locale and tool I/O calls belong in `oxpinyin-input`.
 - DBM backend calls belong in `oxpinyin-store`.
-- C ABI objects, ownership conventions, marshalling and boundary encodings belong in the C adapters: `oxpinyin-capi`, `oxpinyin-zhuyin-capi` and `oxpinyin-capi-marshal`.
+- C ABI objects, ownership conventions, marshalling and boundary encodings belong in the C adapters: `oxpinyin-capi`, `oxpinyin-zhuyin-capi` and `oxpinyin-core`.
 - Core and engine code implement domain semantics in native Rust, even where those semantics are observable through the C interfaces.
 
 Core and engine types carry only what the pin's pre-C operations need:

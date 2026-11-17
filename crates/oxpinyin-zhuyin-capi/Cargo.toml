@@ -55,19 +55,14 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 workspace = true
 
 [dependencies]
-# Marshalling macros shared with oxpinyin-capi (macro-only, no compiled
-# code): the opaque-handle pointer casts and the char**-out sentence
-# writer expand into this crate, where the unsafe is allowed.
-oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal", version = "=0.1.0-alpha.1" }
 oxpinyin-core.workspace = true
+oxpinyin-input.workspace = true
 # The shared facade-orchestration layer this crate's C wrappers translate.
 oxpinyin-facade = { path = "../oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]
-# Dev-only: the user.conf expectation uses the boundary's text-mode newline.
-oxpinyin-input.workspace = true
 # Dev-only: shared-shape cases in the crate tests.
 rstest.workspace = true
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the

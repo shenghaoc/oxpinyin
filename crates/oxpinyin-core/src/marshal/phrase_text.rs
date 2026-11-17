@@ -8,7 +8,7 @@
 
 use std::borrow::Cow;
 
-use oxpinyin_core::PhraseText;
+use crate::PhraseText;
 
 /// The bytes the pin hands to C for `text`.
 ///

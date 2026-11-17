@@ -11,11 +11,11 @@
 
 use std::ffi::CStr;
 
-use oxpinyin_core::PhraseText;
+use crate::PhraseText;
 
 /// A byte sequence outside the converter's accepted set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Ucs4Error;
+pub(crate) struct Ucs4Error;
 
 impl core::fmt::Display for Ucs4Error {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -31,7 +31,7 @@ impl std::error::Error for Ucs4Error {}
 ///
 /// Returns [`Ucs4Error`] for a continuation byte in lead position, a
 /// truncated sequence, an overlong form, or a `0xfe`/`0xff` byte.
-pub fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
     let mut words = Vec::with_capacity(bytes.len());
     let mut position = 0;
     while let Some(&first) = bytes.get(position) {
@@ -75,7 +75,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
 /// non-scalar words keep the stored form.
 #[must_use]
 pub fn prefix_text(prefix: Option<&CStr>) -> Option<PhraseText> {
-    crate::input::utf8_to_ucs4(prefix).filter(|text| !text.is_empty())
+    crate::marshal::input::utf8_to_ucs4(prefix).filter(|text| !text.is_empty())
 }
 
 #[cfg(test)]

@@ -26,6 +26,12 @@ pub fn decode_filename(name: &CStr) -> PathBuf {
     path_from_bytes(name.to_bytes())
 }
 
+/// Decode a nullable C filename at either C API boundary.
+#[must_use]
+pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
+    input.map(decode_filename)
+}
+
 /// A pin byte path as the Rust path that opens it.
 ///
 /// Unix keeps the bytes. Windows decodes UTF-8 and replaces invalid input

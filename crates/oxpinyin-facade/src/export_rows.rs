@@ -5,7 +5,7 @@
 //! types cross this boundary.
 
 use crate::runtime::{PhraseItemView, RuntimeDict};
-use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText};
 use oxpinyin_user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 

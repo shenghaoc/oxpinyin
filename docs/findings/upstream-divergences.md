@@ -51,7 +51,7 @@ An entry holds nothing else.
 ### NULL prediction prefix
 
 - **Pin:** `_compute_prefixes` passes `prefix` to `g_utf8_to_ucs4` with no NULL guard (`src/pinyin.cpp:1389-1398`; GLib 2.84.4 `gutf8.c:950`), after the defined resets of its callers (`:2420-2423`, `:2459`, `:1431-1432`; `src/zhuyin.cpp:912-918`, `:949-953`). A NULL `prefix` dies of SIGSEGV.
-- **oxpinyin:** `ucs4::prefix_text` (`oxpinyin-capi-marshal`) turns a NULL, invalid or empty prefix into `None`: the plain entry answers `false`, the punctuation entry `true` with an empty list, and both sentence entries guess on `[sentence_start]`.
+- **oxpinyin:** `ucs4::prefix_text` (`oxpinyin-core`) turns a NULL, invalid or empty prefix into `None`: the plain entry answers `false`, the punctuation entry `true` with an empty list, and both sentence entries guess on `[sentence_start]`.
 - **Decision:** accepted, class (b), by maintainer ruling: a NULL prefix is a prefix that adds no token.
 - **Tests:** `sentence::a_null_sentence_prefix_is_no_prefix`.
 

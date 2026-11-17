@@ -57,7 +57,7 @@ pub unsafe extern "C" fn pinyin_parse_full_pinyin(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_capi_marshal::input::scalar_text(
+    let text = oxpinyin_core::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn pinyin_parse_double_pinyin(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_capi_marshal::input::scalar_text(
+    let text = oxpinyin_core::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_capi_marshal::input::scalar_text(
+    let text = oxpinyin_core::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },
@@ -241,7 +241,7 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     }
 }
 
-oxpinyin_capi_marshal::display_string_getter! {
+oxpinyin_core::display_string_getter! {
     key: ChewingKey, char: GChar
 }
 

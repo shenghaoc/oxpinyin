@@ -596,7 +596,6 @@ dependencies = [
  "glib-sys",
  "libc",
  "num_enum",
- "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-facade",
  "oxpinyin-input",
@@ -605,14 +604,6 @@ dependencies = [
  "rstest",
  "rustc-hash",
  "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-capi-marshal"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-input",
 ]
 
 [[package]]
@@ -635,7 +626,6 @@ dependencies = [
 name = "oxpinyin-facade"
 version = "0.1.0-alpha.1"
 dependencies = [
- "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-input",
  "oxpinyin-store",
@@ -729,7 +719,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "glib-sys",
  "libc",
- "oxpinyin-capi-marshal",
  "oxpinyin-core",
  "oxpinyin-facade",
  "oxpinyin-input",

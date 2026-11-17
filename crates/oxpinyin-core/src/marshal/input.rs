@@ -7,9 +7,8 @@
 //! `g_utf8_to_ucs4` site instead needs [`utf8_to_ucs4`].
 
 use std::ffi::CStr;
-use std::path::PathBuf;
 
-use oxpinyin_core::PhraseText;
+use crate::PhraseText;
 
 /// Decode the canonical historical encodings accepted by `g_utf8_to_ucs4`.
 ///
@@ -21,7 +20,7 @@ pub fn utf8_to_ucs4(input: Option<&CStr>) -> Option<PhraseText> {
     if let Ok(text) = input.to_str() {
         return Some(PhraseText::from(text));
     }
-    PhraseText::from_words(crate::ucs4::decode(input.to_bytes()).ok()?)
+    PhraseText::from_words(crate::marshal::ucs4::decode(input.to_bytes()).ok()?)
 }
 
 /// Read a scalar spelling, rejecting NULL and invalid Unicode UTF-8.
@@ -50,12 +49,6 @@ pub fn parser_prefix(input: Option<&CStr>) -> String {
             .unwrap_or_default()
             .to_owned(),
     }
-}
-
-/// Read a native filename using the shared boundary's byte-path conversion.
-#[must_use]
-pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
-    Some(oxpinyin_input::path::path_from_bytes(input?.to_bytes()))
 }
 
 /// Define the nullable C-string borrow at a C ABI boundary.
@@ -108,6 +101,3 @@ pub fn direct_zhuyin_reading(input: Option<&CStr>) -> String {
         }
     }
 }
-
-#[cfg(all(test, windows))]
-mod tests;

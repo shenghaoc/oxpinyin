@@ -52,7 +52,7 @@ pub unsafe extern "C" fn zhuyin_phrase_segment(
             }
         };
     }
-    let Some(text) = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+    let Some(text) = oxpinyin_core::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(sentence) },

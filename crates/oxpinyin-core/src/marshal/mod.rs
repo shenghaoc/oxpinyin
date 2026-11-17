@@ -2,30 +2,12 @@
 //! (`oxpinyin-capi` → `libpinyin.so.15`, `oxpinyin-zhuyin-capi` →
 //! `libzhuyin.so.15`).
 //!
-//! The two facades are near-twins: ~73% of the zhuyin crate's marshalling
-//! source is line-for-line identical to the pinyin crate's once the
-//! `pinyin`/`zhuyin` token is folded. The genuinely mechanical,
-//! doc-light boilerplate — opaque-handle pointer casts, and the
-//! `char **`-out sentence writer — is stamped from these macros instead of
-//! being written out by hand twice.
-//!
-//! ## Why the unsafe marshalling is macros, not functions
-//!
-//! Every helper stamped here is itself an `unsafe` edge (a raw-pointer
-//! deref, `Box::from_raw`/`into_raw`, a `*out = ..` write). The
-//! constitution's `unsafe` allowlist reaches only the C-ABI crates
-//! (`capi`/`oracle`), and this crate must not carry compiled `unsafe` of
-//! its own — so it is `#![forbid(unsafe_code)]`. A `macro_rules!` body is
-//! only a token tree in the crate that *defines* it; the `unsafe` is
-//! type-checked, borrow-checked and lint-checked in the crate that
-//! *expands* it. Each generated `unsafe` block therefore lands in the
-//! allowlisted capi crate, carrying its `// SAFETY:` comment, and this
-//! crate stays unsafe-free. This is the same boundary the per-facade
-//! `ffi.rs` files document: the allocator edge is not shared, and neither
-//! is any compiled `unsafe` — only the *shape* of the unsafe marshalling.
+//! The two C crates expand the pointer casts, allocation and output writers
+//! at the ABI boundary. Core forbids unsafe code. The macro definitions
+//! compile here and the generated unsafe blocks compile at their call sites.
 //!
 //! The safe [`input`] and [`phrase_text`] modules compile here: they convert
-//! borrowed input to Rust values and encode [`oxpinyin_core::PhraseText`]
+//! borrowed input to Rust values and encode [`crate::PhraseText`]
 //! as the pin's C-facing bytes. Only pointer borrowing and output allocation
 //! remain unsafe edges in the adapters.
 //!
@@ -34,20 +16,6 @@
 //! `libpinyin.ver` (79) / `libzhuyin.ver` (52) export gates and the C++
 //! header smoke test see an unchanged surface. These macros stamp only the
 //! crate-internal Rust helpers those entry points call.
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-// Constitution §4: keep these non-test denials. A permitted site needs the
-// narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see docs/rust-conventions.md.
-// An expectation proves lint coverage, not correspondence with the pin.
-// Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
-// are separate crates.
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(not(test), deny(clippy::expect_used))]
-#![cfg_attr(not(test), deny(clippy::panic))]
-#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
-#![cfg_attr(not(test), deny(clippy::unreachable))]
-
 /// Stamps the opaque-handle marshalling helpers behind a facade's three C
 /// handle types: the context, the instance, and the borrowed lookup
 /// candidate.
@@ -73,7 +41,7 @@
 /// # Example
 ///
 /// ```ignore
-/// oxpinyin_capi_marshal::opaque_handle_casts! {
+/// oxpinyin_core::opaque_handle_casts! {
 ///     vis: pub,
 ///     context: PinyinContext => CapiContext,
 ///     instance: PinyinInstance => CapiInstance,
@@ -288,7 +256,7 @@ macro_rules! ffi_output_helpers {
         /// fails. NULL when every conversion failed.
         pub fn sentence_text(
             phrases: impl IntoIterator<
-                Item = Option<impl core::borrow::Borrow<oxpinyin_core::PhraseText>>,
+                Item = Option<impl core::borrow::Borrow<$crate::PhraseText>>,
             >,
         ) -> *mut c_char {
             let mut result: *mut c_char = ptr::null_mut();
@@ -296,7 +264,7 @@ macro_rules! ffi_output_helpers {
                 // A phrase whose words GLib does not convert is NULL here.
                 let converted = phrase.map_or(ptr::null_mut(), |phrase| {
                     let bytes =
-                        oxpinyin_capi_marshal::phrase_text::phrase_text_bytes(phrase.borrow());
+                        $crate::marshal::phrase_text::phrase_text_bytes(phrase.borrow());
                     malloc_cstr_with(bytes.len(), |out| {
                         out.copy_from_slice(&bytes);
                         bytes.len()
@@ -409,7 +377,7 @@ macro_rules! display_string_getter {
         unsafe fn display_string_getter(
             key: *mut $key,
             utf8_str: *mut *mut $char,
-            render: impl FnOnce(oxpinyin_core::$key) -> oxpinyin_core::KeyText,
+            render: impl FnOnce($crate::$key) -> $crate::KeyText,
         ) -> bool {
             // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
             // `*utf8_str` before any check, so a NULL out stays guarded (row 41).
@@ -610,7 +578,7 @@ macro_rules! state_handle_helpers {
 /// # Example
 ///
 /// ```ignore
-/// oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
+/// oxpinyin_core::write_owned_sentence!(crate::ffi::sentence_text);
 /// ```
 #[macro_export]
 macro_rules! write_owned_sentence {
@@ -627,7 +595,7 @@ macro_rules! write_owned_sentence {
         /// initialized.
         unsafe fn write_owned_sentence(
             phrases: impl IntoIterator<
-                Item = Option<impl ::core::borrow::Borrow<::oxpinyin_core::PhraseText>>,
+                Item = Option<impl ::core::borrow::Borrow<$crate::PhraseText>>,
             >,
             sentence: *mut *mut ::std::os::raw::c_char,
         ) -> bool {
