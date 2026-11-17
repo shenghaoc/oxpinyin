@@ -11,6 +11,12 @@ mod content_source;
 mod full_indexes;
 #[path = "src/table_data/full_pinyin_syllables.rs"]
 mod full_syllables;
+#[expect(
+    dead_code,
+    reason = "The shared inventory also declares library-only constants."
+)]
+#[path = "src/table_data/syllable_inventory.rs"]
+mod inventory;
 #[path = "../../tools/codegen/string_tables.rs"]
 mod string_tables;
 
@@ -25,16 +31,19 @@ mod zhuyin_indexes {
     include!("src/table_data/zhuyin_indexes.rs");
 }
 
-/// `(source table, generated map)` pairs, in tier order: the order
+/// `(inventory, generated map)` pairs, in tier order: the order
 /// `SyllableKey::from_text` / `from_canonical_text` consult them.
-const TABLES: &[(&str, &str)] = &[
-    ("INCOMPLETE_PINYIN_KEYS", "INCOMPLETE_PINYIN_KEY_MAP"),
+const TABLES: &[(&[&str], &str)] = &[
     (
-        "OPTION_ONLY_COMPLETE_SYLLABLES",
+        &inventory::INCOMPLETE_PINYIN_KEYS,
+        "INCOMPLETE_PINYIN_KEY_MAP",
+    ),
+    (
+        &inventory::OPTION_ONLY_COMPLETE_SYLLABLES,
         "OPTION_ONLY_COMPLETE_SYLLABLE_MAP",
     ),
     (
-        "ZHUYIN_ONLY_COMPLETE_SYLLABLES",
+        &inventory::ZHUYIN_ONLY_COMPLETE_SYLLABLES,
         "ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP",
     ),
 ];
@@ -42,11 +51,9 @@ const TABLES: &[(&str, &str)] = &[
 fn main() {
     println!("cargo:rerun-if-changed=src/table_data/syllable_inventory.rs");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by cargo"));
-    let source = fs::read_to_string("src/table_data/syllable_inventory.rs")
-        .expect("read src/table_data/syllable_inventory.rs");
 
     generate_content_table(&out_dir);
-    let spellings = syllable_spellings(&source);
+    let spellings = syllable_spellings();
     generate_string_tables(&out_dir, &spellings);
 
     let mut generated = String::from(
@@ -57,17 +64,8 @@ fn main() {
         "FULL_PINYIN_SYLLABLE_MAP",
         full_syllables::FULL_PINYIN_SYLLABLES.iter().copied(),
     );
-    for (table, map) in TABLES {
-        let (declared, entries) = extract(&source, table).unwrap_or_else(|| {
-            panic!("{table}: table not found in src/table_data/syllable_inventory.rs")
-        });
-        assert_eq!(
-            entries.len(),
-            declared,
-            "{table}: declared [&str; {declared}] but found {} entries",
-            entries.len()
-        );
-        write_phf(&mut generated, map, entries.iter().map(String::as_str));
+    for (entries, map) in TABLES {
+        write_phf(&mut generated, map, entries.iter().copied());
     }
 
     fs::write(out_dir.join("syllable_maps.rs"), generated).expect("write syllable_maps.rs");
@@ -135,15 +133,13 @@ fn generate_content_table(out_dir: &std::path::Path) {
 
 /// The `SyllableKey` spellings in id order: the full syllables, then each
 /// of `TABLES` in order.
-fn syllable_spellings(source: &str) -> Vec<String> {
+fn syllable_spellings() -> Vec<String> {
     let mut spellings: Vec<String> = full_syllables::FULL_PINYIN_SYLLABLES
         .iter()
         .map(|&text| text.to_owned())
         .collect();
-    for (table, _) in TABLES {
-        let (_, entries) = extract(source, table)
-            .unwrap_or_else(|| panic!("{table}: table not found for the syllable key ids"));
-        spellings.extend(entries);
+    for (entries, _) in TABLES {
+        spellings.extend(entries.iter().map(|&text| text.to_owned()));
     }
     spellings
 }
@@ -175,51 +171,6 @@ fn generate_chewing_keys(out_dir: &std::path::Path, spellings: &[String]) {
     }
     writeln!(generated, "];").expect("write key table end");
     fs::write(out_dir.join("chewing_keys.rs"), generated).expect("write chewing_keys.rs");
-}
-
-/// Extracts a frozen `pub static NAME: [&str; COUNT] = ["…", …];` table from
-/// the syllable source, resolving `COUNT` through its
-/// `pub const COUNT: usize = …;` definition: the declared length and the
-/// string entries.
-fn extract(source: &str, name: &str) -> Option<(usize, Vec<String>)> {
-    let marker = format!("static {name}: [&str;");
-    let table = source.find(&marker)?;
-    let length_start = table + marker.len();
-    let length_end = source[length_start..].find(']')? + length_start;
-    let count_ident = source[length_start..length_end].trim();
-
-    let count_marker = format!("const {count_ident}: usize = ");
-    let count_start = source.find(&count_marker)? + count_marker.len();
-    let count_end = source[count_start..].find(';')? + count_start;
-    let declared = source[count_start..count_end].trim().parse().ok()?;
-
-    // The assignment may wrap (`= \n    [`): find the `=` closing the
-    // declaration, then the opening bracket after it.
-    let eq = source[length_end..]
-        .find('=')
-        .unwrap_or_else(|| panic!("{name}: no array assignment found"))
-        + length_end;
-    let open = source[eq..]
-        .find('[')
-        .unwrap_or_else(|| panic!("{name}: no array body found"))
-        + eq
-        + 1;
-    let close = source[open..]
-        .find("];")
-        .unwrap_or_else(|| panic!("{name}: unterminated array body"))
-        + open;
-    let body = &source[open..close];
-
-    // The body holds only comma-separated string literals; the entries are
-    // the quoted pieces.
-    let mut pieces = body.split('"');
-    pieces.next();
-    let mut entries = Vec::new();
-    while let Some(entry) = pieces.next() {
-        entries.push(entry.to_owned());
-        pieces.next();
-    }
-    Some((declared, entries))
 }
 
 fn write_phf<'a>(generated: &mut String, name: &str, entries: impl Iterator<Item = &'a str>) {
