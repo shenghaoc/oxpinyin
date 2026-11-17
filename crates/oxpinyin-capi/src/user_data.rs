@@ -56,11 +56,12 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
         return false;
     }
 
-    // SAFETY: `phrase` is a C string from the caller (null OK; null and
-    // invalid UTF-8 read as empty, which the length gate below rejects).
-    let phrase =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let phrase = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     // 074a2219 pinyin.cpp:3677-3681 checks the character count before
     // _pre_compute_tokens. A failed g_utf8_to_ucs4 leaves that count zero.
     // Stop counting at the refusal boundary: oversized known-character
@@ -110,7 +111,11 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
         key_pronounced_by(&read.core.dict, key, token)
     };
     let mut add = |path: &[MatrixKey]| -> Result<bool, EngineError> {
-        Ok(add_remembered_path(instance, &phrase, path, count))
+        Ok(
+            // SAFETY: Handles guarantees a live instance. Serial calls excludes other calls; the initial
+            // reader and each pronunciation reader have ended before this add callback.
+            unsafe { add_remembered_path(instance, &phrase, path, count) },
+        )
     };
     match remember_walk(&columns, phrase_length, &mut pronounces, &mut add) {
         Ok(added) => added,
@@ -126,7 +131,13 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
 /// preflight that aborts where `_add_phrase` asserts (`:554`, `:568`,
 /// `:571`, `reduce_tokens`; register row 93), then the store write. The
 /// import path's preflight serves both.
-fn add_remembered_path(
+///
+/// # Safety
+///
+/// Under the crate-level rules, Handles: instance is non-NULL and live. Serial
+/// calls grant exclusive access to its shared runtime; all earlier instance and
+/// runtime readers must have ended.
+unsafe fn add_remembered_path(
     instance: *mut PinyinInstance,
     phrase: &oxpinyin_core::PhraseText,
     path: &[MatrixKey],
@@ -151,8 +162,8 @@ fn add_remembered_path(
     else {
         return false;
     };
-    // SAFETY: `instance` is live; every earlier reader has ended and the C
-    // caller grants exclusive access to the runtime for this call.
+    // SAFETY: Handles guarantees a live instance; the helper contract ends
+    // every earlier reader, and Serial calls grants exclusive runtime access.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let phrase =
         match ctx

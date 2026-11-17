@@ -222,14 +222,21 @@ fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor:
 /// `:3509`, `:3569`), or, for an empty matrix, the `g_strdup("")` the pin
 /// writes with its `false` (`:3386`, `:3445`, `:3523`). GLib allocates, so
 /// a failed allocation aborts as the pin's does. Returns the pin's boolean.
-fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
+///
+/// # Safety
+///
+/// Under the crate-level rules, Out-parameters: a non-NULL output is aligned
+/// and writable without conflicting with live borrows. Its contents need not be
+/// initialized.
+unsafe fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
     let answered = text.is_some();
     if !aux_text.is_null() {
         let owned = text.map_or_else(
             || strdup(""),
             |text| strconcat_aux(&text.prefix, &text.middle, &text.postfix),
         );
-        // SAFETY: Null-checked above; ownership transfers to the caller,
+        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
+        // Ownership transfers to the caller,
         // which frees it with `g_free`.
         unsafe {
             *aux_text = owned;
@@ -270,11 +277,15 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     // the matrix is empty — no parse, or a parse that placed no key
     // (`pinyin.cpp:3382-3386`).
     if inst.core.parsed_len == 0 {
-        return write_aux(aux_text, None);
+        // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+        // without conflicting with live borrows. Its contents need not be initialized.
+        return unsafe { write_aux(aux_text, None) };
     }
     let text = if let Some(parse) = inst.core.full_parse.as_ref() {
         if !inst.core.mode_has_keys() {
-            return write_aux(aux_text, None);
+            // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+            // without conflicting with live borrows. Its contents need not be initialized.
+            return unsafe { write_aux(aux_text, None) };
         }
         abort_on_full_walk(&inst.read(), cursor);
         Some(full_index_aux_text(&inst.core.full_input, parse, cursor))
@@ -293,7 +304,10 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
             inst.state.full_aux_options,
         )
     };
-    write_aux(aux_text, text)
+
+    // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+    // without conflicting with live borrows. Its contents need not be initialized.
+    unsafe { write_aux(aux_text, text) }
 }
 
 /// Get auxiliary text for double pinyin display.
@@ -328,13 +342,18 @@ pub unsafe extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     // Upstream returns false with an allocated empty string when
     // the matrix is empty (pinyin.cpp:3442-3445).
     if !inst.core.mode_has_keys() {
-        return write_aux(aux_text, None);
+        // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+        // without conflicting with live borrows. Its contents need not be initialized.
+        return unsafe { write_aux(aux_text, None) };
     }
     // The pin renders the shared matrix whichever parser filled it
     // (register row 55): the keys of a double-pinyin parse carry their
     // tone, which the renderer appends after a cut key.
     let text = render_shared(&inst.read(), |m| m.double(cursor));
-    write_aux(aux_text, text)
+
+    // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+    // without conflicting with live borrows. Its contents need not be initialized.
+    unsafe { write_aux(aux_text, text) }
 }
 
 /// Get auxiliary text for chewing (bopomofo) display.
@@ -367,7 +386,9 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     if !inst.core.mode_has_keys() {
-        return write_aux(aux_text, None);
+        // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+        // without conflicting with live borrows. Its contents need not be initialized.
+        return unsafe { write_aux(aux_text, None) };
     }
     let text = match inst.core.zhuyin_parse.as_ref() {
         Some(parse) => Some(chewing_aux_text(
@@ -380,7 +401,10 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
         // same (register row 55).
         None => render_shared(&inst.read(), |m| m.chewing(cursor)),
     };
-    write_aux(aux_text, text)
+
+    // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
+    // without conflicting with live borrows. Its contents need not be initialized.
+    unsafe { write_aux(aux_text, text) }
 }
 
 #[cfg(test)]

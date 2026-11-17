@@ -196,7 +196,10 @@ pub unsafe extern "C" fn pinyin_iterator_add_phrase(
     let plan = {
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
         let context = unsafe { owner_ref(owner) };
-        plan_import(&context.core, handle.index, phrase, pinyin)
+
+        // SAFETY: The entry point guarantees Strings: both pointers are NULL or live NUL-terminated
+        // strings, unchanged for this call.
+        unsafe { plan_import(&context.core, handle.index, phrase, pinyin) }
     };
     let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
@@ -230,20 +233,30 @@ pub(crate) use oxpinyin_facade::ImportPlan;
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
-fn plan_import(
+///
+/// # Safety
+///
+/// Under the crate-level rules, Strings: both pointers are NULL or live
+/// NUL-terminated strings, unchanged for this call.
+unsafe fn plan_import(
     core: &oxpinyin_facade::ContextCore,
     index: u8,
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
-    let phrase =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let phrase = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
     // keys before an invalid sequence stand, as they do at the pin.
     let pinyin = oxpinyin_capi_marshal::input::parser_prefix(
-        oxpinyin_capi_marshal::borrow_c_string!(pinyin),
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(pinyin) },
     );
     let Some(keys) = parse_import_pinyin(&pinyin) else {
         return ImportPlan::Refuse;
@@ -281,7 +294,9 @@ pub unsafe fn oxpinyin_import_aborts(
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
         let context = unsafe { owner_ref(owner) };
         matches!(
-            plan_import(&context.core, handle.index, phrase, pinyin),
+            // SAFETY: This fuzz API guarantees Strings: both pointers name live
+            // NUL-terminated strings, unchanged for this call.
+            unsafe { plan_import(&context.core, handle.index, phrase, pinyin) },
             ImportPlan::Abort
         )
     }

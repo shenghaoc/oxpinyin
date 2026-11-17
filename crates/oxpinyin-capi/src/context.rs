@@ -6,14 +6,20 @@ use std::ptr;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::PinyinContext;
 
-fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
+/// # Safety
+///
+/// Under the crate-level rules, Strings: both pointers are NULL or live
+/// NUL-terminated strings, unchanged for this call.
+unsafe fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
     // The pin keeps `g_strdup` of both arguments and opens them by those
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) =
-        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(systemdir))
-    else {
+    let Some(system_path) = oxpinyin_capi_marshal::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(systemdir) },
+    ) else {
         // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
         // `setlocale` and failed `fopen("")` with its `open  failed.` line,
         // then the init's `load  failed!` (`table_info.cpp:197-202`).
@@ -24,8 +30,11 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path =
-        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
+    let user_path = oxpinyin_capi_marshal::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(userdir) },
+    );
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
             let handle = box_context(context);
@@ -74,7 +83,9 @@ pub unsafe extern "C" fn pinyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
-    init_context(systemdir, userdir)
+    // SAFETY: The entry point guarantees Strings: both pointers are NULL or live NUL-terminated
+    // strings, unchanged for this call.
+    unsafe { init_context(systemdir, userdir) }
 }
 
 /// Finalize and free a pinyin context.

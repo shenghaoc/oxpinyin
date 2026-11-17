@@ -104,8 +104,11 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
-    let prefix =
-        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(prefix) },
+    );
     // `_compute_prefixes` runs first, whatever the matrix holds, and reduces
     // each tail substring's search with the validating `reduce_tokens`
     // (`zhuyin.cpp:933`, `:953`), which asserts on more than four tokens
@@ -165,7 +168,12 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
         return false;
     }
     match inst.core.sentence_phrases(0) {
-        Some(phrases) => write_owned_sentence(phrases, sentence),
+        Some(phrases) => {
+            // SAFETY: The entry point guarantees Out-parameters: a non-NULL sentence destination is aligned
+            // and writable without conflicting with live borrows, including the phrase inputs. Its
+            // contents need not be initialized.
+            unsafe { write_owned_sentence(phrases, sentence) }
+        }
         None => false,
     }
 }
@@ -220,11 +228,12 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
-    // `g_utf8_to_ucs4` NULL answer.
-    let text =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let text = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
         // Pin behaviour: the zhuyin `_get_char_offset_recur` has no zero-key
         // branch, so at `offset == parsed_len` the walk reaches the last
@@ -302,7 +311,13 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
-    guess_candidates(instance, offset, false)
+    if instance.is_null() {
+        return false;
+    }
+    // SAFETY: Handles guarantees a live instance; Serial calls excludes
+    // overlapping access, and this caller retains no other instance view.
+    let mut inst = unsafe { instance_mut(instance) };
+    guess_candidates(&mut inst, offset, false)
 }
 
 /// Guess candidates at the before-cursor offset.
@@ -324,7 +339,13 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
-    guess_candidates(instance, offset, true)
+    if instance.is_null() {
+        return false;
+    }
+    // SAFETY: Handles guarantees a live instance; Serial calls excludes
+    // overlapping access, and this caller retains no other instance view.
+    let mut inst = unsafe { instance_mut(instance) };
+    guess_candidates(&mut inst, offset, true)
 }
 
 enum CandidateGuessRefusal {
@@ -356,15 +377,12 @@ pub(crate) fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) ->
 
 /// The shared candidate-build shell over the engine's `candidates_at` /
 /// `candidates_ending_at` / cached candidate list.
-fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor: bool) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
-    let outcome = guess_candidates_result(&mut inst, offset, before_cursor);
+fn guess_candidates(
+    inst: &mut crate::state::CapiInstanceMut<'_>,
+    offset: usize,
+    before_cursor: bool,
+) -> bool {
+    let outcome = guess_candidates_result(inst, offset, before_cursor);
     candidate_guess_answer(outcome)
 }
 

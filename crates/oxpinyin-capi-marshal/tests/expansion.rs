@@ -177,17 +177,20 @@ oxpinyin_capi_marshal::write_owned_sentence!(test_sentence_text);
 
 #[test]
 fn sentence_null_out_param_answers_true() {
-    assert!(write_owned_sentence(
-        [Some(PhraseText::from("你"))],
-        ptr::null_mut()
-    ));
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence([Some(PhraseText::from("你"))], ptr::null_mut()) }
+    );
 }
 
 #[test]
 fn sentence_null_allocation_still_answers_true() {
     // The pin's `convert_to_utf8` returns true even when its result is NULL.
     let mut out = std::ptr::dangling_mut::<c_char>();
-    assert!(write_owned_sentence([None::<PhraseText>], &mut out));
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence([None::<PhraseText>], &mut out) }
+    );
     assert!(out.is_null());
 }
 
@@ -199,7 +202,10 @@ fn sentence_phrases_write_through() {
         PhraseText::from("x"),
     ];
     let mut out = ptr::null_mut();
-    assert!(write_owned_sentence(phrases.iter().map(Some), &mut out));
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence(phrases.iter().map(Some), &mut out) }
+    );
     assert!(!out.is_null());
     // SAFETY: the fixture returned CString::into_raw ownership to `out`.
     let cstr = unsafe { std::ffi::CString::from_raw(out) };
@@ -314,14 +320,17 @@ mod display_getter_expansion {
     fn display_getter_checks_zero_and_writes_rendering() {
         let mut zero = ChewingKey(CoreKey::ZERO);
         let mut out = ptr::dangling_mut::<GChar>();
-        assert!(!display_string_getter(&mut zero, &mut out, |_| {
-            KeyText::Plain("x")
-        }));
+        assert!(
+            // SAFETY: Out-parameters is met by the writable local output;
+            // Borrowed objects is met by the live local key.
+            unsafe { !display_string_getter(&mut zero, &mut out, |_| KeyText::Plain("x")) }
+        );
         assert!(out.is_null());
         let mut key = ChewingKey(CoreKey::new(1, 0, 0, 0));
-        assert!(display_string_getter(&mut key, &mut out, |_| {
-            KeyText::Plain("x")
-        }));
+        assert!(
+            // SAFETY: Out-parameters is met by NULL or a writable local output slot. Borrowed objects is met by the live local key.
+            unsafe { display_string_getter(&mut key, &mut out, |_| { KeyText::Plain("x") }) }
+        );
         assert_eq!(out, c"rendered".as_ptr().cast_mut());
     }
 }

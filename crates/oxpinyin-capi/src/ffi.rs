@@ -37,6 +37,8 @@ pub fn take_owned_cstr(ptr: *mut c_char) -> String {
     text
 }
 
+oxpinyin_capi_marshal::borrow_c_string_helpers!();
+
 oxpinyin_capi_marshal::ffi_output_helpers! {
     glib: glib_sys, key_text: KeyText, malloc: malloc, free: free, domain: c"libpinyin"
 }

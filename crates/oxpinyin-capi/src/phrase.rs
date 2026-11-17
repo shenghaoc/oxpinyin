@@ -65,7 +65,9 @@ pub unsafe extern "C" fn pinyin_phrase_segment(
         };
     }
     let Some(text) = oxpinyin_capi_marshal::input::utf8_to_ucs4(
-        oxpinyin_capi_marshal::borrow_c_string!(sentence),
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(sentence) },
     ) else {
         // 074a2219 pinyin.cpp:1454: `g_return_val_if_fail(num_of_chars ==
         // ucs4_len, FALSE)` answers false and leaves the result as it was. Its

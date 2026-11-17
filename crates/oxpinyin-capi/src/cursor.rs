@@ -259,7 +259,11 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
 ) -> bool {
     // `_ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
     // canonical spelling, tone digit appended for a non-zero tone.
-    render_key(key, utf8_str, oxpinyin_core::ChewingKey::pinyin_text)
+
+    // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
+    // parameters: a non-NULL output is aligned and writable without conflicting with live
+    // borrows.
+    unsafe { render_key(key, utf8_str, oxpinyin_core::ChewingKey::pinyin_text) }
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -285,7 +289,10 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text)
+    // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
+    // parameters: a non-NULL output is aligned and writable without conflicting with live
+    // borrows.
+    unsafe { render_key(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text) }
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -358,7 +365,13 @@ fn abort_on_tone_outside_dims(key: oxpinyin_core::ChewingKey) {
 
 /// The shared body of the single-string renderers: the rendering made with
 /// the pin's `g_strdup`/`g_strdup_printf` call (`chewing_key.cpp:47-88`).
-fn render_key(
+///
+/// # Safety
+///
+/// Under the crate-level rules, Borrowed objects: a non-NULL key is valid for
+/// reads. Out-parameters: a non-NULL output is aligned and writable without
+/// conflicting with live borrows.
+unsafe fn render_key(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
     render: impl Fn(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
@@ -368,13 +381,13 @@ fn render_key(
         return false;
     }
     if !utf8_str.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
         unsafe {
             *utf8_str = ptr::null_mut();
         }
     }
 
-    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
+    // SAFETY: Borrowed objects guarantees a readable key; NULL was checked.
     let slot = unsafe { &*key };
     let decoded = slot.to_core();
     abort_on_elements_outside_dims(decoded);
@@ -383,7 +396,7 @@ fn render_key(
     }
     abort_on_tone_outside_dims(decoded);
     if !utf8_str.is_null() {
-        // SAFETY: Null-checked above.
+        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
         unsafe {
             *utf8_str = key_text(render(decoded));
         }
