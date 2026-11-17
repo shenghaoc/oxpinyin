@@ -200,63 +200,8 @@ impl<
 /// Handles retain ownership; every access still borrows only for one C call.
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
-/// Borrow storage retained by a handle, including after context fini.
-/// # Safety
-/// The C caller must serialize calls on this context and all its handles;
-/// no mutation may overlap the returned operation-scoped borrow.
-pub(crate) unsafe fn owner_ref(owner: &ContextOwner) -> &CapiContext {
-    // SAFETY: the owner keeps the allocation alive, and the caller's
-    // one-call-at-a-time contract excludes mutation during this borrow.
-    unsafe { &*owner.get() }
-}
-
-/// Borrow the shared allocation exclusively for one C call.
-/// # Safety
-/// No other call or retained Rust borrow may access this allocation until
-/// the returned borrow ends, including through another owning handle.
-pub(crate) unsafe fn owner_mut(owner: &mut ContextOwner) -> &mut CapiContext {
-    // SAFETY: ownership guarantees liveness; the C caller's one-call-at-a-time
-    // contract, not uniqueness of the reference count, guarantees exclusivity.
-    unsafe { &mut *owner.get() }
-}
-
-/// Retain the backing allocation while the public context handle is live.
-/// # Safety
-/// `ptr` must be a live context; the caller serializes operations on it.
-pub(crate) unsafe fn context_owner(ptr: *mut ZhuyinContext) -> ContextOwner {
-    // SAFETY: the public handle is live for this call; clone only its owner.
-    Rc::clone(unsafe { handles::context_ref(ptr) })
-}
-
-/// Box the context's reference-counted owner as the public C handle.
-pub(crate) fn box_context(context: CapiContext) -> *mut ZhuyinContext {
-    handles::box_context(Rc::new(UnsafeCell::new(context)))
-}
-
-/// Borrow a live public context for one operation.
-/// # Safety
-/// `ptr` is live and the caller excludes mutation during the borrow.
-pub(crate) unsafe fn context_ref<'a>(ptr: *mut ZhuyinContext) -> &'a CapiContext {
-    // SAFETY: the caller keeps the public handle live and serializes its calls.
-    unsafe { owner_ref(handles::context_ref(ptr)) }
-}
-
-/// Borrow a live public context exclusively for one operation.
-/// # Safety
-/// `ptr` is live; no call or borrow through any handle overlaps this one.
-pub(crate) unsafe fn context_mut<'a>(ptr: *mut ZhuyinContext) -> &'a mut CapiContext {
-    // SAFETY: the caller keeps the public handle live and grants exclusive access.
-    unsafe { owner_mut(handles::context_mut(ptr)) }
-}
-
-/// Borrow the runtime retained by an instance, without its public context.
-/// # Safety
-/// `ptr` is live; all earlier readers have ended and the C caller grants
-/// exclusive access across every handle sharing this runtime for this call.
-pub(crate) unsafe fn instance_context_mut<'a>(ptr: *mut ZhuyinInstance) -> &'a mut CapiContext {
-    // SAFETY: the instance owns the allocation; serialized C calls exclude
-    // access through any other instance, iterator or the public context.
-    unsafe { owner_mut(&mut handles::instance_mut(ptr).owner) }
+oxpinyin_capi_marshal::state_handle_helpers! {
+    context: ZhuyinContext, instance: ZhuyinInstance, instance_binding: instance, error: oxpinyin_engine::EngineError, context_field: {  }
 }
 
 mod handles {
@@ -269,50 +214,3 @@ mod handles {
     }
 }
 pub(crate) use handles::{box_instance, candidate_ptr, candidate_ref};
-
-/// Borrow this call's instance and its live context.
-/// # Safety
-/// The instance must be live and all calls sharing its runtime serialized.
-/// No instance or context mutation may overlap the returned reader.
-pub unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a> {
-    // SAFETY: the caller supplies a live instance and serializes all shared-handle calls.
-    let instance = unsafe { handles::instance_ref(ptr) };
-    // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
-    let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
-    CapiInstance {
-        owner: &instance.owner,
-        core: instance.core.read(runtime),
-        state: &instance.state,
-    }
-}
-
-/// Borrow composition exclusively and phrase storage for this call only.
-/// # Safety
-/// The instance must be live, with no overlapping access through any shared handle.
-pub unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceMut<'a> {
-    // SAFETY: the caller grants exclusive access to this live instance.
-    let instance = unsafe { handles::instance_mut(ptr) };
-    // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
-    let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
-    CapiInstance {
-        owner: &instance.owner,
-        core: instance.core.bind(runtime),
-        state: &mut instance.state,
-    }
-}
-
-/// Train with exclusive access to the context, after all read views have ended.
-/// # Safety
-/// The caller supplies a live instance and exclusive access across all shared handles.
-pub(crate) unsafe fn train_instance(
-    ptr: *mut ZhuyinInstance,
-    index: u8,
-) -> Result<bool, oxpinyin_engine::EngineError> {
-    // SAFETY: the caller grants this operation exclusive access to the live instance.
-    let instance = unsafe { handles::instance_mut(ptr) };
-    // SAFETY: the owner retains the allocation; serialized C calls exclude other readers.
-    let context = unsafe { owner_mut(&mut instance.owner) };
-    context.core.train(&instance.core, index)
-}
