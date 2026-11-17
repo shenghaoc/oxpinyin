@@ -4,7 +4,7 @@
 # distribution whose libpinyin uses tkrzw, oxpinyin's default backend;
 # Fedora and Arch still link Kyoto Cabinet (docs/packaging.md, release lanes).
 # Debian testing's libpinyin package is therefore the reference, and its
-# updates trigger pin bumps. Both performance arms run on this same base.
+# updates trigger pin bumps.
 # version-manifest.json names the components whose installed versions are
 # recorded in the image and capture identity; version drift is not a build gate.
 # Stage `build` runs tools/oracle/build.py --libs-only once per DBM
@@ -82,93 +82,6 @@ RUN set -eu; \
             --jobs "$(nproc)"; \
         rm -rf "/build/$dbm"; \
     done
-
-# Local performance environment. Never build or run this target on GitHub Actions.
-# It shares the oracle's testing base; model data and subject builds are prepared
-# after entering the container, never included in this reusable image.
-FROM deps AS performance
-COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
-COPY --from=build /opt/oracle-versions.txt /opt/pinyin-oracle/versions.txt
-RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
-    set -eu; set --; \
-    if [ -s /run/secrets/cacert ]; then \
-        set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
-    fi; \
-    apt-get "$@" update; \
-    apt-get "$@" install -y --no-install-recommends \
-        autopoint gettext libsqlite3-dev sqlite3 libibus-1.0-dev \
-        libclang-dev libssl-dev liblzma-dev liblz4-dev libzstd-dev \
-        zlib1g-dev util-linux valgrind binutils; \
-    rm -rf /var/lib/apt/lists/*
-
-# rustup-init is per-arch: take the build host's own binary and verify it
-# against the pinned checksum for that arch
-# (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
-# Exact on purpose (#1074): rustup-init installs from a checksum, and a checksum
-# is only known for a known version. rustup-init installs no toolchain:
-# `rustup toolchain install` reads the channel and the components from the
-# repository's rust-toolchain.toml, which performance_tag() hashes.
-COPY rust-toolchain.toml /opt/rust-pin/rust-toolchain.toml
-RUN set -eu; \
-    case "$(uname -m)" in \
-        x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
-                 rustup_sha=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10 ;; \
-        aarch64) rustup_arch=aarch64-unknown-linux-gnu; \
-                 rustup_sha=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792 ;; \
-        *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
-    esac; \
-    curl --proto '=https' --tlsv1.2 -sSfL \
-        "https://static.rust-lang.org/rustup/archive/1.29.0/$rustup_arch/rustup-init" \
-        -o /tmp/rustup-init \
-    && echo "$rustup_sha  /tmp/rustup-init" \
-    | sha256sum -c - \
-    && chmod +x /tmp/rustup-init \
-    && /tmp/rustup-init -y --default-toolchain none --profile minimal \
-    && rm /tmp/rustup-init \
-    && cd /opt/rust-pin \
-    && /root/.cargo/bin/rustup toolchain install
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Cargo parallelism, capped for small build VMs. This image's target hosts
-# include a Docker Desktop VM with its default ~8 GiB, where nproc-wide
-# jobs during the fat-LTO / codegen-units=1 link stages can exhaust memory
-# before any single job fails cleanly. Modest default; raise per host:
-#   docker build --target performance --build-arg cargo_jobs=8 -f tools/oracle/Dockerfile.oracle .
-ARG cargo_jobs=4
-ENV CARGO_BUILD_JOBS=${cargo_jobs}
-
-# Exact on purpose (#1074): a fresh image, and cargo-c's rust-version rises with
-# each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
-# install would break once it passes the pinned Rust. `just doctor` reports
-# the minimum cargo-c (docs/runbooks/setup.md). There is no default
-# toolchain, so cargo runs where rust-toolchain.toml selects one.
-RUN cd /opt/rust-pin && cargo install cargo-c@0.10.25 --locked
-
-# uv and the managed interpreter come from the deps stage. The entry point below is
-# `python -m tools.dev measure ...`; this checks the interpreter it runs. The libtkrzw
-# runtime check stays the shell resolver (tools/tkrzw/runtime.py); installing uv does
-# not establish trust in a runtime.
-RUN set -eu; \
-    cd /opt/python-pin; \
-    uv run --managed-python python -X utf8 \
-      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python", "--system"], text=True).strip(); managed_prefix = subprocess.check_output([managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"], text=True).strip(); assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()'
-
-# Both arms use Debian's packaged libtkrzw, the library the `build` stage linked the
-# pin against: the subject finds it through pkg-config, and the runtime check
-# (tools/tkrzw/runtime.py) certifies each arm against it through this per-arch link.
-RUN mkdir -p /usr/local/share/oxpinyin && \
-    ln -s "/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libtkrzw.so.1" \
-        /usr/local/share/oxpinyin/libtkrzw.so.1 && \
-    test -f /usr/local/share/oxpinyin/libtkrzw.so.1 && \
-    cp /etc/os-release /usr/local/share/oxpinyin/performance-os-release
-ENV OXPINYIN_TKRZW_LIBRARY=/usr/local/share/oxpinyin/libtkrzw.so.1
-ENV PINYIN_ORACLE_PREFIX=/performance/pinyin-oracle/tkrzw
-ENV SRC_CURR=/repo CTLTOOLS=/repo/tools
-RUN git config --system --add safe.directory /repo
-RUN mkdir -p /performance/tmp /performance/bin /performance/results
-WORKDIR /repo
-ENTRYPOINT ["bash", "-c", "mkdir -p /performance/tmp /performance/results && exec \"$@\"", "--"]
-CMD ["bash"]
 
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle

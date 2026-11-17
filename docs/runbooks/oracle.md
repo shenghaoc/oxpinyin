@@ -163,8 +163,7 @@ host, with the builds pooled in the `deps` image.
 [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json)
 lists the Debian build dependencies by mode and backend. A full build needs
 the `full` group. The `deps` stage of `tools/oracle/Dockerfile.oracle` has the
-libraries-only and data-regeneration dependencies, and the `performance`
-stage has all of them.
+libraries-only and data-regeneration dependencies.
 To build libzhuyin as well, add `--enable-libzhuyin`. The zhuyin,
 candidate-assembly, two-context and open-counter differentials need it.
 

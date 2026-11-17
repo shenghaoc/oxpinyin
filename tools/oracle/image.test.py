@@ -28,44 +28,9 @@ def as_macos(test):
     test.addCleanup(patcher.stop)
 
 
-class PerformanceImageTests(unittest.TestCase):
+class ReproducibilityTests(unittest.TestCase):
     def setUp(self):
         as_macos(self)
-
-    def test_native_platform_is_explicit_for_build_and_run(self):
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(images.platform, 'machine', return_value='arm64'), \
-             mock.patch.object(images, 'run', return_value=0) as run, \
-             mock.patch.object(images, 'text', return_value='/checkout/.git'):
-            self.assertEqual(images.performance(['--engine', 'container', '--', 'true']), 0)
-        build, launch = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(build[build.index('--platform') + 1], 'linux/arm64')
-        self.assertEqual(build[build.index('--memory') + 1], '6G')
-        self.assertIn('type=bind,source=/checkout/.git,target=/checkout/.git,readonly', launch)
-        self.assertIn(f'type=bind,source={ROOT.resolve()},target=/repo,readonly', launch)
-        self.assertIn('ORACLE_PLATFORM=linux/arm64', build)
-        self.assertEqual(build[build.index('--target') + 1], 'performance')
-        self.assertEqual(launch[launch.index('--platform') + 1], 'linux/arm64')
-        self.assertEqual(launch[-1], 'true')
-
-    def test_ci_and_forced_emulation_refuse_before_any_build(self):
-        for env in ({'GITHUB_ACTIONS': 'true'}, {'ORACLE_PLATFORM': 'linux/amd64'},
-                    {'DOCKER_DEFAULT_PLATFORM': 'linux/amd64'}, {'CONTAINER_DEFAULT_PLATFORM': 'linux/amd64'}):
-            with self.subTest(env=env), mock.patch.dict(os.environ, env, clear=True), \
-                 mock.patch.object(images.platform, 'machine', return_value='arm64'), \
-                 mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(images.main(['performance', '--engine', 'container', '--build-only']), 2)
-                run.assert_not_called()
-
-    def test_rosetta_refuses_even_when_the_interpreter_reports_amd64(self):
-        with mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(images.platform, 'system', return_value='Darwin'), \
-             mock.patch.object(images.platform, 'machine', return_value='x86_64'), \
-             mock.patch.object(images.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'1\n', b'')) as capture, \
-             mock.patch.object(images, 'run') as run, contextlib.redirect_stderr(io.StringIO()) as error:
-            self.assertEqual(images.main(['performance', '--engine', 'container']), 2)
-            self.assertIn('native Python', error.getvalue())
-            capture.assert_called_once_with(['/usr/sbin/sysctl', '-n', 'sysctl.proc_translated'], check=False, capture_output=True)
-            run.assert_not_called()
 
     def test_reproducibility_compares_two_builds_not_a_frozen_digest(self):
         from tools.dev.measure import recipes
@@ -659,16 +624,6 @@ class ProvisionOracleTests(unittest.TestCase):
         env = {'OXPINYIN_CACHE': str(self.root)}
         self.assertEqual(images.provision_cache(env), self.root / f'pin-{commit[:12]}')
         self.assertEqual(images.model_cache(env), self.root / f'model20-{model.archive_sha256()[:12]}')
-
-    def test_the_performance_container_receives_a_cache_root_on_its_volume(self):
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(images.platform, 'machine', return_value='x86_64'), \
-             mock.patch.object(images, 'run', return_value=0) as run, mock.patch.object(images, 'select_runtime', return_value='docker'), \
-             mock.patch.object(images, 'text', return_value='/checkout/.git'):
-            self.assertEqual(images.performance(['--skip-build', '--', 'true']), 0)
-        launch = [str(part) for part in run.call_args_list[-1].args[0]]
-        self.assertIn('oxpinyin-performance-amd64:/performance', launch)
-        self.assertIn('OXPINYIN_CACHE=/performance/cache', launch)
-        self.assertIn(f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}', launch)
 
     def test_other_options_ci_and_foreign_architectures_are_refused_before_any_runtime_call(self):
         for argv, env, machine in ((['--cache-dir', '/x'], {}, 'x86_64'), (['--cells'], {}, 'x86_64'),

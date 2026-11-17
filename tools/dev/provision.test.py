@@ -671,7 +671,7 @@ elif name in ('curl','apt-get','sudo'):
                     with self.subTest(args=args):
                         self.assertEqual(self.check_entry(args, 2).stderr, b'--python-only and --dev-tools cannot be '
                                                                            b'combined with --cells, --jobs or --no-pull\n')
-            # The host takes OXPINYIN_CACHE; --cache-dir exists only at the performance image's mount.
+            # The host takes OXPINYIN_CACHE; --cache-dir exists only at provision-oracle's mount in the deps image.
             self.check_entry(['--cache-dir', str(self.work / 'named')], 2)
             for option in ('--cells', '--jobs'):
                 # Bash-specific unbound-variable diagnostic is deliberately retired;
