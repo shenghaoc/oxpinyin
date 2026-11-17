@@ -176,7 +176,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
             return result.returncode
         args += ['-p', 'oxpinyin-capi']
     try:
-        rc = tools.supervised(['cargo', 'test', *args],
+        rc = tools.supervised(['cargo', 'nextest', 'run', *args],
                               environment=dict(os.environ if env is None else env))
     except Exception as exc:
         print(f'FAIL: {exc}', file=err, flush=True)

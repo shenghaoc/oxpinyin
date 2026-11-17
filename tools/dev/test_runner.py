@@ -387,9 +387,15 @@ def _launch(tools, argv, *, environment, err, **streams):
                                            native.launch_status(error), '', '')
 
 
-def _cargo_test(backend, nightly, target):
-    """Return the backend's cargo test argv, preserving the old argument order."""
-    command = ['cargo', f'+{nightly}', 'test']
+def _cargo_test(backend, nightly, target, subcommand=('nextest', 'run')):
+    """Return the backend's test argv, preserving the old argument order.
+
+    Tests run under nextest: it runs each test in its own process and ends a
+    hung test with the terminate-after limit of .config/nextest.toml.
+    `subcommand=('test',)` gives the cargo test form, which only a
+    `--no-run` build that lists the test binaries uses.
+    """
+    command = ['cargo', f'+{nightly}', *subcommand]
     if backend.locked:
         command += ['--locked', '--target', target, '-p', 'oxpinyin-store',
                     '--no-default-features', '--features', backend.feature]
@@ -526,10 +532,12 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             return 1
         child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)
     command = _cargo_test(backend, nightly, target)
+    build = _cargo_test(backend, nightly, target, ('test',))
     if platform.system() == 'Linux' and sanitizer == 'address':
         command = ['setarch', platform.machine(), '-R', *command]
+        build = ['setarch', platform.machine(), '-R', *build]
     print(f'--- building the tkrzw feature tests under {display} ---', file=out, flush=True)
-    result = _launch(tools, [*command, '--no-run', '--message-format=json-render-diagnostics'],
+    result = _launch(tools, [*build, '--no-run', '--message-format=json-render-diagnostics'],
                      environment=child, err=err, stdout=subprocess.PIPE, stderr=None)
     if result.returncode:
         return native.shell_status(result.returncode)
@@ -579,10 +587,10 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
     if sanitizer == 'address':
         print('--- C facade handles that outlive their context under AddressSanitizer ---',
               file=out, flush=True)
-        lifetime = ['cargo', f'+{nightly}', 'test', '--locked', '--target', target,
+        lifetime = ['cargo', f'+{nightly}', 'nextest', 'run', '--locked', '--target', target,
                     '-p', 'oxpinyin-capi', '-p', 'oxpinyin-zhuyin-capi',
                     '--no-default-features', '--features', backend.feature,
-                    '--lib', 'outlives_context']
+                    '--lib', '-E', 'test(outlives_context)']
         if platform.system() == 'Linux':
             lifetime = ['setarch', platform.machine(), '-R', *lifetime]
         result = _launch(tools, lifetime, environment=child, err=err,

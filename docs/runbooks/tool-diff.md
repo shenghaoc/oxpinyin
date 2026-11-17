@@ -8,7 +8,7 @@ A test run never captures the pin, reads a data file of expected results, or wri
 To run the cases, or to list them:
 
 ```sh
-cargo test --locked -p oxpinyin-utils
+cargo nextest run --locked -p oxpinyin-utils
 cargo nextest list --locked -p oxpinyin-utils
 ```
 

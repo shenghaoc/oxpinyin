@@ -6,7 +6,7 @@ use crate::common::{
 };
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_fs::{TempDir, prelude::*};
-use std::{path::Path, process::Output, time::Duration};
+use std::{path::Path, process::Output};
 
 const EMPTY_PHRASE_CHUNK: File = Sha256(
     "4aeb3f46357bead0db5afe0f8eecd1ca263b389042546aa7fa724249e08ca697",
@@ -135,7 +135,6 @@ fn capture(root: &Path, mode: &str, cwd: &Path, args: &[&str], stdin: &[u8]) -> 
         .env("LC_ALL", "C")
         .args(args)
         .write_stdin(stdin)
-        .timeout(Duration::from_secs(300))
         .output()
         .unwrap_or_else(|error| panic!("run {mode}: {error}"));
     if matches!(

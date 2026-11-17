@@ -188,12 +188,12 @@ When a coherent fix is ready, and before a push for review, the local checks tha
 Between completion gates, iteration feedback guides the fix while it takes shape:
 
 1. Run named unit tests of the touched crate.
-   Select the test target and the test name: `cargo test -p <crate> --lib <name>` or `cargo test -p <crate> --test <target> <name>`.
+   Select the test target and the test name: `cargo nextest run -p <crate> --lib -E 'test(<name>)'` or `cargo nextest run -p <crate> --test <target> -E 'test(<name>)'`.
    A name filter alone still compiles every test target in the crate.
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the witness case of the defect and its neighbours by case ID.
 
-For example, `cargo test -p <crate> --test contract <name>` runs the contract test that names the changed decision.
+For example, `cargo nextest run -p <crate> --test contract -E 'test(<name>)'` runs the contract test that names the changed decision.
 The default differential suite is not used for iteration feedback.
 Iteration feedback is not a gate result.
 It is not reported as one.
@@ -246,7 +246,7 @@ Check the build of the library, not its version:
 
    ```sh
    PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib \
-     cargo test -p oxpinyin-store tkrzw_library_honours_its_sentinel_protocol
+     cargo nextest run -p oxpinyin-store -E 'test(tkrzw_library_honours_its_sentinel_protocol)'
    ```
 
    `readelf -rW $P/lib/libtkrzw.so.1 | grep -c KeyComparator` prints 0 for defect 2.

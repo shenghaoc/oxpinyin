@@ -166,11 +166,6 @@ pub fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
 /// binary runs.
 const DEATH_TEST: &str = "OXPINYIN_ZHUYIN_CAPI_DEATH_TEST";
 
-/// How long a death-test child may run. Each body is a few facade calls
-/// over the mini fixture; the limit only stops a hung child. The twin of
-/// `oxpinyin-capi/src/test_support.rs`.
-const CHILD_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
-
 /// The exit status of a death-test child whose operation panicked. A panic
 /// that reaches a non-unwinding `extern "C"` function aborts the process,
 /// so without this status an unrelated panic passes as the pin's abort.
@@ -200,13 +195,11 @@ enum ChildEnd {
     /// [`OPERATION_PANICKED`] before the panic could unwind into an
     /// `extern "C"` function, where it would abort like the pin.
     OperationPanicked,
-    /// The child ran past [`CHILD_LIMIT`] and was killed. Never an abort.
-    TimedOut,
     /// Any other end, as the status prints it.
     Other(String),
 }
 
-fn child_end(status: std::process::ExitStatus, elapsed: std::time::Duration) -> ChildEnd {
+fn child_end(status: std::process::ExitStatus) -> ChildEnd {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     #[cfg(unix)]
@@ -221,8 +214,6 @@ fn child_end(status: std::process::ExitStatus, elapsed: std::time::Duration) -> 
     let aborted = status.code() == Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes()));
     if aborted {
         ChildEnd::Aborted
-    } else if elapsed >= CHILD_LIMIT {
-        ChildEnd::TimedOut
     } else {
         match status.code() {
             Some(0) => ChildEnd::Returned,
@@ -235,13 +226,11 @@ fn child_end(status: std::process::ExitStatus, elapsed: std::time::Duration) -> 
 
 /// Runs the death-test child `command` for the test `name` and requires
 /// that it aborted. Answers its output.
-fn wait_for_abort(name: &str, command: std::process::Command) -> std::process::Output {
-    let started = std::time::Instant::now();
-    let output = assert_cmd::Command::from_std(command)
-        .timeout(CHILD_LIMIT)
+fn wait_for_abort(name: &str, mut command: std::process::Command) -> std::process::Output {
+    let output = command
         .output()
         .unwrap_or_else(|error| panic!("{name}: the death-test child did not start: {error}"));
-    let end = child_end(output.status, started.elapsed());
+    let end = child_end(output.status);
     assert_eq!(
         end,
         ChildEnd::Aborted,
@@ -258,8 +247,8 @@ fn wait_for_abort(name: &str, command: std::process::Command) -> std::process::O
 /// retired 2026-10-31 UTC). `name` is the calling test's full path as
 /// libtest prints it (`module::test`): the test binary is re-executed with
 /// `--exact name`, and in that child `body` runs and must not return.
-/// A normal return, a panic, a timeout and a child that does not start
-/// each fail with their own message. Answers the child's stderr.
+/// A normal return, a panic and a child that does not start each fail
+/// with their own message. Answers the child's stderr.
 pub fn assert_aborts(name: &str, body: impl FnOnce()) -> Vec<u8> {
     assert_aborts_after_setup(name, || (), |()| body())
 }

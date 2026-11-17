@@ -19,7 +19,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use crate::fixtures::w3;
 
@@ -131,7 +130,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run export_interpolation");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -149,7 +147,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::{EMPTY_PHRASE_CHUNK, UNKNOWN_OPTION_NO_SUCH_OPTION};
         use crate::fixtures::w3;
@@ -508,7 +505,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_binary_files");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -527,7 +523,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::UNKNOWN_OPTION_NO_SUCH_OPTION;
         use crate::fixtures::w3;
@@ -736,7 +731,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run import_interpolation");
             output.stderr = mask_glib_prefix(&output.stderr);
