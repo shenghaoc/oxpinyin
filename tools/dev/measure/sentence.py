@@ -2,9 +2,7 @@
 
 The no-argument legacy campaign remains in valgrind.py. These explicitly
 selected workloads compare main/PR/pin, with an exact same-bytes instruction
-control for each Rust arm. They do not extend startup's RandomState exception,
-except that the typing sequence reports a varying control as DIAGNOSTIC when
-every varying function is a RANDOMSTATE_TYPING scope.
+control for each Rust arm.
 Optional native rounds time the same worker with plain shipping objects.
 """
 import argparse
@@ -22,38 +20,6 @@ from . import bench, identity, instructions, neutrality, stats
 
 ANCHORS = {'sentence': 'bisect_sentence_unit', 'typing-sequence': 'bisect_typing_unit'}
 ARMS = ('main', 'pr__', 'pin_', 'mctl', 'pctl')
-# Std HashSet/HashMap with the default RandomState (per-process SipHash keys)
-# in these engine functions change probe and group-tag collision counts, hence
-# their own Ir and the equality memcmp calls they make (PhraseText::eq).
-#
-# prepend_nbest_rows has no hash container of its own. Packaged builds (just
-# packaging install: release profile, fat LTO, one codegen unit) inline
-# dedup_by_text_keep_first, which it alone calls, into it, so that
-# function's HashSet<&PhraseText> (std RandomState) probes inside
-# prepend_nbest_rows and the profile carries no dedup_by_text_keep_first
-# symbol. The set is insert-only and never iterated: the hash keys change
-# probe length and equality memcmp calls, never which rows survive. This is
-# the production RandomState variation the 2026-10-23 ruling accepts.
-# dedup_by_text_keep_first stays listed for builds that keep it out of line
-# (plain cargo build without the packaging route).
-RANDOMSTATE_TYPING = frozenset((
-    'dedup_by_text_keep_first', 'dedup_ranked_by_text', 'order_window_tail',
-    'prepend_nbest_rows', '__memcmp_avx2_movbe',
-))
-# A Session method demangles as <oxpinyin_engine::session::Session<D, L, S>>::name.
-SESSION_METHOD = re.compile(r'<oxpinyin_engine::session::Session<[^<>]*>>::([a-z_0-9]+)')
-
-
-def randomstate_scope(function):
-    """Reduce a profiled name to its RANDOMSTATE_TYPING form, exactly.
-
-    Remove a trailing legacy Rust hash, then either the engine session module
-    prefix or the complete Session<...> receiver of an inherent method. Clone
-    suffixes, other modules and other receivers keep their full names.
-    """
-    name = re.sub(r'::h[0-9a-f]{16}$', '', function)
-    method = SESSION_METHOD.fullmatch(name)
-    return method[1] if method else name.removeprefix('oxpinyin_engine::session::')
 
 
 def positive(text):
@@ -139,29 +105,7 @@ def checked_profile(raw, executable, pid, library):
     costs = callgrind_costs(result['raw'], library, preserve_objects=True)
     if costs['totals']['Ir'] != result['total'] or result['total'] <= 0:
         raise ValueError('exclusive Ir does not reconcile with a positive total')
-    result['functions'] = {}
-    for row in costs['functions']:
-        result['functions'][row['function']] = result['functions'].get(row['function'], 0) + row['Ir']
     return result
-
-
-def randomstate_scopes(profiles):
-    """Per identical pair, the functions whose Ir varies across its rounds.
-
-    The pairs are main with mctl and pr__ with pctl. A function's Ir is never
-    compared across main and PR, so a deterministic main/PR change cannot
-    count as variation. Exclusive Ir is keyed by function name, since each arm
-    loads its own library copy. Return the sets per pair and the entries of
-    either set outside RANDOMSTATE_TYPING, as (pair, function).
-    """
-    by_pair = {}
-    for pair, arms in (('main', ('main', 'mctl')), ('pr__', ('pr__', 'pctl'))):
-        tables = [table for arm in arms for table in profiles[arm]]
-        by_pair[pair] = sorted(name for name in set().union(*tables)
-                               if len({table.get(name, 0) for table in tables}) > 1)
-    outside = [dict(pair=pair, function=name) for pair, names in by_pair.items() for name in names
-               if randomstate_scope(name) not in RANDOMSTATE_TYPING]
-    return by_pair, outside
 
 
 def prepare(args, env):
@@ -283,7 +227,6 @@ def campaign(args, env):
     if getattr(args, 'native_rounds', 0):
         native_campaign(args, env, harness)
     counts = {arm: [] for arm in ARMS}
-    profiles = {arm: [] for arm in ARMS}
     answers = {}
     creators = set()
     for round_index in range(args.rounds):
@@ -316,7 +259,6 @@ def campaign(args, env):
                 bench.fail(f'{arm}: fresh-process observations differ', 3)
             answers[arm] = row['observations']
             counts[arm].append(parsed['total'])
-            profiles[arm].append(parsed['functions'])
             creators.add(parsed['creator'])
             emit(f'{args.workload} {arm} round {round_index + 1}: {parsed["total"]} Ir')
     controls = instruction_controls(counts)
@@ -325,16 +267,7 @@ def campaign(args, env):
     exact = all(control['valid'] for control in controls.values())
     valid = exact and same_answers and equal and len(creators) == 1
     verdict = 'VALID' if valid else 'INVALID'
-    extra = {}
-    if args.workload == 'typing-sequence' and not exact and same_answers and equal and len(creators) == 1:
-        # 2026-10-23 diagnostic ruling: a control that varies only inside the
-        # RandomState scopes is reported as ranges, never as an exact match.
-        by_pair, outside = randomstate_scopes(profiles)
-        extra = dict(rule='randomstate', varying_by_pair=by_pair,
-                     varying_functions=sorted(set().union(*by_pair.values())), outside_allowlist=outside)
-        if not outside:
-            valid, verdict = True, 'DIAGNOSTIC'
-    result = dict(verdict=verdict, counts=counts, controls=controls, **extra,
+    result = dict(verdict=verdict, counts=counts, controls=controls,
                   control_observations_equal=same_answers,
                   main_pr_observations_equal=equal,
                   main_pin_observations_equal=answers['main'] == answers['pin_'],

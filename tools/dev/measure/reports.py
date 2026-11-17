@@ -223,17 +223,13 @@ def linux_observation(raw, *, cycles, library, source=None, fingerprint=None):
     return result
 
 
-def linux_comparison(rows, *, source, functions=None, creators=()):
+def linux_comparison(rows, *, source, creators=()):
     """Paired block estimates, with the Linux same-bytes control rules applied to A against A'.
 
     Wall time, CPU time and the hardware count use stats.stable_control;
     residency uses stats.stable_residency on paired KiB differences. An
     unstable control is DIAGNOSTIC: the estimate stays, beside the control
-    limits. Callgrind Ir must be equal in every run of A and A'. A varying
-    count is DIAGNOSTIC, reported as ranges and bounds, when every varying
-    function is one of sentence.RANDOMSTATE_TYPING; otherwise it is INVALID
-    and the Ir comparison is withheld. FUNCTIONS maps (kind, block, arm) to
-    that run's exclusive Ir by function.
+    limits. Callgrind Ir must be equal in every run of A and A'. A mismatch invalidates the Ir comparison.
     """
     from . import stats
     if {row.get('instruction_source') for row in rows} != {source}:
@@ -254,7 +250,7 @@ def linux_comparison(rows, *, source, functions=None, creators=()):
         raise ValueError('the Linux comparison requires its same-bytes control')
     ir = None
     if source == 'callgrind':
-        ir = linux_ir_control(rows, control, functions or {}, creators)
+        ir = linux_ir_control(rows, control, creators)
         result['verdicts'][counter] = ir['verdict']
     for kind, pairs in paired.items():
         if not pairs:
@@ -275,12 +271,6 @@ def linux_comparison(rows, *, source, functions=None, creators=()):
             if metric == counter and ir is not None:
                 if ir['verdict'] == 'INVALID':
                     entry = {'withheld': 'INVALID same-bytes instruction control'}
-                elif ir['verdict'] == 'DIAGNOSTIC':
-                    # Ranges and bounds only: a varying count carries no point estimate.
-                    del entry['B_over_A']
-                    base, head = ([min(values(arm, metric)), max(values(arm, metric))] for arm in 'AB')
-                    entry.update(Ir_ranges={'A': base, 'B': head},
-                                 B_minus_A_bounds=[head[0] - base[1], head[1] - base[0]])
                 if kind == 'control':
                     entry['gate'] = ir
             elif kind == 'control':
@@ -290,9 +280,8 @@ def linux_comparison(rows, *, source, functions=None, creators=()):
     return result
 
 
-def linux_ir_control(rows, control, functions, creators):
+def linux_ir_control(rows, control, creators):
     """The exact Callgrind control over every run of the same bytes: A and A'."""
-    from . import sentence
     counter = LINUX_SOURCES['callgrind']
     first = [row for row in rows if row['arm'] == 'A']
     second = [pair['B'] for pair in control]
@@ -302,15 +291,7 @@ def linux_ir_control(rows, control, functions, creators):
                   spread=max(counts) - min(counts))
     if len(set(creators)) != 1:
         return dict(result, verdict='INVALID', reason='Callgrind creator changed between runs')
-    if len(set(counts)) == 1:
-        return dict(result, verdict='VALID')
-
-    def tables(selected):
-        return [functions[row['kind'], row['block'], row['arm']] for row in selected]
-    # The 2026-10-23 typing-sequence rule, as sentence.py applies it to its identical pair.
-    by_pair, outside = sentence.randomstate_scopes(dict(main=tables(first), mctl=tables(second), pr__=[], pctl=[]))
-    return dict(result, rule='randomstate', varying_functions=by_pair['main'], outside_allowlist=outside,
-                verdict='INVALID' if outside else 'DIAGNOSTIC')
+    return dict(result, verdict='VALID' if len(set(counts)) == 1 else 'INVALID')
 
 
 def capture_rows(xml, *, pid, uuid, allocations):

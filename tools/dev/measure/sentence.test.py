@@ -85,8 +85,7 @@ class CampaignTests(unittest.TestCase):
                 '--pr-shipping', '/missing', '--system-dir', '/missing', '--out', '/missing',
                 '--native-rounds', '2'])
 
-    def fake_campaign(self, *, changed_answer=False, varying_control=False, vary='f', workload='typing-sequence',
-                      changed=None, vary_arm='pctl'):
+    def fake_campaign(self, *, changed_answer=False, varying_control=False, workload='typing-sequence', changed=False):
         temporary = self.enterContext(tempfile.TemporaryDirectory(prefix='sentence-campaign-'))
         root = Path(temporary)
         libraries = {arm: root / arm / 'libpinyin.so' for arm in sentence.ARMS}
@@ -110,10 +109,10 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual(command[-5:], ['--perf-' + workload, command[-4], str(Path('/data')), 'ni', '1'])
             arm = Path(command[-4]).parent.name
             output = Path(next(c.split('=', 1)[1] for c in command if c.startswith('--callgrind-out-file=')))
-            count = 101 if varying_control and arm == vary_arm else 100
-            costs = {vary: count}
+            count = 101 if varying_control and arm == 'pctl' else 100
+            costs = {'f': count}
             if changed and arm in ('pr__', 'pctl'):
-                costs[changed] = 7  # a deterministic main/PR difference, identical in both PR copies
+                costs['g'] = 7  # a deterministic main/PR difference, identical in both PR copies
             total = sum(costs.values())
             body = ''.join(f'fn={name}\n1 {cost}\n' for name, cost in costs.items())
             output.write_text(f'creator: callgrind-3.26\npid: 123\ncmd: {root / "bisect"} --perf-typing-sequence x\n'
@@ -138,10 +137,10 @@ class CampaignTests(unittest.TestCase):
         return code, json.loads((root / 'result.json').read_text())
 
     def test_campaign_rotates_serial_arms_and_checks_the_complete_answers(self):
-        code, result = self.fake_campaign()
+        code, result = self.fake_campaign(changed=True)
         self.assertEqual(code, 0)
         self.assertEqual(result['verdict'], 'VALID')
-        self.assertEqual(result['main_minus_pr_bounds'], [0, 0])
+        self.assertEqual(result['main_minus_pr_bounds'], [-7, -7])
         self.assertTrue(result['main_pr_observations_equal'])
         self.assertTrue(result['main_pin_observations_equal'])
 
@@ -152,47 +151,6 @@ class CampaignTests(unittest.TestCase):
                 self.assertEqual(code, 3)
                 self.assertEqual(result['verdict'], 'INVALID')
                 self.assertNotIn('Ir_per_invocation', result)
-
-    def test_randomstate_scopes_make_a_typing_control_diagnostic_only(self):
-        # The packaged fat-LTO build reports the inlined keep-first dedup under this receiver.
-        session = ('<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, '
-                   'oxpinyin_runtime::RuntimeLm, &mut oxpinyin_engine::session::SessionState>>::')
-        for name in ('oxpinyin_engine::session::order_window_tail', 'dedup_by_text_keep_first',
-                     'oxpinyin_engine::session::dedup_ranked_by_text', '__memcmp_avx2_movbe',
-                     session + 'prepend_nbest_rows', 'prepend_nbest_rows'):
-            with self.subTest(name=name):
-                code, result = self.fake_campaign(varying_control=True, vary=name)
-                self.assertEqual((code, result['verdict'], result['rule']), (0, 'DIAGNOSTIC', 'randomstate'))
-                self.assertEqual(result['outside_allowlist'], [])
-                self.assertEqual(result['Ir_ranges']['pctl'], [101, 101])
-                self.assertFalse(result['controls']['pr__']['valid'])
-        for name in ('f', 'dedup_by_text_keep_first_clone', 'oxpinyin_engine::nbest::order_window_tail',
-                     session + 'prepend_longer_row', session + 'prepend_nbest_rows_clone',
-                     session.replace('session::Session<', 'other::Session<') + 'prepend_nbest_rows',
-                     'x' + session + 'prepend_nbest_rows'):
-            with self.subTest(name=name):
-                code, result = self.fake_campaign(varying_control=True, vary=name)
-                self.assertEqual((code, result['verdict']), (3, 'INVALID'))
-                self.assertEqual(result['outside_allowlist'], [dict(pair='pr__', function=name)])
-        code, result = self.fake_campaign(varying_control=True, vary='order_window_tail', workload='sentence')
-        self.assertEqual((code, result['verdict'], 'rule' in result), (3, 'INVALID', False))
-
-    def test_main_pr_difference_is_not_control_variation(self):
-        code, result = self.fake_campaign(varying_control=True, vary='order_window_tail',
-                                          changed='oxpinyin_engine::cursor::matrix_keys')
-        self.assertEqual((code, result['verdict']), (0, 'DIAGNOSTIC'))
-        self.assertEqual(result['varying_by_pair'], dict(main=[], pr__=['order_window_tail']))
-        self.assertEqual(result['varying_functions'], ['order_window_tail'])
-        self.assertEqual(result['outside_allowlist'], [])
-        self.assertNotEqual(result['counts']['main'], result['counts']['pr__'])
-
-    def test_each_pair_is_checked_and_names_the_function_and_pair(self):
-        for arm, pair in (('mctl', 'main'), ('pctl', 'pr__')):
-            with self.subTest(pair=pair):
-                code, result = self.fake_campaign(varying_control=True, vary='matrix_keys', vary_arm=arm,
-                                                  changed='order_window_tail')
-                self.assertEqual((code, result['verdict']), (3, 'INVALID'))
-                self.assertEqual(result['outside_allowlist'], [dict(pair=pair, function='matrix_keys')])
 
     def test_controls_reject_both_within_arm_and_between_copy_variation(self):
         counts = {arm: [100, 100] for arm in sentence.ARMS}
