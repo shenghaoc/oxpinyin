@@ -10,6 +10,15 @@ fn toned(parser: &ZhuyinParser, input: &[u8]) -> ZhuyinParse {
     parser.parse_with_options(input, OptionBits::USE_TONE)
 }
 
+fn double_full_pinyin(parse: &crate::DoublePinyinParse) -> String {
+    parse
+        .keys()
+        .iter()
+        .map(|item| item.key().text())
+        .collect::<Vec<_>>()
+        .join("'")
+}
+
 #[test]
 fn double_two_keys_use_fallback_when_the_first_yunmu_is_missing() {
     use super::{MS_SHENG, MS_YUN, SchemeTables, YunmuTable, parse_two_keys};
@@ -904,9 +913,7 @@ fn double_pinyin_output_is_valid_full_pinyin_for_every_scheme() {
     for scheme in DOUBLE_SCHEMES {
         let mut parser = DoublePinyinParser::new();
         parser.set_scheme(*scheme);
-        let full = parser
-            .parse_with_options(b"uikjkuk", OptionBits::empty())
-            .full_pinyin();
+        let full = double_full_pinyin(&parser.parse_with_options(b"uikjkuk", OptionBits::empty()));
         assert!(
             parser_accepts_spellings(&full),
             "{scheme:?}: full-pinyin projection {full:?} is not parsable"
@@ -1159,7 +1166,7 @@ fn ms_parses_common_spellings() {
     let parser = DoublePinyinParser::new();
     let parsed = parser.parse_with_options(b"nihao", OptionBits::PINYIN_INCOMPLETE);
     assert_eq!(parsed.consumed(), 4);
-    assert_eq!(parsed.full_pinyin(), "ni'ha");
+    assert_eq!(double_full_pinyin(&parsed), "ni'ha");
 }
 
 /// The batch law that `docs/findings/double-pinyin-spec.md` (Tone) states:
