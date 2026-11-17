@@ -1,14 +1,9 @@
 //! Frozen product observations of the three storage utilities: status,
 //! both streams and every file the run leaves.
-#[cfg(unix)]
-mod common;
-#[cfg(unix)]
-mod fixtures;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
-    use crate::common::expected::*;
+    use crate::support::expected::*;
 
     const EMPTY_PHRASE_CHUNK: File = Sha256(
         "4aeb3f46357bead0db5afe0f8eecd1ca263b389042546aa7fa724249e08ca697",
@@ -18,9 +13,9 @@ mod frozen {
         b"option parsing failed:Unknown option --no-such-option\n";
 
     mod export_interpolation {
-        use crate::common::CELL;
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::CELL;
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -31,10 +26,10 @@ mod frozen {
         fn w3_model() -> Stdout {
             match CELL {
                 "bdb" => Exact(include_bytes!(
-                    "fixtures/export_interpolation/w3-model-bdb-order.txt"
+                    "../fixtures/export_interpolation/w3-model-bdb-order.txt"
                 )),
                 "kc" | "tkrzw" => Exact(include_bytes!(
-                    "fixtures/export_interpolation/w3-model-kc-tkrzw-order.txt"
+                    "../fixtures/export_interpolation/w3-model-kc-tkrzw-order.txt"
                 )),
                 _ => unreachable!("unknown cell {CELL}"),
             }
@@ -79,10 +74,10 @@ mod frozen {
             TempDir::new().unwrap(),
             &[],
             b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice()), ("gb_char.bin", include_bytes!("../../../fixtures/w3/tkt/gb_char.bin").as_slice())],
+            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice()), ("gb_char.bin", include_bytes!("../../../../fixtures/w3/tkt/gb_char.bin").as_slice())],
             Run {
                 status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/export_interpolation/w3-model-without-bigrams.txt")),
+                stdout: Exact(include_bytes!("../fixtures/export_interpolation/w3-model-without-bigrams.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -149,8 +144,8 @@ mod frozen {
         }
     }
     mod gen_binary_files {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -317,7 +312,7 @@ mod frozen {
             ( &["pinyin_index.bin", "phrase_index.bin", "addon_pinyin_index.bin", "addon_phrase_index.bin"][..], &[] as &[&str] ),
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/gen_binary_files/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/gen_binary_files/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -440,7 +435,7 @@ mod frozen {
             w3(),
             &["--gen-punct-table"],
             b"",
-            &[("gb_char.table", include_bytes!("../../../fixtures/datagen-toned/gb_char.table").as_slice()), ("gbk_char.table", include_bytes!("../../../fixtures/datagen-toned/gbk_char.table").as_slice()), ("opengram.table", include_bytes!("../../../fixtures/datagen-toned/opengram.table").as_slice()), ("merged.table", include_bytes!("../../../fixtures/datagen-toned/merged.table").as_slice()), ("art.table", include_bytes!("../../../fixtures/datagen-toned/art.table").as_slice()), ("culture.table", include_bytes!("../../../fixtures/datagen-toned/culture.table").as_slice()), ("economy.table", include_bytes!("../../../fixtures/datagen-toned/economy.table").as_slice()), ("geology.table", include_bytes!("../../../fixtures/datagen-toned/geology.table").as_slice()), ("history.table", include_bytes!("../../../fixtures/datagen-toned/history.table").as_slice()), ("life.table", include_bytes!("../../../fixtures/datagen-toned/life.table").as_slice()), ("nature.table", include_bytes!("../../../fixtures/datagen-toned/nature.table").as_slice()), ("people.table", include_bytes!("../../../fixtures/datagen-toned/people.table").as_slice()), ("science.table", include_bytes!("../../../fixtures/datagen-toned/science.table").as_slice()), ("society.table", include_bytes!("../../../fixtures/datagen-toned/society.table").as_slice()), ("sport.table", include_bytes!("../../../fixtures/datagen-toned/sport.table").as_slice()), ("technology.table", include_bytes!("../../../fixtures/datagen-toned/technology.table").as_slice()), ("punct.table", include_bytes!("../../../fixtures/datagen-toned/punct.table").as_slice())],
+            &[("gb_char.table", include_bytes!("../../../../fixtures/datagen-toned/gb_char.table").as_slice()), ("gbk_char.table", include_bytes!("../../../../fixtures/datagen-toned/gbk_char.table").as_slice()), ("opengram.table", include_bytes!("../../../../fixtures/datagen-toned/opengram.table").as_slice()), ("merged.table", include_bytes!("../../../../fixtures/datagen-toned/merged.table").as_slice()), ("art.table", include_bytes!("../../../../fixtures/datagen-toned/art.table").as_slice()), ("culture.table", include_bytes!("../../../../fixtures/datagen-toned/culture.table").as_slice()), ("economy.table", include_bytes!("../../../../fixtures/datagen-toned/economy.table").as_slice()), ("geology.table", include_bytes!("../../../../fixtures/datagen-toned/geology.table").as_slice()), ("history.table", include_bytes!("../../../../fixtures/datagen-toned/history.table").as_slice()), ("life.table", include_bytes!("../../../../fixtures/datagen-toned/life.table").as_slice()), ("nature.table", include_bytes!("../../../../fixtures/datagen-toned/nature.table").as_slice()), ("people.table", include_bytes!("../../../../fixtures/datagen-toned/people.table").as_slice()), ("science.table", include_bytes!("../../../../fixtures/datagen-toned/science.table").as_slice()), ("society.table", include_bytes!("../../../../fixtures/datagen-toned/society.table").as_slice()), ("sport.table", include_bytes!("../../../../fixtures/datagen-toned/sport.table").as_slice()), ("technology.table", include_bytes!("../../../../fixtures/datagen-toned/technology.table").as_slice()), ("punct.table", include_bytes!("../../../../fixtures/datagen-toned/punct.table").as_slice())],
             (&["phrase_index.bin", "addon_pinyin_index.bin", "addon_phrase_index.bin", "punct.bin"][..], &["pinyin_index.bin"][..]),
             Run {
                 status: Exit(0),
@@ -526,9 +521,9 @@ mod frozen {
         }
     }
     mod import_interpolation {
-        use crate::common::CELL;
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::CELL;
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -625,7 +620,7 @@ mod frozen {
             TempDir::new().unwrap(),
             &[],
             b"",
-            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice()), ("phrase_index.bin", include_bytes!("../../../fixtures/w3/tkt/phrase_index.bin").as_slice())],
+            &[("table.conf", b"binary format version:7\nmodel data version:14\nlambda parameter:0.312699\n\nsource table format:pinyin\ndatabase format:Tkrzw\n\ndefault RESERVED NULL NULL NULL NOT_USED\ndefault GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\ndefault GBK_DICTIONARY NULL NULL gbk_char.dbin USER_FILE\ndefault OPENGRAM_DICTIONARY NULL NULL opengram.dbin USER_FILE\ndefault MERGED_DICTIONARY NULL NULL merged.dbin USER_FILE\n".as_slice()), ("phrase_index.bin", include_bytes!("../../../../fixtures/w3/tkt/phrase_index.bin").as_slice())],
             &["bigram.db"],
             Run {
                 status: Exit(2),

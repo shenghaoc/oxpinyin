@@ -2,10 +2,10 @@
 //! Frozen product outputs and persistent files remain independent expectations;
 //! obsolete timing output and fixed working-directory conventions are excluded.
 #[cfg(unix)]
-#[path = "../../oxpinyin-utils/tests/common/mod.rs"]
+#[path = "../../oxpinyin-utils/tests/it/support.rs"]
 mod common;
 #[cfg(unix)]
-#[path = "../../oxpinyin-utils/tests/fixtures/mod.rs"]
+#[path = "../../oxpinyin-utils/tests/it/support/fixtures.rs"]
 mod fixtures;
 #[cfg(unix)]
 mod product {

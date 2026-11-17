@@ -1,10 +1,14 @@
 //! Real-model witnesses migrated from the nonshipping upstream lookup driver.
-//! The manifest requires the `tools` feature for this target.
+//! The `tool` module, and with it these tests, requires the `tools` feature.
 
 use oxpinyin_core::OptionBits;
+
 use oxpinyin_data::table_info::TableConf;
+
 use oxpinyin_engine::tool::prepare_lookup;
-use oxpinyin_runtime::tool::Lookup;
+
+use crate::tool::Lookup;
+
 use std::path::PathBuf;
 
 /// 074a2219 tests/lookup/test_pinyin_lookup.cpp:84-111 passes the explicit

@@ -1228,7 +1228,7 @@ def tree(work, before, cell):
                 # A new or changed DBM file's container bytes are not the same on two runs: tkrzw keeps
                 # a clock in bytes 48-56 and Berkeley DB containers are not byte-stable (#358). Its rows
                 # are the observation, as the frozen cases' inventory() records a DBM file
-                # (crates/oxpinyin-utils/tests/common/mod.rs:224-242). No frozen case this capture
+                # (crates/oxpinyin-utils/tests/it/support.rs:225-243). No frozen case this capture
                 # feeds records a DBM file by its bytes, so no file keeps a bytes hash.
                 entry['rows'] = dbm_rows(path, cell)
                 entry['rows_sha256'] = rows_digest(entry['rows'])

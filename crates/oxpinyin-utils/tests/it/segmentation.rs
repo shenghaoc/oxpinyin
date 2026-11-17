@@ -107,16 +107,10 @@ fn the_output_file_receives_the_stream() {
     );
 }
 
-#[cfg(unix)]
-mod common;
-
-#[cfg(unix)]
-mod fixtures;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
-    use crate::common::expected::*;
+    use crate::support::expected::*;
 
     const EMPTY_OUT_TXT_FILES: &[(&str, File)] = &[("out.txt", EMPTY_FILE)];
     const NON_UCS4_CHARACTERS: &[u8] = b"non-ucs4 characters encountered:\xff.\n";
@@ -127,8 +121,8 @@ mod frozen {
     const ZHONG_THEN_TWO_NULL_TOKEN_LINES: &[u8] = "16786821 中\n0 \n0 \n".as_bytes();
 
     mod mergeseq {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -216,7 +210,7 @@ mod frozen {
             w3(),
             &["seq.txt"],
             b"",
-            &[("seq.txt", include_bytes!("../../../fixtures/w9/mergeseq-input.txt").as_slice())],
+            &[("seq.txt", include_bytes!("../../../../fixtures/w9/mergeseq-input.txt").as_slice())],
             Run {
                 status: Exit(0),
                 stdout: Exact("16817937 中国\n0 \n16802309 你好\n0 \n0 \n".as_bytes()),
@@ -296,8 +290,8 @@ mod frozen {
         }
     }
     mod ngseg {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -388,7 +382,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/ngseg/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/ngseg/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -413,10 +407,10 @@ mod frozen {
             w3(),
             &["han.txt"],
             b"",
-            &[("han.txt", include_bytes!("../../../fixtures/w9/segmenter-han.txt").as_slice())],
+            &[("han.txt", include_bytes!("../../../../fixtures/w9/segmenter-han.txt").as_slice())],
             Run {
                 status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/ngseg/w3-segments.txt")),
+                stdout: Exact(include_bytes!("../fixtures/ngseg/w3-segments.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -493,8 +487,8 @@ mod frozen {
         }
     }
     mod spseg {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -569,7 +563,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/spseg/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/spseg/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -593,10 +587,10 @@ mod frozen {
             w3(),
             &["han.txt"],
             b"",
-            &[("han.txt", include_bytes!("../../../fixtures/w9/segmenter-han.txt").as_slice())],
+            &[("han.txt", include_bytes!("../../../../fixtures/w9/segmenter-han.txt").as_slice())],
             Run {
                 status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/spseg/w3-segments.txt")),
+                stdout: Exact(include_bytes!("../fixtures/spseg/w3-segments.txt")),
                 stderr: b"",
                 files: &[],
             },

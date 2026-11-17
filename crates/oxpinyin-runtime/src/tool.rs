@@ -103,3 +103,6 @@ impl Lookup {
         self.libraries.phrase_text(token)
     }
 }
+
+#[cfg(test)]
+mod tests;

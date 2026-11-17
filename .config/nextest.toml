@@ -26,17 +26,16 @@ test-threads = 4
 # real pin data (a libpinyin data tree or a pin-built user profile) lives
 # in a module named `pin_data`; it runs in the store-backend group and also
 # takes the whole invocation's test budget. The filters match those
-# complete module-name segments anywhere in a test's path. The binary()
-# terms name integration suites that have not moved into modules yet.
+# complete module-name segments anywhere in a test's path.
 [test-groups.store-backend]
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'test(/(^|::)(backend_files|pin_data)::/) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir)'
+filter = 'test(/(^|::)(backend_files|pin_data)::/)'
 test-group = 'store-backend'
 
 [[profile.default.overrides]]
-filter = 'test(/(^|::)pin_data::/) | binary(libpinyin_data_dir)'
+filter = 'test(/(^|::)pin_data::/)'
 test-group = 'store-backend'
 threads-required = "num-test-threads"
 

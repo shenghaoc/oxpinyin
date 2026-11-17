@@ -567,7 +567,7 @@ mod pin_data {
         rows
     }
 
-    /// The frozen utility cases' `rows_digest` (`crates/oxpinyin-utils/tests/common/mod.rs`): the
+    /// The frozen utility cases' `rows_digest` (`crates/oxpinyin-utils/tests/it/support.rs`): the
     /// SHA-256 of one `<key hex> <value hex>` line per sorted row, unmasked.
     fn rows_digest(rows: &[(Vec<u8>, Vec<u8>)]) -> String {
         let hex = |bytes: &[u8]| {

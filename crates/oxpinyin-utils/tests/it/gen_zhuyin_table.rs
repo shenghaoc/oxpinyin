@@ -61,15 +61,12 @@ fn a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble() {
     }
 }
 
-#[cfg(unix)]
-mod common;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod gen_zhuyin_table {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -117,7 +114,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/gen_zhuyin_table/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/gen_zhuyin_table/help.txt")),
                 stderr: b"",
                 files: &[],
             },

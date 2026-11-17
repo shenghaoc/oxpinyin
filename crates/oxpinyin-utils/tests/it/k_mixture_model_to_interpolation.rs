@@ -75,15 +75,12 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
             .replace('\n', newline)
     );
 }
-#[cfg(unix)]
-mod common;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
     mod k_mixture_model_to_interpolation {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::TempDir;
         use rstest::rstest;
@@ -101,10 +98,10 @@ mod frozen {
         // Also the merged-model witness: the arguments are ignored and the input is MERGED_KMM.
         #[case::kti_arguments_ignored(
             &["--help", "-o", "out.txt", "missing.txt"],
-            crate::MERGED_KMM.as_bytes(),
+            crate::k_mixture_model_to_interpolation::MERGED_KMM.as_bytes(),
             Run {
                 status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/merged-model.txt")),
+                stdout: Exact(include_bytes!("../fixtures/k_mixture_model_to_interpolation/merged-model.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -272,7 +269,7 @@ mod frozen {
             b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 16817937 \xe4\xb8\xad\xe5\x9b\xbd count 1 freq +5\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 1 freq 4294967301\n\\item 16808451 \xe4\xb8\x96\xe7\x95\x8c count 1 freq -7\n\\item 16782711 \xe4\xba\xba count 1 freq abc\n\\item 2147483649 \xe7\x94\xb2 count 1 freq 00012x\n\\item 1 <start> count 1 freq 9\n\\2-gram\n\\item +16817937 \xe4\xb8\xad\xe5\x9b\xbd -4278149359 \xe4\xb8\xad\xe5\x9b\xbd count +3 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 4311785233 \xe4\xb8\xad\xe5\x9b\xbd 16802309 \xe4\xbd\xa0\xe5\xa5\xbd count 4294967299 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 16802309 \xe4\xbd\xa0\xe5\xa5\xbd 16808451 \xe4\xb8\x96\xe7\x95\x8c count 99999999999999999999 T 3 N_n_0 1 n_1 1 Mr 3\n\\item 16808451 \xe4\xb8\x96\xe7\x95\x8c 16817937 \xe4\xb8\xad\xe5\x9b\xbd count - T 3 N_n_0 1 n_1 1 Mr 3\n\\end\n",
             Run {
                 status: Exit(0),
-                stdout: Exact(include_bytes!("fixtures/k_mixture_model_to_interpolation/numeric-fields-model.txt")),
+                stdout: Exact(include_bytes!("../fixtures/k_mixture_model_to_interpolation/numeric-fields-model.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -285,7 +282,7 @@ mod frozen {
             Run {
                 status: Exit(0),
                 stdout: Exact("\\data model interpolation\n\\1-gram\n\\item 10 甲 count 3\n\\item 20 乙 丙 count 4\n\\2-gram\n\\item 10 甲 20 乙 count 1\n\\1-gram\n\\item 30 丁 count 5\n\\end\n".as_bytes()),
-                stderr: include_bytes!("fixtures/k_mixture_model_to_interpolation/unexpected-tag-warnings.txt"),
+                stderr: include_bytes!("../fixtures/k_mixture_model_to_interpolation/unexpected-tag-warnings.txt"),
                 files: &[],
             },
         )]
