@@ -169,7 +169,7 @@ An entry holds nothing else.
 - **Pin:** At init and mask-out, the pin prints `mmap %s failed!` before loading the empty chunk and reading past it (`src/pinyin.cpp:256`, `:956`; `src/zhuyin.cpp:200`; `src/storage/phrase_index.cpp:335-363`).
 - **oxpinyin:** Pinyin and Zhuyin init report an earlier missing library and fail at the later unmappable library they reach. On Unix, pinyin mask-out with a removed `gb_char.bin` emits the mmap diagnostic and returns `true`, preserving the tested lookups, unigram count and profile files.
 - **Decision:** accepted, class (b): the read through the empty chunk is not reproduced.
-- **Tests:** `library_directory::init_reports_only_what_the_library_loop_reached`, `boundary_tests::user_store::mask_out_over_an_unmappable_library_changes_nothing` (init and mask-out).
+- **Tests:** `context::tests::library_directory::init_reports_only_what_the_library_loop_reached`, `boundary_tests::user_store::mask_out_over_an_unmappable_library_changes_nothing` (init and mask-out).
 
 ### A sparse chunk's whole mapping is retained after `fini` (#865; policy row 109)
 
