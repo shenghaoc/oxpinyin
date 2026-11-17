@@ -26,7 +26,7 @@ fn session() -> Fixtures {
     let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
 
     // The scenarios name phrases the vocabulary has to hold — `f-e-12` expects
-    // `传` for `zhuan`. `fixture_provenance` checks the vocabulary against the
+    // `传` for `zhuan`. Core's fixture-provenance tests check the vocabulary against the
     // captures but knows nothing about these scenarios, so a key dropped from
     // the fixture would otherwise surface as a mystifying candidate mismatch
     // several steps into a replay. Fail here instead, naming the key.

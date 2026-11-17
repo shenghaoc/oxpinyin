@@ -32,7 +32,7 @@ backend, as with the other peers.
   and `SYSTEM_DEPS_BDB_LIB=db`. No copy of libdb is vendored.
 - Every consumer crate forwards the `bdb` feature.
 - Tests: the shared store read and write suites,
-  `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (files the pin's
+  the `pin_data` tests in `crates/oxpinyin-store/src/bdb/tests.rs` (files the pin's
   libdb wrote, from `fixtures/w3/db/`; their `table.conf` differs from the
   other backends' sets only in `database format:BerkeleyDB`), and the C harnesses
   `tools/bdb/hash-walk.c` and `tools/bdb/btree-order.c`.

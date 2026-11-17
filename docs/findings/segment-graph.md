@@ -104,7 +104,7 @@ This rule applies at every reachable node, including node 0.
 So the graph consumes a **leading** apostrophe (`'ni`) and a **doubled** apostrophe (`ni''hao`), as the pin does.
 An apostrophe run with no key after it has no edge.
 
-`OPEN_APOSTROPHE_CASES` in `crates/oxpinyin-core/tests/graph_paths.rs` is empty, so the test permits no disagreement with the pin.
+`OPEN_APOSTROPHE_CASES` in `crates/oxpinyin-core/src/graph/tests.rs` is empty, so the test permits no disagreement with the pin.
 
 ## The recovered-path fixture
 
@@ -126,6 +126,6 @@ The junk stratum contains inputs such as `#nishaozhan`, and escaping never emits
 
 ## Acceptance
 
-`crates/oxpinyin-core/tests/graph_paths.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
+`crates/oxpinyin-core/src/graph/tests.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
 `OPEN_APOSTROPHE_CASES` is empty.
 Synthetic goldens in `crates/oxpinyin-core/src/graph.rs` also cover the empty input, ordering, tie cases, apostrophes, junk, chained initials and over-length refusal.

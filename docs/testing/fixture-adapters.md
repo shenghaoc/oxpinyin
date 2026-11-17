@@ -63,7 +63,7 @@ weight and keeps that order exactly, across the whole fixture and not
 per input. The committed captures reproduce it. A phrase
 observed at several ranks takes its best rank.
 
-`crates/oxpinyin-core/tests/fixture_provenance.rs` enforces these rules:
+The fixture-provenance tests in `crates/oxpinyin-core/src/tests.rs` enforce these rules:
 
 - every phrase must appear in a committed capture;
 - every weight must equal the output of the rule;

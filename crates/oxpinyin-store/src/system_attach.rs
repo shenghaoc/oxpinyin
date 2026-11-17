@@ -169,3 +169,6 @@ impl UnopenedSystemDbm {
         self.db.borrow_mut().take();
     }
 }
+
+#[cfg(test)]
+mod tests;

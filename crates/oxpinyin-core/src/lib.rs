@@ -8,7 +8,7 @@
 // narrowest justified #[expect], citing the pin's abort site or an invariant
 // making failure unreachable; see docs/rust-conventions.md.
 // An expectation proves lint coverage, not correspondence with the pin.
-// Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
+// #[cfg(test)] modules are exempt; tests/, benches/ and examples/
 // are separate crates.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
@@ -16,9 +16,16 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
+// The fixture doubles name this crate by its package name.
+#[cfg(test)]
+extern crate self as oxpinyin_core;
+
 mod chewing_key;
 mod chewing_key_data;
 pub mod direct;
+#[cfg(test)]
+#[path = "../tests/common/fixture_doubles.rs"]
+mod fixture_doubles;
 mod full_pinyin_index;
 pub mod graph;
 pub mod options;
@@ -1357,144 +1364,4 @@ impl Default for NbestStepCosts {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library, sort_tokens_by_library};
-
-    /// `add_index` files a token under `PHRASE_INDEX_LIBRARY_INDEX(token)`
-    /// and keeps its whole value (`phrase_large_table3.cpp:42`,
-    /// `novel_types.h:44` at the pin `074a2219`); `reduce_tokens` appends
-    /// the arrays in library order (`phrase_large_table3.h:83-91`). A token
-    /// with high bits set files with its masked library, in the given order.
-    #[test]
-    fn tokens_sort_by_their_masked_library_and_keep_their_order_within_it() {
-        let mut tokens = [
-            0x0700_0002,
-            0x8100_0001,
-            0x0100_0009,
-            0x0700_0001,
-            0x0100_0003,
-            0x1100_0000,
-        ];
-        sort_tokens_by_library(&mut tokens);
-        assert_eq!(
-            tokens,
-            [
-                0x8100_0001,
-                0x0100_0009,
-                0x0100_0003,
-                0x1100_0000,
-                0x0700_0002,
-                0x0700_0001,
-            ]
-        );
-    }
-
-    /// A memo runs `init` once and keeps what it made; a failed `init`
-    /// keeps nothing, so the next call tries again.
-    #[test]
-    fn trellis_path_memo_keeps_the_first_value_and_nothing_on_failure() {
-        let memo = TrellisPathMemo::<u8>::default();
-        assert_eq!(memo.get_or_try_init(|| Err::<u8, _>("boom")), Err("boom"));
-        assert_eq!(memo.get_or_try_init(|| Ok::<_, ()>(7)), Ok(&7));
-        assert_eq!(
-            memo.get_or_try_init::<()>(|| panic!("init runs on a filled memo")),
-            Ok(&7)
-        );
-    }
-
-    fn spans(ranges: &PhraseIndexRanges<u32>, library: usize) -> Vec<(u32, u32)> {
-        ranges
-            .ranges(library)
-            .iter()
-            .map(|range| (range.first(), range.last()))
-            .collect()
-    }
-
-    fn call(tokens: &[u32]) -> Vec<(u32, Option<u32>)> {
-        tokens.iter().map(|&token| (token, Some(token))).collect()
-    }
-
-    /// `convert` merges a token one past the open range and opens a new
-    /// range otherwise — including for a repeated or descending token.
-    #[test]
-    fn convert_merges_consecutive_runs_in_item_order() {
-        let mut ranges = PhraseIndexRanges::new();
-        ranges.convert(call(&[5, 6, 7, 9, 8, 8]));
-        assert_eq!(spans(&ranges, 0), [(5, 7), (9, 9), (8, 8), (8, 8)]);
-        let walked: Vec<u32> = ranges.walk().copied().collect();
-        assert_eq!(walked, [5, 6, 7, 9, 8, 8]);
-    }
-
-    /// A run never crosses a library nibble, and each range lands in its
-    /// own library's array; the walk visits libraries in ascending order.
-    #[test]
-    fn convert_splits_runs_at_library_boundaries() {
-        let top = 0x00ff_ffff;
-        let mut ranges = PhraseIndexRanges::new();
-        ranges.convert(call(&[0x0200_0001, top, top + 1, 0x0200_0002]));
-        assert_eq!(phrase_index_library(top + 1), 1);
-        assert_eq!(spans(&ranges, 0), [(top, top)]);
-        assert_eq!(spans(&ranges, 1), [(top + 1, top + 1)]);
-        assert_eq!(
-            spans(&ranges, 2),
-            [(0x0200_0001, 0x0200_0001), (0x0200_0002, 0x0200_0002)]
-        );
-        let walked: Vec<u32> = ranges.walk().copied().collect();
-        assert_eq!(walked, [top, top + 1, 0x0200_0001, 0x0200_0002]);
-    }
-
-    /// Each call closes its last range: `[5,6]` and `[7]` from two calls
-    /// stay two ranges, in append order.
-    #[test]
-    fn convert_builds_no_run_across_calls() {
-        let mut ranges = PhraseIndexRanges::new();
-        ranges.convert(call(&[5, 6]));
-        ranges.convert(call(&[7, 4]));
-        assert_eq!(spans(&ranges, 0), [(5, 6), (7, 7), (4, 4)]);
-        let mut merged = PhraseIndexRanges::new();
-        merged.convert(call(&[1]));
-        merged.append_from(&mut ranges, |token| token * 10);
-        assert_eq!(spans(&merged, 0), [(1, 1), (5, 6), (7, 7), (4, 4)]);
-        let walked: Vec<u32> = merged.walk().copied().collect();
-        assert_eq!(walked, [1, 50, 60, 70, 40]);
-        assert!(ranges.iter().next().is_none());
-    }
-
-    /// `trellis_records`' contract is the walk order, not item order: a
-    /// row that interleaves libraries comes back library by library, each
-    /// library's ranges in append order.
-    #[test]
-    fn walk_entries_follow_libraries_then_ranges_on_an_interleaved_row() {
-        let mut ranges = PhraseIndexRanges::new();
-        ranges.convert(call(&[0x0200_0005, 0x0100_0007, 0x0200_0006, 0x0100_0003]));
-        ranges.convert(call(&[0x0200_0001, 0x0100_0008]));
-        assert_eq!(
-            ranges.walk().copied().collect::<Vec<_>>(),
-            [
-                0x0100_0007,
-                0x0100_0003,
-                0x0100_0008,
-                0x0200_0005,
-                0x0200_0006,
-                0x0200_0001,
-            ]
-        );
-    }
-
-    /// An unresolved item keeps its token in the range, so `entry` finds
-    /// its neighbours at the right offsets.
-    #[test]
-    fn unresolved_items_keep_their_place_in_the_range() {
-        let mut ranges = PhraseIndexRanges::new();
-        ranges.convert([(3, Some(30)), (4, None), (5, Some(50))]);
-        let [range] = ranges.ranges(0) else {
-            panic!("one range: {:?}", ranges.ranges(0));
-        };
-        assert_eq!((range.first(), range.last()), (3, 5));
-        assert_eq!(ranges.entry(range, 3), Some(&30));
-        assert_eq!(ranges.entry(range, 4), None);
-        assert_eq!(ranges.entry(range, 5), Some(&50));
-        assert_eq!(ranges.entry(range, 6), None);
-        assert_eq!(ranges.walk().copied().collect::<Vec<_>>(), [30, 50]);
-    }
-}
+mod tests;

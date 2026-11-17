@@ -65,5 +65,5 @@ The C APIs' parsed length includes a trailing apostrophe run; `full_parsed_len` 
 ## Verification
 
 `crates/oxpinyin-core/src/parser.rs` tests the single-key law.
-`crates/oxpinyin-core/tests/graph_paths.rs` checks that the pin's selected paths and consumed lengths are admissible in the graph.
+`crates/oxpinyin-core/src/graph/tests.rs` checks that the pin's selected paths and consumed lengths are admissible in the graph.
 The F-A fixture records selected splits, not every possible segmentation ([capture-fixtures.md](../testing/capture-fixtures.md)).

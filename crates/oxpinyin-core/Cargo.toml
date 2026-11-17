@@ -6,8 +6,6 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
-# The integration tests build as one binary; see [[test]] below.
-autotests = false
 
 [lib]
 doctest = false
@@ -27,15 +25,6 @@ phf_codegen.workspace = true
 
 [dev-dependencies]
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
-
-# tests/integration.rs declares each tests/*.rs suite as a module, so the
-# dependency closure links once instead of once per suite (#1005). With
-# autotests off, a new file under tests/ builds only once it is declared
-# there, and a tests/<dir>/main.rs only once a [[test]] here names it; its
-# every_suite_file_is_declared test fails until then.
-[[test]]
-name = "integration"
-path = "tests/integration.rs"
 
 [features]
 # Parser result access for the nonshipping pin test programs.
