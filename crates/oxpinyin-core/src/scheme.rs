@@ -72,20 +72,6 @@ impl DoublePinyinParse {
     pub const fn consumed(&self) -> usize {
         self.consumed
     }
-
-    /// The parsed keys as a `'`-joined full-pinyin string.
-    ///
-    /// Used by the compatibility layer to drive the existing decoder
-    /// without turning double-pinyin keys back into shorter full-pinyin
-    /// segmentations.
-    #[must_use]
-    pub fn full_pinyin(&self) -> String {
-        self.keys
-            .iter()
-            .map(|item| item.key.text())
-            .collect::<Vec<_>>()
-            .join("'")
-    }
 }
 
 /// `FullPinyinScheme` from `src/storage/pinyin_custom2.h:98-104`.

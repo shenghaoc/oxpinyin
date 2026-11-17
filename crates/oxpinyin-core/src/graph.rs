@@ -134,19 +134,6 @@ pub enum EdgeKind {
     Incomplete,
 }
 
-impl EdgeKind {
-    /// Wire spelling, matching the `pinyin-capture-v1` completeness tokens
-    /// where they overlap.
-    #[must_use]
-    pub const fn as_wire(self) -> &'static str {
-        match self {
-            Self::Exact => "exact",
-            Self::Segmentation => "segmentation",
-            Self::Incomplete => "incomplete",
-        }
-    }
-}
-
 /// One key match spanning a byte range.
 ///
 /// `from` may be one byte before `syllable_start`: a consumed apostrophe
@@ -430,12 +417,6 @@ impl SegmentGraph {
     #[must_use]
     pub const fn consumed(&self) -> usize {
         self.consumed
-    }
-
-    /// Whether every byte of the input is covered by some path.
-    #[must_use]
-    pub const fn fully_consumed(&self) -> bool {
-        self.consumed == self.input_len
     }
 
     /// Fewest-keys path under the incomplete-edge filter.

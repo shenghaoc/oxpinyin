@@ -1,6 +1,14 @@
 use super::{Edge, EdgeKind, ExactSegment, GraphError, SegmentGraph};
 use crate::{Completeness, OptionBits, SyllableKey};
 
+fn edge_kind_wire(kind: EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::Exact => "exact",
+        EdgeKind::Segmentation => "segmentation",
+        EdgeKind::Incomplete => "incomplete",
+    }
+}
+
 /// Renders the graph as `from-to:key:kind:tone` under `options`.
 fn rendered_with_options(input: &str, options: OptionBits) -> Vec<String> {
     SegmentGraph::build_with_options(input.as_bytes(), options)
@@ -13,7 +21,7 @@ fn rendered_with_options(input: &str, options: OptionBits) -> Vec<String> {
                 edge.from(),
                 edge.to(),
                 edge.key().text(),
-                edge.kind().as_wire(),
+                edge_kind_wire(edge.kind()),
                 edge.tone()
             )
         })
@@ -43,7 +51,7 @@ fn force_tone_rejects_every_toneless_span() {
     }
     // Toned spans still parse.
     let graph = SegmentGraph::build_with_options(b"ni3hao3", force_tone_options()).expect("valid");
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == b"ni3hao3".len());
     let graph = SegmentGraph::build_with_options(b"zai4", force_tone_options()).expect("valid");
     assert_eq!(graph.consumed(), 4);
 }
@@ -55,7 +63,7 @@ fn force_tone_is_dead_without_use_tone() {
     // parses exactly like the toneless profile.
     let inert = OptionBits::PINYIN_INCOMPLETE | OptionBits::FORCE_TONE;
     let graph = SegmentGraph::build_with_options(b"nihao", inert).expect("valid");
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == b"nihao".len());
 }
 
 #[test]
@@ -86,10 +94,11 @@ fn use_tone_reaches_the_seventh_byte_of_a_span() {
     let edges = rendered_with_options("zhuang4", tone_options());
     assert!(edges.contains(&"0-7:zhuang:exact:4".to_owned()));
     assert!(edges.contains(&"0-6:zhuang:segmentation:0".to_owned()));
-    assert!(
+    assert_eq!(
         SegmentGraph::build_with_options(b"zhuang4", tone_options())
             .expect("valid")
-            .fully_consumed()
+            .consumed(),
+        b"zhuang4".len()
     );
 }
 
@@ -102,7 +111,7 @@ fn use_tone_rejects_the_non_tone_digits() {
         let graph =
             SegmentGraph::build_with_options(input.as_bytes(), tone_options()).expect("valid");
         assert_eq!(graph.consumed(), 3, "input {input}");
-        assert!(!graph.fully_consumed(), "input {input}");
+        assert!(graph.consumed() != input.len(), "input {input}");
         assert!(
             graph
                 .edges()
@@ -117,7 +126,7 @@ fn use_tone_rejects_the_non_tone_digits() {
 fn use_tone_leaves_junk_after_the_digit_unparsed() {
     let graph = SegmentGraph::build_with_options(b"zai4Q", tone_options()).expect("valid");
     assert_eq!(graph.consumed(), 4);
-    assert!(!graph.fully_consumed());
+    assert!(graph.consumed() != b"zai4Q".len());
     let path: Vec<(usize, &str, u8)> = graph
         .fewest_keys(true)
         .iter()
@@ -129,7 +138,7 @@ fn use_tone_leaves_junk_after_the_digit_unparsed() {
 #[test]
 fn use_tone_carries_a_digit_over_an_apostrophe_boundary() {
     let graph = SegmentGraph::build_with_options(b"zai4'an", tone_options()).expect("valid");
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == b"zai4'an".len());
     let path: Vec<(&str, u8)> = graph
         .fewest_keys(true)
         .iter()
@@ -154,7 +163,7 @@ fn use_tone_admits_a_tone_on_an_incomplete_key_only_with_the_bit() {
         graph
             .edges()
             .iter()
-            .map(|edge| (edge.kind().as_wire(), edge.tone()))
+            .map(|edge| (edge_kind_wire(edge.kind()), edge.tone()))
             .collect::<Vec<_>>(),
         [("incomplete", 4), ("incomplete", 0)]
     );
@@ -176,7 +185,7 @@ fn the_empty_input_is_one_node_and_no_edges() {
     assert_eq!(graph.node_count(), 1);
     assert_eq!(graph.edges().len(), 0);
     assert_eq!(graph.consumed(), 0);
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == 0);
     assert!(graph.outgoing(0).is_empty());
     assert!(graph.outgoing(99).is_empty());
 }
@@ -187,7 +196,7 @@ fn repeated_initials_chain_the_whole_way() {
     let graph =
         SegmentGraph::build_with_options(b"zzzzzzzz", OptionBits::default()).expect("valid");
     assert_eq!(graph.consumed(), 8);
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == b"zzzzzzzz".len());
     assert!(
         graph
             .edges()
@@ -211,7 +220,7 @@ fn a_mid_position_initial_is_an_ordinary_edge() {
             key.text()
         );
     }
-    assert!(graph.fully_consumed());
+    assert!(graph.consumed() == b"yingchon".len());
 }
 
 #[test]
@@ -475,7 +484,7 @@ fn exact_graph_has_one_edge_per_segment_and_no_resplits() {
                 edge.from(),
                 edge.to(),
                 edge.key().text(),
-                edge.kind().as_wire()
+                edge_kind_wire(edge.kind())
             )
         })
         .collect();
@@ -562,7 +571,7 @@ fn a_leading_apostrophe_run_is_consumed_like_a_separator() {
         let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default())
             .expect("short input");
         assert_eq!(graph.consumed(), input.len(), "{input:?}");
-        assert!(graph.fully_consumed(), "{input:?}");
+        assert!(graph.consumed() == input.len(), "{input:?}");
         assert!(
             graph
                 .fewest_keys(false)
