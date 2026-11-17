@@ -16,8 +16,13 @@ use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 ///
 /// Upstream gates on GLib UCS4 conversion length
 /// (`g_return_val_if_fail`, `zhuyin.cpp:973`) and stores the best phrase path into the instance's result array.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `sentence` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_phrase_segment(
+pub unsafe extern "C" fn zhuyin_phrase_segment(
     instance: *mut ZhuyinInstance,
     sentence: *const c_char,
 ) -> bool {
@@ -80,8 +85,16 @@ pub extern "C" fn zhuyin_phrase_segment(
 /// ```c
 /// bool zhuyin_get_n_phrase(zhuyin_instance_t * instance, guint * num);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_n_phrase(instance: *mut ZhuyinInstance, num: *mut GUint) -> bool {
+pub unsafe extern "C" fn zhuyin_get_n_phrase(
+    instance: *mut ZhuyinInstance,
+    num: *mut GUint,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -106,8 +119,13 @@ pub extern "C" fn zhuyin_get_n_phrase(instance: *mut ZhuyinInstance, num: *mut G
 /// bool zhuyin_get_phrase_token(zhuyin_instance_t * instance,
 ///                              guint index, phrase_token_t * token);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `token` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_phrase_token(
+pub unsafe extern "C" fn zhuyin_get_phrase_token(
     instance: *mut ZhuyinInstance,
     index: GUint,
     token: *mut PhraseTokenT,
@@ -139,6 +157,11 @@ pub extern "C" fn zhuyin_get_phrase_token(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::*;
     use std::cell::RefCell;
     use std::ffi::{CStr, CString};
@@ -247,25 +270,25 @@ mod tests {
             b"nihao\xed\xa0\x80".as_slice(),
         ] {
             let sentence = CString::new(bytes).expect("no interior NUL");
-            assert!(!zhuyin_phrase_segment(instance, sentence.as_ptr()));
+            assert!(!unsafe { zhuyin_phrase_segment(instance, sentence.as_ptr()) });
             let mut count = 0xABCDEF;
-            assert!(zhuyin_get_n_phrase(instance, &raw mut count));
+            assert!(unsafe { zhuyin_get_n_phrase(instance, &raw mut count) });
             assert_eq!(count, 6);
             for index in 0..count {
                 let mut token = 0xABCDEF;
-                assert!(zhuyin_get_phrase_token(instance, index, &raw mut token));
+                assert!(unsafe { zhuyin_get_phrase_token(instance, index, &raw mut token) });
                 assert_eq!(token, 0);
             }
             let mut token = 0xABCDEF;
-            assert!(!zhuyin_get_phrase_token(instance, count, &raw mut token));
+            assert!(!unsafe { zhuyin_get_phrase_token(instance, count, &raw mut token) });
             assert_eq!(token, 0);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
 
             // Recover through normal lookup, then verify the invalid-byte
             // refusal keeps the prior result and logs nothing (#1297).
-            assert!(zhuyin_phrase_segment(instance, c"你好".as_ptr()));
-            assert!(!zhuyin_phrase_segment(instance, c"\xff\xfe".as_ptr()));
-            assert!(zhuyin_get_n_phrase(instance, &raw mut count));
+            assert!(unsafe { zhuyin_phrase_segment(instance, c"你好".as_ptr()) });
+            assert!(!unsafe { zhuyin_phrase_segment(instance, c"\xff\xfe".as_ptr()) });
+            assert!(unsafe { zhuyin_get_n_phrase(instance, &raw mut count) });
             assert_eq!(count, 2);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
         }

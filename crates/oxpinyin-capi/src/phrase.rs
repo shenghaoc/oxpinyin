@@ -28,8 +28,13 @@ use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 /// (`g_return_val_if_fail(num_of_chars == ucs4_len, FALSE)`, `pinyin.cpp:1454`) and stores the best phrase
 /// path into the instance's result array — including on a failed match,
 /// where the array stays fully sized and all-null.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `sentence` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_phrase_segment(
+pub unsafe extern "C" fn pinyin_phrase_segment(
     instance: *mut PinyinInstance,
     sentence: *const c_char,
 ) -> bool {
@@ -96,8 +101,16 @@ pub extern "C" fn pinyin_phrase_segment(
 /// Upstream answers `true` unconditionally over whatever
 /// `pinyin_phrase_segment` last stored (`pinyin.cpp:3269-3274`); without
 /// a prior segment call the count is 0.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_n_phrase(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
+pub unsafe extern "C" fn pinyin_get_n_phrase(
+    instance: *mut PinyinInstance,
+    num: *mut GUint,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -126,8 +139,13 @@ pub extern "C" fn pinyin_get_n_phrase(instance: *mut PinyinInstance, num: *mut G
 ///
 /// The out-param is zeroed before the bounds check — a `false` still
 /// delivers `null_token` (`pinyin.cpp:3276-3287`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `token` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_phrase_token(
+pub unsafe extern "C" fn pinyin_get_phrase_token(
     instance: *mut PinyinInstance,
     index: GUint,
     token: *mut PhraseTokenT,
@@ -159,6 +177,11 @@ pub extern "C" fn pinyin_get_phrase_token(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::*;
     use std::cell::RefCell;
     use std::ffi::{CStr, CString};
@@ -300,9 +323,9 @@ mod tests {
         let user = TempUserDir::new("segment-ieee");
         let system = cstr(system.to_str().expect("UTF-8 path"));
         let user_path = cstr(user.path.to_str().expect("UTF-8 path"));
-        let context = crate::context::pinyin_init(system.as_ptr(), user_path.as_ptr());
+        let context = unsafe { crate::context::pinyin_init(system.as_ptr(), user_path.as_ptr()) };
         assert!(!context.is_null());
-        let instance = crate::instance::pinyin_alloc_instance(context);
+        let instance = unsafe { crate::instance::pinyin_alloc_instance(context) };
         assert!(!instance.is_null());
         assert_eq!(lookup(instance, "你"), [NI]);
         assert!(lookup(instance, "你你").is_empty());
@@ -317,17 +340,17 @@ mod tests {
         } else {
             (c"你你", [NI, NI])
         };
-        assert!(pinyin_phrase_segment(instance, sentence.as_ptr()));
+        assert!(unsafe { pinyin_phrase_segment(instance, sentence.as_ptr()) });
         let mut count = 0;
-        assert!(pinyin_get_n_phrase(instance, &raw mut count));
+        assert!(unsafe { pinyin_get_n_phrase(instance, &raw mut count) });
         assert_eq!(count, 2);
         for (index, expected_token) in (0..count).zip(expected) {
             let mut token = 0;
-            assert!(pinyin_get_phrase_token(instance, index, &raw mut token));
+            assert!(unsafe { pinyin_get_phrase_token(instance, index, &raw mut token) });
             assert_eq!(token, expected_token);
         }
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     #[test]
@@ -342,29 +365,29 @@ mod tests {
             b"nihao\xed\xa0\x80".as_slice(),
         ] {
             let sentence = CString::new(bytes).expect("no interior NUL");
-            assert!(!pinyin_phrase_segment(instance, sentence.as_ptr()));
+            assert!(!unsafe { pinyin_phrase_segment(instance, sentence.as_ptr()) });
             let mut count = 0xABCDEF;
-            assert!(pinyin_get_n_phrase(instance, &raw mut count));
+            assert!(unsafe { pinyin_get_n_phrase(instance, &raw mut count) });
             assert_eq!(count, 6);
             for index in 0..count {
                 let mut token = 0xABCDEF;
-                assert!(pinyin_get_phrase_token(instance, index, &raw mut token));
+                assert!(unsafe { pinyin_get_phrase_token(instance, index, &raw mut token) });
                 assert_eq!(token, 0);
             }
             let mut token = 0xABCDEF;
-            assert!(!pinyin_get_phrase_token(instance, count, &raw mut token));
+            assert!(!unsafe { pinyin_get_phrase_token(instance, count, &raw mut token) });
             assert_eq!(token, 0);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
 
             // Recover through normal lookup, then verify the invalid-byte
             // refusal keeps the prior result and logs nothing (#1297).
-            assert!(pinyin_phrase_segment(instance, c"你好".as_ptr()));
-            assert!(!pinyin_phrase_segment(instance, c"\xff\xfe".as_ptr()));
-            assert!(pinyin_get_n_phrase(instance, &raw mut count));
+            assert!(unsafe { pinyin_phrase_segment(instance, c"你好".as_ptr()) });
+            assert!(!unsafe { pinyin_phrase_segment(instance, c"\xff\xfe".as_ptr()) });
+            assert!(unsafe { pinyin_get_n_phrase(instance, &raw mut count) });
             assert_eq!(count, 2);
             LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
         }
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

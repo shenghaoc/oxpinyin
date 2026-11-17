@@ -5,6 +5,11 @@
 //! (docs/findings/upstream-divergences.md#reproduced-library-aborts-write-no-assertion-line:
 //! oxpinyin writes no assertion line).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::c_char;
 use std::path::Path;
 use std::ptr;
@@ -86,7 +91,7 @@ const SEPARATOR_OPTIONS: u32 = 0x18a;
 fn init_at(system: &Path, user: &Path) -> *mut PinyinContext {
     let system = cstr(system.to_str().expect("UTF-8 path"));
     let user = cstr(user.to_str().expect("UTF-8 path"));
-    pinyin_init(system.as_ptr(), user.as_ptr())
+    unsafe { pinyin_init(system.as_ptr(), user.as_ptr()) }
 }
 
 /// A context and instance on the mini fixture and `user`.
@@ -95,19 +100,19 @@ fn open_at(user: &Path) -> (*mut PinyinContext, *mut PinyinInstance) {
 }
 
 fn alloc(context: *mut PinyinContext) -> *mut PinyinInstance {
-    let instance = pinyin_alloc_instance(context);
+    let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
     instance
 }
 
 fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
-    pinyin_free_instance(instance);
-    pinyin_fini(context);
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
 }
 
 fn parse(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> usize {
     let text = std::ffi::CString::new(text.as_ref()).expect("no interior NUL");
-    pinyin_parse_more_full_pinyins(instance, text.as_ptr())
+    unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) }
 }
 
 /// The first row of `kind` in the current list.
@@ -134,23 +139,25 @@ fn row_with(
 
 fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandidate {
     let mut cand: *mut LookupCandidate = ptr::null_mut();
-    assert!(pinyin_get_candidate(
-        instance,
-        u32::try_from(index).expect("small index"),
-        &raw mut cand
-    ));
+    assert!(unsafe {
+        pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small index"),
+            &raw mut cand,
+        )
+    });
     cand
 }
 
 fn n_candidate(instance: *mut PinyinInstance) -> u32 {
     let mut count = UNTOUCHED;
-    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     count
 }
 
 fn unigram(instance: *mut PinyinInstance, token: u32) -> (bool, u32) {
     let mut freq = UNTOUCHED;
-    let ret = pinyin_token_get_unigram_frequency(instance, token, &raw mut freq);
+    let ret = unsafe { pinyin_token_get_unigram_frequency(instance, token, &raw mut freq) };
     (ret, freq)
 }
 
@@ -159,7 +166,7 @@ fn unigram(instance: *mut PinyinInstance, token: u32) -> (bool, u32) {
 fn sentence_out(instance: *mut PinyinInstance, index: u8) -> (bool, Option<String>) {
     let seed = UNTOUCHED as usize as *mut c_char;
     let mut out = seed;
-    let ret = pinyin_get_sentence(instance, index, &raw mut out);
+    let ret = unsafe { pinyin_get_sentence(instance, index, &raw mut out) };
     if out == seed {
         (ret, None)
     } else {
@@ -179,7 +186,7 @@ fn replace_user_bigram(user: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 fn saved_user_phrase(user: &Path) -> u32 {
     let (context, instance) = open_at(user);
     assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
-    assert!(pinyin_save(context));
+    assert!(unsafe { pinyin_save(context) });
     let token = lookup(instance, "龘龘")[0];
     assert_eq!(token >> 24, 7);
     close(context, instance);
@@ -190,12 +197,12 @@ fn saved_user_phrase(user: &Path) -> u32 {
 fn user_row_of_dada(user: &Path) -> (*mut PinyinInstance, *mut LookupCandidate) {
     let (_context, instance) = open_at(user);
     assert_eq!(parse(instance, "dada"), 4);
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     let rows = capture_rows(instance);
     let index = (0..rows.len())
         .find(|&index| {
             let cand = candidate_at(instance, index);
-            rows[index].0 == NORMAL && pinyin_is_user_candidate(instance, cand)
+            rows[index].0 == NORMAL && unsafe { pinyin_is_user_candidate(instance, cand) }
         })
         .expect("a NORMAL user row");
     (instance, candidate_at(instance, index))
@@ -204,8 +211,10 @@ fn user_row_of_dada(user: &Path) -> (*mut PinyinInstance, *mut LookupCandidate) 
 /// The phrase text of `token` through `pinyin_token_get_phrase`.
 fn phrase_of(instance: *mut PinyinInstance, token: u32) -> Option<String> {
     let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
-    crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
-        .then(|| crate::ffi::take_owned_cstr(phrase).as_str().to_owned())
+    unsafe {
+        crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
+    }
+    .then(|| crate::ffi::take_owned_cstr(phrase).as_str().to_owned())
 }
 
 /// The newline the C stdio of the host writes for `\n` on stderr: the
@@ -245,12 +254,9 @@ fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
 fn reading_bytes(instance: *mut PinyinInstance, token: u32, nth: u32) -> Vec<u8> {
     // SAFETY: a fresh GArray of two-byte elements, freed below.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
-    assert!(crate::dict::pinyin_token_get_nth_pronunciation(
-        instance,
-        token,
-        nth,
-        keys.cast()
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_token_get_nth_pronunciation(instance, token, nth, keys.cast())
+    });
     // SAFETY: a live GArray of two-byte elements.
     let bytes = unsafe {
         let view = &*keys;
@@ -309,11 +315,11 @@ fn ucs4(text: &str) -> Vec<u8> {
 /// The sentence of row 0 after a fresh `pinyin_guess_sentence`, or `None`
 /// when the guess or the read answers `false`.
 fn sentence_after_guess(instance: *mut PinyinInstance) -> Option<String> {
-    if !pinyin_guess_sentence(instance) {
+    if !unsafe { pinyin_guess_sentence(instance) } {
         return None;
     }
     let mut sentence: *mut c_char = ptr::null_mut();
-    if !pinyin_get_sentence(instance, 0, &raw mut sentence) {
+    if !unsafe { pinyin_get_sentence(instance, 0, &raw mut sentence) } {
         return None;
     }
     // SAFETY: a NUL-terminated GLib string the caller owns.

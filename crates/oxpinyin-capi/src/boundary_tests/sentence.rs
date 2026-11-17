@@ -1,6 +1,11 @@
 //! Sentence guesses, `pinyin_get_sentence`, sentence prefixes, n-best rows
 //! and the sentence step prices.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// Each prefix occurrence seeds a node (074a2219 pinyin.cpp:1415-1421,
@@ -59,10 +64,9 @@ fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
     assert!(!context.is_null());
     let instance = alloc(context);
     assert_eq!(parse(instance, "ba1"), 3);
-    assert!(crate::sentence::pinyin_guess_sentence_with_prefix(
-        instance,
-        c"丙".as_ptr()
-    ));
+    assert!(unsafe {
+        crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"丙".as_ptr())
+    });
     for (index, text) in [(0, "甲"), (1, "甲"), (2, "乙")] {
         assert_eq!(sentence_out(instance, index), (true, Some(text.to_owned())));
     }
@@ -88,13 +92,13 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
         ),
         [true; 3]
     );
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba4"), 3);
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     let chosen = row_with(instance, NORMAL, "甲");
-    assert_eq!(pinyin_choose_candidate(instance, 0, chosen), 3);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, chosen) }, 3);
     assert_eq!(parse(instance, "da4"), 3);
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     let rows = capture_rows(instance);
     assert!(
         rows.iter()
@@ -105,7 +109,7 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
             .iter()
             .any(|(kind, text, _)| *kind == NORMAL && text == "甲")
     );
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some("甲".to_owned())));
     close(context, instance);
 }
@@ -118,9 +122,9 @@ fn guess_sentence_aborts_on_a_toned_initial() {
         || {
             let user = TempUserDir::new("toned-sentence");
             let (context, instance) = open_at(&user.path);
-            assert!(pinyin_set_options(context, 0x28));
+            assert!(unsafe { pinyin_set_options(context, 0x28) });
             assert_eq!(parse(instance, "n4"), 2);
-            pinyin_guess_sentence(instance);
+            unsafe { pinyin_guess_sentence(instance) };
         },
     );
 }
@@ -134,9 +138,9 @@ fn get_sentence_aborts_past_the_rows() {
             let user = TempUserDir::new("sentence-past-rows");
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "nihao"), 5);
-            assert!(pinyin_guess_sentence(instance));
+            assert!(unsafe { pinyin_guess_sentence(instance) });
             let mut out: *mut c_char = ptr::null_mut();
-            pinyin_get_sentence(instance, 5, &raw mut out);
+            unsafe { pinyin_get_sentence(instance, 5, &raw mut out) };
         },
     );
 }
@@ -162,9 +166,9 @@ fn get_sentence_before_a_guess_leaves_the_out_pointer() {
             "parsed {index}"
         );
     }
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some("你好".to_owned())));
-    assert!(pinyin_reset(instance));
+    assert!(unsafe { pinyin_reset(instance) });
     assert_eq!(sentence_out(instance, 0), (false, None));
     close(context, instance);
 }
@@ -175,9 +179,9 @@ fn get_sentence_before_a_guess_leaves_the_out_pointer() {
 fn a_leading_separator_guess_has_no_sentence() {
     let user = TempUserDir::new("separator-sentence");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, SEPARATOR_OPTIONS));
+    assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
     assert_eq!(parse(instance, "'ni'hao"), 7);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (false, None));
     close(context, instance);
 }
@@ -191,12 +195,10 @@ fn a_leading_separator_guess_has_no_sentence() {
 fn an_index_parse_leading_separator_guess_has_no_sentence(#[values(2, 3)] scheme: i32) {
     let user = TempUserDir::new("index-separator-sentence");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, SEPARATOR_OPTIONS));
-    assert!(crate::config::pinyin_set_full_pinyin_scheme(
-        context, scheme
-    ));
+    assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
+    assert!(unsafe { crate::config::pinyin_set_full_pinyin_scheme(context, scheme) });
     assert_eq!(parse(instance, "'ni"), 3);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (false, None));
     close(context, instance);
 }
@@ -209,28 +211,30 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
     let user = TempUserDir::new("zero-key-guess");
     let (context, _) = open_at(&user.path);
     let guesses: [fn(*mut PinyinInstance) -> bool; 2] = [
-        |instance| pinyin_guess_sentence(instance),
-        |instance| crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"你".as_ptr()),
+        |instance| unsafe { pinyin_guess_sentence(instance) },
+        |instance| unsafe {
+            crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"你".as_ptr())
+        },
     ];
     for guess in guesses {
         let instance = alloc(context);
         assert_eq!(parse(instance, "ni3hao3"), 7);
-        assert!(pinyin_guess_sentence(instance));
+        assert!(unsafe { pinyin_guess_sentence(instance) });
         let sentence = sentence_out(instance, 0);
         assert!(sentence.0);
         assert_eq!(parse(instance, "'"), 1);
         assert!(!guess(instance));
         assert_eq!(sentence_out(instance, 0), sentence);
         assert_eq!(n_candidate(instance), 0);
-        pinyin_free_instance(instance);
+        unsafe { pinyin_free_instance(instance) };
 
         let fresh = alloc(context);
         assert_eq!(parse(fresh, "'"), 1);
         assert!(!guess(fresh));
         assert_eq!(sentence_out(fresh, 0), (false, None));
-        pinyin_free_instance(fresh);
+        unsafe { pinyin_free_instance(fresh) };
     }
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
 }
 
 /// GLib's historical UTF-8 form of `words`, up to six bytes per word.
@@ -268,17 +272,13 @@ fn a_null_sentence_prefix_is_no_prefix() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba1"), 3);
     let valid = std::ffi::CString::new(glib_utf8(&[0x7532, 0x4e01, 0x4e59])).expect("no NUL");
-    assert!(crate::sentence::pinyin_guess_sentence_with_prefix(
-        instance,
-        valid.as_ptr()
-    ));
-    assert!(crate::sentence::pinyin_guess_sentence_with_prefix(
-        instance,
-        ptr::null()
-    ));
+    assert!(unsafe {
+        crate::sentence::pinyin_guess_sentence_with_prefix(instance, valid.as_ptr())
+    });
+    assert!(unsafe { crate::sentence::pinyin_guess_sentence_with_prefix(instance, ptr::null()) });
     assert_eq!(sentence_out(instance, 0), (true, Some("丙".to_owned())));
     close(context, instance);
 }
@@ -294,14 +294,13 @@ fn a_sentence_prefix_above_unicode_is_converted() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba1"), 3);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     let prefix = std::ffi::CString::new(glib_utf8(&[0x7532, 0x11_0000, 0x4e59])).expect("no NUL");
-    assert!(crate::sentence::pinyin_guess_sentence_with_prefix(
-        instance,
-        prefix.as_ptr()
-    ));
+    assert!(unsafe {
+        crate::sentence::pinyin_guess_sentence_with_prefix(instance, prefix.as_ptr())
+    });
     assert_eq!(sentence_out(instance, 0), (true, Some("戌".to_owned())));
     close(context, instance);
 }
@@ -323,11 +322,11 @@ fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba1ba1"), 6);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some(String::new())));
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     assert_eq!(capture_rows(instance), [(NBEST, String::new(), Some(0))]);
     close(context, instance);
 }
@@ -354,9 +353,9 @@ fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba1an1"), 6);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some("丙".to_owned())));
     close(context, instance);
 }
@@ -377,15 +376,12 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(
-        context,
-        oxpinyin_core::OptionBits::USE_TONE.bits()
-    ));
+    assert!(unsafe { pinyin_set_options(context, oxpinyin_core::OptionBits::USE_TONE.bits()) });
     assert_eq!(parse(instance, "ba1"), 3);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
 
     let mut out = UNTOUCHED as usize as *mut c_char;
-    assert!(pinyin_get_sentence(instance, 0, &raw mut out));
+    assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut out) });
     assert!(out.is_null());
     close(context, instance);
 }
@@ -427,14 +423,14 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
             let context = init_at(&system, user);
             assert!(!context.is_null());
             let instance = alloc(context);
-            assert!(pinyin_set_options(context, 1 << 5));
+            assert!(unsafe { pinyin_set_options(context, 1 << 5) });
             assert_eq!(parse(instance, "ba1da1"), 6);
-            assert!(pinyin_guess_sentence(instance));
+            assert!(unsafe { pinyin_guess_sentence(instance) });
             assert_eq!(sentence_out(instance, 0), (true, Some("丙丁".to_owned())));
             // The next guess reads the gram once for 甲's span; the read
             // for 丙丁's span fails.
             oxpinyin_store::read_faults::fail_point_read_of(&sentence_start, 1);
-            assert!(pinyin_guess_sentence(instance));
+            assert!(unsafe { pinyin_guess_sentence(instance) });
             assert_eq!(sentence_out(instance, 0), (true, Some("甲乙".to_owned())));
             close(context, instance);
         },
@@ -453,8 +449,8 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
             let user = TempUserDir::new("empty-matrix-diff-write");
             let (context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "nihao"), 5);
-            assert!(pinyin_guess_sentence(instance));
-            assert!(pinyin_guess_candidates(instance, 0, 0));
+            assert!(unsafe { pinyin_guess_sentence(instance) });
+            assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
             let rows = capture_rows(instance);
             let index = rows
                 .iter()
@@ -465,18 +461,16 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
                     }
                     let row = candidate_at(instance, index);
                     let mut rank = 0;
-                    assert!(pinyin_get_candidate_nbest_index(
-                        instance,
-                        row,
-                        &raw mut rank
-                    ));
+                    assert!(unsafe {
+                        pinyin_get_candidate_nbest_index(instance, row, &raw mut rank)
+                    });
                     (rank > 0).then_some(index)
                 })
                 .expect("a differing n-best row");
             let row = candidate_at(instance, index);
             assert_eq!(parse(instance, ""), 0);
-            assert!(!pinyin_guess_sentence(instance));
-            pinyin_choose_candidate(instance, 0, row);
+            assert!(!unsafe { pinyin_guess_sentence(instance) });
+            unsafe { pinyin_choose_candidate(instance, 0, row) };
             close(context, instance);
         },
     );
@@ -500,9 +494,9 @@ fn a_step_prices_readings_with_the_query_tone() {
         ),
         [true; 3]
     );
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ba4"), 3);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some("乙".to_owned())));
     close(context, instance);
 }
@@ -526,11 +520,11 @@ fn a_step_prices_a_user_item_from_its_readings() {
         [true; 3]
     );
     assert_eq!(parse(instance, "ba"), 2);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     assert_eq!(sentence_out(instance, 0), (true, Some("乙".to_owned())));
     assert_eq!(parse(instance, "da"), 2);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     assert!(
         !capture_rows(instance)
             .iter()

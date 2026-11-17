@@ -1,14 +1,19 @@
 //! Init and save: reports, refusals, conf formats and copy faults.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// Trains the top sentence of `nihao` once on a new instance.
 fn train_once(context: *mut PinyinContext) {
     let instance = alloc(context);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(crate::candidates::pinyin_train(instance, 0));
-    pinyin_free_instance(instance);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    unsafe { pinyin_free_instance(instance) };
 }
 
 /// An absent library at init prints `mmap … failed!` and the init still
@@ -37,11 +42,11 @@ fn reload_of_an_empty_library_reports_and_answers_true() {
         "boundary_tests::init_and_save::reload_of_an_empty_library_reports_and_answers_true",
         |user| {
             let (system, context) = private_context(user);
-            assert!(crate::config::pinyin_unload_phrase_library(context, 2));
+            assert!(unsafe { crate::config::pinyin_unload_phrase_library(context, 2) });
             let library = system.join("gbk_char.bin");
             std::fs::remove_file(&library).expect("unlink gbk_char.bin");
             std::fs::write(&library, b"").expect("an empty library");
-            assert!(pinyin_load_phrase_library(context, 2));
+            assert!(unsafe { pinyin_load_phrase_library(context, 2) });
         },
     );
     let system = run.user_dir.parent().expect("scratch").join("system");
@@ -60,7 +65,7 @@ fn save_reports_an_absent_system_library_and_answers_false() {
             let (system, context) = private_context(user);
             train_once(context);
             std::fs::remove_file(system.join("gb_char.bin")).expect("unlink gb_char.bin");
-            assert!(!pinyin_save(context));
+            assert!(!unsafe { pinyin_save(context) });
         },
     );
     let system = run.user_dir.parent().expect("scratch").join("system");
@@ -92,7 +97,7 @@ fn save_aborts_where_the_chunk_header_write_fails() {
                 libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
                 assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &raw const limit), 0);
             }
-            pinyin_save(context);
+            unsafe { pinyin_save(context) };
         },
     );
     let staged = std::fs::metadata(run.user_dir.join("gb_char.dbin.tmp")).expect("staged log");
@@ -113,7 +118,7 @@ fn init_refuses_a_system_directory_without_table_conf() {
         "boundary_tests::init_and_save::init_refuses_a_system_directory_without_table_conf",
         |user| {
             let user_c = cstr(user.to_str().expect("UTF-8 path"));
-            assert!(pinyin_init(ptr::null(), user_c.as_ptr()).is_null());
+            assert!(unsafe { pinyin_init(ptr::null(), user_c.as_ptr()) }.is_null());
             assert!(init_at(Path::new("/nonexistent-system-dir"), user).is_null());
             let system = private_system(user.parent().expect("the child's scratch"));
             std::fs::remove_file(system.join("table.conf")).expect("unlink table.conf");
@@ -145,9 +150,9 @@ fn a_null_user_directory_reports_its_empty_path() {
         "boundary_tests::init_and_save::a_null_user_directory_reports_its_empty_path",
         |_| {
             let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-            let context = pinyin_init(system.as_ptr(), ptr::null());
+            let context = unsafe { pinyin_init(system.as_ptr(), ptr::null()) };
             assert!(!context.is_null());
-            pinyin_fini(context);
+            unsafe { pinyin_fini(context) };
         },
     );
     assert_eq!(
@@ -227,8 +232,8 @@ fn an_absolute_user_file_lands_under_the_user_directory() {
     let context = init_at(&system, &user);
     assert!(!context.is_null());
     assert_eq!(import_batch(context, 7, &[("你好", "ni3'hao3", 1)]), [true]);
-    assert!(pinyin_save(context));
-    pinyin_fini(context);
+    assert!(unsafe { pinyin_save(context) });
+    unsafe { pinyin_fini(context) };
     assert!(Path::new(&beneath).join("u.bin").is_file());
     assert!(!Path::new(&nested).join("u.bin").exists());
 }
@@ -357,12 +362,12 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             assert!(!context.is_null());
             // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
             train_once(context);
-            assert!(pinyin_save(context));
+            assert!(unsafe { pinyin_save(context) });
             keep_before(user);
             train_once(context);
             // The first copy writes one record and fails the next.
             oxpinyin_store::copy_faults::fail_destination_write_after(1);
-            pinyin_save(context);
+            unsafe { pinyin_save(context) };
         },
     );
     let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));

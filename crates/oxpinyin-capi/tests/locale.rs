@@ -4,6 +4,10 @@
 //! parallel test runner cannot interleave them within this process.
 
 #![expect(unsafe_code, reason = "calls the C ABI and the C library setlocale")]
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -70,7 +74,7 @@ fn lc_numeric_follows_the_pins_table_info_sites() {
     #[cfg(windows)]
     assert_ne!(numeric_locale().as_c_str(), c"C");
 
-    let context = pinyin_capi::pinyin_init(c"".as_ptr(), c"".as_ptr());
+    let context = unsafe { pinyin_capi::pinyin_init(c"".as_ptr(), c"".as_ptr()) };
     assert!(context.is_null());
     assert_eq!(numeric_locale().as_c_str(), c"C");
 
@@ -86,30 +90,27 @@ fn lc_numeric_follows_the_pins_table_info_sites() {
     let user = tempfile::tempdir().expect("user directory");
     let user = CString::new(user.path().to_str().expect("UTF-8 path")).expect("no NUL");
     let open = || {
-        let context = pinyin_capi::pinyin_init(system.as_ptr(), user.as_ptr());
+        let context = unsafe { pinyin_capi::pinyin_init(system.as_ptr(), user.as_ptr()) };
         assert!(!context.is_null());
         context
     };
     let context = open();
     install();
-    pinyin_capi::pinyin_fini(context);
+    unsafe { pinyin_capi::pinyin_fini(context) };
     assert_eq!(numeric_locale().as_c_str(), c"C", "after fini");
     install();
     let context = open();
     assert_eq!(numeric_locale().as_c_str(), c"C", "after init");
     let installed = install();
-    assert!(!pinyin_capi::pinyin_save(context));
+    assert!(!unsafe { pinyin_capi::pinyin_save(context) });
     assert_eq!(numeric_locale(), installed, "after an unmodified save");
-    let import = pinyin_capi::pinyin_begin_add_phrases(context, 7);
-    assert!(pinyin_capi::pinyin_iterator_add_phrase(
-        import,
-        c"你好".as_ptr(),
-        c"nihao".as_ptr(),
-        1
-    ));
-    pinyin_capi::pinyin_end_add_phrases(import);
+    let import = unsafe { pinyin_capi::pinyin_begin_add_phrases(context, 7) };
+    assert!(unsafe {
+        pinyin_capi::pinyin_iterator_add_phrase(import, c"你好".as_ptr(), c"nihao".as_ptr(), 1)
+    });
+    unsafe { pinyin_capi::pinyin_end_add_phrases(import) };
     install();
-    assert!(pinyin_capi::pinyin_save(context));
+    assert!(unsafe { pinyin_capi::pinyin_save(context) });
     assert_eq!(numeric_locale().as_c_str(), c"C", "after a modified save");
-    pinyin_capi::pinyin_fini(context);
+    unsafe { pinyin_capi::pinyin_fini(context) };
 }

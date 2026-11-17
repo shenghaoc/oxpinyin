@@ -29,8 +29,12 @@ use crate::types::ZhuyinContext;
 /// implements. If that law cannot be reproduced exactly for a keyboard, the
 /// gap is registered under the existing `FORCE_TONE on double-pinyin/zhuyin
 /// schemes` divergence class rather than silently absorbed.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `systemdir` and `userdir` are strings.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_init(
+pub unsafe extern "C" fn zhuyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut ZhuyinContext {
@@ -99,8 +103,14 @@ fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Pa
 /// handed out by `zhuyin_init`) returns at once: the pin deletes the freed
 /// context's members again (`zhuyin.cpp:741-757`), a double free that kills
 /// it with SIGSEGV (register row 105, class (b)).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies. After the call `context` is dangling: only the two functions that the handle rule
+/// names may receive it again.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
+pub unsafe extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     // One step: the registry held the address and this call removed it, so
     // of two calls on one context only the first goes on to free it.
     if context.is_null() || !crate::live::unregister(context) {
@@ -129,8 +139,13 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
 ///
 /// The §4 semantics: `false` when there is no user directory or nothing
 /// changed since the last save; `true` after a dirty save.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
+pub unsafe extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     if context.is_null() {
         return false;
     }

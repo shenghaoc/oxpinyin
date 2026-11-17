@@ -3,6 +3,11 @@
 //! the prefix-seeded sentence guess — driven black-box through the
 //! re-exported symbols against the `fixtures/w3` mini tables.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
@@ -61,24 +66,24 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        pinyin_free_instance(self.instance);
-        pinyin_fini(self.context);
+        unsafe { pinyin_free_instance(self.instance) };
+        unsafe { pinyin_fini(self.context) };
     }
 }
 
 fn segment(fixture: &Fixture, sentence: &str) -> bool {
-    pinyin_phrase_segment(fixture.instance, cstr(sentence).as_ptr())
+    unsafe { pinyin_phrase_segment(fixture.instance, cstr(sentence).as_ptr()) }
 }
 
 fn n_phrase(fixture: &Fixture) -> u32 {
     let mut num: u32 = 0;
-    assert!(pinyin_get_n_phrase(fixture.instance, &raw mut num));
+    assert!(unsafe { pinyin_get_n_phrase(fixture.instance, &raw mut num) });
     num
 }
 
 fn phrase_token(fixture: &Fixture, index: u32) -> Option<u32> {
     let mut token: pinyin_capi::PhraseTokenT = 0;
-    if pinyin_get_phrase_token(fixture.instance, index, &raw mut token) {
+    if unsafe { pinyin_get_phrase_token(fixture.instance, index, &raw mut token) } {
         Some(token)
     } else {
         None
@@ -112,11 +117,7 @@ fn segment_two_adjacent_phrases() {
 
     // Out-of-range: false with the out-param zeroed.
     let mut token: pinyin_capi::PhraseTokenT = 0xBEEF;
-    assert!(!pinyin_get_phrase_token(
-        fixture.instance,
-        4,
-        &raw mut token
-    ));
+    assert!(!unsafe { pinyin_get_phrase_token(fixture.instance, 4, &raw mut token) });
     assert_eq!(token, 0, "zeroed before the bounds check");
 }
 
@@ -143,10 +144,7 @@ fn failed_match_keeps_the_sized_all_null_array() {
 
     // Invalid UTF-8: upstream's g_return_val_if_fail gate answers false.
     let invalid = [0xFF, 0xFE, 0x00];
-    assert!(!pinyin_phrase_segment(
-        fixture.instance,
-        invalid.as_ptr().cast::<c_char>()
-    ));
+    assert!(!unsafe { pinyin_phrase_segment(fixture.instance, invalid.as_ptr().cast::<c_char>()) });
 }
 
 /// A fresh instance reports zero phrases; `pinyin_reset` clears the
@@ -159,7 +157,7 @@ fn reset_clears_the_phrase_result() {
     assert!(segment(&fixture, "你好"));
     assert_eq!(n_phrase(&fixture), 2);
 
-    assert!(pinyin_reset(fixture.instance));
+    assert!(unsafe { pinyin_reset(fixture.instance) });
     assert_eq!(n_phrase(&fixture), 0, "reset clears the phrase result");
     assert_eq!(phrase_token(&fixture, 0), None, "false past the end");
 }
@@ -174,39 +172,28 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
     let fixture = Fixture::new("phrase-plain");
     let nihao = cstr("nihao");
     assert_eq!(
-        pinyin_parse_more_full_pinyins(fixture.instance, nihao.as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(fixture.instance, nihao.as_ptr()) },
         5
     );
     // The union flow: guess before choose — sort option 0x1e, the
     // pipeline tests' option.
-    assert!(pinyin_guess_candidates(fixture.instance, 0, 0x1e));
+    assert!(unsafe { pinyin_guess_candidates(fixture.instance, 0, 0x1e) });
     let mut candidate: *mut LookupCandidate = std::ptr::null_mut();
-    assert!(pinyin_get_candidate(
-        fixture.instance,
-        0,
-        &raw mut candidate
-    ));
-    assert!(pinyin_choose_candidate(fixture.instance, 0, candidate) > 0);
-    assert!(pinyin_capi::pinyin_guess_sentence(fixture.instance));
-    assert!(pinyin_train(fixture.instance, 0));
+    assert!(unsafe { pinyin_get_candidate(fixture.instance, 0, &raw mut candidate) });
+    assert!(unsafe { pinyin_choose_candidate(fixture.instance, 0, candidate) } > 0);
+    assert!(unsafe { pinyin_capi::pinyin_guess_sentence(fixture.instance) });
+    assert!(unsafe { pinyin_train(fixture.instance, 0) });
 
     let mut num: u32 = 0;
-    assert!(pinyin_guess_predicted_candidates(
-        fixture.instance,
-        cstr("你").as_ptr()
-    ));
-    assert!(pinyin_get_n_candidate(fixture.instance, &raw mut num));
+    assert!(unsafe { pinyin_guess_predicted_candidates(fixture.instance, cstr("你").as_ptr()) });
+    assert!(unsafe { pinyin_get_n_candidate(fixture.instance, &raw mut num) });
     assert!(num > 0, "the planted bigram predicts rows");
 
     for index in 0..num {
         let mut row: *mut LookupCandidate = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(fixture.instance, index, &raw mut row));
+        assert!(unsafe { pinyin_get_candidate(fixture.instance, index, &raw mut row) });
         let mut kind = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
-        assert!(pinyin_get_candidate_type(
-            fixture.instance,
-            row,
-            &raw mut kind
-        ));
+        assert!(unsafe { pinyin_get_candidate_type(fixture.instance, row, &raw mut kind) });
         assert_ne!(
             kind,
             lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
@@ -216,14 +203,15 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
 
     // A prefix with no dictionary suffix: the plain variant answers
     // false; the punctuated entry discards that retval and answers true.
-    assert!(!pinyin_guess_predicted_candidates(
-        fixture.instance,
-        cstr("abyss").as_ptr()
-    ));
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        fixture.instance,
-        cstr("abyss").as_ptr()
-    ));
+    assert!(!unsafe {
+        pinyin_guess_predicted_candidates(fixture.instance, cstr("abyss").as_ptr())
+    });
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(
+            fixture.instance,
+            cstr("abyss").as_ptr(),
+        )
+    });
 }
 
 /// The prefix-seeded sentence guess: parses a composition first, then
@@ -234,16 +222,15 @@ fn prefix_seeded_sentence_guess() {
     let fixture = Fixture::new("phrase-prefix");
     let nihao = cstr("nihao");
     assert_eq!(
-        pinyin_parse_more_full_pinyins(fixture.instance, nihao.as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(fixture.instance, nihao.as_ptr()) },
         5
     );
 
-    assert!(pinyin_guess_sentence_with_prefix(
-        fixture.instance,
-        cstr("你好").as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_sentence_with_prefix(fixture.instance, cstr("你好").as_ptr())
+    });
     let mut sentence: *mut c_char = std::ptr::null_mut();
-    assert!(pinyin_get_sentence(fixture.instance, 0, &raw mut sentence));
+    assert!(unsafe { pinyin_get_sentence(fixture.instance, 0, &raw mut sentence) });
     let text = take_sentence(sentence);
     assert!(
         text.contains("你好"),
@@ -253,10 +240,7 @@ fn prefix_seeded_sentence_guess() {
     // No parse yet: the fresh instance has an empty matrix, the decode
     // answers false.
     let fresh = Fixture::new("phrase-prefix-fresh");
-    assert!(!pinyin_guess_sentence_with_prefix(
-        fresh.instance,
-        cstr("你好").as_ptr()
-    ));
+    assert!(!unsafe { pinyin_guess_sentence_with_prefix(fresh.instance, cstr("你好").as_ptr()) });
 }
 
 fn take_sentence(sentence: *mut c_char) -> String {
@@ -360,30 +344,28 @@ fn lookup_tokens_resolves_stored_phrases() {
     let fixture = Fixture::new("dict-lookup");
 
     let mut array = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
+    });
     let tokens = array.elements();
     assert_eq!(tokens.len(), 1, "你好 resolves to one token");
 
     // Reuse the same array: it clears per call. ASCII matches no
     // phrase — and the retval is `SEARCH_OK & retval`, false for a
     // no-hit span (the array still cleared).
-    assert!(!pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("abyss").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(!unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("abyss").as_ptr(), array.array_ptr())
+    });
     assert!(array.elements().is_empty());
 
     // GLib diagnoses a NULL array; the pin still returns the lookup result.
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        std::ptr::null_mut()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(
+            fixture.instance,
+            cstr("你好").as_ptr(),
+            std::ptr::null_mut(),
+        )
+    });
 }
 
 /// `pinyin_token_get_phrase` round-trips the lookup: the token found by
@@ -394,44 +376,38 @@ fn token_get_phrase_round_trips() {
     let fixture = Fixture::new("dict-phrase");
 
     let mut array = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
+    });
     let token = array.elements()[0];
 
     let mut len: u32 = 0;
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
-    assert!(pinyin_token_get_phrase(
-        fixture.instance,
-        token,
-        &raw mut len,
-        &raw mut rendered
-    ));
+    assert!(unsafe {
+        pinyin_token_get_phrase(fixture.instance, token, &raw mut len, &raw mut rendered)
+    });
     assert_eq!(len as usize, 2, "len is the character count");
     assert_eq!(
         take(rendered).as_deref(),
         Some("你好"),
         "the text round-trips"
     );
-    assert!(pinyin_token_get_phrase(
-        fixture.instance,
-        token,
-        std::ptr::null_mut(),
-        &raw mut rendered
-    ));
+    assert!(unsafe {
+        pinyin_token_get_phrase(
+            fixture.instance,
+            token,
+            std::ptr::null_mut(),
+            &raw mut rendered,
+        )
+    });
 
     let unknown = 0x09FF_FFFF;
     len = 0xBEEF;
     let sentinel = std::ptr::dangling_mut::<pinyin_capi::GChar>();
     rendered = sentinel;
-    assert!(!pinyin_token_get_phrase(
-        fixture.instance,
-        unknown,
-        &raw mut len,
-        &raw mut rendered
-    ));
+    assert!(!unsafe {
+        pinyin_token_get_phrase(fixture.instance, unknown, &raw mut len, &raw mut rendered)
+    });
     assert_eq!(len, 0xBEEF, "len untouched");
     assert_eq!(rendered, sentinel, "the string out-param is untouched");
 }
@@ -446,19 +422,13 @@ fn token_pronunciation_surface() {
     let fixture = Fixture::new("dict-pron");
 
     let mut array = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
+    });
     let token = array.elements()[0];
 
     let mut num: u32 = 0;
-    assert!(pinyin_token_get_n_pronunciation(
-        fixture.instance,
-        token,
-        &raw mut num
-    ));
+    assert!(unsafe { pinyin_token_get_n_pronunciation(fixture.instance, token, &raw mut num) });
     assert!(num >= 1);
 
     // A real glib GArray of `u16` chewing-key words. The library
@@ -474,24 +444,14 @@ fn token_pronunciation_surface() {
         )
     };
     assert!(!keys.is_null(), "g_array_new returned null");
-    assert!(pinyin_token_get_nth_pronunciation(
-        fixture.instance,
-        token,
-        0,
-        keys,
-    ));
+    assert!(unsafe { pinyin_token_get_nth_pronunciation(fixture.instance, token, 0, keys,) });
     // SAFETY: keys is live; `len` is glib's public field.
     let keys_len = unsafe { (*keys).len };
     assert!(keys_len >= 2, "你+好: two chewing keys");
 
     // An out-of-range nth answers true with `phrase_length` zeroed keys:
     // the array is emptied first, then appended to.
-    assert!(pinyin_token_get_nth_pronunciation(
-        fixture.instance,
-        token,
-        9,
-        keys,
-    ));
+    assert!(unsafe { pinyin_token_get_nth_pronunciation(fixture.instance, token, 9, keys,) });
     // SAFETY: keys is live; `len` and `data` are glib's public fields.
     let (zeroed_len, zeroed) = unsafe {
         let view = &*keys;
@@ -504,12 +464,7 @@ fn token_pronunciation_surface() {
     assert_eq!(zeroed, vec![0, 0], "past the last reading: zeroed keys");
 
     // An unknown token answers false and leaves the array empty.
-    assert!(!pinyin_token_get_nth_pronunciation(
-        fixture.instance,
-        0x09FF_FFFF,
-        0,
-        keys,
-    ));
+    assert!(!unsafe { pinyin_token_get_nth_pronunciation(fixture.instance, 0x09FF_FFFF, 0, keys) });
     // SAFETY: keys is live; `len` is glib's public field.
     assert_eq!(unsafe { (*keys).len }, 0);
 
@@ -526,45 +481,25 @@ fn token_unigram_read_and_live_item_write() {
     let fixture = Fixture::new("dict-unigram");
 
     let mut array = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
+    });
     let token = array.elements()[0];
 
     let mut freq: u32 = 0;
-    assert!(pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { pinyin_token_get_unigram_frequency(fixture.instance, token, &raw mut freq) });
     let before = freq;
 
-    assert!(pinyin_token_add_unigram_frequency(
-        fixture.instance,
-        token,
-        7
-    ));
-    assert!(pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { pinyin_token_add_unigram_frequency(fixture.instance, token, 7) });
+    assert!(unsafe { pinyin_token_get_unigram_frequency(fixture.instance, token, &raw mut freq) });
     assert_eq!(freq, before + 7, "the live item count increases");
 
     // Absent token: false, and the read stays absent.
     let absent = 0x09FF_FFFF;
-    assert!(!pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        absent,
-        &raw mut freq
-    ));
-    assert!(!pinyin_token_add_unigram_frequency(
-        fixture.instance,
-        absent,
-        3
-    ));
+    assert!(!unsafe {
+        pinyin_token_get_unigram_frequency(fixture.instance, absent, &raw mut freq)
+    });
+    assert!(!unsafe { pinyin_token_add_unigram_frequency(fixture.instance, absent, 3) });
 }
 
 #[test]
@@ -574,47 +509,28 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
     };
 
     let fixture = Fixture::new("dict-unigram-zero");
-    let iter = pinyin_begin_add_phrases(fixture.context, 7);
+    let iter = unsafe { pinyin_begin_add_phrases(fixture.context, 7) };
     assert!(!iter.is_null());
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr("网词").as_ptr(),
-        cstr("wang3'ci2").as_ptr(),
-        0,
-    ));
-    pinyin_end_add_phrases(iter);
+    assert!(unsafe {
+        pinyin_iterator_add_phrase(iter, cstr("网词").as_ptr(), cstr("wang3'ci2").as_ptr(), 0)
+    });
+    unsafe { pinyin_end_add_phrases(iter) };
     let mut tokens = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("网词").as_ptr(),
-        tokens.array_ptr(),
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("网词").as_ptr(), tokens.array_ptr())
+    });
     let token = tokens.elements()[0];
     assert_eq!(token >> 24, 7);
     let mut freq = u32::MAX;
-    assert!(pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { pinyin_token_get_unigram_frequency(fixture.instance, token, &raw mut freq) });
     assert_eq!(freq, 0);
     freq = u32::MAX;
-    assert!(!pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        token + 1,
-        &raw mut freq
-    ));
+    assert!(!unsafe {
+        pinyin_token_get_unigram_frequency(fixture.instance, token + 1, &raw mut freq)
+    });
     assert_eq!(freq, 0);
-    assert!(pinyin_token_add_unigram_frequency(
-        fixture.instance,
-        token,
-        7
-    ));
-    assert!(pinyin_token_get_unigram_frequency(
-        fixture.instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { pinyin_token_add_unigram_frequency(fixture.instance, token, 7) });
+    assert!(unsafe { pinyin_token_get_unigram_frequency(fixture.instance, token, &raw mut freq) });
     assert_eq!(freq, 7);
 }
 
@@ -626,26 +542,27 @@ fn phrase_library_load_unload_contract() {
     let fixture = Fixture::new("dict-lib");
 
     assert!(
-        !pinyin_load_phrase_library(fixture.context, 2),
+        !unsafe { pinyin_load_phrase_library(fixture.context, 2) },
         "already loaded"
     );
-    assert!(pinyin_unload_phrase_library(fixture.context, 2));
+    assert!(unsafe { pinyin_unload_phrase_library(fixture.context, 2) });
     assert!(
-        pinyin_unload_phrase_library(fixture.context, 2),
+        unsafe { pinyin_unload_phrase_library(fixture.context, 2) },
         "the pin ignores what `unload` returns: a repeat answers true too"
     );
-    assert!(pinyin_load_phrase_library(fixture.context, 2), "reload");
     assert!(
-        !pinyin_load_phrase_library(fixture.context, 2),
+        unsafe { pinyin_load_phrase_library(fixture.context, 2) },
+        "reload"
+    );
+    assert!(
+        !unsafe { pinyin_load_phrase_library(fixture.context, 2) },
         "loaded again"
     );
 
     // Content survives the cycle: 你好 still resolves.
     let mut array = TokenArray::new();
-    assert!(pinyin_lookup_tokens(
-        fixture.instance,
-        cstr("你好").as_ptr(),
-        array.array_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
+    });
     assert_eq!(array.elements().len(), 1);
 }

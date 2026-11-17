@@ -1,12 +1,17 @@
 //! Import, mask-out and the user index, bigram and file rows.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// Opens and closes `user_dir` once, so that the profile exists.
 fn first_init(user_dir: &Path) {
     let context = init_on(&system_dir(), Some(user_dir));
     assert!(!context.is_null());
-    zhuyin_fini(context);
+    unsafe { zhuyin_fini(context) };
 }
 
 /// A user phrase added again after its library reloads unsaved aborts.
@@ -19,8 +24,8 @@ fn adding_a_user_phrase_again_after_a_reload_aborts() {
             let (context, _instance) = open_with_user(&user_dir.path);
             let reading = "ㄏㄠˇ ㄋㄧˇ".as_bytes();
             assert!(import(context, 7, "好你", reading, 50));
-            assert!(zhuyin_unload_phrase_library(context, 7));
-            assert!(zhuyin_load_phrase_library(context, 7));
+            assert!(unsafe { zhuyin_unload_phrase_library(context, 7) });
+            assert!(unsafe { zhuyin_load_phrase_library(context, 7) });
             import(context, 7, "好你", reading, 50);
         },
     );
@@ -39,7 +44,7 @@ fn an_imported_den_reading_stores_its_key() {
         nth_pronunciation(instance, tokens[0], 0),
         (true, 1, "8414".to_owned())
     );
-    assert!(zhuyin_save(context));
+    assert!(unsafe { zhuyin_save(context) });
     close(context, instance);
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
@@ -72,7 +77,7 @@ fn mask_out_over_an_overlong_user_index_key_aborts() {
             let user_dir = TempUserDir::new("overlong-mask");
             overlong_index_profile(&user_dir.path);
             let (context, _instance) = open_with_user(&user_dir.path);
-            zhuyin_mask_out(context, 0xFFFF_FFFF, 0);
+            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
 }
@@ -85,11 +90,11 @@ fn cursor_guesses_ignore_an_overlong_user_index_key() {
     overlong_index_profile(&user_dir.path);
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
         6
     );
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
-    assert!(zhuyin_guess_candidates_before_cursor(instance, 6));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
+    assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) });
     close(context, instance);
 }
 
@@ -129,7 +134,7 @@ fn adding_a_phrase_whose_index_token_has_other_text_aborts() {
             let user_dir = TempUserDir::new("text-mismatch");
             let (context, instance) = open_with_user(&user_dir.path);
             assert!(import(context, 7, "你們", "ㄋㄧˇ ㄇㄣˊ".as_bytes(), 1));
-            assert!(zhuyin_save(context));
+            assert!(unsafe { zhuyin_save(context) });
             let token = user_tokens(instance, "你們")[0];
             close(context, instance);
             add_after_index(&user_dir.path, &token.to_le_bytes());
@@ -146,7 +151,7 @@ fn mask_out_over_a_non_token_bigram_key_aborts() {
             let user_dir = TempUserDir::new("bigram-key");
             plant_bigram(&user_dir.path, vec![(vec![0, 1], vec![7, 0, 0, 0])]);
             let (context, _instance) = open_with_user(&user_dir.path);
-            zhuyin_mask_out(context, 0xFFFF_FFFF, 0);
+            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
 }
@@ -161,7 +166,7 @@ fn mask_out_over_a_residual_bigram_gram_aborts() {
             let value = [&[7_u8, 0, 0, 0][..], &[0; 8]].concat();
             plant_bigram(&user_dir.path, vec![(vec![1, 0, 0, 0], value)]);
             let (context, _instance) = open_with_user(&user_dir.path);
-            zhuyin_mask_out(context, 0xFFFF_FFFF, 0);
+            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
 }
@@ -177,7 +182,7 @@ fn an_import_after_a_refused_bigram_mask_still_adds() {
     let (context, instance) = open_with_user(&user_dir.path);
     let reading = "ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ".as_bytes();
     assert!(import(context, 1, "你你你你", reading, 5));
-    assert!(!zhuyin_mask_out(context, 0xFFFF_FFFF, 0));
+    assert!(!unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) });
     assert!(import(context, 1, "你你你你", reading, 4));
     close(context, instance);
 }
@@ -217,12 +222,12 @@ fn the_import_reads_a_chewing_reading_up_to_an_invalid_byte() {
 /// Whether the phrase segmenter matched the one-character `龘`, and the token
 /// it stored (`null_token` after a failed match).
 fn segmented_token(instance: *mut ZhuyinInstance) -> (bool, u32) {
-    let matched = zhuyin_phrase_segment(instance, c"龘".as_ptr());
+    let matched = unsafe { zhuyin_phrase_segment(instance, c"龘".as_ptr()) };
     let mut count = UNTOUCHED;
-    assert!(zhuyin_get_n_phrase(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_phrase(instance, &raw mut count) });
     assert_eq!(count, 1);
     let mut token = UNTOUCHED;
-    assert!(zhuyin_get_phrase_token(instance, 0, &raw mut token));
+    assert!(unsafe { zhuyin_get_phrase_token(instance, 0, &raw mut token) });
     (matched, token)
 }
 
@@ -241,7 +246,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
     let [token] = user_tokens(instance, "龘")[..] else {
         panic!("one user token for 龘");
     };
-    assert!(zhuyin_save(context));
+    assert!(unsafe { zhuyin_save(context) });
     close(context, instance);
     let item_file = std::fs::read(user.path.join("user.bin")).expect("user.bin");
     // The sentence-start gram admits the token with all of its mass.

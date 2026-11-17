@@ -8,6 +8,11 @@
 //! `m_begin` (before it). Each case runs with both instances on one
 //! context and again on two contexts over the same system data.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use crate::candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
     zhuyin_get_candidate_type, zhuyin_get_n_candidate,
@@ -33,7 +38,7 @@ impl Pair {
     fn open(same_context: bool) -> Self {
         let (context, producer) = open();
         if same_context {
-            let receiver = zhuyin_alloc_instance(context);
+            let receiver = unsafe { zhuyin_alloc_instance(context) };
             assert!(!receiver.is_null());
             return Self {
                 contexts: vec![context],
@@ -52,17 +57,17 @@ impl Pair {
 
 impl Drop for Pair {
     fn drop(&mut self) {
-        zhuyin_free_instance(self.producer);
-        zhuyin_free_instance(self.receiver);
+        unsafe { zhuyin_free_instance(self.producer) };
+        unsafe { zhuyin_free_instance(self.receiver) };
         for context in &self.contexts {
-            zhuyin_fini(*context);
+            unsafe { zhuyin_fini(*context) };
         }
     }
 }
 
 fn parse(instance: *mut ZhuyinInstance, input: &str) {
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, cstr(input).as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, cstr(input).as_ptr()) },
         input.len()
     );
 }
@@ -70,13 +75,13 @@ fn parse(instance: *mut ZhuyinInstance, input: &str) {
 /// Every row of `instance`'s list with its type.
 fn rows(instance: *mut ZhuyinInstance) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t)> {
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     (0..count)
         .map(|index| {
             let mut row = std::ptr::null_mut();
-            assert!(zhuyin_get_candidate(instance, index, &raw mut row));
+            assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut row) });
             let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-            assert!(zhuyin_get_candidate_type(instance, row, &raw mut kind));
+            assert!(unsafe { zhuyin_get_candidate_type(instance, row, &raw mut kind) });
             (row, kind)
         })
         .collect()
@@ -88,15 +93,15 @@ fn rows(instance: *mut ZhuyinInstance) -> Vec<(*mut LookupCandidate, lookup_cand
 fn a_best_match_row_answers_the_receivers_matrix_end(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
     parse(pair.producer, "su3cl3");
-    assert!(zhuyin_guess_sentence(pair.producer));
-    assert!(zhuyin_guess_candidates_after_cursor(pair.producer, 0));
+    assert!(unsafe { zhuyin_guess_sentence(pair.producer) });
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(pair.producer, 0) });
     let (row, _) = rows(pair.producer)
         .into_iter()
         .find(|(_, kind)| *kind == lookup_candidate_type_t::BEST_MATCH_CANDIDATE)
         .expect("a sentence row");
     parse(pair.receiver, "su3");
-    assert_eq!(zhuyin_choose_candidate(pair.receiver, 0, row), 3);
-    assert!(!zhuyin_clear_constraint(pair.receiver, 0));
+    assert_eq!(unsafe { zhuyin_choose_candidate(pair.receiver, 0, row) }, 3);
+    assert!(!unsafe { zhuyin_clear_constraint(pair.receiver, 0) });
 }
 
 /// An after-cursor row forces its span on the receiver and answers its own
@@ -114,7 +119,7 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
     let pair = Pair::open(same_context);
     parse(pair.producer, "su3cl3");
     parse(pair.receiver, "su3cl3");
-    assert!(zhuyin_guess_candidates_after_cursor(pair.producer, 0));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(pair.producer, 0) });
     let after: Vec<_> = rows(pair.producer)
         .into_iter()
         .filter(|(_, kind)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR)
@@ -124,31 +129,34 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
     // The pin answers the row's own `m_end` whatever the caller's offset.
     let ends: Vec<_> = after
         .iter()
-        .map(|&row| zhuyin_choose_candidate(pair.receiver, 9, row))
+        .map(|&row| unsafe { zhuyin_choose_candidate(pair.receiver, 9, row) })
         .collect();
     assert!(ends.iter().all(|&end| end == 3 || end == 6), "{ends:?}");
-    assert!(zhuyin_clear_constraint(pair.receiver, 0));
-    assert!(!zhuyin_clear_constraint(pair.producer, 0));
+    assert!(unsafe { zhuyin_clear_constraint(pair.receiver, 0) });
+    assert!(!unsafe { zhuyin_clear_constraint(pair.producer, 0) });
 
     let whole = after[ends
         .iter()
         .position(|&end| end == 6)
         .expect("a two-key row")];
-    let short = zhuyin_alloc_instance(*pair.contexts.last().expect("a context"));
+    let short = unsafe { zhuyin_alloc_instance(*pair.contexts.last().expect("a context")) };
     parse(short, "su3");
-    assert_eq!(zhuyin_choose_candidate(short, 0, whole), 6);
-    assert!(!zhuyin_clear_constraint(short, 0));
-    zhuyin_free_instance(short);
+    assert_eq!(unsafe { zhuyin_choose_candidate(short, 0, whole) }, 6);
+    assert!(!unsafe { zhuyin_clear_constraint(short, 0) });
+    unsafe { zhuyin_free_instance(short) };
 
     let one_key = after[ends
         .iter()
         .position(|&end| end == 3)
         .expect("a one-key row")];
-    let unspellable = zhuyin_alloc_instance(*pair.contexts.last().expect("a context"));
+    let unspellable = unsafe { zhuyin_alloc_instance(*pair.contexts.last().expect("a context")) };
     parse(unspellable, "a83");
-    assert_eq!(zhuyin_choose_candidate(unspellable, 0, one_key), 3);
-    assert!(!zhuyin_clear_constraint(unspellable, 0));
-    zhuyin_free_instance(unspellable);
+    assert_eq!(
+        unsafe { zhuyin_choose_candidate(unspellable, 0, one_key) },
+        3
+    );
+    assert!(!unsafe { zhuyin_clear_constraint(unspellable, 0) });
+    unsafe { zhuyin_free_instance(unspellable) };
 }
 
 /// A before-cursor row answers its own `m_begin` on the receiver
@@ -158,17 +166,17 @@ fn a_before_cursor_row_answers_its_begin(#[values(true, false)] same_context: bo
     let pair = Pair::open(same_context);
     parse(pair.producer, "su3cl3");
     parse(pair.receiver, "su3cl3");
-    assert!(zhuyin_guess_candidates_before_cursor(pair.producer, 6));
+    assert!(unsafe { zhuyin_guess_candidates_before_cursor(pair.producer, 6) });
     let begins: Vec<_> = rows(pair.producer)
         .into_iter()
         .filter(|(_, kind)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR)
-        .map(|(row, _)| zhuyin_choose_candidate(pair.receiver, 9, row))
+        .map(|(row, _)| unsafe { zhuyin_choose_candidate(pair.receiver, 9, row) })
         .collect();
     assert!(!begins.is_empty());
     assert!(
         begins.iter().all(|&begin| begin == 0 || begin == 3),
         "{begins:?}"
     );
-    assert!(!zhuyin_clear_constraint(pair.producer, 0));
-    assert!(!zhuyin_clear_constraint(pair.producer, 3));
+    assert!(!unsafe { zhuyin_clear_constraint(pair.producer, 0) });
+    assert!(!unsafe { zhuyin_clear_constraint(pair.producer, 3) });
 }

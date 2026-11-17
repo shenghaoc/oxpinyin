@@ -14,8 +14,13 @@ use crate::types::{ZhuyinContext, ZhuyinInstance};
 /// ```
 ///
 /// Returns NULL on failure or null context.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
+pub unsafe extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
     if context.is_null() {
         return ptr::null_mut();
     }
@@ -39,8 +44,13 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
 /// ```c
 /// void zhuyin_free_instance(zhuyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies. After the call `instance` is dangling, and so is every pointer borrowed from it.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
+pub unsafe extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
     if instance.is_null() {
         return;
     }
@@ -58,8 +68,13 @@ pub extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
 /// ```c
 /// bool zhuyin_reset(zhuyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
+pub unsafe extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }

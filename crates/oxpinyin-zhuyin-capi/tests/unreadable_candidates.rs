@@ -1,5 +1,9 @@
 //! C API regressions for a searched token whose phrase item is absent.
 #![allow(unsafe_code)]
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
 
 use std::ffi::CString;
 use std::ptr;
@@ -24,7 +28,7 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
     let (system, user) = fixture::dirs(case);
     let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
     let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
-    let context = zhuyin_init(path.as_ptr(), user_path.as_ptr());
+    let context = unsafe { zhuyin_init(path.as_ptr(), user_path.as_ptr()) };
     assert!(!context.is_null());
     // SAFETY: context is a live C API handle.
     let instance = unsafe { zhuyin_alloc_instance(context.cast()) };
@@ -36,12 +40,12 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
     );
     let instance = instance.cast();
     if before_cursor {
-        assert!(zhuyin_guess_candidates_before_cursor(instance, 3));
+        assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 3) });
     } else {
-        assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+        assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     }
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(
         count,
         u32::from(matches!(
@@ -51,31 +55,29 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
     );
     if count == 1 {
         let mut row = ptr::null_mut();
-        assert!(zhuyin_get_candidate(instance, 0, &raw mut row));
+        assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
-        assert!(zhuyin_capi::zhuyin_get_candidate_type(
-            instance,
-            row,
-            row_type.as_mut_ptr()
-        ));
+        assert!(unsafe {
+            zhuyin_capi::zhuyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+        });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };
         assert_eq!(row_type as i32, if before_cursor { 3 } else { 2 });
         let mut string = c"sentinel".as_ptr();
-        assert!(zhuyin_get_candidate_string(instance, row, &raw mut string));
+        assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
         if matches!(case, fixture::Case::Mixed) {
             assert!(!string.is_null());
         } else {
             assert!(string.is_null());
             assert_eq!(
-                zhuyin_choose_candidate(instance, 0, row),
+                unsafe { zhuyin_choose_candidate(instance, 0, row) },
                 if before_cursor { 0 } else { 3 }
             );
         }
     }
     // SAFETY: the C API instance is live and freed exactly once.
     unsafe { zhuyin_free_instance(instance.cast()) };
-    zhuyin_fini(context);
+    unsafe { zhuyin_fini(context) };
 }
 
 #[test]
@@ -119,7 +121,7 @@ fn a_library_mask_does_not_read_extension_rows() {
         let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
         let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
         let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
-        let context = zhuyin_init(path.as_ptr(), user_path.as_ptr());
+        let context = unsafe { zhuyin_init(path.as_ptr(), user_path.as_ptr()) };
         assert!(!context.is_null());
         if unload {
             // SAFETY: context is a live C API handle.
@@ -135,22 +137,22 @@ fn a_library_mask_does_not_read_extension_rows() {
         );
         let instance = instance.cast();
         assert!(
-            zhuyin_guess_candidates_after_cursor(instance, 0),
+            unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) },
             "unload {unload}"
         );
         let mut count = u32::MAX;
-        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         assert_eq!(count, expected, "unload {unload}");
         if count == 1 {
             let mut row = ptr::null_mut();
-            assert!(zhuyin_get_candidate(instance, 0, &raw mut row));
+            assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
             let mut string = c"sentinel".as_ptr();
-            assert!(zhuyin_get_candidate_string(instance, row, &raw mut string));
+            assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
             assert!(string.is_null());
         }
         // SAFETY: the C API instance is live and freed exactly once.
         unsafe { zhuyin_free_instance(instance.cast()) };
-        zhuyin_fini(context);
+        unsafe { zhuyin_fini(context) };
     }
 }
 

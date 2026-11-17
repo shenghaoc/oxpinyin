@@ -31,8 +31,13 @@ fn parse_full_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
 /// ```
 ///
 /// Returns number of bytes consumed, 0 on failure.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `pinyins` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_parse_more_full_pinyins(
+pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
     instance: *mut ZhuyinInstance,
     pinyins: *const c_char,
 ) -> usize {
@@ -56,8 +61,13 @@ pub extern "C" fn zhuyin_parse_more_full_pinyins(
 ///
 /// Parses through [`oxpinyin_core::ZhuyinParser`] and drives the session
 /// with the apostrophe-joined full-pinyin spelling.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `chewings` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_parse_more_chewings(
+pub unsafe extern "C" fn zhuyin_parse_more_chewings(
     instance: *mut ZhuyinInstance,
     chewings: *const c_char,
 ) -> usize {
@@ -77,8 +87,13 @@ pub extern "C" fn zhuyin_parse_more_chewings(
 /// ```c
 /// size_t zhuyin_get_parsed_input_length(zhuyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) -> usize {
+pub unsafe extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) -> usize {
     if instance.is_null() {
         return 0;
     }
@@ -99,8 +114,13 @@ pub extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) 
 /// ```
 ///
 /// `key` is a plain `char` value (not a pointer).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `symbols` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_in_chewing_keyboard(
+pub unsafe extern "C" fn zhuyin_in_chewing_keyboard(
     instance: *mut ZhuyinInstance,
     key: std::os::raw::c_char,
     symbols: *mut *mut *mut GChar,
@@ -139,6 +159,11 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use rstest::rstest;
 
     use super::{zhuyin_get_parsed_input_length, zhuyin_parse_more_full_pinyins};
@@ -151,7 +176,7 @@ mod tests {
     #[case::full(crate::parse::zhuyin_parse_more_full_pinyins, "ni3")]
     #[case::chewing(crate::parse::zhuyin_parse_more_chewings, "su3")]
     fn reparse_preserves_candidate_strings_until_guess_or_reset(
-        #[case] parse: extern "C" fn(
+        #[case] parse: unsafe extern "C" fn(
             *mut crate::types::ZhuyinInstance,
             *const std::ffi::c_char,
         ) -> usize,
@@ -165,40 +190,35 @@ mod tests {
 
         let (context, instance) = open();
         assert_eq!(
-            zhuyin_parse_more_full_pinyins(instance, cstr("ni3hao3").as_ptr()),
+            unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("ni3hao3").as_ptr()) },
             7
         );
-        assert!(crate::sentence::zhuyin_guess_candidates_after_cursor(
-            instance, 0
-        ));
+        assert!(unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
         let mut count = 0;
-        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         assert!(count > 0);
         let mut original = ptr::null_mut();
-        assert!(zhuyin_get_candidate(instance, 0, &raw mut original));
+        assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut original) });
         let mut string = ptr::null();
-        assert!(zhuyin_get_candidate_string(
-            instance,
-            original,
-            &raw mut string
-        ));
+        assert!(unsafe { zhuyin_get_candidate_string(instance, original, &raw mut string) });
         assert!(!string.is_null());
         // SAFETY: the freshly guessed candidate owns a NUL-terminated string.
         let expected = unsafe { CStr::from_ptr(string) }.to_owned();
 
-        assert_eq!(parse(instance, cstr(input).as_ptr()), input.len());
+        assert_eq!(
+            unsafe { parse(instance, cstr(input).as_ptr()) },
+            input.len()
+        );
         let mut after = 0;
-        assert!(zhuyin_get_n_candidate(instance, &raw mut after));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, count, "a reparse preserves the original list");
         let mut current = ptr::null_mut();
-        assert!(zhuyin_get_candidate(instance, 0, &raw mut current));
+        assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
         assert_eq!(current, original);
         let mut current_string = ptr::null();
-        assert!(zhuyin_get_candidate_string(
-            instance,
-            original,
-            &raw mut current_string
-        ));
+        assert!(unsafe {
+            zhuyin_get_candidate_string(instance, original, &raw mut current_string)
+        });
         assert_eq!(current_string, string);
         // SAFETY: parsing has preserved the original snapshot, as checked above;
         // no guess or reset has invalidated either saved pointer.
@@ -206,15 +226,9 @@ mod tests {
 
         // A successful guess replaces the old list with the reparsed input's
         // candidates. Read only newly obtained pointers after this boundary.
-        assert!(crate::sentence::zhuyin_guess_candidates_after_cursor(
-            instance, 0
-        ));
-        assert!(zhuyin_get_candidate(instance, 0, &raw mut current));
-        assert!(zhuyin_get_candidate_string(
-            instance,
-            current,
-            &raw mut current_string
-        ));
+        assert!(unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
+        assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
+        assert!(unsafe { zhuyin_get_candidate_string(instance, current, &raw mut current_string) });
         assert_ne!(
             // SAFETY: this pointer comes from the new candidate list.
             unsafe { CStr::from_ptr(current_string) },
@@ -222,30 +236,26 @@ mod tests {
         );
 
         // Even a refused empty-input guess invalidates the preceding list.
-        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         assert!(count > 0);
-        assert_eq!(parse(instance, cstr("").as_ptr()), 0);
-        assert!(zhuyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(unsafe { parse(instance, cstr("").as_ptr()) }, 0);
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, count);
-        assert!(!crate::sentence::zhuyin_guess_candidates_after_cursor(
-            instance, 0
-        ));
-        assert!(zhuyin_get_n_candidate(instance, &raw mut after));
+        assert!(!unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, 0);
-        assert!(!zhuyin_get_candidate(instance, 0, &raw mut current));
+        assert!(!unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
         assert!(current.is_null());
 
         assert_eq!(
-            zhuyin_parse_more_full_pinyins(instance, cstr("ni3hao3").as_ptr()),
+            unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("ni3hao3").as_ptr()) },
             7
         );
-        assert!(crate::sentence::zhuyin_guess_candidates_after_cursor(
-            instance, 0
-        ));
-        assert!(crate::instance::zhuyin_reset(instance));
-        assert!(zhuyin_get_n_candidate(instance, &raw mut after));
+        assert!(unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
+        assert!(unsafe { crate::instance::zhuyin_reset(instance) });
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, 0);
-        assert!(!zhuyin_get_candidate(instance, 0, &raw mut current));
+        assert!(!unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
         assert!(current.is_null());
         close(context, instance);
     }
@@ -276,13 +286,13 @@ mod tests {
         let (context, instance) = open();
         let input = cstr("su3cl3");
         assert_eq!(
-            super::zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            unsafe { super::zhuyin_parse_more_chewings(instance, input.as_ptr()) },
             6
         );
         assert!(if before {
-            zhuyin_guess_candidates_before_cursor(instance, 6)
+            unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) }
         } else {
-            zhuyin_guess_candidates_after_cursor(instance, 3)
+            unsafe { zhuyin_guess_candidates_after_cursor(instance, 3) }
         });
         let (index, token) = {
             // SAFETY: live instance immediately after the guess.
@@ -296,17 +306,19 @@ mod tests {
             (index, inst.core.dict.tokens_for_text("好")[0])
         };
         let mut original = ptr::null_mut();
-        assert!(zhuyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small index"),
-            &raw mut original
-        ));
+        assert!(unsafe {
+            zhuyin_get_candidate(
+                instance,
+                u32::try_from(index).expect("small index"),
+                &raw mut original,
+            )
+        });
         let reparsed = cstr(reparse);
         assert_eq!(
             if full_pinyin {
-                super::zhuyin_parse_more_full_pinyins(instance, reparsed.as_ptr())
+                unsafe { super::zhuyin_parse_more_full_pinyins(instance, reparsed.as_ptr()) }
             } else {
-                super::zhuyin_parse_more_chewings(instance, reparsed.as_ptr())
+                unsafe { super::zhuyin_parse_more_chewings(instance, reparsed.as_ptr()) }
             },
             consumed
         );
@@ -317,7 +329,7 @@ mod tests {
         // choose still sees this same token and span (zhuyin.cpp:1646-1666).
         for _ in 0..2 {
             assert_eq!(
-                zhuyin_choose_candidate(instance, if before { 6 } else { 3 }, original),
+                unsafe { zhuyin_choose_candidate(instance, if before { 6 } else { 3 }, original) },
                 if before { 3 } else { 6 }
             );
             assert_eq!(
@@ -333,8 +345,8 @@ mod tests {
                 }
             );
         }
-        assert!(!zhuyin_clear_constraint(instance, 0));
-        assert_eq!(zhuyin_clear_constraint(instance, 3), !refused);
+        assert!(!unsafe { zhuyin_clear_constraint(instance, 0) });
+        assert_eq!(unsafe { zhuyin_clear_constraint(instance, 3) }, !refused);
         close(context, instance);
     }
 
@@ -355,13 +367,13 @@ mod tests {
         let (context, instance) = open();
         let input = cstr("su3cl3");
         assert_eq!(
-            super::zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            unsafe { super::zhuyin_parse_more_chewings(instance, input.as_ptr()) },
             6
         );
         assert!(if before {
-            zhuyin_guess_candidates_before_cursor(instance, 6)
+            unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) }
         } else {
-            zhuyin_guess_candidates_after_cursor(instance, 3)
+            unsafe { zhuyin_guess_candidates_after_cursor(instance, 3) }
         });
         let index = {
             // SAFETY: live instance immediately after the guess.
@@ -373,19 +385,27 @@ mod tests {
                 .expect("好 over the second key")
         };
         let mut row = ptr::null_mut();
-        assert!(zhuyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small index"),
-            &raw mut row
-        ));
+        assert!(unsafe {
+            zhuyin_get_candidate(
+                instance,
+                u32::try_from(index).expect("small index"),
+                &raw mut row,
+            )
+        });
         let expected = if before { 3 } else { 6 };
-        assert_eq!(zhuyin_choose_candidate(instance, 0, row), expected);
+        assert_eq!(
+            unsafe { zhuyin_choose_candidate(instance, 0, row) },
+            expected
+        );
         let shorter = cstr("83cl3");
         assert_eq!(
-            super::zhuyin_parse_more_chewings(instance, shorter.as_ptr()),
+            unsafe { super::zhuyin_parse_more_chewings(instance, shorter.as_ptr()) },
             5
         );
-        assert_eq!(zhuyin_choose_candidate(instance, 0, row), expected);
+        assert_eq!(
+            unsafe { zhuyin_choose_candidate(instance, 0, row) },
+            expected
+        );
         close(context, instance);
     }
 
@@ -415,10 +435,13 @@ mod tests {
 
         let text = cstr(input);
         assert_eq!(
-            zhuyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            unsafe { zhuyin_parse_more_full_pinyins(instance, text.as_ptr()) },
             consumed
         );
-        assert_eq!(zhuyin_get_parsed_input_length(instance), parsed_length);
+        assert_eq!(
+            unsafe { zhuyin_get_parsed_input_length(instance) },
+            parsed_length
+        );
 
         close(context, instance);
     }

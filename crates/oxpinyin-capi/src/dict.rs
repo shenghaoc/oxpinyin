@@ -44,8 +44,14 @@ use crate::types::{GChar, GUint, PhraseTokenT, PinyinInstance};
 /// `true` exactly when the span matched at least one stored phrase,
 /// `false` for a no-hit span (the array still cleared). Unloaded
 /// libraries contribute nothing.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `phrase` is a
+/// string. The serial-calls rule applies. `tokenarray` is NULL or a live GLib `GArray` whose
+/// element size is four bytes (`phrase_token_t`).
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_lookup_tokens(
+pub unsafe extern "C" fn pinyin_lookup_tokens(
     instance: *mut PinyinInstance,
     phrase: *const c_char,
     tokenarray: *mut crate::types::GArray,
@@ -128,8 +134,13 @@ pub extern "C" fn pinyin_lookup_tokens(
 /// `false` for an unknown token or an unloaded library, with both
 /// out-params untouched; both out-params are optional; the string is
 /// caller-owned (`g_free`), and NULL for stored text GLib cannot convert.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `len` and `utf8_str`
+/// are out-parameters. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_token_get_phrase(
+pub unsafe extern "C" fn pinyin_token_get_phrase(
     instance: *mut PinyinInstance,
     token: PhraseTokenT,
     len: *mut GUint,
@@ -184,8 +195,13 @@ pub extern "C" fn pinyin_token_get_phrase(
 ///
 /// `false` for an unknown token or an unloaded library; `*num` is
 /// zeroed before the dispatch, so a `false` still delivers 0.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_token_get_n_pronunciation(
+pub unsafe extern "C" fn pinyin_token_get_n_pronunciation(
     instance: *mut PinyinInstance,
     token: PhraseTokenT,
     num: *mut GUint,
@@ -273,8 +289,14 @@ unsafe fn append_stored_words(
 /// uninitialised stack buffer held (`pinyin.cpp:2808-2817`, the return
 /// value of `get_nth_pronunciation` ignored): zeroed keys, class (b) for
 /// the content (register row 51).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies. `keys` is NULL or a live GLib `GArray` whose element size is two bytes
+/// (`ChewingKey`).
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_token_get_nth_pronunciation(
+pub unsafe extern "C" fn pinyin_token_get_nth_pronunciation(
     instance: *mut PinyinInstance,
     token: PhraseTokenT,
     nth: GUint,
@@ -364,8 +386,13 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
 ///
 /// `*freq` is zeroed before the dispatch, so a `false` still delivers
 /// 0 (`pinyin.cpp:2821-2831`). The count comes from the live phrase item.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `freq` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_token_get_unigram_frequency(
+pub unsafe extern "C" fn pinyin_token_get_unigram_frequency(
     instance: *mut PinyinInstance,
     token: PhraseTokenT,
     freq: *mut GUint,
@@ -409,8 +436,13 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
 /// serializes that item. A loaded sub-index takes the facade-total bump
 /// before dispatching to its item, so a missing item can still shift the
 /// denominator (`phrase_index.h:628-635`, `pinyin.cpp:1817`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_token_add_unigram_frequency(
+pub unsafe extern "C" fn pinyin_token_add_unigram_frequency(
     instance: *mut PinyinInstance,
     token: PhraseTokenT,
     delta: GUint,

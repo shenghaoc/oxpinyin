@@ -5,6 +5,11 @@
 //! (`docs/findings/upstream-divergences.md#reproduced-library-aborts-write-no-assertion-line`:
 //! oxpinyin writes no assertion line).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::os::raw::c_char;
 use std::path::Path;
 use std::ptr;
@@ -64,9 +69,9 @@ const CRITICAL: u32 = 8;
 
 /// A fresh instance on `context` with `keys` parsed as chewing keystrokes.
 fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinInstance {
-    let instance = zhuyin_alloc_instance(context);
+    let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
-    zhuyin_parse_more_chewings(instance, cstr(keys).as_ptr());
+    unsafe { zhuyin_parse_more_chewings(instance, cstr(keys).as_ptr()) };
     instance
 }
 
@@ -75,24 +80,24 @@ const SEPARATOR_OPTIONS: u32 = 0x18a;
 
 /// A fresh instance with `text` parsed as full pinyin under `options`.
 fn full_pinyin(context: *mut ZhuyinContext, options: u32, text: &str) -> *mut ZhuyinInstance {
-    assert!(zhuyin_set_options(context, options));
-    let instance = zhuyin_alloc_instance(context);
+    assert!(unsafe { zhuyin_set_options(context, options) });
+    let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
-    zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr());
+    unsafe { zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) };
     instance
 }
 
 /// The sentence getter's answer and text; `None` for an untouched output.
 fn sentence(instance: *mut ZhuyinInstance) -> (bool, Option<String>) {
     let mut text = SEEDED as *mut c_char;
-    let ret = zhuyin_get_sentence(instance, &raw mut text);
+    let ret = unsafe { zhuyin_get_sentence(instance, &raw mut text) };
     let text = (text as usize != SEEDED).then(|| take_sentence(text));
     (ret, text)
 }
 
 fn candidate_at(instance: *mut ZhuyinInstance, index: u32) -> *mut LookupCandidate {
     let mut candidate: *mut LookupCandidate = ptr::null_mut();
-    assert!(zhuyin_get_candidate(instance, index, &raw mut candidate));
+    assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut candidate) });
     candidate
 }
 
@@ -118,7 +123,7 @@ fn keys_hex(array: *mut glib_sys::GArray) -> String {
 fn nth_pronunciation(instance: *mut ZhuyinInstance, token: u32, nth: u32) -> (bool, u32, String) {
     // SAFETY: a fresh GArray of two-byte elements, freed below.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
-    let ret = zhuyin_token_get_nth_pronunciation(instance, token, nth, keys);
+    let ret = unsafe { zhuyin_token_get_nth_pronunciation(instance, token, nth, keys) };
     // SAFETY: the array is live.
     let len = unsafe { (*keys).len };
     let hex = keys_hex(keys);
@@ -132,7 +137,7 @@ fn nth_pronunciation(instance: *mut ZhuyinInstance, token: u32, nth: u32) -> (bo
 fn token_phrase(instance: *mut ZhuyinInstance, token: u32) -> (bool, u32, Option<String>) {
     let mut length = UNTOUCHED;
     let mut text = SEEDED as *mut c_char;
-    let ret = zhuyin_token_get_phrase(instance, token, &raw mut length, &raw mut text);
+    let ret = unsafe { zhuyin_token_get_phrase(instance, token, &raw mut length, &raw mut text) };
     let text = (text as usize != SEEDED).then(|| take_sentence(text));
     (ret, length, text)
 }

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr;
@@ -30,7 +35,7 @@ fn luoma_left_offset_reads_the_unsplit_matrix() {
         .join("../../fixtures/w3")
         .join(oxpinyin_data::DEFAULT_STORE_EXT);
     let system = CString::new(system.as_os_str().as_encoded_bytes()).expect("fixture path");
-    let context = zhuyin_init(system.as_ptr(), ptr::null());
+    let context = unsafe { zhuyin_init(system.as_ptr(), ptr::null()) };
     assert!(!context.is_null());
 
     // SAFETY: The context came from zhuyin_init, the instance comes from
@@ -52,7 +57,7 @@ fn luoma_left_offset_reads_the_unsplit_matrix() {
         zhuyin_free_instance(instance);
         (left, has_middle_key)
     };
-    zhuyin_fini(context);
+    unsafe { zhuyin_fini(context) };
 
     // Pin 074a2219 zhuyin.cpp:1017-1042 fills and fuzzes the parsed xian
     // key over 0..4. Column 2 stays empty, so the backward scan reaches

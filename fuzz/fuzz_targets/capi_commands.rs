@@ -24,6 +24,10 @@
 //! at index 0 only, and the export walk is gated by `has_next`.
 
 #![no_main]
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
 // Scoped exception to this workspace's unsafe_code deny: an FFI-driven
 // harness is the documented reason the fuzz crate uses deny, not forbid.
 #![allow(unsafe_code)]
@@ -130,14 +134,14 @@ fn session() -> &'static Session {
         let user = CString::new(user.to_str().expect("UTF-8 temp path")).expect("no NUL");
         // SAFETY: fresh fixture context over the committed w3 tables and a
         // per-process temp user dir; both outlive the process.
-        let context = pinyin_init(system.as_ptr(), user.as_ptr());
+        let context = unsafe { pinyin_init(system.as_ptr(), user.as_ptr()) };
         assert!(
             !context.is_null(),
             "fixture context must initialize (system dir: {})",
             system_dir.display()
         );
         // SAFETY: `context` is the live context above.
-        let instance = pinyin_alloc_instance(context);
+        let instance = unsafe { pinyin_alloc_instance(context) };
         assert!(!instance.is_null(), "instance must allocate");
         // Store raw pointers for the atexit teardown and register it.
         // SAFETY: single-threaded init; TEARDOWN_* are written exactly
@@ -173,7 +177,7 @@ fuzz_target!(|data: &[u8]| {
     let (context, instance) = (session.context, session.instance);
     // Each fuzz input starts from a clean instance; state still evolves
     // across the commands within one input.
-    pinyin_reset(instance);
+    unsafe { pinyin_reset(instance) };
     let mut cursor = 0;
     while cursor < data.len() {
         let command = data[cursor];
@@ -183,21 +187,23 @@ fuzz_target!(|data: &[u8]| {
             // reset the session state
             0 => {
                 // SAFETY: live instance from the static session.
-                pinyin_reset(instance);
+                unsafe { pinyin_reset(instance) };
             }
             // feed a pinyin string
             1 => {
                 let pinyins = cstring_arg(rest);
                 // SAFETY: live instance; `pinyins` is a valid CString.
-                pinyin_parse_more_full_pinyins(instance, pinyins.as_ptr());
+                unsafe { pinyin_parse_more_full_pinyins(instance, pinyins.as_ptr()) };
             }
             // guess + fetch the sentence (owned string → free)
             2 => {
                 // SAFETY: live instance.
-                if pinyin_guess_sentence(instance) {
+                if unsafe { pinyin_guess_sentence(instance) } {
                     let mut sentence: *mut c_char = null_mut();
                     // SAFETY: live instance; `sentence` is an out-param.
-                    if pinyin_get_sentence(instance, 0, &mut sentence) && !sentence.is_null() {
+                    if unsafe { pinyin_get_sentence(instance, 0, &mut sentence) }
+                        && !sentence.is_null()
+                    {
                         // SAFETY: malloc'd by the ABI, released once here.
                         unsafe { free(sentence.cast()) };
                     }
@@ -207,16 +213,16 @@ fuzz_target!(|data: &[u8]| {
             3 => {
                 let mut count = 0_u32;
                 // SAFETY: live instance; `count` is an out-param.
-                if pinyin_get_n_candidate(instance, &mut count) {
+                if unsafe { pinyin_get_n_candidate(instance, &mut count) } {
                     for index in 0..count.min(8) {
                         let mut candidate: *mut LookupCandidate = null_mut();
                         // SAFETY: live instance; in-range index.
-                        if pinyin_get_candidate(instance, index, &mut candidate)
+                        if unsafe { pinyin_get_candidate(instance, index, &mut candidate) }
                             && !candidate.is_null()
                         {
                             let mut text: *const GChar = null();
                             // SAFETY: `candidate` was just returned by the ABI.
-                            pinyin_get_candidate_string(instance, candidate, &mut text);
+                            unsafe { pinyin_get_candidate_string(instance, candidate, &mut text) };
                             if !text.is_null() {
                                 // SAFETY: borrowed interior pointer from the
                                 // instance snapshot; read-only, never freed.
@@ -228,14 +234,14 @@ fuzz_target!(|data: &[u8]| {
                             let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
                             // SAFETY: `candidate` from the ABI; `kind` is an
                             // out-param.
-                            pinyin_get_candidate_type(instance, candidate, &mut kind);
+                            unsafe { pinyin_get_candidate_type(instance, candidate, &mut kind) };
                             if !matches!(
                                 kind,
                                 lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
                                     | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
                             ) {
                                 // SAFETY: live instance; `candidate` from the ABI.
-                                pinyin_choose_candidate(instance, 0, candidate);
+                                unsafe { pinyin_choose_candidate(instance, 0, candidate) };
                             }
                         }
                     }
@@ -244,15 +250,15 @@ fuzz_target!(|data: &[u8]| {
             // parsed-length accounting
             4 => {
                 // SAFETY: live instance.
-                let _ = pinyin_get_parsed_input_length(instance);
+                let _ = unsafe { pinyin_get_parsed_input_length(instance) };
             }
             // train the current selection, unless the library reports the
             // pin's training assert for it (stale forcing or span)
             5 => {
                 // SAFETY: live instance.
-                if !oxpinyin_train_aborts(instance, 0) {
+                if !unsafe { oxpinyin_train_aborts(instance, 0) } {
                     // SAFETY: live instance.
-                    pinyin_train(instance, 0);
+                    unsafe { pinyin_train(instance, 0) };
                 }
             }
             // config setter incl. out-of-enum discriminants (the pin's
@@ -261,7 +267,7 @@ fuzz_target!(|data: &[u8]| {
                 let scheme = rest.first().copied().unwrap_or(0) as c_int;
                 if scheme != 30 {
                     // SAFETY: live context from the static session.
-                    pinyin_set_double_pinyin_scheme(context, scheme);
+                    unsafe { pinyin_set_double_pinyin_scheme(context, scheme) };
                 }
             }
             // import iterator trio — begin/add/end paired within the command
@@ -271,35 +277,39 @@ fuzz_target!(|data: &[u8]| {
                 let phrase = cstring_arg(&rest[..rest.len() / 2]);
                 let pinyin = cstring_arg(&rest[rest.len() / 2..]);
                 // SAFETY: live context.
-                let iter: *mut ImportIterator = pinyin_begin_add_phrases(context, 0);
+                let iter: *mut ImportIterator = unsafe { pinyin_begin_add_phrases(context, 0) };
                 if !iter.is_null() {
                     // The library reports the pin's import asserts.
-                    if !oxpinyin_import_aborts(iter, phrase.as_ptr(), pinyin.as_ptr()) {
+                    if !unsafe { oxpinyin_import_aborts(iter, phrase.as_ptr(), pinyin.as_ptr()) } {
                         // SAFETY: `iter` was just returned by its begin call.
-                        pinyin_iterator_add_phrase(iter, phrase.as_ptr(), pinyin.as_ptr(), 1);
+                        unsafe {
+                            pinyin_iterator_add_phrase(iter, phrase.as_ptr(), pinyin.as_ptr(), 1)
+                        };
                     }
                     // SAFETY: transfers ownership back exactly once.
-                    pinyin_end_add_phrases(iter);
+                    unsafe { pinyin_end_add_phrases(iter) };
                 }
             }
             // export iterator trio — begin/walk/end paired within the command
             8 => {
                 let index = rest.first().copied().unwrap_or(0) as u32;
                 // SAFETY: live context.
-                let iter: *mut ExportIterator = pinyin_begin_get_phrases(context, index);
+                let iter: *mut ExportIterator = unsafe { pinyin_begin_get_phrases(context, index) };
                 if !iter.is_null() {
                     // SAFETY: `iter` was just returned by its begin call.
-                    while pinyin_iterator_has_next_phrase(iter) {
+                    while unsafe { pinyin_iterator_has_next_phrase(iter) } {
                         let mut phrase: *mut c_char = null_mut();
                         let mut pinyin: *mut c_char = null_mut();
                         let mut freq: c_int = 0;
                         // SAFETY: same live iterator; all out-params are locals.
-                        if pinyin_iterator_get_next_phrase(
-                            iter,
-                            &mut phrase,
-                            &mut pinyin,
-                            &mut freq,
-                        ) {
+                        if unsafe {
+                            pinyin_iterator_get_next_phrase(
+                                iter,
+                                &mut phrase,
+                                &mut pinyin,
+                                &mut freq,
+                            )
+                        } {
                             // SAFETY: malloc'd by the ABI, released once here.
                             unsafe {
                                 if !phrase.is_null() {
@@ -312,20 +322,20 @@ fuzz_target!(|data: &[u8]| {
                         }
                     }
                     // SAFETY: transfers ownership back exactly once.
-                    pinyin_end_get_phrases(iter);
+                    unsafe { pinyin_end_get_phrases(iter) };
                 }
             }
             // constraint clearing at an arbitrary offset
             9 => {
                 let offset = rest.first().copied().unwrap_or(0) as usize;
                 // SAFETY: live instance.
-                pinyin_clear_constraint(instance, offset);
+                unsafe { pinyin_clear_constraint(instance, offset) };
             }
             // second parse flavor feeding the same session
             _ => {
                 let pinyins = cstring_arg(rest);
                 // SAFETY: live instance; `pinyins` is a valid CString.
-                pinyin_parse_more_full_pinyins(instance, pinyins.as_ptr());
+                unsafe { pinyin_parse_more_full_pinyins(instance, pinyins.as_ptr()) };
             }
         }
     }

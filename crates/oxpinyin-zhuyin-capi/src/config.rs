@@ -24,8 +24,16 @@ const TSI_DICTIONARY: u8 = 1;
 /// `ZHUYIN_STANDARD_DVORAK` (7) slot (`zhuyin_parser2.cpp:295`) and every
 /// out-of-enum value (`zhuyin.cpp:736`) abort the process, as upstream does
 /// (register rows 5c and 5d).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme: c_int) -> bool {
+pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
+    context: *mut ZhuyinContext,
+    scheme: c_int,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -54,8 +62,13 @@ pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme:
 /// HANYU (1), LUOMA (2) and `SECONDARY_ZHUYIN` (3) are the schemes; any other
 /// value aborts the process, as `set_scheme`'s `default: abort()` does
 /// (`pinyin_parser2.cpp:398` via `zhuyin.cpp:704`, register row 5d).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_set_full_pinyin_scheme(
+pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
     context: *mut ZhuyinContext,
     scheme: c_int,
 ) -> bool {
@@ -82,8 +95,16 @@ pub extern "C" fn zhuyin_set_full_pinyin_scheme(
 /// bool zhuyin_set_options(zhuyin_context_t * context,
 ///                         pinyin_option_t options);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_set_options(context: *mut ZhuyinContext, options: PinyinOptionT) -> bool {
+pub unsafe extern "C" fn zhuyin_set_options(
+    context: *mut ZhuyinContext,
+    options: PinyinOptionT,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -115,8 +136,17 @@ pub extern "C" fn zhuyin_set_options(context: *mut ZhuyinContext, options: Pinyi
 /// residual total (`ngram.cpp:70`); the reload of each loaded system
 /// library then asserts on one that is a directory (`memory_chunk.h:493`).
 /// The process aborts at each (register rows 84, 85, 86, 87, 94 and 96).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value: u32) -> bool {
+pub unsafe extern "C" fn zhuyin_mask_out(
+    context: *mut ZhuyinContext,
+    mask: u32,
+    value: u32,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -179,8 +209,16 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
 /// bool zhuyin_load_phrase_library(zhuyin_context_t * context,
 ///                                 guint8 index);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index: u8) -> bool {
+pub unsafe extern "C" fn zhuyin_load_phrase_library(
+    context: *mut ZhuyinContext,
+    index: u8,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -229,8 +267,16 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
 /// bool zhuyin_unload_phrase_library(zhuyin_context_t * context,
 ///                                   guint8 index);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, index: u8) -> bool {
+pub unsafe extern "C" fn zhuyin_unload_phrase_library(
+    context: *mut ZhuyinContext,
+    index: u8,
+) -> bool {
     if index >= PHRASE_INDEX_LIBRARY_COUNT {
         // Register row 66, `zhuyin.cpp:381`: `assert`, before the context is
         // read, so a NULL context aborts as well.

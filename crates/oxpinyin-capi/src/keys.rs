@@ -39,8 +39,13 @@ use crate::types::{ChewingKey, GChar, PinyinInstance};
 /// the zero key (`pinyin.cpp:1484`); the probe itself is
 /// `FullPinyinParser2::parse_one_key` over the live option word, with
 /// the `FORCE_TONE` law inside `USE_TONE`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `onepinyin` is a string
+/// and `onekey` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_full_pinyin(
+pub unsafe extern "C" fn pinyin_parse_full_pinyin(
     instance: *mut PinyinInstance,
     onepinyin: *const c_char,
     onekey: *mut ChewingKey,
@@ -92,8 +97,13 @@ pub extern "C" fn pinyin_parse_full_pinyin(
 /// context's live double-pinyin scheme; `FORCE_TONE` demands exactly
 /// three bytes, and a third `1..=5` byte is the tone under `USE_TONE`
 /// (`pinyin_parser2.cpp:405-530`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `onepinyin` is a string
+/// and `onekey` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_double_pinyin(
+pub unsafe extern "C" fn pinyin_parse_double_pinyin(
     instance: *mut PinyinInstance,
     onepinyin: *const c_char,
     onekey: *mut ChewingKey,
@@ -131,8 +141,13 @@ pub extern "C" fn pinyin_parse_double_pinyin(
 /// `pinyin.cpp:1568-1569` — the caller's corrections never reach the
 /// chewing parser). The key is written only on success, like the double
 /// entry.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `onechewing` is a
+/// string and `onekey` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_chewing(
+pub unsafe extern "C" fn pinyin_parse_chewing(
     instance: *mut PinyinInstance,
     onechewing: *const c_char,
     onekey: *mut ChewingKey,
@@ -169,8 +184,13 @@ pub extern "C" fn pinyin_parse_chewing(
 ///
 /// The LUOMA full-pinyin index spelling; the tone digit is appended even
 /// for the first tone (`chewing_key.cpp:91-105`); caller-owned string.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `utf8_str` is an
+/// out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_luoma_pinyin_string(
+pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
@@ -189,8 +209,13 @@ pub extern "C" fn pinyin_get_luoma_pinyin_string(
 ///
 /// The `SECONDARY_ZHUYIN` index spelling; like luoma, the first tone gets
 /// its digit (`chewing_key.cpp:107-121`); caller-owned string.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `utf8_str` is an
+/// out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_secondary_zhuyin_string(
+pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
@@ -251,8 +276,13 @@ fn display_string_getter(
 /// (`pinyin.cpp:2758-2766`). Upstream asserts the tone is zero in the
 /// true branch — a toned initial-only key aborts the pin, and the process
 /// aborts here too (register row 4).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object. `_instance` is not
+/// read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_is_incomplete(
+pub unsafe extern "C" fn pinyin_get_pinyin_is_incomplete(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
 ) -> bool {

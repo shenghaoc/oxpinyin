@@ -1,5 +1,10 @@
 //! Data-table reads that fail or return a partial row.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// A pinyin-table read that fails is a miss on every backend: the search
@@ -18,18 +23,16 @@ fn a_failed_pinyin_table_read_is_a_miss() {
             let key = |text: &str| {
                 let mut key = 0_u16;
                 let text = cstr(text);
-                assert!(pinyin_parse_full_pinyin(
-                    instance,
-                    text.as_ptr(),
-                    (&raw mut key).cast()
-                ));
+                assert!(unsafe {
+                    pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast())
+                });
                 key.to_le_bytes()
             };
             // The complete index key: the packed keys, tones zero.
             let row = [key("ni"), key("hao")].concat();
             assert_eq!(parse(instance, "nihao"), 5);
             oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
-            assert!(pinyin_guess_sentence(instance));
+            assert!(unsafe { pinyin_guess_sentence(instance) });
             assert_eq!(sentence_out(instance, 0), (true, Some("你好".to_owned())));
             close(context, instance);
         },
@@ -51,15 +54,13 @@ fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
             let (context, instance) = open_at(&user.path);
             let mut key = 0_u16;
             let text = cstr("ni");
-            assert!(pinyin_parse_full_pinyin(
-                instance,
-                text.as_ptr(),
-                (&raw mut key).cast()
-            ));
+            assert!(unsafe {
+                pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast())
+            });
             assert_eq!(parse(instance, "nihao"), 5);
             // One read of the row passes: its size check.
             oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 1);
-            pinyin_guess_sentence(instance);
+            unsafe { pinyin_guess_sentence(instance) };
             close(context, instance);
         },
     );
@@ -125,18 +126,14 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
             let (context, instance) = open_at(user);
             let mut key = 0_u16;
             let text = cstr("ni");
-            assert!(pinyin_parse_full_pinyin(
-                instance,
-                text.as_ptr(),
-                (&raw mut key).cast()
-            ));
+            assert!(unsafe {
+                pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast())
+            });
             assert_eq!(parse(instance, "nihao"), 5);
             oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
-            assert!(pinyin_guess_candidates(
-                instance,
-                0,
-                crate::test_support::DEFAULT_SORT
-            ));
+            assert!(unsafe {
+                pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT)
+            });
             close(context, instance);
         },
     );
@@ -157,11 +154,9 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
             let key = |text: &str| {
                 let mut key = 0_u16;
                 let text = cstr(text);
-                assert!(pinyin_parse_full_pinyin(
-                    instance,
-                    text.as_ptr(),
-                    (&raw mut key).cast()
-                ));
+                assert!(unsafe {
+                    pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast())
+                });
                 key.to_le_bytes()
             };
             let row = [key("ni"), key("hao")].concat();
@@ -169,7 +164,7 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
             oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
             // Sort word 0 keeps the longer-candidate row, which walks the
             // rows that extend `ni`.
-            assert!(pinyin_guess_candidates(instance, 0, 0));
+            assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
             close(context, instance);
         },
     );
@@ -221,10 +216,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
             };
             let (context, instance) = open_at(user);
             oxpinyin_store::read_faults::fail_point_read_of(&extensions[1], 0);
-            assert!(pinyin_guess_predicted_candidates(
-                instance,
-                cstr("你").as_ptr()
-            ));
+            assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
             let rows: Vec<String> = capture_rows(instance)
                 .into_iter()
                 .map(|(_, text, _)| text)
@@ -263,7 +255,7 @@ fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
     assert!(!context.is_null());
     let instance = alloc(context);
     assert_eq!(parse(instance, "ba"), 2);
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     assert!(
         capture_rows(instance)
             .iter()
@@ -288,11 +280,9 @@ fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
                 .to_packed();
             assert_eq!(parse(instance, "nihao"), 5);
             let normal_rows = || {
-                assert!(pinyin_guess_candidates(
-                    instance,
-                    0,
-                    crate::test_support::DEFAULT_SORT
-                ));
+                assert!(unsafe {
+                    pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT)
+                });
                 capture_rows(instance)
                     .into_iter()
                     .filter_map(|(kind, text, _)| (kind == NORMAL).then_some(text))
@@ -354,18 +344,16 @@ fn addon_candidate_continuation_uses_its_row_read() {
 
             let context = init_at(&system, user);
             assert!(!context.is_null());
-            assert!(crate::config::pinyin_load_addon_phrase_library(context, 4));
+            assert!(unsafe { crate::config::pinyin_load_addon_phrase_library(context, 4) });
             let instance = alloc(context);
             assert_eq!(parse(instance, "bama"), 4);
             // One default get/check misses. The addon row needs one get,
             // or a check and a body read on Kyoto Cabinet.
             let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
             oxpinyin_store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
-            assert!(pinyin_guess_candidates(
-                instance,
-                0,
-                crate::test_support::DEFAULT_SORT
-            ));
+            assert!(unsafe {
+                pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT)
+            });
             let rows = capture_rows(instance);
             for expected in ["甲", "乙丙"] {
                 assert!(

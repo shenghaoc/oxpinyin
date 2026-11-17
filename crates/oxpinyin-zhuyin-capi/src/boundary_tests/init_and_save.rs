@@ -1,5 +1,10 @@
 //! Init and save: reports, refusals, conf formats and copy faults.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// The GLib level of a warning.
@@ -39,9 +44,9 @@ fn a_save_cut_after_the_chunk_length_word_aborts() {
         "boundary_tests::init_and_save::a_save_cut_after_the_chunk_length_word_aborts",
         |user| {
             let (context, instance) = open_with_user(user);
-            zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr());
-            assert!(zhuyin_guess_sentence(instance));
-            assert!(zhuyin_train(instance));
+            unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
+            assert!(unsafe { zhuyin_guess_sentence(instance) });
+            assert!(unsafe { zhuyin_train(instance) });
             let limit = libc::rlimit {
                 rlim_cur: 4,
                 rlim_max: 4,
@@ -51,7 +56,7 @@ fn a_save_cut_after_the_chunk_length_word_aborts() {
                 libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
                 assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &raw const limit), 0);
             }
-            zhuyin_save(context);
+            unsafe { zhuyin_save(context) };
         },
     );
     let tmp = run.user_dir.join("gb_char.dbin.tmp");
@@ -68,9 +73,9 @@ fn init_refusals_write_the_open_and_load_lines() {
         |user| {
             let context = init_on(&system_dir(), None);
             assert!(!context.is_null());
-            zhuyin_fini(context);
+            unsafe { zhuyin_fini(context) };
             let user_c = cstr(user.to_str().expect("UTF-8 path"));
-            assert!(zhuyin_init(ptr::null(), user_c.as_ptr()).is_null());
+            assert!(unsafe { zhuyin_init(ptr::null(), user_c.as_ptr()) }.is_null());
             assert!(init_on(Path::new("/nonexistent-system-dir"), Some(user)).is_null());
             let system = private_system(user.parent().expect("scratch"));
             std::fs::remove_file(system.join("table.conf")).expect("unlink table.conf");
@@ -102,7 +107,7 @@ fn loading_library_zero_aborts() {
         "boundary_tests::init_and_save::loading_library_zero_aborts",
         || {
             let (context, _instance) = open();
-            zhuyin_load_phrase_library(context, 0);
+            unsafe { zhuyin_load_phrase_library(context, 0) };
         },
     );
 }
@@ -187,15 +192,15 @@ fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {
                 std::fs::create_dir(&user).expect("a fresh user directory");
                 let (context, instance) = open_with_user(&user);
                 let train = |instance| {
-                    zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr());
-                    assert!(zhuyin_guess_sentence(instance));
-                    assert!(zhuyin_train(instance));
+                    unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
+                    assert!(unsafe { zhuyin_guess_sentence(instance) });
+                    assert!(unsafe { zhuyin_train(instance) });
                 };
                 train(instance);
                 let live = user.join("user_phrase_index.bin");
                 let mut before = None;
                 if destination == "live-file" {
-                    assert!(zhuyin_save(context));
+                    assert!(unsafe { zhuyin_save(context) });
                     before = Some(std::fs::read(&live).expect("the live index"));
                     train(instance);
                 } else if destination == "empty-directory" {
@@ -204,7 +209,7 @@ fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {
                 let tmp = user.join("user_phrase_index.bin.tmp");
                 std::fs::create_dir(&tmp).expect("the stale temporary directory");
                 std::fs::write(tmp.join("stale-marker"), marker).expect("the stale marker");
-                assert!(zhuyin_save(context), "{destination}");
+                assert!(unsafe { zhuyin_save(context) }, "{destination}");
                 assert_eq!(tmp.exists(), !moved, "{destination}");
                 assert_eq!(
                     std::fs::read(live.join("stale-marker")).ok().as_deref(),
@@ -239,12 +244,12 @@ fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
 /// Trains one sentence on `context`, so that the next save writes.
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 fn train_once(context: *mut ZhuyinContext) {
-    let instance = zhuyin_alloc_instance(context);
+    let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
-    zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr());
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
-    zhuyin_free_instance(instance);
+    unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_train(instance) });
+    unsafe { zhuyin_free_instance(instance) };
 }
 
 /// The pin's copies assert on a failed destination write
@@ -267,7 +272,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             );
             let (context, _instance) = open_with_user(user);
             train_once(context);
-            assert!(zhuyin_save(context));
+            assert!(unsafe { zhuyin_save(context) });
             let before = user.parent().expect("the child's scratch").join("before");
             std::fs::create_dir(&before).expect("the before directory");
             for (name, bytes) in files_of(user) {
@@ -276,7 +281,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             train_once(context);
             // The first copy writes one record and fails the next.
             oxpinyin_store::copy_faults::fail_destination_write_after(1);
-            zhuyin_save(context);
+            unsafe { zhuyin_save(context) };
         },
     );
     let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));

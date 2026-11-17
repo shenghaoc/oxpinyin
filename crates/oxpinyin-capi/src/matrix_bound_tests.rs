@@ -4,6 +4,11 @@
 //! chewing keys packed from caller memory die in `get_table_index` and the
 //! string renderers (`chewing_key.cpp:28-42`, register row 4).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ptr;
 
 use crate::context::pinyin_fini;
@@ -43,7 +48,7 @@ impl Fixture {
     fn parsed(tag: &str, text: &str, parsed: usize) -> Self {
         let fixture = Self::new(tag);
         assert_eq!(
-            pinyin_parse_more_full_pinyins(fixture.instance, cstr(text).as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(fixture.instance, cstr(text).as_ptr()) },
             parsed
         );
         fixture
@@ -52,8 +57,8 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        pinyin_free_instance(self.instance);
-        pinyin_fini(self.context);
+        unsafe { pinyin_free_instance(self.instance) };
+        unsafe { pinyin_fini(self.context) };
     }
 }
 
@@ -67,7 +72,7 @@ fn a_cursor_over_a_keyless_parse_aborts() {
             let fixture = Fixture::parsed("keyless-cursor", "'''", 3);
             let instance = fixture.instance;
             let mut offset = 0;
-            pinyin_get_pinyin_offset(instance, 1, &raw mut offset);
+            unsafe { pinyin_get_pinyin_offset(instance, 1, &raw mut offset) };
         },
     );
 }
@@ -77,7 +82,7 @@ fn cursor_zero_over_a_keyless_parse_reads_no_column() {
     let fixture = Fixture::parsed("keyless-zero", "'''", 3);
     let instance = fixture.instance;
     let mut offset = usize::MAX;
-    assert!(pinyin_get_pinyin_offset(instance, 0, &raw mut offset));
+    assert!(unsafe { pinyin_get_pinyin_offset(instance, 0, &raw mut offset) });
     assert_eq!(offset, 0);
 }
 
@@ -89,7 +94,7 @@ fn guess_candidates_past_an_early_stopped_parse_aborts() {
         || {
             let fixture = Fixture::parsed("guess-past", "ni,'hao", 2);
             let instance = fixture.instance;
-            pinyin_guess_candidates(instance, 4, DEFAULT_SORT);
+            unsafe { pinyin_guess_candidates(instance, 4, DEFAULT_SORT) };
         },
     );
 }
@@ -100,7 +105,7 @@ fn guess_candidates_at_the_reserved_slot_and_one_past_it_answer() {
     let instance = fixture.instance;
     // Columns 0..=2 exist; offset 3 reads column 2.
     for offset in [2, 3] {
-        let _ = pinyin_guess_candidates(instance, offset, DEFAULT_SORT);
+        let _ = unsafe { pinyin_guess_candidates(instance, offset, DEFAULT_SORT) };
     }
 }
 
@@ -112,7 +117,7 @@ fn the_left_move_past_an_early_stopped_parse_aborts() {
             let fixture = Fixture::parsed("left-past", "ni,'hao", 2);
             let instance = fixture.instance;
             let mut left = 0;
-            pinyin_get_left_pinyin_offset(instance, 4, &raw mut left);
+            unsafe { pinyin_get_left_pinyin_offset(instance, 4, &raw mut left) };
         },
     );
 }
@@ -125,7 +130,7 @@ fn the_right_move_from_past_the_last_column_aborts() {
             let fixture = Fixture::parsed("right-past", "ni,'hao", 2);
             let instance = fixture.instance;
             let mut right = 0;
-            pinyin_get_right_pinyin_offset(instance, 3, &raw mut right);
+            unsafe { pinyin_get_right_pinyin_offset(instance, 3, &raw mut right) };
         },
     );
 }
@@ -138,7 +143,9 @@ fn the_character_offset_past_the_last_column_aborts() {
             let fixture = Fixture::parsed("char-past", "ni,'hao", 2);
             let instance = fixture.instance;
             let mut length = 0;
-            pinyin_get_character_offset(instance, cstr("你").as_ptr(), 3, &raw mut length);
+            unsafe {
+                pinyin_get_character_offset(instance, cstr("你").as_ptr(), 3, &raw mut length)
+            };
         },
     );
 }
@@ -164,12 +171,14 @@ fn the_character_offset_after_a_separator_aborts() {
             // Not `eprintln!`: libtest captures it and the abort drops it.
             writeln!(std::io::stderr(), "walk: {walk:?}").expect("write to stderr");
             let mut length = 0;
-            pinyin_get_character_offset(
-                fixture.instance,
-                cstr("你好").as_ptr(),
-                3,
-                &raw mut length,
-            );
+            unsafe {
+                pinyin_get_character_offset(
+                    fixture.instance,
+                    cstr("你好").as_ptr(),
+                    3,
+                    &raw mut length,
+                )
+            };
         },
     );
     // The init's `open …/user.conf failed.` precedes it without a newline.
@@ -190,7 +199,9 @@ fn a_null_phrase_past_the_last_column_aborts() {
         || {
             let fixture = Fixture::parsed("char-null-phrase", "ni,'hao", 2);
             let mut length = 0;
-            pinyin_get_character_offset(fixture.instance, ptr::null(), 3, &raw mut length);
+            unsafe {
+                pinyin_get_character_offset(fixture.instance, ptr::null(), 3, &raw mut length)
+            };
         },
     );
 }
@@ -199,12 +210,9 @@ fn a_null_phrase_past_the_last_column_aborts() {
 fn a_null_phrase_within_the_columns_answers_false() {
     let fixture = Fixture::parsed("char-null-within", "ni,'hao", 2);
     let mut length = 7;
-    assert!(!pinyin_get_character_offset(
-        fixture.instance,
-        ptr::null(),
-        2,
-        &raw mut length
-    ));
+    assert!(!unsafe {
+        pinyin_get_character_offset(fixture.instance, ptr::null(), 2, &raw mut length)
+    });
     assert_eq!(length, 7);
 }
 
@@ -222,7 +230,7 @@ fn a_key_outside_the_table_dimensions_aborts_every_renderer() {
             let instance = fixture.instance;
             let mut key = out_of_dims_initial();
             let mut text = ptr::null_mut();
-            pinyin_get_pinyin_string(instance, &raw mut key, &raw mut text);
+            unsafe { pinyin_get_pinyin_string(instance, &raw mut key, &raw mut text) };
         },
     );
 }
@@ -235,7 +243,9 @@ fn the_strings_getter_aborts_on_a_key_outside_the_table_dimensions() {
             let fixture = Fixture::new("key-dims-strings");
             let instance = fixture.instance;
             let mut key = ChewingKey { packed: 18 << 7 };
-            pinyin_get_pinyin_strings(instance, &raw mut key, ptr::null_mut(), ptr::null_mut());
+            unsafe {
+                pinyin_get_pinyin_strings(instance, &raw mut key, ptr::null_mut(), ptr::null_mut())
+            };
         },
     );
 }
@@ -248,14 +258,12 @@ fn a_tone_outside_the_table_dimensions_aborts_the_tone_renderers() {
             let fixture = Fixture::new("key-tone");
             let instance = fixture.instance;
             let mut key = ChewingKey { packed: 0 };
-            assert!(pinyin_parse_full_pinyin(
-                instance,
-                cstr("ni").as_ptr(),
-                &raw mut key
-            ));
+            assert!(unsafe {
+                pinyin_parse_full_pinyin(instance, cstr("ni").as_ptr(), &raw mut key)
+            });
             key.packed |= 6 << 12;
             let mut text = ptr::null_mut();
-            pinyin_get_pinyin_string(instance, &raw mut key, &raw mut text);
+            unsafe { pinyin_get_pinyin_string(instance, &raw mut key, &raw mut text) };
         },
     );
 }
@@ -266,16 +274,9 @@ fn the_shengmu_yunmu_getter_does_not_read_the_tone() {
     let fixture = Fixture::new("key-tone-strings");
     let instance = fixture.instance;
     let mut key = ChewingKey { packed: 0 };
-    assert!(pinyin_parse_full_pinyin(
-        instance,
-        cstr("ni").as_ptr(),
-        &raw mut key
-    ));
+    assert!(unsafe { pinyin_parse_full_pinyin(instance, cstr("ni").as_ptr(), &raw mut key) });
     key.packed |= 6 << 12;
-    assert!(pinyin_get_pinyin_strings(
-        instance,
-        &raw mut key,
-        ptr::null_mut(),
-        ptr::null_mut()
-    ));
+    assert!(unsafe {
+        pinyin_get_pinyin_strings(instance, &raw mut key, ptr::null_mut(), ptr::null_mut())
+    });
 }

@@ -1,6 +1,11 @@
 //! The import and export iterators and the compaction at the end of an
 //! import.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// `get_next` on a fresh bigram export iterator of an empty profile
@@ -12,15 +17,17 @@ fn bigram_get_next_aborts_on_an_empty_export() {
         || {
             let user = TempUserDir::new("bigram-get-next");
             let (context, _) = open_at(&user.path);
-            let iter = pinyin_begin_get_bigram_phrases(context);
-            assert!(!pinyin_bigram_iterator_has_next_phrase(iter));
+            let iter = unsafe { pinyin_begin_get_bigram_phrases(context) };
+            assert!(!unsafe { pinyin_bigram_iterator_has_next_phrase(iter) });
             let (mut phrase, mut pinyin, mut count) = (ptr::null_mut(), ptr::null_mut(), 0);
-            pinyin_bigram_iterator_get_next_phrase(
-                iter,
-                &raw mut phrase,
-                &raw mut pinyin,
-                &raw mut count,
-            );
+            unsafe {
+                pinyin_bigram_iterator_get_next_phrase(
+                    iter,
+                    &raw mut phrase,
+                    &raw mut pinyin,
+                    &raw mut count,
+                )
+            };
         },
     );
 }
@@ -34,11 +41,7 @@ fn an_import_reading_parses_with_the_corrections() {
     assert_eq!(import_batch(context, 7, &[("嗯", "egn", 5)]), [true]);
     let token = lookup(instance, "嗯")[0];
     let mut count = UNTOUCHED;
-    assert!(pinyin_token_get_n_pronunciation(
-        instance,
-        token,
-        &raw mut count
-    ));
+    assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
     assert_eq!(count, 1);
     assert_eq!(reading_bytes(instance, token, 0), [0x00, 0x05]);
     close(context, instance);
@@ -56,11 +59,9 @@ fn a_system_reading_count_exports_its_bit_pattern() {
     let key = |text: &str| {
         let mut key = 0_u16;
         let text = cstr(text);
-        assert!(pinyin_parse_full_pinyin(
-            instance,
-            text.as_ptr(),
-            (&raw mut key).cast()
-        ));
+        assert!(unsafe {
+            pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast())
+        });
         key
     };
     let readings = [
@@ -103,14 +104,10 @@ fn a_system_reading_count_exports_its_bit_pattern() {
     ];
     assert_eq!(export_rows_of(context, 1, "你"), before);
     assert_eq!(parse(instance, "ni"), 2);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
-    assert!(pinyin_choose_candidate(instance, 0, row_with(instance, NORMAL, "你")) > 0);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(crate::candidates::pinyin_train(instance, 0));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
+    assert!(unsafe { pinyin_choose_candidate(instance, 0, row_with(instance, NORMAL, "你")) } > 0);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
     let after = [
         ("ni3".to_owned(), -7),
         ("ni2".to_owned(), -1),
@@ -138,23 +135,25 @@ fn the_bigram_export_count_wraps() {
         ],
     );
     let (context, instance) = open_at(&user.path);
-    let iter = pinyin_begin_get_bigram_phrases(context);
+    let iter = unsafe { pinyin_begin_get_bigram_phrases(context) };
     let mut rows = Vec::new();
-    while pinyin_bigram_iterator_has_next_phrase(iter) {
+    while unsafe { pinyin_bigram_iterator_has_next_phrase(iter) } {
         let (mut phrase, mut pinyin, mut count) = (ptr::null_mut(), ptr::null_mut(), 0);
-        pinyin_bigram_iterator_get_next_phrase(
-            iter,
-            &raw mut phrase,
-            &raw mut pinyin,
-            &raw mut count,
-        );
+        unsafe {
+            pinyin_bigram_iterator_get_next_phrase(
+                iter,
+                &raw mut phrase,
+                &raw mut pinyin,
+                &raw mut count,
+            )
+        };
         rows.push((
             crate::ffi::take_owned_cstr(phrase),
             crate::ffi::take_owned_cstr(pinyin),
             count,
         ));
     }
-    crate::iterators::pinyin_end_get_bigram_phrases(iter);
+    unsafe { crate::iterators::pinyin_end_get_bigram_phrases(iter) };
     rows.sort();
     assert_eq!(
         rows,
@@ -280,18 +279,20 @@ fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
     set_phrase_table_row(&user.path, "测测", &[0x0700_0001]);
 
     let (context, instance) = open_at(&user.path);
-    let iter = pinyin_begin_add_phrases(context, 7);
-    assert!(crate::iterators::pinyin_iterator_add_phrase(
-        iter,
-        cstr("测测").as_ptr(),
-        cstr("ce4'ce4").as_ptr(),
-        7,
-    ));
+    let iter = unsafe { pinyin_begin_add_phrases(context, 7) };
+    assert!(unsafe {
+        crate::iterators::pinyin_iterator_add_phrase(
+            iter,
+            cstr("测测").as_ptr(),
+            cstr("ce4'ce4").as_ptr(),
+            7,
+        )
+    });
     assert_eq!(
         export_rows_of(context, 7, "测测"),
         [("ce4'ce4".to_owned(), 12), ("ce4'ce4".to_owned(), 5)]
     );
-    pinyin_end_add_phrases(iter);
+    unsafe { pinyin_end_add_phrases(iter) };
     close(context, instance);
 }
 
@@ -301,20 +302,22 @@ fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
 fn an_import_reading_parses_past_long_separator_runs() {
     let user = TempUserDir::new("import-separator-runs");
     let (context, instance) = open_at(&user.path);
-    let iter = crate::iterators::pinyin_begin_add_phrases(context, 7);
+    let iter = unsafe { crate::iterators::pinyin_begin_add_phrases(context, 7) };
     for reading in [
         [&b"ni3"[..], &[b'\''; 40_000], b"hao3"].concat(),
         [&b"ni3'hao3"[..], &[b'\''; 70_000]].concat(),
     ] {
         let reading = std::ffi::CString::new(reading).expect("no NUL");
-        assert!(crate::iterators::pinyin_iterator_add_phrase(
-            iter,
-            c"你好".as_ptr(),
-            reading.as_ptr(),
-            1
-        ));
+        assert!(unsafe {
+            crate::iterators::pinyin_iterator_add_phrase(
+                iter,
+                c"你好".as_ptr(),
+                reading.as_ptr(),
+                1,
+            )
+        });
     }
-    crate::iterators::pinyin_end_add_phrases(iter);
+    unsafe { crate::iterators::pinyin_end_add_phrases(iter) };
     assert_eq!(
         crate::e2e_tests::export_of(context, 7),
         [("你好".to_owned(), "ni3'hao3".to_owned(), 2)]
@@ -353,7 +356,7 @@ fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
     let instance = alloc(context);
     assert_eq!(unigram(instance, 0x0100_0002), (true, 100));
     assert_eq!(import_batch(context, 7, &[]), [false; 0]);
-    assert!(pinyin_token_add_unigram_frequency(instance, 0x0100_0001, 5));
+    assert!(unsafe { pinyin_token_add_unigram_frequency(instance, 0x0100_0001, 5) });
     assert_eq!(unigram(instance, 0x0100_0001), (true, 105));
     assert_eq!(unigram(instance, 0x0100_0002), (true, 100));
     close(context, instance);
@@ -399,22 +402,14 @@ fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
         assert_eq!(unigram(instance, 0x0100_0001), (true, 0));
         assert_eq!(unigram(instance, 0x0100_0002), (true, 0));
         let (first, second) = if write_before_compaction {
-            assert!(pinyin_token_add_unigram_frequency(
-                instance,
-                0x0100_0001,
-                256
-            ));
+            assert!(unsafe { pinyin_token_add_unigram_frequency(instance, 0x0100_0001, 256) });
             assert_eq!(unigram(instance, 0x0100_0002), (true, 1));
             (256, 1)
         } else {
             (0, 0)
         };
         assert_eq!(import_batch(context, 7, &[]), [false; 0]);
-        assert!(pinyin_token_add_unigram_frequency(
-            instance,
-            0x0100_0001,
-            256
-        ));
+        assert!(unsafe { pinyin_token_add_unigram_frequency(instance, 0x0100_0001, 256) });
         assert_eq!(unigram(instance, 0x0100_0001), (true, first + 256));
         assert_eq!(unigram(instance, 0x0100_0002), (true, second));
         close(context, instance);

@@ -17,8 +17,16 @@ use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candida
 /// ```c
 /// bool pinyin_get_n_candidate(pinyin_instance_t * instance, guint * num);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
+pub unsafe extern "C" fn pinyin_get_n_candidate(
+    instance: *mut PinyinInstance,
+    num: *mut GUint,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -46,8 +54,14 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
 ///
 /// Out-param `candidate` is instance-borrowed (never freed by caller).
 /// Valid until the next `pinyin_guess_candidates` call.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is an
+/// out-parameter. The serial-calls rule applies. The row written to `*candidate` is a borrowed
+/// object.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_candidate(
+pub unsafe extern "C" fn pinyin_get_candidate(
     instance: *mut PinyinInstance,
     index: GUint,
     candidate: *mut *mut LookupCandidate,
@@ -87,8 +101,13 @@ pub extern "C" fn pinyin_get_candidate(
 ///                                lookup_candidate_t * candidate,
 ///                                lookup_candidate_type_t * type);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object and
+/// `candidate_type` is an out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_candidate_type(
+pub unsafe extern "C" fn pinyin_get_candidate_type(
     _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     candidate_type: *mut lookup_candidate_type_t,
@@ -121,8 +140,14 @@ pub extern "C" fn pinyin_get_candidate_type(
 /// ```
 ///
 /// Out-param `utf8_str` is instance-borrowed (never freed by caller).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object and `utf8_str`
+/// is an out-parameter. `_instance` is not read. The string written to `*utf8_str` belongs to
+/// the row's candidate list and lives as long as the row; the caller does not free it.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_candidate_string(
+pub unsafe extern "C" fn pinyin_get_candidate_string(
     _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     utf8_str: *mut *const GChar,
@@ -157,8 +182,13 @@ pub extern "C" fn pinyin_get_candidate_string(
 /// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row
 /// (`m_nbest_index`, `pinyin.cpp:2878-2884`). Any other row type is the
 /// pin's `assert`, and the process aborts (register row 64).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object and `index` is
+/// an out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_candidate_nbest_index(
+pub unsafe extern "C" fn pinyin_get_candidate_nbest_index(
     _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
     index: *mut u8,
@@ -200,8 +230,13 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
 /// `if (USER_DICTIONARY != index) return false` (`:3718`). Predicted rows
 /// and sentence-level/fallback rows carry no user status even when a
 /// predicted prefix token names the user library.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object. `_instance`
+/// is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_is_user_candidate(
+pub unsafe extern "C" fn pinyin_is_user_candidate(
     _instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
 ) -> bool {
@@ -243,8 +278,13 @@ pub extern "C" fn pinyin_is_user_candidate(
 /// (`pinyin.cpp:3726-3768`); so does this. The handle must be a row of a
 /// live instance's published candidate list, valid for the whole call and
 /// not used elsewhere during it, as for [`pinyin_choose_candidate`].
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+/// borrowed object. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_remove_user_candidate(
+pub unsafe extern "C" fn pinyin_remove_user_candidate(
     instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
 ) -> bool {
@@ -562,8 +602,13 @@ fn choose_phrase_row(
 ///
 /// Per §2.2, the bigram training of a normal selection is deferred to
 /// [`pinyin_train`].
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+/// borrowed object. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_choose_candidate(
+pub unsafe extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
     offset: usize,
     candidate: *mut LookupCandidate,
@@ -710,8 +755,16 @@ fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
 ///
 /// Returns `false` for a free cell or an out-of-range offset — upstream's
 /// own defined return, never an abort — and for a null instance.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset: usize) -> bool {
+pub unsafe extern "C" fn pinyin_clear_constraint(
+    instance: *mut PinyinInstance,
+    offset: usize,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -815,8 +868,13 @@ unsafe fn try_promote_addon(
 /// [`pinyin_choose_candidate`].
 ///
 /// Returns `false` for a candidate without a token or a store failure.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+/// borrowed object. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_choose_predicted_candidate(
+pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
     instance: *mut PinyinInstance,
     candidate: *mut LookupCandidate,
 ) -> bool {
@@ -943,8 +1001,13 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
 /// (`phonetic_lookup.h:884`) and a `set_freq` that misses the item its
 /// `insert_freq` added (`:903`): the process aborts there before anything is
 /// observed (register rows 6, 38, 82 and 85).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
+pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -984,9 +1047,14 @@ fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
 /// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
 /// which skips such a call: not in `pinyin.h`, a Rust function compiled
 /// only with `fuzz-api` and never into the shipped artifact.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[cfg(feature = "fuzz-api")]
 #[must_use]
-pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
+pub unsafe fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -998,6 +1066,11 @@ pub fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
 
 #[cfg(test)]
 mod unloaded_library_tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     //! A library `pinyin_unload_phrase_library` let go has no sub-index in the
     //! pin (`phrase_index.cpp:261-269`): a write that names it answers an
     //! error before it moves anything (`phrase_index.h:628-635`), `compact`
@@ -1054,7 +1127,7 @@ mod unloaded_library_tests {
             instance: *mut PinyinInstance,
         ) -> Self {
             assert_eq!(
-                pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
+                unsafe { pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()) },
                 2
             );
             Self {
@@ -1071,7 +1144,7 @@ mod unloaded_library_tests {
             sort: c_uint,
             wanted: impl Fn(lookup_candidate_type_t, u32) -> bool,
         ) -> (*mut LookupCandidate, u32) {
-            assert!(pinyin_guess_candidates(self.instance, 0, sort));
+            assert!(unsafe { pinyin_guess_candidates(self.instance, 0, sort) });
             self.find_row(wanted)
         }
 
@@ -1092,11 +1165,13 @@ mod unloaded_library_tests {
                     .expect("the fixture holds a row of this kind")
             };
             let mut row = ptr::null_mut();
-            assert!(pinyin_get_candidate(
-                self.instance,
-                u32::try_from(index).expect("small index"),
-                &raw mut row
-            ));
+            assert!(unsafe {
+                pinyin_get_candidate(
+                    self.instance,
+                    u32::try_from(index).expect("small index"),
+                    &raw mut row,
+                )
+            });
             (row, token)
         }
 
@@ -1148,8 +1223,8 @@ mod unloaded_library_tests {
 
     impl Drop for Open {
         fn drop(&mut self) {
-            crate::instance::pinyin_free_instance(self.instance);
-            crate::context::pinyin_fini(self.context);
+            unsafe { crate::instance::pinyin_free_instance(self.instance) };
+            unsafe { crate::context::pinyin_fini(self.context) };
         }
     }
 
@@ -1164,14 +1239,14 @@ mod unloaded_library_tests {
         #[values(false, true)] finalized: bool,
     ) {
         let mut open = Open::new("choose-retained-owner");
-        assert!(pinyin_guess_sentence(open.instance));
+        assert!(unsafe { pinyin_guess_sentence(open.instance) });
         let (row, _) = open.row_of(sort, |candidate_kind, _| candidate_kind == kind);
         if finalized {
             crate::test_support::finalize_public_context(open.context, open.instance);
             open.context = ptr::null_mut();
         }
         let before = open.amplified_total();
-        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 1);
+        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 1);
         assert_eq!(open.amplified_total() - before, 483);
     }
 
@@ -1184,14 +1259,14 @@ mod unloaded_library_tests {
     #[test]
     fn training_a_chosen_word_of_an_unloaded_library_keeps_its_bigram() {
         let open = Open::new("train-unloaded");
-        assert!(pinyin_guess_sentence(open.instance));
+        assert!(unsafe { pinyin_guess_sentence(open.instance) });
         let (row, gbk) = open.gbk_row(DEFAULT_SORT);
-        assert!(pinyin_choose_candidate(open.instance, 0, row) > 0);
-        assert!(pinyin_guess_sentence(open.instance));
-        assert!(pinyin_unload_phrase_library(open.context, 2));
+        assert!(unsafe { pinyin_choose_candidate(open.instance, 0, row) } > 0);
+        assert!(unsafe { pinyin_guess_sentence(open.instance) });
+        assert!(unsafe { pinyin_unload_phrase_library(open.context, 2) });
         let total = open.amplified_total();
 
-        assert!(pinyin_train(open.instance, 0));
+        assert!(unsafe { pinyin_train(open.instance, 0) });
 
         assert!(
             open.store(|store| store.bigram_count(SENTENCE_START, gbk))
@@ -1222,20 +1297,17 @@ mod unloaded_library_tests {
             .user_store_mut()
             .set_bigram_count(ni, gbk, 10)
             .expect("seed");
-        assert!(pinyin_guess_predicted_candidates(
-            open.instance,
-            cstr("你").as_ptr()
-        ));
+        assert!(unsafe { pinyin_guess_predicted_candidates(open.instance, cstr("你").as_ptr()) });
         let (row, token) =
             open.find_row(|kind, _| kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE);
         assert_eq!(token, gbk, "the seeded word is the predicted bigram row");
-        assert!(pinyin_unload_phrase_library(open.context, 2));
+        assert!(unsafe { pinyin_unload_phrase_library(open.context, 2) });
         let before = open
             .store(|store| store.bigram_count(ni, gbk))
             .expect("count");
         let total = open.amplified_total();
 
-        assert!(pinyin_choose_predicted_candidate(open.instance, row));
+        assert!(unsafe { pinyin_choose_predicted_candidate(open.instance, row) });
 
         assert_eq!(
             open.store(|store| store.bigram_count(ni, gbk))
@@ -1257,19 +1329,22 @@ mod unloaded_library_tests {
         std::fs::create_dir_all(&user).expect("user dir");
         let system_c = cstr(system.to_str().expect("UTF-8 path"));
         let user_c = cstr(user.to_str().expect("UTF-8 path"));
-        let context = crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr());
+        let context = unsafe { crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr()) };
         assert!(!context.is_null());
-        let instance = crate::instance::pinyin_alloc_instance(context);
+        let instance = unsafe { crate::instance::pinyin_alloc_instance(context) };
         assert!(!instance.is_null());
         let open = Open::parsed(Box::new(scratch), context, instance);
         let (_, gbk) = open.gbk_row(DEFAULT_SORT);
-        assert!(pinyin_unload_phrase_library(context, 2));
+        assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
 
         let library = system.join("gbk_char.bin");
         std::fs::remove_file(&library).expect("remove the system file");
-        assert!(pinyin_load_phrase_library(context, 2), "row 76's answer");
         assert!(
-            !pinyin_token_add_unigram_frequency(instance, gbk, 1),
+            unsafe { pinyin_load_phrase_library(context, 2) },
+            "row 76's answer"
+        );
+        assert!(
+            !unsafe { pinyin_token_add_unigram_frequency(instance, gbk, 1) },
             "the library is still unloaded"
         );
 
@@ -1278,11 +1353,11 @@ mod unloaded_library_tests {
             &library,
         );
         assert!(
-            pinyin_load_phrase_library(context, 2),
+            unsafe { pinyin_load_phrase_library(context, 2) },
             "the next load maps it"
         );
         assert!(
-            pinyin_token_add_unigram_frequency(instance, gbk, 1),
+            unsafe { pinyin_token_add_unigram_frequency(instance, gbk, 1) },
             "the library is loaded again"
         );
     }
@@ -1294,22 +1369,19 @@ mod unloaded_library_tests {
     fn an_increment_and_an_import_into_an_unloaded_library_answer_false() {
         let open = Open::new("guards-unloaded");
         let (_, gbk) = open.gbk_row(DEFAULT_SORT);
-        assert!(pinyin_unload_phrase_library(open.context, 2));
+        assert!(unsafe { pinyin_unload_phrase_library(open.context, 2) });
         let total = open.amplified_total();
 
-        assert!(!pinyin_token_add_unigram_frequency(open.instance, gbk, 1));
-        let import = pinyin_begin_add_phrases(open.context, 2);
-        assert!(!pinyin_iterator_add_phrase(
-            import,
-            cstr("单").as_ptr(),
-            cstr("dan").as_ptr(),
-            -1
-        ));
+        assert!(!unsafe { pinyin_token_add_unigram_frequency(open.instance, gbk, 1) });
+        let import = unsafe { pinyin_begin_add_phrases(open.context, 2) };
+        assert!(!unsafe {
+            pinyin_iterator_add_phrase(import, cstr("单").as_ptr(), cstr("dan").as_ptr(), -1)
+        });
         assert_eq!(open.amplified_total(), total);
-        pinyin_end_add_phrases(import);
+        unsafe { pinyin_end_add_phrases(import) };
 
-        assert!(pinyin_load_phrase_library(open.context, 2));
-        assert!(pinyin_token_add_unigram_frequency(open.instance, gbk, 1));
+        assert!(unsafe { pinyin_load_phrase_library(open.context, 2) });
+        assert!(unsafe { pinyin_token_add_unigram_frequency(open.instance, gbk, 1) });
     }
 
     /// The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg trains the row's unigram and
@@ -1320,9 +1392,9 @@ mod unloaded_library_tests {
     fn choosing_a_row_of_an_unloaded_library_under_the_sort_bit_answers_one() {
         let open = Open::new("sort-bit-unloaded");
         let (row, _) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
-        assert!(pinyin_unload_phrase_library(open.context, 2));
+        assert!(unsafe { pinyin_unload_phrase_library(open.context, 2) });
 
-        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 1);
+        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 1);
     }
 
     /// `ERROR_INTEGER_OVERFLOW` is the one error the leg answers `false` for.
@@ -1331,32 +1403,28 @@ mod unloaded_library_tests {
         let open = Open::new("sort-bit-overflow");
         let (row, gbk) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
         let total = open.loaded_total(2);
-        assert!(pinyin_token_add_unigram_frequency(
-            open.instance,
-            gbk,
-            u32::MAX - total
-        ));
+        assert!(unsafe {
+            pinyin_token_add_unigram_frequency(open.instance, gbk, u32::MAX - total)
+        });
 
-        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 0);
+        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 0);
     }
 
     /// The LONGER leg (`pinyin.cpp:2523-2531`) answers as the sort-bit leg.
     #[test]
     fn choosing_a_longer_row_whose_unigram_add_overflows_answers_zero() {
         let open = Open::new("longer-overflow");
-        assert!(pinyin_guess_sentence(open.instance));
+        assert!(unsafe { pinyin_guess_sentence(open.instance) });
         let (row, token) = open.row_of(IBUS_DEFAULT_SORT, |kind, _| {
             kind == lookup_candidate_type_t::LONGER_CANDIDATE
         });
         let library = u8::try_from(token >> 24).expect("a library nibble");
         let total = open.loaded_total(library);
-        assert!(pinyin_token_add_unigram_frequency(
-            open.instance,
-            token,
-            u32::MAX - total
-        ));
+        assert!(unsafe {
+            pinyin_token_add_unigram_frequency(open.instance, token, u32::MAX - total)
+        });
 
-        assert_eq!(pinyin_choose_candidate(open.instance, 0, row), 0);
+        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 0);
     }
 }
 

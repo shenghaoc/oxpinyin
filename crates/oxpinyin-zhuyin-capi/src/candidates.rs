@@ -21,8 +21,16 @@ use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candida
 /// ```c
 /// bool zhuyin_get_n_candidate(zhuyin_instance_t * instance, guint * num);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_n_candidate(instance: *mut ZhuyinInstance, num: *mut GUint) -> bool {
+pub unsafe extern "C" fn zhuyin_get_n_candidate(
+    instance: *mut ZhuyinInstance,
+    num: *mut GUint,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -46,8 +54,14 @@ pub extern "C" fn zhuyin_get_n_candidate(instance: *mut ZhuyinInstance, num: *mu
 /// bool zhuyin_get_candidate(zhuyin_instance_t * instance,
 ///                           guint index, lookup_candidate_t ** candidate);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is an
+/// out-parameter. The serial-calls rule applies. The row written to `*candidate` is a borrowed
+/// object.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_candidate(
+pub unsafe extern "C" fn zhuyin_get_candidate(
     instance: *mut ZhuyinInstance,
     index: GUint,
     candidate: *mut *mut LookupCandidate,
@@ -96,8 +110,13 @@ pub extern "C" fn zhuyin_get_candidate(
 /// instance is a defined call there, so it is unused here. A NULL `candidate`
 /// is read unconditionally by the pin, so it is register row 41's class (b)
 /// site and the guard answers `false`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object and
+/// `candidate_type` is an out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_candidate_type(
+pub unsafe extern "C" fn zhuyin_get_candidate_type(
     _instance: *mut ZhuyinInstance,
     candidate: *mut LookupCandidate,
     candidate_type: *mut lookup_candidate_type_t,
@@ -134,8 +153,14 @@ pub extern "C" fn zhuyin_get_candidate_type(
 /// instance is a defined call there, so it is unused here. A NULL `candidate`
 /// is read unconditionally by the pin, so it is register row 41's class (b)
 /// site and the guard answers `false`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `candidate` is a borrowed object and `utf8_str`
+/// is an out-parameter. `_instance` is not read. The string written to `*utf8_str` belongs to
+/// the row's candidate list and lives as long as the row; the caller does not free it.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_candidate_string(
+pub unsafe extern "C" fn zhuyin_get_candidate_string(
     _instance: *mut ZhuyinInstance,
     candidate: *mut LookupCandidate,
     utf8_str: *mut *const GChar,
@@ -189,8 +214,13 @@ pub extern "C" fn zhuyin_get_candidate_string(
 /// a row of a live instance's published candidate list, valid for the
 /// whole call and not used elsewhere during it. Any other pointer is a
 /// caller precondition violation, as for the candidate getters.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+/// borrowed object. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_choose_candidate(
+pub unsafe extern "C" fn zhuyin_choose_candidate(
     instance: *mut ZhuyinInstance,
     offset: usize,
     candidate: *mut LookupCandidate,
@@ -249,8 +279,16 @@ pub extern "C" fn zhuyin_choose_candidate(
 /// bool zhuyin_clear_constraint(zhuyin_instance_t * instance,
 ///                              size_t offset);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset: usize) -> bool {
+pub unsafe extern "C" fn zhuyin_clear_constraint(
+    instance: *mut ZhuyinInstance,
+    offset: usize,
+) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -267,8 +305,13 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
 /// ```c
 /// bool zhuyin_train(zhuyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
+pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }

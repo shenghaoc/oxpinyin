@@ -5,6 +5,11 @@
 //! the table dimensions dies in `get_table_index` and the renderers
 //! (`chewing_key.cpp:28-42`).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ptr;
 
 use crate::cursor::zhuyin_get_zhuyin_offset;
@@ -24,11 +29,11 @@ fn a_cursor_over_a_keyless_parse_aborts() {
             let user_dir = TempUserDir::new("keyless-cursor");
             let (_context, instance) = open_with_user(&user_dir.path);
             assert_eq!(
-                zhuyin_parse_more_full_pinyins(instance, cstr("'''").as_ptr()),
+                unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("'''").as_ptr()) },
                 3
             );
             let mut offset = 0;
-            zhuyin_get_zhuyin_offset(instance, 1, &raw mut offset);
+            unsafe { zhuyin_get_zhuyin_offset(instance, 1, &raw mut offset) };
         },
     );
 }
@@ -38,11 +43,11 @@ fn cursor_zero_over_a_keyless_parse_reads_no_column() {
     let user_dir = TempUserDir::new("keyless-zero");
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(instance, cstr("'''").as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("'''").as_ptr()) },
         3
     );
     let mut offset = usize::MAX;
-    assert!(zhuyin_get_zhuyin_offset(instance, 0, &raw mut offset));
+    assert!(unsafe { zhuyin_get_zhuyin_offset(instance, 0, &raw mut offset) });
     assert_eq!(offset, 0);
     close(context, instance);
 }
@@ -54,7 +59,7 @@ fn a_key_outside_the_table_dimensions_aborts_the_renderer() {
         || {
             let mut key = ChewingKey { packed: 24 };
             let mut text = ptr::null_mut();
-            zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut text);
+            unsafe { zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut text) };
         },
     );
 }
@@ -69,7 +74,7 @@ fn a_tone_outside_the_table_dimensions_aborts_the_renderer() {
                 packed: ni.to_packed() | (6 << 12),
             };
             let mut text = ptr::null_mut();
-            zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut text);
+            unsafe { zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut text) };
         },
     );
 }
@@ -85,11 +90,11 @@ fn a_null_phrase_past_the_last_column_aborts() {
             let user_dir = TempUserDir::new("char-null-phrase");
             let (_context, instance) = open_with_user(&user_dir.path);
             assert_eq!(
-                zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+                unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
                 6
             );
             let mut length = 0;
-            zhuyin_get_character_offset(instance, ptr::null(), 7, &raw mut length);
+            unsafe { zhuyin_get_character_offset(instance, ptr::null(), 7, &raw mut length) };
         },
     );
 }
@@ -99,16 +104,11 @@ fn a_null_phrase_within_the_columns_answers_false() {
     let user_dir = TempUserDir::new("char-null-within");
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
         6
     );
     let mut length = 7;
-    assert!(!zhuyin_get_character_offset(
-        instance,
-        ptr::null(),
-        2,
-        &raw mut length
-    ));
+    assert!(!unsafe { zhuyin_get_character_offset(instance, ptr::null(), 2, &raw mut length) });
     assert_eq!(length, 7);
     close(context, instance);
 }
@@ -124,16 +124,16 @@ macro_rules! full_pinyin_keyless_query_aborts {
                 let user = TempUserDir::new(stringify!($name));
                 let (_context, instance) = open_with_user(&user.path);
                 assert_eq!(
-                    zhuyin_parse_more_full_pinyins(instance, cstr($input).as_ptr()),
+                    unsafe { zhuyin_parse_more_full_pinyins(instance, cstr($input).as_ptr()) },
                     $length
                 );
                 assert_eq!(
-                    crate::parse::zhuyin_get_parsed_input_length(instance),
+                    unsafe { crate::parse::zhuyin_get_parsed_input_length(instance) },
                     $length
                 );
                 let mut key = ptr::null_mut();
                 let _slots = crate::test_support::key_slot_guard();
-                crate::cursor::zhuyin_get_zhuyin_key(instance, 0, &raw mut key);
+                unsafe { crate::cursor::zhuyin_get_zhuyin_key(instance, 0, &raw mut key) };
             });
         }
     };

@@ -41,8 +41,13 @@ use crate::types::PinyinInstance;
 /// a state `_add_phrase` asserts on for a completed path (`pinyin.cpp:554`,
 /// `:568`, `:571`; register row 93), the process aborts, as the import
 /// iterator does.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `phrase` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_remember_user_input(
+pub unsafe extern "C" fn pinyin_remember_user_input(
     instance: *mut PinyinInstance,
     phrase: *const c_char,
     count: c_int,

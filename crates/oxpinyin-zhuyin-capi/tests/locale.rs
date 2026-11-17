@@ -4,6 +4,10 @@
 //! parallel test runner cannot interleave them within this process.
 
 #![expect(unsafe_code, reason = "calls the C ABI and the C library setlocale")]
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
@@ -59,7 +63,7 @@ fn a_failed_init_leaves_lc_numeric_at_c() {
     #[cfg(windows)]
     assert_ne!(numeric_locale().as_c_str(), c"C");
 
-    let context = zhuyin_capi::zhuyin_init(c"".as_ptr(), c"".as_ptr());
+    let context = unsafe { zhuyin_capi::zhuyin_init(c"".as_ptr(), c"".as_ptr()) };
     assert!(context.is_null());
     assert_eq!(numeric_locale().as_c_str(), c"C");
 }

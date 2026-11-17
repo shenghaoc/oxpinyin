@@ -1,6 +1,10 @@
 //! C API regressions for a searched token whose phrase item is absent.
 
 #![allow(unsafe_code)]
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
 
 use std::ffi::{CString, c_void};
 
@@ -22,14 +26,17 @@ fn check_row(case: fixture::Case, sort: u32) {
     let (system, user) = fixture::dirs(case);
     let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
     let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
-    let context = pinyin_init(path.as_ptr(), user_path.as_ptr());
+    let context = unsafe { pinyin_init(path.as_ptr(), user_path.as_ptr()) };
     assert!(!context.is_null());
-    let instance = pinyin_alloc_instance(context);
+    let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()), 2);
-    assert!(pinyin_guess_candidates(instance, 0, sort));
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()) },
+        2
+    );
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, sort) });
     let mut count = 0;
-    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(
         count,
         u32::from(matches!(
@@ -42,24 +49,22 @@ fn check_row(case: fixture::Case, sort: u32) {
     );
     if count == 1 {
         let mut row = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &raw mut row));
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
-        assert!(pinyin_capi::pinyin_get_candidate_type(
-            instance,
-            row,
-            row_type.as_mut_ptr()
-        ));
+        assert!(unsafe {
+            pinyin_capi::pinyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+        });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };
         assert_eq!(row_type as i32, 2);
         let mut string = c"sentinel".as_ptr();
-        assert!(pinyin_get_candidate_string(instance, row, &raw mut string));
+        assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut string) });
         if matches!(case, fixture::Case::Mixed) {
             assert!(!string.is_null());
         } else {
             assert!(string.is_null());
             assert_eq!(
-                pinyin_choose_candidate(instance, 0, row),
+                unsafe { pinyin_choose_candidate(instance, 0, row) },
                 if sort & 1 == 1 { 1 } else { 2 }
             );
             if sort & 1 == 0 {
@@ -72,11 +77,14 @@ fn check_row(case: fixture::Case, sort: u32) {
     if matches!(case, fixture::Case::ChooseToZero) {
         // The missing item's choose increments the total by 483, wrapping
         // it to zero. Ranking the readable hao row must now abort.
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, c"hao".as_ptr()), 3);
-        assert!(pinyin_guess_candidates(instance, 0, sort));
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, c"hao".as_ptr()) },
+            3
+        );
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, sort) });
     }
-    pinyin_free_instance(instance);
-    pinyin_fini(context);
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
 }
 
 #[test]
@@ -119,30 +127,33 @@ fn a_library_mask_does_not_read_extension_rows() {
         let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
         let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
         let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
-        let context = pinyin_init(path.as_ptr(), user_path.as_ptr());
+        let context = unsafe { pinyin_init(path.as_ptr(), user_path.as_ptr()) };
         assert!(!context.is_null());
         if unload {
-            assert!(pinyin_unload_phrase_library(context, 2));
+            assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
         }
-        let instance = pinyin_alloc_instance(context);
+        let instance = unsafe { pinyin_alloc_instance(context) };
         assert!(!instance.is_null());
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()), 2);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()) },
+            2
+        );
         assert!(
-            pinyin_guess_candidates(instance, 0, 0x1f),
+            unsafe { pinyin_guess_candidates(instance, 0, 0x1f) },
             "unload {unload}"
         );
         let mut count = u32::MAX;
-        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
         assert_eq!(count, expected, "unload {unload}");
         if count == 1 {
             let mut row = ptr::null_mut();
-            assert!(pinyin_get_candidate(instance, 0, &raw mut row));
+            assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
             let mut string = c"sentinel".as_ptr();
-            assert!(pinyin_get_candidate_string(instance, row, &raw mut string));
+            assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut string) });
             assert!(string.is_null());
         }
-        pinyin_free_instance(instance);
-        pinyin_fini(context);
+        unsafe { pinyin_free_instance(instance) };
+        unsafe { pinyin_fini(context) };
     }
 }
 

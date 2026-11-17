@@ -113,8 +113,13 @@ struct ImportHandle {
 /// NULL context gets a handle that holds none, as at the pin). The caller
 /// frees it with `pinyin_end_add_phrases`. Adds target the loaded system
 /// libraries 1–4 and USER_FILE libraries 5–7.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_begin_add_phrases(
+pub unsafe extern "C" fn pinyin_begin_add_phrases(
     context: *mut PinyinContext,
     index: u8,
 ) -> *mut ImportIterator {
@@ -160,8 +165,13 @@ pub extern "C" fn pinyin_begin_add_phrases(
 /// without a sub-index answers `false` (`ERROR_NO_SUB_PHRASE_INDEX`), and
 /// 16..=255 — an out-of-bounds read of the pin's 16-slot array
 /// (`phrase_index.h:630`) — answer `false` without reproducing it.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
+/// are strings. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_iterator_add_phrase(
+pub unsafe extern "C" fn pinyin_iterator_add_phrase(
     iter: *mut ImportIterator,
     phrase: *const c_char,
     pinyin: *const c_char,
@@ -246,9 +256,14 @@ fn plan_import(
 /// pin's asserts ([`ImportPlan::Abort`]). Reads only. For the in-tree fuzz
 /// harness, which skips such a call: not in `pinyin.h`, a Rust function
 /// compiled only with `fuzz-api` and never into the shipped artifact.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
+/// are strings. The serial-calls rule applies.
 #[cfg(feature = "fuzz-api")]
 #[must_use]
-pub fn oxpinyin_import_aborts(
+pub unsafe fn oxpinyin_import_aborts(
     iter: *mut ImportIterator,
     phrase: *const c_char,
     pinyin: *const c_char,
@@ -305,8 +320,13 @@ fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
 /// the store's `compact_libraries` applies. The dirty-flag arm is the rest
 /// of the persistence-side effect, so the next `pinyin_save` compacts and
 /// clears (`docs/findings/user-store.md` §4).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies. After the call `iter` is dangling.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
+pub unsafe extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
@@ -344,8 +364,13 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 /// use their live chunks, and `USER_FILE` libraries use the user store.
 /// A nibble without a sub-index exports nothing
 /// ([`oxpinyin_facade::ContextCore::phrase_export_cursor`]).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_begin_get_phrases(
+pub unsafe extern "C" fn pinyin_begin_get_phrases(
     context: *mut PinyinContext,
     index: GUint,
 ) -> *mut ExportIterator {
@@ -369,8 +394,13 @@ pub extern "C" fn pinyin_begin_get_phrases(
 /// ```c
 /// bool pinyin_iterator_has_next_phrase(export_iterator_t * iter);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> bool {
+pub unsafe extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> bool {
     if iter.is_null() {
         return false;
     }
@@ -402,8 +432,13 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 /// allocation aborts as the pin's does. At one of the pin's assert sites,
 /// an exhausted iterator included (`:709`), the process aborts (register
 /// row 62). The read itself cannot fail, as the pin's in-memory one cannot.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase`, `pinyin` and
+/// `count` are out-parameters. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_iterator_get_next_phrase(
+pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
     iter: *mut ExportIterator,
     phrase: *mut *mut GChar,
     pinyin: *mut *mut GChar,
@@ -501,8 +536,13 @@ fn export_count(count: u64) -> c_int {
 /// ```c
 /// void pinyin_end_get_phrases(export_iterator_t * iter);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies. After the call `iter` is dangling.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
+pub unsafe extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
     if iter.is_null() {
         return;
     }
@@ -530,8 +570,13 @@ pub extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
 /// predecessors are skipped; the phrase is the predecessor's text followed
 /// by the successor's text; the pinyin joins the pair's pronunciations with
 /// `'`; the count is the stored bigram count × 2.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_begin_get_bigram_phrases(
+pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
     context: *mut PinyinContext,
 ) -> *mut BigramExportIterator {
     if context.is_null() {
@@ -568,8 +613,15 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
 /// bool pinyin_bigram_iterator_has_next_phrase(
 ///     bigram_export_iterator_t * iter);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExportIterator) -> bool {
+pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
+    iter: *mut BigramExportIterator,
+) -> bool {
     if iter.is_null() {
         return false;
     }
@@ -621,8 +673,13 @@ fn walk_answer(more: Result<bool, oxpinyin_facade::GramLoadFault>, name: &str) -
 /// the row is taken — `false` on the last row — as the pin's
 /// `return pinyin_bigram_iterator_has_next_phrase(iter);` does
 /// (`pinyin.cpp:896-911`, register row 36); `false` once exhausted.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase`, `pinyin` and
+/// `count` are out-parameters. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
+pub unsafe extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     iter: *mut BigramExportIterator,
     phrase: *mut *mut GChar,
     pinyin: *mut *mut GChar,
@@ -678,8 +735,13 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
 /// ```c
 /// void pinyin_end_get_bigram_phrases(bigram_export_iterator_t * iter);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies. After the call `iter` is dangling.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator) {
+pub unsafe extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator) {
     if iter.is_null() {
         return;
     }

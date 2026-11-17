@@ -1,5 +1,10 @@
 //! Shared fixtures for crate tests.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::CString;
 use std::os::raw::c_uint;
 use std::path::PathBuf;
@@ -14,10 +19,16 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 // contract, not a pin oracle: the returned public handle keeps its identity
 // but is no longer live and must not be dereferenced.
 pub(crate) fn finalize_public_context(context: *mut PinyinContext, instance: *mut PinyinInstance) {
-    assert_eq!(crate::instance::pinyin_get_context(instance), context);
-    crate::context::pinyin_fini(context);
+    assert_eq!(
+        unsafe { crate::instance::pinyin_get_context(instance) },
+        context
+    );
+    unsafe { crate::context::pinyin_fini(context) };
     assert!(!crate::live::is_live(context));
-    assert_eq!(crate::instance::pinyin_get_context(instance), context);
+    assert_eq!(
+        unsafe { crate::instance::pinyin_get_context(instance) },
+        context
+    );
 }
 
 /// Serialises the tests that read the pin's process-wide key slots
@@ -98,14 +109,14 @@ pub fn cstr(value: impl AsRef<str>) -> CString {
 pub fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *mut LookupCandidate {
     let input = cstr(text);
     assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
         text.len(),
         "full input parses"
     );
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
     let mut cand: *mut LookupCandidate = std::ptr::null_mut();
     assert!(
-        pinyin_get_candidate(instance, index, &raw mut cand),
+        unsafe { pinyin_get_candidate(instance, index, &raw mut cand) },
         "candidate {index} exists"
     );
     assert!(!cand.is_null());
@@ -115,12 +126,12 @@ pub fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *m
 pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = crate::context::pinyin_init(system.as_ptr(), user.as_ptr());
+    let context = unsafe { crate::context::pinyin_init(system.as_ptr(), user.as_ptr()) };
     assert!(
         !context.is_null(),
         "fixture init must open the mini fixture"
     );
-    let instance = pinyin_alloc_instance(context);
+    let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
     (context, instance)
 }
@@ -687,7 +698,7 @@ pub fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> Vec<u32>
     let text = CString::new(text.as_ref()).expect("no interior NUL");
     // SAFETY: a fresh GArray of four-byte elements, freed below.
     let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
-    crate::dict::pinyin_lookup_tokens(instance, text.as_ptr(), array.cast());
+    unsafe { crate::dict::pinyin_lookup_tokens(instance, text.as_ptr(), array.cast()) };
     // SAFETY: a live GArray of four-byte elements: `data` holds `len` of them.
     let tokens = unsafe {
         let view = &*array;

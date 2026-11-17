@@ -65,8 +65,14 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
 /// the next call from any instance overwrites it, and it outlives the
 /// instance. Answers at exactly the offsets [`pinyin_get_pinyin_key`]
 /// does.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `key_rest` is an
+/// out-parameter. The serial-calls rule applies. The pointer written to `*key_rest` addresses a
+/// process-wide slot, which the next call of this function overwrites.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_key_rest(
+pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     instance: *mut PinyinInstance,
     offset: usize,
     key_rest: *mut *mut ChewingKeyRest,
@@ -152,8 +158,14 @@ fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset
 /// and dereferences `key_rest` only to fill a non-NULL `begin` or `end`
 /// (`pinyin.cpp:2967-2977`): a NULL `key_rest` answers `true` when both are
 /// NULL, and `false` here rather than crashing when either is not.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key_rest` is a borrowed object and `begin` and
+/// `end` are out-parameters. `_instance` is not read. `key_rest` is read only when `begin` or
+/// `end` is not NULL.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
+pub unsafe extern "C" fn pinyin_get_pinyin_key_rest_positions(
     _instance: *mut PinyinInstance,
     key_rest: *mut ChewingKeyRest,
     begin: *mut u16,
@@ -195,8 +207,13 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
 /// (begin 5, end 2 answers 65533) — and, like the pin, `true` whenever it can
 /// answer. fcitx branches on this being 2 to pick its shuangpin rendering
 /// (`eim.cpp:473`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key_rest` is a borrowed object and `length` is
+/// an out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_key_rest_length(
+pub unsafe extern "C" fn pinyin_get_pinyin_key_rest_length(
     _instance: *mut PinyinInstance,
     key_rest: *mut ChewingKeyRest,
     length: *mut u16,
@@ -229,8 +246,13 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_length(
 /// Out-param `utf8_str` is caller-owned (`g_free`). The pin answers
 /// `false` with a NULL out-param for a key whose table index is 0 — the
 /// unset key — which an unpopulated slot reproduces.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `utf8_str` is an
+/// out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_string(
+pub unsafe extern "C" fn pinyin_get_pinyin_string(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
@@ -252,8 +274,13 @@ pub extern "C" fn pinyin_get_pinyin_string(
 /// Out-param `utf8_str` is caller-owned (`g_free`). fcitx treats a NULL
 /// out-param as its "something like xi'" break condition
 /// (`eim.cpp:512-515`), which the `false` return preserves.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `utf8_str` is an
+/// out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_zhuyin_string(
+pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
@@ -274,8 +301,13 @@ pub extern "C" fn pinyin_get_zhuyin_string(
 /// Either out-param may be NULL to skip; both are caller-owned
 /// (`g_free`). A syllable with no initial answers an empty shengmu, which
 /// is the case fcitx substitutes an apostrophe for (`eim.cpp:478-479`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `shengmu` and
+/// `yunmu` are out-parameters. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_strings(
+pub unsafe extern "C" fn pinyin_get_pinyin_strings(
     _instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     shengmu: *mut *mut GChar,
@@ -373,8 +405,13 @@ fn render_key(
 /// before it, and validates (`pinyin.cpp:3008-3027`). A mid-syllable
 /// cursor normalizes to the syllable start; the engine's validation error is
 /// answered as `false`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `offset` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_offset(
+pub unsafe extern "C" fn pinyin_get_pinyin_offset(
     instance: *mut PinyinInstance,
     cursor: usize,
     offset: *mut usize,
@@ -431,8 +468,13 @@ fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
 /// (`pinyin.cpp:3029-3059`). Where the pin's validation asserts
 /// (`pinyin.cpp:3035`, `:3057`, or `phonetic_key_matrix.h:103` past the
 /// matrix) the process aborts (register row 14).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `left` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_left_pinyin_offset(
+pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
     instance: *mut PinyinInstance,
     offset: usize,
     left: *mut usize,
@@ -490,8 +532,13 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
 /// asserts — its validation (`pinyin.cpp:3067`, `:3092`), a column past the
 /// matrix, or any offset on an empty matrix (`phonetic_key_matrix.h:103`)
 /// — the process aborts (register rows 14 and 66).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `right` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_right_pinyin_offset(
+pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
     instance: *mut PinyinInstance,
     offset: usize,
     right: *mut usize,
@@ -562,8 +609,14 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
 /// Out-param `key` borrows the process-wide slot [`KEY_SLOT`], as the
 /// pin's function-local `static` does: every instance shares it, the next
 /// call from any instance overwrites it, and it outlives the instance.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `key` is an
+/// out-parameter. The serial-calls rule applies. The pointer written to `*key` addresses a
+/// process-wide slot, which the next call of this function overwrites.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_pinyin_key(
+pub unsafe extern "C" fn pinyin_get_pinyin_key(
     instance: *mut PinyinInstance,
     offset: usize,
     key: *mut *mut ChewingKey,
@@ -608,6 +661,11 @@ pub extern "C" fn pinyin_get_pinyin_key(
 
 #[cfg(test)]
 mod preedit_key_tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use std::ptr;
 
     use crate::config::pinyin_set_options;
@@ -636,32 +694,29 @@ mod preedit_key_tests {
         for scheme in [2, 3] {
             let user_dir = TempUserDir::new("scheme-key");
             let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-            assert!(pinyin_set_options(context, PARITY));
-            assert!(crate::config::pinyin_set_full_pinyin_scheme(
-                context, scheme
-            ));
+            assert!(unsafe { pinyin_set_options(context, PARITY) });
+            assert!(unsafe { crate::config::pinyin_set_full_pinyin_scheme(context, scheme) });
             let input = cstr("nihao");
-            assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
-            assert!(crate::sentence::pinyin_guess_sentence(instance));
+            assert_eq!(
+                unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
+                5
+            );
+            assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
             let mut key: *mut ChewingKey = ptr::null_mut();
-            assert!(super::pinyin_get_pinyin_key(instance, 0, &raw mut key));
+            assert!(unsafe { super::pinyin_get_pinyin_key(instance, 0, &raw mut key) });
             // SAFETY: a true answer points `key` at the instance's key slot.
             assert_eq!(unsafe { (*key).packed }, 43, "scheme {scheme}");
             let mut rendered: *mut crate::types::GChar = ptr::null_mut();
-            assert!(crate::keys::pinyin_get_luoma_pinyin_string(
-                instance,
-                key,
-                &raw mut rendered
-            ));
+            assert!(unsafe {
+                crate::keys::pinyin_get_luoma_pinyin_string(instance, key, &raw mut rendered)
+            });
             assert_eq!(take(rendered), "ni", "scheme {scheme}");
-            assert!(crate::keys::pinyin_get_secondary_zhuyin_string(
-                instance,
-                key,
-                &raw mut rendered
-            ));
+            assert!(unsafe {
+                crate::keys::pinyin_get_secondary_zhuyin_string(instance, key, &raw mut rendered)
+            });
             assert_eq!(take(rendered), "ni", "scheme {scheme}");
-            crate::instance::pinyin_free_instance(instance);
-            crate::context::pinyin_fini(context);
+            unsafe { crate::instance::pinyin_free_instance(instance) };
+            unsafe { crate::context::pinyin_fini(context) };
         }
     }
 
@@ -674,9 +729,12 @@ mod preedit_key_tests {
         let _slots = key_slot_guard();
         let user_dir = TempUserDir::new("preedit-nihao");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, PARITY));
+        assert!(unsafe { pinyin_set_options(context, PARITY) });
         let input = cstr("nihao");
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
+            5
+        );
 
         let expected: [(usize, &str, u16, u16, &str, &str, &str); 2] = [
             (0, "ni", 0, 2, "n", "i", "ㄋㄧ"),
@@ -686,67 +744,54 @@ mod preedit_key_tests {
         for (offset, pinyin, begin, end, shengmu, yunmu, zhuyin) in expected {
             let mut key: *mut ChewingKey = ptr::null_mut();
             assert!(
-                super::pinyin_get_pinyin_key(instance, offset, &raw mut key),
+                unsafe { super::pinyin_get_pinyin_key(instance, offset, &raw mut key) },
                 "offset {offset} starts a key"
             );
             assert!(!key.is_null());
 
             let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-            assert!(super::pinyin_get_pinyin_key_rest(
-                instance,
-                offset,
-                &raw mut rest
-            ));
+            assert!(unsafe { super::pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) });
             let (mut b, mut e) = (0_u16, 0_u16);
-            assert!(super::pinyin_get_pinyin_key_rest_positions(
-                instance, rest, &raw mut b, &raw mut e
-            ));
+            assert!(unsafe {
+                super::pinyin_get_pinyin_key_rest_positions(instance, rest, &raw mut b, &raw mut e)
+            });
             assert_eq!((b, e), (begin, end), "raw span at offset {offset}");
 
             let mut len = 0_u16;
-            assert!(super::pinyin_get_pinyin_key_rest_length(
-                instance,
-                rest,
-                &raw mut len
-            ));
+            assert!(unsafe {
+                super::pinyin_get_pinyin_key_rest_length(instance, rest, &raw mut len)
+            });
             assert_eq!(len, end - begin, "rest length at offset {offset}");
 
             let mut s: *mut crate::types::GChar = ptr::null_mut();
-            assert!(super::pinyin_get_pinyin_string(instance, key, &raw mut s));
+            assert!(unsafe { super::pinyin_get_pinyin_string(instance, key, &raw mut s) });
             assert_eq!(take(s), pinyin);
 
             let (mut sm, mut ym): (*mut crate::types::GChar, *mut crate::types::GChar) =
                 (ptr::null_mut(), ptr::null_mut());
-            assert!(super::pinyin_get_pinyin_strings(
-                instance,
-                key,
-                &raw mut sm,
-                &raw mut ym
-            ));
+            assert!(unsafe {
+                super::pinyin_get_pinyin_strings(instance, key, &raw mut sm, &raw mut ym)
+            });
             assert_eq!((take(sm), take(ym)), (shengmu.to_owned(), yunmu.to_owned()));
 
             let mut z: *mut crate::types::GChar = ptr::null_mut();
-            assert!(super::pinyin_get_zhuyin_string(instance, key, &raw mut z));
+            assert!(unsafe { super::pinyin_get_zhuyin_string(instance, key, &raw mut z) });
             assert_eq!(take(z), zhuyin);
         }
 
         for offset in [1_usize, 3, 4, 5] {
             let mut key: *mut ChewingKey = ptr::null_mut();
             assert!(
-                !super::pinyin_get_pinyin_key(instance, offset, &raw mut key),
+                !unsafe { super::pinyin_get_pinyin_key(instance, offset, &raw mut key) },
                 "offset {offset} starts no key"
             );
             assert!(key.is_null(), "a false answer nulls the out-param");
             let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-            assert!(!super::pinyin_get_pinyin_key_rest(
-                instance,
-                offset,
-                &raw mut rest
-            ));
+            assert!(!unsafe { super::pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) });
         }
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     /// The pin's key and key-rest slots are function-local `static`s
@@ -759,45 +804,43 @@ mod preedit_key_tests {
         let _slots = key_slot_guard();
         let user_dir = TempUserDir::new("preedit-static-slots");
         let (context, first) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        let second = crate::instance::pinyin_alloc_instance(context);
+        let second = unsafe { crate::instance::pinyin_alloc_instance(context) };
         assert_eq!(
-            pinyin_parse_more_full_pinyins(first, cstr("ni").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(first, cstr("ni").as_ptr()) },
             2
         );
         assert_eq!(
-            pinyin_parse_more_full_pinyins(second, cstr("hao").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(second, cstr("hao").as_ptr()) },
             3
         );
 
         let (mut a, mut b): (*mut ChewingKey, *mut ChewingKey) = (ptr::null_mut(), ptr::null_mut());
-        assert!(super::pinyin_get_pinyin_key(first, 0, &raw mut a));
+        assert!(unsafe { super::pinyin_get_pinyin_key(first, 0, &raw mut a) });
         // SAFETY: `a` is the slot the call above handed out.
         let ni = unsafe { *a };
-        assert!(super::pinyin_get_pinyin_key(second, 0, &raw mut b));
+        assert!(unsafe { super::pinyin_get_pinyin_key(second, 0, &raw mut b) });
         assert_eq!(a, b, "one slot for every instance");
         // SAFETY: as above.
         assert_ne!(unsafe { *a }, ni, "the second call overwrote the first");
 
         let (mut ra, mut rb): (*mut ChewingKeyRest, *mut ChewingKeyRest) =
             (ptr::null_mut(), ptr::null_mut());
-        assert!(super::pinyin_get_pinyin_key_rest(first, 0, &raw mut ra));
-        assert!(super::pinyin_get_pinyin_key_rest(second, 0, &raw mut rb));
+        assert!(unsafe { super::pinyin_get_pinyin_key_rest(first, 0, &raw mut ra) });
+        assert!(unsafe { super::pinyin_get_pinyin_key_rest(second, 0, &raw mut rb) });
         assert_eq!(ra, rb);
 
         let mut length = 0_u16;
         let mut reversed = ChewingKeyRest { begin: 5, end: 2 };
-        assert!(super::pinyin_get_pinyin_key_rest_length(
-            first,
-            &raw mut reversed,
-            &raw mut length
-        ));
+        assert!(unsafe {
+            super::pinyin_get_pinyin_key_rest_length(first, &raw mut reversed, &raw mut length)
+        });
         assert_eq!(length, 65533, "end - begin in guint16");
 
-        crate::instance::pinyin_free_instance(first);
-        crate::instance::pinyin_free_instance(second);
+        unsafe { crate::instance::pinyin_free_instance(first) };
+        unsafe { crate::instance::pinyin_free_instance(second) };
         // SAFETY: the slot is a `static`: the pointer outlives the instances.
         assert_ne!(unsafe { *a }, ni);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     /// Past byte 65535 the key-rest positions narrow into the pin's
@@ -813,36 +856,30 @@ mod preedit_key_tests {
         let _slots = key_slot_guard();
         let user_dir = TempUserDir::new("key-rest-wrap-double");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, 1 << 5));
-        assert!(pinyin_set_double_pinyin_scheme(context, 2));
+        assert!(unsafe { pinyin_set_options(context, 1 << 5) });
+        assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 2) });
         let input = format!("ni3{}", "ni".repeat(32_769));
         assert_eq!(
-            pinyin_parse_more_double_pinyins(instance, cstr(&input).as_ptr()),
+            unsafe { pinyin_parse_more_double_pinyins(instance, cstr(&input).as_ptr()) },
             65_541
         );
 
         for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
             let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-            assert!(super::pinyin_get_pinyin_key_rest(
-                instance,
-                offset,
-                &raw mut rest
-            ));
+            assert!(unsafe { super::pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) });
             let (mut b, mut e) = (0_u16, 0_u16);
-            assert!(super::pinyin_get_pinyin_key_rest_positions(
-                instance, rest, &raw mut b, &raw mut e
-            ));
+            assert!(unsafe {
+                super::pinyin_get_pinyin_key_rest_positions(instance, rest, &raw mut b, &raw mut e)
+            });
             assert_eq!((b, e), (begin, end), "offset {offset}");
             let mut length = 0_u16;
-            assert!(super::pinyin_get_pinyin_key_rest_length(
-                instance,
-                rest,
-                &raw mut length
-            ));
+            assert!(unsafe {
+                super::pinyin_get_pinyin_key_rest_length(instance, rest, &raw mut length)
+            });
             assert_eq!(length, 2, "offset {offset}");
         }
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

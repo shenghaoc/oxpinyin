@@ -63,6 +63,11 @@ pub(crate) fn is_live(context: *mut ZhuyinContext) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::{insert, is_live, register, remove, unregister};
     use crate::test_support::{TempUserDir, open_with_user};
 
@@ -99,12 +104,12 @@ mod tests {
         drop(owner);
         let input = crate::test_support::cstr("su3cl3");
         assert_eq!(
-            crate::parse::zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            unsafe { crate::parse::zhuyin_parse_more_chewings(instance, input.as_ptr()) },
             6
         );
         let marker = user_dir.path.join("user.conf");
         let before = std::fs::read(&marker).ok();
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::context::zhuyin_fini(context) };
         assert!(!is_live(context));
         let at_fini = std::fs::read(&marker).ok();
         assert_eq!(before, at_fini);
@@ -115,10 +120,10 @@ mod tests {
         // Row 42: the system tables are closed, so every read is a miss. The
         // guess completes over the retained in-memory state and decodes no
         // sentence, and training has no sentence to train.
-        assert!(crate::sentence::zhuyin_guess_sentence(instance));
-        assert!(!crate::candidates::zhuyin_train(instance));
-        assert!(crate::instance::zhuyin_reset(instance));
-        crate::instance::zhuyin_free_instance(instance);
+        assert!(unsafe { crate::sentence::zhuyin_guess_sentence(instance) });
+        assert!(!unsafe { crate::candidates::zhuyin_train(instance) });
+        assert!(unsafe { crate::instance::zhuyin_reset(instance) });
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
         assert!(
             weak.upgrade().is_none(),
             "the last handle releases the allocation"
@@ -160,36 +165,38 @@ mod tests {
         let user_dir = TempUserDir::new("fini-closes");
         let system_c = crate::test_support::cstr(system.path.to_str().expect("UTF-8 path"));
         let user_c = crate::test_support::cstr(user_dir.path.to_str().expect("UTF-8 path"));
-        let context = crate::context::zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+        let context = unsafe { crate::context::zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) };
         assert!(!context.is_null());
-        let instance = crate::instance::zhuyin_alloc_instance(context);
+        let instance = unsafe { crate::instance::zhuyin_alloc_instance(context) };
         assert!(!instance.is_null());
         assert!(
             open_descriptors(&system.path) > 0,
             "the attached tables hold their files"
         );
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::context::zhuyin_fini(context) };
         assert_eq!(open_descriptors(&system.path), 0);
-        crate::instance::zhuyin_free_instance(instance);
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
     }
 
     #[test]
     fn import_iterator_outlives_context() {
         let user_dir = TempUserDir::new("orphan-import");
         let (context, instance) = open_with_user(&user_dir.path);
-        let import = crate::iterators::zhuyin_begin_add_phrases(context, 5);
+        let import = unsafe { crate::iterators::zhuyin_begin_add_phrases(context, 5) };
         assert!(!import.is_null());
-        crate::instance::zhuyin_free_instance(instance);
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
+        unsafe { crate::context::zhuyin_fini(context) };
         let phrase = crate::test_support::cstr("你好");
         let reading = crate::test_support::cstr("ㄋㄧˇ ㄏㄠˇ");
-        assert!(crate::iterators::zhuyin_iterator_add_phrase(
-            import,
-            phrase.as_ptr(),
-            reading.as_ptr(),
-            7
-        ));
-        crate::iterators::zhuyin_end_add_phrases(import);
+        assert!(unsafe {
+            crate::iterators::zhuyin_iterator_add_phrase(
+                import,
+                phrase.as_ptr(),
+                reading.as_ptr(),
+                7,
+            )
+        });
+        unsafe { crate::iterators::zhuyin_end_add_phrases(import) };
     }
 
     #[test]
@@ -197,15 +204,15 @@ mod tests {
         let user_dir = TempUserDir::new("live-context");
         let (context, instance) = open_with_user(&user_dir.path);
         assert!(is_live(context));
-        crate::instance::zhuyin_free_instance(instance);
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
+        unsafe { crate::context::zhuyin_fini(context) };
         assert!(!is_live(context));
         assert!(
-            crate::instance::zhuyin_alloc_instance(context).is_null(),
+            unsafe { crate::instance::zhuyin_alloc_instance(context) }.is_null(),
             "a finalised context allocates nothing"
         );
         // A second finalise is a no-op, where the pin double-frees (row 105).
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::context::zhuyin_fini(context) };
         assert!(!is_live(context));
         // Registering and forgetting a stray address leaves the rest alone.
         let stray = std::ptr::NonNull::<crate::types::ZhuyinContext>::dangling().as_ptr();
