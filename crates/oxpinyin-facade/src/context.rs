@@ -11,7 +11,7 @@ use crate::runtime::{
 };
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::SessionSettings;
-use oxpinyin_user::c_stderr;
+use oxpinyin_user::data::c_stderr;
 use oxpinyin_user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
 };

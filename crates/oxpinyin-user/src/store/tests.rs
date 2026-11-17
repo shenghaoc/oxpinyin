@@ -100,7 +100,7 @@ fn reload_preserves_the_delta_no_subindex_accepted() {
                 range_end: 2,
                 items: BTreeMap::from([(
                     1,
-                    oxpinyin_data::chunk_write::ChunkItem {
+                    crate::data::chunk_write::ChunkItem {
                         phrase: vec![0x4f60],
                         unigram: u32::MAX,
                         prons: Vec::new(),
@@ -111,7 +111,7 @@ fn reload_preserves_the_delta_no_subindex_accepted() {
     };
     let mut store = UserStore::open_transient(
         originals(),
-        oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+        crate::data::user_files::SystemVersions::for_this_build(7, 14),
         UserConfLaw::Pinyin,
     )
     .unwrap();
@@ -130,7 +130,7 @@ fn reload_preserves_the_delta_no_subindex_accepted() {
 
 #[test]
 fn system_import_changes_the_first_match_and_guards_its_prefix() {
-    let mut item = oxpinyin_data::chunk_write::ChunkItem {
+    let mut item = crate::data::chunk_write::ChunkItem {
         phrase: vec![0x4f60],
         unigram: 0,
         prons: vec![(vec![1], u32::MAX - 10), (vec![2], 3), (vec![2], 5)],
@@ -166,14 +166,14 @@ fn system_import_changes_the_first_match_and_guards_its_prefix() {
 mod session {
     use super::super::*;
     use super::next_user_token;
+    use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
+    use crate::data::user_files::{SystemVersions, UserFileLayout};
     use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
     use crate::{
         ADDON_DICTIONARY, FIRST_USER_TOKEN, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK,
         PHRASE_MASK, USER_DICTIONARY, phrase_index_make_token,
     };
     use oxpinyin_core::SyllableKey;
-    use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
-    use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
     use std::collections::BTreeMap;
 
     fn versions() -> SystemVersions {
@@ -1081,14 +1081,13 @@ mod session {
     #[test]
     fn promote_addon_phrase_copies_a_word_that_is_not_a_scalar() {
         let mut store = transient();
-        let item = oxpinyin_data::chunk_write::encode_phrase_item(
-            &oxpinyin_data::chunk_write::ChunkItem {
+        let item =
+            crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
                 phrase: vec![0xD800, 0x4e8c],
                 unigram: 4,
                 prons: vec![(vec![0x0001, 0x0002], 4)],
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
         let token = crate::test_session::promote_item(&mut store, &item).unwrap();
         assert_eq!(stored_item(&store, token), item);
     }
@@ -1136,8 +1135,8 @@ mod session {
 
 #[test]
 fn reporting_save_guards_preserve_unigram_overflow() {
+    use crate::data::user_files::SystemVersions;
     use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
-    use oxpinyin_data::user_files::SystemVersions;
     fn originals() -> SystemOriginals {
         crate::LibraryTable::from([(
             1,
@@ -1147,7 +1146,7 @@ fn reporting_save_guards_preserve_unigram_overflow() {
                 mapped: None,
                 items: BTreeMap::from([(
                     1,
-                    oxpinyin_data::chunk_write::ChunkItem {
+                    crate::data::chunk_write::ChunkItem {
                         phrase: vec![0x4f60],
                         unigram: 100,
                         prons: Vec::new(),
@@ -1220,9 +1219,9 @@ fn reporting_save_guards_preserve_unigram_overflow() {
 
 #[test]
 fn repeated_increments_move_the_live_unigram_and_total() {
+    use crate::data::user_files::SystemVersions;
     use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
-    use oxpinyin_data::user_files::SystemVersions;
-    let item = oxpinyin_data::chunk_write::ChunkItem {
+    let item = crate::data::chunk_write::ChunkItem {
         phrase: vec![u32::from('你')],
         unigram: 0,
         prons: Vec::new(),
@@ -1314,7 +1313,7 @@ mod backend_files {
 
     use oxpinyin_core::SyllableKey;
 
-    use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
+    use crate::data::user_files::{SystemVersions, UserFileLayout};
 
     use crate::{
         FIRST_USER_TOKEN, SENTENCE_START, SystemOriginals, Token, UserConfLaw, UserPhrase,
@@ -1352,7 +1351,7 @@ mod backend_files {
             ),
         )
         .unwrap();
-        let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system).unwrap();
+        let conf = crate::data::table_info::TableConf::load_from_dir(&system).unwrap();
         crate::test_session::open_with_conf(dir, &system, &conf, UserConfLaw::Pinyin)
     }
 
@@ -1757,9 +1756,9 @@ mod backend_files {
 /// slot-0 exclusion (`phrase_index.cpp:180-206`).
 #[test]
 fn import_end_compaction_drops_the_reserved_slot() {
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::chunk_write::{ChunkItem, build_chunk};
     use crate::native_fixture::{TempUserDir, system_dir, write_user_conf};
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-slot-zero");
     write_user_conf(&user.path, &system_dir());
@@ -1875,9 +1874,9 @@ fn removing_a_user_item_takes_its_unigram_increment_out_of_the_total() {
 /// `phrase_index.cpp:169-175,345`).
 #[test]
 fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
+    use crate::data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
+    use crate::data::chunk_write::{ChunkItem, build_chunk};
     use crate::native_fixture::TempUserDir;
-    use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
-    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-unigram-wrap");
     drop(crate::test_session::open_w3(&user.path));

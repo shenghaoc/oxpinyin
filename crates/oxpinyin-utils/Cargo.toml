@@ -17,17 +17,14 @@ doctest = false
 # edge the utilities use.
 default = ["tkrzw"]
 kyotocabinet = [
-    "oxpinyin-data/kyotocabinet",
     "oxpinyin-store/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
 ]
 bdb = [
-    "oxpinyin-data/bdb",
     "oxpinyin-store/bdb",
     "oxpinyin-user/bdb",
 ]
 tkrzw = [
-    "oxpinyin-data/tkrzw",
     "oxpinyin-store/tkrzw",
     "oxpinyin-user/tkrzw",
 ]
@@ -38,8 +35,6 @@ workspace = true
 [dependencies]
 rustc-hash.workspace = true
 oxpinyin-core = { workspace = true, features = ["tools"] }
-# pinyin_exact_compare2, shared with the table writers.
-oxpinyin-data = { workspace = true }
 # The pin's DBM files, written and read through the backend seam the data
 # layer and datagen share.
 oxpinyin-store = { workspace = true, features = ["tools"] }

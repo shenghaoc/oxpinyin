@@ -97,8 +97,8 @@ fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
 /// `zhuyin.cpp:983-999`).
 #[test]
 fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
-    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
-    use oxpinyin_data::row_format::pinyin_index::{encode_complete_key, encode_item};
+    use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 
     let scratch = tempfile::tempdir().expect("scratch");
     let system = private_system(scratch.path());

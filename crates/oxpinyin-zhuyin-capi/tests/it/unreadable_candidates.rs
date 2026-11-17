@@ -70,10 +70,10 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
     unsafe { zhuyin_fini(context) };
 }
 
-#[path = "../../../oxpinyin-data/tests/support/mod.rs"]
+#[path = "../../../oxpinyin-user/tests/support/mod.rs"]
 mod chunk_fixture;
 
-#[path = "../../../oxpinyin-data/tests/support/unreadable_fixture.rs"]
+#[path = "../../../oxpinyin-user/tests/support/unreadable_fixture.rs"]
 mod fixture;
 
 #[test]

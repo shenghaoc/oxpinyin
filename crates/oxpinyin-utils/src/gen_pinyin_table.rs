@@ -17,11 +17,11 @@ use std::ffi::{CStr, CString, OsString, c_int};
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{ChewingKey, OptionBits};
-use oxpinyin_data::table_entries::exact_compare2;
 use oxpinyin_input::tool::gen_pinyin_table::{self as edge, TableInput};
 use oxpinyin_input::tool::{
     self, OptionArg, OptionEntry, OptionValue, OutputStream, ucs4_to_utf8, utf8_to_ucs4,
 };
+use oxpinyin_user::data::table_entries::exact_compare2;
 
 /// `MAX_PHRASE_LENGTH` (`src/include/novel_types.h:119`).
 pub const MAX_PHRASE_LENGTH: usize = 16;

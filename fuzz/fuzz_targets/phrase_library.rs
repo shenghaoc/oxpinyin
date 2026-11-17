@@ -13,8 +13,8 @@
 use std::io::Write;
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
-use oxpinyin_data::phrase_library::PhraseLibrary;
+use oxpinyin_user::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
+use oxpinyin_user::data::phrase_library::PhraseLibrary;
 
 fn scratch_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(

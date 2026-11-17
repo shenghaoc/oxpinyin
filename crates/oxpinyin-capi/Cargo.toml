@@ -43,7 +43,7 @@ tools = []
 fuzz-api = []
 # Backend selection (one backend per binary; see oxpinyin-store's
 # [features] for the model and precedence). Each peer feature forwards to
-# oxpinyin-facade, which carries it down facade -> user -> data ->
+# oxpinyin-facade, which carries it down facade -> user ->
 # store. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
 # because `cargo cinstall --features <peer>` names them. `just packaging
@@ -67,7 +67,6 @@ oxpinyin-core.workspace = true
 # carries it for the `workspace = true` ones) so `--no-default-features`
 # builds actually reach the store's backend selection; the [features] block
 # above forwards it.
-oxpinyin-data = { path = "../oxpinyin-data", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-engine.workspace = true
 # The shared facade-orchestration layer (instance/context state machines,
 # parse seams, cursor laws) this crate's C wrappers translate.

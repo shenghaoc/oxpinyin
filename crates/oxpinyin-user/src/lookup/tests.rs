@@ -13,9 +13,9 @@ fn transient() -> UserStore {
     UserStore::open_transient(
         crate::persistence::SystemOriginals::new(
             Default::default(),
-            oxpinyin_data::user_files::UserFileLayout::stock(),
+            crate::data::user_files::UserFileLayout::stock(),
         ),
-        oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+        crate::data::user_files::SystemVersions::for_this_build(7, 14),
         crate::persistence::UserConfLaw::Pinyin,
     )
     .unwrap()
@@ -31,7 +31,7 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
     let mut phrases = SessionPhrases::default();
     let token = crate::FIRST_USER_TOKEN;
     let bytes =
-        oxpinyin_data::chunk_write::encode_phrase_item(&oxpinyin_data::chunk_write::ChunkItem {
+        crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
             phrase: vec![u32::from('你')],
             unigram: 1,
             prons: Vec::new(),
@@ -157,7 +157,7 @@ fn lookup_answers_a_single_syllable_incomplete_query_from_by_initial() {
 /// A two-syllable query where the first key is incomplete and the
 /// second is complete must still filter by the second syllable
 /// (`keys_match`'s complete-only rule at
-/// `crates/oxpinyin-data/src/chewing_table.rs:431-451`). Regresses
+/// `crates/oxpinyin-user/src/data/chewing_table.rs:431-451`). Regresses
 /// shenghaoc/oxpinyin#403's fix.
 #[test]
 fn lookup_filters_mixed_incomplete_and_complete_syllables() {

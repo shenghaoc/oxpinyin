@@ -175,7 +175,7 @@ fn session_text(
     items
         .borrow()
         .with_live(token, |bytes| {
-            oxpinyin_data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
+            crate::data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })
         .flatten()
 }

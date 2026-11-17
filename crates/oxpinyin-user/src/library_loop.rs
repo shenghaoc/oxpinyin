@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use oxpinyin_data::phrase_library::LibraryError;
-use oxpinyin_data::table_info::{DefaultRowStep, TableConf, TableConfSite};
+use crate::data::phrase_library::LibraryError;
+use crate::data::table_info::{DefaultRowStep, TableConf, TableConfSite};
 
 use crate::persistence::{SessionProfile, SystemOriginals};
 use crate::replay::JournalFault;

@@ -11,8 +11,8 @@
     )
 )]
 
-use oxpinyin_data::table_info::{FileType, TableConf};
 use oxpinyin_input::tool::{self, storage::TableFile};
+use oxpinyin_user::data::table_info::{FileType, TableConf};
 use oxpinyin_user::tool::Index;
 use std::path::{Path, PathBuf};
 

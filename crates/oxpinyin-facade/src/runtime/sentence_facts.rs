@@ -4,7 +4,7 @@
 use super::*;
 use oxpinyin_core::TokenPhrase;
 use oxpinyin_core::sentence_facts::{SentenceFacts, TokenFacts};
-use oxpinyin_data::phrase_library::PhraseItemView;
+use oxpinyin_user::data::phrase_library::PhraseItemView;
 
 impl RuntimeDict<'_> {
     fn sentence_token(&self, token: u32, facts: &mut SentenceFacts) -> Option<TokenFacts> {

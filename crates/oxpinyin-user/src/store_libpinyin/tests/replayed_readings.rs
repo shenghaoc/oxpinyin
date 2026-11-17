@@ -15,9 +15,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
+use crate::data::user_files::{LogRecord, SystemVersions};
 use oxpinyin_core::{ChewingKey, PhraseToken, UserModel};
-use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
-use oxpinyin_data::user_files::{LogRecord, SystemVersions};
 
 use super::super::{export_state, packed_to_pinyin_keys};
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
@@ -104,15 +104,15 @@ fn open(dir: &std::path::Path, base: &SystemOriginals) -> UserStore {
 /// A profile whose `gb_char.dbin` holds `records` over `base`.
 fn open_over(name: &str, base: &SystemOriginals, records: &[LogRecord]) -> (PathBuf, UserStore) {
     let dir = tempdir(name);
-    let payload = oxpinyin_data::user_files::encode_log_records(records).expect("log");
+    let payload = crate::data::user_files::encode_log_records(records).expect("log");
     std::fs::write(
         dir.join("gb_char.dbin"),
-        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+        crate::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write log");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let store = open(&dir, base);
@@ -490,7 +490,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     let control = tempdir("user-library-control");
     std::fs::write(
         control.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("marker");
     let mut plain = open(&control, &base);

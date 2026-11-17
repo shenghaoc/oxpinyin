@@ -11,9 +11,9 @@ fn transient() -> UserStore {
     UserStore::open_transient(
         crate::persistence::SystemOriginals::new(
             Default::default(),
-            oxpinyin_data::user_files::UserFileLayout::stock(),
+            crate::data::user_files::UserFileLayout::stock(),
         ),
-        oxpinyin_data::user_files::SystemVersions::for_this_build(7, 14),
+        crate::data::user_files::SystemVersions::for_this_build(7, 14),
         crate::persistence::UserConfLaw::Pinyin,
     )
     .unwrap()

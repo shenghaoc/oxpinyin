@@ -8,9 +8,9 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin_data::single_gram::decode_single_gram;
 use oxpinyin_input::tool;
 use oxpinyin_input::tool::OutputStream;
+use oxpinyin_user::data::single_gram::decode_single_gram;
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::{Libraries, token_to_string};

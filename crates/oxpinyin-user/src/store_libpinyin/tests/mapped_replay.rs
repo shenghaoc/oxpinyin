@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
+use crate::data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
+use crate::data::phrase_library::PhraseLibrary;
+use crate::data::user_files::{LogRecord, SystemVersions, encode_log_records};
 use oxpinyin_core::ChewingKey;
-use oxpinyin_data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
-use oxpinyin_data::phrase_library::PhraseLibrary;
-use oxpinyin_data::user_files::{LogRecord, SystemVersions, encode_log_records};
 
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::store::UserStore;
@@ -60,12 +60,12 @@ impl Profile {
         std::fs::write(&chunk, build_chunk(&shipped()).expect("chunk")).expect("write chunk");
         std::fs::write(
             dir.join("gb_char.dbin"),
-            oxpinyin_data::chunk_format::build_memory_chunk(log).expect("log chunk"),
+            crate::data::chunk_format::build_memory_chunk(log).expect("log chunk"),
         )
         .expect("write log");
         std::fs::write(
             dir.join("user.conf"),
-            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+            crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
         )
         .expect("write marker");
         Self { dir, chunk }
@@ -200,7 +200,7 @@ fn internally_overlapping_slots_survive_same_header_modify_and_reopen() {
     payload.push(b'#');
     std::fs::write(
         &profile.chunk,
-        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+        crate::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write overlapping chunk");
     let mut store = profile.open();

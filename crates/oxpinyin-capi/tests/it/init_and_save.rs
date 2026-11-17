@@ -118,7 +118,10 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
     let run = crate::support::assert_aborts_in_dir(
         "init_and_save::init_aborts_on_an_unknown_table_conf_database_format",
         |user| {
-            let format = format!("database format:{}", oxpinyin_data::DEFAULT_STORE_DB_FORMAT);
+            let format = format!(
+                "database format:{}",
+                oxpinyin_user::data::DEFAULT_STORE_DB_FORMAT
+            );
             let system = conf_system(
                 user.parent().expect("scratch"),
                 &format,
@@ -140,7 +143,10 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
             write_user_conf(user, &system_dir());
             let path = user.join("user.conf");
             let text = std::fs::read_to_string(&path).expect("user.conf");
-            let format = format!("database format:{}", oxpinyin_data::DEFAULT_STORE_DB_FORMAT);
+            let format = format!(
+                "database format:{}",
+                oxpinyin_user::data::DEFAULT_STORE_DB_FORMAT
+            );
             std::fs::write(&path, text.replace(&format, "database format:LMDB"))
                 .expect("write user.conf");
             init_at(&system_dir(), user);

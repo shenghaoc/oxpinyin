@@ -1,6 +1,6 @@
 //! Live system items: each loaded system library's private buffer.
 
-use oxpinyin_data::chunk_write::ChunkItem;
+use crate::data::chunk_write::ChunkItem;
 
 use crate::persistence::SystemLibraryRef;
 use crate::replay::{ReplayedLibrary, UnigramAdd};

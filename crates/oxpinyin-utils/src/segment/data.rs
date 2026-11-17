@@ -14,10 +14,10 @@
 use std::ffi::CString;
 use std::path::Path;
 
-use oxpinyin_data::phrase_library::{LibraryError, RowFault};
-use oxpinyin_data::table_info::{TableConf, TableConfError};
-use oxpinyin_data::{BigramTable, PhraseIndexTable, PhraseLibraries};
 use oxpinyin_input::tool;
+use oxpinyin_user::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin_user::data::table_info::{TableConf, TableConfError};
+use oxpinyin_user::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
 
 /// The loaded system data.
 pub(crate) struct Tables {

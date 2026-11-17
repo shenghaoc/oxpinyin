@@ -326,7 +326,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         let record = [&4u32.to_le_bytes()[..], &[0; 4], &[4, 0], total, total].concat();
         assert_eq!(
             bytes,
-            oxpinyin_data::chunk_format::build_memory_chunk(&record).expect("frame"),
+            oxpinyin_user::data::chunk_format::build_memory_chunk(&record).expect("frame"),
             "{}",
             path.display()
         );
@@ -335,15 +335,19 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     assert!(
         user_dir
             .path
-            .join(oxpinyin_data::user_files::UserDbm::Bigram.file_name())
+            .join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
-    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
+    let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
     let marker =
-        oxpinyin_data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
+        oxpinyin_user::data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
             .expect("saved user.conf");
-    assert!(marker.is_conform(&oxpinyin_data::user_files::SystemVersions::from_conf(&conf)));
+    assert!(
+        marker.is_conform(&oxpinyin_user::data::user_files::SystemVersions::from_conf(
+            &conf
+        ))
+    );
     // The saved user bigram holds no record.
     let mut bigram_rows = 0;
     {
@@ -351,7 +355,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         oxpinyin_store::DefaultStore::open_user_bigram(
             &user_dir
                 .path
-                .join(oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+                .join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name()),
         )
         .expect("the saved user bigram")
         .copy_raw(|_, _| bigram_rows += 1)
