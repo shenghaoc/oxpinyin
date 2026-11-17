@@ -8,7 +8,7 @@ takes every observation in its `OBSERVATIONS`. The first segment of an observati
 | --- | --- | --- |
 | `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | C-API tests in the two capi crates |
 | `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import`, `zhuyin-separator`, `constraint-revalidation` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
-| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; `utility/tkrzw/pinyin-phrase-index-131` and `utility/tkrzw/zhuyin-phrase-index-131`, the generators at `-t 131`; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131` in `gen_pinyin_table.rs` and `gen_zhuyin_table.rs`; for C1, the two pin-written Berkeley DB tests in `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
+| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; `utility/tkrzw/pinyin-phrase-index-131` and `utility/tkrzw/zhuyin-phrase-index-131`, the generators at `-t 131`; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131` in `gen_pinyin_table.rs` and `gen_zhuyin_table.rs`; for C1, the two pin-written Berkeley DB tests in the `pin_data` module of `crates/oxpinyin-store/src/bdb/tests.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
 
 The `zhuyin-separator` observations parse `ni'hao` through libzhuyin's full-pinyin export.
 They record the default tone refusal, the guess-at-3 abort, and the guess-at-2 choose and clears.
@@ -29,8 +29,8 @@ parse and parsed length of `'`, `''` and `'''`:
 Two groups of those tests hold observations of the capture: the abort of a key query on an apostrophe-only
 parse, and the key walk of `ni'`, `ni'!` and `ni'i`.
 
-`fixtures/w4/oracle-paths.txt` excludes all six inputs. The `graph_paths` tests of
-`oxpinyin-core` hold native regressions for them:
+`fixtures/w4/oracle-paths.txt` excludes all six inputs. The graph tests of
+`oxpinyin-core` (`src/graph/tests.rs`) hold native regressions for them:
 
 - apostrophe-only inputs consume every byte without key edges;
 - the other three inputs consume three bytes and admit `ni@0:2:complete` (the pin segments are
@@ -81,7 +81,7 @@ The data sequence stages the end, stdout and stderr of each program,
 with the temporary directory of the subset written as `<table-dir>`. It also stages the rows and `rows_digest`
 of `bigram.db`, `phrase_index.bin` and `pinyin_index.bin`, never their container bytes.
 `fixtures/w3/db/` holds what the ports of `oxpinyin-utils` wrote (`fixtures/w3/README.md`), so these
-rows are the pin-written evidence for it. The two tests in `bdb_libpinyin_files.rs` hold them as
+rows are the pin-written evidence for it. The two `pin_data` tests in `src/bdb/tests.rs` hold them as
 literals and compare them with `fixtures/w3/db/` through the same reader.
 If a recapture gives other rows, the work stops and the report gives the first rows that differ.
 

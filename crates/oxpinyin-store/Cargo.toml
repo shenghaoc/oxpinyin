@@ -19,9 +19,10 @@ workspace = true
 # generated glue over the pin's concrete classes.
 cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
-# The frozen rows digest of the pin-written Berkeley DB tests (tests/bdb_libpinyin_files.rs),
+# The frozen rows digest of the pin-written Berkeley DB tests (src/bdb/tests.rs, pin_data),
 # the one crates/oxpinyin-utils/tests/common computes.
 sha2 = "0.11"
+tempfile.workspace = true
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }

@@ -173,8 +173,8 @@ Within one single gram the items ascend by **numeric token**, the pin's
 
 ### Tests that pin this
 
-`crates/oxpinyin-store/tests/flexible_bigram.rs` round-trips every
-operation on the backend that the build selects. Its last case,
+The `flexible_bigram` tests in `crates/oxpinyin-store/src/flexible_ngram/tests.rs` round-trip every
+operation on the backend that the build selects. Their last case,
 `a_pin_written_file_is_read_in_the_pins_native_order`, reads the committed
 `fixtures/w3/{db,kct,tkt}/k_mixture_model.db`. It compares every header, item
 and `get_all_items` token with the pin's `export_k_mixture_model` output of

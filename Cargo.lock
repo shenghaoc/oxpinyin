@@ -724,6 +724,7 @@ dependencies = [
  "cxx-build",
  "sha2",
  "system-deps",
+ "tempfile",
 ]
 
 [[package]]
