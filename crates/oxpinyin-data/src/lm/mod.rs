@@ -650,26 +650,4 @@ impl<
 }
 
 #[cfg(test)]
-mod merge_tests {
-    use super::merge_bigram;
-
-    #[test]
-    fn bigram_merge_keeps_a_zero_total_system_bigram() {
-        // `merge_single_gram` answers true as soon as one load answers.
-        assert_eq!(merge_bigram(Some((2, 0)), 0, 0), Some((2, 0)));
-    }
-
-    #[test]
-    fn bigram_merge_wraps_each_field_at_the_stored_width() {
-        for (user, expected) in [(u32::MAX - 1, u32::MAX), (u32::MAX, 0)] {
-            assert_eq!(
-                merge_bigram(Some((1, 1)), u64::from(user), u64::from(user)),
-                Some((u64::from(expected), u64::from(expected)))
-            );
-        }
-        assert_eq!(
-            merge_bigram(Some((2, 2)), u64::from(u32::MAX), u64::from(u32::MAX)),
-            Some((1, 1))
-        );
-    }
-}
+mod tests;

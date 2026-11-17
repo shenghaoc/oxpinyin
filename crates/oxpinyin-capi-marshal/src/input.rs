@@ -57,15 +57,6 @@ pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
     Some(oxpinyin_input::path::path_from_bytes(input?.to_bytes()))
 }
 
-#[cfg(all(test, windows))]
-#[test]
-fn filenames_keep_null_empty_and_lossy_utf8_handling() {
-    assert_eq!(filename(None), None);
-    assert_eq!(filename(Some(c"")), Some(PathBuf::new()));
-    let input = c"\xff";
-    assert_eq!(filename(Some(input)), Some(PathBuf::from("\u{fffd}")));
-}
-
 /// Borrow a nullable input pointer within an exposed C adapter.
 ///
 /// The expanding entry point must ensure a non-NULL pointer names a live,
@@ -109,3 +100,6 @@ pub fn direct_zhuyin_reading(input: Option<&CStr>) -> String {
         }
     }
 }
+
+#[cfg(all(test, windows))]
+mod tests;

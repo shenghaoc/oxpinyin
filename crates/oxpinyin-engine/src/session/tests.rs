@@ -4166,7 +4166,10 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
 
 /// Chooses row `index` of the session's cached list at the composition
 /// offset, through [`Session::select_target`].
-fn select_row<D, L>(session: &mut Session<D, L>, index: usize) -> Result<Selection, EngineError>
+pub(super) fn select_row<D, L>(
+    session: &mut Session<D, L>,
+    index: usize,
+) -> Result<Selection, EngineError>
 where
     D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::SyllableKey>,
     D::Error: core::fmt::Display,
@@ -4409,4 +4412,272 @@ fn duplicated_matrix_paths_leave_ordinary_rows_unchanged() {
     duplicate_the_first_key(&mut session);
     session.guess_sentence().unwrap();
     assert_eq!(ordinary(&mut session), rows);
+}
+
+pub(super) mod session_lifecycle {
+    //! Behavioural ports of the upstream session-lifecycle suites.
+    //!
+    //! - `libchewing/tests/test-reset.c`: `Reset` clears session state but
+    //!   must not drop loaded data or configuration — the next conversion
+    //!   after a reset behaves like the first.
+    //! - `libchewing/tests/test-keyboardless.c` (selection subset): the
+    //!   programmatic choice surface — out-of-range choices fail without
+    //!   disturbing state, choosing without a candidate window fails, and a
+    //!   mid-composition choice commits the exact chosen phrase. These
+    //!   selection ports are in the `session_lifecycle` module of
+    //!   `selection/tests.rs`.
+    //!
+    //! The oxpinyin seam is the internal engine `Session` API over the
+    //! `oxpinyin-core/tests/common/fixture_doubles.rs` doubles. Chewing's commit/preedit
+    //! buffer checks use selected text and raw-input offsets; its config setters
+    //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.
+
+    use oxpinyin_core::OptionBits;
+
+    use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
+    use crate::{Session, SessionSettings};
+
+    use super::select_row;
+
+    pub(in crate::session) const VOCAB: &str =
+        include_str!("../../../../fixtures/w4/mini-vocab.txt");
+
+    pub(in crate::session) const BIGRAM: &str =
+        include_str!("../../../../fixtures/w4/mini-bigram.txt");
+
+    pub(in crate::session) type TestSession = Session<FixtureDictionary, FrequencyFixtureModel>;
+
+    /// The committed W4 fixtures as one session: the one builder the moved
+    /// lookup, selection, lifecycle and replay tests share.
+    pub(in crate::session) fn session() -> TestSession {
+        let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
+        let model = FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
+        Session::new(SessionSettings::default(), dictionary, model)
+    }
+
+    // ── libchewing test-reset.c ─────────────────────────────────────────
+
+    #[test]
+    fn reset_clears_the_composition_but_not_the_configuration() {
+        // Chewing's regression: Reset used to wipe dictionaries and settings.
+        // After a reset, the same input must convert exactly as the first
+        // time, under the configuration set before the reset.
+        let mut session = session();
+        session
+            .set_options(session.options() - OptionBits::PINYIN_INCOMPLETE)
+            .expect("the option toggles");
+        let options = session.options();
+
+        session.replace_raw("nihao").expect("typing");
+        assert!(session.is_composing());
+
+        session.reset();
+        assert!(!session.is_composing());
+        assert!(session.selected_text().is_empty());
+
+        // The live option survives reset and still controls decoding.
+        assert_eq!(session.options(), options);
+        session.replace_raw("n").expect("typing");
+        assert_eq!(session.full_parsed_len(), 0);
+    }
+
+    #[test]
+    fn the_reset_session_converts_identically_to_a_fresh_one() {
+        let mut fresh = session();
+        fresh.replace_raw("zhong,guo").expect("typing");
+        let mut reset = session();
+        reset.replace_raw("zhong,guo").expect("typing");
+        select_row(&mut reset, 0).expect("choose");
+        reset.reset();
+
+        reset.replace_raw("zhong,guo").expect("typing");
+        let fresh_candidates: Vec<String> = fresh
+            .candidates()
+            .iter()
+            .filter_map(|c| c.text_str())
+            .map(str::to_owned)
+            .collect();
+        let reset_candidates: Vec<String> = reset
+            .candidates()
+            .iter()
+            .filter_map(|c| c.text_str())
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            reset_candidates, fresh_candidates,
+            "a reset session must behave like a fresh one"
+        );
+    }
+
+    #[test]
+    fn reset_composition_keeps_the_parse_more_split_state() {
+        // The two-stage reset: `reset_composition` clears the parse state but
+        // keeps the raw buffer and selection record alive (the
+        // `pinyin_parse_more_*` re-parse seam).
+        let mut session = session();
+        session.replace_raw("ni").expect("typing");
+        session.reset_composition();
+        // The parse state is gone; the session survives and accepts input.
+        assert!(session.replace_raw("nih").is_ok());
+    }
+
+    #[test]
+    fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
+        // Chewing's config setters reject out-of-enum values; the oxpinyin
+        // option word is a bitset, where bits outside the frozen constants
+        // ride along inertly (the DYNAMIC_ADJUST gating tests pin the
+        // off-behaviour of a defined-but-special bit). Setting the word with
+        // the incomplete flag PLUS an undefined low bit must leave the
+        // defined behaviour untouched.
+        let undefined_bit = 1 << 0; // bits 0..2 are outside the frozen set
+        let mut session = session();
+        session
+            .set_options(
+                OptionBits::PINYIN_INCOMPLETE | OptionBits::from_bits_retain(undefined_bit),
+            )
+            .expect("the option word accepts undefined bits");
+        session
+            .set_options(session.options() | OptionBits::PINYIN_INCOMPLETE)
+            .expect("the option toggles");
+        session.replace_raw("n").expect("typing");
+        assert!(
+            session.is_composing(),
+            "incomplete pinyin still composes past an initial"
+        );
+    }
+}
+
+/// The F-D replay fixture session and the session-level replay tests; the
+/// scenarios themselves are in `selection/tests.rs`.
+pub(super) mod session_replay {
+    use oxpinyin_core::{Dictionary, SyllableKey};
+
+    use crate::Session;
+    use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
+
+    use super::session_lifecycle::VOCAB;
+
+    type Fixtures = Session<FixtureDictionary, FrequencyFixtureModel>;
+
+    pub(in crate::session) fn session() -> Fixtures {
+        let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
+
+        // The scenarios name phrases the vocabulary has to hold — `f-e-12` expects
+        // `传` for `zhuan`. Core's fixture-provenance tests check the vocabulary against the
+        // captures but knows nothing about these scenarios, so a key dropped from
+        // the fixture would otherwise surface as a mystifying candidate mismatch
+        // several steps into a replay. Fail here instead, naming the key.
+        for keys in ["zhuan", "ni", "ni,hao", "xi,an", "chang,an", "zhong,guo"] {
+            let sequence: Vec<SyllableKey> = keys
+                .split(',')
+                .map(|key| SyllableKey::from_text(key).expect("a frozen pinyin key"))
+                .collect();
+            assert!(
+                !dictionary
+                    .lookup(&sequence)
+                    .expect("fixture lookups cannot fail")
+                    .is_empty(),
+                "fixtures/w4/mini-vocab.txt has no entry for {keys:?}, which a \
+             replay scenario depends on"
+            );
+        }
+
+        super::session_lifecycle::session()
+    }
+
+    /// Every byte sequence a shell could send survives the session.
+    #[test]
+    fn arbitrary_characters_never_panic() {
+        let mut session = session();
+        let mut text = String::new();
+        for character in ('\u{0}'..='\u{ff}').chain(['\u{4f60}', '\u{10ffff}']) {
+            text.push(character);
+            session.replace_raw(&text).expect("no input is an error");
+        }
+        assert!(session.composition_offset() <= session.raw_input().len());
+        session.reset();
+        assert!(session.raw_input().is_empty());
+        assert!(session.selected_text().is_empty());
+    }
+}
+
+/// Decoding tests whose decision is the session's parse and settings.
+mod decoding {
+    use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
+    use crate::{Candidate, Session, SessionSettings};
+
+    use super::session_lifecycle::{BIGRAM, VOCAB};
+
+    /// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
+    ///
+    /// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
+    /// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification: the full
+    /// W4 capture (`fixtures/w4/oracle-candidate-structure.txt` before the #1764
+    /// reduction) had `b#ing\t1\t不` and `bing\t1\t并`; neither input is in the
+    /// retained subset.
+    const JUNK_VOCAB: &str = "\
+token=1\tkeys=bu\ttext=不\tunigram=1000
+token=2\tkeys=bing\ttext=并\tunigram=100
+";
+
+    #[test]
+    fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
+        // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing):
+        // the junk byte reaches the decoder, which stops at it.
+        let mut session = Session::new(
+            SessionSettings::default(),
+            FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
+            FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+        );
+
+        session.replace_raw("b#ing").expect("parse cannot fail");
+        assert_eq!(session.raw_input(), "b#ing");
+
+        let top = session
+            .candidates()
+            .iter()
+            .next()
+            .map(Candidate::text)
+            .expect("at least one candidate");
+        assert_eq!(
+            top, "不",
+            "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
+        );
+
+        // Contrast: clean bing prefers 并.
+        let mut collapsed = Session::new(
+            SessionSettings::default(),
+            FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
+            FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+        );
+        collapsed.replace_raw("bing").expect("parse cannot fail");
+        let collapsed_top = collapsed
+            .candidates()
+            .iter()
+            .next()
+            .map(Candidate::text)
+            .expect("at least one candidate");
+        assert_eq!(collapsed_top, "并", "clean bing must still rank 并 first");
+    }
+
+    #[test]
+    fn turning_incomplete_pinyin_off_stops_at_the_initial() {
+        let mut session = Session::new(
+            SessionSettings {
+                incomplete_pinyin: false,
+            },
+            FixtureDictionary::parse(VOCAB).expect("committed fixture"),
+            FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
+        );
+
+        session.replace_raw("nih").expect("typing cannot fail");
+
+        let texts: Vec<&str> = session
+            .candidates()
+            .iter()
+            .filter_map(Candidate::text_str)
+            .collect();
+        assert_eq!(texts[0], "你", "without the incomplete key, nih is just ni");
+        assert!(!texts.contains(&"你好"));
+    }
 }

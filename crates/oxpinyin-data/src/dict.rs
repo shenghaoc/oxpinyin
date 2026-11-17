@@ -1203,40 +1203,4 @@ impl AddonDictionary {
 }
 
 #[cfg(test)]
-mod failed_addon_attachment_tests {
-    use super::{AddonDictionary, TableConf};
-
-    // pinyin.cpp:477-494 reaches the NULL system filename at :284-290.
-    #[test]
-    fn addon_without_chunk_reports_null_chunk_name() {
-        use crate::phrase_library::{LibraryError, RowFault};
-        use std::path::Path;
-        let mut addon = AddonDictionary::empty();
-        addon.rows[4].system = None;
-        assert!(matches!(
-            addon.load_reporting(4, Path::new("unused")),
-            Err(LibraryError::Row(RowFault::NullChunkName))
-        ));
-    }
-
-    #[test]
-    fn missing_addon_files_leave_the_retained_failed_objects_not_none() {
-        // `AddonDictionary::attach_with` keeps both addon tables with their
-        // failed native objects, the pin's `FacadeChewingTable2::load` and
-        // `FacadePhraseTable3::load` on `pinyin.cpp:421,429`; a table that
-        // is `None` would skip the pin's later calls on them.
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-data-addon-missing-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut addon = AddonDictionary::attach_with(&dir, &TableConf::stock()).unwrap();
-        assert!(addon.pinyin_attachment_failed());
-        assert!(addon.phrase_attachment_failed());
-        assert!(!addon.attachments_finished());
-        addon.finish_attachments();
-        assert!(addon.attachments_finished());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+mod tests;

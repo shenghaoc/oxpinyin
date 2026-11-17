@@ -27,6 +27,9 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
+#[cfg(test)]
+extern crate self as oxpinyin_data;
+
 pub mod bigram_table;
 pub mod c_stderr;
 pub(crate) mod chewing_table;
@@ -42,6 +45,9 @@ pub(crate) mod phrase_table;
 pub mod punct;
 pub mod row_format;
 pub mod single_gram;
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
 pub mod system_files;
 pub mod table;
 pub mod table_conf;

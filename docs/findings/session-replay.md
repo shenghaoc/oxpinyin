@@ -16,7 +16,7 @@ Every candidate asserted here is one that the pinned oracle emitted, taken from 
 
 ## Harness
 
-`crates/oxpinyin-engine/tests/session_replay.rs` holds the scenarios inline and reads no scenario file.
+The `session_replay` module of `crates/oxpinyin-engine/src/session/selection/tests.rs` holds the scenarios inline and reads no scenario file; the robustness tests are in the `session_replay` module of `crates/oxpinyin-engine/src/session/tests.rs`.
 It opens each session with `Session::new` and `SessionSettings::default()`.
 The dictionary and the language model are fixture doubles over `fixtures/w4/mini-vocab.txt` and `fixtures/w4/mini-bigram.txt`.
 
@@ -46,12 +46,13 @@ The test `recorded_candidate_scenarios_use_direct_operations` runs seven scenari
 
 ## Robustness tests
 
-The test doc comments state each upstream defect.
+The test doc comments state each upstream defect. F-E-12 is an `assert()` on the user input `zhuan` (ibus-libpinyin #542).
 
-- **F-E-12**, `f_e_12_zhuan_session_replay`.
-  The test runs the full frontend-equivalent sequence, not a parse in isolation: it parses `zhuan`, takes a candidate, reads the retained text, resets, and continues on the same session.
+- **F-E-12**, the `zhuan` row of `recorded_candidate_scenarios_use_direct_operations` and `the_reset_session_converts_identically_to_a_fresh_one`.
+  The row runs the full frontend-equivalent sequence, not a parse in isolation: it parses `zhuan`, takes `传`, reads the retained text and resets.
+  `the_reset_session_converts_identically_to_a_fresh_one` (the `session_lifecycle` module of `crates/oxpinyin-engine/src/session/tests.rs`) continues on a session after a choice and a reset.
 
-A third test, `arbitrary_characters_never_panic`, appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
+The test `arbitrary_characters_never_panic` appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
 It requires no panic and no error: the totality property at session level.
 
 ## Portability
