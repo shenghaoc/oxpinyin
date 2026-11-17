@@ -112,7 +112,7 @@ RUST_READS = (
 # The shipping-size job's path gate. `crates` over-selects the three crates
 # outside the capi closure; the gate must not need a Cargo toolchain.
 SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
-        "tools/codegen/string_tables.rs", "tools/dev/packaging.py",
+        "crates/oxpinyin-core/codegen/string_tables.rs", "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "vcpkg-overlays", "triplets",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",

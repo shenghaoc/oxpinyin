@@ -54,14 +54,30 @@
 //! `libpinyin.pc.in` after `cargo cinstall` and reads nothing from Cargo's
 //! build directory. See `docs/findings/installed-naming.md` for the
 //! rationale and the verified cargo-c limits.
-//!
-//! The link step is shared with `oxpinyin-zhuyin-capi` in `build_capi.rs`.
 
-mod build_capi;
+use std::env;
 
 fn main() {
-    build_capi::run(&build_capi::Library {
-        soname: "libpinyin.so.15",
-        shared_source: "build_capi.rs",
-    });
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // Keep the Linux link setup in sync with crates/oxpinyin-zhuyin-capi/build.rs.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
+    }
+    println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libpinyin.so.15");
+    // The tkrzw and Kyoto Cabinet backends' cxx bridges link the `cxx`
+    // crate, whose Rust runtime defines `#[export_name]` symbols
+    // (`cxxbridge1$slice$*`, `cxxbridge1$string$*`, ...) that rustc lists
+    // as C-level exports of every cdylib in the graph. They are not part
+    // of the libpinyin ABI (docs/packaging.md#export-gate). The symbols
+    // live in rlib archives, and GNU ld's `--exclude-libs` gives every symbol
+    // defined in an archive hidden visibility, which a version script
+    // cannot override; the crate's own `pinyin_*` / `zhuyin_*` symbols come
+    // from its object files and are untouched. The shipped library is
+    // relinked under its `.ver` script and needs none of this.
+    if env::var_os("CARGO_FEATURE_TKRZW").is_some()
+        || env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some()
+    {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--exclude-libs,ALL");
+    }
 }

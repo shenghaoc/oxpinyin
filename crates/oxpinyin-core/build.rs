@@ -17,7 +17,7 @@ mod full_syllables;
 )]
 #[path = "src/table_data/syllable_inventory.rs"]
 mod inventory;
-#[path = "../../tools/codegen/string_tables.rs"]
+#[path = "codegen/string_tables.rs"]
 mod string_tables;
 
 mod zhuyin_indexes {
@@ -191,7 +191,7 @@ fn generate_string_tables(out_dir: &std::path::Path, spellings: &[String]) {
         "src/table_data/full_pinyin_indexes.rs",
         "src/table_data/full_pinyin_syllables.rs",
         "src/table_data/zhuyin_indexes.rs",
-        "../../tools/codegen/string_tables.rs",
+        "codegen/string_tables.rs",
     ] {
         println!("cargo:rerun-if-changed={path}");
     }
