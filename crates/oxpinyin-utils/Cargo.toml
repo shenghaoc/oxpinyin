@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-publish = false
-description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships."
+include = ["/src/**"]
+description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). Never ships. The Rust interface is unstable."
 
 [lib]
 doctest = false

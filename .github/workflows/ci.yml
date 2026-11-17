@@ -213,6 +213,39 @@ jobs:
         uses: ./.github/actions/contract-data
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
         if: needs.changes.outputs.reuse != 'true'
+      - name: Build Cargo packages from their archives
+        if: needs.changes.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf -- "$scratch"' EXIT
+          metadata=$(cargo metadata --format-version 1 --locked --no-deps)
+          packages=$(jq -er '.packages[] | select(.publish != []) | [.name, .version] | @tsv' <<< "$metadata")
+          target=$(jq -er '.target_directory' <<< "$metadata")
+          toolchain=$(rustup show active-toolchain)
+          toolchain=${toolchain%% *}
+
+          package_args=()
+          while read -r name version; do
+            package_args+=(-p "$name")
+          done <<< "$packages"
+
+          cargo package --locked "${package_args[@]}" --list
+          # The pinned Cargo verifier can fail to find a checksum for a workspace
+          # dependency in its temporary registry. Build the extracted archives
+          # against one another instead.
+          cargo package --locked "${package_args[@]}" --no-verify --target-dir "$scratch/target"
+          printf '[patch.crates-io]\n' > "$scratch/archives.toml"
+          while read -r name version; do
+            tar -xzf "$scratch/target/package/$name-$version.crate" -C "$scratch"
+            printf '%s = { path = "%s" }\n' "$name" "$scratch/$name-$version" >> "$scratch/archives.toml"
+          done <<< "$packages"
+
+          cd "$scratch"
+          while read -r name version; do
+            cargo "+$toolchain" --config "$scratch/archives.toml" build --offline \
+              --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
+          done <<< "$packages"
       - name: C++ pinyin.h smoke gate
         if: needs.changes.outputs.reuse != 'true'
         run: just cpp-smoke
