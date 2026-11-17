@@ -282,7 +282,7 @@ def linux_compare(args, arms, env, output):
     source = linux_source(arms['A'], env, args.budget)
     counter = reports.LINUX_SOURCES[source]
     emit('instruction source: ' + source + ' (' + counter + ')')
-    rows, functions, creators, fingerprint = {}, {}, [], None
+    rows, creators, fingerprint = {}, [], None
     deadline = time.monotonic() + args.budget
     with (output / 'runs.jsonl').open('w') as stream:
         for phase in ('native', 'callgrind') if source == 'callgrind' else ('native',):
@@ -305,10 +305,8 @@ def linux_compare(args, arms, env, output):
                     rows[kind, block, label] = row
                 else:
                     rows[kind, block, label][counter] = row[counter]
-                    functions[kind, block, label] = parsed['functions']
                     creators.append(parsed['creator'])
-    result = reports.linux_comparison(list(rows.values()), source=source, functions=functions,
-                                      creators=creators or [None])
+    result = reports.linux_comparison(list(rows.values()), source=source, creators=creators or [None])
     (output / 'summary.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
     # As the Callgrind campaign: an invalid exact control is a failed run, after its record is kept.

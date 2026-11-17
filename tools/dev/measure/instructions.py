@@ -1,7 +1,6 @@
-"""Exclusive Callgrind attribution and the 2026-10-24 RandomState rule."""
+"""Exclusive Callgrind attribution."""
 import re
 from pathlib import Path
-import statistics
 
 
 def callgrind_costs(text, library, *, preserve_objects=False):
@@ -92,24 +91,6 @@ def callgrind_costs(text, library, *, preserve_objects=False):
                     for (obj, fn), value in sorted(inclusive.items(), key=lambda item: -item[1][ir]) if value[ir]],
                 edges=[dict(caller_object=label(obj), caller=fn, callee_object=label(cob), callee=cfn, Ir=value[ir])
                     for (obj, fn, cob, cfn), value in sorted(edges.items(), key=lambda item: -item[1][ir]) if value[ir]])
-
-
-RANDOMSTATE_ALLOWLIST = frozenset((
-    'dedup_ranked_by_text', 'order_window_tail', '__memcmp_avx2_movbe',
-))
-
-
-def allowed(function):
-    """Recognize an exact RandomState allowlisted name after Rust-path normalization.
-
-    Remove a trailing Rust hash and the engine session prefix; clone suffixes
-    and arbitrary substring matches remain rejected.
-    """
-    # Accept complete demangled Rust paths, never a substring or a clone suffix.
-    name = re.sub(r'::h[0-9a-f]{16}$', '', function)
-    if name.startswith('oxpinyin_engine::session::'):
-        name = name.removeprefix('oxpinyin_engine::session::')
-    return name in RANDOMSTATE_ALLOWLIST
 
 
 def resolve_unmapped(text, documents, pid, executable):
@@ -244,40 +225,3 @@ def profile(raw, library, executable, pid, documents=()):
             row['unresolved'] = True
     return dict(total=int(summary[0]), functions=functions, raw=text, loader_data=[d for d in documents if d.get('startup') == 'loaded_object'],
                 creator=re.search(r'^creator:[ \t]+([^\s]+)', text, re.M)[1], pid=pid)
-
-
-def qualify(counts, profiles):
-    """Qualify instruction-count ranges using same-bytes PR/control attribution.
-
-    Require at least five counts per arm and one profiler identity, otherwise
-    raise ValueError. A positive PR median, overlapping PR/control ranges,
-    allowlisted variation, and constant unresolved sites yield RANGE-QUALIFIED;
-    otherwise return INVALID with the offending sites and observed bounds.
-    """
-    if any(len(counts[arm]) < 5 for arm in ('base', 'pr', 'control')):
-        raise ValueError('range qualification requires five fresh processes per arm')
-    median = statistics.median(counts['pr'])
-    if len({p['creator'] for samples in profiles.values() for p in samples}) != 1:
-        raise ValueError('Callgrind profiler identity changed between samples')
-    bounds = {arm: [min(values), max(values)] for arm, values in counts.items()}
-    overlap = max(bounds[a][0] for a in ('pr', 'control')) <= min(bounds[a][1] for a in ('pr', 'control'))
-    tables = [{(r['object'], r['function']): r['Ir'] for r in sample['functions']}
-              for arm in ('pr', 'control') for sample in profiles[arm]]
-    keys = set().union(*tables)
-    varying = [dict(object=obj, function=fn, values=[t.get((obj, fn), 0) for t in tables])
-               for obj, fn in sorted(keys) if len({t.get((obj, fn), 0) for t in tables}) > 1]
-    unresolved_keys = {(r['object'], r['function']) for arm in ('pr', 'control')
-                       for sample in profiles[arm] for r in sample['functions'] if r.get('unresolved')}
-    constant = {key: tables[0][key] for key in unresolved_keys
-                if all(key in t and t[key] == tables[0].get(key) for t in tables)}
-    unresolved_invalid = sorted(unresolved_keys - constant.keys())
-    outside = [row for row in varying if (row['object'], row['function']) not in unresolved_keys
-               and not allowed(row['function'])]
-    valid = median > 0 and overlap and not outside and not unresolved_invalid
-    return dict(verdict='RANGE-QUALIFIED' if valid else 'INVALID', bounds=bounds,
-                pr_median=median, overlap=overlap,
-                base_minus_pr_bounds=[bounds['base'][0] - bounds['pr'][1],
-                                      bounds['base'][1] - bounds['pr'][0]],
-                varying_functions=varying, outside_allowlist=outside,
-                constant_unresolved_count=len(constant), constant_unresolved_Ir=sum(constant.values()),
-                invalid_unresolved=unresolved_invalid)

@@ -108,48 +108,25 @@ class LinuxReport(unittest.TestCase):
             reports.linux_comparison([row for row in session() if row['kind'] == 'comparison'],
                                      source='perf_event_open')
 
-    def callgrind(self, counts, tables):
-        """COUNTS and TABLES give Ir and per-function Ir by (kind, arm), each a function of the block."""
-        rows, functions = [], {}
+    def callgrind(self, counts):
+        rows = []
         for row in session('callgrind', pairs=2):
             key = row['kind'], row['arm']
             row['loop_callgrind_ir'] = counts.get(key, lambda block: 5000)(row['block'])
-            functions[row['kind'], row['block'], row['arm']] = tables.get(key, lambda block: {'steady': 5000})(row['block'])
             rows.append(row)
-        return reports.linux_comparison(rows, source='callgrind', functions=functions, creators=['callgrind-3.22.0'])
+        return reports.linux_comparison(rows, source='callgrind', creators=['callgrind-3.22.0'])
 
-    def test_callgrind_control_is_exact_then_randomstate_then_invalid(self):
-        exact = self.callgrind({('comparison', 'B'): lambda block: 5500}, {})
+    def test_callgrind_control_requires_exact_counts(self):
+        exact = self.callgrind({('comparison', 'B'): lambda block: 5500})
         self.assertEqual(exact['verdicts']['loop_callgrind_ir'], 'VALID')
         self.assertEqual(exact['comparison']['loop_callgrind_ir']['B_over_A']['median'], 1.1)
         self.assertEqual(exact['control']['loop_callgrind_ir']['gate']['spread'], 0)
         self.assertNotIn('loop_hw_instructions', exact['units'])
         self.assertIn('Callgrind', exact['units']['loop_callgrind_ir'])
 
-        # A' differs from A only inside a RandomState scope: ranges and bounds, no point estimate.
-        scoped = 'oxpinyin_engine::session::order_window_tail'
-        varying = dict(counts={('control', 'B'): lambda block: 5003 + block,
-                               ('comparison', 'B'): lambda block: 5500},
-                       tables={('control', 'B'): lambda block: {'steady': 4000, scoped: 1003 + block},
-                               ('control', 'A'): lambda block: {'steady': 4000, scoped: 1000},
-                               ('comparison', 'A'): lambda block: {'steady': 4000, scoped: 1000}})
-        diagnostic = self.callgrind(**varying)
-        self.assertEqual(diagnostic['verdicts']['loop_callgrind_ir'], 'DIAGNOSTIC')
-        entry = diagnostic['comparison']['loop_callgrind_ir']
-        self.assertNotIn('B_over_A', entry)
-        self.assertEqual((entry['Ir_ranges'], entry['B_minus_A_bounds']),
-                         ({'A': [5000, 5000], 'B': [5500, 5500]}, [500, 500]))
-        gate = diagnostic['control']['loop_callgrind_ir']['gate']
-        self.assertEqual((gate['rule'], gate['varying_functions'], gate['outside_allowlist']),
-                         ('randomstate', [scoped], []))
-
-        # The same variation in any other function is INVALID and withholds the Ir comparison only.
-        varying['tables'][('control', 'B')] = lambda block: {'steady': 4003 + block, scoped: 1000}
-        invalid = self.callgrind(**varying)
+        invalid = self.callgrind({('control', 'B'): lambda block: 5003 + block})
         self.assertEqual(invalid['verdicts']['loop_callgrind_ir'], 'INVALID')
         self.assertEqual(set(invalid['comparison']['loop_callgrind_ir']), {'withheld'})
-        self.assertEqual(invalid['control']['loop_callgrind_ir']['gate']['outside_allowlist'],
-                         [dict(pair='main', function='steady')])
         self.assertIn('B_over_A', invalid['comparison']['wall_seconds'])
 
 

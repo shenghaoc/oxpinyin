@@ -194,15 +194,6 @@ serially, with equal-length private library paths. These rules decide the result
   are required.
 - Invalid controls, observations or collections return nonzero
   and suppress the per-invocation comparison.
-- The typing sequence
-  alone reports a varying control as `DIAGNOSTIC` (rule `randomstate`, ranges,
-  no tolerance) when every varying function is one of these:
-  `dedup_by_text_keep_first`;
-  `prepend_nbest_rows` (packaged fat-LTO builds inline
-  `dedup_by_text_keep_first` into it); `dedup_ranked_by_text`;
-  `order_window_tail` (std `HashSet`/`HashMap` with the per-process
-  `RandomState` SipHash-1-3 keys); or `memcmp`, their equality callee. Any
-  other varying function is `INVALID`.
 
 The output directory must be new. `result.json` reports raw counts, control
 spread, and Ir per sentence or per complete typing sequence. `environment.json`
@@ -613,10 +604,8 @@ The same-bytes control of A against A′ follows the Linux rules, not the rule o
 hardware count use the 0.95 to 1.05 band. Residency uses ±max(64 KiB, 1% of the
 A median). A control outside its limits is `DIAGNOSTIC`: the estimate stays in
 the report beside the control limits. Callgrind `Ir` must be equal in every run
-of A and A′. A varying count follows the typing-sequence rule above: it is
-`DIAGNOSTIC`, with ranges and bounds and no ratio, when every varying function
-is in that list. Any other variation is `INVALID`: the `Ir` comparison is
-withheld and the command returns nonzero after it writes its report.
+of A and A′. If any count differs, the command records `INVALID`, withholds
+the `Ir` comparison and returns nonzero after it writes its report.
 
 One budget covers both passes. Callgrind is far slower than a native run, so a
 comparison that uses it needs an explicit `--budget`. The Valgrind
