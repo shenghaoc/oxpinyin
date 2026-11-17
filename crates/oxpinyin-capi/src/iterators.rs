@@ -752,3 +752,6 @@ pub unsafe extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIt
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
     }
 }
+
+#[cfg(test)]
+mod tests;

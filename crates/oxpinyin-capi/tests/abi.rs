@@ -10,8 +10,6 @@
 
 #[path = "abi/common.rs"]
 mod common;
-#[path = "abi/contract.rs"]
-mod contract;
 #[path = "abi/exact_scheme.rs"]
 mod exact_scheme;
 #[path = "abi/keys.rs"]

@@ -11,51 +11,48 @@
 )]
 
 use std::os::raw::c_char;
-use std::path::Path;
-use std::ptr;
 
-use crate::candidates::{
-    zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_candidate_type,
-    zhuyin_get_n_candidate, zhuyin_train,
-};
-use crate::config::{
-    zhuyin_load_phrase_library, zhuyin_mask_out, zhuyin_set_chewing_scheme, zhuyin_set_options,
-    zhuyin_unload_phrase_library,
-};
-use crate::context::{zhuyin_fini, zhuyin_init, zhuyin_save};
-use crate::cursor::{
-    zhuyin_get_left_zhuyin_offset, zhuyin_get_right_zhuyin_offset, zhuyin_get_zhuyin_key,
-    zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_length,
-    zhuyin_get_zhuyin_key_rest_positions,
-};
+use std::path::Path;
+
+use crate::candidates::zhuyin_train;
+
+use crate::config::{zhuyin_load_phrase_library, zhuyin_set_options, zhuyin_unload_phrase_library};
+
+use crate::context::{zhuyin_fini, zhuyin_save};
+
 use crate::dict::{
-    zhuyin_token_add_unigram_frequency, zhuyin_token_get_n_pronunciation,
-    zhuyin_token_get_nth_pronunciation, zhuyin_token_get_phrase,
+    zhuyin_token_get_n_pronunciation, zhuyin_token_get_nth_pronunciation, zhuyin_token_get_phrase,
 };
+
 use crate::instance::{zhuyin_alloc_instance, zhuyin_free_instance};
-use crate::keys::{zhuyin_get_pinyin_string, zhuyin_get_zhuyin_string, zhuyin_parse_chewing};
+
+use crate::keys::zhuyin_parse_chewing;
+
 use crate::parse::{
-    zhuyin_get_parsed_input_length, zhuyin_in_chewing_keyboard, zhuyin_parse_more_chewings,
-    zhuyin_parse_more_full_pinyins,
+    zhuyin_get_parsed_input_length, zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins,
 };
+
 use crate::phrase::{zhuyin_get_n_phrase, zhuyin_get_phrase_token, zhuyin_phrase_segment};
+
 use crate::sentence::{
-    zhuyin_get_character_offset, zhuyin_get_sentence, zhuyin_guess_candidates_after_cursor,
-    zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence,
+    zhuyin_get_sentence, zhuyin_guess_candidates_after_cursor, zhuyin_guess_sentence,
 };
+
 use crate::test_support::{
-    LogCapture, TempUserDir, abort_in_child, assert_aborts, close, craft_user_index, cstr, import,
-    init_on, open, open_with_user, plant_bigram, private_system, run_in_child, system_dir,
-    take_sentence, tokens_of, ucs4_key, write_user_conf,
+    TempUserDir, assert_aborts, close, craft_user_index, cstr, import, open, open_with_user,
+    plant_bigram, run_in_child, system_dir, take_sentence, tokens_of, ucs4_key, write_user_conf,
 };
-use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, ZhuyinInstance};
+
+use crate::types::{ChewingKey, ZhuyinContext, ZhuyinInstance};
 
 mod import_and_user_store;
+
 mod init_and_save;
-mod null_arguments;
-mod parse_keys;
+
 mod sentence_and_candidates;
+
 mod table_reads;
+
 mod token_getters;
 
 /// The out-parameter seed that shows an untouched output.
@@ -63,17 +60,6 @@ const UNTOUCHED: u32 = 0x00AB_CDEF;
 
 /// A seeded pointer out-parameter.
 const SEEDED: usize = 0x00AB_CDEF;
-
-/// The GLib level of a critical.
-const CRITICAL: u32 = 8;
-
-/// A fresh instance on `context` with `keys` parsed as chewing keystrokes.
-fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinInstance {
-    let instance = unsafe { zhuyin_alloc_instance(context) };
-    assert!(!instance.is_null());
-    unsafe { zhuyin_parse_more_chewings(instance, cstr(keys).as_ptr()) };
-    instance
-}
 
 /// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
 const SEPARATOR_OPTIONS: u32 = 0x18a;
@@ -93,12 +79,6 @@ fn sentence(instance: *mut ZhuyinInstance) -> (bool, Option<String>) {
     let ret = unsafe { zhuyin_get_sentence(instance, &raw mut text) };
     let text = (text as usize != SEEDED).then(|| take_sentence(text));
     (ret, text)
-}
-
-fn candidate_at(instance: *mut ZhuyinInstance, index: u32) -> *mut LookupCandidate {
-    let mut candidate: *mut LookupCandidate = ptr::null_mut();
-    assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut candidate) });
-    candidate
 }
 
 /// The keys of a GArray of two-byte elements as lowercase hex.
@@ -148,22 +128,4 @@ fn user_tokens(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
         .into_iter()
         .filter(|token| token >> 24 == 7)
         .collect()
-}
-
-/// The elements of a zero-terminated GArray of `width`-byte elements; the
-/// terminator is checked.
-fn elements(array: *mut glib_sys::GArray, width: usize) -> Vec<u32> {
-    // SAFETY: a live zero-terminated GArray of `width`-byte elements.
-    unsafe {
-        let view = &*array;
-        let read = |index: usize| {
-            if width == 4 {
-                view.data.cast::<u32>().add(index).read_unaligned()
-            } else {
-                u32::from(view.data.cast::<u16>().add(index).read_unaligned())
-            }
-        };
-        assert_eq!(read(view.len as usize), 0, "the zero terminator");
-        (0..view.len as usize).map(read).collect()
-    }
 }

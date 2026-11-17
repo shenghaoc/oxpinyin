@@ -8,23 +8,6 @@
 
 use super::*;
 
-/// An import aborts where the user phrase table maps the phrase to two
-/// tokens of one library.
-#[test]
-fn import_aborts_on_two_tokens_of_one_library() {
-    assert_aborts(
-        "boundary_tests::library_tokens::import_aborts_on_two_tokens_of_one_library",
-        || {
-            let user = TempUserDir::new("import-duplicate-token");
-            let (context, instance) = open_at(&user.path);
-            close(context, instance);
-            set_phrase_table_row(&user.path, "你好", &[0x0700_0001, 0x0700_0002]);
-            let (context, _) = open_at(&user.path);
-            import_batch(context, 7, &[("你好", "ni'hao", 5)]);
-        },
-    );
-}
-
 /// The high four bits a crafted user file can give a token of 龘龘.
 const TAG: u32 = 0x8000_0000;
 
@@ -238,80 +221,6 @@ fn an_import_aborts_on_five_tokens_before_the_library_refusal() {
             let (context, _) = open_at(&user.path);
             hold_in_five_libraries(context, "你好", "ni3'hao3");
             import_batch(context, 8, &[("你好", "ni3'hao3", 100_000)]);
-        },
-    );
-}
-
-/// A reading of the wrong length is refused before the five-token search.
-#[test]
-fn an_import_refuses_a_short_reading_before_the_token_count() {
-    let user = TempUserDir::new("combined-invalid-reading");
-    let (context, instance) = open_at(&user.path);
-    hold_in_five_libraries(context, "你好", "ni3'hao3");
-    assert_eq!(
-        import_batch(context, 6, &[("你好", "ni3", 100_000)]),
-        [false]
-    );
-    close(context, instance);
-}
-
-/// The prefix guess aborts on a prefix of five tokens (`compute_prefixes`).
-#[test]
-fn the_prefix_guess_aborts_on_five_tokens() {
-    assert_aborts(
-        "boundary_tests::library_tokens::the_prefix_guess_aborts_on_five_tokens",
-        || {
-            let user = TempUserDir::new("combined-prefix-guess");
-            let (context, instance) = open_at(&user.path);
-            hold_in_five_libraries(context, "你好", "ni3'hao3");
-            unsafe {
-                crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"你好".as_ptr())
-            };
-        },
-    );
-}
-
-/// The prediction aborts on a prefix of five tokens.
-#[test]
-fn the_prediction_aborts_on_five_tokens() {
-    assert_aborts(
-        "boundary_tests::library_tokens::the_prediction_aborts_on_five_tokens",
-        || {
-            let user = TempUserDir::new("combined-prediction");
-            let (context, instance) = open_at(&user.path);
-            hold_in_five_libraries(context, "你好", "ni3'hao3");
-            unsafe { pinyin_guess_predicted_candidates(instance, c"你好".as_ptr()) };
-        },
-    );
-}
-
-/// The character offset aborts on a phrase of five tokens.
-#[test]
-fn the_character_offset_aborts_on_five_tokens() {
-    assert_aborts(
-        "boundary_tests::library_tokens::the_character_offset_aborts_on_five_tokens",
-        || {
-            let user = TempUserDir::new("combined-character-offset");
-            let (context, instance) = open_at(&user.path);
-            hold_in_five_libraries(context, "你", "ni3");
-            assert_eq!(parse(instance, "ni"), 2);
-            let mut length = 0_usize;
-            unsafe { pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length) };
-        },
-    );
-}
-
-/// `remember_user_input` aborts on a phrase of five tokens.
-#[test]
-fn remember_aborts_on_five_tokens() {
-    assert_aborts(
-        "boundary_tests::library_tokens::remember_aborts_on_five_tokens",
-        || {
-            let user = TempUserDir::new("combined-remember");
-            let (context, instance) = open_at(&user.path);
-            hold_in_five_libraries(context, "你", "ni3");
-            assert_eq!(parse(instance, "ni"), 2);
-            unsafe { crate::user_data::pinyin_remember_user_input(instance, c"你".as_ptr(), 1) };
         },
     );
 }

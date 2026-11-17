@@ -11,61 +11,80 @@
 )]
 
 use std::ffi::c_char;
+
 use std::path::Path;
+
 use std::ptr;
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_get_candidate_nbest_index, pinyin_get_candidate_type, pinyin_get_n_candidate,
-    pinyin_is_user_candidate, pinyin_remove_user_candidate,
+    pinyin_get_n_candidate, pinyin_is_user_candidate,
 };
+
 use crate::config::{
     pinyin_load_phrase_library, pinyin_mask_out, pinyin_set_options, pinyin_unload_phrase_library,
 };
+
 use crate::context::{pinyin_fini, pinyin_init, pinyin_save};
-use crate::cursor::{
-    pinyin_get_left_pinyin_offset, pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest,
-    pinyin_get_right_pinyin_offset,
-};
+
+use crate::cursor::pinyin_get_pinyin_key;
+
 use crate::dict::{
     pinyin_token_add_unigram_frequency, pinyin_token_get_n_pronunciation,
     pinyin_token_get_unigram_frequency,
 };
+
 use crate::e2e_tests::{capture_rows, import_batch};
-use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+
+use crate::instance::{pinyin_alloc_instance, pinyin_free_instance};
+
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_bigram_phrases,
     pinyin_bigram_iterator_get_next_phrase, pinyin_bigram_iterator_has_next_phrase,
     pinyin_end_add_phrases,
 };
-use crate::keys::{pinyin_get_pinyin_is_incomplete, pinyin_parse_full_pinyin};
+
+use crate::keys::pinyin_parse_full_pinyin;
+
 use crate::parse::pinyin_parse_more_full_pinyins;
+
 use crate::predict::pinyin_guess_predicted_candidates;
+
 use crate::sentence::{
-    pinyin_get_character_offset, pinyin_get_sentence, pinyin_guess_candidates,
+    pinyin_get_sentence, pinyin_guess_candidates,
     pinyin_guess_predicted_candidates_with_punctuations, pinyin_guess_sentence,
 };
+
 use crate::test_support::{
     TempUserDir, assert_aborts, craft_hash, craft_tree, craft_user_bigram, craft_user_index, cstr,
     gram_bytes, lookup, open, plant_bigram, private_system, set_phrase_table_row, system_dir,
     write_user_conf,
 };
-use crate::text::{pinyin_get_double_pinyin_auxiliary_text, pinyin_get_full_pinyin_auxiliary_text};
+
 use crate::types::{
     ChewingKey, LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t,
 };
 
 mod choose;
+
 mod guess_predict;
+
 mod import_export;
+
 mod init_and_save;
+
 mod library_loading;
+
 mod library_tokens;
-mod parse_keys;
+
 mod sentence;
+
 mod table_reads;
+
 mod token_getters;
+
 mod training;
+
 mod user_store;
 
 /// The value a test seeds an out-parameter with, to see it left alone.
@@ -275,36 +294,6 @@ fn export_rows_of(context: *mut PinyinContext, library: u32, phrase: &str) -> Ve
         .map(|(_, reading, count)| (reading, count))
         .collect()
 }
-
-/// A private system whose library 1 holds 甲?乙 (the middle word `word`)
-/// at 100, 丙 at 1000, 戌 at 10 and 甲?乙丙; its bigram ranks 戌 after
-/// 甲?乙.
-fn prefix_system(parent: &Path, word: u32) -> std::path::PathBuf {
-    let prefix = [0x7532, word, 0x4e59];
-    let phrase = [0x7532, word, 0x4e59, 0x4e19];
-    let system = crate::test_support::items_system(
-        &system_dir(),
-        parent,
-        &[
-            (&prefix, &[0x1084; 3], 100),
-            (&[0x4e19], &[0x1081], 1000),
-            (&[0x620c], &[0x1081], 10),
-            (&phrase, &[0x1084, 0x1084, 0x1084, 0x1081], 100),
-        ],
-        2000,
-    );
-    craft_hash(
-        &system.join("bigram.db"),
-        &[(
-            0x0100_0001_u32.to_le_bytes().to_vec(),
-            gram_bytes(1000, &[(0x0100_0003, 1000)]),
-        )],
-    );
-    system
-}
-
-/// GLib's `G_LOG_LEVEL_CRITICAL`.
-const CRITICAL: glib_sys::GLogLevelFlags = glib_sys::G_LOG_LEVEL_CRITICAL;
 
 fn ucs4(text: &str) -> Vec<u8> {
     text.chars()

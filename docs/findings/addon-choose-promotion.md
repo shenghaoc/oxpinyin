@@ -124,20 +124,16 @@ list and replaces it (§5).
 - Promotion is gated on an `ADDON` candidate, which exists only once an
   addon library is loaded, so the empty-store, no-addon path does not change.
 - `oxpinyin-capi`'s
-  `union_e2e_tests::a_promoted_addon_item_keeps_every_toned_reading` and
-  `union_e2e_tests::an_addon_item_with_no_reading_is_still_promoted` and
-  `union_e2e_tests::an_addon_item_with_a_non_scalar_word_is_promoted_as_stored`
-  choose a crafted toned item, an indexed item with no reading and an item
-  whose words include 0xD800. They check the
-  candidate type, find the token with `pinyin_lookup_tokens` and compare
-  the packed readings and the item text.
+  `candidates::tests::a_promoted_addon_item_keeps_every_toned_reading`
+  chooses a crafted toned item. It checks the candidate type, finds the
+  token with `pinyin_lookup_tokens` and compares the packed readings.
   `oxpinyin-user`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
   `promote_addon_phrase_copies_an_item_with_no_reading`,
   `promote_addon_phrase_copies_a_word_that_is_not_a_scalar` and
   `promote_addon_phrase_takes_length_16_and_refuses_17` compare the copied
   item bytes, which include the reading frequencies.
 - `oxpinyin-capi`'s
-  `union_e2e_tests::chosen_addon_candidate_is_promoted_into_default_nibble_5`
+  `candidates::tests::chosen_addon_candidate_is_promoted_into_default_nibble_5`
   loads addon library 4 and chooses the surfaced `ADDON_CANDIDATE`. It
   asserts that the snapshot candidate becomes a `NORMAL_CANDIDATE` at a
   nibble-5 token, that the phrase persists under that token in the user

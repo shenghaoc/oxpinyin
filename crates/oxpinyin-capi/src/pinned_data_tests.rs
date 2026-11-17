@@ -9,24 +9,35 @@
 )]
 
 use std::path::PathBuf;
+
 use std::ptr;
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate, pinyin_train};
+
 use crate::config::pinyin_set_options;
+
 use crate::e2e_tests::{capture_rows, export_of};
+
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
+
 use crate::parse::pinyin_parse_more_full_pinyins;
+
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
+
 use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr};
+
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
 /// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`, the capture's word.
 const PARITY: u32 = 0x18a;
+
 const NBEST: lookup_candidate_type_t = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
+
 const NORMAL: lookup_candidate_type_t = lookup_candidate_type_t::NORMAL_CANDIDATE;
 
 #[path = "../../oxpinyin-runtime/tests/common/contract_data.rs"]
 mod contract_data;
+
 use contract_data::contract_data_dir;
 
 /// A context and instance on the pinned data with a fresh user directory.
@@ -185,29 +196,6 @@ fn choosing_a_deep_or_last_row_constrains_its_span() {
         );
         close(context, instance);
     }
-}
-
-/// S4: index n, one past the list, answers false with the out-param NULLed first
-/// (`pinyin.cpp:2856-2859` at 074a2219). Observation `past-end/nihao`.
-#[test]
-fn the_row_one_past_the_list_is_refused() {
-    let user_dir = TempUserDir::new("pinned-past-end");
-    let (context, instance) = open_pinned(&user_dir);
-    assert!(unsafe { pinyin_set_options(context, PARITY) });
-    let input = cstr("nihao");
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
-        5
-    );
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let mut count = 0;
-    assert!(unsafe { crate::candidates::pinyin_get_n_candidate(instance, &raw mut count) });
-    assert_eq!(count, 126);
-    let mut cand = ptr::NonNull::<LookupCandidate>::dangling().as_ptr();
-    assert!(!unsafe { pinyin_get_candidate(instance, count, &raw mut cand) });
-    assert!(cand.is_null());
-    close(context, instance);
 }
 
 /// D8: the n-best training sequence (`pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589`, `:2670-2691` at 074a2219): three
@@ -466,181 +454,6 @@ fn choosing_a_nonzero_nbest_row_trains_the_selected_result() {
         });
         assert_eq!(frequency, expected_frequency);
     }
-    close(context, instance);
-}
-
-/// D10: `pinyin.cpp:2678-2688` at 074a2219 asserts that the train index is
-/// below the number of decoded results before training it.
-#[test]
-fn training_the_last_two_nbest_results_succeeds() {
-    for index in [1, 2] {
-        let user = TempUserDir::new("train-index");
-        let (context, instance) = open_pinned(&user);
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) },
-            5
-        );
-        assert_eq!(
-            unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
-            5
-        );
-        assert!(unsafe { pinyin_guess_sentence(instance) });
-        assert!(unsafe { pinyin_train(instance, index) });
-        close(context, instance);
-    }
-}
-
-#[test]
-fn training_one_past_the_nbest_results_aborts() {
-    crate::test_support::assert_aborts(
-        "pinned_data_tests::training_one_past_the_nbest_results_aborts",
-        || {
-            let user = TempUserDir::new("train-index-past-end");
-            let (_context, instance) = open_pinned(&user);
-            assert_eq!(
-                unsafe { pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) },
-                5
-            );
-            assert_eq!(
-                unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
-                5
-            );
-            assert!(unsafe { pinyin_guess_sentence(instance) });
-            unsafe { pinyin_train(instance, 3) };
-        },
-    );
-}
-
-/// The key at `offset` as `tools/oracle/pin_capture.py`'s `key_walk` reads it: the packed word,
-/// the raw span of its key rest and its pinyin string; `None` when both queries answer false.
-fn key_at(instance: *mut PinyinInstance, offset: usize) -> Option<(u16, (u16, u16), String)> {
-    use crate::cursor::{
-        pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest, pinyin_get_pinyin_key_rest_positions,
-        pinyin_get_pinyin_string,
-    };
-    // The key and its rest are read from the pin's process-wide key slots.
-    let _slots = crate::test_support::key_slot_guard();
-    let mut key: *mut crate::types::ChewingKey = ptr::null_mut();
-    let found = unsafe { pinyin_get_pinyin_key(instance, offset, &raw mut key) };
-    let mut rest: *mut crate::types::ChewingKeyRest = ptr::null_mut();
-    assert_eq!(
-        unsafe { pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) },
-        found
-    );
-    assert_eq!((key.is_null(), rest.is_null()), (!found, !found));
-    if !found {
-        return None;
-    }
-    let (mut begin, mut end) = (0_u16, 0_u16);
-    assert!(unsafe {
-        pinyin_get_pinyin_key_rest_positions(instance, rest, &raw mut begin, &raw mut end)
-    });
-    // SAFETY: a true answer points `key` at the instance's key slot.
-    let packed = unsafe { (*key).packed };
-    let mut text: *mut std::os::raw::c_char = ptr::null_mut();
-    assert!(unsafe { pinyin_get_pinyin_string(instance, key, &raw mut text) });
-    Some((packed, (begin, end), crate::ffi::take_owned_cstr(text)))
-}
-
-/// Parses `text` and decodes it; answers sentence 0.
-fn decoded(instance: *mut PinyinInstance, text: &std::ffi::CStr) -> String {
-    let length = text.to_bytes().len();
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-        length
-    );
-    assert_eq!(
-        unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
-        length
-    );
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    sentence(instance, 0)
-}
-
-/// Constraint revalidation: 整个 forced over its abbreviation `zhg`, one initial-only key per
-/// syllable, under 0x18a. Observation `constraint-revalidation/pinyin/zhg-整个` of the pin
-/// capture of 2026-11-16 (runs 1 and 2 identical), at 074a2219.
-///
-/// `fill_matrix` puts `zh` at column 0 and `g` at column 2 (`phonetic_key_matrix.cpp:30-84`).
-/// The choose answers `offset + add_constraint(0, 3)` (`pinyin.cpp:2578-2588`;
-/// `lookup/phonetic_lookup.cpp:61-86`). `validate_constraint` keeps the forcing at the next guess
-/// (`phonetic_lookup.cpp:120-167`), because an incomplete key matches any final
-/// (`pinyin_phrase3.h:80-86`), and the one forced path leaves one sentence row
-/// (`lookup/phonetic_lookup.h:552-554,601-612,776-788`). A parse never touches the constraints
-/// (`pinyin.cpp:1497-1525`), so the forcing survives `zh` and `zhg` parsed with no guess between.
-/// A guess on `zh` shrinks the store to 3 and clears the forcing that ends at 3
-/// (`phonetic_lookup.cpp:136-138,145-148`).
-#[test]
-fn a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does() {
-    let user = TempUserDir::new("constraint-revalidation");
-    let (context, instance) = open_pinned(&user);
-    assert!(unsafe { pinyin_set_options(context, PARITY) });
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, c"zhg".as_ptr()) },
-        3
-    );
-    assert_eq!(
-        unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
-        3
-    );
-    assert_eq!(
-        (0..=3)
-            .map(|offset| key_at(instance, offset))
-            .collect::<Vec<_>>(),
-        [
-            Some((23, (0, 2), "zh".to_owned())),
-            None,
-            Some((7, (2, 3), "g".to_owned())),
-            None,
-        ]
-    );
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance, 0), "中国");
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let rows = capture_rows(instance);
-    assert_eq!(rows.len(), 2025);
-    assert_eq!(
-        &rows[..3],
-        &[
-            row(NBEST, "中国", Some(0)),
-            row(NBEST, "这个", Some(2)),
-            row(NORMAL, "整个", None),
-        ]
-    );
-    assert_eq!(
-        unsafe { pinyin_choose_candidate(instance, 0, candidate_at(instance, 2)) },
-        3
-    );
-
-    // Revalidated by the guess.
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance, 0), "整个");
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let rows = capture_rows(instance);
-    assert_eq!(rows.len(), 2025);
-    assert_eq!(
-        &rows[..3],
-        &[
-            row(NBEST, "整个", Some(0)),
-            row(NORMAL, "中国", None),
-            row(NORMAL, "这个", None),
-        ]
-    );
-
-    // A replaced selection: no guess sees the shorter parse.
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, c"zh".as_ptr()) },
-        2
-    );
-    assert_eq!(
-        unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
-        2
-    );
-    assert_eq!(decoded(instance, c"zhg"), "整个");
-
-    // A guess on the shorter parse clears the forcing.
-    assert_eq!(decoded(instance, c"zh"), "中");
-    assert_eq!(decoded(instance, c"zhg"), "中国");
     close(context, instance);
 }
 

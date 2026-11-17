@@ -6,12 +6,14 @@
 )]
 
 use std::ffi::CString;
+
 use std::ptr;
 
 use zhuyin_capi::{
     zhuyin_choose_candidate, zhuyin_fini, zhuyin_get_candidate, zhuyin_get_candidate_string,
     zhuyin_get_n_candidate, zhuyin_init,
 };
+
 use zhuyin_capi::{zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor};
 
 unsafe extern "C" {
@@ -81,28 +83,8 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
 }
 
 #[test]
-fn a_sole_unreadable_after_cursor_row_has_a_null_string() {
-    check_row(fixture::Case::Single, false);
-}
-
-#[test]
-fn a_sole_unreadable_before_cursor_row_has_a_null_string() {
-    check_row(fixture::Case::Single, true);
-}
-
-#[test]
-fn two_unreadable_rows_are_omitted() {
-    check_row(fixture::Case::Pair, false);
-}
-
-#[test]
 fn a_sole_unreadable_row_survives_the_user_table_fallback() {
     check_row(fixture::Case::Fallback, false);
-}
-
-#[test]
-fn a_readable_candidate_displaces_an_unreadable_candidate() {
-    check_row(fixture::Case::Mixed, false);
 }
 
 /// The zhuyin twin of the pinyin facade's
@@ -166,6 +148,10 @@ mod fixture {
     use std::{fs, path::Path};
 
     #[derive(Clone, Copy)]
+    #[expect(
+        dead_code,
+        reason = "the cases are shared with the other target until the (c) tests move"
+    )]
     pub(super) enum Case {
         Single,
         Pair,
@@ -258,38 +244,4 @@ mod fixture {
         }
         (dir, user)
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn zero_total_aborts_after_cursor() {
-    use std::os::unix::process::ExitStatusExt;
-    const CHILD: &str = "OXPINYIN_UNREADABLE_ZERO_TOTAL_CHILD";
-    if std::env::var_os(CHILD).is_some() {
-        check_row(fixture::Case::Zero, false);
-        return;
-    }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "zero_total_aborts_after_cursor"])
-        .env(CHILD, "1")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
-}
-
-#[cfg(unix)]
-#[test]
-fn zero_total_aborts_before_cursor() {
-    use std::os::unix::process::ExitStatusExt;
-    const CHILD: &str = "OXPINYIN_UNREADABLE_ZERO_TOTAL_CHILD";
-    if std::env::var_os(CHILD).is_some() {
-        check_row(fixture::Case::Zero, true);
-        return;
-    }
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "zero_total_aborts_before_cursor"])
-        .env(CHILD, "1")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.signal(), Some(libc::SIGABRT), "{output:?}");
 }

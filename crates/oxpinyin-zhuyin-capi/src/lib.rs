@@ -113,11 +113,56 @@ pub use candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
     zhuyin_get_candidate_string, zhuyin_get_candidate_type, zhuyin_get_n_candidate, zhuyin_train,
 };
+pub use config::zhuyin_load_phrase_library;
+pub use config::zhuyin_mask_out;
+pub use config::zhuyin_set_chewing_scheme;
+pub use config::zhuyin_set_full_pinyin_scheme;
+pub use config::zhuyin_set_options;
+pub use config::zhuyin_unload_phrase_library;
+pub use cursor::zhuyin_get_left_zhuyin_offset;
+pub use cursor::zhuyin_get_right_zhuyin_offset;
+pub use cursor::zhuyin_get_zhuyin_key;
+pub use cursor::zhuyin_get_zhuyin_key_rest;
+pub use cursor::zhuyin_get_zhuyin_key_rest_length;
+pub use cursor::zhuyin_get_zhuyin_key_rest_positions;
+pub use cursor::zhuyin_get_zhuyin_offset;
+pub use dict::zhuyin_lookup_tokens;
+pub use dict::zhuyin_token_add_unigram_frequency;
+pub use dict::zhuyin_token_get_n_pronunciation;
+pub use dict::zhuyin_token_get_nth_pronunciation;
+pub use dict::zhuyin_token_get_phrase;
+pub use dict::zhuyin_token_get_unigram_frequency;
+pub use instance::zhuyin_alloc_instance;
+pub use instance::zhuyin_free_instance;
+pub use instance::zhuyin_reset;
+pub use keys::zhuyin_get_pinyin_string;
+pub use keys::zhuyin_get_zhuyin_string;
+pub use keys::zhuyin_parse_chewing;
+pub use keys::zhuyin_parse_full_pinyin;
+pub use parse::zhuyin_get_parsed_input_length;
+pub use parse::zhuyin_in_chewing_keyboard;
+pub use parse::zhuyin_parse_more_chewings;
+pub use parse::zhuyin_parse_more_full_pinyins;
+pub use phrase::zhuyin_get_n_phrase;
+pub use phrase::zhuyin_get_phrase_token;
+pub use phrase::zhuyin_phrase_segment;
+pub use sentence::zhuyin_get_character_offset;
 pub use sentence::{
     zhuyin_get_sentence, zhuyin_guess_candidates_after_cursor,
     zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence,
     zhuyin_guess_sentence_with_prefix,
 };
+pub use types::ChewingKey;
+pub use types::ChewingKeyRest;
+pub use types::GChar;
+pub use types::GUint;
+pub use types::ImportIterator;
+pub use types::LookupCandidate;
+pub use types::PhraseTokenT;
+pub use types::PinyinOptionT;
+pub use types::ZhuyinContext;
+pub use types::ZhuyinInstance;
+pub use types::lookup_candidate_type_t;
 
 // The behaviour battery: the training/import/dictionary entry points
 // driven through the C symbols themselves, the zhuyin twin of
@@ -127,10 +172,6 @@ mod boundary_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
-mod foreign_candidate_tests;
-#[cfg(test)]
-mod matrix_bound_tests;
-#[cfg(test)]
 mod parse_matrix_tests;
 #[cfg(all(test, feature = "tkrzw"))]
 mod pinned_data_tests;
@@ -139,46 +180,6 @@ mod test_support;
 
 #[cfg(test)]
 mod tests {
-    #![expect(
-        clippy::undocumented_unsafe_blocks,
-        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
-    )]
-
-    use std::ffi::c_char;
-    use std::ptr;
-
-    use super::candidates::{
-        zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
-        zhuyin_get_n_candidate,
-    };
-    use super::context::zhuyin_fini;
-    use super::instance::zhuyin_free_instance;
-    use super::parse::zhuyin_parse_more_chewings;
-    use super::sentence::{
-        zhuyin_get_character_offset, zhuyin_get_sentence, zhuyin_guess_candidates_before_cursor,
-        zhuyin_guess_sentence,
-    };
-    use super::state::instance_mut;
-    use super::test_support::{candidate_text, cstr, open};
-    use super::types::{LookupCandidate, lookup_candidate_type_t};
-
-    /// The Phase-1 correction, pinned: the zhuyin 4-value enum's exact
-    /// discriminants. The zhuyin header (`zhuyin.h:41-45`) defines four
-    /// enumerators, and they collide with the pinyin eight at 3 and 4 — so
-    /// the enum must never be aliased to the pinyin one.
-    #[test]
-    fn zhuyin_candidate_type_discriminants_match_zhuyin_h() {
-        assert_eq!(lookup_candidate_type_t::BEST_MATCH_CANDIDATE as i32, 1);
-        assert_eq!(
-            lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR as i32,
-            2
-        );
-        assert_eq!(
-            lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR as i32,
-            3
-        );
-        assert_eq!(lookup_candidate_type_t::ZOMBIE_CANDIDATE as i32, 4);
-    }
 
     /// The zhuyin init seed is `USE_TONE | FORCE_TONE` (the pin's
     /// `zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin), unlike
@@ -191,138 +192,5 @@ mod tests {
         assert!(seed.contains(OptionBits::USE_TONE | OptionBits::FORCE_TONE));
         // No PINYIN_INCOMPLETE is seeded.
         assert!(!seed.contains(OptionBits::PINYIN_INCOMPLETE));
-    }
-
-    /// The zhuyin twin of the pinyin crate's
-    /// `choosing_from_a_reanchored_window_uses_the_anchored_span`
-    /// (`oxpinyin-capi/src/e2e_tests.rs`): a
-    /// `zhuyin_guess_candidates_before_cursor` window is re-anchored, so
-    /// the following `zhuyin_choose_candidate` must resolve the row's
-    /// index against THAT window.
-    ///
-    /// `su3cl3` is `ni3'hao3` in the session's `'`-joined buffer, and the
-    /// two lists provably differ at row 1: the composition-anchored cached
-    /// list offers 你 (the first key's span), the `before(6)` window offers
-    /// 好 (the second key's span, ending at the cursor). Resolving row 1
-    /// through the cached list committed 你 and answered cursor 3 — a row
-    /// the caller never displayed.
-    #[test]
-    fn choosing_from_a_before_cursor_window_uses_that_window() {
-        let (context, instance) = open();
-        let input = cstr("su3cl3");
-        assert_eq!(
-            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
-            "su3cl3".len(),
-            "the whole keystroke run parses"
-        );
-
-        assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) });
-        let mut count = 0;
-        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
-        assert!(count > 1, "the before-cursor window carries several rows");
-
-        // No sentence was guessed, so nothing is prepended
-        // (`zhuyin.cpp:1277-1278`): every row is a phrase row of the spans
-        // ending at the cursor (`:1594`), and row 1 is the second of them.
-        let displayed = candidate_text(instance, 1);
-        assert_eq!(displayed, "好", "the fixture's before(6) row 1");
-        let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(unsafe { zhuyin_get_candidate(instance, 1, &raw mut cand) });
-        assert!(!cand.is_null());
-
-        // The chosen span is `[3, 6)` — the second key alone. Upstream
-        // writes the constraint on `[m_begin, m_end)` and, for a
-        // before-cursor row, answers `m_begin` as the new cursor
-        // (`zhuyin.cpp:1656-1660` at the pin): 3, the span's start — not
-        // the span's end. (The cached list's row 1 also ends at 3; the
-        // committed text below is what tells the two rows apart.)
-        assert_eq!(unsafe { zhuyin_choose_candidate(instance, 6, cand) }, 3);
-        // The session's own composition offset advanced to the span's end,
-        // which is the whole joined buffer here.
-        // SAFETY: the instance is live and no other reference is held.
-        let session = unsafe { &instance_mut(instance).core.session };
-        assert_eq!(
-            session.composition_offset(),
-            session.raw_input().len(),
-            "the composition consumed through the chosen span's end"
-        );
-
-        // The forcing is the row's own span `[3, 6)`, not `[0, 6)`: the
-        // first key's cell is free, the second key's is forced.
-        // (`clear_constraint` answers false for a free cell and true for a
-        // hit anywhere inside a forced run; probing 0 first cannot disturb
-        // the run at 3.)
-        assert!(
-            !unsafe { zhuyin_clear_constraint(instance, 0) },
-            "no forcing covers the first key"
-        );
-
-        // The pin's constrain-and-re-decode: a re-guess keeps the leading
-        // key's conversion and the forced 好 (register, measured
-        // 2026-09-05 on the pin-built oracle: 你好 after the choose).
-        assert!(unsafe { zhuyin_guess_sentence(instance) });
-        let mut sentence: *mut c_char = ptr::null_mut();
-        assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
-        assert!(!sentence.is_null());
-        // SAFETY: `sentence` is a NUL-terminated string this facade just
-        // malloc'd for the caller; it is read, then released with the
-        // allocator that produced it.
-        let decoded = unsafe { std::ffi::CStr::from_ptr(sentence) }
-            .to_str()
-            .expect("UTF-8")
-            .to_owned();
-        // SAFETY: `sentence` is the returned GLib string, which `g_free`
-        // releases, and is not used after this call.
-        unsafe { glib_sys::g_free(sentence.cast()) };
-        assert_eq!(decoded, "你好", "the re-decode keeps 你 and forces 好");
-        assert!(
-            unsafe { zhuyin_clear_constraint(instance, 3) },
-            "the forcing starts where 好 starts"
-        );
-        unsafe { zhuyin_free_instance(instance) };
-        unsafe { zhuyin_fini(context) };
-    }
-
-    /// The zhuyin twin of issue #356: `zhuyin_get_character_offset` runs
-    /// the same phrase-table search and matrix walk (`zhuyin.cpp:2148`
-    /// at the pin). `su3cl3` is 你好 on the standard keyboard: the
-    /// keystroke string as the phrase answers `false`, the sentence
-    /// counts one character per key at or before the offset.
-    #[test]
-    fn character_offset_searches_the_phrase_and_walks_the_keys() {
-        let (context, instance) = open();
-        let input = cstr("su3cl3");
-        assert_eq!(
-            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
-            6
-        );
-
-        let phrase = cstr("su3cl3");
-        for offset in [0, 3, 6] {
-            let mut length = usize::MAX;
-            assert!(!unsafe {
-                zhuyin_get_character_offset(instance, phrase.as_ptr(), offset, &raw mut length)
-            });
-            assert_eq!(length, usize::MAX, "offset {offset}");
-        }
-        let phrase = cstr("你好");
-        for (offset, expected) in [(0, 0), (3, 1)] {
-            let mut length = usize::MAX;
-            assert!(unsafe {
-                zhuyin_get_character_offset(instance, phrase.as_ptr(), offset, &raw mut length)
-            });
-            assert_eq!(length, expected, "offset {offset}");
-        }
-        // At the reserved slot the pin's zhuyin walk has no zero-key skip: it
-        // steps onto the last column, finds no reading and fails, storing the
-        // length it reached (`zhuyin.cpp:2095-2140`, `:2192`).
-        let mut length = usize::MAX;
-        assert!(!unsafe {
-            zhuyin_get_character_offset(instance, phrase.as_ptr(), 6, &raw mut length)
-        });
-        assert_eq!(length, 0);
-
-        unsafe { zhuyin_free_instance(instance) };
-        unsafe { zhuyin_fini(context) };
     }
 }

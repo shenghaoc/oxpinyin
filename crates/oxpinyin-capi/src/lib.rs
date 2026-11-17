@@ -202,29 +202,55 @@ pub use phrase::pinyin_get_phrase_token;
 pub use phrase::pinyin_phrase_segment;
 
 // ── text ─────────────────────────────────────────────
+pub use candidates::pinyin_choose_predicted_candidate;
+pub use candidates::pinyin_clear_constraint;
+pub use candidates::pinyin_get_candidate_nbest_index;
+pub use candidates::pinyin_is_user_candidate;
+pub use candidates::pinyin_remove_user_candidate;
+pub use config::pinyin_load_addon_phrase_library;
+pub use cursor::pinyin_get_left_pinyin_offset;
+pub use cursor::pinyin_get_pinyin_key;
+pub use cursor::pinyin_get_pinyin_key_rest;
+pub use cursor::pinyin_get_pinyin_key_rest_length;
+pub use cursor::pinyin_get_pinyin_key_rest_positions;
+pub use cursor::pinyin_get_pinyin_offset;
+pub use cursor::pinyin_get_right_pinyin_offset;
+pub use iterators::pinyin_begin_get_bigram_phrases;
+pub use iterators::pinyin_begin_get_phrases;
+pub use iterators::pinyin_bigram_iterator_get_next_phrase;
+pub use iterators::pinyin_bigram_iterator_has_next_phrase;
+pub use iterators::pinyin_end_get_bigram_phrases;
+pub use iterators::pinyin_end_get_phrases;
+pub use iterators::pinyin_iterator_get_next_phrase;
+pub use iterators::pinyin_iterator_has_next_phrase;
+pub use parse::pinyin_get_parsed_input_length;
+pub use parse::pinyin_in_chewing_keyboard;
+pub use sentence::pinyin_get_character_offset;
 pub use text::pinyin_get_chewing_auxiliary_text;
+pub use text::pinyin_get_double_pinyin_auxiliary_text;
 pub use text::pinyin_get_full_pinyin_auxiliary_text;
+pub use types::BigramExportIterator;
+pub use types::ExportIterator;
+pub use types::GUint;
+pub use types::PinyinOptionT;
+pub use user_data::pinyin_remember_user_input;
 
-// The ABI-driven black-box suites live in `tests/abi.rs`. These three mods
-// are white-box unit tests of the ABI layer: they drive the C symbols for
-// setup and act, then assert directly on `CapiInstance` internals through
-// `instance_ref`. Moving them under `tests/` would require exporting
-// internals purely for test inspection or weakening the assertions, so
-// they stay at the unit layer (docs/testing/upstream-test-coverage.md).
+// The verification tests live in `tests/it`. The suites declared here hold
+// the tests of behaviour implemented below this crate until they move to
+// the crates that implement it (docs/testing/README.md#where-tests-belong).
 #[cfg(test)]
 mod boundary_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
-mod foreign_candidate_tests;
-#[cfg(test)]
 mod guess_offset_tests;
-#[cfg(test)]
-mod matrix_bound_tests;
 #[cfg(test)]
 mod parse_matrix_tests;
 #[cfg(all(test, feature = "tkrzw"))]
 mod pinned_data_tests;
+#[cfg(test)]
+#[path = "../../oxpinyin-user/src/test_child.rs"]
+mod test_child;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

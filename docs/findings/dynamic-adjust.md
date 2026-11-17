@@ -192,5 +192,5 @@ gates:
   merge-count assertion catches a per-candidate merge, which is why the
   model counts calls rather than only answering them.
 
-`e2e_tests::partial_candidate_gram_logs_once` (`oxpinyin-capi`) covers the bit-set path against a partial user gram (register row 98).
-`e2e_tests::a_short_sentence_start_gram_aborts_the_guess_after_parsing` checks that parsing returns successfully before the candidate guess aborts on a short sentence-start gram (register row 85).
+`guess_predict::partial_candidate_gram_logs_once` (`oxpinyin-capi`) covers the bit-set path against a partial user gram (register row 98).
+`sentence::a_short_sentence_start_gram_aborts_the_guess_after_parsing` checks that parsing returns successfully before the candidate guess aborts on a short sentence-start gram (register row 85).

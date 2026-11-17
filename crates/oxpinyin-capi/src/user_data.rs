@@ -170,3 +170,6 @@ fn add_remembered_path(
     // below -1 is accepted and exported as it went in.
     user.add_phrase(&phrase, &keys, count).is_ok()
 }
+
+#[cfg(test)]
+mod tests;

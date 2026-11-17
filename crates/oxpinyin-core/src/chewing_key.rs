@@ -158,7 +158,7 @@ impl ChewingKey {
     /// zero padding `15`), matching `_ChewingKey`'s declaration order
     /// under the little-endian bitfield allocation both engines build
     /// with. Byte identity against the pinned oracle is held by the frozen key
-    /// cases in `tests/abi/keys.rs` of `oxpinyin-capi`.
+    /// cases in `tests/it/keys.rs` of `oxpinyin-capi`.
     #[must_use]
     pub const fn to_packed(self) -> u16 {
         ((self.initial as u16) & 0x1f)

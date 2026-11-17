@@ -7,26 +7,24 @@
 )]
 
 use std::ffi::CString;
+
 use std::os::raw::{c_char, c_uint};
+
 use std::path::{Path, PathBuf};
 
 use crate::candidates::{zhuyin_get_candidate, zhuyin_get_n_candidate};
-use crate::context::{zhuyin_fini, zhuyin_init};
-use crate::instance::zhuyin_alloc_instance;
-use crate::parse::zhuyin_parse_more_chewings;
-use crate::sentence::zhuyin_guess_candidates_after_cursor;
-use crate::state::instance_mut;
-use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
-/// Serialises the tests that read the pin's process-wide key slots
-/// (`zhuyin_get_zhuyin_key`, `zhuyin_get_zhuyin_key_rest`): the slots are
-/// statics, so two such tests running on different threads overwrite each
-/// other's answers. Hold the guard for the whole test.
-pub fn key_slot_guard() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
+use crate::context::{zhuyin_fini, zhuyin_init};
+
+use crate::instance::zhuyin_alloc_instance;
+
+use crate::parse::zhuyin_parse_more_chewings;
+
+use crate::sentence::zhuyin_guess_candidates_after_cursor;
+
+use crate::state::instance_mut;
+
+use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
 /// The committed mini fixture (`fixtures/w3/<backend ext>`), the same
 /// data directory the pinyin crate's e2e tests open.
@@ -350,6 +348,7 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
     }
 }
 
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 /// [`assert_aborts`] with the user directory of [`run_in_child`]: `body`
 /// gets a fresh user directory that stays on disk for the parent, so a test
 /// can read the files the child left before its abort.
@@ -436,24 +435,6 @@ pub fn write_user_conf(user_dir: &Path, system: &Path) {
     .expect("write user.conf");
 }
 
-/// Replaces the file at `path` with a tree DBM of the running backend.
-/// The tree holds exactly `rows`, raw keys and values for a system table.
-pub fn craft_tree(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
-    if path.exists() {
-        std::fs::remove_file(path).expect("replace the DBM");
-    }
-    let store = oxpinyin_store::DefaultStore::create(path).expect("create the DBM");
-    store
-        .write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .expect("write the DBM rows");
-}
-
 /// Replaces the user index at `path` with one that holds exactly `rows`,
 /// raw keys and values that the library may never write. It is written as
 /// the library's own save writes a user index: a snapshot on Kyoto
@@ -480,6 +461,7 @@ pub fn ucs4_key(text: &str) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(feature = "tkrzw")]
 /// `zhuyin_init` on `system` with `user` (NULL when `None`). The answer can
 /// be NULL.
 pub fn init_on(system: &Path, user: Option<&Path>) -> *mut ZhuyinContext {
@@ -713,18 +695,6 @@ pub mod logs {
         record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
-    /// A null-token `MODIFY_HEADER`.
-    #[must_use]
-    pub fn header() -> Vec<u8> {
-        record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    /// An ADD of a six-byte item at slot `0x99`.
-    #[must_use]
-    pub fn add() -> Vec<u8> {
-        record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
-    }
-
     /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
     /// there (`phrase_index.cpp:483-484`).
     #[must_use]
@@ -737,35 +707,4 @@ pub mod logs {
     }
 }
 
-mod death_tests {
-    /// A panic that reaches this non-unwinding function aborts the process,
-    /// as a facade panic inside an entry point would.
-    extern "C" fn panic_in_an_entry_point() {
-        panic!("an unrelated panic");
-    }
-
-    /// The witness: a death test whose operation panics at a C boundary
-    /// fails with its own result, not as the pin's abort.
-    #[test]
-    fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
-        const NAME: &str =
-            "test_support::death_tests::a_panic_at_the_c_boundary_is_not_the_pins_abort";
-        let parent = std::panic::catch_unwind(|| {
-            super::assert_aborts(NAME, || panic_in_an_entry_point());
-        });
-        let message = parent.expect_err("a panic must not pass as an abort");
-        let message = message
-            .downcast_ref::<String>()
-            .expect("the helper's assertion message");
-        assert!(message.contains("OperationPanicked"), "{message}");
-        assert!(message.contains("an unrelated panic"), "{message}");
-    }
-
-    /// The control: an operation that aborts directly still passes.
-    #[test]
-    fn a_direct_abort_passes() {
-        super::assert_aborts("test_support::death_tests::a_direct_abort_passes", || {
-            std::process::abort()
-        });
-    }
-}
+mod tests;

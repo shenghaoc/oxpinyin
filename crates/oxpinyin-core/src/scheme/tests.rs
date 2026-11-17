@@ -845,7 +845,7 @@ fn cp26_display_reports_the_special_and_dual_rows() {
 // keyboards are checked against the frozen pin by the zhuyin parse parity
 // tests below, and the alternate-romanization index parsers in
 // `src/full_pinyin_index/tests.rs`. Scheme-setter rejection contracts
-// are covered black-box in `crates/oxpinyin-capi/tests/abi/contract.rs`;
+// are covered black-box in `crates/oxpinyin-capi/tests/it/contract.rs`;
 // full-pinyin selected splits are checked in `src/graph/tests.rs`.
 
 /// All double-pinyin layouts with a compiled table (Customized has none).

@@ -226,7 +226,7 @@ pub unsafe extern "C" fn pinyin_get_candidate_nbest_index(
 /// The §3.2 type and nibble test: only a normal or longer row can be a
 /// user candidate (`NORMAL_CANDIDATE != type && LONGER_CANDIDATE != type`
 /// returns false, `pinyin.cpp:3712-3715`), and its token must live in the
-/// [`USER_DICTIONARY`] sub-index. Network (nibble 6) is not "user" —
+/// [`USER_DICTIONARY`](crate::USER_DICTIONARY) sub-index. Network (nibble 6) is not "user" —
 /// `if (USER_DICTIONARY != index) return false` (`:3718`). Predicted rows
 /// and sentence-level/fallback rows carry no user status even when a
 /// predicted prefix token names the user library.
@@ -857,7 +857,7 @@ unsafe fn try_promote_addon(
 /// The pin's return table (`pinyin.cpp:2591-2640`): a punctuation row has no
 /// frequency and answers `true` without training anything (`:2604-2605`); a
 /// unigram add that overflows its library's total answers `false` before the
-/// bigram (`:2609-2612`, [`UserStoreError::UnigramTotalOverflow`]); otherwise
+/// bigram (`:2609-2612`, [`oxpinyin_user::UserStoreError::UnigramTotalOverflow`]); otherwise
 /// `true`.
 ///
 /// The pin reads the candidate's type and token and trains the receiving
@@ -1071,40 +1071,38 @@ mod unloaded_library_tests {
         reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
     )]
 
-    //! A library `pinyin_unload_phrase_library` let go has no sub-index in the
-    //! pin (`phrase_index.cpp:261-269`): a write that names it answers an
-    //! error before it moves anything (`phrase_index.h:628-635`), `compact`
-    //! skips it (`phrase_index.cpp:651-652`), and the caller goes on.
-    //!
-    //! Each test opens the fixture, parses `ni`, guesses its candidates,
-    //! takes the one in the GBK library (2) and unloads that library.
-
     use std::os::raw::c_uint;
+
     use std::ptr;
 
     use oxpinyin_core::{Dictionary, PhraseToken};
+
     use oxpinyin_user::{SENTENCE_START, UserStore};
 
     use super::{
         pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
         pinyin_train,
     };
+
     use crate::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
+
     use crate::dict::pinyin_token_add_unigram_frequency;
+
     use crate::iterators::{
         pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase,
     };
-    use crate::parse::pinyin_parse_more_full_pinyins;
-    use crate::predict::pinyin_guess_predicted_candidates;
-    use crate::sentence::{pinyin_guess_candidates, pinyin_guess_sentence};
-    use crate::state::{context_mut, instance_ref};
-    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
-    use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
-    /// `SORT_WITHOUT_SENTENCE_CANDIDATE`: the choose leg that only trains.
-    const WITHOUT_SENTENCE: c_uint = 0x1;
-    /// The ibus preset that leaves `SORT_WITHOUT_LONGER_CANDIDATE` clear.
-    const IBUS_DEFAULT_SORT: c_uint = 0x1c;
+    use crate::parse::pinyin_parse_more_full_pinyins;
+
+    use crate::predict::pinyin_guess_predicted_candidates;
+
+    use crate::sentence::{pinyin_guess_candidates, pinyin_guess_sentence};
+
+    use crate::state::{context_mut, instance_ref};
+
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
     /// The open fixture, with `ni` parsed.
     struct Open {
@@ -1187,21 +1185,6 @@ mod unloaded_library_tests {
             read(inst.core.user)
         }
 
-        /// The total a system library's sub-index holds once it is loaded
-        /// and before any write: `SubPhraseIndex::load` reads it from the
-        /// chunk (`phrase_index.cpp:345` at the pin `074a2219`).
-        fn loaded_total(&self, library: u8) -> u32 {
-            // SAFETY: as in `store`.
-            unsafe { instance_ref(self.instance) }
-                .core
-                .dict
-                .system()
-                .libraries()
-                .library(u32::from(library) << 24)
-                .map(oxpinyin_data::phrase_library::PhraseLibrary::total_freq)
-                .expect("the library is mapped")
-        }
-
         /// The facade total the model divides by.
         fn amplified_total(&self) -> u64 {
             // SAFETY: as in `store`.
@@ -1226,28 +1209,6 @@ mod unloaded_library_tests {
             unsafe { crate::instance::pinyin_free_instance(self.instance) };
             unsafe { crate::context::pinyin_fini(self.context) };
         }
-    }
-
-    // Both unigram-only choose branches must use the instance's owner, not
-    // its finalized public context. Keep the ordinary lifetime as a control.
-    #[rstest::rstest]
-    #[case::longer(IBUS_DEFAULT_SORT, lookup_candidate_type_t::LONGER_CANDIDATE)]
-    #[case::sort_bit(DEFAULT_SORT | WITHOUT_SENTENCE, lookup_candidate_type_t::NORMAL_CANDIDATE)]
-    fn choosing_a_unigram_row_keeps_the_instance_owner(
-        #[case] sort: c_uint,
-        #[case] kind: lookup_candidate_type_t,
-        #[values(false, true)] finalized: bool,
-    ) {
-        let mut open = Open::new("choose-retained-owner");
-        assert!(unsafe { pinyin_guess_sentence(open.instance) });
-        let (row, _) = open.row_of(sort, |candidate_kind, _| candidate_kind == kind);
-        if finalized {
-            crate::test_support::finalize_public_context(open.context, open.instance);
-            open.context = ptr::null_mut();
-        }
-        let before = open.amplified_total();
-        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 1);
-        assert_eq!(open.amplified_total() - before, 483);
     }
 
     /// `pinyin_train` after the unload. `train_result3` trains the chosen
@@ -1383,69 +1344,7 @@ mod unloaded_library_tests {
         assert!(unsafe { pinyin_load_phrase_library(open.context, 2) });
         assert!(unsafe { pinyin_token_add_unigram_frequency(open.instance, gbk, 1) });
     }
-
-    /// The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg trains the row's unigram and
-    /// answers `true` unless the add overflows (`pinyin.cpp:2565-2576`). A
-    /// library with no sub-index answers `ERROR_NO_SUB_PHRASE_INDEX`, not the
-    /// overflow.
-    #[test]
-    fn choosing_a_row_of_an_unloaded_library_under_the_sort_bit_answers_one() {
-        let open = Open::new("sort-bit-unloaded");
-        let (row, _) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
-        assert!(unsafe { pinyin_unload_phrase_library(open.context, 2) });
-
-        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 1);
-    }
-
-    /// `ERROR_INTEGER_OVERFLOW` is the one error the leg answers `false` for.
-    #[test]
-    fn choosing_a_row_whose_unigram_add_overflows_under_the_sort_bit_answers_zero() {
-        let open = Open::new("sort-bit-overflow");
-        let (row, gbk) = open.gbk_row(DEFAULT_SORT | WITHOUT_SENTENCE);
-        let total = open.loaded_total(2);
-        assert!(unsafe {
-            pinyin_token_add_unigram_frequency(open.instance, gbk, u32::MAX - total)
-        });
-
-        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 0);
-    }
-
-    /// The LONGER leg (`pinyin.cpp:2523-2531`) answers as the sort-bit leg.
-    #[test]
-    fn choosing_a_longer_row_whose_unigram_add_overflows_answers_zero() {
-        let open = Open::new("longer-overflow");
-        assert!(unsafe { pinyin_guess_sentence(open.instance) });
-        let (row, token) = open.row_of(IBUS_DEFAULT_SORT, |kind, _| {
-            kind == lookup_candidate_type_t::LONGER_CANDIDATE
-        });
-        let library = u8::try_from(token >> 24).expect("a library nibble");
-        let total = open.loaded_total(library);
-        assert!(unsafe {
-            pinyin_token_add_unigram_frequency(open.instance, token, u32::MAX - total)
-        });
-
-        assert_eq!(unsafe { pinyin_choose_candidate(open.instance, 0, row) }, 0);
-    }
 }
 
 #[cfg(test)]
-mod tests {
-    /// `phonetic_lookup.h:904`: training stores into the failed Berkeley DB
-    /// user bigram container and the pin's `check_result` dies. Only
-    /// running out of memory makes that container, so the training answer
-    /// is handed to the refusal directly.
-    #[test]
-    fn a_store_into_the_failed_user_bigram_aborts_training() {
-        let stderr = crate::test_support::assert_aborts(
-            "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
-            || {
-                super::train_answer(Err(oxpinyin_engine::EngineError::FailedUserBigramStore {
-                    token: 0x0100_0001,
-                }));
-            },
-        );
-        // No Rust panic text or other line: the pin writes none here but
-        // glibc's assert line, the register's policy-accepted missing line.
-        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-    }
-}
+mod tests;
