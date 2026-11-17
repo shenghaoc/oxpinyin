@@ -2,6 +2,7 @@
 //! the parse-mode state machine, and the snapshot-adjacent fields both
 //! facades' C layers borrow against.
 
+use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_core::{
     Dictionary, DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken,
     ZhuyinParse,
@@ -10,7 +11,6 @@ use oxpinyin_engine::{
     Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
     check_lookup_offset_range, normalize_lookup_offset,
 };
-use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_user::UserStore;
 
 use crate::context::LiveOptions;
@@ -329,9 +329,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     }
 
     /// The stored length and text of `token`'s item, as the C token getters
-    /// read them ([`oxpinyin_runtime::RuntimeDict::token_phrase`]).
+    /// read them ([`crate::runtime::RuntimeDict::token_phrase`]).
     #[must_use]
-    pub fn token_phrase(&self, token: u32) -> Option<oxpinyin_runtime::TokenPhrase> {
+    pub fn token_phrase(&self, token: u32) -> Option<crate::runtime::TokenPhrase> {
         self.dict.token_phrase(token)
     }
 

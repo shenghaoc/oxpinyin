@@ -29,7 +29,7 @@ pub(crate) fn zhuyin_instance() -> (ContextCore, InstanceCore) {
 }
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../oxpinyin-runtime/tests/common/contract_data.rs"]
+#[path = "../tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 #[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
 pub(crate) mod native_fixture;

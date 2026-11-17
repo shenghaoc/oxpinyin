@@ -5,12 +5,12 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
-use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
-use oxpinyin_engine::SessionSettings;
-use oxpinyin_runtime::{
+use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
     directory_reads_as_a_chunk,
 };
+use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
+use oxpinyin_engine::SessionSettings;
 use oxpinyin_user::c_stderr;
 use oxpinyin_user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
@@ -497,7 +497,7 @@ impl ContextCore {
     }
 
     /// Allocates one instance's orchestration state over this context's
-    /// assembly. [`Runtime::new_session`](oxpinyin_runtime::Runtime::new_session)
+    /// assembly. `Runtime::new_session`
     /// cannot fail.
     #[must_use]
     pub fn alloc_instance(&self) -> crate::instance::InstanceCore {
@@ -551,11 +551,11 @@ impl ContextCore {
          -> oxpinyin_user::SaveBaseline {
             match Runtime::read_save_baseline(originals, unloaded, nibble) {
                 Ok(baseline) => baseline,
-                Err(oxpinyin_runtime::SaveRemapFault::Unmappable(path)) => {
+                Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
                     c_stderr::mmap_failed(&path);
                     oxpinyin_user::SaveBaseline::Unmappable
                 }
-                Err(oxpinyin_runtime::SaveRemapFault::ChunkHeaderRead) => {
+                Err(crate::runtime::SaveRemapFault::ChunkHeaderRead) => {
                     oxpinyin_user::SaveBaseline::ChunkHeaderRead
                 }
             }
@@ -671,11 +671,11 @@ impl ContextCore {
                             break;
                         }
                     }
-                    RemapStep::Unmappable(_, path) => {
+                    RemapStep::Unmappable(path) => {
                         c_stderr::mmap_failed(&path);
                         return MaskOutOutcome::Done(true);
                     }
-                    RemapStep::Directory(_) => {
+                    RemapStep::Directory => {
                         stop = Some(MaskStop::Directory);
                         break;
                     }
@@ -843,7 +843,7 @@ impl ContextCore {
         let runtime = &mut self.runtime;
         match runtime.load_system_addon_reporting(index) {
             Ok(loaded) => Ok(loaded),
-            Err(oxpinyin_runtime::LibraryError::Row(fault)) => Err(match fault {
+            Err(crate::runtime::LibraryError::Row(fault)) => Err(match fault {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
                     if let Some(dir) = runtime.system_dir() {
@@ -854,10 +854,10 @@ impl ContextCore {
                 RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
             }),
             Err(
-                error @ (oxpinyin_runtime::LibraryError::Io(_)
-                | oxpinyin_runtime::LibraryError::Format(_)
-                | oxpinyin_runtime::LibraryError::Layout(_)
-                | oxpinyin_runtime::LibraryError::Unmappable { .. }),
+                error @ (crate::runtime::LibraryError::Io(_)
+                | crate::runtime::LibraryError::Format(_)
+                | crate::runtime::LibraryError::Layout(_)
+                | crate::runtime::LibraryError::Unmappable { .. }),
             ) => {
                 if let Some(path) = error.unmappable_path() {
                     c_stderr::mmap_failed(path);

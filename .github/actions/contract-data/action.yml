@@ -2,7 +2,7 @@ name: 'contract-data'
 description: |-
   Provide the pinned libpinyin-data package at target/contract-data and set the cache root
   OXPINYIN_CACHE to target for the rest of the job. The tkrzw-only package tests of
-  oxpinyin-runtime, oxpinyin-data and the two C API crates read the package there
+  oxpinyin-facade, oxpinyin-data and the two C API crates read the package there
   (just fetch-contract-data). Restores it from the cache first, so a run needs
   snapshot.debian.org only when the pin changes. Call this after checkout and the bootstrap
   action with `uv: 'true'`.

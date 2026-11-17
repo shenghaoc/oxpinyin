@@ -15,26 +15,12 @@
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
 //! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods
 //! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
-//! ordering law held here is [`merge_suggestion_rows`], the pinned
+//! ordering law held here is `merge_suggestion_rows`, the pinned
 //! suggestion row order the facades rank predicted candidates in.
 //! Centralizing the assembly here is what keeps every C-ABI consumer
 //! on one construction and one set of semantics.
 //!
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
-#![forbid(unsafe_code)]
-// Constitution §4: keep these non-test denials. A permitted site needs the
-// narrowest justified #[expect], citing the pin's abort site or an invariant
-// making failure unreachable; see docs/rust-conventions.md.
-// An expectation proves lint coverage, not correspondence with the pin.
-// Inline #[cfg(test)] modules are exempt; tests/, benches/ and examples/
-// are separate crates.
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(not(test), deny(clippy::expect_used))]
-#![cfg_attr(not(test), deny(clippy::panic))]
-#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
-#![cfg_attr(not(test), deny(clippy::unreachable))]
-#![warn(missing_docs)]
-
 mod sentence_facts;
 
 use std::cell::{Cell, RefCell};
@@ -48,11 +34,11 @@ use oxpinyin_core::{
     PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
     UserCountDelta,
 };
-pub use oxpinyin_data::phrase_library::{
+pub(crate) use oxpinyin_data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
-pub use oxpinyin_data::table_info::{FileType, TableConfSite};
-pub use oxpinyin_data::table_info::{TableConf, TableConfError};
+pub(crate) use oxpinyin_data::table_info::{FileType, TableConfSite};
+pub(crate) use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
@@ -86,7 +72,7 @@ use oxpinyin_user::{
 /// suggestion ordering instead of each assembling an equivalent against
 /// raw UCS-4 keys.
 #[must_use]
-pub fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Vec<u32> {
+pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Vec<u32> {
     let mut user = user_rows.to_vec();
     user.sort_by(|a, b| a.1.cmp(&b.1));
     let mut merged = Vec::with_capacity(system.len() + user.len());
@@ -142,25 +128,11 @@ pub enum OpenError {
     UserSession(oxpinyin_user::UserStoreError),
 }
 
-/// [`Runtime::reload_system_libraries`]'s result.
-#[derive(Debug)]
-pub struct SystemRemap {
-    /// The libraries mapped again, in the mask loop's order.
-    pub originals: oxpinyin_user::SystemOriginals,
-    /// The files `MemoryChunk::mmap` refused, with their sub-index, in the
-    /// loop's order: each a `mmap %s failed!` line the pin writes when its
-    /// loop reaches that library.
-    pub unmappable: Vec<(u8, PathBuf)>,
-    /// The library that is a directory the pin asserts on, where the walk
-    /// ended (`memory_chunk.h:493`).
-    pub header_fault: Option<u8>,
-}
-
 /// A mask loop's remap, advanced one library at a time by
 /// [`Runtime::remap_next`]: the libraries mapped so far, and the sub-indices
 /// still to visit. Nothing past a stop is opened.
 #[derive(Debug)]
-pub struct RemapWalk {
+pub(crate) struct RemapWalk {
     originals: oxpinyin_user::SystemOriginals,
     indices: std::ops::Range<u8>,
     /// One library's `_load_phrase_library`, not the mask loop: it maps an
@@ -172,22 +144,22 @@ pub struct RemapWalk {
 /// mask loop one that is not loaded or names no user file; in either a chunk
 /// that fails some other check) is not a step.
 #[derive(Debug)]
-pub enum RemapStep {
+pub(crate) enum RemapStep {
     /// The library mapped and is in the walk's originals.
     Mapped(u8),
     /// `MemoryChunk::mmap` refuses the file (row 76): the `mmap %s failed!`
     /// path.
-    Unmappable(u8, PathBuf),
+    Unmappable(PathBuf),
     /// A directory whose header read the pin asserts on (`memory_chunk.h:493`,
     /// row 96). The walk is over.
-    Directory(u8),
+    Directory,
 }
 
 /// Why `save_disk_baseline` could not give a baseline for a
 /// system library the save maps again at its `_write_files` position
 /// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
 #[derive(Debug)]
-pub enum SaveRemapFault {
+pub(crate) enum SaveRemapFault {
     /// `MemoryChunk::mmap` refuses the file: the pin writes
     /// `mmap %s failed!` (row 76, class (b)).
     Unmappable(PathBuf),
@@ -202,7 +174,7 @@ impl OpenError {
     /// (`pinyin.cpp:256`) and dies on the empty chunk it goes on with. A
     /// layout fault past the chunk and every other failure answer `None`.
     #[must_use]
-    pub fn unmappable_library(&self) -> Option<&Path> {
+    pub(crate) fn unmappable_library(&self) -> Option<&Path> {
         match self {
             Self::Dict(DictError::Library(error)) => error.unmappable_path(),
             Self::Io(..)
@@ -219,7 +191,7 @@ impl OpenError {
     /// ([`TableConfSite::NullSystemFile`]): the pin reads the system
     /// directory itself as the chunk.
     #[must_use]
-    pub fn null_system_chunk(&self) -> bool {
+    pub(crate) fn null_system_chunk(&self) -> bool {
         matches!(
             self,
             Self::TableConf(TableConfError::Abort(TableConfSite::NullSystemFile))
@@ -231,7 +203,7 @@ impl OpenError {
     /// row 96), after the libraries before it were mapped and merged. The C
     /// adapters abort.
     #[must_use]
-    pub fn chunk_header_read(&self) -> bool {
+    pub(crate) fn chunk_header_read(&self) -> bool {
         matches!(
             self,
             Self::Dict(DictError::Library(LibraryError::Row(
@@ -322,7 +294,7 @@ const fn library_of(token: u32) -> u8 {
     oxpinyin_user::phrase_index_library_index(token)
 }
 
-pub use oxpinyin_core::TokenPhrase;
+pub(crate) use oxpinyin_core::TokenPhrase;
 
 /// One token reading, without the text or any other reading's keys.
 pub struct TokenPronunciation {
@@ -728,7 +700,7 @@ impl<'a> RuntimeDict<'a> {
     /// phrase export iterator, which checks a library's visibility once when
     /// it probes.
     #[must_use]
-    pub fn live_items_ignoring_mask(&self) -> LiveSystemItems<'_> {
+    pub(crate) fn live_items_ignoring_mask(&self) -> LiveSystemItems<'_> {
         LiveSystemItems::unmasked(self.system.libraries(), self.user)
     }
 
@@ -1498,7 +1470,7 @@ pub type RuntimeSession<'a> =
 ///
 /// Storage has one owner. [`Runtime::dict`], [`Runtime::lm`] and
 /// [`Runtime::user_store`] borrow it for an operation; writers require
-/// exclusive access. [`Runtime::new_session`] retains composition only.
+/// exclusive access. `Runtime::new_session` retains composition only.
 /// Every successful open owns a store, including when the user directory
 /// is absent: that store is transient, and its directory flag controls
 /// training and saving.
@@ -1715,7 +1687,7 @@ impl Runtime {
     /// # Errors
     ///
     /// As [`Runtime::open`].
-    pub fn open_with_law(
+    pub(crate) fn open_with_law(
         system_dir: &Path,
         user_dir: Option<&Path>,
         law: UserConfLaw,
@@ -1733,7 +1705,7 @@ impl Runtime {
     /// # Errors
     ///
     /// As [`Runtime::open`].
-    pub fn open_with_law_reporting(
+    pub(crate) fn open_with_law_reporting(
         system_dir: &Path,
         user_dir: Option<&Path>,
         law: UserConfLaw,
@@ -1877,7 +1849,7 @@ impl Runtime {
     ///
     /// Construction cannot fail: [`Session::new`] reads no dictionary or
     /// model record.
-    pub fn new_session(&self, settings: SessionSettings) -> oxpinyin_engine::SessionState {
+    pub(crate) fn new_session(&self, settings: SessionSettings) -> oxpinyin_engine::SessionState {
         Session::new(settings, self.dict(), self.lm()).into_state()
     }
 
@@ -2030,7 +2002,7 @@ impl Runtime {
     }
 
     /// Publish dictionary remaps while retaining any unreplaced journal originals.
-    pub fn install_baselines(&mut self, originals: oxpinyin_user::SystemOriginals) {
+    pub(crate) fn install_baselines(&mut self, originals: oxpinyin_user::SystemOriginals) {
         self.originals_mut().publish_current(originals);
     }
 
@@ -2046,7 +2018,7 @@ impl Runtime {
     /// # Errors
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
-    pub fn load_system_addon_reporting(&mut self, index: u8) -> Result<bool, LibraryError> {
+    pub(crate) fn load_system_addon_reporting(&mut self, index: u8) -> Result<bool, LibraryError> {
         let Some(system_dir) = self.paths.system_data_dirs().first() else {
             return Ok(false);
         };
@@ -2064,7 +2036,7 @@ impl Runtime {
     /// rows without a user filename (`pinyin.cpp:927-943`, `:1235-1251`).
     /// An explicit reload still checks its target, including slot zero.
     #[must_use]
-    pub fn check_system_libraries(
+    pub(crate) fn check_system_libraries(
         &self,
         only: Option<u8>,
     ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
@@ -2097,7 +2069,7 @@ impl Runtime {
     }
 
     /// The current loaded-library mask, snapshotted for an exclusive save.
-    pub fn unloaded_libraries(&self) -> u32 {
+    pub(crate) fn unloaded_libraries(&self) -> u32 {
         self.library_mask.get()
     }
 
@@ -2105,7 +2077,7 @@ impl Runtime {
     ///
     /// # Errors
     /// The remap faults reported by `save_disk_baseline`.
-    pub fn read_save_baseline(
+    pub(crate) fn read_save_baseline(
         originals: &oxpinyin_user::SystemOriginals,
         unloaded: u32,
         nibble: u8,
@@ -2142,23 +2114,6 @@ impl Runtime {
         }
     }
 
-    /// Maps every loaded SYSTEM_FILE/DICTIONARY default library again for
-    /// mask_out, in the mask loop's order, replacing the shared sub-index,
-    /// never the phrase DBM. Read from the 074a2219 tree: pinyin.cpp:1253-1273,
-    /// zhuyin.cpp:788-808. Unloaded libraries and rows without a user file
-    /// are skipped. A file `MemoryChunk::mmap` refuses keeps the existing
-    /// safe fallback and is listed in [`SystemRemap::unmappable`] with its
-    /// sub-index: the pin writes its `mmap %s failed!` line (row 76) at that
-    /// library's place in the loop, so the caller writes it only if the loop
-    /// reached it. A library that is a directory whose header read the pin
-    /// asserts on (`memory_chunk.h:493`, register row 96) ends the walk
-    /// ([`SystemRemap::header_fault`]), and the originals hold the libraries
-    /// mapped before it, whose logs the pin merged before it died.
-    #[must_use]
-    pub fn reload_system_libraries(&mut self) -> SystemRemap {
-        self.remap_system_libraries(1..16, false)
-    }
-
     /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
     /// again, as `_load_phrase_library` does before it merges the saved
     /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:298-312`). The
@@ -2170,9 +2125,10 @@ impl Runtime {
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
     #[must_use]
-    pub fn reload_system_library(&mut self, index: u8) -> oxpinyin_user::SystemOriginals {
-        self.remap_system_libraries(index..index.saturating_add(1), true)
-            .originals
+    pub(crate) fn reload_system_library(&mut self, index: u8) -> oxpinyin_user::SystemOriginals {
+        let mut walk = self.begin_remap(index..index.saturating_add(1), true);
+        self.remap_next(&mut walk);
+        self.finish_system_remap(walk)
     }
 
     /// Starts the mask loop's remap over every loaded SYSTEM_FILE/DICTIONARY
@@ -2180,7 +2136,7 @@ impl Runtime {
     /// zhuyin.cpp:788-808). Advance it with [`Self::remap_next`] and end it
     /// with [`Self::finish_system_remap`].
     #[must_use]
-    pub fn begin_system_remap(&self) -> RemapWalk {
+    pub(crate) fn begin_system_remap(&self) -> RemapWalk {
         self.begin_remap(1..16, false)
     }
 
@@ -2202,7 +2158,7 @@ impl Runtime {
     /// the walk is over. A directory ends it. Nothing after the library
     /// returned is opened until the next call, so a caller that stops there
     /// leaves every later library untouched.
-    pub fn remap_next(&self, walk: &mut RemapWalk) -> Option<RemapStep> {
+    pub(crate) fn remap_next(&self, walk: &mut RemapWalk) -> Option<RemapStep> {
         let dir = self.paths.system_data_dirs().first()?;
         let libraries = self.libraries();
         while let Some(index) = walk.indices.next() {
@@ -2236,7 +2192,7 @@ impl Runtime {
                 }
                 Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                     walk.indices = 0..0;
-                    return Some(RemapStep::Directory(index));
+                    return Some(RemapStep::Directory);
                 }
                 Err(
                     error @ (LibraryError::Io(_)
@@ -2246,7 +2202,7 @@ impl Runtime {
                     | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName)),
                 ) => {
                     if let Some(path) = error.unmappable_path() {
-                        return Some(RemapStep::Unmappable(index, path.to_path_buf()));
+                        return Some(RemapStep::Unmappable(path.to_path_buf()));
                     }
                 }
             }
@@ -2256,33 +2212,11 @@ impl Runtime {
 
     /// Ends a remap walk and returns the libraries it mapped.
     #[must_use]
-    pub fn finish_system_remap(&mut self, walk: RemapWalk) -> oxpinyin_user::SystemOriginals {
-        walk.originals
-    }
-
-    fn remap_system_libraries(
+    pub(crate) fn finish_system_remap(
         &mut self,
-        indices: std::ops::Range<u8>,
-        reload: bool,
-    ) -> SystemRemap {
-        let mut walk = self.begin_remap(indices, reload);
-        let mut unmappable = Vec::new();
-        let mut header_fault = None;
-        while let Some(step) = self.remap_next(&mut walk) {
-            match step {
-                RemapStep::Mapped(_) => {}
-                RemapStep::Unmappable(index, path) => unmappable.push((index, path)),
-                RemapStep::Directory(index) => {
-                    header_fault = Some(index);
-                    break;
-                }
-            }
-        }
-        SystemRemap {
-            originals: self.finish_system_remap(walk),
-            unmappable,
-            header_fault,
-        }
+        walk: RemapWalk,
+    ) -> oxpinyin_user::SystemOriginals {
+        walk.originals
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.
@@ -2297,7 +2231,7 @@ impl Runtime {
     /// Loads default library `index` — the GBK-reload path after an
     /// unload; `false` when already visible.
     #[must_use]
-    pub fn load_library(&mut self, index: u32) -> bool {
+    pub(crate) fn load_library(&mut self, index: u32) -> bool {
         let changed = self.dict().load_library(index);
         if index < PHRASE_INDEX_LIBRARY_COUNT {
             self.user.set_library_loaded(index as u8, true);

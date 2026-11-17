@@ -269,7 +269,7 @@ unselected. A named file with no matches stays a failure, as does a pattern
 that matches no tests across all selected files.
 
 A full test run needs one `just fetch-contract-data` beforehand: the
-`candidate_surface` test of `oxpinyin-runtime` reads the pinned data that it
+`candidate_surface` test of `oxpinyin-facade` reads the pinned data that it
 fetches ([test inputs](../testing/README.md#test-inputs)).
 
 cargo-nextest is the only supported test runner. It runs each test in its

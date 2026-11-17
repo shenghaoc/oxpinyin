@@ -592,16 +592,15 @@ fn a_failed_user_read_is_no_gram() {
     assert_eq!(user_gram_or_none(Ok(None)).unwrap(), None);
 }
 
-#[path = "../tests/common/candidate_fixture.rs"]
+#[path = "../../tests/common/candidate_fixture.rs"]
 mod candidate_fixture;
 #[cfg(feature = "tkrzw")]
-#[path = "../tests/common/contract_data.rs"]
-mod contract_data;
+use crate::test_fixture::contract_data;
 #[cfg(feature = "tkrzw")]
-#[path = "../tests/common/sentence_fixture.rs"]
+#[path = "../../tests/common/sentence_fixture.rs"]
 mod sentence_fixture;
 #[cfg(feature = "tkrzw")]
-#[path = "../tests/common/sentence_tail.rs"]
+#[path = "../../tests/common/sentence_tail.rs"]
 mod sentence_tail;
 
 // The format of the committed candidate structure capture.
@@ -676,7 +675,7 @@ mod backend_files {
     //! which is integration territory (components together, real files, no
     //! private access).
 
-    use crate::{OpenError, Runtime, TableConfError};
+    use crate::runtime::{OpenError, Runtime, TableConfError};
     use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
     use oxpinyin_engine::{Selection, SelectionTarget, SessionSettings};
     use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
@@ -1601,7 +1600,7 @@ mod backend_files {
         let tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
         assert!(!tokens.is_empty(), "vacuity guard: nihao ranges tokens");
 
-        let own = <crate::RuntimeDict as Dictionary>::PathMemo::default();
+        let own = <crate::runtime::RuntimeDict as Dictionary>::PathMemo::default();
         for token in tokens.iter().copied().chain([0, u32::MAX]) {
             let expected = runtime
                 .dict()
@@ -1652,7 +1651,7 @@ mod backend_files {
         assert!(matches!(
             opened,
             Err(OpenError::TableConf(TableConfError::Abort(
-                crate::TableConfSite::DefaultDictionary
+                crate::runtime::TableConfSite::DefaultDictionary
             )))
         ));
         assert_eq!(
@@ -1848,7 +1847,7 @@ mod pin_data {
 
     use oxpinyin_engine::SessionSettings;
 
-    use crate::Runtime;
+    use crate::runtime::Runtime;
 
     fn syllables(text: &str) -> Vec<SyllableKey> {
         text.split('\'')
@@ -2010,7 +2009,7 @@ mod candidate_surface {
 
     use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
 
-    use crate::Runtime;
+    use crate::runtime::Runtime;
 
     use candidate_fixture::{CandidateFixture, OracleCandidateType, STRUCTURE_FIXTURE};
 
@@ -2253,8 +2252,7 @@ mod sentence_surface_parity {
 }
 
 // Nextest isolates the process-wide read-fault key by running each test in its own process.
-#[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
-mod native_fixture;
+use crate::test_fixture::native_fixture;
 use native_fixture::{
     TempUserDir, craft_hash, craft_tree, gram_bytes, set_phrase_table_row, system_dir,
 };
@@ -3468,9 +3466,9 @@ fn ordinary_training_reorders_the_nbest_rows() {
     );
 }
 
-#[path = "../../oxpinyin-data/tests/support/mod.rs"]
+#[path = "../../../oxpinyin-data/tests/support/mod.rs"]
 mod chunk_fixture;
-#[path = "../../oxpinyin-data/tests/support/unreadable_fixture.rs"]
+#[path = "../../../oxpinyin-data/tests/support/unreadable_fixture.rs"]
 mod unreadable_fixture;
 
 /// The sole unreadable user-index row survives the system miss and keeps its token.

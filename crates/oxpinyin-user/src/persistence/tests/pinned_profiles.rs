@@ -3,7 +3,7 @@ use crate::native_fixture::{TempUserDir, craft_hash, store_rows, write_user_conf
 use crate::test_session::{native_keys, native_unigram, open_native};
 use crate::{UserConfLaw, UserStore};
 use std::path::Path;
-#[path = "../../../../oxpinyin-runtime/tests/common/contract_data.rs"]
+#[path = "../../../../oxpinyin-facade/tests/common/contract_data.rs"]
 mod contract_data;
 use contract_data::contract_data_dir;
 

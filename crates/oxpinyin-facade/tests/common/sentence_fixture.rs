@@ -11,7 +11,7 @@ pub const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
 /// Exact subject surfaces admitted by sentence-surface.md §12, in the same
 /// four-column format as the unchanged pin fixture.
 const RESIDUAL_FIXTURE: &str =
-    "crates/oxpinyin-runtime/tests/fixtures/sentence-surface/residuals.txt";
+    "crates/oxpinyin-facade/tests/fixtures/sentence-surface/residuals.txt";
 
 /// Repository root, from this crate's manifest directory.
 #[must_use]

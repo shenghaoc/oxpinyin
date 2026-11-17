@@ -2,8 +2,8 @@
 //! `guess_sentence_with_prefix`, and the merged suggestion rows
 //! `_compute_predicted_prefix_candidates` ranks.
 
+use crate::runtime::RuntimeDict;
 use oxpinyin_core::PhraseText;
-use oxpinyin_runtime::RuntimeDict;
 use oxpinyin_user::UserStore;
 
 /// Resolves a prefix to the phrase tokens its tail substrings name, in the
@@ -67,7 +67,7 @@ pub fn compute_prefixes(
 /// pin's caller needs the token to take the stale-length filter and the
 /// sole-missing/class-(b) split (`pinyin.cpp:2389-2405`, `:2443-2451`;
 /// #1231). The ordering law itself is
-/// [`oxpinyin_runtime::merge_suggestion_rows`], held with this crate's
+/// `runtime::merge_suggestion_rows`, held with this crate's
 /// other shared orchestration so the C-ABI facades rank one suggestion
 /// order rather than each assembling an equivalent.
 #[must_use]
@@ -91,7 +91,7 @@ pub fn merged_suggestions(
     // Search visits raw keys; the candidate's text comes from its live item
     // (074a2219 pinyin.cpp:2391-2395, 2018-2022), including keys containing
     // UCS-4 values that cannot be represented by a Rust String.
-    oxpinyin_runtime::merge_suggestion_rows(&system, &user_rows)
+    crate::runtime::merge_suggestion_rows(&system, &user_rows)
         .into_iter()
         .map(|token| {
             // A failed item read leaves no text; it must still reach the

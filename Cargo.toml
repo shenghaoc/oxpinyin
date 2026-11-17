@@ -53,7 +53,7 @@ oxpinyin-core = { path = "crates/oxpinyin-core", version = "=0.1.0-alpha.1" }
 # features, so one forwarding edge per crate reaches the store; every crate
 # that is built on its own keeps its `default` and peer features.
 oxpinyin-data = { path = "crates/oxpinyin-data", version = "=0.1.0-alpha.1", default-features = false }
-oxpinyin-runtime = { path = "crates/oxpinyin-runtime", version = "=0.1.0-alpha.1", default-features = false }
+oxpinyin-facade = { path = "crates/oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 # The external-I/O boundary: the pin's C library calls behind a safe API.
 oxpinyin-input = { path = "crates/oxpinyin-input", version = "=0.1.0-alpha.1" }
 oxpinyin-engine = { path = "crates/oxpinyin-engine", version = "=0.1.0-alpha.1" }

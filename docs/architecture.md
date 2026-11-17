@@ -13,7 +13,6 @@
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
 | oxpinyin-capi-marshal | Shared declarative C-ABI marshalling macros, including opaque-handle casts and the `char **` sentence writer. No compiled unsafe code of its own. | forbid | yes | via capi, zhuyin-capi |
-| oxpinyin-runtime | Shared concrete assembly of tables, model and user wiring into Session. | forbid | yes | via capi |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable W3 data; no timing loops. | forbid | Linux, macOS (needs GLib) | never |
@@ -46,8 +45,8 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 ### Facades
 
 Both C-ABI facades consume `oxpinyin-facade`.
-`oxpinyin-zhuyin-capi` reaches runtime only through it; `oxpinyin-capi` also depends on runtime directly.
-`oxpinyin-facade` depends on core, engine, runtime and user.
+Its runtime module assembles sessions for both libraries.
+`oxpinyin-facade` depends on core, engine, data, input, marshal and user.
 It holds the concrete dictionary, language-model and user handles of runtime by value.
 For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
 
@@ -112,7 +111,7 @@ C facades retain ABI marshalling.
 
 ## Centralized assembly
 
-Decodable engines are constructed in exactly one place, `oxpinyin-runtime`.
+Decodable engines are constructed in exactly one place, `oxpinyin-facade`.
 It assembles system tables, unigram model, λ, a persistent or transient user store, addons and punctuation.
 Facades through `oxpinyin-facade`, capi and future adapters consume that assembly.
 Nothing else assembles equivalents independently.
