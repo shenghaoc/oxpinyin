@@ -94,7 +94,7 @@ fn read_walks_values_then_pairs() {
     let taglib = tags();
     let mut line_type = 0;
     let mut values = Vec::new();
-    let mut required = Required::new();
+    let mut required = Required::default();
     let read = taglib.read(
         c"\\item 10 甲 count 2 freq 3 freq 4",
         &mut line_type,

@@ -15,6 +15,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+rustc-hash.workspace = true
 # Internal workspace crate: the parser, decoder and vocabulary types this API
 # is a façade over. Not an external dependency.
 oxpinyin-core = { path = "../oxpinyin-core" }

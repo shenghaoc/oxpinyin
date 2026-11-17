@@ -4,8 +4,8 @@
 //! training operations shared by the in-tree consumers.
 
 use core::fmt::Display;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
@@ -409,8 +409,8 @@ fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
     into[start..].sort_by_key(|candidate| candidate.token().map_or(usize::MAX, window_library));
     // Membership only: the retained candidates keep the batch's order, so
     // the set's own (unspecified) iteration order is never observed.
-    let mut seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::with_capacity(into.len() - start);
+    let mut seen: FxHashSet<u32> =
+        FxHashSet::with_capacity_and_hasher(into.len() - start, Default::default());
     let mut write = start;
     for read in start..into.len() {
         if let Some(token) = into[read].token().map(oxpinyin_core::PhraseToken::value)
@@ -1094,7 +1094,8 @@ impl RankKey {
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut keep = Vec::with_capacity(candidates.len());
     {
-        let mut seen: HashSet<&PhraseText> = HashSet::with_capacity(candidates.len());
+        let mut seen: FxHashSet<&PhraseText> =
+            FxHashSet::with_capacity_and_hasher(candidates.len(), Default::default());
         keep.extend(
             candidates
                 .iter()
@@ -1123,7 +1124,8 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
 fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
     let mut keep = vec![true; ranked.len()];
     {
-        let mut survivor: HashMap<&PhraseText, usize> = HashMap::with_capacity(ranked.len());
+        let mut survivor: FxHashMap<&PhraseText, usize> =
+            FxHashMap::with_capacity_and_hasher(ranked.len(), Default::default());
         for (index, ((key, _), candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {

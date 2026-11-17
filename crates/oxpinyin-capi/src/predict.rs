@@ -6,8 +6,8 @@
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
-use std::collections::HashSet;
 use std::os::raw::c_char;
 
 use oxpinyin_core::{PhraseText, PhraseToken, single_gram};
@@ -163,7 +163,7 @@ fn guess_predicted_result(
     // Dedup retains the numerically higher score even if the pin's signed
     // comparator put it later (`pinyin.cpp:2128-2136`). Equal scores keep
     // the first row. The winner remains at its original sorted position.
-    let mut winners = std::collections::HashMap::new();
+    let mut winners = FxHashMap::default();
     for (index, item) in items.iter().enumerate() {
         let winner = winners.entry(item.text.clone()).or_insert(index);
         if item.frequency > items[*winner].frequency {
@@ -298,7 +298,7 @@ pub(crate) fn prediction_answer(outcome: Result<bool, &'static str>) -> bool {
 /// `g_array_prepend_val` leaves the punctuations first in this order.
 fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
     let mut puncts: Vec<Vec<u8>> = Vec::new();
-    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for token in inst.core.session.candidate_prefixes() {
         for punct in inst.core.dict.punctuations(token.value()) {
             let bytes = phrase_text_bytes(&punct).into_owned();

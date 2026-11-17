@@ -6,7 +6,7 @@
 //! `double` expressions. The arithmetic below keeps those types, so ties
 //! and comparisons see the pin's values, not a wider Rust computation.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use oxpinyin_data::{BigramRow, BigramTable};
 
@@ -26,7 +26,7 @@ struct Node {
 #[derive(Clone, Debug, Default)]
 struct Step {
     content: Vec<Node>,
-    index: HashMap<u32, usize>,
+    index: FxHashMap<u32, usize>,
 }
 
 impl Step {

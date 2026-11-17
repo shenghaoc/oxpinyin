@@ -14,6 +14,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+rustc-hash.workspace = true
 oxpinyin-core = { workspace = true }
 # The user pinyin index's probe key stays inline: one fixed-size key, no
 # heap allocation per lookup.

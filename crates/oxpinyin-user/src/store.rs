@@ -13,8 +13,8 @@
 //! [`oxpinyin_core::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -679,7 +679,7 @@ pub enum TrainingFault {
 /// fault a failing check met.
 #[derive(Debug, Default)]
 pub struct TrainingCheck {
-    grams: HashMap<Token, Option<Vec<u8>>>,
+    grams: FxHashMap<Token, Option<Vec<u8>>>,
     fault: Option<TrainingFault>,
 }
 

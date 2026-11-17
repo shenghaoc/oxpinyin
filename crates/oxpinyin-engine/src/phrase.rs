@@ -25,7 +25,7 @@
 //! zero. Scores accumulate as `(f64::from(poss) + probability.ln()) as
 //! f32`, with pre-log branches supplied by the language model.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::error::EngineError;
 use crate::nbest::SENTENCE_START;
@@ -63,7 +63,7 @@ const START_SENTINEL: usize = usize::MAX;
 #[derive(Clone, Default)]
 struct Step {
     content: Vec<Node>,
-    index: HashMap<u32, usize>,
+    index: FxHashMap<u32, usize>,
 }
 
 impl Step {

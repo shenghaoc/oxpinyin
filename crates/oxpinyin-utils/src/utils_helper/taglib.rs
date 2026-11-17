@@ -15,7 +15,7 @@
 
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::ffi::{CStr, CString, c_int};
 
 use oxpinyin_input::tool;
@@ -32,7 +32,7 @@ struct TagEntry {
 
 /// The `required` hash table `taglib_read` fills: `g_str_hash` keys, the
 /// last insert of a key keeping its value.
-pub type Required = HashMap<Vec<u8>, CString>;
+pub type Required = FxHashMap<Vec<u8>, CString>;
 
 /// Where the pin's `taglib_read` goes undefined on a line.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
