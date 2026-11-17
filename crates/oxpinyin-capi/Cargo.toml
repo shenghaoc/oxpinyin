@@ -45,6 +45,7 @@ tkrzw = ["oxpinyin-facade/tkrzw"]
 workspace = true
 
 [dependencies]
+rustc-hash.workspace = true
 num_enum.workspace = true
 # Marshalling macros shared with oxpinyin-zhuyin-capi (macro-only, no
 # compiled code): the opaque-handle pointer casts and the char**-out

@@ -35,6 +35,7 @@ tkrzw = [
 workspace = true
 
 [dependencies]
+rustc-hash.workspace = true
 oxpinyin-core = { workspace = true, features = ["tools"] }
 # pinyin_exact_compare2, shared with the table writers.
 oxpinyin-data = { workspace = true }

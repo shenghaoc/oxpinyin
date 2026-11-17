@@ -32,7 +32,7 @@ impl TaggedModel {
             tags: taglib::TagLib::init(),
             line_type: 0,
             values: Vec::new(),
-            required: taglib::Required::new(),
+            required: taglib::Required::default(),
         }
     }
 

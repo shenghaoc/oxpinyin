@@ -27,7 +27,7 @@
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use oxpinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
 
@@ -171,7 +171,7 @@ struct Node {
 #[derive(Clone, Debug, Default)]
 struct Step {
     content: Vec<Node>,
-    index: HashMap<u32, usize>,
+    index: FxHashMap<u32, usize>,
 }
 
 impl Step {

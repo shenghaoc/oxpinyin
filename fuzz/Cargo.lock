@@ -342,6 +342,7 @@ dependencies = [
  "oxpinyin-facade",
  "oxpinyin-runtime",
  "oxpinyin-user",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -380,6 +381,7 @@ version = "0.1.0"
 dependencies = [
  "compact_str",
  "oxpinyin-core",
+ "rustc-hash",
  "smallvec",
  "thiserror",
 ]
@@ -446,6 +448,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-input",
  "oxpinyin-store",
+ "rustc-hash",
  "smallvec",
  "thiserror",
 ]
