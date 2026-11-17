@@ -72,7 +72,7 @@ oxpinyin-input.workspace = true
 # ABI itself.
 libc.workspace = true
 # Dev-only: shared-shape cases in the crate tests.
-rstest = { version = "0.28", default-features = false }
+rstest.workspace = true
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the
 # C ABI itself.
 tempfile.workspace = true

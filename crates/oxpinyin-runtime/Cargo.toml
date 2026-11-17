@@ -26,7 +26,7 @@ oxpinyin-user.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-rstest = { version = "0.28", default-features = false }
+rstest.workspace = true
 oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 
 [features]

@@ -33,6 +33,12 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [workspace.dependencies]
+assert_cmd = "2.2"
+assert_fs = "1.1"
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+regex = "1.13"
+rstest = { version = "0.28", default-features = false }
+sha2 = "0.11"
 # Checked integer conversions for parser schemes and the Pinyin C candidate type.
 num_enum = { version = "0.7.6", default-features = false }
 oxpinyin-core = { path = "crates/oxpinyin-core" }
