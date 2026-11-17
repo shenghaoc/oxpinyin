@@ -13,6 +13,8 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
+oxpinyin_capi_marshal::borrow_c_string_helpers!();
+
 oxpinyin_capi_marshal::ffi_output_helpers! {
     glib: glib_sys, key_text: KeyText, malloc: malloc, free: free, domain: c"libzhuyin"
 }

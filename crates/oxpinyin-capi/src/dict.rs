@@ -62,10 +62,12 @@ pub unsafe extern "C" fn pinyin_lookup_tokens(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    // SAFETY: Null-checked above.
-    let text =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let text = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     let tokens = inst.core.phrase_tokens(&text);
     // `reduce_tokens` clears the caller's array and appends every library's
     // hits, and only then validates the combined count

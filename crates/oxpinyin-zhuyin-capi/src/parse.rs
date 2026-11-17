@@ -6,20 +6,14 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, ZhuyinInstance};
 
-fn parse_chewing_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+fn parse_chewing_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
     // The pin preserves candidate rows and strings across parsing; only a
     // candidate guess, reset or instance destruction invalidates them.
     inst.core
         .parse_chewing_more(text, oxpinyin_facade::ToneForwarding::ZhuyinFacade)
 }
 
-fn parse_full_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
     inst.core.parse_full_more_zhuyin(text)
 }
 
@@ -46,9 +40,14 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
     }
 
     let text = oxpinyin_capi_marshal::input::parser_prefix(
-        oxpinyin_capi_marshal::borrow_c_string!(pinyins),
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(pinyins) },
     );
-    parse_full_more(instance, &text)
+    // SAFETY: Handles guarantees a live instance; the NULL check precedes
+    // conversion. Serial calls and the absence of retained views permit this borrow.
+    let mut inst = unsafe { instance_mut(instance) };
+    parse_full_more(&mut inst, &text)
 }
 
 /// Parse multiple chewing (bopomofo) inputs.
@@ -76,9 +75,14 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
     }
 
     let text = oxpinyin_capi_marshal::input::parser_prefix(
-        oxpinyin_capi_marshal::borrow_c_string!(chewings),
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(chewings) },
     );
-    parse_chewing_more(instance, &text)
+    // SAFETY: Handles guarantees a live instance; the NULL check precedes
+    // conversion. Serial calls and the absence of retained views permit this borrow.
+    let mut inst = unsafe { instance_mut(instance) };
+    parse_chewing_more(&mut inst, &text)
 }
 
 /// Get the parsed length of the input.

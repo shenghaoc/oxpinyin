@@ -368,12 +368,18 @@ fn set_user_bigram(
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { crate::state::context_mut(context) };
     let user = ctx.core.user_store_mut();
-    let prev_text =
-        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(prev))
-            .unwrap_or_default();
-    let cur_text =
-        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(cur))
-            .unwrap_or_default();
+    let prev_text = oxpinyin_capi_marshal::input::scalar_text(
+        // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
+        // Strings. The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(prev) },
+    )
+    .unwrap_or_default();
+    let cur_text = oxpinyin_capi_marshal::input::scalar_text(
+        // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
+        // Strings. The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(cur) },
+    )
+    .unwrap_or_default();
     let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
         return false;
     };

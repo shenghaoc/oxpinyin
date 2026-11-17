@@ -256,8 +256,11 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }
-    let prefix =
-        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(prefix) },
+    );
     let outcome = guess_predicted_result(&mut inst, prefix.as_ref());
     prediction_answer(outcome)
 }

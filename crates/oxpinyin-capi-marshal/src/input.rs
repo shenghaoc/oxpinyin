@@ -1,7 +1,8 @@
 //! Safe input conversions shared by the two exposed C boundaries.
 //!
-//! Pointer borrowing stays at the entry point. These functions consume a
-//! nullable borrowed C string and return native Rust values. Scalar-only
+//! Pointer borrowing stays in entry points and helpers with unsafe contracts.
+//! These functions consume a nullable borrowed C string and return native
+//! Rust values. Scalar-only
 //! conversion is appropriate for parser spellings and test helpers; a pin
 //! `g_utf8_to_ucs4` site instead needs [`utf8_to_ucs4`].
 
@@ -57,24 +58,31 @@ pub fn filename(input: Option<&CStr>) -> Option<PathBuf> {
     Some(oxpinyin_input::path::path_from_bytes(input?.to_bytes()))
 }
 
-/// Borrow a nullable input pointer within an exposed C adapter.
-///
-/// The expanding entry point must ensure a non-NULL pointer names a live,
-/// NUL-terminated allocation throughout the use of the returned borrow.
-/// The borrow must not escape that call. The unsafe operation is compiled
-/// only in the C adapter, as with the crate's opaque-handle macros.
+/// Define the nullable C-string borrow at a C ABI boundary.
 #[macro_export]
-macro_rules! borrow_c_string {
-    ($pointer:expr) => {{
-        let pointer = $pointer;
-        if pointer.is_null() {
-            None
-        } else {
-            // SAFETY: The enclosing C entry's input contract guarantees a
-            // live NUL-terminated allocation during this conversion.
-            Some(unsafe { ::std::ffi::CStr::from_ptr(pointer) })
+macro_rules! borrow_c_string_helpers {
+    () => {
+        /// Borrow a nullable C string for one C call.
+        ///
+        /// # Safety
+        ///
+        /// Under the crate-level Strings rule, NULL is accepted. A non-NULL
+        /// pointer must address a live NUL-terminated string, readable through
+        /// its terminator in one allocation within `isize::MAX` bytes. It must
+        /// stay valid and unchanged for all of `'a`. The borrow must not
+        /// outlive the C call.
+        pub(crate) unsafe fn borrow_c_string<'a>(
+            pointer: *const ::std::os::raw::c_char,
+        ) -> Option<&'a ::std::ffi::CStr> {
+            if pointer.is_null() {
+                None
+            } else {
+                // SAFETY: The Strings contract guarantees readable, unchanged
+                // NUL-terminated storage for the returned borrow's lifetime.
+                Some(unsafe { ::std::ffi::CStr::from_ptr(pointer) })
+            }
         }
-    }};
+    };
 }
 
 /// Keep complete direct-zhuyin segments before the first rejected segment.

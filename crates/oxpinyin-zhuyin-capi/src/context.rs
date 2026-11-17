@@ -42,9 +42,11 @@ pub unsafe extern "C" fn zhuyin_init(
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) =
-        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(systemdir))
-    else {
+    let Some(system_path) = oxpinyin_capi_marshal::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(systemdir) },
+    ) else {
         // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
         // `setlocale` and failed `fopen("")` with its `open  failed.` line,
         // then the init's `load  failed!` (`table_info.cpp:197-202`).
@@ -55,8 +57,11 @@ pub unsafe extern "C" fn zhuyin_init(
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path =
-        oxpinyin_capi_marshal::input::filename(oxpinyin_capi_marshal::borrow_c_string!(userdir));
+    let user_path = oxpinyin_capi_marshal::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(userdir) },
+    );
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => {
             let handle = box_context(ctx);

@@ -400,7 +400,13 @@ macro_rules! display_string_getter {
         /// out-param, refuse the zero key on `get_table_index() == 0`, then hand
         /// out the rendering made with the pin's `g_strdup`/`g_strdup_printf`
         /// call (`chewing_key.cpp:97-114`), caller-owned (`g_free`).
-        fn display_string_getter(
+        ///
+        /// # Safety
+        ///
+        /// Under the crate-level rules, Out-parameters and Borrowed objects: a
+        /// non-NULL output is aligned and writable, and a non-NULL key is valid
+        /// for reads. Access must not conflict with live borrows.
+        unsafe fn display_string_getter(
             key: *mut $key,
             utf8_str: *mut *mut $char,
             render: impl FnOnce(oxpinyin_core::$key) -> oxpinyin_core::KeyText,
@@ -411,11 +417,11 @@ macro_rules! display_string_getter {
                 return false;
             }
 
-            // SAFETY: Null-checked above.
+            // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
             unsafe {
                 *utf8_str = ptr::null_mut();
             }
-            // SAFETY: Null-checked above.
+            // SAFETY: Borrowed objects guarantees a readable key; NULL was checked.
             let core = unsafe { *key }.to_core();
             if !core.elements_in_dims() {
                 std::process::abort();
@@ -426,7 +432,7 @@ macro_rules! display_string_getter {
             if !core.tone_in_dims() {
                 std::process::abort();
             }
-            // SAFETY: Null-checked above.
+            // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
             unsafe {
                 *utf8_str = key_text(render(core));
             }
@@ -612,7 +618,14 @@ macro_rules! write_owned_sentence {
         /// Writes the allocator's result for `phrases` through the
         /// caller-owned out-param, NULL where the pin's would be, and
         /// answers `true` (`lookup.cpp:69`).
-        fn write_owned_sentence(
+        ///
+        /// # Safety
+        ///
+        /// Under the crate-level rules, Out-parameters: a non-NULL sentence
+        /// destination is aligned and writable without conflicting with live
+        /// borrows, including the phrase inputs. Its contents need not be
+        /// initialized.
+        unsafe fn write_owned_sentence(
             phrases: impl IntoIterator<
                 Item = Option<impl ::core::borrow::Borrow<::oxpinyin_core::PhraseText>>,
             >,
@@ -620,7 +633,7 @@ macro_rules! write_owned_sentence {
         ) -> bool {
             if !sentence.is_null() {
                 let owned = $sentence_text(phrases);
-                // SAFETY: Null-checked above.
+                // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
                 unsafe {
                     *sentence = owned;
                 }

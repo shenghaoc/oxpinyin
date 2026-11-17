@@ -101,8 +101,11 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     let mut inst = unsafe { instance_mut(instance) };
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
-    let prefix =
-        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(prefix) },
+    );
     // `_compute_prefixes` reduces each tail substring's search with the
     // validating `reduce_tokens` (`pinyin.cpp:1415`), which asserts on more
     // than four tokens (`phrase_large_table3.h:95`) before the guess.
@@ -158,8 +161,11 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if crate::predict::clear_borrowed_prefix(&mut inst, prefix) {
         return true;
     }
-    let prefix =
-        oxpinyin_capi_marshal::ucs4::prefix_text(oxpinyin_capi_marshal::borrow_c_string!(prefix));
+    let prefix = oxpinyin_capi_marshal::ucs4::prefix_text(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(prefix) },
+    );
     let outcome = crate::predict::guess_predicted_with_punctuations(&mut inst, prefix.as_ref());
     crate::predict::prediction_answer(outcome)
 }
@@ -210,7 +216,12 @@ pub unsafe extern "C" fn pinyin_get_sentence(
         return false;
     }
     match inst.core.sentence_phrases(index) {
-        Some(phrases) => write_owned_sentence(phrases, sentence),
+        Some(phrases) => {
+            // SAFETY: The entry point guarantees Out-parameters: a non-NULL sentence destination is aligned
+            // and writable without conflicting with live borrows, including the phrase inputs. Its
+            // contents need not be initialized.
+            unsafe { write_owned_sentence(phrases, sentence) }
+        }
         None => {
             // Register row 10, `pinyin.cpp:1474`: with rows present, an
             // index past them is `assert(index < results.size())`, and the
@@ -274,11 +285,12 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
-    // `g_utf8_to_ucs4` NULL answer.
-    let text =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let text = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset) {
         Ok((Some(char_count), _)) => char_count,
         Ok((None, walked)) => {

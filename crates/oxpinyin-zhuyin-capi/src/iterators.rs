@@ -113,7 +113,10 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
     let plan = {
         // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
         let context = unsafe { owner_ref(owner) };
-        plan_import(&context.core, handle.index, phrase, pinyin)
+
+        // SAFETY: The entry point guarantees Strings: both pointers are NULL or live NUL-terminated
+        // strings, unchanged for this call.
+        unsafe { plan_import(&context.core, handle.index, phrase, pinyin) }
     };
     let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
@@ -147,17 +150,27 @@ pub(crate) use oxpinyin_facade::ImportPlan;
 /// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
-fn plan_import(
+///
+/// # Safety
+///
+/// Under the crate-level rules, Strings: both pointers are NULL or live
+/// NUL-terminated strings, unchanged for this call.
+unsafe fn plan_import(
     core: &oxpinyin_facade::ContextCore,
     index: u8,
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> ImportPlan {
-    let phrase =
-        oxpinyin_capi_marshal::input::utf8_to_ucs4(oxpinyin_capi_marshal::borrow_c_string!(phrase))
-            .unwrap_or_default();
+    let phrase = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(phrase) },
+    )
+    .unwrap_or_default();
     let pinyin = oxpinyin_capi_marshal::input::direct_zhuyin_reading(
-        oxpinyin_capi_marshal::borrow_c_string!(pinyin),
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(pinyin) },
     );
     let Some(keys) = parse_zhuyin_direct(&pinyin, OptionBits::USE_TONE | OptionBits::FORCE_TONE)
         .into_iter()
