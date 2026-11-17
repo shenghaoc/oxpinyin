@@ -5,6 +5,11 @@ On Linux, the installed tree is a drop-in for a same-backend libpinyin build.
 Consumers such as `ibus-libpinyin` link the 79-symbol `pinyin.h` surface exactly as they link upstream (`libpinyin.pc`, `-lpinyin`, `libpinyin.so.15`) and need no source changes.
 The same applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 
+oxpinyin maps system and addon data files with memmap2 `MmapOptions::map_copy`.
+System and addon data files must not be truncated or rewritten in place while a process has them mapped.
+Truncation can raise SIGBUS on Unix; an in-place write can silently change the bytes the library reads because a private, copy-on-write mapping is not a snapshot.
+On Unix, replacing a file by rename, as package managers do, is safe because the mapping keeps the old inode.
+
 ## Trainer utility layout
 
 Peng Wu's [epico/trainer](https://github.com/epico/trainer/tree/b1927376735c0c1042d72af2eca0e25c53595724)
