@@ -98,7 +98,7 @@ esac
             self.assertIn('fixture cargo stdout', actual)
             self.assertNotIn('fixture cargo stdout', err)
             self.assertEqual(calls[0][0], ['cargo', 'nextest', 'run', '--locked', '--no-default-features',
-                                           '--features', 'bdb', '-p', 'oxpinyin-store',
+                                           '--features', 'bdb', '-p', 'oxpinyin-core',
                                            '-p', 'oxpinyin-capi'])
             self.assertEqual(calls[0][1]['FIXTURE_CARGO_STATUS'], '0')
 

@@ -4,7 +4,7 @@ Runs rule 2's three checks on BASE...HEAD and prints the cells to run, which che
 fired and the matching paths and lines, as plain text for a PR body. A check that
 fires selects all three cells; no check selects the reference cell alone.
 
-  1. The diff lists a file under crates/oxpinyin-store/, or Cargo.lock.
+  1. The diff lists a file in the core store module, its build inputs, or Cargo.lock.
   2. A changed non-Markdown file contains feature = "<backend>", for bdb, tkrzw or
      kyotocabinet, with optional spaces around the =.
   3. The diff adds or removes a line that names a backend in any Cargo.toml.
@@ -52,7 +52,7 @@ if _ROOT not in sys.path:
 from tools.dev import cell
 BACKENDS = cell.BACKENDS
 CELLS = cell.CELLS
-STORE_DIR = 'crates/oxpinyin-store/'
+STORE_DIR = 'crates/oxpinyin-core/src/store/'
 # Rule 2's grep -E pattern as written; git grep -E reads the same syntax.
 FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
 BACKEND_NAME = re.compile('|'.join(BACKENDS))
@@ -122,11 +122,11 @@ def literal(path):
 
 
 def store_paths(base, head, repo):
-    """Check 1: the changed paths under the store crate, and the lockfile.
-
-    Cargo.lock pins the backends' build dependencies, such as bindgen's syn.
-    """
-    return changed_paths(base, head, pathspec=(STORE_DIR, 'Cargo.lock'), repo=repo)
+    """Check 1: the changed store sources, manifest, build script and native build code, and the
+    lockfile, which pins the backends' build dependencies, such as bindgen's syn."""
+    return changed_paths(base, head, pathspec=(STORE_DIR, 'crates/oxpinyin-core/codegen/store.rs',
+                                              'crates/oxpinyin-core/build.rs', 'crates/oxpinyin-core/Cargo.toml',
+                                              'Cargo.lock'), repo=repo)
 
 
 def feature_gates(base, head, repo):
@@ -167,7 +167,7 @@ def backend_lines(base, head, repo):
 
 
 CHECKS = (
-    (1, f'a changed path under {STORE_DIR} or Cargo.lock', store_paths),
+    (1, 'a changed store source, build input or Cargo.lock', store_paths),
     (2, 'a feature = "<backend>" line in a changed non-Markdown file', feature_gates),
     (3, 'a changed Cargo.toml line that names a backend', backend_lines),
 )

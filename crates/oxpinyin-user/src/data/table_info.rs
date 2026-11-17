@@ -315,8 +315,10 @@ impl TableConf {
             model_data_version: 14,
             lambda: PINNED_LAMBDA,
             phonetic: PhoneticType::Pinyin,
-            database_format: DatabaseFormat::from_token(oxpinyin_store::DEFAULT_STORE_DB_FORMAT)
-                .unwrap_or(DatabaseFormat::BerkeleyDb),
+            database_format: DatabaseFormat::from_token(
+                oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT,
+            )
+            .unwrap_or(DatabaseFormat::BerkeleyDb),
             default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
             addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
         };

@@ -91,7 +91,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             }
             train_once(context);
             // The first copy writes one record and fails the next.
-            oxpinyin_store::copy_faults::fail_destination_write_after(1);
+            oxpinyin_core::store::copy_faults::fail_destination_write_after(1);
             unsafe { zhuyin_save(context) };
         },
     );

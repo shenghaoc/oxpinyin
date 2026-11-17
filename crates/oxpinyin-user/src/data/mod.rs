@@ -47,7 +47,7 @@ pub use oxpinyin_core::model::UserCountDelta;
 // fuzz) name fixture directories and check `table.conf` consistently with
 // the backend the build selected — oxpinyin-facade has no direct store
 // edge.
-pub use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
+pub use oxpinyin_core::store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
 pub use system_files::{

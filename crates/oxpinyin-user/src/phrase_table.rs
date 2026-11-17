@@ -5,7 +5,7 @@
 //! duplicate tokens are state, including the KC/tkrzw mask visitor's retained
 //! suffix (`memory_chunk.h:290-296`); loading must not reconstruct these rows.
 
-use oxpinyin_store::StoreError;
+use oxpinyin_core::store::StoreError;
 
 /// Encode phrase text as the pin's little-endian UCS-4 key.
 #[must_use]

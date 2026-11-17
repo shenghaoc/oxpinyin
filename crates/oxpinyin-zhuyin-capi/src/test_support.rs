@@ -342,14 +342,14 @@ fn child_command(
 /// such as one too short for its `guint32` total (register row 85).
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
     let versions = oxpinyin_user::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin_user::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
-    oxpinyin_store::DefaultStore::write_user_bigram(
+    oxpinyin_core::store::DefaultStore::write_user_bigram(
         &user_dir.join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
     )

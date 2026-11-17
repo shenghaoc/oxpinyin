@@ -1,7 +1,7 @@
 use super::*;
 use crate::persistence::SystemLibrary;
 use crate::test_session::tempdir;
-use oxpinyin_store::{DefaultStore, StoreError, WriteStore};
+use oxpinyin_core::store::{DefaultStore, StoreError, WriteStore};
 
 /// The container's gram under `key`, owned: `None` on a miss.
 fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
@@ -3079,8 +3079,11 @@ fn train_save_reopen_carries_the_learning() {
     // The user dir now holds the pin's files, not user_store.<ext>.
     assert!(dir.join("user.conf").exists());
     assert!(
-        !dir.join(format!("user_store.{}", oxpinyin_store::DEFAULT_STORE_EXT))
-            .exists()
+        !dir.join(format!(
+            "user_store.{}",
+            oxpinyin_core::store::DEFAULT_STORE_EXT
+        ))
+        .exists()
     );
 
     {
@@ -3133,7 +3136,7 @@ fn train_save_reopen_carries_the_learning() {
 /// and raw records outlive a reopen.
 #[test]
 fn masked_and_removed_phrases_preserve_raw_index_records() {
-    use oxpinyin_store::RawReadStore;
+    use oxpinyin_core::store::RawReadStore;
 
     let dir = tempdir("index-keys");
     let id = |text: &str| {

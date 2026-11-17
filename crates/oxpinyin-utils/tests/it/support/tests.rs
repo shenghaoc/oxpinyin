@@ -1,7 +1,7 @@
 //! The shared comparison and the narrow masks that every frozen case uses.
 use crate::support::expected::*;
 use crate::support::*;
-use oxpinyin_store::{DefaultStore, WriteStore as _, WriteTxn as _};
+use oxpinyin_core::store::{DefaultStore, WriteStore as _, WriteTxn as _};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;

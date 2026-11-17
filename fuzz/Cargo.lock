@@ -346,7 +346,10 @@ name = "oxpinyin-core"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bitflags",
+ "cc",
  "compact_str",
+ "cxx",
+ "cxx-build",
  "glib-sys",
  "libc",
  "memmap2",
@@ -355,6 +358,7 @@ dependencies = [
  "phf_codegen",
  "rustc-hash",
  "smallvec",
+ "system-deps",
  "thiserror",
 ]
 
@@ -378,21 +382,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-store"
-version = "0.1.0-alpha.1"
-dependencies = [
- "cc",
- "cxx",
- "cxx-build",
- "system-deps",
-]
-
-[[package]]
 name = "oxpinyin-user"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-store",
  "rustc-hash",
  "smallvec",
  "thiserror",

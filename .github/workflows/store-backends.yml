@@ -3,7 +3,7 @@ name: Store backends
 # Backend coverage for the peer store backends. The peers (Kyoto Cabinet, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface.
 # Exactly one peer is compiled per build — the exactly-one-backend invariant is enforced at compile
-# time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
+# time by two `compile_error!` guards in `crates/oxpinyin-core/src/store/mod.rs`
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through separate builds, one per peer.
 #
@@ -124,7 +124,7 @@ jobs:
         run: |
           # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
-          # a path under crates/oxpinyin-store/ or Cargo.lock, a feature = "<backend>" line
+          # a path under crates/oxpinyin-core/src/store/ or Cargo.lock, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the utilities' per-cell tests and their data under
@@ -261,8 +261,8 @@ jobs:
           # `--features <peer>` at `--workspace` scope enables that
           # feature on every workspace member that declares it, so the
           # peer selection cascades through each consumer's own
-          # `<peer> = ["oxpinyin-store/<peer>", ...]` forwarder. A
-          # bare passthrough (`--features oxpinyin-store/<peer>`) does
+          # `<peer> = ["oxpinyin-core/<peer>", ...]` forwarder. A
+          # bare passthrough (`--features oxpinyin-core/<peer>`) does
           # NOT — cargo features do not back-propagate — and would
           # leave each consumer's own `#[cfg(feature = "<peer>")]`
           # code (e.g. the per-backend mask walks in oxpinyin-user's
@@ -349,7 +349,7 @@ jobs:
     # The tkrzw backend crosses into C++ through a cxx bridge: borrowed byte
     # slices become std::string_view for one call, iterator reads land in
     # std::string out-parameters, and a RecordProcessor subclass in the
-    # adapter (crates/oxpinyin-store/src/tkrzw/adapter.cc) walks keys. The
+    # adapter (crates/oxpinyin-core/src/store/tkrzw/adapter.cc) walks keys. The
     # live hazards are a borrow outliving its call and a C++ exception
     # crossing the noexcept shim, so the feature's own test surface runs
     # under ASan and any finding kills the job. The adapter and cxx's
@@ -457,7 +457,7 @@ jobs:
         # bindgen's runtime dependency.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev libglib2.0-dev
 
       - name: Run the bdb sanitizer gate
         id: sanitize-tests
@@ -488,7 +488,7 @@ jobs:
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
     # sanitizer service used by `just sanitize kc`. The backend crosses into C++ through a
-    # cxx bridge (crates/oxpinyin-store/src/kyotocabinet/adapter.cc): visitor
+    # cxx bridge (crates/oxpinyin-core/src/store/kyotocabinet/adapter.cc): visitor
     # regions are borrowed for one callback, cursors borrow their database, and
     # an empty region must not reach Kyoto Cabinet as address 1. The store's
     # build script instruments the adapter and cxx's generated glue under
@@ -519,7 +519,7 @@ jobs:
         # no libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev libglib2.0-dev
 
       - name: Run the kc sanitizer gate
         id: sanitize-tests

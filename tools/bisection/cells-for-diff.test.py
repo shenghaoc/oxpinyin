@@ -68,20 +68,30 @@ class Repo:
 
 class StoreCrateTests(unittest.TestCase):
     def test_a_path_under_the_store_crate_fires_check_1(self):
-        repo = Repo(self, {'README.md': 'a\n', 'crates/oxpinyin-store/src/old.rs': '// old\n'},
-                    {'crates/oxpinyin-store/src/new.rs': '// new\n', 'crates/oxpinyin-store/src/old.rs': None})
+        repo = Repo(self, {'README.md': 'a\n', 'crates/oxpinyin-core/src/store/old.rs': '// old\n'},
+                    {'crates/oxpinyin-core/src/store/new.rs': '// new\n', 'crates/oxpinyin-core/src/store/old.rs': None})
         got = repo.checks()
-        self.assertEqual(got[1], ['crates/oxpinyin-store/src/new.rs', 'crates/oxpinyin-store/src/old.rs'])
+        self.assertEqual(got[1], ['crates/oxpinyin-core/src/store/new.rs', 'crates/oxpinyin-core/src/store/old.rs'])
         self.assertEqual(fired(got), {1})
 
     def test_a_file_moved_out_of_the_store_crate_fires_check_1(self):
         body = ''.join(f'fn f{n}() {{}}\n' for n in range(20))
-        repo = Repo(self, {'crates/oxpinyin-store/src/moved.rs': body},
-                    {'crates/oxpinyin-store/src/moved.rs': None, 'crates/oxpinyin-core/src/moved.rs': body})
+        repo = Repo(self, {'crates/oxpinyin-core/src/store/moved.rs': body},
+                    {'crates/oxpinyin-core/src/store/moved.rs': None, 'crates/oxpinyin-core/src/moved.rs': body})
         for setting in ('true', 'false'):
             with self.subTest(diff_renames=setting):
                 repo.git('config', 'diff.renames', setting)
-                self.assertEqual(repo.checks()[1], ['crates/oxpinyin-store/src/moved.rs'])
+                self.assertEqual(repo.checks()[1], ['crates/oxpinyin-core/src/store/moved.rs'])
+
+    def test_a_change_to_the_build_script_alone_selects_the_backend_jobs(self):
+        # build.rs calls store::build(), the native backend build.
+        repo = Repo(self, {'crates/oxpinyin-core/build.rs': 'fn main() {}\n'},
+                    {'crates/oxpinyin-core/build.rs': 'fn main() {\n    store::build();\n}\n'})
+        got = repo.checks()
+        self.assertEqual(got[1], ['crates/oxpinyin-core/build.rs'])
+        self.assertEqual(fired(got), {1})
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
 
     def test_a_change_to_the_lockfile_alone_selects_the_backend_jobs(self):
         # The lockfile pins the backends' build dependencies, such as bindgen's syn.
@@ -175,7 +185,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(fired(repo.checks()), set())
 
     def test_repository_configuration_cannot_change_the_answer(self):
-        head = {'crates/oxpinyin-store/src/lib.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
+        head = {'crates/oxpinyin-core/src/store/mod.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
         repo = Repo(self, {'a.txt': 'a\n'}, head)
         plain = repo.checks()
         for key, value in (('color.ui', 'always'), ('color.diff', 'always'), ('color.grep', 'always'),
@@ -190,9 +200,9 @@ class SelectionTests(unittest.TestCase):
 class DirectoryTests(unittest.TestCase):
     """The answer does not depend on where in the work tree the script is run."""
 
-    BASE = {'README.md': 'a\n', 'tools/notes.txt': 'a\n', 'crates/oxpinyin-store/src/lib.rs': 'fn a() {}\n',
+    BASE = {'README.md': 'a\n', 'tools/notes.txt': 'a\n', 'crates/oxpinyin-core/src/store/mod.rs': 'fn a() {}\n',
             'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\n', 'crates/oxpinyin-user/src/lib.rs': 'fn a() {}\n'}
-    DIRECTORIES = ('.', 'tools', 'crates/oxpinyin-store')
+    DIRECTORIES = ('.', 'tools', 'crates/oxpinyin-core')
 
     def reports(self, repo):
         """The report printed from each directory; every run must succeed."""
@@ -235,7 +245,7 @@ class DirectoryTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     def test_exit_status_reports_success_not_the_selection(self):
-        everything = Repo(self, {'a.txt': 'a\n'}, {'crates/oxpinyin-store/src/lib.rs': 'a\n'})
+        everything = Repo(self, {'a.txt': 'a\n'}, {'crates/oxpinyin-core/src/store/mod.rs': 'a\n'})
         nothing = Repo(self, {'a.txt': 'a\n'}, {'a.txt': 'b\n'})
         for repo, cells in ((everything, 'bdb,kc,tkrzw'), (nothing, 'tkrzw')):
             with self.subTest(cells=cells):
@@ -261,19 +271,19 @@ class CommandTests(unittest.TestCase):
                 self.assertIn(args[-1], result.stderr)
 
     def test_limit_caps_the_matches_shown_per_check(self):
-        repo = Repo(self, {'a.txt': 'a\n'}, {f'crates/oxpinyin-store/src/{name}.rs': 'a\n' for name in 'abc'})
+        repo = Repo(self, {'a.txt': 'a\n'}, {f'crates/oxpinyin-core/src/store/{name}.rs': 'a\n' for name in 'abc'})
         capped = repo.cli('--limit', '2', 'base').stdout
-        self.assertIn('  crates/oxpinyin-store/src/b.rs\n  ... and 1 more (--limit 0 lists all)\n', capped)
+        self.assertIn('  crates/oxpinyin-core/src/store/b.rs\n  ... and 1 more (--limit 0 lists all)\n', capped)
         self.assertNotIn('c.rs', capped)
         everything = repo.cli('--limit', '0', 'base').stdout
-        self.assertIn('  crates/oxpinyin-store/src/c.rs\n', everything)
+        self.assertIn('  crates/oxpinyin-core/src/store/c.rs\n', everything)
         self.assertNotIn('more', everything)
 
 
 class RunFlagTests(unittest.TestCase):
     """--run-flag, the line store-backends.yml's changes job appends to $GITHUB_OUTPUT."""
 
-    BASE = {'README.md': 'a\n', 'crates/oxpinyin-store/src/lib.rs': 'fn a() {}\n',
+    BASE = {'README.md': 'a\n', 'crates/oxpinyin-core/src/store/mod.rs': 'fn a() {}\n',
             'crates/oxpinyin-core/src/engine/mod.rs': 'fn a() {}\n',
             'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\n',
             'tools/tkrzw/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
@@ -285,7 +295,7 @@ class RunFlagTests(unittest.TestCase):
         return result.stdout
 
     def test_each_kind_of_change_sets_the_flag(self):
-        cases = (('store change', {'crates/oxpinyin-store/src/lib.rs': 'fn b() {}\n'}, 'true'),
+        cases = (('store change', {'crates/oxpinyin-core/src/store/mod.rs': 'fn b() {}\n'}, 'true'),
                  ('feature line', {'crates/oxpinyin-core/src/engine/mod.rs': gate('kyotocabinet') + '\n'}, 'true'),
                  ('backend Cargo.toml line', {'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
                   'true'),

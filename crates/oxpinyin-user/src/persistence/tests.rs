@@ -497,7 +497,7 @@ fn non_conform_profile_wipes_and_resets() {
     // build IS BerkeleyDB, so its foreign marker is a different real
     // upstream token (any of the three that is not this build's
     // `DEFAULT_STORE_DB_FORMAT` would do).
-    let foreign_token = match oxpinyin_store::DEFAULT_STORE_DB_FORMAT {
+    let foreign_token = match oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT {
         "BerkeleyDB" => "KyotoCabinet",
         _ => "BerkeleyDB",
     };
@@ -1100,7 +1100,7 @@ fn user_files_take_the_pins_creation_modes() {
     let umask = current_umask(&dir);
     save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("save");
 
-    let dbm_request = match oxpinyin_store::DEFAULT_STORE_DB_FORMAT {
+    let dbm_request = match oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT {
         "BerkeleyDB" => 0o600,
         "KyotoCabinet" => 0o666,
         _ => 0o644,
@@ -2999,7 +2999,7 @@ fn init_survives_a_user_bigram_that_does_not_open() {
     let bigram = user.join("user_bigram.db");
     std::fs::remove_file(&bigram).expect("unlink the user bigram");
     std::fs::create_dir(&bigram).expect("a directory in its place");
-    oxpinyin_store::copy_faults::fail_source_read_after(0);
+    oxpinyin_core::store::copy_faults::fail_source_read_after(0);
     let _store = crate::test_session::open_w3(user);
 }
 
@@ -3020,8 +3020,8 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
             (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
         ],
     );
-    oxpinyin_store::copy_faults::fail_iterator_creation_after(0);
-    oxpinyin_store::copy_faults::fail_source_read_after(0);
+    oxpinyin_core::store::copy_faults::fail_iterator_creation_after(0);
+    oxpinyin_core::store::copy_faults::fail_source_read_after(0);
     let _store = crate::test_session::open_w3(user);
 }
 

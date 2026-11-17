@@ -133,7 +133,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Base (`src/include/`) | `oxpinyin-core` (keys and content tables), `oxpinyin-user` (`chunk_format`, the `MemoryChunk` reader) |
 | Storage: keys, parsers, matrix helpers, `SingleGram` | `oxpinyin-core` |
 | Storage: system tables and their file formats | `oxpinyin-user` |
-| Storage: the DBM backends | `oxpinyin-store`, one backend per build by cargo feature behind one ordered byte-KV seam |
+| Storage: the DBM backends | `oxpinyin-core`, one backend per build by cargo feature behind one ordered byte-KV seam |
 | Storage: user tables and user files | `oxpinyin-user` |
 | Lookup, and the output logic in `pinyin.cpp` | `oxpinyin-core` |
 | Wiring done in `pinyin_init` | `oxpinyin-facade` |
@@ -161,8 +161,8 @@ The differences are deliberate:
 | Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-user/src/data/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup and lookup ownership, below) |
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-user/src/data/bigram_table.rs`) | same / follows |
-| User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
-| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `oxpinyin-store/src/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([record](upstream-divergences.md#utility-check-macros-write-no-message)) |
+| User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-core/src/store/mod.rs`): the pin's container per backend through the real library | same / follows |
+| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `oxpinyin-core/src/store/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([record](upstream-divergences.md#utility-check-macros-write-no-message)) |
 
 For a correctly projected row, each retrieved record falls in the pin's
 `equal_range`. Both filters keep the same entries, including duplicates, in
@@ -616,8 +616,8 @@ The decoder uses the scanned value and derives the unigram coefficient as
 | --- | --- | --- |
 | Graph construction and decoding | The maximum graph position is `u32::MAX - 1` (4294967294). The graph rejects longer input and the decoder reserves `u32::MAX` for the seed step | `oxpinyin-core/src/graph.rs:18-26,251-255,330-334`, `oxpinyin-core/src/engine/nbest.rs:130` |
 | Candidate frequency sorting | A consistent wrapping-frequency group fits in a circular interval narrower than 2³¹. A cyclic group uses stable descending numeric order under the [candidate-frequency ruling](compatibility-policy.md#no-ported-external-library-internals) | `oxpinyin-core/src/engine/candidate.rs:33-40,58-70` |
-| Backend attachment | Berkeley DB 5.3 and Kyoto Cabinet 1.2 runtime version gates | `oxpinyin-store/src/bdb/ffi.rs:101-102,124-137`, `oxpinyin-store/src/kyotocabinet/ffi.rs:67,80-94` |
-| Kyoto Cabinet key and value transfer | At most `0x3fffffff` bytes per region, from Kyoto Cabinet's `MEMMAXSIZ` | `oxpinyin-store/src/kyotocabinet/ffi.rs:96-112` |
+| Backend attachment | Berkeley DB 5.3 and Kyoto Cabinet 1.2 runtime version gates | `oxpinyin-core/src/store/bdb/ffi.rs:101-102,124-137`, `oxpinyin-core/src/store/kyotocabinet/ffi.rs:67,80-94` |
+| Kyoto Cabinet key and value transfer | At most `0x3fffffff` bytes per region, from Kyoto Cabinet's `MEMMAXSIZ` | `oxpinyin-core/src/store/kyotocabinet/ffi.rs:96-112` |
 
 ## 10. Where oxpinyin keeps the pin's code shape
 

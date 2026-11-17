@@ -110,7 +110,7 @@ impl LmError {
         matches!(
             self,
             Self::Table(TableError::Store(
-                oxpinyin_store::StoreError::ReadAfterCheck
+                oxpinyin_core::store::StoreError::ReadAfterCheck
             ))
         )
     }

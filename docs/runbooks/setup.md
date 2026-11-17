@@ -531,9 +531,7 @@ The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI 
 not selected, so those tests do not establish native Windows oracle behavior.
 
 A full local build or `just test` needs the same vcpkg ports as the
-CI job. Without GLib, `glib-sys` fails, and every crate except
-`oxpinyin-core`, `oxpinyin-store` and
-`oxpinyin-core` fails to build. From Developer PowerShell, run:
+CI job. The core library requires GLib. From Developer PowerShell, run:
 
 ```powershell
 & "$env:VCPKG_ROOT\vcpkg.exe" install tkrzw:x64-windows pkgconf:x64-windows glib:x64-windows --overlay-ports=vcpkg-overlays

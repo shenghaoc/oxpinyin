@@ -18,8 +18,8 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
 
+use oxpinyin_core::store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single_gram};
-use oxpinyin_store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 
 use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
@@ -219,7 +219,7 @@ pub enum UserStoreError {
     )]
     SessionSeed(String),
     /// A training step would store its gram in the failed Berkeley DB user
-    /// bigram container ([`oxpinyin_store::UserBigramDb::is_failed`]): its
+    /// bigram container ([`oxpinyin_core::store::UserBigramDb::is_failed`]): its
     /// `store` answers false and the pin's
     /// `check_result(m_user_bigram->store(last_token, user))` dies
     /// (`phonetic_lookup.h:904`). Returned before anything is stored; the
@@ -402,7 +402,7 @@ fn validate_system_merge(
 /// and its Kyoto Cabinet and tkrzw twins): `get_all_items`, `load`,
 /// `store`, `remove`, over the pin's own in-memory user bigram container,
 /// keyed by the four native-endian token bytes.
-pub(crate) struct ContainerGrams<'a>(pub(crate) &'a oxpinyin_store::DefaultUserBigramDb);
+pub(crate) struct ContainerGrams<'a>(pub(crate) &'a oxpinyin_core::store::DefaultUserBigramDb);
 
 impl ContainerGrams<'_> {
     /// `Bigram::get_all_items`: every key in the container's walk order;
@@ -434,7 +434,7 @@ impl ContainerGrams<'_> {
 
 /// `Bigram::load` on the pin's container: the gram under `prev`, owned.
 fn container_gram(
-    container: &oxpinyin_store::DefaultUserBigramDb,
+    container: &oxpinyin_core::store::DefaultUserBigramDb,
     prev: Token,
 ) -> Result<Option<Vec<u8>>, StoreError> {
     let mut gram = Vec::new();
@@ -637,9 +637,9 @@ pub struct StoreInner {
     /// raw `SingleGram` values every bigram operation reads and writes, so
     /// its walk order — the export's order and the saved file's layout —
     /// is the pin's.
-    pub(crate) bigram_db: oxpinyin_store::DefaultUserBigramDb,
+    pub(crate) bigram_db: oxpinyin_core::store::DefaultUserBigramDb,
     /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
-    /// ([`oxpinyin_store::UserBigramDb::is_failed`]), recorded when it is
+    /// ([`oxpinyin_core::store::UserBigramDb::is_failed`]), recorded when it is
     /// created: it never changes.
     pub(crate) bigram_failed: bool,
 }
@@ -647,7 +647,7 @@ pub struct StoreInner {
 /// The libpinyin session store: one per open, over the arena, the pin's
 /// user bigram container and the live system items. The user files are
 /// read and written with the compiled-in backend (tkrzw, Kyoto Cabinet or
-/// Berkeley DB, one per binary; see `oxpinyin-store`).
+/// Berkeley DB, one per binary; see `oxpinyin-core`).
 ///
 /// The context owns the store and lends it to each operation. System chunk
 /// originals belong to this owner; sessions and cursors cannot retain them.
@@ -788,12 +788,13 @@ impl UserStore {
     }
 
     /// Whether the session's user bigram is the failed Berkeley DB container
-    /// ([`oxpinyin_store::UserBigramDb::is_failed`]), as recorded when it was
+    /// ([`oxpinyin_core::store::UserBigramDb::is_failed`]), as recorded when it was
     /// created. On a backend whose container cannot fail this is the
     /// constant `false`.
     #[inline]
     fn user_bigram_failed(&self) -> bool {
-        <DefaultUserBigramDb as oxpinyin_store::UserBigramDb>::CAN_FAIL && self.inner.bigram_failed
+        <DefaultUserBigramDb as oxpinyin_core::store::UserBigramDb>::CAN_FAIL
+            && self.inner.bigram_failed
     }
 
     /// `Bigram::load(prev)`: the raw gram stored under `prev` — one
@@ -2625,7 +2626,7 @@ impl UserStore {
     /// the live system buffers.
     pub(crate) fn seed_from_state(&mut self, state: &crate::persistence::UserState) {
         use crate::data::chunk_write::encode_phrase_item;
-        use oxpinyin_store::UserBigramDb as _;
+        use oxpinyin_core::store::UserBigramDb as _;
         for (key, value) in &state.bigram {
             self.container().store(key, value).expect("store a gram");
         }

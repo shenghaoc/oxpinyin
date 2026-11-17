@@ -384,8 +384,8 @@ if Path(sys.argv[0]).name == 'import_interpolation':
                         shutil.copyfile(source, self.root / 'crates' / crate / source.name)
             shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
             # declared_default() reads the store manifest's [features].default from the checkout.
-            (self.root / 'crates/oxpinyin-store').mkdir(parents=True)
-            shutil.copyfile(ROOT / 'crates/oxpinyin-store/Cargo.toml', self.root / 'crates/oxpinyin-store/Cargo.toml')
+            (self.root / 'crates/oxpinyin-core').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'crates/oxpinyin-core/Cargo.toml', self.root / 'crates/oxpinyin-core/Cargo.toml')
             self.bin = self.work / 'bin'
             self.bin.mkdir()
             self.env = {**os.environ, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],

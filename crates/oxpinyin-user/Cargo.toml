@@ -21,19 +21,16 @@ oxpinyin-core = { workspace = true }
 # The user pinyin index's probe key stays inline: one fixed-size key, no
 # heap allocation per lookup.
 smallvec.workspace = true
-# The workspace table carries default-features = false for this edge; the
-# [features] block below forwards the backend selection.
-oxpinyin-store = { workspace = true }
 thiserror.workspace = true
 
 [features]
 tools = []
-# Backend selection, forwarded to oxpinyin-store (one backend per binary; see the store's [features] for
+# Backend selection, forwarded to oxpinyin-core (one backend per binary; see the store's [features] for
 # the model and precedence).
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-store/kyotocabinet"]
-bdb = ["oxpinyin-store/bdb"]
-tkrzw = ["oxpinyin-store/tkrzw"]
+kyotocabinet = ["oxpinyin-core/kyotocabinet"]
+bdb = ["oxpinyin-core/bdb"]
+tkrzw = ["oxpinyin-core/tkrzw"]
 
 [dev-dependencies]
 proptest.workspace = true
@@ -42,4 +39,4 @@ sha2.workspace = true
 # The session tests' failed Berkeley DB user bigram
 # (`BdbUserBigramDb::failed_container`), a test-only hook; a dev-dependency
 # feature never reaches the normal build.
-oxpinyin-store = { workspace = true, features = ["test-hooks"] }
+oxpinyin-core = { workspace = true, features = ["test-hooks"] }

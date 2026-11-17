@@ -4,7 +4,7 @@
 //! user-file persistence behind `pinyin_save`. The user files are read and
 //! written with the compiled-in `DefaultStore` backend (tkrzw, Kyoto
 //! Cabinet or Berkeley DB — one per binary, selected by feature; see
-//! `oxpinyin-store`). Internal crate — the supported external interfaces
+//! `oxpinyin-core`). Internal crate — the supported external interfaces
 //! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 //!
 //! The integer count [`seed`] arithmetic is pinned in

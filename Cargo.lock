@@ -598,7 +598,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
  "rustc-hash",
@@ -609,8 +608,12 @@ dependencies = [
 name = "oxpinyin-core"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "bindgen",
  "bitflags",
+ "cc",
  "compact_str",
+ "cxx",
+ "cxx-build",
  "glib-sys",
  "libc",
  "memmap2",
@@ -620,7 +623,9 @@ dependencies = [
  "proptest",
  "rstest",
  "rustc-hash",
+ "sha2",
  "smallvec",
+ "system-deps",
  "tempfile",
  "thiserror",
  "windows-sys",
@@ -631,7 +636,6 @@ name = "oxpinyin-facade"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
  "sha2",
@@ -648,7 +652,6 @@ dependencies = [
  "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-store",
  "oxpinyin-user",
  "oxpinyin-utils",
  "oxpinyin-zhuyin-capi",
@@ -659,24 +662,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-store"
-version = "0.1.0-alpha.1"
-dependencies = [
- "bindgen",
- "cc",
- "cxx",
- "cxx-build",
- "sha2",
- "system-deps",
- "tempfile",
-]
-
-[[package]]
 name = "oxpinyin-user"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-store",
  "proptest",
  "rustc-hash",
  "sha2",
@@ -693,7 +682,6 @@ dependencies = [
  "assert_fs",
  "libc",
  "oxpinyin-core",
- "oxpinyin-store",
  "oxpinyin-user",
  "regex",
  "rstest",
@@ -710,7 +698,6 @@ dependencies = [
  "libc",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
  "tempfile",

@@ -38,7 +38,7 @@ impl ChewingDbm for &ScriptedDbm {
             }
             Ok(None) => Ok(false),
             Err(()) => Err(DictError::Table(crate::data::TableError::Store(
-                oxpinyin_store::StoreError::ReadAfterCheck,
+                oxpinyin_core::store::StoreError::ReadAfterCheck,
             ))),
         }
     }
@@ -82,7 +82,7 @@ fn every_predecessor_is_read_on_each_load() {
         assert!(matches!(
             table.load_raw_successors(token),
             Err(DictError::Table(crate::data::TableError::Store(
-                oxpinyin_store::StoreError::ReadAfterCheck
+                oxpinyin_core::store::StoreError::ReadAfterCheck
             )))
         ));
         assert_eq!(*dbm.reads.lock().unwrap(), vec![encode_token_key(token); 4]);
@@ -101,26 +101,30 @@ struct FailingStore {
 
 struct Shared(std::sync::Arc<FailingStore>);
 
-impl oxpinyin_store::RawReadStore for Shared {
-    fn open_read_only(_path: &Path) -> Result<Self, oxpinyin_store::StoreError> {
+impl oxpinyin_core::store::RawReadStore for Shared {
+    fn open_read_only(_path: &Path) -> Result<Self, oxpinyin_core::store::StoreError> {
         unreachable!("the double is built in memory")
     }
 
-    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, oxpinyin_store::StoreError> {
+    fn get_raw(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, oxpinyin_core::store::StoreError> {
         let token = u32::from_le_bytes(key.try_into().expect("a four-byte token key"));
         self.0.reads.lock().unwrap().push(token);
         value.extend_from_slice(b"stale");
         if self.0.backend.contains(&token) {
-            return Err(oxpinyin_store::StoreError::Backend("injected".into()));
+            return Err(oxpinyin_core::store::StoreError::Backend("injected".into()));
         }
         if self.0.after_check.contains(&token) {
-            return Err(oxpinyin_store::StoreError::ReadAfterCheck);
+            return Err(oxpinyin_core::store::StoreError::ReadAfterCheck);
         }
         value.clear();
         Ok(false)
     }
 
-    fn contains_raw(&self, _key: &[u8]) -> Result<bool, oxpinyin_store::StoreError> {
+    fn contains_raw(&self, _key: &[u8]) -> Result<bool, oxpinyin_core::store::StoreError> {
         unreachable!("the bigram reader never checks")
     }
 
@@ -128,8 +132,12 @@ impl oxpinyin_store::RawReadStore for Shared {
         &self,
         _lo: std::ops::Bound<&[u8]>,
         _hi: std::ops::Bound<&[u8]>,
-        _visit: impl FnMut(&[u8], &[u8]) -> Result<oxpinyin_store::Flow, oxpinyin_store::StoreError>,
-    ) -> Result<(), oxpinyin_store::StoreError> {
+        _visit: impl FnMut(
+            &[u8],
+            &[u8],
+        )
+            -> Result<oxpinyin_core::store::Flow, oxpinyin_core::store::StoreError>,
+    ) -> Result<(), oxpinyin_core::store::StoreError> {
         unreachable!("the bigram reader never scans")
     }
 }
@@ -172,7 +180,7 @@ fn a_read_after_check_failure_stays_an_error() {
     assert!(matches!(
         table.load_raw_successors(0x0100_0010),
         Err(DictError::Table(crate::data::TableError::Store(
-            oxpinyin_store::StoreError::ReadAfterCheck
+            oxpinyin_core::store::StoreError::ReadAfterCheck
         )))
     ));
 }

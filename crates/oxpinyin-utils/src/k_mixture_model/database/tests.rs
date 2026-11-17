@@ -1,5 +1,5 @@
 use super::attached;
-use oxpinyin_store::StoreError;
+use oxpinyin_core::store::StoreError;
 
 /// Set in the child: route a store error instead of the test body.
 const CHILD: &str = "OXPINYIN_KMM_ATTACH_ERROR_CHILD";
@@ -111,7 +111,7 @@ pub(crate) fn assert_short_single_gram_exit(name: &str) {
 /// Create a `KMMP` container at `dir/name` holding `rows`, written as
 /// raw values, and answer its file name for `attach`.
 pub(crate) fn plant(dir: &std::path::Path, name: &str, rows: &[(u32, &[u8])]) -> std::ffi::CString {
-    use oxpinyin_store::{DefaultStore, MAGIC_KEY, WriteStore as _, WriteTxn as _};
+    use oxpinyin_core::store::{DefaultStore, MAGIC_KEY, WriteStore as _, WriteTxn as _};
     let path = dir.join(name);
     let db = DefaultStore::create_hash(&path).expect("hash create");
     db.write(|txn| {

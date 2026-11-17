@@ -3,7 +3,7 @@
 use std::ops::{Bound, ControlFlow};
 use std::path::Path;
 
-use oxpinyin_store::{DefaultStore, RawReadStore, RecordRewrite, StoreError, WriteStore};
+use oxpinyin_core::store::{DefaultStore, RawReadStore, RecordRewrite, StoreError, WriteStore};
 
 pub(crate) struct NativeTable(DefaultStore);
 

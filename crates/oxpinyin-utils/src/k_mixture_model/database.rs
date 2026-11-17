@@ -14,7 +14,7 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use oxpinyin_store::{AttachMode, StoreError};
+use oxpinyin_core::store::{AttachMode, StoreError};
 
 use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 

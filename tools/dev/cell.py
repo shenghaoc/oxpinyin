@@ -34,11 +34,11 @@ BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
 @functools.cache
 def _declared_default(root: Path) -> str:
     # [features] cannot be inherited from the workspace, so this file is the exact declaration.
-    manifest = root / 'crates/oxpinyin-store/Cargo.toml'
+    manifest = root / 'crates/oxpinyin-core/Cargo.toml'
     with manifest.open('rb') as file:
         defaults = tomllib.load(file).get('features', {}).get('default')
     if not isinstance(defaults, list) or len(defaults) != 1 or defaults[0] not in BACKENDS:
-        raise ValueError(f'oxpinyin-store needs one backend default: {defaults}')
+        raise ValueError(f'oxpinyin-core needs one backend default: {defaults}')
     return defaults[0]
 
 

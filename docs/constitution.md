@@ -29,7 +29,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - The core library denies unsafe code. Its parser, model, engine, marshalling and table modules forbid it.
    - In `oxpinyin_core::input`, `native` owns the library's libc, GLib and mapping operations. The feature-gated `tool` module owns the utilities' native operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
    - The user and facade libraries forbid unsafe code.
-   - Store denies unsafe code outside its Berkeley DB FFI, Kyoto Cabinet bridge and FFI, and tkrzw bridge.
+   - The core store exceptions are scoped to `store::bdb::ffi`, `store::kyotocabinet::bridge`, `store::kyotocabinet::ffi` and `store::tkrzw::bridge`.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
    - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.
 
@@ -54,7 +54,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
 Rust interfaces are not a compatibility boundary.
 The tools are also drop-in replacements for the pin's utilities within the [platform scope](source-policy.md#platform-scope-of-pinned-behaviour).
 They preserve the pin's binary names, options, help, messages, inputs and outputs.
-Their K-mixture working model uses the pin's backend DBM through `oxpinyin-store`.
+Their K-mixture working model uses the pin's backend DBM through `oxpinyin-core`.
 The `scripts2/` Python build generators are outside this tool scope.
 
 > The only supported external library interfaces are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
