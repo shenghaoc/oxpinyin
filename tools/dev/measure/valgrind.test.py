@@ -74,8 +74,8 @@ class TableTests(World):
         self.assertEqual(code, 0)
         self.assertEqual(text, '=== collection anchors ===\n0000000000001130 t bisect_perf_cold_unit\n'
                                '0000000000001140 t bisect_perf_steady_unit\n'
-                               'PASS: distinct addresses, so --toggle-collect=bisect_perf_steady_unit\n'
-                               '      excludes process init and the cold cycle\n')
+                               'PASS: distinct addresses, so the client requests in bisect_perf_steady_unit\n'
+                               '      exclude process init and the cold cycle\n')
 
     def test_no_anchor_symbol_at_all_ends_the_group_after_its_header(self):
         self.assertEqual(valgrind.anchors_table(Path('bisect'), run=self.nm('0 T main\n')),
@@ -206,6 +206,10 @@ class DifferentialTests(World):
         def capture(command, *, env=None, cwd=None, merge_stderr=False):
             if list(command)[:1] == ['nm']:
                 return pool.Completed(0, self.nm_output.encode(), b'')
+            for part in map(str, command):
+                if part.startswith('--callgrind-out-file='):
+                    Path(part.split('=', 1)[1]).write_text(
+                        f'events: Ir\nob=/harness\nfn=unit\n0 {self.profile_total}\ntotals: {self.profile_total}\n')
             if '--perf' in [str(part) for part in command] and env.get('PERF_HW') == 'instructions':
                 self.log.append(('hardware',))
             return original(command, env=env, cwd=cwd, merge_stderr=merge_stderr)
@@ -213,6 +217,7 @@ class DifferentialTests(World):
         self.enterContext(mock.patch.object(valgrind, 'annotate', lambda out: self.log.append(('annotate', out.name))))
         self.env = {'CG_OUT': str(self.out), 'CG_ROUNDS': '2', 'T_RUNS': '2', 'HW_RUNS': '2', 'PERF_CPU': '1'}
         self.worker_row = {}
+        self.profile_total = 1000
 
     def test_the_seven_stages_run_in_order_and_leave_their_files(self):
         status, out, err = self.execute(valgrind.callgrind_differential, [], self.env)
@@ -240,9 +245,11 @@ class DifferentialTests(World):
         # the redirection probe, then two rounds of both cells
         self.assertEqual(len(profiled), 5)
         cell = profiled[1][6]
-        self.assertEqual(cell[cell.index('valgrind'):cell.index('valgrind') + 7],
-                         ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--toggle-collect=bisect_perf_steady_unit',
+        # No --toggle-collect: the anchor's own client requests bracket the count, and a toggle would invert it.
+        self.assertEqual(cell[cell.index('valgrind'):cell.index('valgrind') + 6],
+                         ['valgrind', '--tool=callgrind', '--collect-atstart=no',
                           '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no'])
+        self.assertFalse([part for part in cell if part.startswith('--toggle-collect')])
         self.assertIn(f'--callgrind-out-file={self.out / "callgrind.libpinyin-tkrzw.r1.out"}', cell)
         self.assertEqual((profiled[1][1], profiled[1][3], profiled[1][4]), ('libpinyin-tkrzw', '4', '1'))
         native = [w for w in self.workers_of() if 'valgrind' not in w[6]]
@@ -285,6 +292,14 @@ class DifferentialTests(World):
         self.assertIn('FAIL (c)', out)
         self.assertFalse((self.out / 'malloc-interception.txt').exists())
         self.assertEqual(self.workers_of(), [])
+
+    def test_a_profile_that_counts_nothing_stops_before_annotation(self):
+        self.profile_total = 0
+        status, _, err = self.execute(valgrind.callgrind_differential, [], self.env)
+        self.assertEqual(status, 1)
+        self.assertIn('callgrind.libpinyin-tkrzw.r1.out counts no instructions', err)
+        self.assertFalse((self.out / 'hw-instructions.jsonl').exists())
+        self.assertNotIn(('annotate', 'out'), self.log)
 
     def test_a_failing_callgrind_run_stops_after_keeping_its_streams(self):
         self.worker_status = {2: 5}

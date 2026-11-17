@@ -505,9 +505,9 @@ bool pinyin_reset(void *p) { (void)p; return true; }
             self.assertEqual(native[0][:3], ['taskset', '-c', '3'])
             self.assertEqual(native[1]['LD_LIBRARY_PATH'], str(self.arms['A']['dylib'].parent) + ':/overlay/lib')
             self.assertIn(('tkrzw', str(self.arms['A']['dylib']), native[1]['LD_LIBRARY_PATH']), self.guarded)
-            self.assertEqual(profiled[0][3:10], ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                                                 '--toggle-collect=bisect_perf_steady_unit', '--cache-sim=no',
-                                                 '--branch-sim=no', '--separate-threads=no'])
+            # No --toggle-collect: the anchor's own client requests bracket the count, and a toggle would invert it.
+            self.assertEqual(profiled[0][3:9], ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--cache-sim=no',
+                                                '--branch-sim=no', '--separate-threads=no'])
             self.assertEqual(profiled[1]['PERF_MODE'], 'speed')
             # Both passes walk the shared schedule; the control's B label is A' from its own prefix.
             order = [env['PERF_BACKEND'] for _, env, _ in self.launches[1:9]]

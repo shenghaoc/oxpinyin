@@ -244,7 +244,7 @@ def linux_sample(arm, cycles, env, deadline, *, source, fingerprint=None, profil
 
     PROFILE selects the Callgrind worker for the same loop.
     """
-    from . import reports, sentence, valgrind
+    from . import reports, sentence
     worker, cell = linux_worker(arm, env)
     extra = {'PERF_WORKLOAD_CHECKSUM': '1'}
     if profile is None:
@@ -255,7 +255,8 @@ def linux_sample(arm, cycles, env, deadline, *, source, fingerprint=None, profil
         return reports.linux_observation(done.stdout, cycles=cycles, library=arm['dylib'],
                                          source=source, fingerprint=fingerprint), None
     # The sentence campaign's Ir-only collection, on the keystroke cycle's steady anchor.
-    prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--toggle-collect=' + valgrind.ANCHOR,
+    # The anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT in bisect.c).
+    prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
               '--cache-sim=no', '--branch-sim=no', '--separate-threads=no', '--callgrind-out-file=' + str(profile)]
     done = worker.launch(cell, 'speed', cycles, extra=extra, prefix=prefix, deadline=deadline)
     row = reports.linux_observation(done.stdout, cycles=cycles, library=arm['dylib'], fingerprint=fingerprint)

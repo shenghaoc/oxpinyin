@@ -66,6 +66,18 @@
 
 #include "driver-common.h"
 
+/* Callgrind client requests bracket each measured unit.
+ * Valgrind's own header defines them; a build without it gets no-ops, and a
+ * Callgrind run of that build then counts nothing, which the recipes refuse. */
+#if defined(__has_include)
+#if __has_include(<valgrind/callgrind.h>)
+#include <valgrind/callgrind.h>
+#endif
+#endif
+#ifndef CALLGRIND_TOGGLE_COLLECT
+#define CALLGRIND_TOGGLE_COLLECT do { } while (0)
+#endif
+
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
 typedef void pinyin_context_t;
@@ -646,26 +658,31 @@ static uint64_t run_perf_unit(const struct symbols *s, pinyin_instance_t *inst,
 /* Callgrind collection anchors.
  *
  * `run_perf_unit` is static and inlinable, and it runs for every cycle
- * index including 0 — the cold one. Neither property suits
- * `--toggle-collect`, which needs a symbol that survives -O2 and that
- * brackets only the steady cycles. These two `noinline`, externally
- * visible forwarders give that: cycle 0 goes through the cold anchor,
- * cycles 1..n-1 through the steady one, so
+ * index including 0 — the cold one. These two `noinline`, externally
+ * visible forwarders separate them: cycle 0 goes through the cold anchor,
+ * cycles 1..n-1 through the steady one. The steady anchor alone switches
+ * Callgrind's collection on at its start and off before it returns, so
  *
- *   valgrind --tool=callgrind --collect-atstart=no \
- *            --toggle-collect=bisect_perf_steady_unit
+ *   valgrind --tool=callgrind --collect-atstart=no
  *
  * counts exactly the steady keystroke cycles. Process start, dlopen,
- * `pinyin_init`, `pinyin_alloc_instance` and the cold pass all stay
- * outside the count.
+ * `pinyin_init`, `pinyin_alloc_instance`, the cold pass, and the timing
+ * and printing after each cycle all stay outside the count.
  *
- * They live in the harness, not in either library, so the toggled region
+ * The client requests replace `--toggle-collect=bisect_perf_steady_unit`.
+ * On arm64 Callgrind's call stack did not see the anchor's return, so the
+ * toggle stayed on through `now_ns` and the printed results, whose digit
+ * counts follow wall time. Only the cold anchor lacks the requests, so the
+ * two bodies differ and cannot be folded to one address.
+ *
+ * They live in the harness, not in either library, so the collected region
  * is identical for every `.so` the harness is pointed at — which is the
  * whole reason a single harness driving both engines through one C ABI
  * gives directly comparable totals.
  *
- * Cost when not under valgrind: one non-inlined call per cycle, against
- * 123 keystroke steps per corpus pass. Identical in both cells. */
+ * Cost when not under valgrind: one non-inlined call per cycle and the two
+ * no-op request sequences, against 123 keystroke steps per corpus pass.
+ * Identical in both cells. */
 uint64_t bisect_perf_cold_unit(const struct symbols *s, pinyin_instance_t *inst,
                                int repeats);
 uint64_t bisect_perf_steady_unit(const struct symbols *s, pinyin_instance_t *inst,
@@ -680,7 +697,10 @@ bisect_perf_cold_unit(const struct symbols *s, pinyin_instance_t *inst,
 __attribute__((noinline)) uint64_t
 bisect_perf_steady_unit(const struct symbols *s, pinyin_instance_t *inst,
                         int repeats) {
-    return run_perf_unit(s, inst, repeats);
+    CALLGRIND_TOGGLE_COLLECT;
+    uint64_t checksum = run_perf_unit(s, inst, repeats);
+    CALLGRIND_TOGGLE_COLLECT;
+    return checksum;
 }
 
 static int perf_env_count(const char *name, int fallback) {
