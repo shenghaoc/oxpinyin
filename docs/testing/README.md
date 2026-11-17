@@ -16,9 +16,8 @@ through the crate's production entries. It lives in the module's sibling
 `tests.rs`, declared as `#[cfg(test)] mod tests;`, and may use the crate's
 private items. It calls a private helper directly only when the production entry
 cannot reach the case, reaches it only at a high cost, or when it compares
-retained speed code with its plain path. A separate test target stays only where
-a compilation boundary is needed: `oxpinyin-capi-marshal`'s macro tests expand
-`unsafe` code that the library's `forbid(unsafe_code)` rejects.
+retained speed code with its plain path. The pinyin C crate's `ffi/tests.rs` exercises core's pointer macros where their unsafe code compiles.
+A separate test target stays only where a compilation boundary is needed.
 
 A verification test checks behaviour at an interface that a consumer uses: an
 exported C function of `oxpinyin-capi` or `oxpinyin-zhuyin-capi`, or the

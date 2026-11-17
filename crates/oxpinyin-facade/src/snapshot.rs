@@ -123,7 +123,7 @@ impl<R> CandidateSnapshot<R> {
     ///
     /// The packed copy of a stored-words phrase is lossy: it stops at the
     /// first zero word and drops the stored length
-    /// (`oxpinyin_capi_marshal::phrase_text_bytes`), while the selection
+    /// (`oxpinyin_core::marshal::phrase_text::phrase_text_bytes`), while the selection
     /// record and the constraint store keep every stored word
     /// ([`oxpinyin_core::engine::SelectionTarget::text`]). Call it only for such
     /// a text; [`Self::phrase_text`] rebuilds every other one exactly from

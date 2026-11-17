@@ -29,6 +29,7 @@ pub mod engine;
 mod fixture_doubles;
 mod full_pinyin_index;
 pub mod graph;
+pub mod marshal;
 pub mod options;
 mod parser;
 mod scheme;

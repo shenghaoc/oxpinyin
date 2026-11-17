@@ -332,13 +332,13 @@ impl<
 /// Handles retain ownership; every access still borrows only for one C call.
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
-oxpinyin_capi_marshal::state_handle_helpers! {
+oxpinyin_core::state_handle_helpers! {
     context: PinyinContext, instance: PinyinInstance, instance_binding: instance, error: oxpinyin_core::engine::EngineError, context_field: { context: instance.context, }
 }
 
 mod handles {
     use super::*;
-    oxpinyin_capi_marshal::opaque_handle_casts! {
+    oxpinyin_core::opaque_handle_casts! {
         vis: pub,
         context: PinyinContext => ContextOwner,
         instance: PinyinInstance => CapiInstance,

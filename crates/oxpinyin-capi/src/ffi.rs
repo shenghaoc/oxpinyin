@@ -1,5 +1,5 @@
 //! Output allocation and diagnostics for the exposed C boundary.
-//! Input conversion is shared by `oxpinyin_capi_marshal::input`.
+//! Input conversion is shared by `oxpinyin_core::marshal::input`.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -37,9 +37,9 @@ pub fn take_owned_cstr(ptr: *mut c_char) -> String {
     text
 }
 
-oxpinyin_capi_marshal::borrow_c_string_helpers!();
+oxpinyin_core::borrow_c_string_helpers!();
 
-oxpinyin_capi_marshal::ffi_output_helpers! {
+oxpinyin_core::ffi_output_helpers! {
     glib: glib_sys, key_text: KeyText, malloc: malloc, free: free, domain: c"libpinyin"
 }
 
@@ -95,3 +95,6 @@ pub fn strjoinv(separator: &CStr, items: impl Iterator<Item = impl AsRef<[u8]>>)
     // all of which outlive the call; `g_strjoinv` only reads them.
     unsafe { glib_sys::g_strjoinv(separator.as_ptr(), array.as_mut_ptr()) }
 }
+
+#[cfg(test)]
+mod tests;

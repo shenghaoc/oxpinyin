@@ -22,7 +22,7 @@
 //! already has `libglib-2.0.so.0` resident (upstream `libpinyin.so.15`
 //! records it in `DT_NEEDED`).
 
-use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
+use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn pinyin_lookup_tokens(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_capi_marshal::input::utf8_to_ucs4(
+    let text = oxpinyin_core::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn pinyin_token_get_n_pronunciation(
     true
 }
 
-oxpinyin_capi_marshal::append_stored_words! {
+oxpinyin_core::append_stored_words! {
     array: GArray, append: g_array_append_vals
 }
 

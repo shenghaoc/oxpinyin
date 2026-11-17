@@ -3,9 +3,9 @@
 use std::cell::Cell;
 use std::os::raw::c_int;
 
-use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use oxpinyin_core::PhraseToken;
 use oxpinyin_core::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
+use oxpinyin_core::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use oxpinyin_user::{UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};

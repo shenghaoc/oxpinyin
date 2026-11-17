@@ -1,20 +1,4 @@
-//! Integration tests for the six `macro_rules!` macros exported by
-//! `oxpinyin-capi-marshal`.
-//!
-// The macro bodies stamp `unsafe` blocks (pointer casts, `Box::from_raw`),
-// and the tests themselves call `unsafe` functions / reclaim pointers.
-// The library crate forbids unsafe_code; the workspace denies it.
-// Integration tests are separate compilation units, so this expectation is scoped
-// to the test binary only.
-#![expect(
-    unsafe_code,
-    reason = "the macros expand unsafe blocks here and the tests reclaim their pointers"
-)]
-//!
-//! These tests live in `tests/` (a separate compilation unit) because the
-//! macro bodies stamp `unsafe` blocks that are type-checked in the
-//! *expanding* crate. The library crate itself is `#![forbid(unsafe_code)]`,
-//! so the expansion cannot happen there.
+//! Exercise the core marshalling macros inside the pinyin C ABI crate.
 
 use std::os::raw::c_char;
 use std::ptr;
@@ -51,7 +35,7 @@ struct CandidateBacking {
 }
 
 // Stamp the helpers.
-oxpinyin_capi_marshal::opaque_handle_casts! {
+oxpinyin_core::opaque_handle_casts! {
     vis: pub,
     context: TestContext => ContextBacking,
     instance: TestInstance => InstanceBacking,
@@ -173,7 +157,7 @@ fn test_sentence_text(
     std::ffi::CString::new(joined).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
-oxpinyin_capi_marshal::write_owned_sentence!(test_sentence_text);
+oxpinyin_core::write_owned_sentence!(test_sentence_text);
 
 #[test]
 fn sentence_null_out_param_answers_true() {
@@ -247,7 +231,7 @@ mod ffi_output_expansion {
         fn malloc(size: usize) -> *mut c_void;
         fn free(ptr: *mut c_void);
     }
-    oxpinyin_capi_marshal::ffi_output_helpers! {
+    oxpinyin_core::ffi_output_helpers! {
         glib: glib, key_text: KeyText, malloc: malloc, free: free, domain: c"libpinyin"
     }
 
@@ -315,7 +299,7 @@ mod display_getter_expansion {
     fn key_text(_: KeyText) -> *mut GChar {
         c"rendered".as_ptr().cast_mut()
     }
-    oxpinyin_capi_marshal::display_string_getter! { key: ChewingKey, char: GChar }
+    oxpinyin_core::display_string_getter! { key: ChewingKey, char: GChar }
     #[test]
     fn display_getter_checks_zero_and_writes_rendering() {
         let mut zero = ChewingKey(CoreKey::ZERO);
@@ -358,7 +342,7 @@ mod append_words_expansion {
                 .map(u16::from_ne_bytes),
         );
     }
-    oxpinyin_capi_marshal::append_stored_words! { array: GArray, append: append }
+    oxpinyin_core::append_stored_words! { array: GArray, append: append }
     #[test]
     fn append_words_copies_reading_or_zeroes() {
         let mut array = GArray(Vec::new());
@@ -412,14 +396,14 @@ mod state_handle_expansion {
     type CapiInstanceMut<'a> = CapiInstance<&'a mut InstanceCore, &'a mut u8, &'a ContextOwner>;
     mod handles {
         use super::*;
-        oxpinyin_capi_marshal::opaque_handle_casts! {
+        oxpinyin_core::opaque_handle_casts! {
             vis: pub(super),
             context: ContextMarker => ContextOwner,
             instance: InstanceMarker => CapiInstance,
             candidate: CandidateMarker => Candidate,
         }
     }
-    oxpinyin_capi_marshal::state_handle_helpers! {
+    oxpinyin_core::state_handle_helpers! {
         context: ContextMarker, instance: InstanceMarker, instance_binding: instance,
         error: (), context_field: {}
     }

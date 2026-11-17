@@ -35,7 +35,7 @@ unsafe fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> 
 
     // The pin parses the raw bytes: what follows an invalid sequence is
     // never reached (`input::parser_prefix`).
-    let text = oxpinyin_capi_marshal::input::parser_prefix(
+    let text = oxpinyin_core::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(text) },
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
         return 0;
     }
 
-    let text = oxpinyin_capi_marshal::input::parser_prefix(
+    let text = oxpinyin_core::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn pinyin_parse_more_chewings(
         return 0;
     }
 
-    let text = oxpinyin_capi_marshal::input::parser_prefix(
+    let text = oxpinyin_core::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },

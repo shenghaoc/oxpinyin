@@ -1,5 +1,5 @@
 use super::phrase_text_bytes;
-use oxpinyin_core::PhraseText;
+use crate::PhraseText;
 
 #[test]
 fn scalar_text_is_borrowed_and_nul_text_is_encoded() {

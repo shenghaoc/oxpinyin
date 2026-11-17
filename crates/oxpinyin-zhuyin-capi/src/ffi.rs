@@ -1,5 +1,5 @@
 //! Output allocation and diagnostics for the exposed C boundary.
-//! Input conversion is shared by `oxpinyin_capi_marshal::input`.
+//! Input conversion is shared by `oxpinyin_core::marshal::input`.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
@@ -13,8 +13,8 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
-oxpinyin_capi_marshal::borrow_c_string_helpers!();
+oxpinyin_core::borrow_c_string_helpers!();
 
-oxpinyin_capi_marshal::ffi_output_helpers! {
+oxpinyin_core::ffi_output_helpers! {
     glib: glib_sys, key_text: KeyText, malloc: malloc, free: free, domain: c"libzhuyin"
 }

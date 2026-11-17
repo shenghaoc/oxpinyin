@@ -106,3 +106,12 @@ fn paths_round_trip_and_the_checked_form_follows_the_platform() {
     #[cfg(not(unix))]
     assert_eq!(path_from_bytes_checked(bytes), None);
 }
+
+#[cfg(windows)]
+#[test]
+fn filenames_keep_null_empty_and_lossy_utf8_handling() {
+    assert_eq!(filename(None), None);
+    assert_eq!(filename(Some(c"")), Some(PathBuf::new()));
+    let input = c"\xff";
+    assert_eq!(filename(Some(input)), Some(PathBuf::from("\u{fffd}")));
+}
