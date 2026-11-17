@@ -59,7 +59,7 @@ use crate::data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
-use oxpinyin_input::path::{build_path, rename, unlink};
+use oxpinyin_core::input::path::{build_path, rename, unlink};
 use oxpinyin_store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
@@ -691,7 +691,7 @@ impl UserState {
 /// `pinyin_save` / `zhuyin_save`, and the pin is built with asserts live,
 /// so a full filesystem or an `RLIMIT_FSIZE` that cuts the header kills the
 /// process. The save answers the failure, typed, and the C adapters abort.
-pub use oxpinyin_input::chunk::ChunkHeaderField;
+pub use oxpinyin_core::input::chunk::ChunkHeaderField;
 
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
@@ -2563,10 +2563,12 @@ fn stage_chunk(
 /// `assert`s on, returned typed; the open and a short payload write are
 /// the pin's soft `false`, carried as `Io`.
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
-    match oxpinyin_input::chunk::save(path, bytes) {
+    match oxpinyin_core::input::chunk::save(path, bytes) {
         Ok(()) => Ok(()),
-        Err(oxpinyin_input::chunk::ChunkSaveError::Io(error)) => Err(PersistenceError::Io(error)),
-        Err(oxpinyin_input::chunk::ChunkSaveError::Header { field, source }) => {
+        Err(oxpinyin_core::input::chunk::ChunkSaveError::Io(error)) => {
+            Err(PersistenceError::Io(error))
+        }
+        Err(oxpinyin_core::input::chunk::ChunkSaveError::Header { field, source }) => {
             Err(PersistenceError::ChunkHeaderWrite { field, source })
         }
     }

@@ -312,7 +312,7 @@ pub enum LibraryLoadFault {
 /// whether this platform lets the chunk loader open a directory; where it
 /// does not, the pin reaches neither branch.
 fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> bool {
-    oxpinyin_input::chunk::opens_directories() && !reads_as_a_chunk(dir)
+    oxpinyin_core::input::chunk::opens_directories() && !reads_as_a_chunk(dir)
 }
 
 /// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on

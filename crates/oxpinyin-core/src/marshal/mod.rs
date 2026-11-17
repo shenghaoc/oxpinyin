@@ -3,7 +3,7 @@
 //! `libzhuyin.so.15`).
 //!
 //! The two C crates expand the pointer casts, allocation and output writers
-//! at the ABI boundary. Core forbids unsafe code. The macro definitions
+//! at the ABI boundary. The marshalling module forbids unsafe code. The macro definitions
 //! compile here and the generated unsafe blocks compile at their call sites.
 //!
 //! The safe [`input`] and [`phrase_text`] modules compile here: they convert

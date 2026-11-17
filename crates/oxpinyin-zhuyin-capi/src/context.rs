@@ -42,7 +42,7 @@ pub unsafe extern "C" fn zhuyin_init(
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) = oxpinyin_input::path::filename(
+    let Some(system_path) = oxpinyin_core::input::path::filename(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(systemdir) },
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn zhuyin_init(
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path = oxpinyin_input::path::filename(
+    let user_path = oxpinyin_core::input::path::filename(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(userdir) },

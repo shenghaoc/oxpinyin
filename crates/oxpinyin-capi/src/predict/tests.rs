@@ -845,7 +845,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
                 text,
                 length,
                 amplified(baked, total),
-                oxpinyin_core::phrase_index_library(token.value()),
+                oxpinyin_core::model::phrase_index_library(token.value()),
                 key,
             )
         })

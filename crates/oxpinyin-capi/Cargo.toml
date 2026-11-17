@@ -59,7 +59,6 @@ workspace = true
 rustc-hash.workspace = true
 num_enum.workspace = true
 oxpinyin-core.workspace = true
-oxpinyin-input.workspace = true
 # default-features = false on the store-reaching edges (the workspace table
 # carries it for the `workspace = true` ones) so `--no-default-features`
 # builds actually reach the store's backend selection; the [features] block

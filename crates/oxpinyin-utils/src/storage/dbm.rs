@@ -96,7 +96,7 @@ impl Tree {
 /// panics there, where the pin's `Bigram::attach` asserts
 /// (`ngram_bdb.cpp:116-117` at 074a2219). Any other failure before the
 /// open, such as an unsupported linked library, is a [`StoreError`], which
-/// the utility reports with `oxpinyin_input::tool::exit_on_store_error`.
+/// the utility reports with `oxpinyin_core::input::tool::exit_on_store_error`.
 pub(crate) struct Hash {
     backend: HashBackend,
 }

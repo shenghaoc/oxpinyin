@@ -80,9 +80,9 @@ fn user_conf_round_trips_and_conforms() {
     // runtime writes CRLF on Windows and LF on Linux/macOS.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");
-    let filename = oxpinyin_input::c_path(&path).expect("c path");
+    let filename = oxpinyin_core::input::c_path(&path).expect("c path");
     assert!(conform.save(&filename));
-    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let newline = oxpinyin_core::input::TEXT_NEWLINE;
     let expected = format!(
         "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
     );
@@ -179,7 +179,7 @@ fn a_fresh_zero_version_marker_requires_conformance_for_either_source_format() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("table.conf");
     let profile = dir.path().join("user.conf");
-    let filename = oxpinyin_input::c_path(&profile).unwrap();
+    let filename = oxpinyin_core::input::c_path(&profile).unwrap();
     for (source, backend) in [("pinyin", "Tkrzw"), ("zhuyin", "KyotoCabinet")] {
         std::fs::write(&config, format!("binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:{source}\ndatabase format:{backend}\n")).unwrap();
         let conf = crate::data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
@@ -198,7 +198,7 @@ fn a_fresh_zero_version_marker_requires_conformance_for_either_source_format() {
         assert!(reloaded.is_conform(&versions));
         assert_eq!(reloaded, conformed);
     }
-    let directory = oxpinyin_input::c_path(dir.path()).unwrap();
+    let directory = oxpinyin_core::input::c_path(dir.path()).unwrap();
     assert!(!UserTableInfo::load(&filename).unwrap().save(&directory));
     assert!(profile.is_file());
 }

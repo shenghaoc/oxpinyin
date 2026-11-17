@@ -11,12 +11,12 @@
 //!
 //! `g_rename` is a macro to `rename` on Unix and a function around
 //! `MoveFileExW` on Windows; `unlink` is the plain C call. The safe
-//! functions below make those calls through `crate::native`.
+//! functions below make those calls through `crate::input::native`.
 
 use std::ffi::{CStr, CString, OsStr};
 use std::path::{Path, PathBuf};
 
-use crate::native;
+use crate::input::native;
 
 /// Decode a filename from an internal C string or the C-ABI facade.
 /// Unix keeps its bytes. Windows uses UTF-8 and replaces invalid input

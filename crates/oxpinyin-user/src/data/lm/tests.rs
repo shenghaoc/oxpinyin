@@ -28,7 +28,10 @@ mod language_model {
 
     use std::rc::Rc;
 
-    use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta};
+    use oxpinyin_core::{
+        PhraseToken,
+        model::{LanguageModel, UserCountDelta},
+    };
 
     use crate::data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
 
@@ -164,7 +167,7 @@ mod language_model {
         assert_eq!(
             lm.nbest_step_costs(&hao, &PhraseToken::new(0x0300_0001))
                 .unwrap(),
-            oxpinyin_core::NbestStepCosts::default()
+            oxpinyin_core::model::NbestStepCosts::default()
         );
         // The user overlay raises the rare one.
         let raised = lm
@@ -241,8 +244,8 @@ mod language_model {
         token: u32,
         user: UserCountDelta,
         user_gram: (u64, Vec<(u32, u64)>),
-    ) -> oxpinyin_core::NbestStepCosts {
-        use oxpinyin_core::{MergedGram, NbestStepRow};
+    ) -> oxpinyin_core::model::NbestStepCosts {
+        use oxpinyin_core::model::{MergedGram, NbestStepRow};
         let bytes = MergedGram::new(user_gram.0, user_gram.1).to_bytes();
         let mut row = NbestStepRow::default();
         let gram = row
@@ -420,7 +423,7 @@ mod language_model {
             let step = lm
                 .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), absent)
                 .unwrap();
-            assert_eq!(step, oxpinyin_core::NbestStepCosts::default());
+            assert_eq!(step, oxpinyin_core::model::NbestStepCosts::default());
         }
 
         // A present item prices from its own field, and the three user-file
@@ -469,7 +472,10 @@ mod language_model {
                 },
             )
             .unwrap();
-        assert_eq!(stale_with_bigram, oxpinyin_core::NbestStepCosts::default());
+        assert_eq!(
+            stale_with_bigram,
+            oxpinyin_core::model::NbestStepCosts::default()
+        );
 
         // The gate keeps its refusals: a masked user library, a loaded
         // library's missing item and a non-existent library answer the
@@ -479,7 +485,7 @@ mod language_model {
         let masked = lm2
             .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(27))
             .unwrap();
-        assert_eq!(masked, oxpinyin_core::NbestStepCosts::default());
+        assert_eq!(masked, oxpinyin_core::model::NbestStepCosts::default());
         let (lm3, _) = fix.open();
         let delta = UserCountDelta {
             unigram_delta: 27,
@@ -492,7 +498,7 @@ mod language_model {
                 .unwrap();
             assert_eq!(
                 step,
-                oxpinyin_core::NbestStepCosts::default(),
+                oxpinyin_core::model::NbestStepCosts::default(),
                 "nibble {} without an item keeps the default answer",
                 token >> 24
             );
@@ -516,7 +522,7 @@ mod language_model {
 
     #[test]
     fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges() {
-        use oxpinyin_core::{MergedGram, NbestStepRow};
+        use oxpinyin_core::model::{MergedGram, NbestStepRow};
         let fix = Fixture::new();
         let (mut lm, _) = fix.open();
         let user_rows = [
@@ -588,7 +594,7 @@ mod language_model {
 
     #[test]
     fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
-        use oxpinyin_core::NbestStepRow;
+        use oxpinyin_core::model::NbestStepRow;
         let fix = Fixture::new();
         let store =
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
@@ -603,7 +609,7 @@ mod language_model {
         assert_eq!(
             lm.nbest_item_costs_in_row(&prev, &PhraseToken::new(GBK), Some((1, 1)), &mut row)
                 .unwrap(),
-            oxpinyin_core::NbestStepCosts::default()
+            oxpinyin_core::model::NbestStepCosts::default()
         );
         let Err(error) = lm.nbest_successors_in_row(&prev, &mut row) else {
             panic!("a present empty value is corruption");
@@ -626,7 +632,7 @@ mod language_model {
     /// on index 3, so `HAO` answers 99, not the first record's 7.
     #[test]
     fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
-        use oxpinyin_core::NbestSuccessors;
+        use oxpinyin_core::model::NbestSuccessors;
         let fix = Fixture::new();
         let store =
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
@@ -639,7 +645,7 @@ mod language_model {
             .unwrap();
         drop(store);
         let (lm, _) = fix.open();
-        let mut row = oxpinyin_core::NbestStepRow::default();
+        let mut row = oxpinyin_core::model::NbestStepRow::default();
         let prev = PhraseToken::new(NI);
         for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
             let item = match lm.nbest_successors_in_row(&prev, &mut row).unwrap() {

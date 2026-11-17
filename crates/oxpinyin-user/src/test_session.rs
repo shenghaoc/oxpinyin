@@ -196,7 +196,7 @@ pub(crate) fn load_checked(
         ..
     } = load_profile_checked(dir, originals, check)?;
     let state = &mut loaded.state;
-    let bigram = oxpinyin_input::path::build_path(
+    let bigram = oxpinyin_core::input::path::build_path(
         dir,
         std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
     );

@@ -20,6 +20,9 @@ doctest = false
 workspace = true
 
 [dependencies]
+libc.workspace = true
+glib-sys.workspace = true
+memmap2.workspace = true
 rustc-hash.workspace = true
 bitflags.workspace = true
 num_enum.workspace = true
@@ -33,9 +36,13 @@ thiserror.workspace = true
 phf_codegen.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 
 [features]
-# Parser result access for the nonshipping pin test programs.
+# Parser and native I/O operations for the utilities and REPL.
 tools = []
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }

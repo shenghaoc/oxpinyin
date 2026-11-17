@@ -475,7 +475,7 @@ export iterators (§9).
 
 ## 7. oxpinyin implementation map
 
-`oxpinyin-core` defines the `UserModel` seam (`crates/oxpinyin-core/src/lib.rs`).
+`oxpinyin-core` defines the `UserModel` seam (`crates/oxpinyin-core/src/model.rs`).
 `oxpinyin_user::UserStore` implements it (`crates/oxpinyin-user/src/model.rs`)
 and exposes the stored counts as `UserCountDelta` for the §5 merge.
 
@@ -536,7 +536,7 @@ the files themselves are a second comparison surface (§11).
 
 **Dependencies.**
 
-- The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs`) and the engine
+- The `UserModel` seam (`crates/oxpinyin-core/src/model.rs`) and the engine
   `Session` (`crates/oxpinyin-core/src/engine/session/`).
 - The backend store (`oxpinyin-store`), which reads and writes the user
   files in the backend's own containers.

@@ -3,7 +3,7 @@
 use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 
-use oxpinyin_input::tool;
+use oxpinyin_core::input::tool;
 use oxpinyin_user::data::PhraseLibraries;
 use oxpinyin_user::data::phrase_library::{LibraryError, PhraseLibrary};
 use oxpinyin_user::data::table_info::{FileName, FileType, TableConf};
@@ -119,8 +119,11 @@ pub(crate) fn load_system_libraries(
 /// `save_dictionary` (`utils_helper.h:97-145`).
 pub(crate) fn save_and_reload_library(name: &CStr, file: &[u8]) -> PhraseLibrary {
     let path = crate::training::path_of(name);
-    if let Err(error) = oxpinyin_input::chunk::save(&path, file) {
-        if matches!(error, oxpinyin_input::chunk::ChunkSaveError::Header { .. }) {
+    if let Err(error) = oxpinyin_core::input::chunk::save(&path, file) {
+        if matches!(
+            error,
+            oxpinyin_core::input::chunk::ChunkSaveError::Header { .. }
+        ) {
             tool::abort();
         }
         tool::storage::report_save_failed(name);

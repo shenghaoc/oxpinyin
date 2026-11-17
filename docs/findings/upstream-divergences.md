@@ -174,9 +174,9 @@ An entry holds nothing else.
 ### A sparse chunk's whole mapping is retained after `fini` (#865; policy row 109)
 
 - **Pin:** `MemoryChunk::mmap` maps the whole `file_size` (`src/include/memory_chunk.h:475-524`), but `freemem` unmaps only `header + capacity()` (`:72-78`). When `guint32 data_len` wraps, as for a 2^32+8 file, most of the mapping stays after `fini`.
-- **oxpinyin:** `oxpinyin-input::chunk` owns one private whole-file mapping per loaded chunk, and its `Drop` releases all of it.
+- **oxpinyin:** `oxpinyin_core::input::chunk` owns one private whole-file mapping per loaded chunk, and its `Drop` releases all of it.
 - **Decision:** the mapping is reproduced; the wrapped-size residual is accepted under the external API misuse ruling: the pin's `munmap` length contradicts its own mapping.
-- **Tests:** `chunk::tests::sparse_file_has_one_whole_writable_private_mapping_and_no_residual` (`crates/oxpinyin-input/src/chunk.rs`).
+- **Tests:** `chunk::tests::sparse_file_has_one_whole_writable_private_mapping_and_no_residual` (`crates/oxpinyin-core/src/input/chunk.rs`).
 
 ### `table.conf` follows its rows; malformed ones fail the triggering call (policy rows 78, 79, 80 and 83)
 
@@ -239,7 +239,7 @@ An entry holds nothing else.
 - **Pin:** `MemoryChunk::load` converts a negative `read` result, `EINTR` included, to `guint32` and checksums that length past the allocation (`src/include/memory_chunk.h:452-453`).
 - **oxpinyin:** returns the I/O error before checksumming, releases the buffer and descriptor, and does not retry.
 - **Decision:** accepted, class (b), by maintainer ruling: an out-of-bounds read.
-- **Tests:** `chunk::tests::interrupted_payload_read_is_not_retried` (`crates/oxpinyin-input/src/chunk.rs`).
+- **Tests:** `chunk::tests::interrupted_payload_read_is_not_retried` (`crates/oxpinyin-core/src/input/chunk.rs`).
 
 ### Berkeley DB handles whose open failed (policy row 113)
 
@@ -290,7 +290,7 @@ An entry holds nothing else.
 ### gen_pinyin_table truncated lead byte on the first line (policy row 126, class (b))
 
 - **Pin:** `char phrase[1024]` starts indeterminate (`utils/storage/gen_pinyin_table.cpp:135`). When the first phrase ends in a truncated UTF-8 lead byte, `g_utf8_strlen` (`:168`) reads the indeterminate bytes after the terminator. On later lines it reads the bytes that earlier lines left.
-- **oxpinyin:** starts the buffer zeroed (`TableInput`, `crates/oxpinyin-input/src/tool.rs`), so the count stops at the first zero past the lead byte's skip; the row then takes the invalid UTF-8 phrase path above. Later lines read the same stale bytes as the pin.
+- **oxpinyin:** starts the buffer zeroed (`TableInput`, `crates/oxpinyin-core/src/input/tool.rs`), so the count stops at the first zero past the lead byte's skip; the row then takes the invalid UTF-8 phrase path above. Later lines read the same stale bytes as the pin.
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
 - **Tests:** `a_first_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/it/gen_pinyin_table.rs`). Nothing runs on the pin: its result is undefined.
 
@@ -311,10 +311,10 @@ An entry holds nothing else.
 ### g_utf8_next_char from a byte that leads no sequence
 
 - **Pin:** `split_line` steps with `g_utf8_next_char` (`src/storage/tag_utility.cpp:118-169`), whose GLib table steps 5 from `0xF8..=0xFB` and 6 from `0xFC..=0xFD` (`glib/gutf8.c:115-124`, GLib 2.84.4), outside the macro's valid-UTF-8 precondition.
-- **oxpinyin:** `oxpinyin_input::tool::utf8_next_char_step` steps the lead length of 2, 3 or 4, else 1; from such a byte it steps 1 and tokenizes the bytes after it.
+- **oxpinyin:** `oxpinyin_core::input::tool::utf8_next_char_step` steps the lead length of 2, 3 or 4, else 1; from such a byte it steps 1 and tokenizes the bytes after it.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): GLib's internal table sets the step outside the precondition.
 - **Rejected:** reading GLib's table, which needs a hand-declared data symbol that MSVC cannot import.
-- **Tests:** `split_line_steps_one_byte_from_a_byte_that_leads_no_sequence` (`crates/oxpinyin-utils/src/utils_helper/taglib.rs`); the `tool.rs` boundary test of `oxpinyin-input`.
+- **Tests:** `split_line_steps_one_byte_from_a_byte_that_leads_no_sequence` (`crates/oxpinyin-utils/src/utils_helper/taglib.rs`); the `tool.rs` boundary test of `oxpinyin_core::input`.
 
 ### Utility check macros write no message
 
@@ -483,7 +483,7 @@ These entries are pin defects that oxpinyin collects for the libpinyin report-ba
 - **Pin:** `UserTableInfo::load` and `SystemTableInfo2::load` set `LC_NUMERIC` to `"C"` and restore it only on success (`src/storage/table_info.cpp:328`, `:372`, `:197`, `:291`; `save` at `:378`, `:394`), so after any init `LC_NUMERIC` is `"C"`.
 - **oxpinyin:** installs `"C"` with the C library's `setlocale` at the pin's points.
 - **Decision:** reproduced under the [`LC_NUMERIC` ruling](compatibility-policy.md#lc_numeric-after-init-row-39); item 6 of the report drafts.
-- **Tests:** `lc_numeric_follows_the_pins_table_info_sites` (`crates/oxpinyin-capi/tests/it/locale.rs`), `a_failed_init_leaves_lc_numeric_at_c` (`crates/oxpinyin-input/src/config/tests.rs`).
+- **Tests:** `lc_numeric_follows_the_pins_table_info_sites` (`crates/oxpinyin-capi/tests/it/locale.rs`), `a_failed_init_leaves_lc_numeric_at_c` (`crates/oxpinyin-core/src/input/config/tests.rs`).
 
 ### Pinyin candidate frequency: out-of-range `float`-to-`guint32` store (class (b))
 
@@ -556,4 +556,4 @@ None.
 
 `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance and its context, as the pin does (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
 
-A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-input/src/{native,chunk}.rs`, `crates/oxpinyin-user/src/data/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.
+A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-core/src/input/{native,chunk}.rs`, `crates/oxpinyin-user/src/data/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.

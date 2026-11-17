@@ -2,7 +2,7 @@
 //! Pin 074a2219 phonetic_lookup.h:643-697 reads one PhraseItem for length,
 //! unigram and pronunciation. Keep exceptional resolution on the old path.
 use super::*;
-use oxpinyin_core::TokenPhrase;
+use oxpinyin_core::model::TokenPhrase;
 use oxpinyin_core::sentence_facts::{SentenceFacts, TokenFacts};
 use oxpinyin_user::data::phrase_library::PhraseItemView;
 

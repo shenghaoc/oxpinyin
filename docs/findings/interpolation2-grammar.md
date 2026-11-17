@@ -18,7 +18,7 @@ of that tagger, `oxpinyin_utils::taglib`
 - the k-mixture-model tools in `oxpinyin-utils` `k_mixture_model`.
 
 The tagger's character steps and warnings are GLib's, through the tool
-boundary (`oxpinyin_input::tool`), including `g_unichar_isgraph`
+boundary (`oxpinyin_core::input::tool`), including `g_unichar_isgraph`
 ([external I/O boundary](external-io-boundary.md)). This is an input-text
 grammar, not an on-disk row layout, so `oxpinyin_user::data::row_format` does
 not cover it.

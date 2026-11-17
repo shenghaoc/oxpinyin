@@ -35,11 +35,11 @@ impl Lookup {
             "phrase_index.bin"
         });
         let tables = SystemTables::for_lookup(&path, phonetic)
-            .unwrap_or_else(|_| oxpinyin_input::tool::abort());
+            .unwrap_or_else(|_| oxpinyin_core::input::tool::abort());
         let mut libraries = PhraseLibraries::empty();
         for (index, row) in conf.system_libraries() {
             let name = row.system.as_ref().map(|name| PathBuf::from(name.as_ref()));
-            let path = oxpinyin_input::path::build_path(
+            let path = oxpinyin_core::input::path::build_path(
                 data,
                 name.as_deref().unwrap_or(Path::new("")).as_os_str(),
             );
@@ -49,7 +49,7 @@ impl Lookup {
         }
         let model = bigram.then(|| {
             let mut model = oxpinyin_user::data::lm::BigramTables::attach(&data.join("bigram.db"))
-                .unwrap_or_else(|_| oxpinyin_input::tool::abort());
+                .unwrap_or_else(|_| oxpinyin_core::input::tool::abort());
             model.set_lambda_from_conf(conf);
             model
         });
@@ -64,7 +64,7 @@ impl Lookup {
     pub fn key_exists(&self, keys: &[oxpinyin_core::ChewingKey]) -> bool {
         self.tables
             .key_exists(keys)
-            .unwrap_or_else(|_| oxpinyin_input::tool::abort())
+            .unwrap_or_else(|_| oxpinyin_core::input::tool::abort())
     }
     /// Existing n-best lookup with no user overlay.
     ///

@@ -12,8 +12,8 @@ use smallvec::SmallVec;
 use crate::graph::{Edge, ExactSegment, SegmentGraph};
 use crate::scoring::ScoringError;
 use crate::{
-    Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseText, PhraseToken,
-    SyllableKey, UserModel,
+    OptionBits, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel, MergedGram, UserModel},
 };
 
 use crate::engine::candidate::{Candidate, CandidateKind, CandidateList};
@@ -387,7 +387,7 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
 /// `chewing_large_table2.h:107`, `novel_types.h:44` at the pin
 /// `074a2219`). The token's high four bits are masked.
 const fn window_library(token: crate::PhraseToken) -> usize {
-    crate::phrase_index_library(token.value())
+    crate::model::phrase_index_library(token.value())
 }
 
 fn window_ascends_by_library_then_token(window: &[Candidate]) -> bool {

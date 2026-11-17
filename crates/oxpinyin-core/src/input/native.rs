@@ -60,7 +60,7 @@ pub(crate) fn wide_path(path: &std::path::Path) -> Vec<u16> {
 
 /// The pin's fopen, with a native wide filename on Windows.
 pub(crate) fn fopen(
-    filename: &(impl crate::FileName + ?Sized),
+    filename: &(impl crate::input::FileName + ?Sized),
     mode: &CStr,
 ) -> Option<NonNull<libc::FILE>> {
     #[cfg(not(windows))]
@@ -93,7 +93,7 @@ impl ReadChunk {
     pub(crate) fn open(path: &std::path::Path) -> std::io::Result<Self> {
         #[cfg(unix)]
         let fd = {
-            let path = crate::path::c_string(path.as_os_str());
+            let path = crate::input::path::c_string(path.as_os_str());
             // SAFETY: path is NUL-terminated and lives through open; without
             // O_CREAT its variadic mode argument is not read.
             unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) }
@@ -263,7 +263,7 @@ unsafe extern "C" {
     windows
 )))]
 compile_error!(
-    "oxpinyin-input: no declaration of the C library's `stdout` and `stderr` objects \
+    "oxpinyin-core: no declaration of the C library's `stdout` and `stderr` objects \
      for this target; add its per-platform `extern` block in src/native.rs"
 );
 
@@ -328,14 +328,14 @@ pub(crate) struct Stream(NonNull<File>);
 
 impl Stream {
     /// `fopen(filename, "r")`.
-    pub(crate) fn open_read(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
+    pub(crate) fn open_read(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode literal are NUL-terminated and
         // outlive the call.
         fopen(filename, c"r").map(Self)
     }
 
     /// `fopen(filename, "w")`.
-    pub(crate) fn open_write(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
+    pub(crate) fn open_write(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: as `open_read`.
         fopen(filename, c"w").map(Self)
     }

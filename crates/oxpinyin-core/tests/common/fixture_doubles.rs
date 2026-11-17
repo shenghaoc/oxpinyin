@@ -20,8 +20,8 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use oxpinyin_core::{
-    ChewingKey, Completeness, Dictionary, LanguageModel, PhraseEntry, PhraseText, PhraseToken,
-    SyllableKey,
+    ChewingKey, Completeness, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel},
 };
 
 /// Why a fixture could not be read.
@@ -201,7 +201,7 @@ pub struct FixtureDictionary {
     entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>>,
     /// Each token's phrase item: one pronunciation per record that spells
     /// it, toneless, with frequency 1.
-    items: BTreeMap<PhraseToken, oxpinyin_core::PronunciationRows>,
+    items: BTreeMap<PhraseToken, oxpinyin_core::model::PronunciationRows>,
     count: usize,
 }
 
@@ -214,7 +214,8 @@ impl FixtureDictionary {
     pub fn parse(text: &str) -> Result<Self, FixtureError> {
         let records = parse_vocab(text)?;
         let mut entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>> = BTreeMap::new();
-        let mut items: BTreeMap<PhraseToken, oxpinyin_core::PronunciationRows> = BTreeMap::new();
+        let mut items: BTreeMap<PhraseToken, oxpinyin_core::model::PronunciationRows> =
+            BTreeMap::new();
         let count = records.len();
 
         for record in records {
@@ -314,10 +315,10 @@ impl Dictionary for FixtureDictionary {
     fn phrase_item_pronunciations(
         &self,
         token: PhraseToken,
-    ) -> Result<oxpinyin_core::PhraseItemRead, FixtureError> {
+    ) -> Result<oxpinyin_core::model::PhraseItemRead, FixtureError> {
         Ok(self.items.get(&token).cloned().map_or(
-            oxpinyin_core::PhraseItemRead::NoItem,
-            oxpinyin_core::PhraseItemRead::Item,
+            oxpinyin_core::model::PhraseItemRead::NoItem,
+            oxpinyin_core::model::PhraseItemRead::Item,
         ))
     }
 

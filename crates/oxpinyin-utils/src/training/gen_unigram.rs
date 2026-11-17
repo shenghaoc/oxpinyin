@@ -8,7 +8,7 @@
 
 use std::ffi::OsString;
 
-use oxpinyin_input::tool;
+use oxpinyin_core::input::tool;
 use oxpinyin_user::data::table_info::{FileType, TableConf};
 
 use crate::storage::libraries::Libraries;

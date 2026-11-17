@@ -2032,7 +2032,7 @@ fn a_library_the_mask_does_not_select_reloads_without_its_log() {
 
 #[test]
 fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
-    use oxpinyin_core::{PhraseToken, UserModel};
+    use oxpinyin_core::{PhraseToken, model::UserModel};
     let dir = tempdir("trained-prons");
     let mut base = originals();
     let item = base
@@ -2108,7 +2108,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
 
 #[test]
 fn live_system_readings_train_import_and_replay_without_double_counting() {
-    use oxpinyin_core::{PhraseToken, UserModel};
+    use oxpinyin_core::{PhraseToken, model::UserModel};
     let dir = tempdir("live-system-readings");
     let mut base = originals();
     let ni = ChewingKey::from_pinyin("ni").expect("ni");
@@ -2792,7 +2792,7 @@ fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
 
 #[test]
 fn appended_system_readings_keep_absolute_training_counts() {
-    use oxpinyin_core::{PhraseToken, UserModel};
+    use oxpinyin_core::{PhraseToken, model::UserModel};
     let dir = tempdir("live-appended-readings");
     let ni = ChewingKey::from_pinyin("ni").expect("ni");
     let keys = packed_to_pinyin_keys(&[ni.to_packed()]).expect("dense");
@@ -3712,7 +3712,7 @@ fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
     let user = tempfile::tempdir().unwrap();
     let system = crate::native_fixture::system_dir();
     let dict = crate::data::SystemDictionary::open(&system).unwrap();
-    use oxpinyin_core::Dictionary as _;
+    use oxpinyin_core::model::Dictionary as _;
     let ni_key = oxpinyin_core::SyllableKey::from_text("ni").unwrap();
     let gbk = dict
         .lookup(&[ni_key])

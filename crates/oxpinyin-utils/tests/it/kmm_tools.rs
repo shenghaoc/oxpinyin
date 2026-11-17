@@ -4,7 +4,7 @@
 //! fixture corpus `fixtures/w9/segmenter-spseg-w3.txt`; the native DBM walk
 //! order is never asserted, only the set of records it emits.
 
-use oxpinyin_input::tool;
+use oxpinyin_core::input::tool;
 
 /// Format independently with libc's `%f`, as the utility's printf family does.
 #[expect(unsafe_code, reason = "libc snprintf formats the expected text")]
@@ -152,7 +152,7 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin_core::input::TEXT_NEWLINE)
 }
 
 fn block(export: &str, header: &str, until: &str) -> Vec<String> {

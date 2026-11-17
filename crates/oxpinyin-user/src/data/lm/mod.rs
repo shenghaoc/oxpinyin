@@ -1,7 +1,7 @@
 //! Bigram language model over libpinyin's own `bigram.db` and the phrase
 //! libraries' unigram counts.
 //!
-//! Implements [`oxpinyin_core::LanguageModel`] with two lazy sources:
+//! Implements [`oxpinyin_core::model::LanguageModel`] with two lazy sources:
 //!
 //! * the bigram rows — `Bigram::load` per previous token through
 //!   [`BigramTable`] (a point read on the hash container: key
@@ -42,7 +42,11 @@ use std::cell::Cell;
 use std::fmt;
 use std::path::Path;
 
-use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta, single_gram};
+use oxpinyin_core::{
+    PhraseToken,
+    model::{LanguageModel, UserCountDelta},
+    single_gram,
+};
 
 use crate::data::bigram_table::BigramTable;
 use crate::data::dict::DictError;
@@ -348,7 +352,7 @@ impl<
     /// (upstream's `get_phrase_item` failing), or owns no such item.
     #[must_use]
     pub(crate) fn unigram_count(&self, token: u32) -> Option<u64> {
-        if !self.visible(oxpinyin_core::phrase_index_library(token) as u8) {
+        if !self.visible(oxpinyin_core::model::phrase_index_library(token) as u8) {
             return None;
         }
         self.libraries().unigram_count(token)
@@ -427,7 +431,7 @@ impl<
     /// (`phonetic_lookup.h:594-599`, `pinyin.cpp:2210-2215`,
     /// `phrase_lookup.cpp:268-276` at `074a2219`): `None` when both are
     /// absent, the present gram's own bytes when one is, and
-    /// `merge_single_gram` otherwise ([`oxpinyin_core::MergedGram::merge`]).
+    /// `merge_single_gram` otherwise ([`oxpinyin_core::model::MergedGram::merge`]).
     /// The system value enters the merge as stored, from a fresh DBM read.
     ///
     /// # Errors
@@ -436,8 +440,8 @@ impl<
         &self,
         prev: u32,
         user: Option<Vec<u8>>,
-    ) -> Result<Option<oxpinyin_core::MergedGram>, LmError> {
-        Ok(oxpinyin_core::MergedGram::merge(
+    ) -> Result<Option<oxpinyin_core::model::MergedGram>, LmError> {
+        Ok(oxpinyin_core::model::MergedGram::merge(
             self.bigram.load_raw_successors(prev)?,
             user,
         ))
@@ -449,7 +453,7 @@ impl<
     fn live_unigram_count(&self, token: u32, user: &UserCountDelta) -> u64 {
         match user
             .unigram_live
-            .filter(|_| self.visible(oxpinyin_core::phrase_index_library(token) as u8))
+            .filter(|_| self.visible(oxpinyin_core::model::phrase_index_library(token) as u8))
         {
             Some(live) => u64::from(live),
             None => {
@@ -509,7 +513,7 @@ impl<
         prev: &PhraseToken,
         token: &PhraseToken,
         user: UserCountDelta,
-    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+    ) -> Result<oxpinyin_core::model::NbestStepCosts, LmError> {
         self.nbest_step_costs_using(token, user, || {
             self.merged_transition(prev.value(), token.value(), user)
         })
@@ -527,7 +531,7 @@ impl<
         token: &PhraseToken,
         user: UserCountDelta,
         item: Option<(u32, u32)>,
-    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+    ) -> Result<oxpinyin_core::model::NbestStepCosts, LmError> {
         self.nbest_step_costs_using(token, user, || {
             Ok(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
         })
@@ -538,7 +542,7 @@ impl<
         token: &PhraseToken,
         user: UserCountDelta,
         transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
-    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+    ) -> Result<oxpinyin_core::model::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
         // loaded sub-index, and every transition reads it first
         // (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`).
@@ -550,12 +554,12 @@ impl<
         // (`ERROR_NO_ITEM`, a `USER_FILE` item the store lacks included).
         // Those keep the seam's default answer — no n-best cost data, no
         // rows — as does no installed unigram table at all.
-        let nibble = oxpinyin_core::phrase_index_library(token.value()) as u8;
+        let nibble = oxpinyin_core::model::phrase_index_library(token.value()) as u8;
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {
                 let Some(count) = self.unigram_count(token.value()) else {
-                    return Ok(oxpinyin_core::NbestStepCosts::default());
+                    return Ok(oxpinyin_core::model::NbestStepCosts::default());
                 };
                 merge_unigram_counts(count, user.unigram_delta)
             }
@@ -583,9 +587,9 @@ impl<
             _ => None,
         };
         if blended.is_none() && unigram.is_none() {
-            return Ok(oxpinyin_core::NbestStepCosts::default());
+            return Ok(oxpinyin_core::model::NbestStepCosts::default());
         }
-        Ok(oxpinyin_core::NbestStepCosts {
+        Ok(oxpinyin_core::model::NbestStepCosts {
             blended,
             unigram,
             unigram_lambda,
@@ -619,7 +623,7 @@ impl<
         &self,
         prev: &Self::Token,
         token: &Self::Token,
-    ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
+    ) -> Result<oxpinyin_core::model::NbestStepCosts, Self::Error> {
         // System-only: the empty-user identity of the merged path.
         self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
     }
@@ -629,21 +633,21 @@ impl<
         _prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        _row: &mut oxpinyin_core::NbestStepRow,
-    ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
+        _row: &mut oxpinyin_core::model::NbestStepRow,
+    ) -> Result<oxpinyin_core::model::NbestStepCosts, Self::Error> {
         self.nbest_item_costs(token, UserCountDelta::ZERO, item)
     }
 
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &Self::Token,
-        row: &'a mut oxpinyin_core::NbestStepRow,
-    ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
+        row: &'a mut oxpinyin_core::model::NbestStepRow,
+    ) -> Result<Option<oxpinyin_core::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
             row.get_or_try_init(|| self.load_merged_row(prev.value(), None))?
                 .map_or(
-                    oxpinyin_core::NbestSuccessors::Miss,
-                    oxpinyin_core::NbestSuccessors::Row,
+                    oxpinyin_core::model::NbestSuccessors::Miss,
+                    oxpinyin_core::model::NbestSuccessors::Row,
                 ),
         ))
     }

@@ -107,7 +107,7 @@ and volatile GLib diagnostic prefixes.
 The matrix module checks the shared lookup loader's required chunk errors.
 `table_guards.rs` checks exact prior output and the input tree after a later EINVAL.
 The two table state-machine tests live in `crates/oxpinyin-repl/src/tables/tests.rs`.
-The input crate's `getline_keeps_the_pins_lines_and_its_last_line` checks the
+The input module's `getline_keeps_the_pins_lines_and_its_last_line` checks the
 unterminated final line and the C-string view of embedded NULs.
 Fixed-path missing-config cases and the upstream executable's help text
 are harness-specific; the data layer's missing-file/header tests cover the data side.

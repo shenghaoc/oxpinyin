@@ -334,8 +334,8 @@ impl PhraseItemView<'_> {
 /// that the header's length word is the payload length and that the
 /// checksum verifies. Every refusal is [`LibraryError::Unmappable`], the
 /// one error after which the pin writes `mmap %s failed!`.
-fn map_chunk(path: &Path) -> Result<oxpinyin_input::chunk::Mapping, LibraryError> {
-    use oxpinyin_input::chunk::MappingSource;
+fn map_chunk(path: &Path) -> Result<oxpinyin_core::input::chunk::Mapping, LibraryError> {
+    use oxpinyin_core::input::chunk::MappingSource;
 
     let unmappable = |cause: LibraryError| LibraryError::Unmappable {
         path: path.to_path_buf(),
@@ -423,7 +423,7 @@ pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
 /// A writable private view of one library's offset array and phrase-content
 /// area. Changes never reach the system file or other library views.
 pub(crate) struct PhraseContent {
-    mapping: oxpinyin_input::chunk::Mapping,
+    mapping: oxpinyin_core::input::chunk::Mapping,
     offsets: Range<usize>,
     area: Range<usize>,
 }
@@ -448,7 +448,7 @@ impl PhraseContent {
 }
 
 enum LibraryBytes {
-    Mapped(oxpinyin_input::chunk::Mapping),
+    Mapped(oxpinyin_core::input::chunk::Mapping),
     Owned(Vec<u8>),
 }
 
@@ -556,12 +556,12 @@ impl PhraseLibrary {
     /// # Errors
     /// Returns a read, checksum, or layout error.
     pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
-        let loaded = oxpinyin_input::chunk::load(path).map_err(|error| match error {
-            oxpinyin_input::chunk::ChunkLoadError::Header(_) => {
+        let loaded = oxpinyin_core::input::chunk::load(path).map_err(|error| match error {
+            oxpinyin_core::input::chunk::ChunkLoadError::Header(_) => {
                 LibraryError::Row(RowFault::ChunkHeaderRead)
             }
-            oxpinyin_input::chunk::ChunkLoadError::Io(error) => LibraryError::Io(error),
-            oxpinyin_input::chunk::ChunkLoadError::ShortHeader => {
+            oxpinyin_core::input::chunk::ChunkLoadError::Io(error) => LibraryError::Io(error),
+            oxpinyin_core::input::chunk::ChunkLoadError::ShortHeader => {
                 LibraryError::Format("chunk shorter than its header".into())
             }
         })?;

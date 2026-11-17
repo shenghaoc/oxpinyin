@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library, sort_tokens_by_library};
 use crate::fixture_doubles::{FixtureDictionary, FixtureError, FixtureLanguageModel};
-use crate::{Dictionary, SyllableKey};
+use crate::{SyllableKey, model::Dictionary};
 
 /// `add_index` files a token under `PHRASE_INDEX_LIBRARY_INDEX(token)`
 /// and keeps its whole value (`phrase_large_table3.cpp:42`,
@@ -146,7 +146,7 @@ fn unresolved_items_keep_their_place_in_the_range() {
 
 #[test]
 fn step_row_reuses_hits_and_misses_but_retries_errors() {
-    use crate::{MergedGram, NbestStepRow};
+    use crate::{model::MergedGram, model::NbestStepRow};
     let mut row = NbestStepRow::default();
     assert_eq!(
         row.get_or_try_init::<&str>(|| Err("empty value")).err(),
@@ -184,7 +184,7 @@ fn step_row_reuses_hits_and_misses_but_retries_errors() {
 /// `1..=3` yields every item, duplicates included.
 #[test]
 fn a_merged_row_answers_as_the_pins_merged_chunk() {
-    use crate::{MergedGram, NbestStepRow, NbestSuccessors};
+    use crate::{model::MergedGram, model::NbestStepRow, model::NbestSuccessors};
     let chunk = |total: u32, items: &[(u32, u32)]| {
         let mut value = total.to_le_bytes().to_vec();
         for (token, count) in items {
@@ -225,7 +225,7 @@ fn a_merged_row_answers_as_the_pins_merged_chunk() {
 /// (`ngram.cpp:168`) — every item — so the walk yields nothing.
 #[test]
 fn a_range_ending_at_the_last_token_searches_nothing_as_the_pin_does() {
-    use crate::MergedGram;
+    use crate::model::MergedGram;
     let gram = MergedGram::new(2, vec![(u32::MAX - 1, 1), (u32::MAX, 1)]);
     let mut items = Vec::new();
     gram.search_into(u32::MAX, u32::MAX, &mut items).unwrap();
@@ -244,7 +244,7 @@ fn a_range_ending_at_the_last_token_searches_nothing_as_the_pin_does() {
 /// the fault surfaces at the first read that meets it.
 #[test]
 fn a_merge_the_pin_cannot_read_answers_its_fault() {
-    use crate::{GramFault, MergedGram};
+    use crate::{GramFault, model::MergedGram};
     let system = {
         let mut value = 4_u32.to_le_bytes().to_vec();
         value.extend_from_slice(&2_u32.to_le_bytes());
@@ -291,7 +291,7 @@ fn gram(total: u32, records: &[(u32, u32)]) -> Vec<u8> {
 }
 
 fn merged(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Vec<u8>> {
-    crate::MergedGram::merge(system, user).map(|row| row.to_bytes())
+    crate::model::MergedGram::merge(system, user).map(|row| row.to_bytes())
 }
 
 /// `merge_single_gram`'s loop (`ngram.cpp:308-349` at `074a2219`),
@@ -338,7 +338,7 @@ fn row_merge_is_the_pins_two_pointer_interleave_for_arbitrary_rows() {
 
 // The fixture doubles' own contract: parsing and lookup.
 
-const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
+const VOCAB: &str = include_str!("../../../../fixtures/w4/mini-vocab.txt");
 
 fn keys(text: &str) -> Vec<SyllableKey> {
     text.split(',')
@@ -489,9 +489,9 @@ fn comments_and_blank_lines_are_skipped() {
 // the capture ranks candidates across every segmentation of an input, so it
 // cannot say which keys a candidate covers. That is recorded in the finding.
 
-const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
+const F_A: &str = include_str!("../../../../fixtures/foundation/f-a.txt");
 
-const F_C: &str = include_str!("../../../fixtures/foundation/f-c.txt");
+const F_C: &str = include_str!("../../../../fixtures/foundation/f-c.txt");
 
 const BASE_WEIGHT: u64 = 1_000;
 

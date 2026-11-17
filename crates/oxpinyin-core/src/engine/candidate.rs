@@ -262,7 +262,7 @@ pub(crate) struct UnreadableCandidates {
 }
 
 impl UnreadableCandidates {
-    pub fn append(&mut self, rows: crate::UnreadableRows, start: usize, end: usize) {
+    pub fn append(&mut self, rows: crate::model::UnreadableRows, start: usize, end: usize) {
         if self.count == 0 {
             self.first = rows.first.map(|token| (token, start, end));
         }

@@ -23,7 +23,7 @@ The [Rust conventions](rust-conventions.md) define lint denials and narrow justi
 Those lints do not prove behavioural correspondence.
 
 oxpinyin reduces libpinyin's tight coupling and preserves behaviour.
-The additional `oxpinyin-input` crate serves that goal.
+The additional `oxpinyin_core::input` crate serves that goal.
 The aim is fewer unnecessary dependencies between crates, not fewer crates.
 Unrelated workspace parts are not restructured.
 

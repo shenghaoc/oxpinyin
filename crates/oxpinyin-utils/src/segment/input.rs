@@ -11,7 +11,7 @@ use std::ffi::CStr;
 use std::fs::File;
 use std::io::{BufReader, StdinLock};
 
-use oxpinyin_input::tool::{self, LineReader};
+use oxpinyin_core::input::tool::{self, LineReader};
 
 /// Either `std::cin` (tied: each read flushes `stdout`) or an
 /// `std::ifstream` (untied).

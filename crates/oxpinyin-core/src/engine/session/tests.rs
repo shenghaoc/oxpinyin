@@ -34,7 +34,8 @@ fn full_parsed_len_reflects_the_exact_chain() {
 }
 
 use crate::{
-    Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey, UserModel,
+    PhraseEntry, PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel, NbestStepCosts, UserModel},
 };
 
 use super::{Selection, SelectionTarget, Session};
@@ -1291,7 +1292,7 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
 
 #[test]
 fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
-    use crate::{MergedGram, OptionBits};
+    use crate::{OptionBits, model::MergedGram};
 
     let clear = OptionBits::default();
     let set = OptionBits::DYNAMIC_ADJUST;
@@ -1394,7 +1395,7 @@ impl Dictionary for SystemPhrases {
 /// invisible to any output-only assertion.
 struct CountingBigrams {
     unigrams: FixedUnigrams,
-    row: Option<crate::MergedGram>,
+    row: Option<crate::model::MergedGram>,
     merges: std::rc::Rc<std::cell::Cell<usize>>,
     asked_about: std::rc::Rc<std::cell::Cell<u32>>,
 }
@@ -1422,7 +1423,7 @@ impl LanguageModel for CountingBigrams {
     fn merged_successors(
         &self,
         prev: &PhraseToken,
-    ) -> Result<Option<crate::MergedGram>, EngineError> {
+    ) -> Result<Option<crate::model::MergedGram>, EngineError> {
         self.merges.set(self.merges.get() + 1);
         self.asked_about.set(prev.value());
         Ok(self.row.clone())
@@ -1449,7 +1450,7 @@ struct DynamicAdjustRun {
 fn dynamic_adjust_run(
     entries: usize,
     dynamic: bool,
-    row: Option<crate::MergedGram>,
+    row: Option<crate::model::MergedGram>,
 ) -> DynamicAdjustRun {
     use crate::OptionBits;
     use std::cell::Cell;
@@ -1515,7 +1516,7 @@ fn dynamic_adjust_run(
 /// token the row credits.
 #[test]
 fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
-    use crate::MergedGram;
+    use crate::model::MergedGram;
 
     // A row that credits the SECOND phrase with half its mass. The
     // unigram answer is a constant across tokens, so with the bit clear
@@ -1911,7 +1912,7 @@ impl Dictionary for TwoFacadeDict {
 /// fresh session's window, before and after the cursor.
 #[test]
 fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
-    use crate::{MergedGram, OptionBits};
+    use crate::{OptionBits, model::MergedGram};
 
     let whole = MergedGram::new(4, vec![(DYNAMIC_ADJUST_FIRST, 4)]).to_bytes();
     let mut partial = whole.clone();
@@ -3372,9 +3373,9 @@ impl Dictionary for StoredTone3 {
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
         _row: &mut Vec<u8>,
-    ) -> Result<(crate::UnreadableRows, bool), EngineError> {
+    ) -> Result<(crate::model::UnreadableRows, bool), EngineError> {
         *out = self.trellis_records(syllables, tones)?;
-        Ok((crate::UnreadableRows::default(), true))
+        Ok((crate::model::UnreadableRows::default(), true))
     }
 }
 
@@ -3924,7 +3925,7 @@ fn the_matrix_keys_are_the_parse_in_column_order() {
 /// (`phonetic_lookup.cpp:120-165` at 074a2219).
 struct ItemDictionary {
     inner: FixtureDictionary,
-    items: std::collections::HashMap<u32, crate::PronunciationRows>,
+    items: std::collections::HashMap<u32, crate::model::PronunciationRows>,
     /// Every item read fails, as a backend that cannot serve it would.
     failing: bool,
 }
@@ -3944,7 +3945,7 @@ impl Dictionary for ItemDictionary {
     fn phrase_item_pronunciations(
         &self,
         token: PhraseToken,
-    ) -> Result<crate::PhraseItemRead, EngineError> {
+    ) -> Result<crate::model::PhraseItemRead, EngineError> {
         if self.failing {
             return Err(EngineError::Scoring(
                 crate::scoring::ScoringError::Dictionary("item read failed".into()),
@@ -3954,15 +3955,15 @@ impl Dictionary for ItemDictionary {
             .items
             .get(&token.value())
             .cloned()
-            .map_or(crate::PhraseItemRead::NoItem, |rows| {
-                crate::PhraseItemRead::Item(rows)
+            .map_or(crate::model::PhraseItemRead::NoItem, |rows| {
+                crate::model::PhraseItemRead::Item(rows)
             }))
     }
 }
 
 /// 中华人民 and 种花人民 as one item: `zhong1 hua2 ren2 min2` (frequency 50)
 /// and `zhong3 hua1 ren2 min2` (frequency 1).
-fn wide_abbreviation_item() -> crate::PronunciationRows {
+fn wide_abbreviation_item() -> crate::model::PronunciationRows {
     let reading = |spellings: [(&str, u8); 4]| -> Vec<crate::ChewingKey> {
         spellings
             .into_iter()
@@ -3989,7 +3990,7 @@ fn wide_abbreviation_item() -> crate::PronunciationRows {
 /// token 7 forced over all of it and the selection record rebuilt from that
 /// forcing.
 fn wide_abbreviation_session(
-    item: Option<crate::PronunciationRows>,
+    item: Option<crate::model::PronunciationRows>,
 ) -> Session<ItemDictionary, TrellisModel> {
     let mut session = Session::new(
         SessionSettings::default(),
@@ -4162,9 +4163,9 @@ pub(super) fn select_row<D, L>(
     index: usize,
 ) -> Result<Selection, EngineError>
 where
-    D: crate::Dictionary<Syllable = crate::SyllableKey>,
+    D: crate::model::Dictionary<Syllable = crate::SyllableKey>,
     D::Error: core::fmt::Display,
-    L: crate::LanguageModel<Token = PhraseToken>,
+    L: crate::model::LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
     session.refresh_candidates()?;
@@ -4542,7 +4543,7 @@ pub(super) mod session_lifecycle {
 /// The F-D replay fixture session and the session-level replay tests; the
 /// scenarios themselves are in `selection/tests.rs`.
 pub(super) mod session_replay {
-    use crate::{Dictionary, SyllableKey};
+    use crate::{SyllableKey, model::Dictionary};
 
     use crate::engine::Session;
     use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};

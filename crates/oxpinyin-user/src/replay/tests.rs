@@ -913,7 +913,7 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
         let frame = crate::data::chunk_write::build_chunk(&[(1, item.clone())]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gb_char.bin");
-        oxpinyin_input::chunk::save(&path, &frame).unwrap();
+        oxpinyin_core::input::chunk::save(&path, &frame).unwrap();
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load_heap(0, &path).unwrap());
         libraries.pronunciation_possibility(1, &[key]).unwrap()

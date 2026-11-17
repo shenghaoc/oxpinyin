@@ -21,7 +21,7 @@
 //! Scoring is the upstream per-step form
 //! `log((λ·bigram + (1−λ)·unigram) · pinyin_poss)` accumulated in f32,
 //! with pre-log pieces from
-//! [`crate::LanguageModel::nbest_step_costs`]. The bigram branch
+//! [`crate::model::LanguageModel::nbest_step_costs`]. The bigram branch
 //! expands every beam value; the unigram branch expands only the beam's
 //! head, as upstream's `search_bigram2` / `search_unigram2` do.
 //! Pronunciation sums every matrix path of the span before the epsilon
@@ -35,8 +35,11 @@ use std::collections::hash_map::Entry;
 use crate::graph::{GraphError, MAX_GRAPH_POSITION};
 use crate::scoring::ScoringError;
 use crate::{
-    ChewingKey, Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges,
-    PhraseItemRead, PhraseText, PhraseToken, PronunciationRows, SyllableKey, TokenPhrase,
+    ChewingKey, PhraseText, PhraseToken, SyllableKey,
+    model::{
+        Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
+        PronunciationRows, TokenPhrase,
+    },
 };
 use smallvec::SmallVec;
 
@@ -1462,7 +1465,7 @@ where
     let mut selected: Vec<Selected<'_>> = Vec::new();
     // The best predecessor's row, which the unigram pass below hands to the
     // model again.
-    let mut head_row = crate::NbestStepRow::default();
+    let mut head_row = crate::model::NbestStepRow::default();
     for (index, predecessor) in beam.iter().enumerate() {
         selected.clear();
         let prev = predecessor.value.token;
@@ -1470,7 +1473,7 @@ where
         // every beam value in every `search_bigram2` call, `sentence_start`
         // included (`phonetic_lookup.h:588-599` at 074a2219). No row is
         // kept for the step's next span.
-        let mut loaded = crate::NbestStepRow::default();
+        let mut loaded = crate::model::NbestStepRow::default();
         let row = &mut loaded;
         let traversal = match model
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
@@ -1532,7 +1535,7 @@ fn expand_span_entries<D, L>(
     span: &std::ops::Range<usize>,
     model: &L,
     predecessor: &BeamEntry,
-    row: &mut crate::NbestStepRow,
+    row: &mut crate::model::NbestStepRow,
     trellis: &mut Trellis,
     branch: Branch,
 ) -> Result<(), EngineError>
@@ -1676,7 +1679,7 @@ fn expand_one<L: LanguageModel<Token = PhraseToken>>(
     entry: &SpanEntry,
     ctx: StepCtx<'_, L>,
     predecessor: &BeamEntry,
-    row: &mut crate::NbestStepRow,
+    row: &mut crate::model::NbestStepRow,
     trellis: &mut Trellis,
     branch: Branch,
 ) -> Result<(), EngineError>

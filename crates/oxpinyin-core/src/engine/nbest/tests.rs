@@ -4,7 +4,8 @@ use crate::engine::session::ScanKey;
 use crate::engine::session::matrix::ScanMatrix;
 use crate::graph::SegmentGraph;
 use crate::{
-    Dictionary, LanguageModel, NbestStepCosts, OptionBits, PhraseText, PhraseToken, SyllableKey,
+    OptionBits, PhraseText, PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel, NbestStepCosts},
 };
 use std::cell::RefCell;
 
@@ -68,7 +69,7 @@ fn priced_slot(token: u32) -> super::LazySlot {
 }
 
 fn pricing(
-    ranges: &crate::PhraseIndexRanges<super::LazySlot>,
+    ranges: &crate::model::PhraseIndexRanges<super::LazySlot>,
 ) -> super::Pricing<'_, FixtureDictionary> {
     static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
     // The paths are leaked rather than held in a static.
@@ -640,7 +641,7 @@ fn backtracking_uses_the_physical_slot_after_batch_selection() {
             facts: &RefCell::default(),
         },
         predecessor,
-        &mut crate::NbestStepRow::default(),
+        &mut crate::model::NbestStepRow::default(),
         &mut trellis,
         super::Branch::Unigram,
     )
@@ -804,7 +805,7 @@ fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
 /// and no predecessor reads another's row.
 #[test]
 fn row_cached_step_costs_decode_as_the_pairwise_path() {
-    use crate::{MergedGram, NbestStepRow};
+    use crate::model::{MergedGram, NbestStepRow};
     use std::cell::Cell;
 
     fn records(prev: u32, flipped: bool) -> Vec<(u32, u64)> {
@@ -913,7 +914,7 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
 
 #[test]
 fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
-    use crate::{MergedGram, NbestStepRow};
+    use crate::model::{MergedGram, NbestStepRow};
     use std::cell::RefCell;
 
     struct Sparse(RefCell<Vec<u32>>);
@@ -925,12 +926,15 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
             &self,
             _: &PhraseToken,
             row: &'a mut NbestStepRow,
-        ) -> Result<Option<crate::NbestSuccessors<'a>>, EngineError> {
+        ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
             Ok(Some(
                 row.get_or_try_init::<EngineError>(|| {
                     Ok(Some(MergedGram::new(2, vec![(1, 2), (3, 0)])))
                 })?
-                .map_or(crate::NbestSuccessors::Miss, crate::NbestSuccessors::Row),
+                .map_or(
+                    crate::model::NbestSuccessors::Miss,
+                    crate::model::NbestSuccessors::Row,
+                ),
             ))
         }
 
@@ -950,7 +954,7 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
         }
     }
 
-    let mut entries = crate::PhraseIndexRanges::new();
+    let mut entries = crate::model::PhraseIndexRanges::new();
     entries.convert([3, 2, 1, 3].map(|token| (token, Some(priced_slot(token)))));
     let model = Sparse(RefCell::new(Vec::new()));
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
@@ -970,7 +974,7 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
 /// partial tail. A walk that stops before the tail steps normally.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
-    use crate::{MergedGram, NbestStepRow, NbestSuccessors};
+    use crate::model::{MergedGram, NbestStepRow, NbestSuccessors};
 
     struct Rows(Option<MergedGram>);
     impl LanguageModel for Rows {
@@ -1013,7 +1017,7 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
         value.extend_from_slice(tail);
         value
     };
-    let mut entries = crate::PhraseIndexRanges::new();
+    let mut entries = crate::model::PhraseIndexRanges::new();
     entries.convert([1, 2].map(|token| (token, Some(priced_slot(token)))));
     let run = |row: Option<MergedGram>, one_step: Option<u32>| {
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
@@ -1048,7 +1052,7 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
 /// own count, so 2 steps there with 7.
 #[test]
 fn a_token_the_walk_yields_below_its_range_still_steps() {
-    use crate::{MergedGram, NbestStepRow, NbestSuccessors};
+    use crate::model::{MergedGram, NbestStepRow, NbestSuccessors};
     use std::cell::RefCell;
 
     /// Each bigram step's token and the item it was priced from.
@@ -1090,7 +1094,7 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
         }
     }
 
-    let mut entries = crate::PhraseIndexRanges::new();
+    let mut entries = crate::model::PhraseIndexRanges::new();
     entries.convert([1, 3, 2].map(|token| (token, Some(priced_slot(token)))));
     let model = Walked(RefCell::new(Vec::new()));
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);

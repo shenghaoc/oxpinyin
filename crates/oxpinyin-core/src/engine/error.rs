@@ -302,7 +302,7 @@ impl EngineError {
     /// `ngram_kyotodb.cpp:136-137` at 074a2219), a scoring error otherwise.
     pub(crate) fn row_read<L>(model: &L, token: u32, error: &L::Error) -> Self
     where
-        L: crate::LanguageModel + ?Sized,
+        L: crate::model::LanguageModel + ?Sized,
         L::Error: fmt::Display,
     {
         if model.is_read_after_check(error) {

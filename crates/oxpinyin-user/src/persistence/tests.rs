@@ -2226,7 +2226,7 @@ mod save_semantics_929 {
         libraries.sort_by_key(|(index, _)| *index);
         let mut names: Vec<_> = libraries
             .into_iter()
-            .map(|(_, name)| oxpinyin_input::path::build_path(dir, name.as_ref()))
+            .map(|(_, name)| oxpinyin_core::input::path::build_path(dir, name.as_ref()))
             .collect();
         names.extend(
             [

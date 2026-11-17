@@ -23,8 +23,8 @@ use std::fmt;
 use std::path::Path;
 
 use oxpinyin_core::{
-    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseText,
-    PhraseToken, SyllableKey, TokenPhrase, TrellisItem,
+    ChewingKey, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+    model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
 };
 use oxpinyin_store::{DefaultStore, RawReadStore};
 
@@ -119,7 +119,7 @@ fn resolve_item(
 fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) -> bool {
     libraries.library(token).is_some()
         || 1_u32
-            .checked_shl(oxpinyin_core::phrase_index_library(token) as u32)
+            .checked_shl(oxpinyin_core::model::phrase_index_library(token) as u32)
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
@@ -342,11 +342,11 @@ impl SystemDictionary {
     /// library unloaded, as `FacadePhraseIndex::load` failing does.
     pub fn open(system_dir: &Path) -> Result<Self, DictError> {
         Self::open_files(
-            &oxpinyin_input::path::build_path(
+            &oxpinyin_core::input::path::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
             ),
-            &oxpinyin_input::path::build_path(
+            &oxpinyin_core::input::path::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
             ),
@@ -383,11 +383,11 @@ impl SystemDictionary {
             .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
             .collect();
         let mut dict = Self::open_files_with(
-            &oxpinyin_input::path::build_path(
+            &oxpinyin_core::input::path::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
             ),
-            &oxpinyin_input::path::build_path(
+            &oxpinyin_core::input::path::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
             ),
@@ -408,14 +408,14 @@ impl SystemDictionary {
     pub fn attach_tables(system_dir: &Path, conf: &TableConf) -> Result<SystemTables, DictError> {
         Ok(SystemTables {
             pinyin: ChewingTable::new(crate::data::chewing_table::DefaultDbm::attach(
-                &oxpinyin_input::path::build_path(
+                &oxpinyin_core::input::path::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
                 ),
                 false,
             )?),
             phrase: PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
-                &oxpinyin_input::path::build_path(
+                &oxpinyin_core::input::path::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
                 ),
@@ -471,9 +471,9 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         row: &mut Vec<u8>,
         mut visible: impl FnMut(u32) -> bool,
         mut live: impl FnMut(u32) -> Option<PhraseEntry>,
-    ) -> Result<(oxpinyin_core::UnreadableRows, bool), DictError> {
+    ) -> Result<(oxpinyin_core::model::UnreadableRows, bool), DictError> {
         out.clear();
-        let mut unreadable = oxpinyin_core::UnreadableRows::default();
+        let mut unreadable = oxpinyin_core::model::UnreadableRows::default();
         if syllables.is_empty() {
             return Ok((unreadable, false));
         }
@@ -652,7 +652,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         }
         // `reduce_tokens`'s library grouping: tokens filed by nibble
         // ascending, cursor order within a library.
-        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        oxpinyin_core::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens))
     }
 
@@ -775,7 +775,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
-    ) -> Result<oxpinyin_core::UnreadableRows, DictError> {
+    ) -> Result<oxpinyin_core::model::UnreadableRows, DictError> {
         self.lookup_with_live(
             syllables,
             &[],
@@ -877,7 +877,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
         row: &mut Vec<u8>,
-    ) -> Result<(oxpinyin_core::UnreadableRows, bool), Self::Error> {
+    ) -> Result<(oxpinyin_core::model::UnreadableRows, bool), Self::Error> {
         self.lookup_with_live(
             syllables,
             tones,
@@ -987,7 +987,10 @@ impl AddonDictionary {
     /// Returns failures before native attach.
     pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
         let path = |kind: SystemDbm| {
-            oxpinyin_input::path::build_path(system_dir, std::ffi::OsStr::new(&kind.file_name()))
+            oxpinyin_core::input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&kind.file_name()),
+            )
         };
         Ok(Self {
             pinyin: Some(ChewingTable::new(
@@ -1118,12 +1121,12 @@ impl AddonDictionary {
         let Some(file) = file else {
             return Err(LibraryError::Row(RowFault::NullChunkName));
         };
-        let path = oxpinyin_input::path::build_chunk_path(dir, file.as_ref());
+        let path = oxpinyin_core::input::path::build_chunk_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
             // size where the boundary says the loader opens directories; on
             // Windows the open is refused and the row is skipped below.
-            Ok(meta) if meta.is_dir() && oxpinyin_input::chunk::opens_directories() => {}
+            Ok(meta) if meta.is_dir() && oxpinyin_core::input::chunk::opens_directories() => {}
             Ok(meta) if !meta.is_file() => return Ok(false),
             Ok(_) => {}
             Err(error) => {

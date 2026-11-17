@@ -21,7 +21,7 @@ fn run(dir: &Path, args: &[&str]) -> Output {
 /// UTF-8 phrase refusal.
 #[test]
 fn a_phrase_ending_in_a_truncated_lead_byte_is_refused() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let newline = oxpinyin_core::input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), b"\xe3 1 \xe3\x84\x9a\n").unwrap();
     let out = run(dir.path(), &["-o", "out.table", "in.txt"]);
@@ -42,7 +42,7 @@ fn a_phrase_ending_in_a_truncated_lead_byte_is_refused() {
 /// defined range.
 #[test]
 fn a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble() {
-    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let newline = oxpinyin_core::input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), "你 5 ㄋㄧ\n").unwrap();
     let cases: [(&[&str], u32); 2] = [

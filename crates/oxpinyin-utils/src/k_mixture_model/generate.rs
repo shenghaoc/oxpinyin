@@ -13,7 +13,7 @@
 //! headers and the magic total in `post_processing_unigram` (`:283-311`).
 //!
 //! Both `GHashTable`s are GLib's own, through
-//! [`oxpinyin_input::tool::DirectHashTable`]: the pin walks them with
+//! [`oxpinyin_core::input::tool::DirectHashTable`]: the pin walks them with
 //! `g_hash_table_iter_next` to choose the DBM write order, so reproducing
 //! the container's record order needs GLib's order, not a Rust map's.
 //! `m_Mr` is the only cross-document state each pair carries, so documents
@@ -23,7 +23,7 @@
 
 use std::ffi::{CStr, CString};
 
-use oxpinyin_input::tool::{self, DirectHashTable, LineReader, k_mixture_model as edge};
+use oxpinyin_core::input::tool::{self, DirectHashTable, LineReader, k_mixture_model as edge};
 
 use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::k_mixture_model::phrase::PhraseIndex;

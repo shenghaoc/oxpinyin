@@ -26,14 +26,13 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Class (b) rulings stay authoritative.
    The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
 5. **Unsafe code.** The target allowlist is:
-   - oxpinyin-core/user/facade forbid `unsafe`.
-   - The bidirectional `oxpinyin-input` boundary permits scoped unsafe modules.
-   - `oxpinyin-store` denies `unsafe`, with scoped backend allows.
+   - The core library denies unsafe code. Its parser, model, engine, marshalling and table modules forbid it.
+   - In `oxpinyin_core::input`, `native` owns the library's libc, GLib and mapping operations. The feature-gated `tool` module owns the utilities' native operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
+   - The user and facade libraries forbid unsafe code.
+   - Store denies unsafe code outside its Berkeley DB FFI, Kyoto Cabinet bridge and FFI, and tkrzw bridge.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
-   - Every unsafe block has a `// SAFETY:` comment.
+   - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.
 
-   The system/addon mapping boundary is active: the user crate uses the input mapping API and has `#![forbid(unsafe_code)]`.
-   Crate-root `#![forbid]` attributes and scoped allows enforce the implemented allowlist.
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
    `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.
    CI enforces these lints.

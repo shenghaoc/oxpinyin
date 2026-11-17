@@ -2,8 +2,8 @@
 
 use std::os::raw::{c_char, c_int};
 
-use oxpinyin_core::Dictionary;
 use oxpinyin_core::engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
+use oxpinyin_core::model::Dictionary;
 use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::iterators::ImportPlan;

@@ -31,9 +31,11 @@ const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 
 use oxpinyin_core::engine::{EngineError, Session, SessionSettings, StoragePaths};
 use oxpinyin_core::{
-    Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
-    PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
-    UserCountDelta,
+    PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+    model::{
+        Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseIndexRanges, PhraseItemRead,
+        TrellisItem, TrellisPathMemo, UserCountDelta,
+    },
 };
 pub(crate) use oxpinyin_user::data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
@@ -78,7 +80,7 @@ pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]
     let mut merged = Vec::with_capacity(system.len() + user.len());
     merged.extend_from_slice(system);
     merged.extend(user.into_iter().map(|(token, _)| token));
-    oxpinyin_core::sort_tokens_by_library(&mut merged);
+    oxpinyin_core::model::sort_tokens_by_library(&mut merged);
     merged
 }
 
@@ -294,7 +296,7 @@ const fn library_of(token: u32) -> u8 {
     oxpinyin_user::phrase_index_library_index(token)
 }
 
-pub(crate) use oxpinyin_core::TokenPhrase;
+pub(crate) use oxpinyin_core::model::TokenPhrase;
 
 /// One token reading, without the text or any other reading's keys.
 pub struct TokenPronunciation {
@@ -350,7 +352,7 @@ impl<'a> RuntimeDict<'a> {
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
         row: &mut Vec<u8>,
-    ) -> Result<(oxpinyin_core::UnreadableRows, bool), DictError> {
+    ) -> Result<(oxpinyin_core::model::UnreadableRows, bool), DictError> {
         let (mut unreadable, system_present) = self.system.lookup_with_live(
             syllables,
             tones,
@@ -1099,7 +1101,7 @@ impl Dictionary for RuntimeDict<'_> {
         tones: &[u8],
         out: &mut Vec<PhraseEntry>,
         row: &mut Vec<u8>,
-    ) -> Result<(oxpinyin_core::UnreadableRows, bool), Self::Error> {
+    ) -> Result<(oxpinyin_core::model::UnreadableRows, bool), Self::Error> {
         // One system get per path serves the tokens and `SEARCH_CONTINUED`,
         // then the user table's search, with no early return
         // (`facade_chewing_table2.h:109-129` at 074a2219). A failed
@@ -1147,7 +1149,7 @@ impl Dictionary for RuntimeDict<'_> {
         );
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
         // reduce_tokens groups the system and user table results by library.
-        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        oxpinyin_core::model::sort_tokens_by_library(&mut tokens);
         tokens.into_iter().map(PhraseToken::new).collect()
     }
 
@@ -1163,7 +1165,7 @@ impl Dictionary for RuntimeDict<'_> {
                 .unwrap_or_default(),
         );
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
-        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        oxpinyin_core::model::sort_tokens_by_library(&mut tokens);
         tokens.into_iter().map(PhraseToken::new).collect()
     }
 
@@ -1223,7 +1225,7 @@ impl Dictionary for RuntimeDict<'_> {
         if self.library_mask.get() != 0 {
             tokens.retain(|token| self.library_visible(u32::from(library_of(*token))));
         }
-        oxpinyin_core::sort_tokens_by_library(&mut tokens);
+        oxpinyin_core::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
@@ -1423,7 +1425,7 @@ impl LanguageModel for RuntimeLm<'_> {
         prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        row: &mut oxpinyin_core::NbestStepRow,
+        row: &mut oxpinyin_core::model::NbestStepRow,
         facts: &mut oxpinyin_core::sentence_facts::SentenceFacts,
     ) -> Result<NbestStepCosts, Self::Error> {
         if let Some(costs) = self.costs_with_facts(token, item, facts) {
@@ -1437,7 +1439,7 @@ impl LanguageModel for RuntimeLm<'_> {
         _prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        _row: &mut oxpinyin_core::NbestStepRow,
+        _row: &mut oxpinyin_core::model::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         let extra = self.delta(None, token.value())?;
         self.inner.nbest_item_costs(token, extra, item)
@@ -1446,13 +1448,13 @@ impl LanguageModel for RuntimeLm<'_> {
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &Self::Token,
-        row: &'a mut oxpinyin_core::NbestStepRow,
-    ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
+        row: &'a mut oxpinyin_core::model::NbestStepRow,
+    ) -> Result<Option<oxpinyin_core::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
             row.get_or_try_init(|| self.merged_row(prev.value()))?
                 .map_or(
-                    oxpinyin_core::NbestSuccessors::Miss,
-                    oxpinyin_core::NbestSuccessors::Row,
+                    oxpinyin_core::model::NbestSuccessors::Miss,
+                    oxpinyin_core::model::NbestSuccessors::Row,
                 ),
         ))
     }
@@ -1788,7 +1790,7 @@ impl Runtime {
 
         // The bigram follows the library loop (`pinyin.cpp:394-397`,
         // `zhuyin.cpp:336-339`).
-        let bigram = oxpinyin_input::path::build_path(
+        let bigram = oxpinyin_core::input::path::build_path(
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
@@ -2185,7 +2187,7 @@ impl Runtime {
             let Some(name) = row.system.as_ref() else {
                 continue;
             };
-            let path = oxpinyin_input::path::build_chunk_path(dir, name.as_ref());
+            let path = oxpinyin_core::input::path::build_chunk_path(dir, name.as_ref());
             if !libraries.is_loaded(index) {
                 continue;
             }

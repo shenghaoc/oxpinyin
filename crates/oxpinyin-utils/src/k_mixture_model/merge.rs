@@ -12,7 +12,7 @@
 
 use std::ffi::CStr;
 
-use oxpinyin_input::tool::{self, k_mixture_model as edge};
+use oxpinyin_core::input::tool::{self, k_mixture_model as edge};
 
 use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::k_mixture_model::records::{

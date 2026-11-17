@@ -14,7 +14,7 @@ fn prefix_prompt_writes_the_pins_exact_bytes() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "tool::tests::prefix_prompt_writes_the_pins_exact_bytes",
+            "input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes",
             "--quiet",
         ])
         .env(CHILD, "1")
@@ -44,7 +44,7 @@ fn exit_on_store_error_prints_one_line_and_exits_with_status_1() {
     let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
         .args([
             "--exact",
-            "tool::tests::exit_on_store_error_prints_one_line_and_exits_with_status_1",
+            "input::tool::tests::exit_on_store_error_prints_one_line_and_exits_with_status_1",
             "--test-threads=1",
         ])
         .env(STORE_ERROR_CHILD, "1")
@@ -88,10 +88,10 @@ fn a_file_opens_and_a_missing_one_does_not() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.txt");
     std::fs::write(&path, b"x\n").unwrap();
-    let mut input = LineReader::open(&crate::c_path(&path).unwrap());
+    let mut input = LineReader::open(&crate::input::c_path(&path).unwrap());
     assert!(input.is_open() && input.getline());
     assert_eq!(input.line(), b"x");
-    let missing = LineReader::open(&crate::c_path(&dir.path().join("absent")).unwrap());
+    let missing = LineReader::open(&crate::input::c_path(&dir.path().join("absent")).unwrap());
     assert!(!missing.is_open());
 }
 

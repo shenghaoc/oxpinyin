@@ -11,7 +11,7 @@
 //! Each operation here is the pin's C++ control flow: the same per-token
 //! walks (`get_all_items` in the backend's native order, `retrieve_all`
 //! token-ascending), the same ignored return values, the same `fprintf`
-//! bytes through `oxpinyin-input`'s tool boundary, the same ordinary exits
+//! bytes through `oxpinyin-core`'s tool boundary, the same ordinary exits
 //! and the same source-derived aborts. The utility `main`s live in
 //! the surrounding crate under the pin's binary names; they parse the pin's
 //! options and load its system tables, then call these operations.

@@ -41,8 +41,6 @@ oxpinyin-store = { workspace = true, features = ["tools"] }
 # The storage text importer reuses the user store's pin-exact pronunciation
 # count handling.
 oxpinyin-user = { workspace = true, features = ["tools"] }
-# The utilities' edge calls: GLib options and text, input streams, C stdio.
-oxpinyin-input = { workspace = true, features = ["tools"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

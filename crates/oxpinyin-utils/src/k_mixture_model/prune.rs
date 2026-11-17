@@ -14,7 +14,7 @@
 
 use std::ffi::CStr;
 
-use oxpinyin_input::tool::{self, k_mixture_model as edge};
+use oxpinyin_core::input::tool::{self, k_mixture_model as edge};
 
 use super::database::Database;
 use super::math::compute_pr_g_3_with_count;

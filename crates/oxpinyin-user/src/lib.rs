@@ -9,10 +9,10 @@
 //!
 //! The integer count [`seed`] arithmetic is pinned in
 //! `docs/findings/user-store.md` §2, and `USER_DICTIONARY` token allocation
-//! in §3. The store is the [`oxpinyin_core::UserModel`] implementor (typed
+//! in §3. The store is the [`oxpinyin_core::model::UserModel`] implementor (typed
 //! with the engine's [`oxpinyin_core::PhraseToken`]) the engine session and
 //! the C ABI reach; it exposes the counts as a
-//! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively
+//! [`oxpinyin_core::model::UserCountDelta`] so decode can merge them additively
 //! with the system model, the §4 `m_modified` gate
 //! ([`UserStore::is_modified`] / [`UserStore::save_reporting`]) behind `pinyin_save`,
 //! and the §9 export surface ([`UserStore::export_phrases_in`] /

@@ -40,7 +40,7 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candid
 
 use crate::test_support::promotion_system;
 
-use oxpinyin_core::{Dictionary as _, PhraseToken};
+use oxpinyin_core::{PhraseToken, model::Dictionary as _};
 
 use oxpinyin_facade::TextSpan;
 
