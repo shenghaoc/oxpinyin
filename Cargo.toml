@@ -33,6 +33,7 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [workspace.dependencies]
+rustc-hash = "2.1.3"
 assert_cmd = "2.2"
 assert_fs = "1.1"
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
