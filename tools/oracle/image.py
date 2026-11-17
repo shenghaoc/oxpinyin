@@ -577,7 +577,7 @@ def build_image(argv, *, root=ROOT, env=None):
     expected = selected.split('/', 1)[1]
     image = f'{REGISTRY}:{image_tag(root)}' + ('-arm64' if expected == 'arm64' else '')
     flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
-    run(runtime_command([runtime, 'build', *performance_resources(runtime), '--platform', selected, '--build-arg', f'ORACLE_PLATFORM={selected}',
+    run(runtime_command([runtime, 'build', *container_resources(runtime), '--platform', selected, '--build-arg', f'ORACLE_PLATFORM={selected}',
                       *flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', image, '.']), cwd=root, env=environment)
     actual = image_field(runtime, 'Architecture', image, env=environment, platform=selected)
     if actual != expected:
@@ -635,7 +635,7 @@ def capture_build_command(runtime, reference, capture_image, *, selected, flags)
         pull = []  # wslc's and Apple container's build --pull is an on/off switch that takes no value
     else:
         pull = ['--pull=false']
-    return runtime_command([runtime, 'build', *performance_resources(runtime), '--platform', selected, *pull, *flags, '-f', 'tools/oracle/Dockerfile.capture',
+    return runtime_command([runtime, 'build', *container_resources(runtime), '--platform', selected, *pull, *flags, '-f', 'tools/oracle/Dockerfile.capture',
                          '--build-arg', f'REFERENCE_IMAGE={reference}', '-t', capture_image, '.'])
 
 
@@ -759,29 +759,16 @@ def select_runtime(override='', *, env=None, host=None, output=print):
     return selected
 
 
-def performance_tag(root, native):
-    """The performance image's tag: the oracle tag, the interpreter and toolchain pins, the architecture."""
-    inputs = hashlib.sha256()
-    for name in ('.python-version', 'rust-toolchain.toml'):
-        inputs.update((Path(root) / name).read_bytes())
-    return f'oxpinyin-performance:{image_tag(root)}-{inputs.hexdigest()[:12]}-{native}'
-
-
-def performance_resources(engine):
+def container_resources(engine):
     """Apple's container VM gets 4 CPUs and 6 GB; the other runtimes take the host's."""
     return ['--cpus', '4', '--memory', '6G'] if is_apple(engine) else []
 
 
 def oracle_build_command(engine, root, selected_platform, tag, target):
     """The build of Dockerfile.oracle's TARGET stage (docker grammar)."""
-    return [engine, 'build', *performance_resources(engine), '--platform', selected_platform,
+    return [engine, 'build', *container_resources(engine), '--platform', selected_platform,
             '--build-arg', f'ORACLE_PLATFORM={selected_platform}', '--target', target,
             '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root]
-
-
-def performance_build_command(engine, root, selected_platform, tag):
-    """The build of Dockerfile.oracle's performance target (docker grammar)."""
-    return oracle_build_command(engine, root, selected_platform, tag, 'performance')
 
 
 # The inputs of Dockerfile.oracle's deps stage. .python-version: the stage installs the managed
@@ -835,7 +822,7 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, 
     uv project's environment goes to CONTAINER_VENV."""
     user = [] if Path(engine).name.startswith('podman') or is_apple(engine) else run_user()
     home = ['-e', 'HOME=/tmp', '-e', 'UV_CACHE_DIR=/tmp/uv-cache'] if user else []
-    return [engine, 'run', '--rm', '--platform', selected_platform, *performance_resources(engine), *user,
+    return [engine, 'run', '--rm', '--platform', selected_platform, *container_resources(engine), *user,
             '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{Path(cache).resolve()}:/provision',
             '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
             '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={CONTAINER_VENV}', *home,
@@ -875,57 +862,6 @@ def provision_oracle(argv, *, root=ROOT, env=None):
     return run(runtime_command(provision_oracle_command(engine, root, cache, tag, selected, argv,
                                                         cachedir.root(environment))),
                cwd=root, env=environment, check=False)
-
-
-def performance(argv, *, root=ROOT):
-    """Build and enter the local performance environment, on the host architecture."""
-    parser = argparse.ArgumentParser(prog='just performance')
-    parser.add_argument('--engine', choices=('container', 'docker', 'podman', 'wslc'))
-    build_mode = parser.add_mutually_exclusive_group()
-    build_mode.add_argument('--build-only', action='store_true')
-    build_mode.add_argument('--skip-build', action='store_true')
-    parser.add_argument('--volume', help='persistent local Cargo/model cache volume')
-    parser.add_argument('command', nargs=argparse.REMAINDER)
-    args = parser.parse_args(argv)
-    if os.environ.get('GITHUB_ACTIONS') == 'true':
-        fail('the oracle performance environment is local-only; never run it on GitHub Actions', 2)
-    if platform.system() == 'Darwin':
-        translated = subprocess.run(['/usr/sbin/sysctl', '-n', 'sysctl.proc_translated'],
-                                    check=False, capture_output=True)
-        if translated.returncode == 0 and translated.stdout.strip() == b'1':
-            fail('performance measurements require native Python; this interpreter runs under Rosetta', 2)
-    native = {'arm64': 'arm64', 'aarch64': 'arm64', 'x86_64': 'amd64', 'AMD64': 'amd64'}.get(platform.machine())
-    if native is None:
-        fail(f'unsupported native performance architecture: {platform.machine()}', 2)
-    selected_platform = f'linux/{native}'
-    for variable in ('DOCKER_DEFAULT_PLATFORM', 'CONTAINER_DEFAULT_PLATFORM', 'ORACLE_PLATFORM'):
-        if os.environ.get(variable) not in (None, '', selected_platform):
-            fail(f'{variable} forces a non-native performance platform; unset it', 2)
-    engine = args.engine or select_runtime()
-    tag = performance_tag(root, native)
-    resources = performance_resources(engine)
-    if not args.skip_build:
-        run(runtime_command(performance_build_command(engine, root, selected_platform, tag)))
-    if args.build_only:
-        return 0
-    command = args.command
-    if command[:1] == ['--']:
-        command = command[1:]
-    cache = args.volume or f'oxpinyin-performance-{selected_platform.split("/")[1]}'
-    flags = ['-it'] if not command and sys.stdin.isatty() else []
-    flags += resources
-    common = text(['git', '-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
-    if common.startswith('/'):
-        # The worktree's .git names this path; a Windows path (C:/...) is no container path, so
-        # git in the container cannot follow it there and the mount is left out.
-        flags += ['-v', f'{common}:{common}:ro']
-    return run(runtime_command([engine, 'run', '--rm', '--platform', selected_platform, *flags,
-                                '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{cache}:/performance',
-                                '-e', 'CARGO_TARGET_DIR=/performance/target', '-e', 'TMPDIR=/performance/tmp',
-                                '-e', 'OXPINYIN_CACHE=/performance/cache',
-                                '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={CONTAINER_VENV}',
-                                '-w', '/repo', tag, *(command or ['bash'])]),
-               check=False)
 
 
 def check_reproducible(argv, *, root=ROOT):
@@ -970,14 +906,12 @@ def check_reproducible(argv, *, root=ROOT):
 
 
 def main(argv=None):
-    """Dispatch oracle image operations and the local performance environment."""
+    """Dispatch oracle image operations."""
     args = list(sys.argv[1:] if argv is None else argv)
 
     def call():
         if args[:1] == ['check-reproducible']:
             return check_reproducible(args[1:])
-        if args[:1] == ['performance']:
-            return performance(args[1:])
         if args[:1] == ['provision-oracle']:
             return provision_oracle(args[1:])
         if args[:1] == ['image-tag']:
@@ -997,7 +931,7 @@ def main(argv=None):
             print(image_field(*args[1:]))
             return 0
         print('usage: python -m tools.oracle.image '
-              'image-tag|pin-field|verify-image|build-image|image-field|capture-pin|run-in-capture-image|provision-oracle|performance ...',
+              'image-tag|pin-field|verify-image|build-image|image-field|capture-pin|run-in-capture-image|provision-oracle ...',
               file=sys.stderr)
         return 2
     return guarded(call)

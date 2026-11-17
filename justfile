@@ -345,12 +345,3 @@ measure-callgrind-differential *args:
 [linux]
 measure-system-import-profile *args:
     @uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.valgrind import system_import_profile; from tools.dev.measure.recipes import run; raise SystemExit(run(system_import_profile, pin_comparison=True))' "$@"
-
-# Build and enter the local oracle-based performance environment on the host architecture.
-[unix]
-performance *args:
-    @uv run --managed-python python -X utf8 -m tools.oracle.image performance "$@"
-
-[windows]
-performance *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image performance @forwarded; exit $LASTEXITCODE
