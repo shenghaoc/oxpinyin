@@ -8,7 +8,7 @@
 //! ([`diagnostic`]), so every library line is written to the C library's
 //! stream. What the scanned values mean — the
 //! `strcmp` mappings, the slots, the refusals where the pin aborts — stays
-//! with the crates that own those records; this crate answers only what each
+//! with the crates that own those records; this module answers only what each
 //! C call answered.
 //!
 //! Stage 2 prepares the chunk open/seek/header-read calls and a single
@@ -26,15 +26,8 @@
 //! (maintainer ruling 2026-10-31 UTC); the shipping libraries never enable
 //! it.
 //!
-//! Unsafe code is confined to the native module and `tool`; every block
+//! Production unsafe code is confined to the native module and `tool`; every block
 //! carries a `// SAFETY:` comment and no raw pointer leaves them.
-
-#![deny(unsafe_code)]
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(not(test), deny(clippy::expect_used))]
-#![cfg_attr(not(test), deny(clippy::panic))]
-#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
-#![cfg_attr(not(test), deny(clippy::unreachable))]
 
 pub mod chunk;
 pub mod config;

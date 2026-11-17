@@ -23,7 +23,7 @@ use crate::test_support::{TempUserDir, assert_aborts, cstr, open};
 
 use crate::types::{PinyinContext, PinyinInstance};
 
-use oxpinyin_core::{Dictionary, OptionBits, PhraseText};
+use oxpinyin_core::{OptionBits, PhraseText, model::Dictionary};
 
 /// The value a test seeds an out-parameter with, to see it left alone.
 const UNTOUCHED: u32 = 0x00AB_CDEF;

@@ -535,7 +535,7 @@ fn holds_user_data(
     replayed: &crate::LibraryTable<crate::replay::ReplayedLibrary>,
 ) -> bool {
     let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
-        oxpinyin_input::path::build_path(
+        oxpinyin_core::input::path::build_path(
             dir,
             std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
         )

@@ -30,8 +30,8 @@ use rustc_hash::FxHashMap;
 use crate::engine::error::EngineError;
 use crate::engine::nbest::SENTENCE_START;
 use crate::{
-    Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors, PhraseToken,
-    SyllableKey,
+    PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors},
 };
 
 /// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin-user`'s

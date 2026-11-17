@@ -10,7 +10,7 @@
 //! ([`StoreInner::bigram_db`]), and every bigram operation runs the pin's
 //! `SingleGram` code over those bytes ([`oxpinyin_core::single_gram`]).
 //! The counts the decoder merges come back as a
-//! [`oxpinyin_core::UserCountDelta`]; the save cycle is the §4 `m_modified`
+//! [`oxpinyin_core::model::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
 use rustc_hash::FxHashMap;
@@ -18,7 +18,7 @@ use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
 
-use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
+use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single_gram};
 use oxpinyin_store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 
 use crate::persistence::ChunkHeaderField;
@@ -2370,7 +2370,7 @@ impl UserStore {
     pub fn item_pronunciations(
         &self,
         token: Token,
-    ) -> Result<Option<oxpinyin_core::PronunciationRows>, UserStoreError> {
+    ) -> Result<Option<oxpinyin_core::model::PronunciationRows>, UserStoreError> {
         use crate::store_libpinyin::pinyin_keys_to_packed;
         if let Some(readings) = self.with_user_item(token, |item| {
             item.pronunciations()

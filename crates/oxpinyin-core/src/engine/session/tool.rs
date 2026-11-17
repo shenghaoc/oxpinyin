@@ -159,9 +159,9 @@ pub fn lookup<D, L>(
     model: &L,
 ) -> Result<Vec<LookupRow>, crate::engine::EngineError>
 where
-    D: crate::Dictionary<Syllable = SyllableKey>,
+    D: crate::model::Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: crate::LanguageModel<Token = crate::PhraseToken>,
+    L: crate::model::LanguageModel<Token = crate::PhraseToken>,
     L::Error: core::fmt::Display,
 {
     crate::engine::nbest::nbest_sentences_generation(
@@ -204,9 +204,9 @@ pub fn phrase_lookup<D, L>(
     model: &L,
 ) -> Result<Vec<crate::PhraseToken>, crate::engine::EngineError>
 where
-    D: crate::Dictionary<Syllable = SyllableKey>,
+    D: crate::model::Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: crate::LanguageModel<Token = crate::PhraseToken>,
+    L: crate::model::LanguageModel<Token = crate::PhraseToken>,
     L::Error: core::fmt::Display,
 {
     crate::engine::phrase::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)

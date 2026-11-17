@@ -884,7 +884,7 @@ mod native {
                 .join("system")
                 .join("merged.bin")
                 .display(),
-            oxpinyin_input::TEXT_NEWLINE
+            oxpinyin_core::input::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -912,7 +912,7 @@ mod native {
                 .join("system")
                 .join("gbk_char.bin")
                 .display(),
-            oxpinyin_input::TEXT_NEWLINE
+            oxpinyin_core::input::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -938,7 +938,7 @@ mod native {
                 .join("system")
                 .join("gb_char.bin")
                 .display(),
-            oxpinyin_input::TEXT_NEWLINE
+            oxpinyin_core::input::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -992,7 +992,10 @@ mod native {
         let after = files_of(&user);
         let conf = String::from_utf8_lossy(&after["user.conf"]);
         assert!(
-            conf.ends_with(&format!("open counter:2{}", oxpinyin_input::TEXT_NEWLINE)),
+            conf.ends_with(&format!(
+                "open counter:2{}",
+                oxpinyin_core::input::TEXT_NEWLINE
+            )),
             "{conf}"
         );
         assert_eq!(after["user_bigram.db"], before["user_bigram.db"]);
@@ -1184,7 +1187,7 @@ mod native {
                     .join("system")
                     .join("gb_char.bin")
                     .display(),
-                oxpinyin_input::TEXT_NEWLINE
+                oxpinyin_core::input::TEXT_NEWLINE
             )
         );
     }
@@ -1570,7 +1573,7 @@ mod native_files {
             assert_eq!(sizes[name], size, "{name}");
         }
         let marker = std::fs::read_to_string(user.join("user.conf")).unwrap();
-        let nl = oxpinyin_input::TEXT_NEWLINE;
+        let nl = oxpinyin_core::input::TEXT_NEWLINE;
         assert!(
             marker.starts_with(&format!(
                 "binary format version:7{nl}model data version:14{nl}"
@@ -1588,7 +1591,7 @@ mod native_files {
             return;
         };
         let sep = std::path::MAIN_SEPARATOR;
-        let nl = oxpinyin_input::TEXT_NEWLINE;
+        let nl = oxpinyin_core::input::TEXT_NEWLINE;
         let user = user.display();
         assert_eq!(
             String::from_utf8_lossy(&run.stderr),

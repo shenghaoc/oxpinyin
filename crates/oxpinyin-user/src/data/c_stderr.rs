@@ -1,5 +1,5 @@
 //! The pin's library `fprintf(stderr, …)` lines, made with the pin's own call
-//! through the `oxpinyin-input` boundary (`docs/findings/external-io-boundary.md`,
+//! through the `oxpinyin-core` boundary (`docs/findings/external-io-boundary.md`,
 //! stages 1 and 4).
 //!
 //! `table_info.cpp`'s `open %s failed.` and `write %s failed.` lines are the
@@ -18,7 +18,7 @@ use std::path::Path;
 /// A path's bytes as they are, which is what `%s` writes.
 #[must_use]
 pub fn path_bytes(path: &Path) -> &[u8] {
-    oxpinyin_input::path::path_to_bytes(path)
+    oxpinyin_core::input::path::path_to_bytes(path)
 }
 
 /// The init's `load %s failed!` for a `table.conf` that
@@ -26,8 +26,8 @@ pub fn path_bytes(path: &Path) -> &[u8] {
 /// `zhuyin.cpp:282`), naming `system_dir/table.conf` as `g_build_filename`
 /// spells it; `None` for a NULL system dir, whose name is `""`.
 pub fn table_conf_load_failed(system_dir: Option<&Path>) {
-    let name = oxpinyin_input::path::build_bytes(system_dir, Some("table.conf"));
-    oxpinyin_input::diagnostic::report_load_failed(&c_prefix(&name));
+    let name = oxpinyin_core::input::path::build_bytes(system_dir, Some("table.conf"));
+    oxpinyin_core::input::diagnostic::report_load_failed(&c_prefix(&name));
 }
 
 /// `mmap %s failed!`: `MemoryChunk::mmap` refused `path`. Every caller the
@@ -37,14 +37,14 @@ pub fn table_conf_load_failed(system_dir: Option<&Path>) {
 /// (`pinyin.cpp:1265`, `zhuyin.cpp:800`). The pin carries on with an empty
 /// chunk and dies reading it; the line is all of its output (policy row 76).
 pub fn mmap_failed(path: &Path) {
-    oxpinyin_input::diagnostic::report_mmap_failed(&c_prefix(path_bytes(path)));
+    oxpinyin_core::input::diagnostic::report_mmap_failed(&c_prefix(path_bytes(path)));
 }
 
 /// A save's failed rename of `tmp` to `final_path`, as the pin's
 /// `_rename_files` (`pinyin.cpp:1061-1123`) or `zhuyin_save`
 /// (`zhuyin.cpp:611-689`) writes it.
 pub(crate) fn rename_failed(tmp: &Path, final_path: &Path) {
-    oxpinyin_input::diagnostic::report_rename_failed(
+    oxpinyin_core::input::diagnostic::report_rename_failed(
         &c_prefix(path_bytes(tmp)),
         &c_prefix(path_bytes(final_path)),
     );

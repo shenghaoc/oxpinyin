@@ -13,8 +13,8 @@
 
 use std::ffi::OsString;
 
-use oxpinyin_input::tool;
-use oxpinyin_input::tool::OptionValue;
+use oxpinyin_core::input::tool;
+use oxpinyin_core::input::tool::OptionValue;
 use oxpinyin_user::data::table_info::FileType;
 
 use crate::storage::dbm::Hash;
@@ -68,7 +68,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
     // ignored, and a failed attach leaves every load and store a no-op.
     let bigram = bigram_name.as_deref().map(|name| {
         Hash::create_or_missing(&path_of(name))
-            .unwrap_or_else(|error| oxpinyin_input::tool::exit_on_store_error(&error))
+            .unwrap_or_else(|error| oxpinyin_core::input::tool::exit_on_store_error(&error))
     });
 
     train(&mut libraries, bigram.as_ref(), train_pi_gram, deleted);
@@ -80,7 +80,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
 /// The `std::getline(std::cin, linebuf)` loop (`gen_ngram.cpp:77-118`,
 /// `gen_deleted_ngram.cpp:78-116`).
 fn train(libraries: &mut Libraries, bigram: Option<&Hash>, train_pi_gram: bool, deleted: bool) {
-    let mut reader = oxpinyin_input::tool::LineReader::stdin();
+    let mut reader = oxpinyin_core::input::tool::LineReader::stdin();
     let mut cur_token = NULL_TOKEN;
     let mut last_token;
     while reader.getline() {

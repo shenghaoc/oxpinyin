@@ -98,9 +98,9 @@ fn file_size_is_narrowed_before_length_comparison() {
 #[test]
 fn mapping_opens_a_non_ascii_windows_path() {
     let root = tempfile::tempdir().unwrap();
-    let dir = crate::path::build_chunk_path(root.path(), std::ffi::OsStr::new("目录"));
+    let dir = crate::input::path::build_chunk_path(root.path(), std::ffi::OsStr::new("目录"));
     std::fs::create_dir(&dir).unwrap();
-    let path = crate::path::build_chunk_path(&dir, std::ffi::OsStr::new("词库.bin"));
+    let path = crate::input::path::build_chunk_path(&dir, std::ffi::OsStr::new("词库.bin"));
     save(&path, &[1_u8, 2, 3, 4, 5, 6, 7, 8]).unwrap();
     let mut source = MappingSource::open(&path).unwrap();
     assert_eq!(source.file_size(), 8);

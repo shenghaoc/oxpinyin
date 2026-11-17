@@ -88,7 +88,7 @@ fn exit_word(outcome: &Output) -> i32 {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin_input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin_core::input::TEXT_NEWLINE)
 }
 /// One `SingleGram` row as `(total, records)`; the row must exist.
 fn bigram_row(path: &Path, token: u32) -> (u32, Vec<(u32, u32)>) {

@@ -61,7 +61,7 @@ fn the_pruned_differential_fixture_projects_to_the_golden() {
     // The utility prints through the C runtime's text-mode stdout: CRLF on
     // Windows, LF elsewhere (docs/findings/external-io-boundary.md, "Native
     // text-mode line endings").
-    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let newline = oxpinyin_core::input::TEXT_NEWLINE;
     // <start> and zero-freq unigrams drop; the 1-gram count is the KMM
     // freq, the 2-gram count the pair WC. 乙 is W2-only but its header-only
     // row carries freq 8, so it projects.

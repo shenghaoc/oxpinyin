@@ -4,17 +4,14 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers and frozen content tables. | forbid | yes | yes |
-| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via user |
+| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables and native I/O. | deny, scoped input exceptions | yes | yes |
 | oxpinyin-user | Native system-data readers and the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
 | oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
-| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-input`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
+| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-core`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable W3 data; no timing loops. | forbid | Linux, macOS (needs GLib) | never |
-
-`oxpinyin-core` contains the parser and engine. It never depends on storage (`oxpinyin-store`, `cxx`, `bindgen` or a backend binding), including through dev and build dependencies; `cargo deny check` enforces it through the `[bans] deny` wrappers in `deny.toml`.
 
 See [backend selection](runbooks/backends.md) for the Cargo default.
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
@@ -41,9 +38,9 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 
 ### Facades
 
-Both C-ABI facades consume `oxpinyin-facade`. They expand the pointer macros defined in `oxpinyin-core` and decode nullable filenames through `oxpinyin-input`.
+Both C-ABI facades consume `oxpinyin-facade`. They expand the pointer macros defined in `oxpinyin-core` and decode nullable filenames through `oxpinyin-core`.
 Its runtime module assembles sessions for both libraries.
-`oxpinyin-facade` depends on core, input and user.
+`oxpinyin-facade` depends on core and user.
 It holds the concrete dictionary, language-model and user handles of runtime by value.
 For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
 
@@ -81,7 +78,7 @@ Constructing the concrete classes directly, as the pin does, keeps the pin's lib
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 The cdylibs hide the cxx runtime symbols of both bridges ([export gate](packaging.md#export-gate)).
 
-The `oxpinyin-input` boundary calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
+The `oxpinyin-core` boundary calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
 Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' lines with `std::io`.
 
@@ -99,7 +96,7 @@ Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' line
 
 ## External I/O
 
-`oxpinyin-input` owns bidirectional external calls in scoped unsafe modules.
+`oxpinyin-core` owns bidirectional external calls in scoped unsafe modules.
 Stage 1 covers library configuration read/write and locale.
 The [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) lists stages 2 to 5: chunks, save and rename, diagnostics, and tools.
 All five stages are implemented.

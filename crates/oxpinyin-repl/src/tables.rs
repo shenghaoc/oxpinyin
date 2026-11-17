@@ -1,8 +1,8 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
 use crate::{load_text_tables, present};
+use oxpinyin_core::input::tool;
+use oxpinyin_core::input::tool::table_tests as output;
 use oxpinyin_core::{ChewingKey, OptionBits};
-use oxpinyin_input::tool;
-use oxpinyin_input::tool::table_tests as output;
 use oxpinyin_user::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
 use oxpinyin_user::data::{chewing_index_key as index_key, search_chewing_row as search_row};
 use oxpinyin_user::tool::Index;
@@ -32,7 +32,7 @@ impl Tables {
     }
 
     pub(crate) fn enabled(&self, token: u32) -> bool {
-        self.indices[oxpinyin_core::phrase_index_library(token)].is_some()
+        self.indices[oxpinyin_core::model::phrase_index_library(token)].is_some()
     }
 
     pub(crate) fn phrase_search(&self, words: &[u32]) -> (bool, [Vec<u32>; 16]) {
@@ -42,7 +42,7 @@ impl Tables {
         };
         for token in decode_tokens(&value).unwrap_or_else(|_| tool::abort()) {
             if self.enabled(token) {
-                tokens[oxpinyin_core::phrase_index_library(token)].push(token);
+                tokens[oxpinyin_core::model::phrase_index_library(token)].push(token);
             }
         }
         (true, tokens)
@@ -69,7 +69,7 @@ impl Tables {
             if !self.enabled(token) {
                 continue;
             }
-            let library = oxpinyin_core::phrase_index_library(token);
+            let library = oxpinyin_core::model::phrase_index_library(token);
             // null_token marks an empty cursor even after consuming token 0.
             if cursor.as_ref().is_none_or(|(_, range)| range.start == 0) {
                 cursor = Some((library, token..token.wrapping_add(1)));

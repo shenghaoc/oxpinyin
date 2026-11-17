@@ -8,8 +8,8 @@ use oxpinyin_core::engine::{
     check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_core::{
-    Dictionary, DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken,
-    ZhuyinParse,
+    DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken, ZhuyinParse,
+    model::Dictionary,
 };
 use oxpinyin_user::UserStore;
 

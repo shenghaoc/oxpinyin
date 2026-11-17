@@ -22,7 +22,7 @@ fn embedded_nul_lookup_keeps_the_original_terminal_column() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
         .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
-    let conf_path = oxpinyin_input::c_path(&data.join("table.conf")).unwrap();
+    let conf_path = oxpinyin_core::input::c_path(&data.join("table.conf")).unwrap();
     let conf = TableConf::load(&conf_path).unwrap();
     let lookup = Lookup::open(&data, &conf, true, true).unwrap_or_else(|_| panic!("W3 lookup"));
     for (input, key_end, consumed) in [

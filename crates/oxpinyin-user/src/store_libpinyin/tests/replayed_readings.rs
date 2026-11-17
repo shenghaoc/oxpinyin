@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions};
-use oxpinyin_core::{ChewingKey, PhraseToken, UserModel};
+use oxpinyin_core::{ChewingKey, PhraseToken, model::UserModel};
 
 use super::super::{export_state, packed_to_pinyin_keys};
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};

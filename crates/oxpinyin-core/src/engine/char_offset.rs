@@ -44,7 +44,7 @@
 //! column, and in calling the caller's `add` at every complete path.
 
 use crate::scoring::ScoringError;
-use crate::{Dictionary, PhraseToken, SyllableKey};
+use crate::{PhraseToken, SyllableKey, model::Dictionary};
 
 use crate::engine::cursor::MatrixKey;
 use crate::engine::error::EngineError;
@@ -111,7 +111,7 @@ where
         .phrase_item_pronunciations(token)
         .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
     {
-        crate::PhraseItemRead::Item(rows) => {
+        crate::model::PhraseItemRead::Item(rows) => {
             let query = [key.key()];
             let total = rows
                 .iter()
@@ -124,7 +124,7 @@ where
             // division; the caller compares against FLT_EPSILON.
             Ok(total != 0 && matched as f32 / total as f32 >= f32::EPSILON)
         }
-        crate::PhraseItemRead::NoItem => Ok(false),
+        crate::model::PhraseItemRead::NoItem => Ok(false),
     }
 }
 

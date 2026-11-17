@@ -7,7 +7,7 @@
 //! (`utils/segment/*.cpp` at 074a2219) and its committed W9 goldens, not
 //! from a live run.
 
-use oxpinyin_input::tool;
+use oxpinyin_core::input::tool;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

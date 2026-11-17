@@ -12,9 +12,9 @@
 use std::io;
 use std::path::Path;
 
-use crate::native;
+use crate::input::native;
 #[cfg(unix)]
-use crate::path;
+use crate::input::path;
 
 /// Whether the pin's chunk loader opens a directory row as a file and
 /// judges it by its reported size.
@@ -216,7 +216,7 @@ impl PendingMapping {
 /// A reader excludes a writer for as long as the read view is used:
 ///
 /// ```compile_fail
-/// use oxpinyin_input::chunk::Mapping;
+/// use oxpinyin_core::input::chunk::Mapping;
 /// fn overlapping_views(mapping: &mut Mapping) {
 ///     let before = mapping.as_slice();
 ///     mapping.as_mut_slice()[0] = 1;

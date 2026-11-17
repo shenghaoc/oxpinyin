@@ -85,7 +85,7 @@ fn save_aborts_where_the_chunk_header_write_fails() {
     let staged = std::fs::metadata(run.user_dir.join("gb_char.dbin.tmp")).expect("staged log");
     assert_eq!(staged.len(), 4);
     let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    let newline = oxpinyin_input::TEXT_NEWLINE;
+    let newline = oxpinyin_core::input::TEXT_NEWLINE;
     assert!(
         conf.ends_with(&format!("open counter:1{newline}")),
         "{conf}"

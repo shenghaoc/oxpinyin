@@ -5,7 +5,7 @@ fn file(bytes: &[u8]) -> (tempfile::TempDir, CString) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("table.conf");
     std::fs::write(&path, bytes).expect("write");
-    let name = crate::c_path(&path).expect("c path");
+    let name = crate::input::c_path(&path).expect("c path");
     (dir, name)
 }
 
@@ -89,7 +89,7 @@ fn a_nul_ends_the_token_strcmp_sees() {
 #[test]
 fn opening_a_missing_file_fails() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let name = crate::c_path(&dir.path().join("absent")).expect("c path");
+    let name = crate::input::c_path(&dir.path().join("absent")).expect("c path");
     assert!(SystemTableInfoReader::open(&name).is_err());
     assert!(UserTableInfoReader::open(&name).is_err());
 }
@@ -98,7 +98,7 @@ fn opening_a_missing_file_fails() {
 fn the_writer_prints_the_four_lines() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");
-    let name = crate::c_path(&path).expect("c path");
+    let name = crate::input::c_path(&path).expect("c path");
     let fields = UserTableInfoFields {
         binary_format_version: -1,
         model_data_version: 14,
@@ -107,7 +107,7 @@ fn the_writer_prints_the_four_lines() {
     };
     assert!(save_user_table_info(&name, &fields));
     // The pin's `fopen("w")` uses the host C runtime's text mode.
-    let newline = crate::TEXT_NEWLINE;
+    let newline = crate::input::TEXT_NEWLINE;
     let expected = format!(
         "binary format version:-1{newline}model data version:14{newline}database format:KyotoCabinet{newline}open counter:3{newline}"
     );
@@ -119,7 +119,7 @@ fn the_writer_prints_the_four_lines() {
     assert_eq!(reader.str(), Some(c"KyotoCabinet"));
     assert_eq!(reader.open_counter(), Scanned::Assigned(3));
     reader.finish();
-    let missing = crate::c_path(&dir.path().join("absent/user.conf")).expect("c path");
+    let missing = crate::input::c_path(&dir.path().join("absent/user.conf")).expect("c path");
     assert!(!save_user_table_info(&missing, &fields));
 }
 
@@ -155,7 +155,7 @@ fn windows_config_paths_keep_cjk_and_lone_surrogates() {
         assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
         reader.finish();
         assert!(SystemTableInfoReader::open(&path).is_ok());
-        crate::path::unlink(&path);
+        crate::input::path::unlink(&path);
         assert!(!path.exists());
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! Each utility reads the cwd-relative names the pin does
 //! (`src/include/pinyin_internal.h:55-66`), through the pin's own calls in
-//! `oxpinyin_input::tool::storage`; the table text, the DBM records and the
+//! `oxpinyin_core::input::tool::storage`; the table text, the DBM records and the
 //! per-library chunks are the bytes `oxpinyin-user`'s layouts describe.
 //!
 //! - [`gen_binary_files`] turns `table.conf`'s `.table` files into the
@@ -29,8 +29,8 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin_input::tool;
-use oxpinyin_input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin_core::input::tool;
+use oxpinyin_core::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 use oxpinyin_user::data::table_info::{TableConf, TableConfError};
 
 pub mod dbm;
@@ -115,7 +115,7 @@ pub(crate) const fn make_token(library: u8, slot: u32) -> u32 {
 
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
-    oxpinyin_input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
+    oxpinyin_core::input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
 }
 
 /// The `CString` a `table.conf` name column names.

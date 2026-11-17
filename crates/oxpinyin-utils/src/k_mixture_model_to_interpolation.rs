@@ -17,8 +17,8 @@ use std::ffi::{CStr, CString, OsString, c_int, c_long};
 use std::fmt;
 use std::io::{BufRead, Write as _};
 
-use oxpinyin_input::tool::k_mixture_model_to_interpolation as edge;
-use oxpinyin_input::tool::{self, LineReader, OutputStream};
+use oxpinyin_core::input::tool::k_mixture_model_to_interpolation as edge;
+use oxpinyin_core::input::tool::{self, LineReader, OutputStream};
 
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,

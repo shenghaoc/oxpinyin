@@ -38,7 +38,8 @@ mod system_dictionary {
     //! exercises the `Dictionary` trait plus the runtime's extra surface.
 
     use oxpinyin_core::{
-        ChewingKey, Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges, SyllableKey,
+        ChewingKey, SyllableKey,
+        model::{Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges},
     };
 
     // The fixtures are written with the crate's own row schema, not a copy of

@@ -1,6 +1,6 @@
 #![no_main]
 //! Hostile bytes through `table.conf` as `pinyin_init` reads it: the pin's
-//! own scanner calls (`oxpinyin-input`) and `TableConf::load`'s decoding of
+//! own scanner calls (`oxpinyin-core`) and `TableConf::load`'s decoding of
 //! what they answered. The load must answer on every input, never panic,
 //! and be deterministic; a refusal is a legitimate answer, not a failure.
 

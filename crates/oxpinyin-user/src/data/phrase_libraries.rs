@@ -14,7 +14,10 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_core::{ChewingKey, PhraseText, TokenPhrase, TrellisItem};
+use oxpinyin_core::{
+    ChewingKey, PhraseText,
+    model::{TokenPhrase, TrellisItem},
+};
 
 use crate::data::phrase_library::{
     LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk,
@@ -144,13 +147,13 @@ impl PhraseLibraries {
         file: &std::ffi::OsStr,
     ) -> Result<(), LibraryError> {
         // `g_build_filename`: a name never leaves the directory.
-        let path = oxpinyin_input::path::build_chunk_path(dir, file);
+        let path = oxpinyin_core::input::path::build_chunk_path(dir, file);
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its
             // reported size where the boundary says the loader opens
             // directories; any other file that is not a regular one, and a
             // directory on Windows, is skipped without a word.
-            Ok(meta) if meta.is_dir() && oxpinyin_input::chunk::opens_directories() => {}
+            Ok(meta) if meta.is_dir() && oxpinyin_core::input::chunk::opens_directories() => {}
             Ok(meta) if !meta.is_file() => return Ok(()),
             Ok(_) => {}
             // The pin's `open` fails and `MemoryChunk::mmap` answers
@@ -340,7 +343,7 @@ impl PhraseLibraries {
     #[must_use]
     pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble
-            .get(oxpinyin_core::phrase_index_library(token))?
+            .get(oxpinyin_core::model::phrase_index_library(token))?
             .as_ref()
             .map(|loaded| &loaded.library)
     }
@@ -486,7 +489,10 @@ impl PhraseLibraries {
     /// (`phrase_index.h` at the pin `074a2219`), tones kept. `None` when
     /// the token's library is not loaded or owns no such item.
     #[must_use]
-    pub fn pronunciation_rows(&self, token: u32) -> Option<oxpinyin_core::PronunciationRows> {
+    pub fn pronunciation_rows(
+        &self,
+        token: u32,
+    ) -> Option<oxpinyin_core::model::PronunciationRows> {
         let library = self.library(token)?;
         let item = library.item(token)?;
         Some(

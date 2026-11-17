@@ -1,7 +1,10 @@
 use super::{phrase_segment, phrase_segment_ucs4};
 use crate::PhraseEntry;
 
-use crate::{Dictionary, LanguageModel, NbestStepCosts, PhraseToken, SyllableKey};
+use crate::{
+    PhraseToken, SyllableKey,
+    model::{Dictionary, LanguageModel, NbestStepCosts},
+};
 
 /// A tiny dictionary: the text → tokens reverse map the span DP probes.
 struct Dict {
@@ -71,8 +74,8 @@ impl LanguageModel for CheckedModel {
     fn nbest_successors_in_row<'a>(
         &self,
         _prev: &Self::Token,
-        _row: &'a mut crate::NbestStepRow,
-    ) -> Result<Option<crate::NbestSuccessors<'a>>, Self::Error> {
+        _row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Err("read after check")
     }
 
@@ -94,7 +97,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
         .flat_map(u32::to_le_bytes)
         .collect();
     let model = Rows {
-        row: crate::MergedGram::merge(None, Some(gram)).expect("whole row"),
+        row: crate::model::MergedGram::merge(None, Some(gram)).expect("whole row"),
     };
     let (matched, result) =
         phrase_segment_ucs4(&dictionary, &model, &[0xd800]).expect("infallible model");
@@ -105,7 +108,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
 #[test]
 fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
     use crate::engine::nbest::SENTENCE_START;
-    use crate::{NbestStepCosts, NbestStepRow, NbestSuccessors};
+    use crate::model::{NbestStepCosts, NbestStepRow, NbestSuccessors};
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Recording {
@@ -193,7 +196,7 @@ fn prefix_faults_follow_spans_before_predecessors() {
             prev: &PhraseToken,
             token: &PhraseToken,
             _: Option<(u32, u32)>,
-            _: &mut crate::NbestStepRow,
+            _: &mut crate::model::NbestStepRow,
         ) -> Result<NbestStepCosts, Self::Error> {
             let pair = (prev.value(), token.value());
             self.0.borrow_mut().push(pair);
@@ -226,7 +229,7 @@ fn prefix_faults_follow_spans_before_predecessors() {
 /// (`phrase_lookup.cpp:145-146,263-270`), so `final_step` finds the path.
 #[test]
 fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
-    use crate::{NbestStepRow, NbestSuccessors};
+    use crate::model::{NbestStepRow, NbestSuccessors};
 
     struct Missing(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Missing {
@@ -273,7 +276,7 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
 /// A model whose every predecessor's merged row is `row`, pricing the
 /// bigram branch only for an item read from it.
 struct Rows {
-    row: crate::MergedGram,
+    row: crate::model::MergedGram,
 }
 
 impl LanguageModel for Rows {
@@ -283,11 +286,14 @@ impl LanguageModel for Rows {
     fn nbest_successors_in_row<'a>(
         &self,
         _: &Self::Token,
-        row: &'a mut crate::NbestStepRow,
-    ) -> Result<Option<crate::NbestSuccessors<'a>>, Self::Error> {
+        row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
             row.get_or_try_init::<Self::Error>(|| Ok(Some(self.row.clone())))?
-                .map_or(crate::NbestSuccessors::Miss, crate::NbestSuccessors::Row),
+                .map_or(
+                    crate::model::NbestSuccessors::Miss,
+                    crate::model::NbestSuccessors::Row,
+                ),
         ))
     }
 
@@ -296,7 +302,7 @@ impl LanguageModel for Rows {
         _: &Self::Token,
         _: &Self::Token,
         item: Option<(u32, u32)>,
-        _: &mut crate::NbestStepRow,
+        _: &mut crate::model::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         Ok(NbestStepCosts {
             blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
@@ -313,9 +319,9 @@ impl LanguageModel for Rows {
 /// segments.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
-    use crate::MergedGram;
     use crate::engine::error::EngineError;
     use crate::engine::nbest::SENTENCE_START;
+    use crate::model::MergedGram;
     let dictionary = Dict::parse(&[("你", 3)]);
     let system = || {
         let mut value = 1_u32.to_le_bytes().to_vec();

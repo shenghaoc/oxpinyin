@@ -18,7 +18,7 @@ use std::io::{BufRead, BufReader};
 
 use libc::FILE;
 
-use crate::native::{c_stderr, c_stdout};
+use crate::input::native::{c_stderr, c_stdout};
 
 /// The target's `EINVAL`, the pin's exit status for a refused option or
 /// argument (`ngseg.cpp:119`).
@@ -558,10 +558,10 @@ impl OutputStream {
 
     /// `fopen(filename, "w")` (`ngseg.cpp:122`); `None` for NULL.
     #[must_use]
-    pub fn open_write(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
+    pub fn open_write(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode are NUL-terminated and outlive the
         // call.
-        crate::native::fopen(filename, c"w").map(|stream| Self {
+        crate::input::native::fopen(filename, c"w").map(|stream| Self {
             stream,
             owned: true,
         })
@@ -631,7 +631,7 @@ impl LineReader<BufReader<std::fs::File>> {
     /// has no tie, and a failed open sets `failbit`, which `!input_file`
     /// ([`Self::is_open`]) tests.
     #[must_use]
-    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Self {
+    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Self {
         let (file, open_errno) = match std::fs::File::open(filename.as_path()) {
             Ok(file) => (Some(file), None),
             Err(error) => (None, error.raw_os_error()),
@@ -798,10 +798,10 @@ pub mod gen_pinyin_table {
     impl TableInput {
         /// `fopen(filename, "r")` (`:138`); `None` for NULL.
         #[must_use]
-        pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode are NUL-terminated and outlive
             // the call.
-            crate::native::fopen(filename, c"r").map(|stream| Self {
+            crate::input::native::fopen(filename, c"r").map(|stream| Self {
                 stream,
                 phrase: Box::new([0; FIELD]),
                 pinyin: Box::new([0; FIELD]),
@@ -1239,10 +1239,10 @@ pub mod storage {
     impl TableFile {
         /// `fopen(filename, "r")` (`gen_binary_files.cpp:61`, `:97`).
         #[must_use]
-        pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode literal are NUL-terminated and
             // outlive the call.
-            crate::native::fopen(filename, c"r").map(|stream| Self { stream })
+            crate::input::native::fopen(filename, c"r").map(|stream| Self { stream })
         }
 
         /// `fseek(tablefile, 0L, SEEK_SET)` (`gen_binary_files.cpp:69`,
@@ -1371,7 +1371,7 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
-        unsafe { crate::native::errno_location() }
+        unsafe { crate::input::native::errno_location() }
     }
 
     /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
@@ -1427,7 +1427,7 @@ pub mod storage {
     /// `assert`), a short payload write returns `false` after the close.
     #[must_use]
     pub fn save_chunk(
-        filename: &(impl crate::FileName + ?Sized),
+        filename: &(impl crate::input::FileName + ?Sized),
         length: u32,
         checksum: u32,
         payload: &[u8],
@@ -1435,7 +1435,7 @@ pub mod storage {
         #[cfg(not(windows))]
         let filename = filename.as_c_name();
         #[cfg(windows)]
-        let filename = crate::native::wide_path(&filename.as_path());
+        let filename = crate::input::native::wide_path(&filename.as_path());
         #[cfg(not(windows))]
         use libc::open;
         #[cfg(windows)]

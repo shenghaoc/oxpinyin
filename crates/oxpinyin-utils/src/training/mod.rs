@@ -20,8 +20,8 @@ use oxpinyin_user::data::row_format::encode_token_key;
 use oxpinyin_user::data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_user::data::table_info::{FileType, TableConf, TableConfError};
 
-use oxpinyin_input::tool;
-use oxpinyin_input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin_core::input::tool;
+use oxpinyin_core::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 
 use crate::storage::dbm::Hash;
 
@@ -257,5 +257,5 @@ pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CSt
 /// A C string's bytes as the path the store opens. On Unix the bytes are
 /// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
-    oxpinyin_input::path::path_from_bytes(name.to_bytes())
+    oxpinyin_core::input::path::path_from_bytes(name.to_bytes())
 }

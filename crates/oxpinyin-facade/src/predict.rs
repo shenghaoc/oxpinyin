@@ -49,7 +49,7 @@ pub fn compute_prefixes(
                 count: matches.len(),
             });
         }
-        oxpinyin_core::sort_tokens_by_library(&mut matches);
+        oxpinyin_core::model::sort_tokens_by_library(&mut matches);
         tokens.extend(matches);
     }
     Ok(tokens)

@@ -314,7 +314,7 @@ impl fmt::Display for SyllableKey {
 /// Opaque identifier of a phrase in a dictionary and language model.
 ///
 /// The engine never interprets the number; it only compares tokens and hands
-/// them to a [`crate::LanguageModel`]. That keeps the token layout entirely a
+/// them to a [`crate::model::LanguageModel`]. That keeps the token layout entirely a
 /// backend concern, so a fixture adapter and a table-backed loader can use
 /// different numbering without the decoder noticing.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

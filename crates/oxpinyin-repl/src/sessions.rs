@@ -1,7 +1,7 @@
 //! The pin's C-API test programs (074a2219 tests/test_*.cpp).
 //! The caller supplies the isolated data path; product call order is retained.
 
-use oxpinyin_input::tool::{LineReader, pin_tests as output};
+use oxpinyin_core::input::tool::{LineReader, pin_tests as output};
 use pinyin_capi::tool::Driver;
 
 /// tests/test_pinyin.cpp:34-101.

@@ -41,7 +41,7 @@ pub mod user_files;
 pub use bigram_table::BigramTable;
 pub use dict::{AddonDictionary, DictError, PhraseIndexTable, PinyinIndexTable, SystemDictionary};
 pub use lm::{BigramLanguageModel, BigramRow, LmError, library_visible, merge_bigram};
-pub use oxpinyin_core::UserCountDelta;
+pub use oxpinyin_core::model::UserCountDelta;
 // The compiled-in backend's native-table extension and `database format:`
 // token, re-exported so consumers above this crate (runtime, capi, tests,
 // fuzz) name fixture directories and check `table.conf` consistently with

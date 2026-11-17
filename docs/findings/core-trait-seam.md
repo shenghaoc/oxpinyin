@@ -3,7 +3,7 @@
 Status: **reference**
 
 This page describes the internal `oxpinyin-core` trait seam
-(`crates/oxpinyin-core/src/lib.rs`) and its behavioural rules: totality,
+(`crates/oxpinyin-core/src/model.rs`) and its behavioural rules: totality,
 determinism, ordering and growth.
 It is not a compatibility contract; the traits and their rules change with the code.
 Failure behaviour is set by the [compatibility policy](compatibility-policy.md#failure-behaviour), and candidate order by the C APIs' pin-derived behaviour.

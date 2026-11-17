@@ -3,7 +3,7 @@
 //! at `074a2219`), and the library set its rows describe.
 //!
 //! The file is scanned with the pin's own `setlocale`, `fopen`, `fscanf`,
-//! `feof` and `atoi` calls through [`oxpinyin_input::config`]: five header
+//! `feof` and `atoi` calls through [`oxpinyin_core::input::config`]: five header
 //! directives declare versions, λ, source and database format, then the row
 //! loop reads six words at a time, across line breaks, as the scanner
 //! groups them. This module keeps what the pin does with each answer.
@@ -32,7 +32,7 @@
 use std::ffi::{CStr, OsStr, OsString};
 use std::path::Path;
 
-use oxpinyin_input::config::SystemTableInfoReader;
+use oxpinyin_core::input::config::SystemTableInfoReader;
 
 use crate::data::phrase_library::directory_reads_as_a_chunk;
 use crate::data::table_conf::PINNED_LAMBDA;
@@ -113,7 +113,7 @@ impl DatabaseFormat {
 
 /// A file name as a `table.conf` column spells it: the bytes of the `%s`
 /// word, kept raw (the pin opens whatever bytes it read), and joined to a
-/// directory by `oxpinyin_input::path::build_path` — never as `Path::join`
+/// directory by `oxpinyin_core::input::path::build_path` — never as `Path::join`
 /// does.
 ///
 /// A name that starts with a separator stays beneath the directory; only an
@@ -126,7 +126,7 @@ impl FileName {
     /// The name made of `bytes`.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(oxpinyin_input::path::path_from_bytes(bytes).into_os_string())
+        Self(oxpinyin_core::input::path::path_from_bytes(bytes).into_os_string())
     }
 
     /// The name with `suffix` appended (`g_strdup_printf("%s.tmp", name)`).
@@ -362,7 +362,7 @@ impl TableConf {
     ///
     /// [`TableConfError`] where the pin returns `false` or dies.
     pub fn load(
-        filename: &(impl oxpinyin_input::FileName + ?Sized),
+        filename: &(impl oxpinyin_core::input::FileName + ?Sized),
     ) -> Result<Self, TableConfError> {
         let input =
             SystemTableInfoReader::open(filename).map_err(|_| TableConfError::Unopenable)?;
@@ -443,7 +443,7 @@ impl TableConf {
                 .ok_or(TableConfError::Abort(TableConfSite::DefaultIndex))?
         } else {
             // `to_index_of_addon_tables` returns `atoi` as a `guint8`.
-            usize::from(oxpinyin_input::config::atoi(index) as u8)
+            usize::from(oxpinyin_core::input::config::atoi(index) as u8)
         };
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return Err(TableConfError::Abort(TableConfSite::AddonIndex));
@@ -478,7 +478,7 @@ impl TableConf {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`TableConfError::Unopenable`].
     pub fn load_path(path: &Path) -> Result<Self, TableConfError> {
-        if oxpinyin_input::path::path_to_bytes(path).contains(&0) {
+        if oxpinyin_core::input::path::path_to_bytes(path).contains(&0) {
             return Err(TableConfError::Unopenable);
         }
         Self::load(path)
@@ -492,7 +492,7 @@ impl TableConf {
     ///
     /// As [`Self::load_path`].
     pub fn load_from_dir(system_dir: &Path) -> Result<Self, TableConfError> {
-        Self::load_path(&oxpinyin_input::path::build_path(
+        Self::load_path(&oxpinyin_core::input::path::build_path(
             system_dir,
             OsStr::new("table.conf"),
         ))

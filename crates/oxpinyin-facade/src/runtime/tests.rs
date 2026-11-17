@@ -677,7 +677,10 @@ mod backend_files {
 
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use oxpinyin_core::engine::{Selection, SelectionTarget, SessionSettings};
-    use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
+    use oxpinyin_core::{
+        PhraseToken, SyllableKey,
+        model::{Dictionary, LanguageModel},
+    };
     use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
     use std::path::Path;
 
@@ -1265,7 +1268,7 @@ mod backend_files {
 
     #[test]
     fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
-        use oxpinyin_core::NbestStepRow;
+        use oxpinyin_core::model::NbestStepRow;
         let tmp = scratch_dir("oxpinyin-nbest-step-");
         let dir = tmp.path().to_path_buf();
         let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
@@ -1326,7 +1329,7 @@ mod backend_files {
 
     #[test]
     fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
-        use oxpinyin_core::LanguageModel;
+        use oxpinyin_core::model::LanguageModel;
         let tmp = scratch_dir("oxpinyin-user-gram-alone-");
         let dir = tmp.path().to_path_buf();
         let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
@@ -1355,7 +1358,7 @@ mod backend_files {
 
     #[test]
     fn a_fresh_nbest_row_observes_a_reborrowed_stores_committed_write() {
-        use oxpinyin_core::{NbestStepRow, NbestSuccessors};
+        use oxpinyin_core::model::{NbestStepRow, NbestSuccessors};
         let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
         let dir = tmp.path().to_path_buf();
         let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
@@ -1477,13 +1480,13 @@ mod backend_files {
             let mut scratch = Vec::new();
             for path in &paths {
                 for tones in tones {
-                    let mut pair = oxpinyin_core::PhraseIndexRanges::new();
+                    let mut pair = oxpinyin_core::model::PhraseIndexRanges::new();
                     runtime
                         .dict()
                         .trellis_ranges(path, tones, &mut pair)
                         .unwrap();
                     let continued = runtime.dict().phrase_prefix_exists(path).unwrap();
-                    let mut fused = oxpinyin_core::PhraseIndexRanges::new();
+                    let mut fused = oxpinyin_core::model::PhraseIndexRanges::new();
                     let fused_continued = runtime
                         .dict()
                         .trellis_ranges_continued(path, tones, &mut fused, &mut scratch)
@@ -1592,7 +1595,7 @@ mod backend_files {
             SyllableKey::from_text("hao").unwrap(),
         ];
         let tones = [0, 0];
-        let mut ranges = oxpinyin_core::PhraseIndexRanges::new();
+        let mut ranges = oxpinyin_core::model::PhraseIndexRanges::new();
         runtime
             .dict()
             .trellis_ranges(&syllables, &tones, &mut ranges)
@@ -1844,7 +1847,10 @@ mod pin_data {
 
     use super::contract_data;
 
-    use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
+    use oxpinyin_core::{
+        PhraseToken, SyllableKey,
+        model::{Dictionary, LanguageModel},
+    };
 
     use oxpinyin_core::engine::SessionSettings;
 

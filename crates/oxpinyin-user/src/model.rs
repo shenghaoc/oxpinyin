@@ -2,7 +2,7 @@
 //!
 //! This implements the `oxpinyin-core` seam: `observe` records training,
 //! and the stored counts are exposed as
-//! [`oxpinyin_core::UserCountDelta`] for the decode-time additive merge.
+//! [`oxpinyin_core::model::UserCountDelta`] for the decode-time additive merge.
 //! The seam carries counts only: decode reads them through the language
 //! model, because a score added after the λ blend would be a new weighting
 //! scheme.
@@ -14,7 +14,7 @@
 //! the numeric value. The store itself stays keyed on the raw `u32`
 //! `phrase_token_t` layout; the impl converts at the seam.
 
-use oxpinyin_core::{PhraseToken, UserModel};
+use oxpinyin_core::{PhraseToken, model::UserModel};
 
 use crate::store::{SENTENCE_START, UserStore, UserStoreError};
 

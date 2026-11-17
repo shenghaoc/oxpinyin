@@ -21,8 +21,6 @@ oxpinyin-core = { workspace = true }
 # The user pinyin index's probe key stays inline: one fixed-size key, no
 # heap allocation per lookup.
 smallvec.workspace = true
-# The pin's path, chunk-save, rename and unlink calls (external-I/O stage 3).
-oxpinyin-input = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }

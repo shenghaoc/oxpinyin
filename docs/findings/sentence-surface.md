@@ -156,7 +156,7 @@ Current scoring and selection:
 
 - `LanguageModel::nbest_step_costs` gives the two pre-log branches of §2
   for one step. It is a defaulted method of the `LanguageModel` trait in
-  `crates/oxpinyin-core/src/lib.rs`. The default returns no cost data, so a model that
+  `crates/oxpinyin-core/src/model.rs`. The default returns no cost data, so a model that
   keeps the default produces no rows. The blended branch answers only
   when the previous token's bigram row carries the successor (count > 0),
   as `search_bigram2` walks merged-gram successors.

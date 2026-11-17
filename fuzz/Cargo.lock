@@ -337,7 +337,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-input",
  "oxpinyin-user",
  "rustc-hash",
 ]
@@ -348,6 +347,9 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "bitflags",
  "compact_str",
+ "glib-sys",
+ "libc",
+ "memmap2",
  "num_enum",
  "phf",
  "phf_codegen",
@@ -361,7 +363,6 @@ name = "oxpinyin-facade"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-input",
  "oxpinyin-user",
 ]
 
@@ -374,15 +375,6 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-user",
  "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-input"
-version = "0.1.0-alpha.1"
-dependencies = [
- "glib-sys",
- "libc",
- "memmap2",
 ]
 
 [[package]]
@@ -400,7 +392,6 @@ name = "oxpinyin-user"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-input",
  "oxpinyin-store",
  "rustc-hash",
  "smallvec",

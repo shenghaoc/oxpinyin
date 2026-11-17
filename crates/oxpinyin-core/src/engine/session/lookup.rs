@@ -6,7 +6,7 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
-use crate::phrase_index_library;
+use crate::model::phrase_index_library;
 
 use super::*;
 

@@ -28,7 +28,7 @@ use crate::data::chunk_format::chunk_checksum;
 use std::ffi::CString;
 
 use crate::data::table_info::FileName;
-use oxpinyin_input::config::{
+use oxpinyin_core::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
 use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
@@ -99,7 +99,7 @@ pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> 
 /// # Errors
 /// Returns an I/O error or an invalid-data error on a failed chunk load.
 pub(crate) fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-    use oxpinyin_input::chunk::{ChunkLoadError, load};
+    use oxpinyin_core::input::chunk::{ChunkLoadError, load};
     let chunk = match load(path) {
         Ok(chunk) => chunk,
         Err(ChunkLoadError::Io(error)) => return Err(error),
@@ -320,7 +320,7 @@ pub(crate) const fn get_open_counter(open_counter: i32) -> i32 {
 ///
 /// [`UserTableInfo::load`] and [`UserTableInfo::save`] make the pin's own
 /// `fopen`, `fscanf`, `fprintf` and `setlocale` calls through
-/// [`oxpinyin_input::config`].
+/// [`oxpinyin_core::input::config`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserTableInfo {
     /// `binary format version:`.
@@ -372,7 +372,7 @@ impl UserTableInfo {
     /// load's `false` (the pin's open line has been written for the first).
     /// [`UserConfError::UnknownDatabaseFormat`] is the abort point.
     pub fn load(
-        filename: &(impl oxpinyin_input::FileName + ?Sized),
+        filename: &(impl oxpinyin_core::input::FileName + ?Sized),
     ) -> Result<Self, UserConfError> {
         let input = UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
         Self::read(input)
@@ -423,7 +423,7 @@ impl UserTableInfo {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`UserConfError::Unopenable`].
     pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
-        if oxpinyin_input::path::path_to_bytes(path).contains(&0) {
+        if oxpinyin_core::input::path::path_to_bytes(path).contains(&0) {
             return Err(UserConfError::Unopenable);
         }
         Self::load(path)
@@ -438,7 +438,7 @@ impl UserTableInfo {
     /// (`make_conform` copies the system's first); here it writes nothing
     /// and answers `false`.
     #[must_use]
-    pub fn save(&self, filename: &(impl oxpinyin_input::FileName + ?Sized)) -> bool {
+    pub fn save(&self, filename: &(impl oxpinyin_core::input::FileName + ?Sized)) -> bool {
         let Some(database_format) = self
             .database_format
             .as_deref()
@@ -461,7 +461,7 @@ impl UserTableInfo {
     /// holding a NUL, which no C caller can pass.
     #[must_use]
     pub(crate) fn save_path(&self, path: &std::path::Path) -> bool {
-        !oxpinyin_input::path::path_to_bytes(path).contains(&0) && self.save(path)
+        !oxpinyin_core::input::path::path_to_bytes(path).contains(&0) && self.save(path)
     }
 
     /// The four lines [`Self::save`] writes, in its order, for composing

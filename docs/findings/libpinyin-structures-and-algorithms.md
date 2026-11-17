@@ -589,9 +589,9 @@ relative to `crates/`.
 | `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` | `oxpinyin-user/src/data/table_info.rs:41`, `oxpinyin-facade/src/runtime/mod.rs:30` |
 | Token slot mask and allocation wrap | `0x00ffffff`. After the last slot, import uses slot 1 and addon promotion uses slot 0 | `include/novel_types.h:41-46`, `storage/phrase_index.cpp:620`, `pinyin.cpp:589-594,2541-2545` | `oxpinyin-user/src/phrase.rs:29,110-116`, `oxpinyin-user/src/store_arena.rs:378-382` |
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32,409,423` | `oxpinyin-user/src/data/user_files.rs:291,300,500` |
-| Configuration scanner | 6 conversions per library row, at most 255 bytes per `%s` field | `storage/table_info.cpp:228,232,255-259,352` | `oxpinyin-input/src/native.rs:394,406,425-432`, `oxpinyin-input/src/config.rs:158` |
-| Table-text scanner | First 4 fields. At most 4095 bytes per read and 255 bytes per copied string. Decimal tokens fit `u32` and counts fit `size_t` | `storage/table_text_parser.h:34-49,54-90,99-114` | `oxpinyin-utils/src/storage/table_text.rs:38-41,69-85`, `oxpinyin-input/src/tool.rs:1260,1312-1334` |
-| MemoryChunk header and checksum | 8-byte minimum header. Four-byte little-endian checksum words and eight-bit shifts for remaining bytes | `include/memory_chunk.h:69,136-160,427-438,486-496` | `oxpinyin-input/src/chunk.rs:109-118`, `oxpinyin-user/src/data/chunk_format.rs:33,70-80` |
+| Configuration scanner | 6 conversions per library row, at most 255 bytes per `%s` field | `storage/table_info.cpp:228,232,255-259,352` | `oxpinyin-core/src/input/native.rs:394,406,425-432`, `oxpinyin-core/src/input/config.rs:158` |
+| Table-text scanner | First 4 fields. At most 4095 bytes per read and 255 bytes per copied string. Decimal tokens fit `u32` and counts fit `size_t` | `storage/table_text_parser.h:34-49,54-90,99-114` | `oxpinyin-utils/src/storage/table_text.rs:38-41,69-85`, `oxpinyin-core/src/input/tool.rs:1260,1312-1334` |
+| MemoryChunk header and checksum | 8-byte minimum header. Four-byte little-endian checksum words and eight-bit shifts for remaining bytes | `include/memory_chunk.h:69,136-160,427-438,486-496` | `oxpinyin-core/src/input/chunk.rs:109-118`, `oxpinyin-user/src/data/chunk_format.rs:33,70-80` |
 | SingleGram header and record stride | 4-byte minimum header, 8-byte item stride | `storage/ngram.cpp:37-38,48-70`, `include/novel_types.h:105-108` | `oxpinyin-core/src/single_gram.rs:20-23`, `oxpinyin-user/src/store.rs:1526-1539` |
 | Journal ADD item header and mask-out header count | ADD needs at least 6 bytes. Mask-out needs one journal header and asserts on a second | `storage/phrase_index.h:56,124-126`, `storage/phrase_index.cpp:457,721-747` | `oxpinyin-user/src/replay.rs:918-924`, `oxpinyin-user/src/persistence.rs:1844-1855` |
 | Phrase-item length and pronunciation count | Both fields are 8-bit unsigned. The 256th distinct pronunciation wraps the count to zero | `storage/phrase_index.h:100-114`, `storage/phrase_index.cpp:56-91,195-204` | `oxpinyin-user/src/user_library.rs:364,411`, `oxpinyin-user/src/store.rs:405-408,443` |
@@ -606,7 +606,7 @@ The stock value is 0.312699 (`data/table.conf.in:3` from the repository root).
 `SystemTableInfo2::load` sets
 `LC_NUMERIC="C"` and scans `%f\n` into a `gfloat`
 (`storage/table_info.cpp:197,220-224`). Both Rust facades and the tools
-call the same scanner through `oxpinyin-input/src/native.rs:374-385`.
+call the same scanner through `oxpinyin-core/src/input/native.rs:374-385`.
 The decoder uses the scanned value and derives the unigram coefficient as
 `1 - λ` (`lookup/phonetic_lookup.h:712-713`).
 
@@ -898,7 +898,7 @@ pinyin columns are gone.
 ### Table-file scanning
 
 Pin `table_info.cpp:208-287,338-359` uses five system/four marker directives,
-then six-column library rows. `oxpinyin-input` makes those `fscanf`, `feof`
+then six-column library rows. `oxpinyin_core::input` makes those `fscanf`, `feof`
 and `atoi` calls on the file's stream, and `TableConf::load` and
 `UserTableInfo::load` keep the pin's mappings, slots and refusals. Both loads
 are O(n) time in the file and O(1) space beyond the rows: the scanner keeps
@@ -907,7 +907,7 @@ retain their formats and ordering. Punctuation remains O(words) time/space;
 chunk payload retries preserve O(bytes) time and O(1) additional space, with
 the existing header/sync/rename contract.
 
-**Equivalence: argued.** `oxpinyin-input/src/native.rs:349-441` makes the
+**Equivalence: argued.** `oxpinyin-core/src/input/native.rs:349-441` makes the
 same libc `fscanf` calls with the same format strings, `feof` (`:344-347`)
 and `atoi` (`:486-489`), so stream position, return counts, buffer
 contents and the dropped short last row are the pin's
@@ -1028,7 +1028,7 @@ frequency, and rows 125-127. No crash or lost buffered output is emulated.
 `gen_pinyin_table` reads with `fscanf("%1023s %1023s %u")` and `feof`
 (`gen_pinyin_table.cpp:134-157`): a last row without a trailing newline is
 dropped. `TableInput` keeps the same persistent buffers and calls
-(`oxpinyin-input/src/tool.rs:777-984`). The full-pinyin parse runs with
+(`oxpinyin-core/src/input/tool.rs:777-984`). The full-pinyin parse runs with
 `PINYIN_CORRECT_ALL | USE_TONE` (`gen_pinyin_table.cpp:176-182`).
 
 **Equivalence: argued.** The scanner, `g_utf8_strlen`, the UCS-4
@@ -1059,7 +1059,7 @@ pin's and replaced them as follows:
 - `test_memory_chunk`, `test_phrase_index` and `test_phrase_index_logger`
   are product tests that print nothing. Examples are
   `framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map`
-  (`oxpinyin-input/src/chunk.rs:557-582`), `oxpinyin-user/src/replay.rs`,
+  (`oxpinyin-core/src/input/chunk.rs:557-582`), `oxpinyin-user/src/replay.rs`,
   `oxpinyin-utils/src/storage/libraries.rs` and
   `oxpinyin-user/src/data/phrase_libraries.rs`.
 - `test_phrase_table`, `test_chewing_table`, `test_matrix`,

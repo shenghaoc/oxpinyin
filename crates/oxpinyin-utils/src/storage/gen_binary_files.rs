@@ -13,9 +13,9 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
 
-use oxpinyin_input::tool;
-use oxpinyin_input::tool::OptionValue;
-use oxpinyin_input::tool::storage::TableFile;
+use oxpinyin_core::input::tool;
+use oxpinyin_core::input::tool::OptionValue;
+use oxpinyin_core::input::tool::storage::TableFile;
 use oxpinyin_user::data::chunk_write::{ChunkItem, PHRASE_MASK};
 use oxpinyin_user::data::row_format::phrase_index::encode_tokens;
 use oxpinyin_user::data::row_format::pinyin_index::{
@@ -69,7 +69,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 
 /// One index file's path as the store opens it.
 fn path_of(name: &CStr) -> PathBuf {
-    oxpinyin_input::path::path_from_bytes(name.to_bytes())
+    oxpinyin_core::input::path::path_from_bytes(name.to_bytes())
 }
 
 /// The rows one `generate_binary_files` call walks (default or addon).
@@ -293,7 +293,7 @@ pub fn read_phrase_items(
     let mut item = fresh_item();
     while let Some(record) = read_pinyin_record(file) {
         // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) == phrase_index)`.
-        if oxpinyin_core::phrase_index_library(record.token) != usize::from(index) {
+        if oxpinyin_core::model::phrase_index_library(record.token) != usize::from(index) {
             tool::abort();
         }
         let (phrase, written) = tool::utf8_to_ucs4(&record.phrase);

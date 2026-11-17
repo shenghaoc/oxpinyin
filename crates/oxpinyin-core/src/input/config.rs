@@ -12,7 +12,7 @@
 
 use std::ffi::{CStr, c_int};
 
-use crate::native::{self, SavedNumeric, Stream, WORD_SIZE};
+use crate::input::native::{self, SavedNumeric, Stream, WORD_SIZE};
 
 /// What one `fscanf` call answered: `1`, `0` or `EOF`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,7 +91,7 @@ impl SystemTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.\n` line, with the
     /// locale left at `"C"`.
-    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Result<Self, OpenFailed> {
+    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
             native::report_system_open_failed(&filename.as_c_name());
@@ -186,7 +186,7 @@ impl UserTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.` line, which has no
     /// newline, with the locale left at `"C"`.
-    pub fn open(filename: &(impl crate::FileName + ?Sized)) -> Result<Self, OpenFailed> {
+    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
             native::report_user_open_failed(&filename.as_c_name());
@@ -260,7 +260,7 @@ pub struct UserTableInfoFields<'a> {
 /// the pin does not check them.
 #[must_use]
 pub fn save_user_table_info(
-    filename: &(impl crate::FileName + ?Sized),
+    filename: &(impl crate::input::FileName + ?Sized),
     fields: &UserTableInfoFields<'_>,
 ) -> bool {
     let locale = SavedNumeric::install_c();

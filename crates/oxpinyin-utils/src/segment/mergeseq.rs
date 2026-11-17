@@ -12,7 +12,7 @@
 
 use std::ffi::{CStr, OsString};
 
-use oxpinyin_input::tool::{self, OutputStream};
+use oxpinyin_core::input::tool::{self, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;
@@ -54,7 +54,7 @@ impl Merger {
     fn validate(&self, search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
         let text = tag_token_text(
             token,
-            oxpinyin_core::phrase_index_library(token) == 0,
+            oxpinyin_core::model::phrase_index_library(token) == 0,
             |token| search.item(token),
             |item| Some(item.words),
             |token| tool::segmentation::report_unknown_token(token as i32),

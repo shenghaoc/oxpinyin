@@ -2,11 +2,11 @@
 
 use std::ffi::{CString, OsString};
 
+use oxpinyin_core::input::tool::{self, OptionArg, OptionEntry, OptionValue};
 use oxpinyin_core::{
     DoublePinyinParser, OptionBits, ZhuyinParser, ZhuyinScheme,
     tool::{Key, Parse, parse_direct},
 };
-use oxpinyin_input::tool::{self, OptionArg, OptionEntry, OptionValue};
 
 enum Parser {
     Full,
