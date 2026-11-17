@@ -17,15 +17,15 @@ doctest = false
 # edge the utilities use.
 default = ["tkrzw"]
 kyotocabinet = [
-    "oxpinyin-store/kyotocabinet",
+    "oxpinyin-core/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
 ]
 bdb = [
-    "oxpinyin-store/bdb",
+    "oxpinyin-core/bdb",
     "oxpinyin-user/bdb",
 ]
 tkrzw = [
-    "oxpinyin-store/tkrzw",
+    "oxpinyin-core/tkrzw",
     "oxpinyin-user/tkrzw",
 ]
 
@@ -37,7 +37,6 @@ rustc-hash.workspace = true
 oxpinyin-core = { workspace = true, features = ["tools"] }
 # The pin's DBM files, written and read through the backend seam the data
 # layer and datagen share.
-oxpinyin-store = { workspace = true, features = ["tools"] }
 # The storage text importer reuses the user store's pin-exact pronunciation
 # count handling.
 oxpinyin-user = { workspace = true, features = ["tools"] }

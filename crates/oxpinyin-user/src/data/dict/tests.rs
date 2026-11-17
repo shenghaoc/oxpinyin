@@ -54,7 +54,7 @@ mod system_dictionary {
 
     use crate::data::{SystemDbm, SystemDictionary};
 
-    use oxpinyin_store::DefaultStore;
+    use oxpinyin_core::store::DefaultStore;
 
     use crate::data::support::{ChunkBuilder, write_raw_rows};
 

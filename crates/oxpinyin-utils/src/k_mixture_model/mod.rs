@@ -4,9 +4,9 @@
 //!
 //! The pin keeps its working model in a DBM whose records are the raw
 //! host-native structs of `utils/training/k_mixture_model.h`. Member 4's
-//! [`oxpinyin_store::FlexibleBigram`] carries that container class and byte
+//! [`oxpinyin_core::store::FlexibleBigram`] carries that container class and byte
 //! layout; [`records`] names the three record types and the `KMMP` magic
-//! number as [`oxpinyin_store::FixedRecord`] and [`oxpinyin_store::FlexibleGramSpec`] impls.
+//! number as [`oxpinyin_core::store::FixedRecord`] and [`oxpinyin_core::store::FlexibleGramSpec`] impls.
 //!
 //! Each operation here is the pin's C++ control flow: the same per-token
 //! walks (`get_all_items` in the backend's native order, `retrieve_all`

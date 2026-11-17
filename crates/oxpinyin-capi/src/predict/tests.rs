@@ -564,10 +564,11 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     // key order, read as the library attaches the file.
     let mut extensions: Vec<Vec<u8>> = Vec::new();
     {
-        use oxpinyin_store::RawReadStore as _;
-        let table =
-            oxpinyin_store::DefaultStore::open_read_only(&system_dir().join("phrase_index.bin"))
-                .expect("open the phrase table");
+        use oxpinyin_core::store::RawReadStore as _;
+        let table = oxpinyin_core::store::DefaultStore::open_read_only(
+            &system_dir().join("phrase_index.bin"),
+        )
+        .expect("open the phrase table");
         table
             .range_raw(
                 std::ops::Bound::Unbounded,
@@ -591,7 +592,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
             .collect::<String>()
     };
     let (context, instance) = open_at(&user.path);
-    oxpinyin_store::read_faults::fail_point_read_of(&extensions[1], 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&extensions[1], 0);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
     let rows: Vec<String> = capture_rows(instance)
         .into_iter()

@@ -361,14 +361,14 @@ pub(crate) fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) 
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
 pub(crate) fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
     let versions = oxpinyin_user::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin_user::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
-    oxpinyin_store::DefaultStore::write_user_bigram(
+    oxpinyin_core::store::DefaultStore::write_user_bigram(
         &user_dir.join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
     )
@@ -391,11 +391,11 @@ pub(crate) fn write_user_conf(user_dir: &Path, system: &Path) {
 /// Replaces the file at `path` with a tree DBM of the running backend.
 /// The tree holds exactly `rows`, raw keys and values for a system table.
 pub(crate) fn craft_tree(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin_core::store::{WriteStore as _, WriteTxn as _};
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
-    let store = oxpinyin_store::DefaultStore::create(path).expect("create the DBM");
+    let store = oxpinyin_core::store::DefaultStore::create(path).expect("create the DBM");
     store
         .write(|txn| {
             for (key, value) in rows {
@@ -411,11 +411,11 @@ pub(crate) fn craft_tree(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// the library's own save writes a user index: a snapshot on Kyoto
 /// Cabinet, a tree file on tkrzw and Berkeley DB.
 pub(crate) fn craft_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the user index");
     }
-    oxpinyin_store::DefaultStore::write_user_index(path, |sink| {
+    oxpinyin_core::store::DefaultStore::write_user_index(path, |sink| {
         for (key, value) in rows {
             sink(key, value)?;
         }

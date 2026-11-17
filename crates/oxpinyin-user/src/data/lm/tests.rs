@@ -35,7 +35,7 @@ mod language_model {
 
     use crate::data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
 
-    use oxpinyin_store::{DefaultStore, WriteStore, WriteTxn};
+    use oxpinyin_core::store::{DefaultStore, WriteStore, WriteTxn};
 
     use crate::data::support::ChunkBuilder;
 

@@ -1122,7 +1122,7 @@ Buckets:
 | 29 | Wrapping in-memory totals: `oxpinyin-facade` unigram total; `oxpinyin-user` `phrase_libraries.rs`, `lm/mod.rs`; `oxpinyin-user` `store.rs`, `registry.rs`, `seed.rs`; the `guint8` pronunciation count in `store_libpinyin.rs` | `phrase_index.h:615,633`; `phrase_index.cpp:28` | Boundary | On-disk `guint32` / `guint8` widths; defined unsigned wrap. |
 | 30 | `oxpinyin-core` `nbest.rs` node index (`HashMap` beside the node `Vec`) | `phonetic_lookup.h:314-315` | Behaviour | Creation order lives in the `Vec`; the map is a lookup only. |
 
-Out of scope: `oxpinyin-store`'s DBM calls and test-only code.
+Out of scope: `oxpinyin-core`'s DBM calls and test-only code.
 The table has no row 28; the other rows keep their numbers.
 
 Result: Boundary rows 1, 2, 7–9, 18–22, 24, 26, 27 and 29. Behaviour rows

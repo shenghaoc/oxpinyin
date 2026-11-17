@@ -5,7 +5,7 @@
 //! session uses the backend's in-memory tree and keeps empty prefix markers,
 //! duplicate tokens and malformed rows verbatim.
 
-use oxpinyin_store::StoreError;
+use oxpinyin_core::store::StoreError;
 
 use crate::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
 use crate::records::NativeTable;

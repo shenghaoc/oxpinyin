@@ -102,11 +102,11 @@ pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
 /// in place of any file there: a system table with records the library
 /// never writes.
 pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin_core::store::{WriteStore as _, WriteTxn as _};
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
-    let store = oxpinyin_store::DefaultStore::create(path).expect("create the DBM");
+    let store = oxpinyin_core::store::DefaultStore::create(path).expect("create the DBM");
     store
         .write(|txn| {
             for (key, value) in rows {
@@ -121,11 +121,11 @@ pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// place of any file there: a system bigram with grams the library never
 /// writes.
 pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin_core::store::{WriteStore as _, WriteTxn as _};
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
-    let store = oxpinyin_store::DefaultStore::create_hash(path).expect("create the DBM");
+    let store = oxpinyin_core::store::DefaultStore::create_hash(path).expect("create the DBM");
     store
         .write(|txn| {
             for (key, value) in rows {
@@ -141,11 +141,11 @@ pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// the library's own save writes a user index: a snapshot on Kyoto
 /// Cabinet, a tree file on tkrzw and Berkeley DB.
 pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the user index");
     }
-    oxpinyin_store::DefaultStore::write_user_index(path, |sink| {
+    oxpinyin_core::store::DefaultStore::write_user_index(path, |sink| {
         for (key, value) in rows {
             sink(key, value)?;
         }
@@ -159,22 +159,23 @@ pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// own save writes the user bigram: a snapshot on Kyoto Cabinet, a hash
 /// file on tkrzw and Berkeley DB.
 pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     let mut rows = rows.to_vec();
     rows.sort();
-    oxpinyin_store::DefaultStore::write_user_bigram(path, &rows).expect("write the user bigram");
+    oxpinyin_core::store::DefaultStore::write_user_bigram(path, &rows)
+        .expect("write the user bigram");
 }
 
 /// Every record of the user container at `path`, sorted. `hash` reads the
 /// user bigram; otherwise the file is a user index. Each is read as the
 /// library reads it on the running backend.
 pub fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use oxpinyin_store::RawReadStore as _;
+    use oxpinyin_core::store::RawReadStore as _;
     use std::ops::Bound;
     let store = if hash {
-        oxpinyin_store::DefaultStore::open_user_bigram(path)
+        oxpinyin_core::store::DefaultStore::open_user_bigram(path)
     } else {
-        oxpinyin_store::DefaultStore::open_user_index(path)
+        oxpinyin_core::store::DefaultStore::open_user_index(path)
     }
     .unwrap_or_else(|error| panic!("open {}: {error:?}", path.display()));
     let mut rows = Vec::new();
@@ -234,14 +235,14 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin_store::WriteStore as _;
+    use oxpinyin_core::store::WriteStore as _;
     let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
     let versions = oxpinyin_user::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin_user::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
-    oxpinyin_store::DefaultStore::write_user_bigram(
+    oxpinyin_core::store::DefaultStore::write_user_bigram(
         &user_dir.join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
     )
@@ -255,7 +256,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 /// in the running backend's format. This is the crafted index of register
 /// row 93, whose tokens the library never wrote.
 pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
-    use oxpinyin_store::{RawReadStore as _, WriteStore as _};
+    use oxpinyin_core::store::{RawReadStore as _, WriteStore as _};
     if !user_dir.join("user.conf").exists() {
         let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(&system_dir())
             .expect("fixture table.conf");
@@ -267,7 +268,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
     let path = user_dir.join(oxpinyin_user::data::user_files::UserDbm::PhraseIndex.file_name());
     let mut rows = std::collections::BTreeMap::new();
     if path.exists() {
-        oxpinyin_store::DefaultStore::open_user_index(&path)
+        oxpinyin_core::store::DefaultStore::open_user_index(&path)
             .expect("open the phrase table")
             .copy_raw(|key, value| {
                 rows.insert(key.to_vec(), value.to_vec());
@@ -280,7 +281,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
         .collect();
     let value = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
     rows.insert(key, value);
-    oxpinyin_store::DefaultStore::write_user_index(&path, |sink| {
+    oxpinyin_core::store::DefaultStore::write_user_index(&path, |sink| {
         rows.iter().try_for_each(|(key, value)| sink(key, value))
     })
     .expect("write the phrase table");

@@ -1,5 +1,5 @@
 use super::*;
-use oxpinyin_store::{DefaultStore, RawReadStore, WriteStore};
+use oxpinyin_core::store::{DefaultStore, RawReadStore, WriteStore};
 use oxpinyin_user::data::{
     PunctTable,
     row_format::punct::{decode_puncts, encode_puncts},

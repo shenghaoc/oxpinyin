@@ -32,5 +32,4 @@ libc.workspace = true
 regex.workspace = true
 rstest.workspace = true
 sha2.workspace = true
-oxpinyin-store.workspace = true
 tempfile.workspace = true

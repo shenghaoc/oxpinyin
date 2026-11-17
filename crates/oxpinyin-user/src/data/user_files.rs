@@ -31,7 +31,7 @@ use crate::data::table_info::FileName;
 use oxpinyin_core::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
-use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
+use oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT;
 
 /// A `MemoryChunk` file that does not frame a valid payload.
 #[derive(Debug)]

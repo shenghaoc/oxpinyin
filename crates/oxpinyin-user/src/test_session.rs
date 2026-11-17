@@ -186,7 +186,7 @@ pub(crate) fn load_checked(
     originals: &SystemOriginals,
     check: &crate::persistence::ProfileCheck,
 ) -> Result<crate::persistence::Loaded, crate::persistence::PersistenceError> {
-    use oxpinyin_store::RawReadStore as _;
+    use oxpinyin_core::store::RawReadStore as _;
     let crate::persistence::LoadedProfile {
         mut loaded,
         replayed,
@@ -201,7 +201,7 @@ pub(crate) fn load_checked(
         std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
     );
     if check.conform && bigram.exists() {
-        match oxpinyin_store::DefaultStore::open_user_bigram(&bigram) {
+        match oxpinyin_core::store::DefaultStore::open_user_bigram(&bigram) {
             Ok(store) => {
                 let rows = &mut state.bigram;
                 if let Err(error) =

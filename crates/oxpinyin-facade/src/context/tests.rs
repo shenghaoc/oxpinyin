@@ -950,7 +950,7 @@ mod native {
         for (name, bytes) in files_of(user) {
             std::fs::write(before.join(name), bytes).unwrap();
         }
-        oxpinyin_store::copy_faults::fail_source_read_after(1);
+        oxpinyin_core::store::copy_faults::fail_source_read_after(1);
         let error = ContextCore::try_open(
             &system_dir(),
             Some(user),

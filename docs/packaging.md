@@ -243,13 +243,13 @@ are already dependencies of libkyotocabinet.
 ## Kyoto Cabinet: build headers must match the installed library
 
 The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the facade, as libpinyin's Kyoto Cabinet build does.
-The adapter of the cxx bridge (`crates/oxpinyin-store/src/kyotocabinet/adapter.cc`) constructs `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers.
+The adapter of the cxx bridge (`crates/oxpinyin-core/src/store/kyotocabinet/adapter.cc`) constructs `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers.
 That compiled code calls the out-of-line functions of the system libkyotocabinet and shares its object layouts.
 So the headers that a package builds against must be the same Kyoto Cabinet version as the libkyotocabinet it runs with.
 
 A package builds against the distribution's `libkyotocabinet-dev` or `kyotocabinet-devel` for the `libkyotocabinet` it ships.
 The facade must be rebuilt whenever the version of that library changes, as libpinyin's package must be.
-The backend checks only that the running library is 1.2.x (`check_runtime_version` in `crates/oxpinyin-store/src/kyotocabinet/ffi.rs`); it does not detect a header/library mismatch.
+The backend checks only that the running library is 1.2.x (`check_runtime_version` in `crates/oxpinyin-core/src/store/kyotocabinet/ffi.rs`); it does not detect a header/library mismatch.
 
 ## Locating the model data (`pkgdatadir`)
 

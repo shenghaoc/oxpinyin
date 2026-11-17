@@ -22,11 +22,11 @@
 use std::fmt;
 use std::path::Path;
 
+use oxpinyin_core::store::{DefaultStore, RawReadStore};
 use oxpinyin_core::{
     ChewingKey, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
     model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
 };
-use oxpinyin_store::{DefaultStore, RawReadStore};
 
 use crate::data::chewing_table::{ChewingTable, RawChewingDbm, prefix_keys_match};
 use crate::data::phrase_libraries::PhraseLibraries;
@@ -271,7 +271,7 @@ impl SystemTables {
     pub fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
         let attached = crate::data::chewing_table::DefaultDbm::attach(path, false)?;
         let empty = crate::data::chewing_table::DefaultDbm::new(
-            <oxpinyin_store::DefaultStore as oxpinyin_store::WriteStore>::create_in_memory()
+            <oxpinyin_core::store::DefaultStore as oxpinyin_core::store::WriteStore>::create_in_memory()
                 .map_err(|error| DictError::Table(error.into()))?,
         );
         let (pinyin, phrase) = if phonetic {

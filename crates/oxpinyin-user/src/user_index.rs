@@ -14,7 +14,7 @@
 //! markers and malformed rows: the pin's `load_db` copies the table and
 //! `save_db` copies it back.
 
-use oxpinyin_store::StoreError;
+use oxpinyin_core::store::StoreError;
 
 use std::collections::BTreeSet;
 

@@ -140,14 +140,14 @@ fn native_table() -> PhraseTable {
 #[test]
 fn a_failed_phrase_table_read_is_a_miss() {
     let table = native_table();
-    oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("测测"), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&encode_ucs4_key("测测"), 0);
     assert!(table.search("测测").unwrap().is_empty());
 }
 
 #[test]
 fn a_failed_phrase_table_read_is_a_miss_for_zhuyin() {
     let table = native_table();
-    oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("你你"), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&encode_ucs4_key("你你"), 0);
     assert!(table.search("你你").unwrap().is_empty());
 }
 
@@ -155,9 +155,9 @@ fn a_failed_phrase_table_read_is_a_miss_for_zhuyin() {
 /// (phrase_large_table3_tkrzwdb.cpp:171-186 at 074a2219).
 #[test]
 fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
-    use oxpinyin_store::RawReadStore as _;
+    use oxpinyin_core::store::RawReadStore as _;
     let prefix = encode_ucs4_key("你");
-    let store = oxpinyin_store::DefaultStore::open_read_only(
+    let store = oxpinyin_core::store::DefaultStore::open_read_only(
         &crate::native_fixture::system_dir().join("phrase_index.bin"),
     )
     .unwrap();
@@ -177,7 +177,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     extensions.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(extensions.len() >= 2);
     let table = native_table();
-    oxpinyin_store::read_faults::fail_point_read_of(&extensions[1].0, 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&extensions[1].0, 0);
     assert_eq!(
         table.search_suggestion(&[u32::from('你')]).unwrap(),
         extensions[0].1
@@ -193,7 +193,7 @@ fn a_phrase_table_body_read_failure_after_the_check_aborts() {
         "data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts";
     if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
         let table = native_table();
-        oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("你好"), 1);
+        oxpinyin_core::store::read_faults::fail_point_read_of(&encode_ucs4_key("你好"), 1);
         let _ = table.search("你好");
         panic!("the checked body read must abort");
     }

@@ -126,7 +126,7 @@ fn a_failed_phrase_table_read_is_a_miss(
         .chars()
         .flat_map(|word| u32::from(word).to_le_bytes())
         .collect();
-    oxpinyin_store::read_faults::fail_point_read_of(&key, 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&key, 0);
     assert!(matches!(
         plan(&context, 7, text, reading),
         ImportPlan::Add { original: None, .. }

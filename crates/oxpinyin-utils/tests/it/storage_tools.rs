@@ -186,7 +186,7 @@ mod frozen {
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
                  addon RESERVED NULL NULL NULL NOT_USED\n\
                  addon 1 source.table addon.bin NULL DICTIONARY\n",
-                    oxpinyin_store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory
@@ -234,7 +234,7 @@ mod frozen {
                  source table format:pinyin\ndatabase format:{}\n\
                  default RESERVED NULL NULL NULL NOT_USED\n\
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n",
-                    oxpinyin_store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory

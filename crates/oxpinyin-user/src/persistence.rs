@@ -60,7 +60,9 @@ use crate::data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
 use oxpinyin_core::input::path::{build_path, rename, unlink};
-use oxpinyin_store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
+use oxpinyin_core::store::{
+    DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb,
+};
 
 use crate::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::user_index::UserIndex;

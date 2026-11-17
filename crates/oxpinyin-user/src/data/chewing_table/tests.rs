@@ -348,11 +348,12 @@ fn suggestion_walk_matches_the_separate_probes() {
 
 #[test]
 fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
-    use oxpinyin_store::{DefaultStore, RawReadStore as _, WriteStore as _, WriteTxn as _};
+    use oxpinyin_core::store::{DefaultStore, RawReadStore as _, WriteStore as _, WriteTxn as _};
     let dir = tempfile::tempdir().expect("scratch directory");
-    let path = dir
-        .path()
-        .join(format!("walk_stop.{}", oxpinyin_store::DEFAULT_STORE_EXT));
+    let path = dir.path().join(format!(
+        "walk_stop.{}",
+        oxpinyin_core::store::DEFAULT_STORE_EXT
+    ));
     let store = DefaultStore::create(&path).unwrap();
     store
         .write(|txn| {
@@ -418,7 +419,7 @@ fn a_failed_pinyin_table_read_is_a_miss() {
         ChewingKey::from_pinyin("hao").unwrap(),
     ];
     assert!(!table.search(&keys).unwrap().is_empty());
-    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&index_key(&keys), 0);
     assert!(table.search(&keys).unwrap().is_empty());
 }
 
@@ -429,7 +430,7 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
     let table = native_table();
     let keys = [ChewingKey::from_pinyin("ni").unwrap()];
     assert!(table.key_exists(&keys).unwrap());
-    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&index_key(&keys), 0);
     assert!(!table.key_exists(&keys).unwrap());
     assert!(
         !table
@@ -451,7 +452,10 @@ fn a_failed_pinyin_table_existence_read_is_a_miss_for_zhuyin() {
         .key()
         .chewing_key()
         .with_tone(parse.keys()[0].tone());
-    oxpinyin_store::read_faults::fail_point_read_of(&(key.to_packed() & 0x0fff).to_le_bytes(), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(
+        &(key.to_packed() & 0x0fff).to_le_bytes(),
+        0,
+    );
     assert!(!table.key_exists(&[key]).unwrap());
     assert!(table.search(&[key]).unwrap().is_empty());
 }
@@ -462,7 +466,7 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
     let table = native_table();
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let hao = ChewingKey::from_pinyin("hao").unwrap();
-    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&[ni, hao]), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&index_key(&[ni, hao]), 0);
     let mut lengths = Vec::new();
     assert!(
         !table
@@ -519,7 +523,7 @@ fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
     if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
         let table = native_table();
         let key = ChewingKey::from_pinyin("ni").unwrap();
-        oxpinyin_store::read_faults::fail_point_read_of(&key.to_packed().to_le_bytes(), 1);
+        oxpinyin_core::store::read_faults::fail_point_read_of(&key.to_packed().to_le_bytes(), 1);
         let _ = table.search(&[key]);
         panic!("the checked body read must abort");
     }

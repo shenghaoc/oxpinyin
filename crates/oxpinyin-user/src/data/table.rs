@@ -6,14 +6,14 @@
 //!
 //! # Backend selection
 //!
-//! One peer backend per binary, resolved by `oxpinyin-store`'s
+//! One peer backend per binary, resolved by `oxpinyin-core`'s
 //! compile-time selection (tkrzw is the default since 2026-10-30;
 //! Kyoto Cabinet and Berkeley DB are the other peers, each selected with
 //! `--no-default-features --features <peer>`).  The committed fixtures
 //! carry one file per peer's extension so tests can exercise each
 //! independently.
 
-use oxpinyin_store::StoreError;
+use oxpinyin_core::store::StoreError;
 
 /// Errors that can occur when opening or querying a table.
 #[derive(Debug, thiserror::Error)]

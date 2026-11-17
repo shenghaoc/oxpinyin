@@ -52,6 +52,7 @@ pub mod sentence_facts;
 pub mod single_gram;
 #[forbid(unsafe_code)]
 mod static_strings;
+pub mod store;
 #[cfg(feature = "tools")]
 #[forbid(unsafe_code)]
 pub mod tool;

@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use oxpinyin_store::{DefaultStore, RawReadStore};
+use oxpinyin_core::store::{DefaultStore, RawReadStore};
 use oxpinyin_user::data::row_format::encode_token_key;
 use oxpinyin_user::data::single_gram::decode_single_gram;
 

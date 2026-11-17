@@ -4,12 +4,11 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables and native I/O. | deny, scoped input exceptions | yes | yes |
+| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables native I/O and the selected DBM backend. | deny, scoped input and backend exceptions | yes | yes |
 | oxpinyin-user | Native system-data readers and the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
-| oxpinyin-store | Ordered byte-KV interface with one compile-time Berkeley DB, Kyoto Cabinet or tkrzw backend. See backend dependencies below. | deny | yes | via engine |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-core`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable W3 data; no timing loops. | forbid | Linux, macOS (needs GLib) | never |
 
@@ -51,7 +50,7 @@ Exactly one backend per binary is selected at compile time.
 A peer is selected with `--no-default-features --features {bdb|kyotocabinet}`.
 This follows libpinyin's `--with-dbm` model.
 Runtime dispatch and fallback are not added.
-`oxpinyin-store` emits `compile_error!` when zero or multiple backends are enabled.
+`oxpinyin-core` emits `compile_error!` when zero or multiple backends are enabled.
 
 A save makes the pin's synchronisation call for the selected backend (`ngram_tkrzwdb.cpp:80`, `ngram_kyotodb.cpp:102` and `ngram_bdb.cpp:103` at `074a2219`).
 Durability is therefore the backend's durability for that call; oxpinyin promises nothing beyond it.
@@ -65,12 +64,12 @@ The tree has no pure-Rust database backend.
 `glib-sys` binds a C library.
 Kyoto Cabinet, tkrzw and Berkeley DB link to the distribution's libraries.
 Berkeley DB is used through its official C API, `db.h`, with bindgen over system headers.
-tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
-`oxpinyin-store` finds the backends with `system-deps`: tkrzw and Kyoto Cabinet through their `.pc` files, and Berkeley DB without pkg-config, because the distributions and Homebrew install no `.pc` file for it.
+tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-core/src/store/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
+`oxpinyin-core` finds the backends with `system-deps`: tkrzw and Kyoto Cabinet through their `.pc` files, and Berkeley DB without pkg-config, because the distributions and Homebrew install no `.pc` file for it.
 The `SYSTEM_DEPS_BDB_*` overrides reach a Berkeley DB outside the defaults ([discovery and overrides](runbooks/backends.md#discovery-and-overrides)).
 
 Kyoto Cabinet is used as libpinyin uses it.
-Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-store/src/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
+Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin-core/src/store/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
 Like libpinyin, it depends on the system library's C++ ABI.
@@ -101,7 +100,7 @@ Stage 1 covers library configuration read/write and locale.
 The [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) lists stages 2 to 5: chunks, save and rename, diagnostics, and tools.
 All five stages are implemented.
 C facades retain ABI marshalling.
-`oxpinyin-store` retains DBM backends.
+`oxpinyin-core` retains DBM backends.
 
 ## Centralized assembly
 

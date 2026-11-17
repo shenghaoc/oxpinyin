@@ -538,7 +538,7 @@ the files themselves are a second comparison surface (§11).
 
 - The `UserModel` seam (`crates/oxpinyin-core/src/model.rs`) and the engine
   `Session` (`crates/oxpinyin-core/src/engine/session/`).
-- The backend store (`oxpinyin-store`), which reads and writes the user
+- The backend store (`oxpinyin-core`), which reads and writes the user
   files in the backend's own containers.
 - The export symbols (§9).
 - The training pipeline is **independent** — it builds the *system* model
@@ -601,7 +601,7 @@ Architecture — the session state behind the value engine:
   only copy.** A libpinyin session holds `Bigram::m_db` as the pin builds
   it — tkrzw `TinyDBM`, Kyoto Cabinet `StashDB` via `load_snapshot`,
   Berkeley DB an in-memory `DB_HASH` by cursor copy
-  (`oxpinyin_store::UserBigramDb`). The session reads `user_bigram.db`
+  (`oxpinyin_core::store::UserBigramDb`). The session reads `user_bigram.db`
   once, by `load_db`, after the profile check. Every bigram operation
   then runs the pin's own sequence on the raw grams:
   - training (`phonetic_lookup.h:876-909`);

@@ -47,7 +47,7 @@ use std::rc::Rc;
 
 use crate::data::chunk_write::ChunkItem;
 use crate::data::user_files::SystemVersions;
-use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
+use oxpinyin_core::store::{DefaultUserBigramDb, UserBigramDb};
 
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase;
@@ -347,7 +347,7 @@ impl UserStore {
             dirty: Cell::new(false),
             write_generation: Cell::new(0),
             has_user_data: Cell::new(has_user_data),
-            bigram_failed: oxpinyin_store::UserBigramDb::is_failed(&bigram_db),
+            bigram_failed: oxpinyin_core::store::UserBigramDb::is_failed(&bigram_db),
             bigram_db,
             libpinyin: target,
         };

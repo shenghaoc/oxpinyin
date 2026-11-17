@@ -2490,7 +2490,7 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
         runtime.session(&mut state).sentence_text(0).unwrap(),
         "丙丁"
     );
-    oxpinyin_store::read_faults::fail_point_read_of(&sentence_start, 1);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&sentence_start, 1);
     assert!(runtime.session(&mut state).guess_sentence().unwrap());
     assert_eq!(
         runtime.session(&mut state).sentence_text(0).unwrap(),
@@ -2671,7 +2671,7 @@ fn a_failed_pinyin_table_read_is_a_miss() {
         .collect();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("nihao").unwrap();
-    oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&row, 0);
     assert!(runtime.session(&mut state).guess_sentence().unwrap());
     assert_eq!(
         runtime.session(&mut state).sentence_text(0).unwrap(),
@@ -2695,7 +2695,7 @@ fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
     let before = normal_texts(&runtime, &mut state);
     assert!(before.iter().any(|text| text == "你"));
     assert!(before.iter().any(|text| text == "你好"));
-    oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
     let after = normal_texts(&runtime, &mut state);
     assert!(!after.iter().any(|text| text == "你"));
     assert!(after.iter().any(|text| text == "你好"));
@@ -2744,7 +2744,7 @@ fn addon_candidate_continuation_uses_its_row_read() {
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("bama").unwrap();
     let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
-    oxpinyin_store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
+    oxpinyin_core::store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
     let rows = runtime
         .session(&mut state)
         .candidates_at_for_abi(0, false)

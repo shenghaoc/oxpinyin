@@ -325,7 +325,7 @@ All three agree with the store's key-ordering contract
   prefix probe.
 - `crates/oxpinyin-user/src/data/dict.rs`: `SystemDictionary` and
   `AddonDictionary` implement the `Dictionary` trait over `ChewingTable`.
-- `crates/oxpinyin-store/src/lib.rs`: `RawReadStore`, unframed key access
+- `crates/oxpinyin-core/src/store/mod.rs`: `RawReadStore`, unframed key access
   to libpinyin's DBM files.
 
 ---
@@ -431,6 +431,6 @@ oxpinyin (all under `crates/`):
 - `oxpinyin-user/src/data/bigram_table.rs`: `BigramTable`, the lazy bigram
   reader; `oxpinyin-user/src/data/lm/mod.rs` builds `BigramLanguageModel` on it.
 - `oxpinyin-user/src/data/punct.rs`: `PunctTable`, the lazy punctuation reader.
-- `oxpinyin-store`: `RawReadStore::open_hash_read_only` and
+- `oxpinyin-core`: `RawReadStore::open_hash_read_only` and
   `WriteStore::create_hash` on each backend (Kyoto Cabinet `DbType::Hash`,
   tkrzw `HashDBM`, Berkeley DB `DB_HASH`).

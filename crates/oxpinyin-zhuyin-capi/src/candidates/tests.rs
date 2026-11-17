@@ -351,8 +351,8 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     // The saved user bigram holds no record.
     let mut bigram_rows = 0;
     {
-        use oxpinyin_store::RawReadStore as _;
-        oxpinyin_store::DefaultStore::open_user_bigram(
+        use oxpinyin_core::store::RawReadStore as _;
+        oxpinyin_core::store::DefaultStore::open_user_bigram(
             &user_dir
                 .path
                 .join(oxpinyin_user::data::user_files::UserDbm::Bigram.file_name()),

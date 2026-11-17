@@ -126,7 +126,7 @@ pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     Some(bound)
 }
 
-/// Wraps a [`RawReadStore`](oxpinyin_store::RawReadStore) for raw
+/// Wraps a [`RawReadStore`](oxpinyin_core::store::RawReadStore) for raw
 /// (unframed) DBM access — the mode libpinyin's `pinyin_index.bin` needs.
 ///
 /// KC and Tkrzw backends skip table framing and hand the key straight
@@ -138,7 +138,7 @@ pub struct RawChewingDbm<S> {
 
 enum DbmState<S> {
     Open(S),
-    Unopened(oxpinyin_store::UnopenedSystemDbm),
+    Unopened(oxpinyin_core::store::UnopenedSystemDbm),
     /// The open file after facade fini: the handle is dropped, which closes
     /// it and releases its lock. An instance or iterator that outlives the
     /// context reads misses here (compatibility row 42).
@@ -162,11 +162,11 @@ impl<S> RawChewingDbm<S> {
 
 /// The production [`ChewingDbm`]: the compiled-in backend read through
 /// its raw (unframed) keyspace.
-pub type DefaultDbm = RawChewingDbm<oxpinyin_store::DefaultStore>;
+pub type DefaultDbm = RawChewingDbm<oxpinyin_core::store::DefaultStore>;
 
 impl DefaultDbm {
     pub(crate) fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
-        use oxpinyin_store::SystemAttachment;
+        use oxpinyin_core::store::SystemAttachment;
         Ok(
             match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
                 SystemAttachment::Open(store) => Self::new(store),
@@ -182,7 +182,7 @@ impl DefaultDbm {
 /// cleared and the key reads as absent. The one failure that stays an error
 /// is a body read after a good size check, where the pin asserts.
 fn failed_read_is_a_miss(
-    read: Result<bool, oxpinyin_store::StoreError>,
+    read: Result<bool, oxpinyin_core::store::StoreError>,
     value: &mut Vec<u8>,
 ) -> Result<bool, DictError> {
     match read {
@@ -190,15 +190,15 @@ fn failed_read_is_a_miss(
         // `:72`; `bdb_utils.h:61`, `:67`); a point read does not copy,
         // so it never reaches here.
         Err(
-            error @ (oxpinyin_store::StoreError::ReadAfterCheck
-            | oxpinyin_store::StoreError::FatalCopy),
+            error @ (oxpinyin_core::store::StoreError::ReadAfterCheck
+            | oxpinyin_core::store::StoreError::FatalCopy),
         ) => Err(DictError::Table(error.into())),
         Err(
-            oxpinyin_store::StoreError::Io(_)
-            | oxpinyin_store::StoreError::Backend(_)
-            | oxpinyin_store::StoreError::ReadOnly
-            | oxpinyin_store::StoreError::InvalidInput(_)
-            | oxpinyin_store::StoreError::ShortArrayHeader,
+            oxpinyin_core::store::StoreError::Io(_)
+            | oxpinyin_core::store::StoreError::Backend(_)
+            | oxpinyin_core::store::StoreError::ReadOnly
+            | oxpinyin_core::store::StoreError::InvalidInput(_)
+            | oxpinyin_core::store::StoreError::ShortArrayHeader,
         ) => {
             value.clear();
             Ok(false)
@@ -207,7 +207,7 @@ fn failed_read_is_a_miss(
     }
 }
 
-impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
+impl<S: oxpinyin_core::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn attachment_failed(&self) -> bool {
         matches!(self.state, DbmState::Unopened(_))
     }
@@ -289,7 +289,7 @@ impl<S: oxpinyin_store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
                 // path through either table search
                 // (`chewing_large_table2_kyotodb.cpp:170-174`,
                 // `phrase_large_table3_kyotodb.cpp:187` at 074a2219).
-                Err(oxpinyin_store::StoreError::ReadAfterCheck) => std::process::abort(),
+                Err(oxpinyin_core::store::StoreError::ReadAfterCheck) => std::process::abort(),
                 read => failed_read_is_a_miss(read, value),
             },
             DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),

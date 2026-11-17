@@ -1,4 +1,4 @@
-//! The pin's two DBM container kinds through `oxpinyin-store`'s raw
+//! The pin's two DBM container kinds through `oxpinyin-core`'s raw
 //! keyspace: `TreeDB`/`TreeDBM`/`DB_BTREE` for the index and punctuation
 //! tables, `HashDB`/`HashDBM`/`DB_HASH` for `bigram.db`.
 //!
@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use oxpinyin_store::{
+use oxpinyin_core::store::{
     DefaultStore, RawReadStore, StoreError, SystemAttachment, UnopenedSystemDbm, WriteStore,
     WriteTxn as _,
 };
@@ -57,7 +57,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READONLY)`.
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: <DefaultStore as oxpinyin_store::RawReadStore>::open_read_only(path)?,
+            store: <DefaultStore as oxpinyin_core::store::RawReadStore>::open_read_only(path)?,
             plain_set: false,
         })
     }
