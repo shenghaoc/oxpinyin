@@ -1,15 +1,12 @@
 [package]
 name = "oxpinyin-runtime"
-description = "Concrete engine assembly shared by oxpinyin consumers (C ABI, tools)"
+description = "Concrete engine assembly shared by oxpinyin consumers (C ABI, tools). The Rust interface is unstable."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-
-# Intentionally not published to crates.io while pre-alpha; consumers are the
-# workspace crates.
-publish = false
+include = ["/src/**"]
 
 [lib]
 doctest = false

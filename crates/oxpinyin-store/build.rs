@@ -52,6 +52,13 @@ const DATABASE_FORMAT: &str = if cfg!(feature = "kyotocabinet") {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rustc-env=OXPINYIN_STORE_DATABASE_FORMAT={DATABASE_FORMAT}");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+    // docs.rs has no network access and no tkrzw. Documentation needs no
+    // native probe, C++ compile or link line for tkrzw or Kyoto Cabinet.
+    if cfg!(not(feature = "bdb")) && std::env::var_os("DOCS_RS").is_some() {
+        return;
+    }
+    // Berkeley DB keeps its step: src/bdb/ffi.rs includes its bindgen output, and docs.rs builds only the default feature.
     #[cfg(feature = "bdb")]
     bdb::pin_defaults();
     let dependencies = probe();

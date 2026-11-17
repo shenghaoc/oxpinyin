@@ -5,7 +5,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "C ABI of libpinyin (libpinyin.so.15): all 79 pinyin_* exports of the pinned libpinyin.ver. Linux only."
+include = [
+    "/src/**",
+    "/build.rs",
+    "/libpinyin.alloc",
+    "/libpinyin.pc.in",
+    "/libpinyin.ver",
+    "/novel_types.h",
+    "/pinyin.h",
+    "/pinyin_custom2.h",
+]
+description = "C ABI of libpinyin (libpinyin.so.15): all 79 pinyin_* exports of the pinned libpinyin.ver. Linux only. The Rust interface is unstable."
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
 #
@@ -50,17 +60,17 @@ num_enum.workspace = true
 # Marshalling macros shared with oxpinyin-zhuyin-capi (macro-only, no
 # compiled code): the opaque-handle pointer casts and the char**-out
 # sentence writer expand into this crate, where the unsafe is allowed.
-oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
+oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal", version = "=0.1.0-alpha.1" }
 oxpinyin-core.workspace = true
 # default-features = false on the store-reaching edges (the workspace table
 # carries it for the `workspace = true` ones) so `--no-default-features`
 # builds actually reach the store's backend selection; the [features] block
 # above forwards it.
-oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
+oxpinyin-data = { path = "../oxpinyin-data", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-engine.workspace = true
 # The shared facade-orchestration layer (instance/context state machines,
 # parse seams, cursor laws) this crate's C wrappers translate.
-oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
+oxpinyin-facade = { path = "../oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true

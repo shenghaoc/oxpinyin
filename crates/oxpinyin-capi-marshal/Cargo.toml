@@ -5,7 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Declarative marshalling macros and safe C-facing encoders shared by the two C-ABI facades (oxpinyin-capi, oxpinyin-zhuyin-capi). No compiled unsafe of its own."
+include = ["/src/**"]
+description = "Declarative marshalling macros and safe C-facing encoders shared by the two C-ABI facades (oxpinyin-capi, oxpinyin-zhuyin-capi). No compiled unsafe of its own. The Rust interface is unstable."
 
 [lib]
 doctest = false
