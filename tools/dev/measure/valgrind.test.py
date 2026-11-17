@@ -6,6 +6,7 @@ neutrality comparison it calls is replaced by a fake module (it has its own test
 """
 import contextlib
 import io
+import os
 from pathlib import Path
 import signal
 import sys
@@ -17,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import pool, slot
-from tools.dev.measure import bench, valgrind
+from tools.dev import pool, slot, vcpkg
+from tools.dev.measure import bench, recipes, valgrind
 from tools.dev import runners
 from tools.dev.measure.fake_world import Stream, World
 
@@ -92,8 +93,8 @@ class LibrariesTests(World):
                 if present is True:
                     (root / 'lib/libpinyin.so').write_bytes(b'')
             roots[key] = root
-        self.enterContext(mock.patch.object(valgrind, 'ROOTS', roots))
-        self.enterContext(mock.patch.object(valgrind, 'DATA', self.root / 'data'))
+        self.enterContext(mock.patch.object(valgrind, 'roots', lambda env: roots))
+        self.enterContext(mock.patch.object(valgrind, 'data_dir', lambda env: self.root / 'data'))
         (self.root / 'data').mkdir()
         return roots
 
@@ -101,7 +102,7 @@ class LibrariesTests(World):
         err = Stream()
         with contextlib.redirect_stderr(err):
             try:
-                return valgrind.libraries(), None, err.text()
+                return valgrind.libraries({}), None, err.text()
             except runners.Finished as stop:
                 return None, stop.status, err.text()
 
@@ -194,8 +195,8 @@ class DifferentialTests(World):
             library.write_bytes(base.encode())
             self.libs[key] = library
         (self.root / 'data').mkdir()
-        self.enterContext(mock.patch.object(valgrind, 'libraries', lambda: dict(self.libs)))
-        self.enterContext(mock.patch.object(valgrind, 'DATA', self.root / 'data'))
+        self.enterContext(mock.patch.object(valgrind, 'libraries', lambda env: dict(self.libs)))
+        self.enterContext(mock.patch.object(valgrind, 'data_dir', lambda env: self.root / 'data'))
         self.nm_output = NM
         self.neutral = (0, 'PASS (a): identical .text\n')
         fake = types.SimpleNamespace(compare=lambda first, second: self.neutral)
@@ -215,9 +216,37 @@ class DifferentialTests(World):
             return original(command, env=env, cwd=cwd, merge_stderr=merge_stderr)
         self.enterContext(mock.patch.object(bench, 'capture', capture))
         self.enterContext(mock.patch.object(valgrind, 'annotate', lambda out: self.log.append(('annotate', out.name))))
-        self.env = {'CG_OUT': str(self.out), 'CG_ROUNDS': '2', 'T_RUNS': '2', 'HW_RUNS': '2', 'PERF_CPU': '1'}
+        self.env = {'CG_OUT': str(self.out), 'CG_ROUNDS': '2', 'T_RUNS': '2', 'HW_RUNS': '2', 'PERF_CPU': '1',
+                    'OXPINYIN_CACHE': str(self.root / 'cache')}
         self.worker_row = {}
         self.profile_total = 1000
+
+    def test_environment_report_uses_the_selected_overlay_pkg_config(self):
+        outer = self.root / 'outer-pkgconfig'
+        overlay = self.root / 'overlay'
+        for directory, version in ((outer, '1.0.32'), (overlay / 'lib/pkgconfig', '1.0.34')):
+            directory.mkdir(parents=True)
+            (directory / 'tkrzw.pc').write_text(f'Version: {version}\n')
+        original = bench.capture
+
+        def capture(command, *, env=None, **kwargs):
+            if command == ['pkg-config', '--modversion', 'tkrzw']:
+                search = (os.environ if env is None else env)['PKG_CONFIG_PATH']
+                fixture = Path(search.split(os.pathsep)[0]) / 'tkrzw.pc'
+                version = fixture.read_text().removeprefix('Version: ')
+                return pool.Completed(0, version.encode(), b'')
+            return original(command, env=env, **kwargs)
+
+        def run_recipe(argv, env):
+            return recipes.run(valgrind.callgrind_differential, argv, env, pin_comparison=True)
+
+        env = dict(self.env, PKG_CONFIG_PATH=str(outer))
+        with mock.patch.dict(os.environ, {'PKG_CONFIG_PATH': str(outer)}), \
+             mock.patch.object(vcpkg, 'prefix', return_value=overlay), \
+             mock.patch.object(bench, 'capture', capture):
+            status, _, err = self.execute(run_recipe, [], env)
+        self.assertEqual(status, 0, err)
+        self.assertIn('libtkrzw: 1.0.34', (self.out / 'environment.txt').read_text().splitlines())
 
     def test_the_seven_stages_run_in_order_and_leave_their_files(self):
         status, out, err = self.execute(valgrind.callgrind_differential, [], self.env)

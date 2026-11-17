@@ -64,23 +64,113 @@ class PreparationTests(unittest.TestCase):
             (prefix / 'oracle-pin.txt').write_text(re.sub(r'recipe_sha256=\w+', 'recipe_sha256=other', text))
             self.assertFalse(prepare.prepared_pin_matches(prefix, 'tkrzw'))
 
+    @staticmethod
+    def environment(root):
+        return {'OXPINYIN_CACHE': str(root / 'cache')}
+
     def prepare_oracle(self, root):
-        """Run `prepare oracle --cells tkrzw` with /opt and /performance under ROOT; answer the regeneration mock."""
-        from tools.dev import model
-        from tools.dev.measure import recipes
-        def path(value):
-            value = Path(value)
-            return root / value.relative_to('/') if value.anchor and value.parts[1] in ('opt', 'performance') else value
-        with mock.patch.object(prepare, 'Path', side_effect=path), \
-             mock.patch.object(recipes, 'require_performance_environment'), \
+        """Run `prepare oracle --cells tkrzw` with the cache root under ROOT; answer the build mock.
+
+        The libraries build publishes ROOT/seed/tkrzw as the prefix, as build.py --libs-only would;
+        the data build changes nothing. A symbolic link is a file that names its target, so the
+        test runs where the user may not make links."""
+        from tools.dev import model, vcpkg
+        self.links_seen = []
+
+        def link(path, target, target_is_directory=False):
+            path.write_text(str(target))
+
+        def build(command, env=None):
+            command = [str(part) for part in command]
+            self.assertEqual(env['OXPINYIN_TKRZW_PREFIX'], 'vcpkg', 'every build uses the overlay tkrzw')
+            self.assertNotIn('LDFLAGS', env, 'the pin is linked as its recipe links it, with no run path')
+            prefix = Path(command[command.index('--prefix') + 1])
+            overlay = prefix / 'lib' / prepare.TKRZW_SONAME
+            if '--libs-only' in command:
+                self.assertFalse(prefix.exists(), 'build.py needs an empty prefix')
+                shutil.copytree(root / 'seed/tkrzw', prefix)
+            else:
+                # build.py's LD_LIBRARY_PATH is the prefix's lib directory: the overlay is found there.
+                self.links_seen.append(overlay.read_text())
+            return 0
+        with mock.patch.object(vcpkg, 'environment', lambda env: dict(env, OXPINYIN_TKRZW_PREFIX='vcpkg')), \
+             mock.patch.object(Path, 'symlink_to', link), \
              mock.patch.object(model, 'fetch', return_value=root / 'model'), \
-             mock.patch.object(bench, 'heavy') as regenerate:
-            self.assertEqual(prepare.prepare(['oracle', '--cells', 'tkrzw'], {}), 0)
-        return regenerate
+             mock.patch.object(bench, 'heavy', side_effect=build) as builds, \
+             contextlib.redirect_stdout(io.StringIO()):
+            try:
+                self.assertEqual(prepare.prepare(['oracle', '--cells', 'tkrzw'], self.environment(root)), 0)
+            finally:
+                prefix = prepare.pin_prefix(self.environment(root), 'tkrzw')
+                self.assertFalse((prefix / 'lib' / prepare.TKRZW_SONAME).exists(),
+                                 'the link is gone after the data build')
+        return builds
+
+    def test_a_matching_prefix_is_reused_without_a_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.prepared_and_seed(directory)
+            self.prepare_oracle(Path(directory)).assert_not_called()
+
+    def test_a_rebuild_runs_build_py_for_the_libraries_then_the_data_under_the_cache_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix, _, _ = self.prepared_and_seed(directory)
+            shutil.rmtree(prefix)
+            builds = [[str(part) for part in call.args[0]] for call in self.prepare_oracle(root).call_args_list]
+            self.assertEqual([command[1] for command in builds], [str(bench.ROOT / 'tools/oracle/build.py')] * 2)
+            self.assertIn('--libs-only', builds[0])
+            self.assertEqual(builds[1][builds[1].index('--model-dir') + 1], str(root / 'model'))
+            work = root / 'cache/measure/oracle-tkrzw'
+            self.assertEqual([command[command.index('--work-dir') + 1] for command in builds],
+                             [str(work / 'libs'), str(work / 'data')])
+            self.assertEqual({command[command.index('--prefix') + 1] for command in builds}, {str(prefix)})
+            self.assertEqual(self.links_seen, [str(Path('vcpkg') / 'lib' / prepare.TKRZW_SONAME)])
+            self.assertTrue(prepare.prepared_pin_matches(prefix, 'tkrzw'))
+
+    def test_a_failed_data_build_still_removes_the_overlay_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix, _, _ = self.prepared_and_seed(directory)
+            shutil.rmtree(prefix)
+            refused = runners.Finished(2)
+
+            def build(command, env=None):
+                command = [str(part) for part in command]
+                if '--libs-only' in command:
+                    shutil.copytree(root / 'seed/tkrzw', Path(command[command.index('--prefix') + 1]))
+                    return 0
+                raise refused
+            from tools.dev import vcpkg
+            with mock.patch.object(vcpkg, 'environment', lambda env: dict(env, OXPINYIN_TKRZW_PREFIX='vcpkg')), \
+                 mock.patch.object(Path, 'symlink_to', lambda path, target, target_is_directory=False:
+                                   path.write_text(str(target))), \
+                 mock.patch.object(bench, 'heavy', side_effect=build), self.assertRaises(runners.Finished):
+                prepare.build_pin(prefix, 'tkrzw', root / 'model', root / 'work', self.environment(root) |
+                                  {'OXPINYIN_TKRZW_PREFIX': 'vcpkg'})
+            self.assertFalse((prefix / 'lib' / prepare.TKRZW_SONAME).exists())
+
+    def test_only_the_tkrzw_cell_gets_the_overlay_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / 'kc'
+            seen = []
+
+            def build(command, env=None):
+                command = [str(part) for part in command]
+                if '--libs-only' in command:
+                    (prefix / 'lib').mkdir(parents=True)
+                else:
+                    seen.append(sorted(path.name for path in (prefix / 'lib').iterdir()))
+                return 0
+            with mock.patch.object(Path, 'symlink_to') as link, mock.patch.object(bench, 'heavy', side_effect=build):
+                prepare.build_pin(prefix, 'kc', root / 'model', root / 'work', {'OXPINYIN_TKRZW_PREFIX': 'vcpkg'})
+            link.assert_not_called()
+            self.assertEqual(seen, [[]])
 
     def prepared_and_seed(self, directory):
         """A valid prepared prefix and an identical seed under DIRECTORY; answer both and the record's text."""
-        prefix, seed = Path(directory) / 'performance/pinyin-oracle/tkrzw', Path(directory) / 'opt/pinyin-oracle/tkrzw'
+        prefix = prepare.pin_prefix(self.environment(Path(directory)), 'tkrzw')
+        seed = Path(directory) / 'seed/tkrzw'
         text = self.prepared_prefix(prefix)
         shutil.copytree(prefix, seed)
         return prefix, seed, text
@@ -96,7 +186,7 @@ class PreparationTests(unittest.TestCase):
                 self.assertIn('--regen-data', self.prepare_oracle(Path(directory)).call_args.args[0])
                 self.assertEqual((prefix / 'lib' / library).read_bytes(), content)
 
-    def test_a_prefix_with_another_images_versions_is_refused_and_rebuilt(self):
+    def test_a_prefix_with_another_hosts_versions_is_refused_and_rebuilt(self):
         with tempfile.TemporaryDirectory() as directory:
             prefix, seed, text = self.prepared_and_seed(directory)
             self.assertTrue(prepare.prepared_pin_matches(prefix, 'tkrzw'))
@@ -129,7 +219,7 @@ class PreparationTests(unittest.TestCase):
             ('model', another_model, '1.0', 'model_sha256'),
             ('library', lambda seed, text: (seed / 'lib/libpinyin.so').write_bytes(b'changed'), '1.0', 'prefix_ok'),
             ('data', lambda seed, text: (seed / 'lib/libpinyin/data/bigram.db').write_bytes(b'changed'), '1.0', 'bigram.db'),
-            ('inventory', lambda seed, text: None, '2.0', "the running image's inventory"),
+            ('inventory', lambda seed, text: None, '2.0', "this host's inventory"),
         ):
             with self.subTest(label), tempfile.TemporaryDirectory() as directory:
                 prefix, seed, text = self.prepared_and_seed(directory)
@@ -138,22 +228,21 @@ class PreparationTests(unittest.TestCase):
                 with mock.patch.object(versions, 'package_version', return_value=installed), \
                      contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(runners.Finished):
                     self.prepare_oracle(Path(directory))
+                self.assertIn('preparation: the rebuilt tkrzw prefix', stderr.getvalue())
                 self.assertIn(named, stderr.getvalue())
-                self.assertFalse((Path(directory) / 'opt/libpinyin-tkrzw').exists(),
-                                 'a refused prefix is not reported as prepared')
 
     def test_cells_is_only_accepted_for_oracle_preparation(self):
         from tools.dev import model
         from tools.dev.measure import recipes
         for mode in ('callgrind',):
-            with self.subTest(mode=mode), mock.patch.object(recipes, 'require_performance_environment'), \
+            with self.subTest(mode=mode), mock.patch.object(recipes, 'require_local_measurement'), \
                  mock.patch.object(model, 'fetch') as fetch, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     prepare.prepare([mode, '--cells', 'tkrzw'], {})
                 self.assertEqual(error.exception.code, 2)
                 fetch.assert_not_called()
 
-    def test_preparation_refuses_outside_the_stage_before_fetching_model_data(self):
+    def test_preparation_refuses_on_github_actions_before_fetching_model_data(self):
         from tools.dev import model
         with mock.patch.object(model, 'fetch') as fetch, contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(runners.Finished):

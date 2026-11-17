@@ -20,6 +20,8 @@ Each command selects a [container runtime](setup.md#container-runtimes) and runs
 [`tools/oracle/build.py`](../../tools/oracle/build.py), in a Linux container.
 No host needs Bash, Git Bash or a WSL shell for this.
 `build.py` does not build libpinyin natively on Windows or macOS.
+On a Linux host, the [measurement preparation](benches.md#where-measurements-run) also runs `build.py`
+natively, with no container, for the pin of a performance comparison.
 
 The model20 archive is not redistributable
 ([model provenance](../findings/model-provenance.md)). No CI job fetches it, and nothing
@@ -130,7 +132,8 @@ digest in the `verified` file beside `extracted/` before reusing the extraction.
 
 ### From any host
 
-`just provision-oracle` builds the local `performance` image when it is
+`just provision-oracle` builds the local `deps` image, the `deps` stage of
+`tools/oracle/Dockerfile.oracle` that `just provision` also uses, when it is
 absent, then provisions the cells in it. It builds missing or stale
 libraries, fetches model20, regenerates missing or damaged data, and
 validates every recorded output before it returns:
@@ -203,8 +206,7 @@ The last stdout line is the path of the built `libpinyin.so`.
 
 The builder writes the prefix's `oracle-pin.txt` last. The differential
 runners compare it with the repository pin before they trust the prefix.
-The local `performance` stage of `tools/oracle/Dockerfile.oracle` holds
-the prebuilt libraries. Enter it with `just performance` and prepare data
+For a performance comparison, a Linux host builds the pin's libraries and data natively
 with the [measurement procedure](benches.md#where-measurements-run).
 
 ## 2a. Or pull the prebuilt libraries (any machine)
@@ -213,7 +215,7 @@ The image uses unpinned Debian testing (`tools/oracle/Dockerfile.oracle`).
 Its libpinyin uses tkrzw, the default backend of oxpinyin
 ([release lanes](../packaging.md#release-artifacts-release-packagesyml)), so the Debian testing package
 is the reference, and its updates trigger pin changes. Both arms of a
-performance comparison run in the same container on the same base.
+performance comparison are built and run natively on the same Linux host.
 
 The image holds the bdb, kc and tkrzw cells and builds natively on amd64 or
 arm64 (see [native arm64](#native-arm64)). The amd64 image is
@@ -363,21 +365,24 @@ prefix does this check.
 The library build is reproducible. `SOURCE_DATE_EPOCH` is the commit time of
 the verified checkout, the source path is remapped to a fixed name and the
 ELF build ID is omitted. The libraries then hash the same for any work
-directory, given the same toolchain and `--prefix`. Inside `just performance`, run:
+directory, given the same toolchain and `--prefix`. On a Linux host, run:
 
 ```sh
-uv run --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir /performance/repro-check
+OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir "$(just cache-root)/measure/repro-check"
 ```
+
+A direct `uv run` command needs `OXPINYIN_CACHE` ([cache directory](setup.md#cache-directory)).
 
 This command builds each cell twice in different work directories, with the same install
 prefix in one environment, and compares only those two sets of library hashes. It never updates frozen input pins.
 Image verification separately checks current pin/recipe provenance, recorded
 library bytes and absence of model-derived data.
 
-To provision the oracle alone inside the same container, as `just provision-oracle` does from the host, run:
+`just provision-oracle` runs this command in the `deps` image. The command refuses to run
+outside that image, which it recognizes by `/usr/local/share/oxpinyin/version-manifest.json`:
 
 ```sh
-uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /performance/provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /provision --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 ## 3. Produce the export

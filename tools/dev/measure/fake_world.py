@@ -35,10 +35,10 @@ class World(unittest.TestCase):
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='valgrind-test-'))).resolve()
-        from . import valgrind
+        from . import prepare
         scratch = self.root / 'scratch'
         scratch.mkdir()
-        self.enterContext(mock.patch.object(valgrind, 'SCRATCH', scratch))
+        self.enterContext(mock.patch.object(prepare, 'harness_path', lambda env: scratch / 'bisect'))
         self.log = []
         self.worker_status = {}        # nth worker launch (1-based) -> exit status
         self.workers = 0
@@ -50,7 +50,6 @@ class World(unittest.TestCase):
         self.enterContext(mock.patch.object(identity, 'loadavg', lambda proc=None, fields=None: (
             '0.1 0.2 0.3 1/2 3' if fields is None else '0.1 0.2 0.3')))
         for name, value in (('cpu_model', 'Fancy CPU'), ('memory_total', 'MemTotal: 1 kB'), ('processors', 4),
-                            ('package_version', '1.0'),
                             ('pc_version', 'Version: 2.11.92'), ('first_output_line', 'tool 1.0'),
                             ('perf_event_paranoid', '2')):
             self.enterContext(mock.patch.object(identity, name, lambda *a, _value=value, **k: _value))

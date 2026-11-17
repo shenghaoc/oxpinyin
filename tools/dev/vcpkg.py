@@ -80,6 +80,18 @@ def environment(env):
     return installed_environment(env, prefix(env))
 
 
+def pin_build_environment(env, backend):
+    """Select the overlay for a tkrzw pin build, including its compiler search paths."""
+    if backend != 'tkrzw':
+        return dict(env)
+    child = environment(env)
+    installed = Path(child['OXPINYIN_TKRZW_PREFIX'])
+    # The pin does not use TKRZW_CFLAGS and configure links a bare -ltkrzw.
+    for name, directory in (('CPATH', installed / 'include'), ('LIBRARY_PATH', installed / 'lib')):
+        child[name] = str(directory) + (os.pathsep + env[name] if env.get(name) else '')
+    return child
+
+
 def fetch_checkout(destination, env, *, run, cwd):
     """Fetch vcpkg at REVISION into DESTINATION and bootstrap it there."""
     run(['git', 'init', str(destination)], env=env, cwd=cwd)

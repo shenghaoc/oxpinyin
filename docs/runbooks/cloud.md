@@ -4,7 +4,7 @@ This procedure provisions a remote Linux host with `tools.dev.provision`.
 A host that meets the requirements below runs every non-measurement gate;
 measurement gates also need the ext4 paths below. Ordinary native development
 uses [native setup](setup.md) and needs no remote host. Pin-comparison
-measurements run in the oracle `performance` stage
+measurements run natively on a Linux host, with no container
 ([where measurements run](benches.md#where-measurements-run)).
 
 The host may be a root container, may supply its own container runtime, and
@@ -230,10 +230,10 @@ These rules apply:
 - Any other launched file is
   checked as itself, so a file that the resolver cannot read is refused.
 
-The `performance` stage of `tools/oracle/Dockerfile.oracle` sets
-`OXPINYIN_TKRZW_LIBRARY` to the packaged `libtkrzw` of Debian, the library that its
-`build` stage links the pin against. The same check certifies both arms
-against that library. Installing uv does not establish trust in a runtime.
+A pin comparison runs with the vcpkg overlay install first: its preparation links the pin and the
+subject against that `libtkrzw`, and the same check certifies both arms against it
+([where measurements run](benches.md#where-measurements-run)).
+Installing uv does not establish trust in a runtime.
 
 The directory of the selected object stays first in `LD_LIBRARY_PATH`, followed
 by the inherited value. These sites set the path differently:

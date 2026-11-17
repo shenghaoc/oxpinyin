@@ -8,7 +8,7 @@ error are kept before the work continues. In Bash, `echo $?` immediately after a
 shows its exit status (zero means success); PowerShell uses `$LASTEXITCODE`.
 Each operating system has its own section below. Ordinary native work and native-only
 measurements require no container, oracle or model20 (upstream reference model data).
-Pin-comparison measurements run in the oracle `performance` stage
+Pin-comparison measurements run natively on a Linux host, with no container
 ([where measurements run](benches.md#where-measurements-run)).
 
 ## Storage backend
@@ -564,7 +564,7 @@ PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names a
 | Build and verify the oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image build-image` |
 | Verify an oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image verify-image --engine wslc IMAGE` |
 | Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
-| Provision the oracle cells in the performance image | `just provision-oracle` |
+| Provision the oracle cells in the deps image | `just provision-oracle` |
 | Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
 
 `tools/oracle/image.py` translates the docker commands for `wslc`
@@ -683,7 +683,7 @@ On every runtime, the library and data runs mount the checkout read-only at
 `/opt/oracle-recipe` and run `tools/oracle/build.py` with Debian’s Python in the image
 in the `deps` image. No run binds a single file, and no host needs Bash for them.
 
-`just provision-oracle` builds the performance image when it is absent, and runs
+`just provision-oracle` builds the `deps` image when it is absent, and runs
 `provision oracle` in it with the provisioning cache mounted at
 `/provision`. On rootful Docker, the run is the invoking user, so the cache
 stays theirs. The home and cache of uv are then in `/tmp`. `just provision` and

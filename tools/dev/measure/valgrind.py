@@ -13,6 +13,7 @@ a fresh work directory and the compiled driver) and hands
 it the collections, which already run as units of one pool.
 """
 import contextlib
+from functools import partial
 import io
 import os
 from pathlib import Path
@@ -22,17 +23,12 @@ from collections.abc import Mapping, Sequence
 
 from .. import pool, slot
 from ..runners import Finished, emit, write
-from . import bench, identity, instructions, reports
+from . import bench, identity, instructions, prepare, reports
 from .bench import Arm, Bench, fail, setting
 
-SCRATCH = Path('/performance/tmp')
 CALLGRIND = 'just measure-callgrind-differential'
 SYSTEM_IMPORT = 'system-import-profile'
-LP_ROOT = Path('/opt/libpinyin-tkrzw')
-DATA = LP_ROOT / 'lib/libpinyin/data'
 ANCHOR = 'bisect_perf_steady_unit'
-# Where the image installs the three libraries the differential uses.
-ROOTS = dict(lp=LP_ROOT, ox=Path('/opt/oxpinyin-tkrzw/stage'), nodebug=Path('/opt/oxpinyin-nodebug/stage'))
 # The tool options of every callgrind run; the output file is added per run.
 # The steady anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT in bisect.c).
 CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no',
@@ -53,10 +49,21 @@ def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str
     return [line for line in text.split('\n') if line and expression.search(line)]
 
 
-def libraries() -> dict:
+def roots(env: Mapping[str, str]) -> dict:
+    """Where `prepare callgrind` stages the three libraries the differential uses."""
+    return dict(lp=prepare.pin_prefix(env, 'tkrzw'), ox=prepare.subject_stage(env, 'tkrzw'),
+                nodebug=prepare.subject_stage(env, 'nodebug'))
+
+
+def data_dir(env: Mapping[str, str]) -> Path:
+    """The prepared tkrzw pin's data directory, which every arm of the differential reads."""
+    return prepare.pin_prefix(env, 'tkrzw') / prepare.DATA_SUBDIRECTORY
+
+
+def libraries(env: Mapping[str, str]) -> dict:
     """The three libraries the differential needs, checked to exist before anything runs."""
     found = {}
-    for key, root in ROOTS.items():
+    for key, root in roots(env).items():
         # `find` on a root that is not there says so and ends the run; on one without the file it prints nothing.
         if not root.is_dir():
             fail(f"find: '{root}': No such file or directory")
@@ -64,14 +71,18 @@ def libraries() -> dict:
     for artifact in found.values():
         if artifact is None or not artifact.exists():
             fail(f"fatal: missing artifact: '{'' if artifact is None else artifact}'")
-    if not DATA.is_dir():
-        fail(f'fatal: data dir {DATA} missing')
+    data = data_dir(env)
+    if not data.is_dir():
+        fail(f'fatal: data dir {data} missing')
     return found
 
 
-def environment_table(artifacts: Sequence[Path], run=None) -> str:
-    """Stage 0: what the numbers depend on, written before any is taken."""
-    lines = ['=== environment ===', f'captured_utc: {bench.utc_now()}', f'container_arch: {identity.uname("m")}',
+def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, run=None) -> str:
+    """Stage 0: what the numbers depend on, written before any is taken.
+
+    PIN is the pin's prefix and DATA the data directory every arm reads.
+    """
+    lines = ['=== environment ===', f'captured_utc: {bench.utc_now()}', f'arch: {identity.uname("m")}',
              f'kernel: {identity.uname("srvm")}', f'nproc: {identity.processors()}', f'cpu: {identity.cpu_model()}',
              f'memtotal: {identity.memory_total()}',
              f'gcc: {identity.first_output_line(["gcc", "--version"], run=run)}',
@@ -79,11 +90,11 @@ def environment_table(artifacts: Sequence[Path], run=None) -> str:
              f'cargo: {identity.first_output_line(["cargo", "--version"], run=run)}',
              f'valgrind: {identity.first_output_line(["valgrind", "--version"], run=run)}',
              f'perf_event_paranoid: {identity.perf_event_paranoid()}',
-             f'libpinyin_pkgversion: {identity.pc_version(LP_ROOT / "lib/pkgconfig/libpinyin.pc")}',
+             f'libpinyin_pkgversion: {identity.pc_version(pin / "lib/pkgconfig/libpinyin.pc")}',
              f'libtkrzw: {identity.package_version("tkrzw", run=run)}']
     # `stat -c%s` on the path as found: for a symlink, the size of the link and not of its target.
     lines += [f'artifact: {identity.sha256(path)}  {path} {os.lstat(path).st_size} bytes' for path in artifacts]
-    lines.append(f'data_dir: {DATA}')
+    lines.append(f'data_dir: {data}')
     return '\n'.join(lines) + '\n'
 
 
@@ -208,7 +219,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
         return sentence.run(argv, env)
     label = CALLGRIND
     env = dict(env)
-    out = Path(setting(env, 'CG_OUT', '/performance/results/callgrind-differential'))
+    out = Path(env['CG_OUT']) if env.get('CG_OUT') else prepare.results(env, 'callgrind-differential')
     cpu = setting(env, 'PERF_CPU', '0')
     # Stage 4 and 5 capture size. Callgrind is deterministic, so this is chosen for a workable runtime
     # under a ~50x interpreter, not for noise.
@@ -224,18 +235,21 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     except OSError as error:
         fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
 
-    found = libraries()
+    found = libraries(env)
     lp, ox, nodebug = (found[key] for key in ('lp', 'ox', 'nodebug'))
-    harness = SCRATCH / 'bisect'
+    data = data_dir(env)
+    harness = prepare.harness_path(env)
     worker = Bench(label, env, harness, cpu, cell='tkrzw', required=True)
-    arms = {'lp': Arm('libpinyin-tkrzw', lp, DATA, lp.parent), 'ox': Arm('oxpinyin-tkrzw', ox, DATA, ox.parent),
-            'nodebug': Arm('oxpinyin-nodebug', nodebug, DATA, nodebug.parent)}
+    arms = {'lp': Arm('libpinyin-tkrzw', lp, data, lp.parent), 'ox': Arm('oxpinyin-tkrzw', ox, data, ox.parent),
+            'nodebug': Arm('oxpinyin-nodebug', nodebug, data, nodebug.parent)}
     for key, arm in arms.items():
         worker.standalone('pin' if key == 'lp' else 'subject', arm)
     pair = [(arms['lp'], 'speed'), (arms['ox'], 'speed')]
 
     # 0. environment
-    bench.tee(out / 'environment.txt', environment_table([lp, ox, nodebug]))
+    metadata_run = partial(bench.capture, env=env)
+    bench.tee(out / 'environment.txt',
+              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, 'tkrzw'), data, run=metadata_run))
 
     # 1. collection anchors
     code, text = anchors_table(harness)
@@ -287,7 +301,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     # biases the Ir ratio. bisect.c brackets the same steady cycles with a PERF_COUNT_HW_INSTRUCTIONS
     # counter (exclude_kernel) in native processes, real glibc malloc included; the ratio of the two
     # engines' medians is the hardware counterpart of the Ir ratio, and the difference is the measured
-    # distortion. Needs a container whose SELinux label and seccomp profile permit perf_event_open.
+    # distortion. Needs a host whose perf_event_paranoid, SELinux and seccomp settings permit perf_event_open.
     hardware = out / 'hw-instructions.jsonl'
     hardware.write_bytes(b'')
     bench.round_robin(hw_runs, pair, lambda arm, mode: worker.sample(
@@ -326,7 +340,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     label = SYSTEM_IMPORT
     arguments = list(argv)
     if len(arguments) == 3 or (len(arguments) > 3 and arguments[3] == '--jobs'):
-        arguments.insert(3, '/performance/results/system-import-profile')
+        arguments.insert(3, str(prepare.results(env, SYSTEM_IMPORT)))
     for number, name in enumerate(('pin-so', 'ox-so', 'system-data-dir', 'new-output-dir'), 1):
         if len(arguments) < number or not arguments[number - 1]:
             fail(f'{label}: {number}: {name}')

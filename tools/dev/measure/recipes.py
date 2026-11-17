@@ -6,27 +6,29 @@ import sys
 from .. import runners
 
 
-def require_performance_environment(env):
-    """Only pin comparisons require the local oracle performance stage."""
-    from pathlib import Path
+def require_local_measurement(env):
+    """Pin comparisons are local work: the oracle is never built or run on GitHub Actions."""
     from ..runners import Finished
-    marker = Path('/usr/local/share/oxpinyin/performance-os-release')
-    release = Path('/etc/os-release')
-    if (env.get('GITHUB_ACTIONS') == 'true' or not marker.is_file() or not release.is_file()
-            or marker.read_bytes() != release.read_bytes()):
-        runners.emit('pin comparisons require the local oracle performance stage; '
-                     'enter it with just performance', error=True)
+    if env.get('GITHUB_ACTIONS') == 'true':
+        runners.emit('pin comparisons are local-only; never run them on GitHub Actions', error=True)
         raise Finished(2)
 
 
 def run(operation, argv=None, env=None, *, pin_comparison=False):
-    """Run the operation under the shared cancellation and failure handlers."""
+    """Run the operation under the shared cancellation and failure handlers.
+
+    A pin comparison runs with the vcpkg overlay tkrzw first, so that the pin and the
+    subject load one libtkrzw and are certified against it.
+    """
     environment = dict(os.environ if env is None else env)
 
     def execute():
+        arguments = environment
         if pin_comparison:
-            require_performance_environment(environment)
-        return operation(list(sys.argv[1:] if argv is None else argv), environment)
+            from .. import vcpkg
+            require_local_measurement(environment)
+            arguments = vcpkg.environment(environment)
+        return operation(list(sys.argv[1:] if argv is None else argv), arguments)
 
     status = runners.guarded(execute)
     sys.stdout.flush()
