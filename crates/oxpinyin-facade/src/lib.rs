@@ -45,6 +45,8 @@ mod offsets;
 mod parse;
 mod predict;
 mod snapshot;
+#[cfg(test)]
+mod test_fixture;
 
 pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, InitRefusal, LibraryLoadFault, LibraryRowAssert,

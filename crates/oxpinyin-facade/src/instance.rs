@@ -865,3 +865,6 @@ fn published_bound(images: &[KeyImage], offset: usize) -> usize {
     }
     images.last().map_or(offset, |image| image.begin_end.1)
 }
+
+#[cfg(test)]
+mod tests;
