@@ -335,6 +335,7 @@ impl crate::RawReadStore for KcStore {
 
     /// The library's own O(1) record count — over the whole file, which
     /// on this backend is exactly the raw keyspace.
+    #[cfg(test)]
     fn count_raw(&self) -> Result<u64, crate::StoreError> {
         self.db.count()
     }
@@ -706,13 +707,9 @@ fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
     db.dump_snapshot(path)
 }
 
+#[cfg(test)]
 impl KcStore {
-    /// Save an attached bigram using the same implementation as the
-    /// in-memory user bigram (`ngram_{tkrzwdb,kyotodb,bdb}.cpp` at 074a2219).
-    ///
-    /// # Errors
-    /// Returns the existing save operation's file or backend error.
-    pub fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
+    pub(crate) fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
         save_bigram_db(&self.db, path)
     }
 }
