@@ -342,14 +342,14 @@ An entry holds nothing else.
 - **Pin:** `FacadePhraseIndex::load_text` passes a failed `g_utf8_to_ucs4` to `set_phrase_string(written, NULL)` with `written` uninitialised (`src/storage/phrase_index.cpp:541-586`); the phrase-table test searches the same failed output (`tests/storage/test_phrase_table.cpp:45-59`; `src/storage/phrase_large_table3_tkrzwdb.cpp:133-136`, `phrase_large_table3.cpp:131-135`).
 - **oxpinyin:** stops the consuming failures with `exit(EINVAL)` and no added diagnostic, keeping earlier output; the defined same-token path continues as in the pin.
 - **Decision:** accepted, class (b), by maintainer approval: undefined behaviour.
-- **Tests:** `phrase_table_invalid_text`, `phrase_table_invalid_utf8` (`crates/oxpinyin-repl/tests/interactive.rs`).
+- **Tests:** `phrase_table_invalid_text` and `invalid_text_for_a_new_item_is_refused_at_the_table_reader` in `crates/oxpinyin-utils/src/storage/gen_binary_files/tests.rs` check strict loading. The REPL's `chewing_table_invalid_text` checks strict item loading through the mode. `invalid_phrase_query_keeps_the_previous_result` in `crates/oxpinyin-repl/tests/it/table_guards.rs` checks query refusal and the preceding output.
 
 ### More than sixteen keys passed to the chewing-table test search (policy row 116)
 
 - **Pin:** the test passes every parsed key to a search whose local `ChewingKey index[MAX_PHRASE_LENGTH]` has sixteen slots (`tests/storage/test_chewing_table.cpp:71-86`; `src/storage/chewing_large_table2.cpp:161-172`; `src/storage/pinyin_phrase3.h:160-177`): a stack-buffer write.
 - **oxpinyin:** after the first incomplete key's tone check (`pinyin_phrase3.h:146-157`), stops before the copy with `exit(EINVAL)`, keeping earlier output.
 - **Decision:** accepted, class (b), by maintainer approval.
-- **Tests:** `chewing-table-overlong-query`.
+- **Tests:** `overlong_chewing_query_keeps_the_previous_result` in `crates/oxpinyin-repl/tests/it/table_guards.rs` checks refusal after prior output. `chewing_table_overlong_toned_first` checks tone validation before the length check.
 
 ### The logger test ignores a failed required phrase-chunk load (policy row 117)
 

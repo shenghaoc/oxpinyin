@@ -1068,9 +1068,9 @@ pin's and replaced them as follows:
   `lookup.rs`). They take the data directory as an argument and run each
   operation once, with no timing loop.
 
-Their frozen outputs are in `crates/oxpinyin-repl/tests/interactive.rs`.
-That file normalises only the pin's `Spent …` timing lines and the data
-path. `table_guards.rs` holds the row 115 and 116 refusals.
+The verification suite in `crates/oxpinyin-repl/tests/it` checks their frozen
+outputs. Its `table_guards.rs` checks the row 115 and 116 refusals after a
+successful query.
 
 The mode logic follows the pin's programs:
 
