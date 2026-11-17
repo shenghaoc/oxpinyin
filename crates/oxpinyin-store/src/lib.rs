@@ -850,6 +850,7 @@ pub trait RawReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend count fails.
+    #[cfg(test)]
     fn count_raw(&self) -> Result<u64, StoreError> {
         let mut count: u64 = 0;
         self.range_raw(Bound::Unbounded, Bound::Unbounded, |_key, _value| {
