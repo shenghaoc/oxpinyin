@@ -227,41 +227,8 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     )
 }
 
-/// The shared body of the two index-spelling display getters: NULL the
-/// out-param, refuse the zero key on `get_table_index() == 0`, then hand
-/// out the rendering made with the pin's `g_strdup`/`g_strdup_printf`
-/// call (`chewing_key.cpp:97-114`), caller-owned (`g_free`).
-fn display_string_getter(
-    key: *mut ChewingKey,
-    utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
-) -> bool {
-    // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
-    // `*utf8_str` before any check, so a NULL out stays guarded (row 41).
-    if key.is_null() || utf8_str.is_null() {
-        return false;
-    }
-
-    // SAFETY: Null-checked above.
-    unsafe {
-        *utf8_str = ptr::null_mut();
-    }
-    // SAFETY: Null-checked above.
-    let core = unsafe { *key }.to_core();
-    if !core.elements_in_dims() {
-        std::process::abort();
-    }
-    if core.table_index() == 0 {
-        return false;
-    }
-    if !core.tone_in_dims() {
-        std::process::abort();
-    }
-    // SAFETY: Null-checked above.
-    unsafe {
-        *utf8_str = key_text(render(core));
-    }
-    true
+oxpinyin_capi_marshal::display_string_getter! {
+    key: ChewingKey, char: GChar
 }
 
 /// Whether a chewing key carries no middle and no final.

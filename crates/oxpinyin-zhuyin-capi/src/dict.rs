@@ -187,40 +187,8 @@ pub unsafe extern "C" fn zhuyin_token_get_n_pronunciation(
     true
 }
 
-/// Append one reading's stored packed words to the caller's array, or the
-/// pin's zeroed past-the-end words when the item has no such reading.
-///
-/// # Safety
-/// `keys` must be a non-NULL `GArray` whose element size is two bytes, as
-/// the caller of `zhuyin_token_get_nth_pronunciation` creates it.
-unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[u8]>) {
-    match words {
-        None => {
-            // SAFETY: the caller guarantees a real GArray; `zeroed` outlives
-            // the append call, which copies from it.
-            let zeroed = vec![0_u16; length];
-            // SAFETY: as above; element size is two bytes.
-            unsafe {
-                g_array_append_vals(
-                    keys,
-                    zeroed.as_ptr().cast::<c_void>(),
-                    c_uint::try_from(zeroed.len()).unwrap_or(0),
-                );
-            }
-        }
-        Some(words) => {
-            // SAFETY: the caller guarantees a real GArray with element size
-            // two bytes; `words` holds `2 * phrase_length` stored bytes and
-            // outlives the append call, which copies from it.
-            unsafe {
-                g_array_append_vals(
-                    keys,
-                    words.as_ptr().cast::<c_void>(),
-                    c_uint::try_from(words.len() / 2).unwrap_or(0),
-                );
-            }
-        }
-    }
+oxpinyin_capi_marshal::append_stored_words! {
+    array: GArray, append: g_array_append_vals
 }
 
 /// Get the nth pronunciation of a token as a vector of chewing keys.

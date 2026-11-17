@@ -1,4 +1,4 @@
-//! Integration tests for the two `macro_rules!` macros exported by
+//! Integration tests for the six `macro_rules!` macros exported by
 //! `oxpinyin-capi-marshal`.
 //!
 // The macro bodies stamp `unsafe` blocks (pointer casts, `Box::from_raw`),
@@ -204,4 +204,247 @@ fn sentence_phrases_write_through() {
     // SAFETY: the fixture returned CString::into_raw ownership to `out`.
     let cstr = unsafe { std::ffi::CString::from_raw(out) };
     assert_eq!(cstr.to_bytes(), "你好x".as_bytes());
+}
+
+// The new macro expansions are checked in this separate compilation unit.
+mod ffi_output_expansion {
+    use std::ffi::{CStr, CString};
+    use std::os::raw::{c_char, c_int, c_void};
+    use std::ptr;
+
+    use oxpinyin_core::{KeyText, PhraseText};
+
+    #[allow(non_upper_case_globals)]
+    mod glib {
+        use super::{c_char, c_int, c_void};
+        pub const GTRUE: c_int = 1;
+        pub const GFALSE: c_int = 0;
+        pub const G_LOG_LEVEL_WARNING: c_int = 1 << 4;
+        #[repr(C)]
+        pub struct GPtrArray {
+            _private: [u8; 0],
+        }
+        #[link(name = "glib-2.0")]
+        unsafe extern "C" {
+            pub fn g_strdup(text: *const c_char) -> *mut c_char;
+            pub fn g_strdup_printf(format: *const c_char, ...) -> *mut c_char;
+            pub fn g_ptr_array_new() -> *mut GPtrArray;
+            pub fn g_ptr_array_add(array: *mut GPtrArray, data: *mut c_void);
+            pub fn g_ptr_array_free(array: *mut GPtrArray, free_segment: c_int) -> *mut c_void;
+            pub fn g_strconcat(first: *const c_char, ...) -> *mut c_char;
+            pub fn g_free(ptr: *mut c_void);
+            pub fn g_strfreev(ptr: *mut *mut c_char);
+            pub fn g_log(domain: *const c_char, level: c_int, format: *const c_char, ...);
+        }
+    }
+    unsafe extern "C" {
+        fn malloc(size: usize) -> *mut c_void;
+        fn free(ptr: *mut c_void);
+    }
+    oxpinyin_capi_marshal::ffi_output_helpers! {
+        glib: glib, key_text: KeyText, malloc: malloc, free: free, domain: c"libpinyin"
+    }
+
+    #[test]
+    fn ffi_output_helpers_preserve_ownership_and_bytes() {
+        let duplicated = strdup("abc");
+        // SAFETY: The macro returned a NUL-terminated GLib string.
+        assert_eq!(unsafe { CStr::from_ptr(duplicated) }.to_bytes(), b"abc");
+        // SAFETY: `g_free` owns the returned `g_strdup` allocation.
+        unsafe { glib::g_free(duplicated.cast()) };
+        // SAFETY: GLib accepts a NULL string and returns NULL.
+        assert!(unsafe { strdup_raw(ptr::null()) }.is_null());
+
+        let key = key_text(KeyText::Digit("a", 3));
+        // SAFETY: The macro returned a NUL-terminated GLib string.
+        assert_eq!(unsafe { CStr::from_ptr(key) }.to_bytes(), b"a3");
+        // SAFETY: `g_free` owns the returned key string.
+        unsafe { glib::g_free(key.cast()) };
+
+        let vector = symbol_vector(&["one", "two"]);
+        // SAFETY: `symbol_vector` returns a NULL-terminated GLib vector.
+        assert_eq!(unsafe { CStr::from_ptr(*vector.add(1)) }.to_bytes(), b"two");
+        // SAFETY: The vector and elements belong to `g_strfreev`.
+        unsafe { glib::g_strfreev(vector) };
+        assert!(symbol_vector(&[] as &[&str]).is_null());
+
+        let sentence = sentence_text([Some(PhraseText::from("你")), Some(PhraseText::from("好"))]);
+        // SAFETY: The macro returned a NUL-terminated GLib string.
+        let sentence_bytes = unsafe { CStr::from_ptr(sentence) }.to_bytes();
+        assert_eq!(sentence_bytes, "你好".as_bytes());
+        // SAFETY: `g_free` releases the final GLib allocation.
+        unsafe { glib::g_free(sentence.cast()) };
+
+        let filled = malloc_cstr_with(3, |out| {
+            out.copy_from_slice(b"abc");
+            3
+        });
+        // SAFETY: The macro returned a NUL-terminated malloc string.
+        assert_eq!(unsafe { CStr::from_ptr(filled) }.to_bytes(), b"abc");
+        // SAFETY: `free` pairs with the macro's malloc.
+        unsafe { free(filled.cast()) };
+        assert!(
+            malloc_cstr_with(1, |out| {
+                out[0] = 0;
+                1
+            })
+            .is_null()
+        );
+        log_warning("a\0b"); // Interior NUL is dropped before GLib sees it.
+    }
+}
+
+mod display_getter_expansion {
+    use oxpinyin_core::{ChewingKey as CoreKey, KeyText};
+    use std::os::raw::c_char;
+    use std::ptr;
+    #[derive(Clone, Copy)]
+    struct ChewingKey(CoreKey);
+    impl ChewingKey {
+        fn to_core(self) -> CoreKey {
+            self.0
+        }
+    }
+    type GChar = c_char;
+    fn key_text(_: KeyText) -> *mut GChar {
+        c"rendered".as_ptr().cast_mut()
+    }
+    oxpinyin_capi_marshal::display_string_getter! { key: ChewingKey, char: GChar }
+    #[test]
+    fn display_getter_checks_zero_and_writes_rendering() {
+        let mut zero = ChewingKey(CoreKey::ZERO);
+        let mut out = ptr::dangling_mut::<GChar>();
+        assert!(!display_string_getter(&mut zero, &mut out, |_| {
+            KeyText::Plain("x")
+        }));
+        assert!(out.is_null());
+        let mut key = ChewingKey(CoreKey::new(1, 0, 0, 0));
+        assert!(display_string_getter(&mut key, &mut out, |_| {
+            KeyText::Plain("x")
+        }));
+        assert_eq!(out, c"rendered".as_ptr().cast_mut());
+    }
+}
+
+mod append_words_expansion {
+    use std::os::raw::{c_uint, c_void};
+    struct GArray(Vec<u16>);
+    /// Copies `length` native-endian packed words from the source bytes.
+    ///
+    /// # Safety
+    /// `keys` must be a live array, and `data` must point to `length * 2`
+    /// readable bytes for the duration of this call.
+    unsafe fn append(keys: *mut GArray, data: *const c_void, length: c_uint) {
+        // SAFETY: The macro test passes a live array exclusively for this call.
+        let array = unsafe { &mut *keys };
+        // SAFETY: The macro supplies `length` packed words as readable bytes;
+        // byte alignment is sufficient for a `u8` slice.
+        let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), length as usize * 2) };
+        array.0.extend(
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_ne_bytes),
+        );
+    }
+    oxpinyin_capi_marshal::append_stored_words! { array: GArray, append: append }
+    #[test]
+    fn append_words_copies_reading_or_zeroes() {
+        let mut array = GArray(Vec::new());
+        let words = [1_u16, 2];
+        let stored: Vec<u8> = words.into_iter().flat_map(u16::to_ne_bytes).collect();
+        // SAFETY: The test array is live with two-byte elements.
+        unsafe { append_stored_words(&mut array, 2, Some(&stored)) };
+        assert_eq!(array.0, [1, 2]);
+        // SAFETY: The same array remains live with two-byte elements.
+        unsafe { append_stored_words(&mut array, 2, None) };
+        assert_eq!(array.0, [1, 2, 0, 0]);
+    }
+}
+
+mod state_handle_expansion {
+    use std::{cell::UnsafeCell, rc::Rc};
+    struct ContextMarker;
+    struct InstanceMarker;
+    #[allow(dead_code)]
+    struct CandidateMarker;
+    #[allow(dead_code)]
+    struct Candidate;
+    struct Runtime {
+        runtime: u8,
+    }
+    impl Runtime {
+        fn train(&mut self, _: &InstanceCore, index: u8) -> Result<bool, ()> {
+            self.runtime = index;
+            Ok(true)
+        }
+    }
+    struct CapiContext {
+        core: Runtime,
+    }
+    type ContextOwner = Rc<UnsafeCell<CapiContext>>;
+    struct InstanceCore;
+    impl InstanceCore {
+        fn read<'a>(&'a self, _: &'a u8) -> &'a Self {
+            self
+        }
+        fn bind<'a>(&'a mut self, _: &'a u8) -> &'a mut Self {
+            self
+        }
+    }
+    struct CapiInstance<C = InstanceCore, S = u8, O = ContextOwner> {
+        owner: O,
+        core: C,
+        state: S,
+    }
+    type CapiInstanceRead<'a> = CapiInstance<&'a InstanceCore, &'a u8, &'a ContextOwner>;
+    type CapiInstanceMut<'a> = CapiInstance<&'a mut InstanceCore, &'a mut u8, &'a ContextOwner>;
+    mod handles {
+        use super::*;
+        oxpinyin_capi_marshal::opaque_handle_casts! {
+            vis: pub(super),
+            context: ContextMarker => ContextOwner,
+            instance: InstanceMarker => CapiInstance,
+            candidate: CandidateMarker => Candidate,
+        }
+    }
+    oxpinyin_capi_marshal::state_handle_helpers! {
+        context: ContextMarker, instance: InstanceMarker, instance_binding: instance,
+        error: (), context_field: {}
+    }
+    #[test]
+    fn state_handles_retain_context_and_borrow_instance() {
+        let context = box_context(CapiContext {
+            core: Runtime { runtime: 1 },
+        });
+        // SAFETY: `context` is a live handle produced above.
+        let owner = unsafe { context_owner(context) };
+        let instance = handles::box_instance(CapiInstance {
+            owner,
+            core: InstanceCore,
+            state: 7,
+        });
+        // SAFETY: The context handle is live and no other access overlaps.
+        assert_eq!(unsafe { context_ref(context) }.core.runtime, 1);
+        // SAFETY: The instance now retains the context allocation through its owner.
+        unsafe { drop(Box::from_raw(context.cast::<ContextOwner>())) };
+        // SAFETY: The instance handle is live and no other access overlaps.
+        assert_eq!(*unsafe { instance_ref(instance) }.state, 7);
+        // SAFETY: The instance handle is live and no other access overlaps.
+        *unsafe { instance_mut(instance) }.state = 9;
+        // SAFETY: The instance handle is live and no other access overlaps.
+        assert_eq!(*unsafe { instance_ref(instance) }.state, 9);
+        // SAFETY: The instance handle is live and no other access overlaps.
+        assert_eq!(unsafe { train_instance(instance, 3) }, Ok(true));
+        // SAFETY: The live instance retains the context; no mutation overlaps.
+        let view = unsafe { instance_ref(instance) };
+        // SAFETY: The instance owner retains the allocation for this read.
+        assert_eq!(unsafe { owner_ref(view.owner) }.core.runtime, 3);
+        // SAFETY: The instance handle was boxed above and is no longer borrowed.
+        unsafe {
+            drop(Box::from_raw(instance.cast::<CapiInstance>()));
+        }
+    }
 }
