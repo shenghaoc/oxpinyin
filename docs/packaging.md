@@ -382,7 +382,7 @@ The `shipping-sizes` job in `.github/workflows/ci.yml` produces them; [verificat
 
 **When the job runs.**
 It runs on a pull request or a push to main when a file that can change a shipping library changes.
-Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxpinyin-zhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, and the packaging tooling.
+Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxpinyin-zhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, the packaging tooling, and the vcpkg overlay port and triplets that provide tkrzw.
 The job also runs when its own files change.
 `tools/dev/ship_sizes.py` holds the path list.
 The job is skipped in other cases, for example a documentation-only change.
@@ -408,7 +408,7 @@ A second full build on every PR is the largest cost, so the base result is cache
 The cache key is `ship-sizes-v1-` plus a hash of two things:
 
 - the Git tree ids of every input that can change a library byte;
-- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, and the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`).
+- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`), and for tkrzw the SHA-256 of the overlay install's vcpkg ABI record (`share/tkrzw/vcpkg_abi_info.txt` under the prefix that pkg-config reports), which changes when the build changes at the same version.
 
 The key names no commit.
 Every main commit with the same inputs shares one result.
@@ -416,12 +416,12 @@ On a push to main the job builds the head and saves its sizes under its key, unl
 On a pull request the job restores the key of the base commit.
 A hit costs one build.
 A miss costs two builds and is correct: the job builds the base, reports it as "built in this run", and saves it under the key for later pushes to the same pull request.
-`debian:testing` is unpinned, so a package update changes the fingerprint and causes one miss.
+An Ubuntu package update changes the fingerprint and causes one miss.
 A stale base can never match: a changed input or toolchain changes the key.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
-It runs in the Linux reference container, on committed work:
+It runs on Linux, on committed work, with tkrzw from the vcpkg overlay port:
 
 ```bash
 just packaging sizes run --base origin/main

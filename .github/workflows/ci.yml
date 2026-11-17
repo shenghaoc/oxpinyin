@@ -13,7 +13,8 @@
 # Main's required set is `ci-aggregate`. It fails when an applicable job fails or
 # when a job's result does not agree with its flag. A pull request that changes
 # this workflow can also change its gates; branch protection covers that case.
-# The platform and backend merge conditions are docs/runbooks/verification.md,
+# The platform and backend merge conditions, and the rule that every Linux
+# job runs natively on the runner, are docs/runbooks/verification.md,
 # section 10.
 
 name: CI
@@ -100,28 +101,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.lint == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 30
     defaults:
       run:
         shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
     steps:
-      # debian:testing ships a minimal base without bash or git; the
-      # runner infrastructure and later steps need both.
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: lint-job
           # Every run: the tkrzw action and the cache refresh run on reuse too.
@@ -132,7 +122,9 @@ jobs:
         # The tkrzw action installs the overlay port with vcpkg and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       - run: cargo fmt --all --check
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -140,7 +132,7 @@ jobs:
       # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
       # false discards the crate attributes after it, so one above a `//!`
       # block removes the docs and `missing_docs` fires on the excluded
-      # platform only. This Linux container cannot see that, so the checker
+      # platform only. This Linux job cannot see that, so the checker
       # reads placement, not cfg outcomes. Its harness runs first, so a
       # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
@@ -181,28 +173,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.test == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 75
     defaults:
       run:
         shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
     steps:
-      # debian:testing ships a minimal base without bash or git; the
-      # runner infrastructure and later steps need both.
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: test-job
           # Every run: the tkrzw action and the cache refresh run on reuse too.
@@ -214,7 +195,9 @@ jobs:
         # The tkrzw action installs the overlay port with vcpkg and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
         # bindgen (libclang) serves the Berkeley DB lanes.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
       # Before the cache refresh, which builds against it.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
@@ -256,33 +239,23 @@ jobs:
 
   # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
   # holds the policy. The bootstrap action installs a released binary, so
-  # the job takes less than a minute. The Debian Testing image is unpinned
-  # for the reason in the store-backends.yml header.
+  # the job takes less than a minute.
   deny:
     needs: changes
     if: needs.changes.outputs.deny == 'true' && needs.changes.outputs.reuse != 'true'
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml
     defaults:
       run:
         shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # cargo-deny shells out to `cargo metadata`, so a cargo binary is
-      # required; minimal profile suffices (nothing here compiles code).
+      # required.
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           cargo-deny: 'true'
       # The default-feature graph, then the feature-gated graphs, then the
       # fuzz workspace's own graph. --locked holds each to its committed
@@ -299,26 +272,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.harness == 'true' && needs.changes.outputs.reuse != 'true'
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 30
     defaults:
       run:
         shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           uv: 'true'
           just: 'true'
       - name: Install build dependencies (apt)
@@ -329,7 +293,8 @@ jobs:
         # zsh: the oracle environment file is sourced under sh, dash and zsh.
         run: |
           llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
       # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
       # the lint job does not run for Python-only paths such as tools/audit.
       - run: just ruff
@@ -359,22 +324,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ship == 'true'
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
     timeout-minutes: 60
     defaults:
       run:
         shell: bash
     env:
-      DEBIAN_FRONTEND: noninteractive
       # Warnings change no byte. The size build adds its own path remapping.
       RUSTFLAGS: ''
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl jq
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -383,8 +341,7 @@ jobs:
       # Only main saves the dependency cache; pull requests restore it.
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: shipping-sizes-job
           rust-cache-save-if: ${{ github.event_name == 'push' }}
@@ -392,13 +349,18 @@ jobs:
           just: 'true'
       - run: rustup show active-toolchain
       # cargo-c is the distribution's own package, as in release-packages.yml.
-      # The backend packages follow the reference cell (tools/dev/cell.py).
+      # The backend packages follow the reference cell (tools/dev/cell.py);
+      # tkrzw, the reference cell, needs none: it comes from the overlay below.
       - name: Install build dependencies (apt)
         run: |
           set -euo pipefail
           backend=$(just packaging sizes apt)
           read -r -a backend_pkgs <<< "$backend"
-          apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+      # Before the key: the toolchain fingerprint reads the installed tkrzw.
+      - name: Install tkrzw (vcpkg overlay and binary cache)
+        uses: ./.github/actions/tkrzw
       - name: Compute the base recipe key
         id: key
         run: |

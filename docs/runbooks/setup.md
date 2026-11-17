@@ -80,8 +80,8 @@ defaults, and stock `x64-linux` installs static debug and release libraries.
 The loader uses `LD_LIBRARY_PATH`; oxpinyin adds no rpath. Product binaries
 and tests, including `just sanitize tkrzw address`, run with these exports.
 See [tkrzw runtime enforcement](cloud.md#runtime-enforcement-verification-rule-9) for how `tools/tkrzw/runtime.py` checks the resolved library.
-Linux CI uses the same overlay and a vcpkg binary cache. Release packaging,
-shipping-size measurements and oracle/reference images keep Debian's tkrzw.
+Linux CI uses the same overlay and a vcpkg binary cache. Release packaging
+and oracle/reference images keep Debian's tkrzw.
 Ubuntu's packaged tkrzw is defective and is not used for development
 ([finding](../findings/tkrzw-distro-compat.md)).
 

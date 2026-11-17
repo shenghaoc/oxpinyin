@@ -516,8 +516,12 @@ def collect(environ=None):
     return lines, status
 
 
-# The fallback can be newer than the oldest supported installed tool. None is the newest release.
-CARGO_TOOL_PINS = {'just': '1.59.0', 'cargo-nextest': None, 'cargo-c': '0.10.25'}
+def cargo_tool_pins(root=ROOT):
+    """Crates.io fallbacks; just follows its justfile, None is the newest release."""
+    match = re.search(r'^set minimum-version := "([^"]+)"$', (root / 'justfile').read_text(), re.MULTILINE)
+    if match is None:
+        raise DoctorError(f'{root / "justfile"} has no minimum-version declaration')
+    return {'just': match.group(1), 'cargo-nextest': None, 'cargo-c': '0.10.25'}
 
 
 def cargo_tool(name, root=ROOT):

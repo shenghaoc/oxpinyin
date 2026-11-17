@@ -1,7 +1,6 @@
 name: Store backends
 
-# Backend coverage for the peer store backends on a rolling
-# toolchain. The peers (Kyoto Cabinet, tkrzw, Berkeley
+# Backend coverage for the peer store backends. The peers (Kyoto Cabinet, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface.
 # Exactly one peer is compiled per build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
@@ -48,17 +47,10 @@ name: Store backends
 # The backend and sanitizer jobs still do the work; this workflow's
 # gate aggregates their results without a separate required-check setting.
 #
-# ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
-# debian:testing because oxpinyin aims to be a viable libpinyin
-# replacement, and building on the newest toolchain distros actually ship
-# is a property under test, not an accident — libpinyin's own
-# make-check.yml does the same. Debian Testing is the mother distro of
-# one of the two major Linux ecosystems (Ubuntu and derivatives descend
-# from it); RHEL, the other ecosystem's root, is the primary development
-# platform, so CI on Debian Testing covers both lineages. Do NOT pin
-# this image by digest or let a later change "stabilise" it. libtkrzw
-# comes from the vcpkg overlay through .github/actions/tkrzw, with a binary
-# cache and PKG_CONFIG_PATH discovery. libdb and libkyotocabinet come from the image.
+# Every job runs natively on the runner (docs/runbooks/verification.md,
+# section 10). libtkrzw comes from the vcpkg overlay through
+# .github/actions/tkrzw, with a binary cache and PKG_CONFIG_PATH discovery.
+# libdb and libkyotocabinet come from Ubuntu's apt.
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model,
@@ -83,7 +75,6 @@ defaults:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
-  DEBIAN_FRONTEND: noninteractive
 
 jobs:
   # The path gate as a job: one run flag for the whole workflow. Runs first
@@ -179,8 +170,6 @@ jobs:
     # a store-only selector would not do. The children run in parallel.
     name: store backend (${{ matrix.backend }})
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
     timeout-minutes: 45
     defaults:
       run:
@@ -197,17 +186,10 @@ jobs:
           - kyotocabinet
 
     steps:
-      # debian:testing ships a minimal base without bash or git; the
-      # runner infrastructure and later steps need both.
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The bootstrap cluster (safe.directory, pinned toolchain, cache
+      # The bootstrap cluster (pinned toolchain, cache
       # restore) in one call right after the inline checkout; the
       # clippy/rustfmt components preserve the toolchain shape this job
       # always installed. Each backend child
@@ -217,14 +199,12 @@ jobs:
       # writable target across the matrix.
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: store-backend-${{ matrix.backend }}
           uv: 'true'
           # Only the test step runs nextest, and a reuse run skips that step.
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
-
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
         # self-contained regardless of scheduling order; the marginal apt
@@ -234,7 +214,9 @@ jobs:
         # Berkeley DB FFI declarations from db.h.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; its cxx bridge compiles against the headers.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
 
       - name: Clippy for this backend
         if: needs.changes.outputs.reuse != 'true'
@@ -386,65 +368,34 @@ jobs:
     # so both sides of the bridge are instrumented.
     name: tkrzw FFI under address
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-      # ASan requires syscall leeway no other job here needs: Docker's
-      # default seccomp profile blocks personality(2), which turns setarch's
-      # ASLR-off ASan wrapper into EPERM. Unconfining
-      # seccomp for THIS job alone restores standard sanitizer setups;
-      # everything else stays under stock confinement.
-      options: --security-opt seccomp=unconfined
     timeout-minutes: 45
     defaults:
       run:
         shell: bash
 
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Same root-owned-checkout caveat as the store-features job. The
-      # nightly toolchain below stays bespoke (sanitizer builds need
-      # nightly, not the pinned channel), and rust-cache stays off on
-      # purpose — see the note above the gate step.
+      # Sanitizer builds need the one pinned nightly, which
+      # fuzz/rust-toolchain.toml names; tools.dev.test_runner runs cargo
+      # +<nightly> from that file. rust-cache stays off on purpose (below).
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
           uv: 'true'
-
-      # The sanitizer nightly is declared once in fuzz/rust-toolchain.toml and
-      # read through tools.dev.test_runner.sanitize_toolchain. RUSTUP_TOOLCHAIN beats
-      # rust-toolchain.toml's channel pin for this job only.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
-        # On Debian, libasan ships with gcc and is not a separate package.
+        # libasan ships with gcc and is not a separate package.
         # libclang-dev is bindgen's runtime dependency.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libglib2.0-dev
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libglib2.0-dev
 
       # Certify each binary against the overlay install named by
       # OXPINYIN_TKRZW_PREFIX; the loader finds it through LD_LIBRARY_PATH.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
-
-      - name: Install nightly Rust (sanitizer support)
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
-          . "$HOME/.cargo/env"
-          rustc --version
 
       # No rust-cache here on purpose: the store crate compiles in seconds;
       # a separate sanitizer-flavored cache entry would be pure book-keeping.
@@ -490,55 +441,32 @@ jobs:
     # bigram.db is BDB and every session opens it through this FFI, so
     # the lane feeds store-backends-gate like tkrzw-sanitizers does.
     #
-    # debian:testing deliberately unpinned like every job here. The
-    # harness half needs libdb-dev (the system libdb the backend links
+    # The harness half needs libdb-dev (the system libdb the backend links
     # and the -ldb it compiles against) and gcc for the C probes.
     name: bdb backend sanitizers
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-      # ASan requires the same seccomp leeway as the tkrzw lane above.
-      options: --security-opt seccomp=unconfined
     timeout-minutes: 45
     defaults:
       run:
         shell: bash
 
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same nightly as the tkrzw lane above.
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
           uv: 'true'
-
-      # Same nightly source as the tkrzw lane above.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
         # backend binds (and whose db.h bindgen reads); libclang-dev is
         # bindgen's runtime dependency; gcc builds the C harnesses.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
-
-      - name: Install nightly Rust (sanitizer support)
         run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-          rustc --version
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
 
       - name: Run the bdb sanitizer gate
         id: sanitize-tests
@@ -577,50 +505,28 @@ jobs:
     # store-backends-gate.
     name: kc backend sanitizers
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-      # ASan requires the same seccomp leeway as the tkrzw lane above.
-      options: --security-opt seccomp=unconfined
     timeout-minutes: 45
     defaults:
       run:
         shell: bash
 
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The same nightly as the tkrzw lane above.
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
           uv: 'true'
-
-      # Same nightly source as the tkrzw lane above.
-      - name: Select the sanitizer nightly
-        run: |
-          set -euo pipefail
-          toolchain=$(uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize_toolchain; raise SystemExit(sanitize_toolchain())')
-          echo "RUSTUP_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library this backend links and the
         # headers its cxx bridge compiles against with g++; no bindgen, so
         # no libclang.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev
-
-      - name: Install nightly Rust (sanitizer support)
         run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-          rustc --version
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libkyotocabinet-dev
 
       - name: Run the kc sanitizer gate
         id: sanitize-tests

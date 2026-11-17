@@ -8,11 +8,8 @@ name: verify-nightly
 # Jobs: fuzz-soak, overflow-lane, test-windows and test-macos.
 # No job may fail: there are no continue-on-error jobs.
 #
-# Every Linux job runs in a debian:testing container in the
-# store-backends.yml style (test-windows runs on windows-2025,
-# test-macos on macos-26): the nightly lanes exist to surface drift early, and the rolling
-# distro toolchain is part of what they exercise. The image is
-# deliberately unpinned — do not "stabilise" it.
+# Every Linux job runs natively on the runner (docs/runbooks/verification.md,
+# section 10); test-windows runs on windows-2025 and test-macos on macos-26.
 # The oracle is never built or run on GitHub Actions.
 
 on:
@@ -55,15 +52,6 @@ jobs:
     # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
     # move (26.04: actions/runner-images#14748) happens here under review.
     runs-on: &ubuntu ubuntu-26.04
-      # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
-      # Docker's default seccomp profile blocks personality(2), which the
-      # setarch ASLR-off wrapper below needs.
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-      # The override the comment above exists for: without it Docker's
-      # default seccomp profile blocks personality(2) and setarch -R dies
-      # with EPERM before any target runs.
-      options: --security-opt seccomp=unconfined
     # Two limits. The "Soak each target" step has 30: 8 targets at 180 s
     # each soak for 24 min, and their builds add 1 to 3 min. The job has
     # 10 more, for the steps before the soak (up to 4 min) and the upload
@@ -73,34 +61,25 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
+      - name: Install build dependencies (apt)
         run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev util-linux
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
           # The tkrzw action runs on the managed CPython.
           uv: 'true'
+          # One nightly toolchain serves both cargo-fuzz's build and the runs.
+          # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
+          # file for a command run in fuzz/, so each cargo step below runs
+          # there and no step names the nightly.
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
-      # One nightly toolchain serves both cargo-fuzz's build and the runs
-      # (cargo install works on nightly; no second toolchain needed).
-      # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
-      # file for a command run in fuzz/, so each cargo step below runs there
-      # and no step names the nightly. No default toolchain is installed.
-      - name: Install the pinned nightly with Rust sources
-        working-directory: fuzz
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain none
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-          rustup toolchain install
       # Exact on purpose: cargo-fuzz passes unstable flags to the pinned nightly above, so the two move together.
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
         working-directory: fuzz
@@ -163,9 +142,8 @@ jobs:
           for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
             # setarch -R disables ASLR for the process tree: runner
-            # kernels' mmap entropy exceeds ASan's shadow mapping, and an
-            # unprivileged container cannot lower vm.mmap_rnd_bits itself
-            # (same rationale as store-backends.yml's sanitizer job).
+            # kernels' mmap entropy exceeds ASan's shadow mapping
+            # (tools/dev/test_runner.py's sanitizer service does the same).
             if ! setarch "$(uname -m)" -R cargo fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096 -print_final_stats=1; then
               status=1
               echo "::error::fuzz target $target failed"
@@ -191,8 +169,6 @@ jobs:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
     runs-on: *ubuntu
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
     # Twice a cold release build, which takes about 20 min with no Rust cache; the tests take seconds.
     timeout-minutes: 40
     defaults:
@@ -201,17 +177,16 @@ jobs:
     env:
       RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
+      - name: Install build dependencies (apt)
         run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libkyotocabinet-dev libglib2.0-dev
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libkyotocabinet-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          safe-directory: 'true'
-          rustup: 'true'
+          rust-toolchain: 'true'
           rust-cache: 'true'
           cargo-nextest: 'true'
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace --release --no-default-features --features kyotocabinet
@@ -249,6 +224,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          rust-toolchain: 'true'
           rust-cache: 'true'
           cargo-nextest: 'true'
           uv: 'true'
@@ -348,6 +324,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          rust-toolchain: 'true'
           rust-cache: 'true'
           uv: 'true'
           just: 'true'

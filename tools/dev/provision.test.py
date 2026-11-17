@@ -114,8 +114,8 @@ class CargoToolTests(unittest.TestCase):
             'if sys.argv[1:2] != ["install"] or len(sys.argv) != (7 if pinned else 5) or sys.argv[-2:] != ["--locked", "--quiet"]: sys.exit(97)\n'
             f'test_support.python_tool({str(self.bin)!r}, *{sources!r}[sys.argv[2]])\n'))
 
-    def provision(self):
-        service = provision.Provision(root=ROOT, env=self.env)
+    def provision(self, root=ROOT):
+        service = provision.Provision(root=root, env=self.env)
         with contextlib.redirect_stderr(io.StringIO()) as error:
             try:
                 service.cargo_tools()
@@ -136,16 +136,19 @@ class CargoToolTests(unittest.TestCase):
         self.assertEqual(self.recorded(), [])
 
     def test_a_missing_tool_is_installed_once(self):
+        root = self.bin / 'checkout'
+        root.mkdir()
+        (root / 'justfile').write_text('set minimum-version := "9.8.7"\n')
         floor_tool(self.bin, 'cargo-nextest', ROOT)
         floor_tool(self.bin, 'cargo-cinstall', ROOT)
         self.fake_cargo()
-        status, error, _ = self.provision()
+        status, error, _ = self.provision(root)
         self.assertEqual(status, 0, error)
-        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
-        self.assertIn("installing just 1.59.0 with cargo (requires the justfile's minimum-version)", error)
+        self.assertEqual(self.recorded(), ['install just --version 9.8.7 --locked --quiet'])
+        self.assertIn("installing just 9.8.7 with cargo (requires the justfile's minimum-version)", error)
         self.assertIn("installed just: just (synthetic) at ", error)
-        self.assertEqual(self.provision()[:2], (0, ''))
-        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
+        self.assertEqual(self.provision(root)[:2], (0, ''))
+        self.assertEqual(self.recorded(), ['install just --version 9.8.7 --locked --quiet'])
 
     def test_missing_nextest_installs_the_newest_release_and_cargo_c_its_pinned_fallback(self):
         floor_tool(self.bin, 'just', ROOT)
@@ -165,7 +168,8 @@ class CargoToolTests(unittest.TestCase):
         self.fake_cargo()
         status, error, _ = self.provision()
         self.assertEqual(status, 0, error)
-        self.assertEqual(self.recorded(), ['install just --version 1.59.0 --locked --quiet'])
+        version = provision.doctor.cargo_tool_pins()['just']
+        self.assertEqual(self.recorded(), [f'install just --version {version} --locked --quiet'])
 
     def test_a_nextest_that_refuses_its_requirement_stops_when_cargo_cannot_fix_it(self):
         floor_tool(self.bin, 'just', ROOT)

@@ -1,19 +1,19 @@
 name: 'bootstrap'
 description: |-
   Shared post-checkout bootstrap cluster for this repository's
-  workflows: the checkout registered as a git safe.directory (container
-  jobs run as root over a root-owned checkout), an optional
-  pinned-rustup install (the toolchain and components that
-  rust-toolchain.toml names, minimal profile), optional CI tools (uv
+  workflows: the checkout registered as a git safe.directory (the
+  release-packages.yml distro-container jobs run as root over a root-owned
+  checkout), an optional rustup install for those container jobs, an
+  optional install of the toolchain and components that
+  rust-toolchain.toml names (minimal profile), optional CI tools (uv
   through astral-sh/setup-uv, with the managed Python and its build
-  check; just,
-  cargo-nextest and cargo-deny through
+  check; just, cargo-nextest and cargo-deny through
   taiki-e/install-action, just and cargo-deny at exact versions and
   cargo-nextest at the latest version that the pinned action carries,
-  restored from the Actions cache when the requested tool list and this
-  file match, and cargo-c from its
+  and cargo-c from its
   upstream macOS release archive), and an optional Swatinem/rust-cache
-  restore/save (its post step runs with the composite's completion).
+  restore/save of the registry and build artifacts (its post step runs
+  with the composite's completion). Tool binaries are not cached.
 
   The actions/checkout step stays inline in every calling job. A local
   `./` action cannot run the checkout that makes it visible: a job
@@ -28,17 +28,32 @@ inputs:
   safe-directory:
     description: >-
       Register the checkout as a git safe.directory. Required in the
-      container jobs, which run as root over a root-owned checkout.
+      release-packages.yml distro-container jobs, which run as root over a
+      root-owned checkout.
       String 'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
   rustup:
     description: >-
       Install rustup from sh.rustup.rs with the minimal profile, then the
-      toolchain and components that rust-toolchain.toml names. String
-      'true'/'false' (composite-action inputs are strings).
+      toolchain and components that rust-toolchain.toml names. For the
+      release-packages.yml distro-container jobs, whose images have no
+      rustup. String 'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
+  rust-toolchain:
+    description: >-
+      Install the toolchain and components that the rust-toolchain.toml in
+      rust-toolchain-dir names, with the rustup already on PATH (the hosted
+      runners'). String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-toolchain-dir:
+    description: >-
+      The directory whose rust-toolchain.toml names the toolchain: the
+      repository root by default, `fuzz` for the one pinned nightly.
+    required: false
+    default: '.'
   uv:
     description: >-
       Install uv with astral-sh/setup-uv, then install and check the managed
@@ -99,7 +114,7 @@ runs:
       shell: bash
       run: echo 'UV_LOCKED=1' >> "$GITHUB_ENV"
 
-    # Container jobs run as root over a root-owned checkout, so any later
+    # The distro-container jobs run as root over a root-owned checkout, so any later
     # git invocation would die on dubious ownership (this affected
     # tracked-path probes in local tooling scripts during development).
     - name: Register the checkout as a git safe.directory
@@ -119,12 +134,13 @@ runs:
       shell: bash
       run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
 
-    # From the repository root, rustup reads the channel and the components
-    # (clippy, rustfmt) from rust-toolchain.toml. No default toolchain is set,
-    # so a command run outside the checkout has no toolchain.
+    # rustup reads the channel and the components from the rust-toolchain.toml
+    # of the working directory. In a container job no default toolchain is
+    # set, so a command run outside the checkout has none.
     - name: Install the pinned Rust toolchain
-      if: inputs.rustup == 'true'
+      if: inputs.rustup == 'true' || inputs.rust-toolchain == 'true'
       shell: bash
+      working-directory: ${{ inputs.rust-toolchain-dir }}
       run: rustup toolchain install
 
     # Pinned to the v10.3.3 tag commit. No version input: setup-uv reads
@@ -164,105 +180,45 @@ runs:
         assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
         PYTHON
 
-    # The install-action tools, each written once, here. just and cargo-deny
-    # have exact versions. cargo-nextest has none: `latest` is the version in
-    # the manifest of the pinned install-action commit, so the pins below fix
-    # it. The step builds the cache key from the runner OS and architecture,
-    # the exact list of tools this call asks for and the hash of this file.
-    # A version bump here or a new install-action pin moves the key. The step
-    # also lists the paths to cache (install-action puts all three in
-    # ${CARGO_HOME:-~/.cargo}/bin, and none sets CARGO_HOME here).
+    # just uses the justfile's minimum-version; cargo-deny uses the version
+    # file beside this action. `latest` for cargo-nextest is the version in
+    # the manifest of the pinned install-action commit.
     - name: Resolve the install-action tools
       id: tools
+      if: inputs.just == 'true' || inputs.cargo-nextest == 'true' || inputs.cargo-deny == 'true'
       shell: bash
       env:
         JUST: ${{ inputs.just }}
         CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
         CARGO_DENY: ${{ inputs.cargo-deny }}
-        ACTION_HASH: ${{ hashFiles('.github/actions/bootstrap/action.yml') }}
       run: |
         set -euo pipefail
         wanted=()
-        paths=()
         resolve() {
-          printf '%s=%s@%s\n' "$1" "$1" "$2" >> "$GITHUB_OUTPUT"
           if [ "$3" = true ]; then
+            if [ -z "$2" ]; then
+              printf '::error::no version declared for %s\n' "$1"
+              exit 1
+            fi
             wanted+=("$1@$2")
-            paths+=("~/.cargo/bin/$1" "~/.cargo/bin/$1.exe")
           fi
         }
-        resolve just 1.59.0 "$JUST"
+        resolve just "$(sed -n 's/^set minimum-version := "\([^"]*\)"$/\1/p' justfile)" "$JUST"
         resolve cargo-nextest latest "$CARGO_NEXTEST"
-        resolve cargo-deny 0.20.2 "$CARGO_DENY"
-        if [ "${#wanted[@]}" -eq 0 ]; then
-          echo 'any=false' >> "$GITHUB_OUTPUT"
-          exit 0
+        resolve cargo-deny "$(cat .github/actions/bootstrap/cargo-deny-version.txt)" "$CARGO_DENY"
+        if [ "${#wanted[@]}" -gt 0 ]; then
+          printf 'wanted=%s\n' "${wanted[*]}" >> "$GITHUB_OUTPUT"
         fi
-        # Without the hash, a new install-action pin would keep the old key.
-        if [ -z "$ACTION_HASH" ]; then
-          echo '::error::no hash for .github/actions/bootstrap/action.yml'
-          exit 1
-        fi
-        {
-          echo 'any=true'
-          printf 'key=install-action-tools-%s-%s-%s-%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${wanted[*]}" "$ACTION_HASH" | tr ' ' '-'
-          echo 'paths<<EOF_PATHS'
-          printf '%s\n' "${paths[@]}"
-          echo 'EOF_PATHS'
-        } >> "$GITHUB_OUTPUT"
 
-    # An exact hit restores every requested binary and skips install-action.
-    # A miss installs as before and the save step below stores the result.
-    - name: Restore the install-action tools
-      id: tool-cache
-      if: steps.tools.outputs.any == 'true'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ${{ steps.tools.outputs.paths }}
-        key: ${{ steps.tools.outputs.key }}
-
-    # GITHUB_PATH applies to later steps. install-action does this itself on
-    # a miss; a restore only extracts files.
-    - name: Put the cached tools on PATH
-      if: steps.tool-cache.outputs.cache-hit == 'true'
-      shell: bash
-      run: |
-        bin="$HOME/.cargo/bin"
-        if command -v cygpath >/dev/null; then bin="$(cygpath -w "$bin")"; fi
-        printf '%s\n' "$bin" >> "$GITHUB_PATH"
-
-    # install-action pins below: v2.90.0 tag commit. Checksum verification stays
+    # install-action pin: v2.90.3 tag commit. Checksum verification stays
     # on (its default) and fallback is off, so a tool the action cannot install
     # from a release fails the job. The action has no retry or timeout input;
     # its downloads retry inside the script.
     - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-      if: inputs.just == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
+      if: steps.tools.outputs.wanted != ''
       with:
-        tool: ${{ steps.tools.outputs.just }}
+        tool: ${{ steps.tools.outputs.wanted }}
         fallback: none
-
-    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-      if: inputs.cargo-nextest == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
-      with:
-        tool: ${{ steps.tools.outputs.cargo-nextest }}
-        fallback: none
-
-    - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-      if: inputs.cargo-deny == 'true' && steps.tool-cache.outputs.cache-hit != 'true'
-      with:
-        tool: ${{ steps.tools.outputs.cargo-deny }}
-        fallback: none
-
-    # Only main writes the Actions cache; every other ref restores only.
-    - name: Save the install-action tools
-      if: >-
-        steps.tools.outputs.any == 'true'
-        && steps.tool-cache.outputs.cache-hit != 'true'
-        && github.ref == 'refs/heads/main'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ${{ steps.tools.outputs.paths }}
-        key: ${{ steps.tools.outputs.key }}
 
     # The upstream release archive for macOS, an arm64 build, held to its
     # SHA-256. A source build took seven minutes. The version and the hash
@@ -296,9 +252,10 @@ runs:
         esac
         printf '%s/cargo-c/bin\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
-    # Pinned to the v2.9.2 tag commit (do not bump without re-verifying).
+    # Pinned to the v2.9.3 tag commit (do not bump without re-verifying).
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       if: inputs.rust-cache == 'true'
       with:
+        cache-bin: 'false'
         key: ${{ inputs.rust-cache-key }}
         save-if: ${{ inputs.rust-cache-save-if == 'true' && github.ref == 'refs/heads/main' }}
