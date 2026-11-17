@@ -6,10 +6,9 @@
 use crate::support::{PARITY, close};
 
 use crate::support::{
-    DEFAULT_SORT, LookupCandidate, NBEST, NORMAL, PinyinContext, PinyinInstance, TempUserDir,
-    candidate_at, capture_rows, cstr, decoded, key_at, pinyin_alloc_instance,
-    pinyin_choose_candidate, pinyin_get_candidate, pinyin_guess_candidates, pinyin_guess_sentence,
-    pinyin_parse_more_full_pinyins, pinyin_set_options, pinyin_train, sentence,
+    DEFAULT_SORT, LookupCandidate, PinyinContext, PinyinInstance, TempUserDir, cstr,
+    pinyin_alloc_instance, pinyin_get_candidate, pinyin_guess_candidates, pinyin_guess_sentence,
+    pinyin_parse_more_full_pinyins, pinyin_set_options, pinyin_train,
 };
 
 use contract_data::contract_data_dir;
@@ -93,91 +92,4 @@ fn training_one_past_the_nbest_results_aborts() {
             unsafe { pinyin_train(instance, 3) };
         },
     );
-}
-
-/// Constraint revalidation: 整个 forced over its abbreviation `zhg`, one initial-only key per
-/// syllable, under 0x18a. Observation `constraint-revalidation/pinyin/zhg-整个` of the pin
-/// capture of 2026-11-16 (runs 1 and 2 identical), at 074a2219.
-///
-/// `fill_matrix` puts `zh` at column 0 and `g` at column 2 (`phonetic_key_matrix.cpp:30-84`).
-/// The choose answers `offset + add_constraint(0, 3)` (`pinyin.cpp:2578-2588`;
-/// `lookup/phonetic_lookup.cpp:61-86`). `validate_constraint` keeps the forcing at the next guess
-/// (`phonetic_lookup.cpp:120-167`), because an incomplete key matches any final
-/// (`pinyin_phrase3.h:80-86`), and the one forced path leaves one sentence row
-/// (`lookup/phonetic_lookup.h:552-554,601-612,776-788`). A parse never touches the constraints
-/// (`pinyin.cpp:1497-1525`), so the forcing survives `zh` and `zhg` parsed with no guess between.
-/// A guess on `zh` shrinks the store to 3 and clears the forcing that ends at 3
-/// (`phonetic_lookup.cpp:136-138,145-148`).
-#[test]
-fn a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does() {
-    let user = TempUserDir::new("constraint-revalidation");
-    let (context, instance) = open_pinned(&user);
-    assert!(unsafe { pinyin_set_options(context, PARITY) });
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, c"zhg".as_ptr()) },
-        3
-    );
-    assert_eq!(
-        unsafe { crate::support::pinyin_get_parsed_input_length(instance) },
-        3
-    );
-    assert_eq!(
-        (0..=3)
-            .map(|offset| key_at(instance, offset))
-            .collect::<Vec<_>>(),
-        [
-            Some((23, (0, 2), "zh".to_owned())),
-            None,
-            Some((7, (2, 3), "g".to_owned())),
-            None,
-        ]
-    );
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance, 0), "中国");
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let rows = capture_rows(instance);
-    assert_eq!(rows.len(), 2025);
-    assert_eq!(
-        &rows[..3],
-        &[
-            (NBEST, "中国".to_owned(), Some(0)),
-            (NBEST, "这个".to_owned(), Some(2)),
-            (NORMAL, "整个".to_owned(), None),
-        ]
-    );
-    assert_eq!(
-        unsafe { pinyin_choose_candidate(instance, 0, candidate_at(instance, 2)) },
-        3
-    );
-
-    // Revalidated by the guess.
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance, 0), "整个");
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let rows = capture_rows(instance);
-    assert_eq!(rows.len(), 2025);
-    assert_eq!(
-        &rows[..3],
-        &[
-            (NBEST, "整个".to_owned(), Some(0)),
-            (NORMAL, "中国".to_owned(), None),
-            (NORMAL, "这个".to_owned(), None),
-        ]
-    );
-
-    // A replaced selection: no guess sees the shorter parse.
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, c"zh".as_ptr()) },
-        2
-    );
-    assert_eq!(
-        unsafe { crate::support::pinyin_get_parsed_input_length(instance) },
-        2
-    );
-    assert_eq!(decoded(instance, c"zhg"), "整个");
-
-    // A guess on the shorter parse clears the forcing.
-    assert_eq!(decoded(instance, c"zh"), "中");
-    assert_eq!(decoded(instance, c"zhg"), "中国");
-    close(context, instance);
 }

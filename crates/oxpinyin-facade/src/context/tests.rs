@@ -855,3 +855,823 @@ mod library_totals {
         assert_eq!(facade_total(&context), total);
     }
 }
+
+mod native {
+    use crate::test_fixture::{native_fixture::*, *};
+    use crate::{ContextCore, ImportPlan, MaskOutOutcome, SaveOutcome};
+    use oxpinyin_core::OptionBits;
+    use oxpinyin_user::UserConfLaw;
+    use std::path::Path;
+
+    #[test]
+    fn init_reports_an_absent_library_and_succeeds() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native::init_reports_an_absent_library_and_succeeds",
+            |user| {
+                let system = private_system(user.parent().unwrap());
+                std::fs::remove_file(system.join("merged.bin")).unwrap();
+                native_context(&system, user, UserConfLaw::Pinyin);
+            },
+        ) else {
+            return;
+        };
+        let line = format!(
+            "mmap {} failed!{}",
+            user.parent()
+                .unwrap()
+                .join("system")
+                .join("merged.bin")
+                .display(),
+            oxpinyin_input::TEXT_NEWLINE
+        );
+        assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
+    }
+
+    #[test]
+    fn reload_of_an_empty_library_reports_and_answers_true() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native::reload_of_an_empty_library_reports_and_answers_true",
+            |user| {
+                let system = private_system(user.parent().unwrap());
+                let mut context = native_context(&system, user, UserConfLaw::Pinyin);
+                assert!(context.unload_phrase_library(2));
+                let library = system.join("gbk_char.bin");
+                std::fs::remove_file(&library).unwrap();
+                std::fs::write(&library, b"").unwrap();
+                assert_eq!(context.load_phrase_library(2), Ok(true));
+            },
+        ) else {
+            return;
+        };
+        let line = format!(
+            "mmap {} failed!{}",
+            user.parent()
+                .unwrap()
+                .join("system")
+                .join("gbk_char.bin")
+                .display(),
+            oxpinyin_input::TEXT_NEWLINE
+        );
+        assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
+    }
+
+    #[test]
+    fn save_reports_an_absent_system_library_and_answers_false() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native::save_reports_an_absent_system_library_and_answers_false",
+            |user| {
+                let system = private_system(user.parent().unwrap());
+                let mut context = native_context(&system, user, UserConfLaw::Pinyin);
+                train_once(&mut context);
+                std::fs::remove_file(system.join("gb_char.bin")).unwrap();
+                assert_eq!(context.save_user(), SaveOutcome::NotSaved);
+            },
+        ) else {
+            return;
+        };
+        let line = format!(
+            "mmap {} failed!{}",
+            user.parent()
+                .unwrap()
+                .join("system")
+                .join("gb_char.bin")
+                .display(),
+            oxpinyin_input::TEXT_NEWLINE
+        );
+        assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
+    }
+
+    #[cfg(any(feature = "tkrzw", feature = "bdb"))]
+    fn copy_failure(user: &Path) {
+        let before = user.parent().unwrap().join("before");
+        std::fs::create_dir(&before).unwrap();
+        for (name, bytes) in files_of(user) {
+            std::fs::write(before.join(name), bytes).unwrap();
+        }
+        oxpinyin_store::copy_faults::fail_source_read_after(1);
+        let error = ContextCore::try_open(
+            &system_dir(),
+            Some(user),
+            crate::PINYIN_DEFAULT_OPTION_WORD,
+            UserConfLaw::Pinyin,
+        )
+        .err()
+        .expect("copy fails");
+        assert!(
+            matches!(
+                error,
+                crate::OpenFailure::Runtime(oxpinyin_runtime::OpenError::UserSession(
+                    oxpinyin_user::UserStoreError::FatalCopy
+                ))
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[cfg(any(feature = "tkrzw", feature = "bdb"))]
+    #[test]
+    fn init_returns_the_source_copy_failure_after_writing_the_open_counter() {
+        let Some((_scratch, user, _run)) = child(
+            "context::tests::native::init_returns_the_source_copy_failure_after_writing_the_open_counter",
+            |user| {
+                plant_bigram(
+                    user,
+                    vec![
+                        (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+                        (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+                    ],
+                );
+                copy_failure(user);
+            },
+        ) else {
+            return;
+        };
+        let before = files_of(&user.parent().unwrap().join("before"));
+        let after = files_of(&user);
+        let conf = String::from_utf8_lossy(&after["user.conf"]);
+        assert!(
+            conf.ends_with(&format!("open counter:2{}", oxpinyin_input::TEXT_NEWLINE)),
+            "{conf}"
+        );
+        assert_eq!(after["user_bigram.db"], before["user_bigram.db"]);
+    }
+
+    #[cfg(any(feature = "tkrzw", feature = "bdb"))]
+    #[test]
+    fn init_returns_the_user_index_copy_failure_without_changing_the_file() {
+        let Some((_scratch, user, _run)) = child(
+            "context::tests::native::init_returns_the_user_index_copy_failure_without_changing_the_file",
+            |user| {
+                set_phrase_table_row(user, "你好", &[0x0100_0001]);
+                set_phrase_table_row(user, "再见", &[0x0100_0002]);
+                copy_failure(user);
+            },
+        ) else {
+            return;
+        };
+        assert_eq!(
+            files_of(&user)["user_phrase_index.bin"],
+            files_of(&user.parent().unwrap().join("before"))["user_phrase_index.bin"]
+        );
+    }
+
+    /// The same failed second separator as phrase_index.cpp:355; its local
+    /// total T is not added at load, but an unload subtracts it (:261-269).
+    fn layout_failed_gbk_context(scratch: &Path) -> (ContextCore, u64) {
+        let system = private_system(scratch);
+        let user = scratch.join("user");
+        std::fs::create_dir(&user).unwrap();
+        let library = system.join("gbk_char.bin");
+        let write = |total: u32| {
+            let mut payload = [0_u8; 32];
+            for (at, value) in [(0, total), (4, 17), (8, 20), (12, 24)] {
+                payload[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            payload[16] = b'#';
+            payload[19] = b'!';
+            std::fs::remove_file(&library).unwrap();
+            std::fs::write(
+                &library,
+                oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+            )
+            .unwrap();
+        };
+        write(0);
+        let mut context = native_context(&system, &user, UserConfLaw::Pinyin);
+        let total = context.runtime.lm().amplified_total();
+        context.finish();
+        drop(context);
+        assert!(total > 0);
+        write(u32::try_from(total).unwrap());
+        let context = native_context(&system, &user, UserConfLaw::Pinyin);
+        assert_eq!(context.runtime.lm().amplified_total(), total);
+        (context, total)
+    }
+
+    #[test]
+    fn an_unload_inside_an_open_import_zeroes_the_facade_total() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut context, _) = layout_failed_gbk_context(scratch.path());
+        assert!(context.unload_phrase_library(2));
+        assert_eq!(context.runtime.lm().amplified_total(), 0);
+    }
+
+    #[test]
+    fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut context, _) = layout_failed_gbk_context(scratch.path());
+        assert!(context.unload_phrase_library(2));
+        context.end_import();
+        assert_eq!(context.runtime.lm().amplified_total(), 0);
+    }
+
+    #[test]
+    fn an_unload_after_the_import_ends_keeps_the_facade_total() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut context, total) = layout_failed_gbk_context(scratch.path());
+        context.end_import();
+        assert!(context.unload_phrase_library(2));
+        assert_eq!(context.runtime.lm().amplified_total(), total);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
+        assert!(!native_window(&context, &mut instance, 0).is_empty());
+    }
+
+    #[test]
+    fn an_increment_after_an_import_into_a_failed_layout_sees_the_item_sum() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut context, _) = layout_failed_gbk_context(scratch.path());
+        assert_eq!(
+            import_native(&mut context, 2, &[("龘龘", "da2'da2", 9)]),
+            [true]
+        );
+        let token = tokens(&context, "龘龘")
+            .into_iter()
+            .find(|token| token >> 24 == 2)
+            .unwrap();
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(token, u32::MAX - 27)
+        );
+    }
+
+    #[test]
+    fn a_save_after_an_import_into_a_failed_layout_journals_the_item_sum() {
+        let scratch = tempfile::tempdir().unwrap();
+        let (mut context, total) = layout_failed_gbk_context(scratch.path());
+        assert_eq!(
+            import_native(&mut context, 2, &[("龘龘", "da2'da2", 9)]),
+            [true]
+        );
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert!(context.unload_phrase_library(2));
+        assert_eq!(context.runtime.lm().amplified_total(), total);
+        context.finish();
+        let journal = std::fs::read(scratch.path().join("user/gbk_char.dbin")).unwrap();
+        let word = |at: usize| u32::from_le_bytes(journal[8 + at..12 + at].try_into().unwrap());
+        assert_eq!((word(0), word(4)), (4, 0));
+        assert_eq!((u64::from(word(10)), word(14)), (total, 27));
+    }
+
+    fn two_headers() -> Vec<u8> {
+        [modify_header(0, 1, 1), modify_header(0, 1, 2)].concat()
+    }
+
+    #[test]
+    fn mask_out_skips_the_log_of_an_unloaded_library() {
+        let user = TempUserDir::new("mask-unloaded-log");
+        write_user_conf(&user.path, &system_dir());
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        std::fs::write(
+            user.path.join("gbk_char.dbin"),
+            oxpinyin_data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
+        )
+        .unwrap();
+        assert!(context.unload_phrase_library(2));
+        assert_eq!(context.mask_out(0, 0), MaskOutOutcome::Done(true));
+    }
+
+    #[test]
+    fn mask_out_over_an_unmappable_library_changes_nothing() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native::mask_out_over_an_unmappable_library_changes_nothing",
+            |user| {
+                write_user_conf(user, &system_dir());
+                let system = private_system(user.parent().unwrap());
+                let mut context = native_context(&system, user, UserConfLaw::Pinyin);
+                assert_eq!(
+                    import_native(&mut context, 1, &[("龘龘", "da2'da2", 1)]),
+                    [true]
+                );
+                assert_eq!(context.save_user(), SaveOutcome::Saved);
+                assert_eq!(
+                    import_native(&mut context, 7, &[("龘龘龘", "da2'da2'da2", 1)]),
+                    [true]
+                );
+                assert!(
+                    context
+                        .user_store_mut()
+                        .add_system_unigram_frequency(0x0100_1225, 7)
+                );
+                let items = [tokens(&context, "龘龘"), tokens(&context, "龘龘龘")];
+                let count = unigram(&context, 0x0100_1225);
+                let files = files_of(user);
+                let library = system.join("gb_char.bin");
+                let original = std::fs::read(&library).unwrap();
+                std::fs::remove_file(&library).unwrap();
+                assert_eq!(context.mask_out(0, 0), MaskOutOutcome::Done(true));
+                assert_eq!(files_of(user), files);
+                assert_eq!(unigram(&context, 0x0100_1225), count);
+                assert_eq!(
+                    [tokens(&context, "龘龘"), tokens(&context, "龘龘龘")],
+                    items
+                );
+                std::fs::write(&library, original).unwrap();
+                assert_eq!(context.save_user(), SaveOutcome::Saved);
+            },
+        ) else {
+            return;
+        };
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
+            format!(
+                "mmap {} failed!{}",
+                user.parent()
+                    .unwrap()
+                    .join("system")
+                    .join("gb_char.bin")
+                    .display(),
+                oxpinyin_input::TEXT_NEWLINE
+            )
+        );
+    }
+
+    #[test]
+    fn a_masked_user_gram_leaves_the_file_at_the_next_armed_save() {
+        let user = TempUserDir::new("issue677");
+        let key = 0x0700_0001_u32.to_le_bytes().to_vec();
+        let gram = gram_bytes(100, &[(0x0100_0001, 100)]);
+        plant_bigram(&user.path, vec![(key.clone(), gram.clone())]);
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let stored = || {
+            store_rows(&user.path.join("user_bigram.db"), true)
+                .into_iter()
+                .find(|(found, _)| *found == key)
+                .map(|(_, value)| value)
+        };
+        assert_eq!(
+            import_native(&mut context, 7, &[("达达", "da2'da2", 100)]),
+            [true]
+        );
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert_eq!(
+            context.mask_out(0x0f00_0000, 0x0700_0000),
+            MaskOutOutcome::Done(true)
+        );
+        assert_eq!(context.save_user(), SaveOutcome::NotSaved);
+        assert_eq!(stored(), Some(gram));
+        assert_eq!(
+            import_native(&mut context, 7, &[("你你", "ni3'ni3", 100)]),
+            [true]
+        );
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert_eq!(stored(), None);
+    }
+
+    #[test]
+    fn set_options_before_alloc_controls_incomplete_parse_length() {
+        let mut context = open_context(crate::PINYIN_DEFAULT_OPTION_WORD);
+        context.set_options(OptionBits::empty());
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nih"), 2);
+        assert_eq!(
+            native_window(&context, &mut instance, 0)
+                .first()
+                .unwrap()
+                .text()
+                .as_str(),
+            Some("你")
+        );
+    }
+
+    #[test]
+    fn set_options_remasks_a_live_instance() {
+        let mut context = open_context(crate::PINYIN_DEFAULT_OPTION_WORD);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nih"), 2);
+        context.set_options(OptionBits::empty());
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nih"), 2);
+        assert_eq!(
+            native_window(&context, &mut instance, 0)
+                .first()
+                .unwrap()
+                .text()
+                .as_str(),
+            Some("你")
+        );
+        context.set_options(OptionBits::PINYIN_INCOMPLETE);
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nih"), 3);
+    }
+
+    #[test]
+    fn set_options_use_tone_reaches_the_hanyu_parser() {
+        let mut context = open_context(crate::PINYIN_DEFAULT_OPTION_WORD);
+        let mut instance = context.alloc_instance();
+        context.set_options(OptionBits::PINYIN_INCOMPLETE);
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("zai4"), 3);
+        context.set_options(OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE);
+        for (input, consumed) in [("zai4", 4), ("zhuang4", 7), ("zai6", 3)] {
+            assert_eq!(
+                instance.bind(&context.runtime).parse_full_more(input),
+                consumed
+            );
+        }
+    }
+
+    fn gbk_token(context: &ContextCore) -> u32 {
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("ni"), 2);
+        native_window(context, &mut instance, 0)
+            .iter()
+            .filter_map(|row| row.token())
+            .map(oxpinyin_core::PhraseToken::value)
+            .find(|token| token >> 24 == 2)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_failed_reload_keeps_the_library_unloaded_until_the_next_load() {
+        let scratch = tempfile::tempdir().unwrap();
+        let system = private_system(scratch.path());
+        let user = scratch.path().join("user");
+        std::fs::create_dir(&user).unwrap();
+        let mut context = native_context(&system, &user, UserConfLaw::Pinyin);
+        let gbk = gbk_token(&context);
+        assert!(context.unload_phrase_library(2));
+        let library = system.join("gbk_char.bin");
+        std::fs::remove_file(&library).unwrap();
+        assert_eq!(context.load_phrase_library(2), Ok(true));
+        assert!(
+            !context
+                .user_store_mut()
+                .add_system_unigram_frequency(gbk, 1)
+        );
+        link_file(&system_dir().join("gbk_char.bin"), &library);
+        assert_eq!(context.load_phrase_library(2), Ok(true));
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(gbk, 1)
+        );
+    }
+
+    #[test]
+    fn an_increment_and_an_import_into_an_unloaded_library_answer_false() {
+        let user = TempUserDir::new("guards-unloaded");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let gbk = gbk_token(&context);
+        assert!(context.unload_phrase_library(2));
+        let total = context.runtime.lm().amplified_total();
+        assert!(
+            !context
+                .user_store_mut()
+                .add_system_unigram_frequency(gbk, 1)
+        );
+        let ImportPlan::Add {
+            phrase,
+            keys,
+            original,
+        } = plan(&context, 2, "单", "dan")
+        else {
+            panic!("planning precedes the unloaded-library guard")
+        };
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_phrase_in(2, original, &phrase, &keys, None)
+                .is_err()
+        );
+        assert_eq!(context.runtime.lm().amplified_total(), total);
+        context.end_import();
+        assert_eq!(context.load_phrase_library(2), Ok(true));
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(gbk, 1)
+        );
+    }
+
+    #[test]
+    fn removing_the_last_saved_phrase_from_a_clean_context_does_not_persist() {
+        let user = TempUserDir::new("clean-last-removal");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        assert_eq!(
+            import_native(&mut context, 7, &[("测侧", "ce'ce", 7)]),
+            [true]
+        );
+        let saved = export_native(&context, 7);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        context.finish();
+        drop(context);
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("cece"), 4);
+        let window = native_window(&context, &mut instance, 0);
+        let token = window
+            .iter()
+            .filter_map(|row| row.token())
+            .find(|token| token.value() >> 24 == 7)
+            .unwrap()
+            .value();
+        assert!(context.user_store_mut().remove_user_phrase(token).unwrap());
+        assert!(export_native(&context, 7).is_empty());
+        assert_eq!(context.save_user(), SaveOutcome::NotSaved);
+        context.finish();
+        drop(context);
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        assert_eq!(export_native(&context, 7), saved);
+    }
+
+    #[test]
+    fn user_unigram_increment_survives_a_later_save() {
+        let user = TempUserDir::new("user-unigram-save");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        assert_eq!(
+            import_native(&mut context, 7, &[("龘龘", "da2'da2", 5)]),
+            [true]
+        );
+        let token = context
+            .user_store()
+            .token_for_phrase("龘龘")
+            .unwrap()
+            .unwrap();
+        let base = unigram(&context, token).unwrap();
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert_eq!(
+            context.user_store_mut().add_unigram_outcome(token, 9),
+            oxpinyin_user::UnigramAdd::Accepted
+        );
+        assert_eq!(context.save_user(), SaveOutcome::NotSaved);
+        context.end_import();
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        context.finish();
+        drop(context);
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        assert_eq!(unigram(&context, token), Some(base + 9));
+    }
+
+    #[test]
+    fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
+        use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+        let system = TempSystemDir::new("oversized-journal-record");
+        let user = TempUserDir::new("oversized-journal-record");
+        let ni = oxpinyin_core::ChewingKey::from_pinyin("ni")
+            .unwrap()
+            .to_packed();
+        let chunk = build_chunk(&[(
+            1,
+            ChunkItem {
+                phrase: vec![u32::from('你'); 128],
+                unigram: 100,
+                prons: vec![(vec![ni; 128], 1); 255],
+            },
+        )])
+        .unwrap();
+        std::fs::write(system.path.join("gb_char.bin"), chunk).unwrap();
+        let mut context = native_context(&system.path, &user.path, UserConfLaw::Pinyin);
+        let token = 0x0100_0001;
+        assert_eq!(unigram(&context, token), Some(100));
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(token, 1)
+        );
+        assert_eq!(unigram(&context, token), Some(101));
+        context.end_import();
+        assert!(context.user_store().is_modified());
+        assert_eq!(context.save_user(), SaveOutcome::NotSaved);
+        assert!(context.user_store().is_modified());
+        assert!(!user.path.join("gb_char.dbin.tmp").exists());
+        assert!(!user.path.join("gb_char.dbin").exists());
+    }
+}
+
+mod native_files {
+    use crate::SaveOutcome;
+    use crate::test_fixture::{native_fixture::*, *};
+    use oxpinyin_user::UserConfLaw;
+
+    #[test]
+    fn an_unloaded_user_library_hides_its_token_until_the_load() {
+        let user = TempUserDir::new("token-unload");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Zhuyin);
+        assert_eq!(
+            import_native(&mut context, 7, &[("你好", "ㄋㄧˇ ㄏㄠˇ", 1)]),
+            [true]
+        );
+        let found: Vec<_> = tokens(&context, "你好")
+            .into_iter()
+            .filter(|token| token >> 24 == 7)
+            .collect();
+        assert_eq!(found.len(), 1);
+        let token = found[0];
+        let shown = |context: &crate::ContextCore| {
+            assert_eq!(
+                context.runtime.dict().token_pronunciation_count(token),
+                Some(1)
+            );
+            assert_eq!(
+                context.runtime.dict().token_text(token),
+                Some("你好".into())
+            );
+            let bytes = context
+                .runtime
+                .dict()
+                .with_user_nth_pronunciation_words(token, 0, |length, keys| {
+                    assert_eq!(length, 2);
+                    keys.unwrap().to_vec()
+                })
+                .unwrap();
+            assert_eq!(bytes, [0x2b, 0x30, 0x86, 0x32]);
+        };
+        shown(&context);
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert!(context.unload_phrase_library(7));
+        assert_eq!(
+            context.runtime.dict().token_pronunciation_count(token),
+            None
+        );
+        assert_eq!(context.runtime.dict().token_text(token), None);
+        assert_eq!(
+            context
+                .runtime
+                .dict()
+                .with_user_nth_pronunciation_words(token, 0, |_, keys| keys.map(<[u8]>::to_vec)),
+            None
+        );
+        assert_eq!(context.load_phrase_library(7), Ok(true));
+        shown(&context);
+    }
+
+    /// table_info.cpp:254-261 reads words across the newline; duplicate
+    /// gbk_char.dbin destinations differ only in the two facades' rename law.
+    fn short_row_session(user: &std::path::Path, law: UserConfLaw) {
+        let system = short_row_system(user.parent().unwrap());
+        let mut context = native_context(&system, user, law);
+        for text in if law == UserConfLaw::Pinyin {
+            ["nihao", "yishu"]
+        } else {
+            ["ni3hao3", "yi4shu4"]
+        } {
+            let mut instance = native_instance(&context, law);
+            if law == UserConfLaw::Pinyin {
+                let _ = instance.bind(&context.runtime).parse_full_more(text);
+            } else {
+                let _ = instance.bind(&context.runtime).parse_full_more_zhuyin(text);
+            }
+            guess(&context, &mut instance);
+            let _sentence = sentence(&context, &instance, 0);
+            assert!(
+                native_window(&context, &mut instance, 0)
+                    .iter()
+                    .all(|row| row.token().map(oxpinyin_core::PhraseToken::value)
+                        != Some(0x0100_1225))
+            );
+        }
+        let mut instance = native_instance(&context, law);
+        let reading = if law == UserConfLaw::Pinyin {
+            let _ = instance.bind(&context.runtime).parse_full_more("nihao");
+            "ce'shi'ci"
+        } else {
+            let _ = instance
+                .bind(&context.runtime)
+                .parse_full_more_zhuyin("ni3hao3");
+            "ㄘㄜˋ ㄕˋ ㄘˊ"
+        };
+        guess(&context, &mut instance);
+        assert!(context.train(&instance, 0).unwrap());
+        assert_eq!(
+            import_native(&mut context, 7, &[("测试词", reading, 1)]),
+            [true]
+        );
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        context.finish();
+        let mut sizes = files_of(user)
+            .into_iter()
+            .map(|(name, bytes)| (name, bytes.len()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        sizes.remove("user.conf");
+        assert_eq!(
+            sizes.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "addon.bin",
+                "gbk_char.dbin",
+                "merged.dbin",
+                "network.bin",
+                "opengram.dbin",
+                "user.bin",
+                "user_bigram.db",
+                "user_phrase_index.bin",
+                "user_pinyin_index.bin"
+            ]
+        );
+        for (name, size) in [
+            ("addon.bin", 27),
+            ("gbk_char.dbin", 26),
+            ("merged.dbin", 26),
+            ("network.bin", 27),
+            ("opengram.dbin", 26),
+            ("user.bin", 71),
+        ] {
+            assert_eq!(sizes[name], size, "{name}");
+        }
+        let marker = std::fs::read_to_string(user.join("user.conf")).unwrap();
+        let nl = oxpinyin_input::TEXT_NEWLINE;
+        assert!(
+            marker.starts_with(&format!(
+                "binary format version:7{nl}model data version:14{nl}"
+            )) && marker.ends_with(&format!("{nl}open counter:0{nl}")),
+            "{marker}"
+        );
+    }
+
+    #[test]
+    fn pinyin_table_conf_919_short_row_merged() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native_files::pinyin_table_conf_919_short_row_merged",
+            |user| short_row_session(user, UserConfLaw::Pinyin),
+        ) else {
+            return;
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        let nl = oxpinyin_input::TEXT_NEWLINE;
+        let user = user.display();
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
+            format!(
+                "open {user}{sep}user.conf failed.rename {user}{sep}gbk_char.dbin.tmp to {user}{sep}gbk_char.dbin failed.{nl}"
+            )
+        );
+    }
+    #[test]
+    fn zhuyin_table_conf_919_short_row_merged() {
+        let Some((_scratch, user, run)) = child(
+            "context::tests::native_files::zhuyin_table_conf_919_short_row_merged",
+            |user| short_row_session(user, UserConfLaw::Zhuyin),
+        ) else {
+            return;
+        };
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
+            format!(
+                "open {}{}user.conf failed.",
+                user.display(),
+                std::path::MAIN_SEPARATOR
+            )
+        );
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn a_save_over_a_failed_layout_journals_against_an_empty_index() {
+        let Some((_scratch, user, _run)) = child(
+            "context::tests::native_files::a_save_over_a_failed_layout_journals_against_an_empty_index",
+            |user| {
+                let system = user.parent().unwrap().join("system");
+                std::fs::create_dir(&system).unwrap();
+                for entry in std::fs::read_dir(contract_data::contract_data_dir()).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry.file_type().unwrap().is_file() {
+                        link_file(&entry.path(), &system.join(entry.file_name()));
+                    }
+                }
+                let mut context = native_context(&system, user, UserConfLaw::Pinyin);
+                train_once(&mut context);
+                replace_with_failed_layout(&system.join("merged.bin"), 123);
+                assert_eq!(context.save_user(), SaveOutcome::Saved);
+            },
+        ) else {
+            return;
+        };
+        let journal = std::fs::read(user.join("merged.dbin")).unwrap();
+        assert_eq!(journal.len(), 38_252);
+        use sha2::Digest as _;
+        assert_eq!(
+            sha2::Sha256::digest(&journal)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            "59eed2f9ef43edc1f6e62b72a6f83c6ac2b83e4a56f9956a19c0452dce92a34a"
+        );
+        assert_eq!(journal_walk(&journal), (Some((123, 1001)), [1, 1001, 0, 0]));
+    }
+
+    #[cfg(feature = "tkrzw")]
+    fn journal_walk(data: &[u8]) -> (Option<(u32, u32)>, [u32; 4]) {
+        let payload = &data[8..];
+        let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().expect("a word"));
+        let half = |at: usize| usize::from(u16::from_le_bytes([payload[at], payload[at + 1]]));
+        let (mut at, mut header, mut counts) = (0, None, [0; 4]);
+        while at + 10 <= payload.len() {
+            match word(at) {
+                4 => {
+                    header.get_or_insert((word(at + 10), word(at + 14)));
+                    counts[0] += 1;
+                    at += 10 + 2 * half(at + 8);
+                }
+                kind @ (1 | 2) => {
+                    counts[kind as usize] += 1;
+                    at += 10 + half(at + 8);
+                }
+                3 => {
+                    counts[3] += 1;
+                    at += 12 + half(at + 8) + half(at + 10);
+                }
+                _ => break,
+            }
+        }
+        (header, counts)
+    }
+}

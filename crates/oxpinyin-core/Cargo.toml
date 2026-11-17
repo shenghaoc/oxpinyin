@@ -24,6 +24,7 @@ phf.workspace = true
 phf_codegen.workspace = true
 
 [dev-dependencies]
+rstest = { version = "0.28", default-features = false }
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 
 [features]

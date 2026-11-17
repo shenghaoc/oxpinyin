@@ -1,9 +1,6 @@
-#![cfg_attr(
-    any(any(feature = "tkrzw", feature = "bdb"), unix),
-    expect(
-        clippy::undocumented_unsafe_blocks,
-        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
-    )
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
@@ -197,4 +194,42 @@ fn save_aborts_on_a_directory_library() {
     } else {
         assert!(map_a_directory_library("save"));
     }
+}
+
+#[test]
+fn the_short_table_row_sequence_writes_no_glib_log() {
+    use crate::test_support::{LogCapture, TempUserDir, cstr, short_row_system};
+    let scratch = tempfile::tempdir().unwrap();
+    let system = short_row_system(scratch.path());
+    let user = TempUserDir::new("short-row-log");
+    let logs = LogCapture::new();
+    let context = crate::test_support::init_on(&system, Some(&user.path));
+    assert!(!context.is_null());
+    for text in ["ni3hao3", "yi4shu4"] {
+        let instance = unsafe { crate::instance::zhuyin_alloc_instance(context) };
+        let _ =
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) };
+        unsafe { crate::sentence::zhuyin_guess_sentence(instance) };
+        let mut sentence = std::ptr::null_mut();
+        unsafe { crate::sentence::zhuyin_get_sentence(instance, &raw mut sentence) };
+        if !sentence.is_null() {
+            crate::test_support::take_sentence(sentence);
+        }
+        assert!(unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
+    }
+    let instance = unsafe { crate::instance::zhuyin_alloc_instance(context) };
+    let _ = unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, c"ni3hao3".as_ptr()) };
+    unsafe { crate::sentence::zhuyin_guess_sentence(instance) };
+    assert!(unsafe { crate::candidates::zhuyin_train(instance) });
+    assert!(crate::test_support::import(
+        context,
+        7,
+        "测试词",
+        "ㄘㄜˋ ㄕˋ ㄘˊ".as_bytes(),
+        1
+    ));
+    assert!(unsafe { crate::context::zhuyin_save(context) });
+    crate::test_support::close(context, instance);
+    assert!(logs.take().is_empty());
 }

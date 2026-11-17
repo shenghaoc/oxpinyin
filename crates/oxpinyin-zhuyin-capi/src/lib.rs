@@ -164,33 +164,6 @@ pub use types::ZhuyinContext;
 pub use types::ZhuyinInstance;
 pub use types::lookup_candidate_type_t;
 
-// The behaviour battery: the training/import/dictionary entry points
-// driven through the C symbols themselves, the zhuyin twin of
-// oxpinyin-capi's e2e suite, over the shared test fixtures.
-#[cfg(test)]
-mod boundary_tests;
-#[cfg(test)]
-mod e2e_tests;
-#[cfg(test)]
-mod parse_matrix_tests;
-#[cfg(all(test, feature = "tkrzw"))]
-mod pinned_data_tests;
+// C publication and conversion tests live in sibling tests.rs files and tests/it.
 #[cfg(test)]
 mod test_support;
-
-#[cfg(test)]
-mod tests {
-
-    /// The zhuyin init seed is `USE_TONE | FORCE_TONE` (the pin's
-    /// `zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin), unlike
-    /// `pinyin_init`'s `USE_TONE`. The constant is the word the context
-    /// stores.
-    #[test]
-    fn zhuyin_default_options_is_use_tone_or_force_tone() {
-        use oxpinyin_core::OptionBits;
-        let seed = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
-        assert!(seed.contains(OptionBits::USE_TONE | OptionBits::FORCE_TONE));
-        // No PINYIN_INCOMPLETE is seeded.
-        assert!(!seed.contains(OptionBits::PINYIN_INCOMPLETE));
-    }
-}

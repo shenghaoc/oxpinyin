@@ -158,3 +158,70 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };
 }
+
+/// An in-range unreadable reading returns false and empties the C array
+/// (compatibility policy row 130), unlike an ordinary out-of-range read.
+#[test]
+fn an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array() {
+    let scratch = tempfile::tempdir().unwrap();
+    let system = crate::test_support::truncated_second_reading_system(scratch.path());
+    let user = TempUserDir::new("token-overrun");
+    let context = crate::test_support::init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = crate::test_support::alloc(context);
+    // SAFETY: the array stores packed two-byte keys and is freed below.
+    let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
+    assert!(!unsafe {
+        super::pinyin_token_get_nth_pronunciation(instance, 0x0100_0001, 1, keys.cast())
+    });
+    // SAFETY: the live array was allocated above and is freed once.
+    unsafe {
+        assert_eq!((*keys).len, 0);
+        glib_sys::g_array_free(keys, 1);
+    }
+    crate::test_support::close(context, instance);
+}
+
+/// The stored surrogate is converted to historical UTF-8, with phrase length 3.
+/// The journal bytes are held by oxpinyin-user's persistent journal witness.
+#[test]
+fn a_journal_surrogate_is_published_as_historical_utf8() {
+    let scratch = tempfile::tempdir().unwrap();
+    let system = crate::test_support::items_system(
+        &crate::test_support::system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532, 0x4e01, 0x4e59], &[0x1084; 3], 100),
+            (&[0x4e19], &[0x1081], 100),
+        ],
+        200,
+    );
+    let user = TempUserDir::new("stored-words-surrogate");
+    crate::test_support::write_user_conf(&user.path, &system);
+    let hex = "380000006f1285e404000000000000000400c8000000800c000001000000030000001c000301b80b00003275000000d80000594e0000841084108410e8030000";
+    let bytes: Vec<_> = hex
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    std::fs::write(user.path.join("gb_char.dbin"), bytes).unwrap();
+    let context = crate::test_support::init_at(&system, &user.path);
+    assert!(!context.is_null());
+    let instance = crate::test_support::alloc(context);
+    let (mut length, mut text) = (0x00ab_cdef, ptr::null_mut());
+    assert!(unsafe {
+        super::pinyin_token_get_phrase(instance, 0x0100_0003, &raw mut length, &raw mut text)
+    });
+    // SAFETY: the successful getter returned an owned NUL-terminated GLib buffer.
+    unsafe {
+        assert_eq!(length, 3);
+        assert_eq!(
+            std::ffi::CStr::from_ptr(text).to_bytes(),
+            &[0xe7, 0x94, 0xb2, 0xed, 0xa0, 0x80, 0xe4, 0xb9, 0x99]
+        );
+        glib_sys::g_free(text.cast());
+    }
+    crate::test_support::close(context, instance);
+}

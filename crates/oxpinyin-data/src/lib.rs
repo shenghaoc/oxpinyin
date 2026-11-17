@@ -75,3 +75,11 @@ pub use table_conf::PINNED_LAMBDA;
 
 // Native row decoding for the pin test-program tools.
 pub use chewing_table::{index_key as chewing_index_key, search_row as search_chewing_row};
+
+#[cfg(test)]
+#[path = "../tests/support/native_fixture.rs"]
+mod native_fixture;
+
+#[cfg(all(test, feature = "kyotocabinet"))]
+#[path = "../../oxpinyin-user/src/test_child.rs"]
+mod test_child;

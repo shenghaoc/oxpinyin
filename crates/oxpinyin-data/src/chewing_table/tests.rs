@@ -1,3 +1,4 @@
+// Nextest isolates the process-wide read-fault key by running each test in its own process.
 use super::*;
 
 // ── In-memory DBM for unit testing ───────────────────────────
@@ -393,5 +394,143 @@ fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
     assert!(
         matches!(err, DictError::Parse(ref m) if m == "boom"),
         "{err:?}"
+    );
+}
+
+fn native_table() -> ChewingTable {
+    ChewingTable::new(
+        DefaultDbm::attach(
+            &crate::native_fixture::system_dir().join("pinyin_index.bin"),
+            false,
+        )
+        .unwrap(),
+    )
+}
+
+/// A failed get/check is SEARCH_NONE on every backend
+/// (chewing_large_table2_tkrzwdb.cpp:146-149, _bdb.cpp:182-184,
+/// _kyotodb.cpp:160-163 at 074a2219).
+#[test]
+fn a_failed_pinyin_table_read_is_a_miss() {
+    let table = native_table();
+    let keys = [
+        ChewingKey::from_pinyin("ni").unwrap(),
+        ChewingKey::from_pinyin("hao").unwrap(),
+    ];
+    assert!(!table.search(&keys).unwrap().is_empty());
+    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    assert!(table.search(&keys).unwrap().is_empty());
+}
+
+/// The existence check also treats a failed read as a miss
+/// (chewing_large_table2_tkrzwdb.cpp:511 at 074a2219).
+#[test]
+fn a_failed_pinyin_table_existence_read_is_a_miss() {
+    let table = native_table();
+    let keys = [ChewingKey::from_pinyin("ni").unwrap()];
+    assert!(table.key_exists(&keys).unwrap());
+    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    assert!(!table.key_exists(&keys).unwrap());
+    assert!(
+        !table
+            .walk_suggestions(&keys, |_, _| panic!("a miss must not walk"))
+            .unwrap()
+    );
+}
+
+/// Zhuyin su3 supplies ni3, with the tone cleared in the stored key.
+#[test]
+fn a_failed_pinyin_table_existence_read_is_a_miss_for_zhuyin() {
+    let table = native_table();
+    let parse = oxpinyin_core::ZhuyinParser::with_scheme(oxpinyin_core::ZhuyinScheme::Standard)
+        .parse_with_options(
+            b"su3",
+            oxpinyin_core::OptionBits::USE_TONE | oxpinyin_core::OptionBits::FORCE_TONE,
+        );
+    let key = parse.keys()[0]
+        .key()
+        .chewing_key()
+        .with_tone(parse.keys()[0].tone());
+    oxpinyin_store::read_faults::fail_point_read_of(&(key.to_packed() & 0x0fff).to_le_bytes(), 0);
+    assert!(!table.key_exists(&[key]).unwrap());
+    assert!(table.search(&[key]).unwrap().is_empty());
+}
+
+/// A failed cursor get ends the walk (chewing_large_table2_tkrzwdb.cpp:516-541).
+#[test]
+fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
+    let table = native_table();
+    let ni = ChewingKey::from_pinyin("ni").unwrap();
+    let hao = ChewingKey::from_pinyin("hao").unwrap();
+    oxpinyin_store::read_faults::fail_point_read_of(&index_key(&[ni, hao]), 0);
+    let mut lengths = Vec::new();
+    assert!(
+        !table
+            .walk_suggestions(&[ni], |length, _| {
+                lengths.push(length);
+                Ok(false)
+            })
+            .unwrap()
+    );
+    assert!(!lengths.contains(&2));
+}
+
+/// IndexItem pointer subtraction keeps only whole records
+/// (chewing_large_table2.h:145-150; compatibility policy row 128).
+#[test]
+fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
+    let scratch = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::items_system(
+        &crate::native_fixture::system_dir(),
+        scratch.path(),
+        &[(&[0x4e19], &[0x1081], 100)],
+        100,
+    );
+    let mut row = 0x0100_0001_u32.to_le_bytes().to_vec();
+    row.extend(0x1081_u16.to_le_bytes());
+    row.extend([0; 2 + 4]);
+    crate::native_fixture::craft_tree(
+        &system.join("pinyin_index.bin"),
+        &[((0x1081_u16 & 4095).to_le_bytes().to_vec(), row)],
+    );
+    let table =
+        ChewingTable::new(DefaultDbm::attach(&system.join("pinyin_index.bin"), false).unwrap());
+    assert_eq!(
+        table
+            .search(&[ChewingKey::from_pinyin("ba").unwrap()])
+            .unwrap(),
+        [0x0100_0001]
+    );
+    let library = crate::phrase_library::PhraseLibrary::open(&system.join("gb_char.bin")).unwrap();
+    assert_eq!(
+        library.item_fields(1).unwrap().phrase_text(),
+        Some("丙".into())
+    );
+}
+
+/// The size check succeeds; the checked body read aborts
+/// (chewing_large_table2_kyotodb.cpp:159-176, pinyin_utils.h:27-31).
+#[cfg(feature = "kyotocabinet")]
+#[test]
+fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
+    const NAME: &str =
+        "chewing_table::tests::a_pinyin_table_body_read_failure_after_the_check_aborts";
+    if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
+        let table = native_table();
+        let key = ChewingKey::from_pinyin("ni").unwrap();
+        oxpinyin_store::read_faults::fail_point_read_of(&key.to_packed().to_le_bytes(), 1);
+        let _ = table.search(&[key]);
+        panic!("the checked body read must abort");
+    }
+    let output = crate::test_child::run_exact(NAME, [("OXPINYIN_DATA_CHILD", NAME)]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(output.status.signal(), Some(6));
+    }
+    #[cfg(windows)]
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes()))
     );
 }

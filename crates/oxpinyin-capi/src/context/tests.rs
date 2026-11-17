@@ -22,7 +22,7 @@ use crate::context::pinyin_init;
 
 use crate::context::pinyin_save;
 
-use crate::e2e_tests::with_store;
+use crate::test_support::with_store;
 
 use crate::instance::pinyin_reset;
 
@@ -356,4 +356,66 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
 
     unsafe { crate::instance::pinyin_free_instance(instance2) };
     unsafe { crate::context::pinyin_fini(context2) };
+}
+
+/// The C adapter keeps row-106 item misses and layout save failures silent.
+#[test]
+fn the_short_table_row_sequence_writes_no_glib_log() {
+    use crate::test_support::{LogCapture, cstr, short_row_system};
+    let scratch = tempfile::tempdir().unwrap();
+    let system = short_row_system(scratch.path());
+    let user = TempUserDir::new("short-row-log");
+    let logs = LogCapture::new();
+    let context = crate::test_support::init_at(&system, &user.path);
+    for text in ["nihao", "yishu"] {
+        let instance = crate::test_support::alloc(context);
+        let _ =
+            unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) };
+        unsafe { crate::sentence::pinyin_guess_sentence(instance) };
+        let mut sentence = std::ptr::null_mut();
+        unsafe { crate::sentence::pinyin_get_sentence(instance, 0, &raw mut sentence) };
+        if !sentence.is_null() {
+            crate::ffi::take_owned_cstr(sentence);
+        }
+        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, 0) });
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+    }
+    let instance = crate::test_support::alloc(context);
+    let _ = unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) };
+    unsafe { crate::sentence::pinyin_guess_sentence(instance) };
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    assert_eq!(
+        crate::test_support::import_batch(context, 7, &[("测试词", "ce'shi'ci", 1)]),
+        [true]
+    );
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    crate::test_support::close(context, instance);
+    assert!(logs.take().is_empty());
+}
+
+#[cfg(feature = "tkrzw")]
+#[test]
+fn saving_against_a_failed_layout_writes_no_glib_critical() {
+    use crate::test_support::{LogCapture, link_file, replace_with_failed_layout};
+    let scratch = tempfile::tempdir().unwrap();
+    let system = scratch.path().join("system");
+    std::fs::create_dir(&system).unwrap();
+    for entry in std::fs::read_dir(crate::test_support::contract_data::contract_data_dir()).unwrap()
+    {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            link_file(&entry.path(), &system.join(entry.file_name()));
+        }
+    }
+    let user = TempUserDir::new("failed-layout-log");
+    let logs = LogCapture::new();
+    let context = crate::test_support::init_at(&system, &user.path);
+    let instance = crate::test_support::alloc(context);
+    assert_eq!(crate::test_support::parse(instance, "nihao"), 5);
+    assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    replace_with_failed_layout(&system.join("merged.bin"), 123);
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    crate::test_support::close(context, instance);
+    assert!(logs.take().is_empty());
 }

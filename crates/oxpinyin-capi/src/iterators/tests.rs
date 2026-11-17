@@ -4,8 +4,11 @@
 )]
 
 use crate::context::pinyin_save;
+use crate::test_support::drain_phrases;
+#[cfg(unix)]
+use crate::test_support::take_exported;
 
-use crate::e2e_tests::with_store;
+use crate::test_support::with_store;
 
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
@@ -18,35 +21,6 @@ use crate::test_support::{TempUserDir, cstr, open};
 use oxpinyin_user::USER_DICTIONARY;
 
 use std::ptr;
-
-// The deallocator for buffers the export iterators hand out (GLib and the
-// conversion encoder allocate with libc `malloc`, which `g_free` and `free`
-// both release on Linux).
-unsafe extern "C" {
-    fn free(ptr: *mut std::ffi::c_void);
-}
-
-/// Frees a caller-owned buffer the export iterators hand out.
-fn free_exported(ptr: *mut std::ffi::c_char) {
-    if !ptr.is_null() {
-        // SAFETY: the iterator's buffers come from libc `malloc`, directly
-        // or through GLib; `free` releases them.
-        unsafe {
-            free(ptr.cast());
-        }
-    }
-}
-
-/// Reads a caller-owned, NUL-terminated export string and frees it.
-fn take_exported(ptr: *mut std::ffi::c_char) -> String {
-    // SAFETY: the iterator hands out NUL-terminated, valid UTF-8 text.
-    let text = unsafe { std::ffi::CStr::from_ptr(ptr) }
-        .to_str()
-        .expect("UTF-8 export string")
-        .to_owned();
-    free_exported(ptr);
-    text
-}
 
 /// Exports the user dictionary after planting a reading one tone past
 /// `MAX_KEY_TONE` behind a spellable one; the aborting read writes its
@@ -140,27 +114,6 @@ fn export_iterator_aborts_on_a_reading_it_cannot_spell() {
         ),
         -1
     );
-}
-
-/// Drains an export iterator into owned `(phrase, pinyin, count)` triples,
-/// freeing each caller-owned buffer as it goes.
-fn drain_phrases(iter: *mut crate::types::ExportIterator) -> Vec<(String, String, i32)> {
-    let mut rows = Vec::new();
-    while unsafe { crate::iterators::pinyin_iterator_has_next_phrase(iter) } {
-        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
-        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
-        let mut count: std::os::raw::c_int = 0;
-        assert!(unsafe {
-            crate::iterators::pinyin_iterator_get_next_phrase(
-                iter,
-                &raw mut phrase,
-                &raw mut pinyin,
-                &raw mut count,
-            )
-        });
-        rows.push((take_exported(phrase), take_exported(pinyin), count));
-    }
-    rows
 }
 
 #[test]
@@ -266,6 +219,36 @@ fn empty_import_batch_arms_modified_and_saves() {
     assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
     unsafe { pinyin_end_get_phrases(export) };
 
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+    unsafe { crate::context::pinyin_fini(context) };
+}
+
+/// An import reading parses past long separator runs, between its keys and
+/// after them, to its two keys.
+#[test]
+fn an_import_reading_parses_past_long_separator_runs() {
+    let user = TempUserDir::new("import-separator-runs");
+    let (context, instance) = open(user.path.to_str().unwrap());
+    let iter = unsafe { crate::iterators::pinyin_begin_add_phrases(context, 7) };
+    for reading in [
+        [&b"ni3"[..], &[b'\''; 40_000], b"hao3"].concat(),
+        [&b"ni3'hao3"[..], &[b'\''; 70_000]].concat(),
+    ] {
+        let reading = std::ffi::CString::new(reading).expect("no NUL");
+        assert!(unsafe {
+            crate::iterators::pinyin_iterator_add_phrase(
+                iter,
+                c"你好".as_ptr(),
+                reading.as_ptr(),
+                1,
+            )
+        });
+    }
+    unsafe { crate::iterators::pinyin_end_add_phrases(iter) };
+    assert_eq!(
+        crate::test_support::export_of(context, 7),
+        [("你好".to_owned(), "ni3'hao3".to_owned(), 2)]
+    );
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };
 }

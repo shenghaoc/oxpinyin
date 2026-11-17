@@ -26,6 +26,8 @@ oxpinyin-user.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+rstest = { version = "0.28", default-features = false }
+oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 
 [features]
 # Nonshipping pin lookup program assembly.

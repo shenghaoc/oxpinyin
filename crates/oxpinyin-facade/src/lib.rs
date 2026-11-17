@@ -46,7 +46,12 @@ mod parse;
 mod predict;
 mod snapshot;
 #[cfg(test)]
+#[path = "../../oxpinyin-user/src/test_child.rs"]
+mod test_child;
+#[cfg(test)]
 mod test_fixture;
+#[cfg(test)]
+mod tests;
 
 pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, InitRefusal, LibraryLoadFault, LibraryRowAssert,

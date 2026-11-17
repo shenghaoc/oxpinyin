@@ -485,3 +485,20 @@ mod package_libraries {
         assert!(art.items().count() > 0);
     }
 }
+
+/// Header and first fields stay readable past an unreadable second reading
+/// (phrase_index.cpp:180-205 at 074a2219; compatibility policy row 130).
+#[test]
+fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
+    let scratch = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::truncated_second_reading_system(scratch.path());
+    let library = PhraseLibrary::open(&system.join("gb_char.bin")).unwrap();
+    let item = library.item_fields(0x0100_0001).unwrap();
+    assert_eq!(item.unigram(), 100);
+    assert_eq!(item.phrase_text(), Some("丙".into()));
+    assert_eq!(
+        item.pronunciation(0).unwrap().keys,
+        0x1081_u16.to_le_bytes()
+    );
+    assert!(item.pronunciation(1).is_none());
+}

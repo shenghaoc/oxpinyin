@@ -1498,66 +1498,6 @@ pub(crate) fn parsed_key_and_rest(
     (key, rest)
 }
 
-#[cfg(feature = "tkrzw")]
-/// Sentence `index` of the last guess.
-pub(crate) fn sentence(instance: *mut PinyinInstance, index: u8) -> String {
-    let mut text: *mut c_char = ptr::null_mut();
-    assert!(unsafe { pinyin_get_sentence(instance, index, &raw mut text) });
-    take_owned_cstr(text)
-}
-
-#[cfg(feature = "tkrzw")]
-/// The key at `offset` as `tools/oracle/pin_capture.py`'s `key_walk` reads it: the packed word,
-/// the raw span of its key rest and its pinyin string; `None` when both queries answer false.
-pub(crate) fn key_at(
-    instance: *mut PinyinInstance,
-    offset: usize,
-) -> Option<(u16, (u16, u16), String)> {
-    // The key and its rest are read from the pin's process-wide key slots.
-    let _slots = key_slot_guard();
-    let mut key: *mut crate::support::ChewingKey = ptr::null_mut();
-    let found = unsafe { crate::support::pinyin_get_pinyin_key(instance, offset, &raw mut key) };
-    let mut rest: *mut crate::support::ChewingKeyRest = ptr::null_mut();
-    assert_eq!(
-        unsafe { crate::support::pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) },
-        found
-    );
-    assert_eq!((key.is_null(), rest.is_null()), (!found, !found));
-    if !found {
-        return None;
-    }
-    let (mut begin, mut end) = (0_u16, 0_u16);
-    assert!(unsafe {
-        crate::support::pinyin_get_pinyin_key_rest_positions(
-            instance,
-            rest,
-            &raw mut begin,
-            &raw mut end,
-        )
-    });
-    // SAFETY: a true answer points `key` at the instance's key slot.
-    let packed = unsafe { (*key).packed };
-    let mut text: *mut c_char = ptr::null_mut();
-    assert!(unsafe { crate::support::pinyin_get_pinyin_string(instance, key, &raw mut text) });
-    Some((packed, (begin, end), take_owned_cstr(text)))
-}
-
-#[cfg(feature = "tkrzw")]
-/// Parses `text` and decodes it; answers sentence 0.
-pub(crate) fn decoded(instance: *mut PinyinInstance, text: &CStr) -> String {
-    let length = text.to_bytes().len();
-    assert_eq!(
-        unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-        length
-    );
-    assert_eq!(
-        unsafe { crate::support::pinyin_get_parsed_input_length(instance) },
-        length
-    );
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    sentence(instance, 0)
-}
-
 /// A partial item tail (`4 + 8k + 1` bytes): row 98's value, which the pin's
 /// `retrieve_all` reads past (class (b)).
 pub(crate) fn partial_gram(successor: u32) -> Vec<u8> {

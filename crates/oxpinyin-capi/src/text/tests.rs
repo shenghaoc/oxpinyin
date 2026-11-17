@@ -1,3 +1,8 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use oxpinyin_core::OptionBits;
 
 /// The rendered text, as the final `g_strconcat` joins its parts.
@@ -110,4 +115,37 @@ fn full_aux_text_matches_the_oracle_for_incomplete_tails() {
     // A bare incomplete initial renders as the initial itself.
     assert_eq!(full_aux_text("n", 1, 0, options), "|n ");
     assert_eq!(full_aux_text("n", 1, 1, options), "n |");
+}
+
+#[path = "../../../oxpinyin-core/tests/common/parser_rows.rs"]
+mod parser_rows;
+
+parser_rows::gated_parser_rows! {
+    fn gated_parser_rows_publish_key_slots_and_auxiliary_text(
+        #[case] input: &str,
+        #[case] options: u32,
+        #[case] parsed: usize,
+        #[case] _keys: &[(u16, u16, u16, &str)],
+        #[case] aux: &str,
+    ) {
+        use crate::test_support::{TempUserDir, cstr, key_slot_guard, open};
+        let _slots = key_slot_guard();
+        let user = TempUserDir::new("gated-row");
+        let (context, instance) = open(user.path.to_str().unwrap());
+        assert!(unsafe { crate::config::pinyin_set_options(context, options) });
+        unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, cstr(input).as_ptr()) };
+        for offset in 0..=parsed {
+            let mut key = std::ptr::null_mut();
+            let found = unsafe { crate::cursor::pinyin_get_pinyin_key(instance, offset, &raw mut key) };
+            assert_eq!(found, !key.is_null(), "offset {offset}: key answer and out-param");
+            let mut rest = std::ptr::null_mut();
+            let found = unsafe { crate::cursor::pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) };
+            assert_eq!(found, !rest.is_null(), "offset {offset}: rest answer and out-param");
+        }
+        let mut text = std::ptr::null_mut();
+        assert!(unsafe { super::pinyin_get_full_pinyin_auxiliary_text(instance, parsed, &raw mut text) });
+        assert_eq!(crate::ffi::take_owned_cstr(text), aux);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
+    }
 }

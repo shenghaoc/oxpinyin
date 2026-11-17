@@ -2,17 +2,18 @@
 
 This page describes the frozen expectations of the C-boundary tests and the local cross-open check.
 
-The C-boundary tests are ordinary Rust tests in the `src` test modules of
-`crates/oxpinyin-capi` and `crates/oxpinyin-zhuyin-capi`:
+The frozen expectations live beside the modules that implement them, in
+`crates/oxpinyin-core`, `oxpinyin-engine`, `oxpinyin-data`, `oxpinyin-input`,
+`oxpinyin-user`, `oxpinyin-runtime` and `oxpinyin-facade`. The C crates retain
+conversion, dispatch and publication checks in their sibling `tests.rs` files
+and `tests/it` targets.
 
-- the `boundary_tests/` modules run on the w3 mini fixture;
-- `pinned_data_tests.rs` runs on the pinned package.
-
-Their expected values are the frozen observations of the pin, inline in each test. The tests never run the pin.
+The expected values are inline in each test. The tests never run the pin.
 `just fetch-contract-data` supplies the pinned system data for the tkrzw tests.
-`cargo test -p oxpinyin-capi --lib` and `cargo test -p oxpinyin-zhuyin-capi --lib` run them.
-In each crate, `testdata/pin-profiles.txt` holds the two pin-written profiles that the
-handoff tests of that crate read.
+`just test --locked` runs the workspace tests through nextest. The read-fault
+and locale tests require its separate process for each test.
+The two C crates' `testdata/pin-profiles.txt` files hold the pin-written profiles
+that `oxpinyin-user/src/persistence/tests/pinned_profiles.rs` reads.
 
 An expectation changes at a pin bump under [the oracle pin](goldens-and-pins.md#3-the-oracle-pin).
 

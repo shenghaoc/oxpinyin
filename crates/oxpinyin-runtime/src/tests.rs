@@ -4,19 +4,10 @@
 use super::*;
 use oxpinyin_user::PinyinKey;
 
-fn w3_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("fixtures")
-        .join("w3")
-        .join(oxpinyin_data::DEFAULT_STORE_EXT)
-}
-
 #[test]
 fn direct_library_visibility_also_guards_session_mutations() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-        let mut runtime = Runtime::open_with_law(&w3_dir(), None, law).unwrap();
+        let mut runtime = Runtime::open_with_law(&system_dir(), None, law).unwrap();
         let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
         let library = token >> 24;
         assert!(runtime.unload_library(library));
@@ -40,7 +31,7 @@ fn direct_library_visibility_also_guards_session_mutations() {
 fn runtime_visibility_preserves_user_library_save_state() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         let dir = tempfile::tempdir().unwrap();
-        let mut runtime = Runtime::open_with_law(&w3_dir(), Some(dir.path()), law).unwrap();
+        let mut runtime = Runtime::open_with_law(&system_dir(), Some(dir.path()), law).unwrap();
         let library = oxpinyin_user::USER_DICTIONARY;
         let chunk = dir.path().join("user.bin");
         let ni = SyllableKey::from_text("ni").unwrap();
@@ -92,7 +83,7 @@ fn runtime_visibility_preserves_user_library_save_state() {
 #[test]
 fn unloading_an_absent_system_chunk_still_guards_the_session() {
     let system = tempfile::tempdir().unwrap();
-    for entry in std::fs::read_dir(w3_dir()).unwrap() {
+    for entry in std::fs::read_dir(system_dir()).unwrap() {
         let path = entry.unwrap().path();
         std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
     }
@@ -118,7 +109,7 @@ fn unloading_an_absent_system_chunk_still_guards_the_session() {
 #[test]
 fn the_save_remap_skips_the_reserved_library() {
     let system = tempfile::tempdir().unwrap();
-    for entry in std::fs::read_dir(w3_dir()).unwrap() {
+    for entry in std::fs::read_dir(system_dir()).unwrap() {
         let path = entry.unwrap().path();
         std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
     }
@@ -147,7 +138,7 @@ fn the_save_remap_skips_the_reserved_library() {
 /// item's own pronunciation count.
 #[test]
 fn pronunciation_count_ignores_the_token_tag_nibble() {
-    let runtime = Runtime::open_with_law(&w3_dir(), None, UserConfLaw::Pinyin).unwrap();
+    let runtime = Runtime::open_with_law(&system_dir(), None, UserConfLaw::Pinyin).unwrap();
     let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
     let count = runtime.dict().token_pronunciation_count(token);
     assert!(count.is_some());
@@ -158,7 +149,7 @@ fn pronunciation_count_ignores_the_token_tag_nibble() {
 
 #[test]
 fn unigram_freq_uses_the_live_count_while_the_library_is_visible() {
-    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
     let library = runtime.libraries().library(token).unwrap();
     assert!(library.is_detached());
@@ -207,7 +198,7 @@ fn unigram_freq_uses_the_live_count_while_the_library_is_visible() {
 /// shipped one, whatever the lookup that listed it carries.
 #[test]
 fn a_step_prices_system_tokens_the_user_table_indexes() {
-    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
     let shipped = runtime.dict().system().tokens_for_text("你").unwrap()[0];
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
@@ -238,7 +229,7 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
 
 #[test]
 fn unigram_freq_reads_increments_from_the_user_item() {
-    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
     for (text, count, expected) in [("鎄", 5, 15), ("龘", 0, 0)] {
@@ -272,7 +263,7 @@ fn unigram_freq_reads_a_user_items_count_live() {
     let keys = [oxpinyin_user::toned_key(ci.index(), 0).unwrap()];
     let token = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
     assert_eq!(store.system_unigram(token), None);
-    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     runtime.user = store;
     for _ in 0..2 {
         assert_eq!(
@@ -293,7 +284,7 @@ fn unigram_freq_reads_a_user_items_count_live() {
 
 #[test]
 fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
-    let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
     let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
     let token = runtime
@@ -338,7 +329,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
     )
     .unwrap();
     drop(runtime);
-    let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+    let runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
     assert_eq!(runtime.user_store().system_unigram(token), None);
     assert_eq!(
         runtime.dict().live_items().read(token, |_| ()),
@@ -365,7 +356,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
 
 #[test]
 fn zhuyin_open_holds_no_addon_or_punct_handles() {
-    let system = w3_dir();
+    let system = system_dir();
     let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
     assert!(
         pinyin.dict().addons.borrow().dict.has_open_indexes(),
@@ -411,7 +402,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
     // rows would say `art.bin`, so a facade built from them would
     // lose the configuration.
     let system = tempfile::tempdir().unwrap();
-    for entry in std::fs::read_dir(w3_dir()).unwrap() {
+    for entry in std::fs::read_dir(system_dir()).unwrap() {
         let path = entry.unwrap().path();
         std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
     }
@@ -448,7 +439,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
 #[test]
 fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
     let dir = tempfile::tempdir().unwrap();
-    let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
 
     let phrase = "你鎄";
     assert!(runtime.dict().tokens_for_text(phrase).is_empty());
@@ -526,7 +517,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
 #[test]
 fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
     let dir = tempfile::tempdir().unwrap();
-    let mut runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+    let mut runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
 
     let tokens = runtime.dict().tokens_for_text("你好");
     let token = tokens[0].value();
@@ -689,7 +680,7 @@ mod backend_files {
     use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
     use oxpinyin_engine::{Selection, SelectionTarget, SessionSettings};
     use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
     /// Declared before the runtime that opens it, so it drops after every
@@ -701,18 +692,11 @@ mod backend_files {
             .expect("temp dir")
     }
 
-    fn w3_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("fixtures")
-            .join("w3")
-            .join(oxpinyin_data::DEFAULT_STORE_EXT)
-    }
+    use super::system_dir;
 
     #[test]
     fn token_text_reads_live_items_and_obeys_library_visibility() {
-        let mut runtime = Runtime::open(&w3_dir(), None).expect("runtime");
+        let mut runtime = Runtime::open(&system_dir(), None).expect("runtime");
         let system = runtime
             .dict()
             .system()
@@ -788,7 +772,7 @@ mod backend_files {
 
     #[test]
     fn narrow_token_reads_preserve_item_order_and_visibility() {
-        let mut runtime = Runtime::open(&w3_dir(), None).expect("runtime");
+        let mut runtime = Runtime::open(&system_dir(), None).expect("runtime");
         let system = runtime
             .dict()
             .system()
@@ -876,7 +860,7 @@ mod backend_files {
     fn trellis_records_filter_user_tones_and_refresh_after_import() {
         let tmp = scratch_dir("oxpinyin-trellis-records-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).expect("runtime");
         let syllables = [
             SyllableKey::from_text("ni").unwrap(),
             SyllableKey::from_text("hao").unwrap(),
@@ -929,7 +913,7 @@ mod backend_files {
 
     #[test]
     fn opens_the_w3_fixture_and_decodes_nihao() {
-        let runtime = Runtime::open(&w3_dir(), None).expect("the fixture dir opens");
+        let runtime = Runtime::open(&system_dir(), None).expect("the fixture dir opens");
         let mut session = runtime.new_session(SessionSettings::default());
         runtime
             .session(&mut session)
@@ -960,7 +944,7 @@ mod backend_files {
     #[test]
     fn open_refuses_a_directory_without_table_conf() {
         let tmp = scratch_dir("oxpinyin-runtime-no-conf-");
-        for entry in std::fs::read_dir(w3_dir()).expect("w3 fixture") {
+        for entry in std::fs::read_dir(system_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
             if entry.file_name() != "table.conf" {
                 std::fs::copy(entry.path(), tmp.path().join(entry.file_name())).expect("copy");
@@ -984,7 +968,7 @@ mod backend_files {
         let dir = tmp.path().to_path_buf();
         // Keep the chunks valid: absent chunks reach an independent pin
         // assertion after the ignored DBM attach (#764).
-        for entry in std::fs::read_dir(w3_dir()).expect("w3 fixture") {
+        for entry in std::fs::read_dir(system_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
             if entry.file_name().as_os_str()
                 != std::ffi::OsStr::new(&oxpinyin_data::SystemDbm::PinyinIndex.file_name())
@@ -1001,7 +985,7 @@ mod backend_files {
     fn open_reads_no_records_beyond_the_handles() {
         // The fixture opens with real counts straight from the chunk files:
         // no interpolation text, no fixture mode.
-        let runtime = Runtime::open(&w3_dir(), None).expect("open");
+        let runtime = Runtime::open(&system_dir(), None).expect("open");
         let total = LanguageModel::unigram_total(&runtime.lm())
             .expect("query")
             .expect("real unigrams");
@@ -1010,7 +994,7 @@ mod backend_files {
 
     #[test]
     fn selection_advances_and_reset_clears_the_chosen_text() {
-        let runtime = Runtime::open(&w3_dir(), None).expect("open");
+        let runtime = Runtime::open(&system_dir(), None).expect("open");
         let mut session = runtime.new_session(SessionSettings::default());
         runtime
             .session(&mut session)
@@ -1048,7 +1032,7 @@ mod backend_files {
         let tmp = scratch_dir("oxpinyin-runtime-user-");
         let dir = tmp.path().to_path_buf();
 
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("open");
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).expect("open");
         let syllables: Vec<SyllableKey> = ["ni", "hao"]
             .iter()
             .map(|s| SyllableKey::from_text(s).expect("fixture key"))
@@ -1131,7 +1115,7 @@ mod backend_files {
         // Only the path is kept: no handle on the file stays open across the
         // open below.
         let marker = file.into_temp_path();
-        let runtime = Runtime::open(&w3_dir(), Some(&*marker));
+        let runtime = Runtime::open(&system_dir(), Some(&*marker));
         // A non-directory user path must not fail init (capi contract).
         if let Err(error) = &runtime {
             panic!("expected open to succeed over a file user dir: {error}");
@@ -1148,13 +1132,13 @@ mod backend_files {
         // `m_user_dir`). The empty path is a different argument — the
         // working directory, as the pin's `""` is — and writes there; its
         // test is `empty_user_path_is_the_working_directory_at_each_use`.
-        let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
+        let mut runtime = Runtime::open(&system_dir(), None).expect("open");
         assert!(!runtime.user_store_mut().has_user_directory());
     }
 
     #[test]
     fn addon_unigram_totals_stay_none_until_a_library_loads() {
-        let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
+        let mut runtime = Runtime::open(&system_dir(), None).expect("open");
         assert_eq!(
             LanguageModel::addon_unigram_total(&runtime.lm()).expect("infallible query"),
             None,
@@ -1184,7 +1168,7 @@ mod backend_files {
     /// and `phrase_index.cpp:150-161` at 074a2219).
     #[test]
     fn unigram_add_distinguishes_a_missing_sub_index_from_a_missing_slot() {
-        let mut runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let mut runtime = Runtime::open(&system_dir(), None).unwrap();
         let before = runtime.lm().amplified_total();
         assert!(!runtime.add_unigram_delta(0x0800_0001, 9));
         assert_eq!(runtime.lm().amplified_total(), before);
@@ -1199,7 +1183,7 @@ mod backend_files {
         use oxpinyin_data::phrase_library::PhraseLibrary;
 
         let system = scratch_dir("oxpinyin-addon-only-");
-        for entry in std::fs::read_dir(w3_dir()).unwrap() {
+        for entry in std::fs::read_dir(system_dir()).unwrap() {
             let entry = entry.unwrap();
             std::fs::copy(entry.path(), system.path().join(entry.file_name())).unwrap();
         }
@@ -1231,7 +1215,7 @@ mod backend_files {
 
     #[test]
     fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
-        let mut runtime = Runtime::open(&w3_dir(), None).expect("open");
+        let mut runtime = Runtime::open(&system_dir(), None).expect("open");
         let before = runtime.lm().amplified_total() as u32;
         let read = runtime.dict();
         let library = read
@@ -1285,7 +1269,7 @@ mod backend_files {
         use oxpinyin_core::NbestStepRow;
         let tmp = scratch_dir("oxpinyin-nbest-step-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
@@ -1346,7 +1330,7 @@ mod backend_files {
         use oxpinyin_core::LanguageModel;
         let tmp = scratch_dir("oxpinyin-user-gram-alone-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
@@ -1375,7 +1359,7 @@ mod backend_files {
         use oxpinyin_core::{NbestStepRow, NbestSuccessors};
         let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
         let keys: Vec<_> = ["ni", "hao"]
             .into_iter()
             .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
@@ -1465,7 +1449,7 @@ mod backend_files {
     fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
         let tmp = scratch_dir("oxpinyin-trellis-fused-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).expect("runtime");
         let texts: [&[&str]; 9] = [
             &["ni"],
             &["ni", "hao"],
@@ -1557,7 +1541,7 @@ mod backend_files {
     fn a_store_write_between_guesses_reaches_the_second_guess() {
         let tmp = scratch_dir("oxpinyin-guess-memo-");
         let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
         let mut session = runtime.new_session(SessionSettings::default());
         runtime.session(&mut session).replace_raw("nihao").unwrap();
         let mut guess = |runtime: &Runtime| {
@@ -1603,7 +1587,7 @@ mod backend_files {
     // `trellis_item` answers for each, the memo being filled by the first.
     #[test]
     fn a_path_memo_prices_as_trellis_item_does() {
-        let runtime = Runtime::open(&w3_dir(), None).unwrap();
+        let runtime = Runtime::open(&system_dir(), None).unwrap();
         let syllables = [
             SyllableKey::from_text("ni").unwrap(),
             SyllableKey::from_text("hao").unwrap(),
@@ -1652,7 +1636,7 @@ mod backend_files {
     fn a_default_dictionary_row_reports_only_the_libraries_before_it() {
         let tmp = scratch_dir("oxpinyin-runtime-row-79-");
         let dir = tmp.path().to_path_buf();
-        let conf = std::fs::read_to_string(w3_dir().join("table.conf")).expect("table.conf");
+        let conf = std::fs::read_to_string(system_dir().join("table.conf")).expect("table.conf");
         let conf = conf.replace(
             "default OPENGRAM_DICTIONARY opengram.table opengram.bin opengram.dbin SYSTEM_FILE",
             "default OPENGRAM_DICTIONARY opengram.table opengram.bin NULL DICTIONARY",
@@ -1684,7 +1668,7 @@ mod backend_files {
     fn a_journal_fault_reports_only_the_libraries_through_its_own() {
         let system_tmp = scratch_dir("oxpinyin-runtime-journal-system-");
         let system = system_tmp.path().to_path_buf();
-        for entry in std::fs::read_dir(w3_dir()).expect("fixture") {
+        for entry in std::fs::read_dir(system_dir()).expect("fixture") {
             let entry = entry.expect("entry");
             let name = entry.file_name();
             if name != "gbk_char.bin" && name != "merged.bin" {
@@ -1776,7 +1760,7 @@ mod backend_files {
 
         // Init: the store opens on the working directory, and libpinyin's
         // check_format writes the raised marker there.
-        let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("open");
+        let mut runtime = Runtime::open(&system_dir(), Some(Path::new(""))).expect("open");
         let store = runtime.user_store_mut();
         assert_eq!(names(&first), ["user.conf"]);
         assert_eq!(open_counter(&first), 1);
@@ -1822,7 +1806,7 @@ mod backend_files {
         for stray in strays {
             std::fs::write(stray, b"stale").expect("plant a stray file");
         }
-        let mut runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("reopen");
+        let mut runtime = Runtime::open(&system_dir(), Some(Path::new(""))).expect("reopen");
         let store = runtime.user_store_mut();
         assert!(
             store
@@ -2266,4 +2250,1405 @@ mod sentence_surface_parity {
         assert_eq!(residuals, 156, "residual inputs checked count moved");
         assert_eq!(pin_equal, 62, "pin-equal inputs checked count moved");
     }
+}
+
+// Nextest isolates the process-wide read-fault key by running each test in its own process.
+#[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
+mod native_fixture;
+use native_fixture::{
+    TempUserDir, craft_hash, craft_tree, gram_bytes, set_phrase_table_row, system_dir,
+};
+use oxpinyin_core::OptionBits;
+
+fn native_session(runtime: &Runtime, options: OptionBits) -> oxpinyin_engine::SessionState {
+    let mut state = runtime.new_session(SessionSettings::default());
+    let mut session = runtime.session(&mut state);
+    session.set_defer_list_builds(true);
+    session.set_options(options).unwrap();
+    state
+}
+fn native_keys(reading: &str) -> Vec<oxpinyin_user::PinyinKey> {
+    if !reading.is_ascii() {
+        return oxpinyin_core::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
+            .into_iter()
+            .map(|(key, tone)| oxpinyin_user::toned_key(key.index(), tone).unwrap())
+            .collect();
+    }
+    let graph = oxpinyin_core::graph::SegmentGraph::build_with_options(
+        reading.as_bytes(),
+        OptionBits::USE_TONE,
+    )
+    .unwrap();
+    assert_eq!(graph.consumed(), reading.len());
+    graph
+        .fewest_keys(false)
+        .iter()
+        .map(|edge| oxpinyin_user::toned_key(edge.key().index(), edge.tone()).unwrap())
+        .collect()
+}
+fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
+    for &(text, reading, count) in rows {
+        let original = runtime
+            .dict()
+            .tokens_for_text(text)
+            .into_iter()
+            .map(PhraseToken::value)
+            .find(|token| oxpinyin_user::phrase_index_library_index(*token) == library);
+        let keys = native_keys(reading);
+        let store = runtime.user_store_mut();
+        if store.is_system_library(library) {
+            store
+                .add_system_phrase_in(library, original, &text.into(), &keys, Some(count))
+                .unwrap();
+        } else {
+            store
+                .add_phrase_in(library, &text.into(), &keys, Some(count))
+                .unwrap();
+        }
+    }
+    runtime.user_store_mut().compact_libraries();
+    runtime.user_store_mut().mark_modified();
+}
+fn normal_texts(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState) -> Vec<String> {
+    runtime
+        .session(state)
+        .candidates_at_for_abi(0, false)
+        .unwrap()
+        .iter()
+        .filter(|candidate| candidate.kind() != oxpinyin_engine::CandidateKind::Sentence)
+        .map(|candidate| candidate.text().as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Each prefix occurrence seeds a node (074a2219 pinyin.cpp:1415-1421,
+/// phonetic_lookup.h:244-265). Two strong 甲 paths occupy two result rows;
+/// with one seed, the weaker 乙 path occupies row 1 instead. The score
+/// gaps exceed one, so the pin's integer tail comparator orders them.
+#[test]
+fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = native_fixture::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532], &[0x1081], 1),
+            (&[0x4e59], &[0x1081], 1),
+            (&[0x4e19], &[0x1084], 999_998),
+        ],
+        1_000_000,
+    );
+    let config = system.join("table.conf");
+    let config_text = std::fs::read_to_string(&config).expect("configuration");
+    std::fs::remove_file(&config).expect("unlink fixture configuration");
+    std::fs::write(
+        &config,
+        config_text
+            .lines()
+            .map(|line| {
+                if line.starts_with("lambda parameter:") {
+                    "lambda parameter:0.5"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("configuration");
+    craft_hash(
+        &system.join("bigram.db"),
+        &[
+            (
+                1_u32.to_le_bytes().to_vec(),
+                gram_bytes(1000, &[(0x0100_0002, 10), (0x0100_0003, 990)]),
+            ),
+            (
+                0x0100_0003_u32.to_le_bytes().to_vec(),
+                gram_bytes(1000, &[(0x0100_0001, 1000)]),
+            ),
+        ],
+    );
+    let user = TempUserDir::new("repeated-prefix");
+    // The system row supplies the first occurrence; this user row adds
+    // the second without changing the item or its pronunciation.
+    set_phrase_table_row(&user.path, "丙", &[0x0100_0003]);
+
+    let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ba1").unwrap();
+    let prefixes = runtime.dict().tokens_for_text("丙");
+    assert_eq!(
+        prefixes
+            .iter()
+            .map(|token| token.value())
+            .collect::<Vec<_>>(),
+        [0x0100_0003, 0x0100_0003]
+    );
+    assert!(
+        runtime
+            .session(&mut state)
+            .guess_sentence_with_prefix(&prefixes)
+            .unwrap()
+    );
+    for (index, text) in [(0, "甲"), (1, "甲"), (2, "乙")] {
+        assert_eq!(
+            runtime
+                .session(&mut state)
+                .sentence_text(index)
+                .and_then(|text| text.as_str()),
+            Some(text)
+        );
+    }
+}
+
+/// The second import adds a reading but no index entry (074a2219
+/// pinyin.cpp:563-582). Validation keeps that reading's constraint
+/// (phonetic_lookup.cpp:141-165), and any SEARCH_OK lets ONESTEP step
+/// its token without a range-membership test (phonetic_lookup.h:552-554,
+/// 601-612,776-788). The guess returns true with 甲, not an empty result.
+#[rstest::rstest]
+#[case::system(1)]
+#[case::user(6)]
+fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
+    let user = TempUserDir::new("unranged-onestep");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(
+        &mut runtime,
+        library,
+        &[("甲", "ba4", 3), ("甲", "da4", 9), ("乙", "da4", 2)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ba4").unwrap();
+    let candidate = runtime
+        .session(&mut state)
+        .candidates_at_for_abi(0, false)
+        .unwrap()
+        .iter()
+        .find(|row| row.text() == "甲")
+        .unwrap()
+        .clone();
+    assert_eq!(candidate.consumed_bytes(), 3);
+    runtime
+        .session(&mut state)
+        .select_target(&oxpinyin_engine::SelectionTarget::of_candidate(
+            &candidate, 0, None,
+        ))
+        .unwrap();
+    runtime.session(&mut state).replace_raw("da4").unwrap();
+    let rows = normal_texts(&runtime, &mut state);
+    assert!(rows.iter().any(|row| row == "乙"));
+    assert!(!rows.iter().any(|row| row == "甲"));
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "甲");
+}
+
+/// Every `search_bigram2` call loads the predecessor's system gram through
+/// the attached handle, `sentence_start` included, and follows that read's
+/// result (`phonetic_lookup.h:588-599`, `ngram_tkrzwdb.cpp:111-114` and its
+/// BDB and KC peers at 074a2219; the sentence-start ruling of the
+/// compatibility policy). Library 1 holds 甲 (ba1) at 1, 乙 (da1) at 1000
+/// and 丙丁 (ba1 da1) at 1; the `sentence_start` gram gives 甲 and 丙丁 half
+/// each. The step at 0 loads the gram for the span of 甲 and again for the
+/// span of 丙丁. With both reads good, 丙丁 takes its bigram and is the
+/// sentence. When the second read fails, 丙丁 has its unigram alone and
+/// 甲乙 is the sentence.
+#[test]
+fn a_later_span_reads_the_sentence_start_gram_again() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = native_fixture::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532], &[0x1081], 1),
+            (&[0x4e59], &[0x1084], 1000),
+            (&[0x4e19, 0x4e01], &[0x1081, 0x1084], 1),
+        ],
+        2000,
+    );
+    let sentence_start = 1_u32.to_le_bytes();
+    craft_hash(
+        &system.join("bigram.db"),
+        &[(
+            sentence_start.to_vec(),
+            gram_bytes(1000, &[(0x0100_0001, 500), (0x0100_0003, 500)]),
+        )],
+    );
+    let user = TempUserDir::new("start-gram-reread");
+    let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ba1da1").unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(
+        runtime.session(&mut state).sentence_text(0).unwrap(),
+        "丙丁"
+    );
+    oxpinyin_store::read_faults::fail_point_read_of(&sentence_start, 1);
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(
+        runtime.session(&mut state).sentence_text(0).unwrap(),
+        "甲乙"
+    );
+}
+
+// Real model rows feed the accumulation in the span DP. The pin
+// weights the unigram by 1 - lambda and takes log after weighting;
+// it also divides by a present bigram's stored total before blending
+// (074a2219 phrase_lookup.cpp:288-344).
+#[rstest::rstest]
+#[case::zero_weight("1", false)]
+#[case::negative_weight("2", false)]
+#[case::nan_weight("nan", false)]
+#[case::infinite_bigram("1", true)]
+fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] infinite: bool) {
+    use native_fixture::{TempUserDir, craft_hash, gram_bytes, private_system};
+
+    // These are the committed w3 tokens for 你 and 好.
+    const NI: u32 = 0x0100_1225;
+    const HAO: u32 = 16_779_429;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = private_system(scratch.path());
+    let conf = system.join("table.conf");
+    let text = std::fs::read_to_string(&conf).expect("fixture table.conf");
+    std::fs::remove_file(&conf).expect("unlink fixture config");
+    std::fs::write(
+        &conf,
+        text.replace(
+            "lambda parameter:0.312699",
+            &format!("lambda parameter:{lambda}"),
+        ),
+    )
+    .expect("private table.conf");
+    let rows = if infinite {
+        vec![
+            (1_u32.to_le_bytes().to_vec(), gram_bytes(0, &[(NI, 1)])),
+            (NI.to_le_bytes().to_vec(), gram_bytes(0, &[(HAO, 1)])),
+        ]
+    } else {
+        Vec::new()
+    };
+    craft_hash(&system.join("bigram.db"), &rows);
+
+    let user = TempUserDir::new("segment-ieee");
+    let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let tokens = |text| {
+        runtime
+            .dict()
+            .tokens_for_text(text)
+            .iter()
+            .map(|token| token.value())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(tokens("你"), [NI]);
+    assert!(tokens("你你").is_empty());
+
+    // The infinite path must beat the one-phrase 你好 path, whose
+    // unigram gets zero weight. The other cases have only the two
+    // successive unigram steps and no bigrams.
+    let (sentence, expected) = if infinite {
+        assert_eq!(tokens("好"), [HAO]);
+        assert!(!tokens("你好").is_empty());
+        ("你好", [NI, HAO])
+    } else {
+        ("你你", [NI, NI])
+    };
+
+    let (matched, tokens) = runtime
+        .session(&mut state)
+        .phrase_segment(sentence)
+        .unwrap();
+    assert!(matched);
+    assert_eq!(
+        tokens.iter().map(|token| token.value()).collect::<Vec<_>>(),
+        expected
+    );
+}
+
+/// The segmenter reads an unsorted sentence-start user gram as stored
+/// (docs/findings/upstream-divergences.md#stored-gram-partitions-phrase-segmentation).
+#[cfg(feature = "tkrzw")]
+#[test]
+fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
+    let user = TempUserDir::new("unsorted-segment");
+    drop(Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap());
+    let gram = native_fixture::gram_bytes(
+        (1 << 31) + 2,
+        &[(16_800_245, 1 << 31), (16_800_252, 1), (16_800_244, 1)],
+    );
+    native_fixture::craft_hash(
+        &user.path.join("user_bigram.db"),
+        &[(1_u32.to_le_bytes().to_vec(), gram)],
+    );
+    native_fixture::write_user_conf(&user.path, &contract_data::contract_data_dir());
+    let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let (matched, path) = runtime
+        .session(&mut state)
+        .phrase_segment("今天天气很好")
+        .unwrap();
+    assert!(matched);
+    let tokens: Vec<_> = path.iter().map(|token| token.value()).collect();
+    assert_eq!(
+        tokens,
+        [16_800_245, 0, 16_810_538, 0, 16_779_492, 16_779_429]
+    );
+}
+/// A step prices a reading with the query's tone (`phonetic_key_matrix.cpp:
+/// 562,575`, `phrase_index.h:136-164` at 074a2219): a nonzero query tone
+/// matches an equal or zero stored tone only (`pinyin_phrase3.h:96-105`).
+/// The second import of 甲 adds a reading and no index row
+/// (`pinyin.cpp:563-582`). Under `USE_TONE`, `ba4` prices 甲 at 2/100, so
+/// 乙 (unigram 3) outranks 甲 (unigram 6).
+#[test]
+fn a_step_prices_readings_with_the_query_tone() {
+    let user = TempUserDir::new("step-price");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(
+        &mut runtime,
+        1,
+        &[("甲", "ba4", 2), ("甲", "ba3", 98), ("乙", "ba4", 1)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ba4").unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
+}
+
+/// A step prices a user item from its own readings
+/// (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at 074a2219).
+/// Library 6's 甲 holds `ba` 3 and `da` 9, so `ba` prices it at 3/12 and 乙
+/// (unigram 6, one reading) outranks 甲 (unigram 9). The second import adds
+/// the reading and no index row (`pinyin.cpp:563-582`), so `da` lists no
+/// 甲 row.
+#[test]
+fn a_step_prices_a_user_item_from_its_readings() {
+    let user = TempUserDir::new("step-price");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(
+        &mut runtime,
+        6,
+        &[("甲", "ba", 3), ("甲", "da", 9), ("乙", "ba", 2)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ba").unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
+    runtime.session(&mut state).replace_raw("da").unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert!(
+        !normal_texts(&runtime, &mut state)
+            .iter()
+            .any(|text| text == "甲")
+    );
+}
+/// A pinyin-table read that fails is a miss on every backend: the search
+/// answers `SEARCH_NONE` for that key and the lookup goes on
+/// (`chewing_large_table2_tkrzwdb.cpp:146-149`,
+/// `chewing_large_table2_bdb.cpp:182-184`,
+/// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). With the read
+/// of the `ni'hao` row failing, the guess still answers true and builds the
+/// sentence from the rows of `ni` and `hao`.
+#[test]
+fn a_failed_pinyin_table_read_is_a_miss() {
+    let user = TempUserDir::new("table-read-miss");
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let row: Vec<_> = ["ni", "hao"]
+        .into_iter()
+        .flat_map(|text| {
+            oxpinyin_core::ChewingKey::from_pinyin(text)
+                .unwrap()
+                .to_packed()
+                .to_le_bytes()
+        })
+        .collect();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("nihao").unwrap();
+    oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(
+        runtime.session(&mut state).sentence_text(0).unwrap(),
+        "你好"
+    );
+}
+/// A failed point read contributes neither rows nor continuation
+/// (`chewing_large_table2_tkrzwdb.cpp:146-152`, `_bdb.cpp:182-187`,
+/// `_kyotodb.cpp:160-166` at 074a2219). The candidate scan widens on
+/// `SEARCH_NONE` (`pinyin.cpp:2231-2243`), so a failed `ni` search
+/// drops 你 but the following `ni'hao` search still lists 你好.
+#[test]
+fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
+    let user = TempUserDir::new("candidate-read-miss");
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let key = oxpinyin_core::ChewingKey::from_pinyin("ni")
+        .unwrap()
+        .to_packed();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("nihao").unwrap();
+    let before = normal_texts(&runtime, &mut state);
+    assert!(before.iter().any(|text| text == "你"));
+    assert!(before.iter().any(|text| text == "你好"));
+    oxpinyin_store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
+    let after = normal_texts(&runtime, &mut state);
+    assert!(!after.iter().any(|text| text == "你"));
+    assert!(after.iter().any(|text| text == "你好"));
+}
+/// The pin ORs the default and addon searches before deciding to widen
+/// (`pinyin.cpp:2231-2256`, `phonetic_key_matrix.cpp:359-373` at
+/// 074a2219). The default `ba` read is a miss. The addon read finds 甲
+/// and sets `SEARCH_CONTINUED`, so the scan reaches 乙丙 at `ba'ma`.
+/// An extra read of `ba` would fail and lose that continuation bit.
+#[test]
+fn addon_candidate_continuation_uses_its_row_read() {
+    use native_fixture::{AddonItem, addon_system};
+    let packed = |text| {
+        oxpinyin_core::ChewingKey::from_pinyin(text)
+            .expect("complete key")
+            .to_packed()
+    };
+    let short = [packed("ba")];
+    let long = [short[0], packed("ma")];
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = addon_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            AddonItem {
+                text: &[u32::from('甲')],
+                readings: &[(&short, 5)],
+                indexed_as: &short,
+                unigram: 15,
+            },
+            AddonItem {
+                text: &[u32::from('乙'), u32::from('丙')],
+                readings: &[(&long, 5)],
+                indexed_as: &long,
+                unigram: 15,
+            },
+        ],
+    );
+    let index = system.join("pinyin_index.bin");
+    std::fs::remove_file(&index).expect("unlink the default index");
+    craft_tree(&index, &[]);
+
+    let user = TempUserDir::new("addon-read-continuation");
+    let mut runtime = Runtime::open(&system, Some(&user.path)).unwrap();
+    assert!(runtime.load_system_addon_reporting(4).unwrap());
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("bama").unwrap();
+    let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
+    oxpinyin_store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
+    let rows = runtime
+        .session(&mut state)
+        .candidates_at_for_abi(0, false)
+        .unwrap();
+    for expected in ["甲", "乙丙"] {
+        assert!(rows.iter().any(
+            |row| row.kind() == oxpinyin_engine::CandidateKind::Addon && row.text() == expected
+        ));
+    }
+}
+
+fn native_chewing(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState, input: &str) {
+    let options = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
+    let parsed = oxpinyin_core::ZhuyinParser::with_scheme(oxpinyin_core::ZhuyinScheme::Standard)
+        .parse_with_options(input.as_bytes(), options);
+    assert_eq!(parsed.consumed(), input.len());
+    let segments: Vec<_> = parsed
+        .keys()
+        .iter()
+        .map(|key| {
+            oxpinyin_core::graph::ExactSegment::new(key.start(), key.end(), key.key(), key.tone())
+        })
+        .collect();
+    runtime
+        .session(state)
+        .set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
+    runtime
+        .session(state)
+        .replace_raw_exact(input, &segments)
+        .unwrap();
+}
+/// A step prices a reading with the query's tone (`phonetic_key_matrix.cpp:
+/// 562,575`, `phrase_index.h:136-164` at 074a2219): a nonzero query tone
+/// matches an equal or zero stored tone only (`pinyin_phrase3.h:96-105`).
+/// The second import of 甲 adds a reading and no index row
+/// (`pinyin.cpp:563-582`). Under the default `USE_TONE` (`zhuyin.cpp:273`),
+/// ㄅㄚˋ prices 甲 at 2/100, so 乙 (unigram 3) outranks 甲 (unigram 6).
+#[test]
+fn zhuyin_a_step_prices_readings_with_the_query_tone() {
+    let user = TempUserDir::new("zhuyin-step-price");
+    let mut runtime =
+        Runtime::open_with_law(&system_dir(), Some(&user.path), UserConfLaw::Zhuyin).unwrap();
+    import_rows(
+        &mut runtime,
+        1,
+        &[("甲", "ㄅㄚˋ", 2), ("甲", "ㄅㄚˇ", 98), ("乙", "ㄅㄚˋ", 1)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
+    native_chewing(&runtime, &mut state, "184");
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
+}
+/// A step prices a user item from its own readings
+/// (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at 074a2219).
+/// Library 6's 甲 holds ㄅㄚˋ 3 and ㄉㄚˋ 9, so ㄅㄚˋ prices it at 3/12 and
+/// 乙 (unigram 6, one reading) outranks 甲 (unigram 9).
+#[test]
+fn zhuyin_a_step_prices_a_user_item_from_its_readings() {
+    let user = TempUserDir::new("zhuyin-step-price");
+    let mut runtime =
+        Runtime::open_with_law(&system_dir(), Some(&user.path), UserConfLaw::Zhuyin).unwrap();
+    import_rows(
+        &mut runtime,
+        6,
+        &[("甲", "ㄅㄚˋ", 3), ("甲", "ㄉㄚˋ", 9), ("乙", "ㄅㄚˋ", 2)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
+    native_chewing(&runtime, &mut state, "184");
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
+}
+
+fn gbk_tokens(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState) -> Vec<u32> {
+    runtime
+        .session(state)
+        .candidates_at_for_abi(0, false)
+        .unwrap()
+        .iter()
+        .filter_map(|row| row.token())
+        .map(PhraseToken::value)
+        .filter(|token| token >> 24 == 2)
+        .collect()
+}
+/// An unload of the GBK library hides its rows from the next candidate
+/// guess on the same parse, with no reparse.
+#[test]
+fn an_unload_hides_its_rows_without_a_reparse() {
+    let user = TempUserDir::new("row54-unload");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ni").unwrap();
+    assert!(!gbk_tokens(&runtime, &mut state).is_empty());
+    assert!(runtime.unload_library(2));
+    assert!(gbk_tokens(&runtime, &mut state).is_empty());
+    assert!(!normal_texts(&runtime, &mut state).is_empty());
+}
+/// The CR-flagged regression on PR #234: `RuntimeDict::phrase_prefix_exists`
+/// used to short-circuit on the plain system probe, ignoring the
+/// library-visibility mask. That leaked GBK-only continuations into
+/// the n-best widen probe after `pinyin_unload_phrase_library(2)`,
+/// and — as a side effect of the shared unload plumbing — kept GBK
+/// candidate rows on the surface after a fresh scan too. This test
+/// pins the surface: the candidate list rescanned after an unload must
+/// carry no GBK-nibble tokens, and the reload must restore them. The
+/// widen-probe path also has to survive the mask armed without
+/// regressing the mixed rows the fixture happens to have.
+#[test]
+fn unloading_gbk_hides_its_tokens_from_the_candidate_surface() {
+    let user = TempUserDir::new("gbk-unload-hides");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("ni").unwrap();
+    let before = gbk_tokens(&runtime, &mut state);
+    assert!(!before.is_empty());
+    assert!(runtime.unload_library(2));
+    runtime.session(&mut state).reset();
+    runtime.session(&mut state).replace_raw("ni").unwrap();
+    assert!(gbk_tokens(&runtime, &mut state).is_empty());
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert!(
+        !runtime
+            .session(&mut state)
+            .sentence_text(0)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(runtime.load_library(2));
+    runtime.session(&mut state).reset();
+    runtime.session(&mut state).replace_raw("ni").unwrap();
+    assert_eq!(gbk_tokens(&runtime, &mut state), before);
+}
+/// D3: a second reading merged into an item is appended and never indexed (`pinyin.cpp:578`,
+/// `phrase_index.cpp:88-90`), and lowers the item's pronunciation possibility, the matched
+/// frequency over the total (`phrase_index.h:136-163`): 测侧 loses the sentence to 侧测 once its
+/// `xi'xi` reading carries 9,000,000 of 10,000,000. Observation `import/dilution/cece`.
+#[test]
+fn an_unindexed_second_reading_dilutes_the_sentence_score() {
+    let user = TempUserDir::new("import-dilution");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(
+        &mut runtime,
+        1,
+        &[("测侧", "ce'ce", 1_000_000), ("侧测", "ce'ce", 600_000)],
+    );
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let sentence = |runtime: &Runtime, state: &mut oxpinyin_engine::SessionState| {
+        runtime.session(state).replace_raw("cece").unwrap();
+        assert!(runtime.session(state).guess_sentence().unwrap());
+        let text = runtime.session(state).sentence_text(0).unwrap().clone();
+        runtime.session(state).reset();
+        text
+    };
+    assert_eq!(sentence(&runtime, &mut state), "测侧");
+    import_rows(&mut runtime, 1, &[("测侧", "xi'xi", 9_000_000)]);
+    assert_eq!(sentence(&runtime, &mut state), "侧测");
+}
+/// D15: one-character user phrases under readings that differ only in the stored key, listed
+/// for the incomplete key `n` (0x18a): their order is the user pinyin index's key order, the
+/// ranges `convert` compresses (`storage/chewing_large_table2.h:91-133`). On the pinned data they
+/// are rows 788-796 of 797, in this order; the system rows around them are the data's and are
+/// not asserted. Observation `tie/user-n`.
+#[test]
+fn user_rows_for_an_incomplete_key_follow_the_stored_key_order() {
+    let user = TempUserDir::new("tie-user-n");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    // 𦰡 takes two readings, the second appended; the candidate order is `pinyin.cpp:2184-2308` at 074a2219.
+    let phrases = [
+        ("𦰡", "na"),
+        ("𫐐", "ni"),
+        ("𫠜", "ni"),
+        ("𨺙", "ni"),
+        ("𫔶", "nie"),
+        ("𬪩", "nong"),
+        ("𦰡", "nuo"),
+        ("𫟅", "nen"),
+        ("𫵷", "nao"),
+        ("𬇕", "nu"),
+    ];
+
+    let rows: Vec<_> = phrases
+        .iter()
+        .map(|&(text, reading)| (text, reading, 1))
+        .collect();
+    import_rows(&mut runtime, 7, &rows);
+    let mut state = native_session(&runtime, OptionBits::from_bits_retain(0x18a));
+    runtime.session(&mut state).replace_raw("n").unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    let user: Vec<_> = runtime
+        .session(&mut state)
+        .candidates_at_for_abi(0, false)
+        .unwrap()
+        .iter()
+        .filter(|row| phrases.iter().any(|&(phrase, _)| row.text() == phrase))
+        .map(|row| {
+            assert_eq!(row.kind(), oxpinyin_engine::CandidateKind::Phrase);
+            row.text().as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_eq!(user, ["𦰡", "𫵷", "𫟅", "𬪩", "𫐐", "𫠜", "𨺙", "𫔶", "𬇕"]);
+}
+/// U4: the library and slot masks ignore the high nibble
+/// (074a2219 `novel_types.h:41-44`, `phrase_index.cpp:154,186`).
+#[test]
+fn unigram_get_and_add_ignore_the_token_tag() {
+    let user = TempUserDir::new("tagged-unigram");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
+    let tokens = [
+        runtime.dict().tokens_for_text("你")[0].value(),
+        runtime
+            .user_store()
+            .token_for_phrase("龘龘")
+            .unwrap()
+            .unwrap(),
+    ];
+    for token in tokens {
+        let base = runtime
+            .lm()
+            .unigram_freq(&PhraseToken::new(token))
+            .unwrap()
+            .unwrap();
+        let tagged = token | 0xf000_0000;
+        assert_eq!(
+            runtime
+                .lm()
+                .unigram_freq(&PhraseToken::new(tagged))
+                .unwrap(),
+            Some(base)
+        );
+        assert!(runtime.add_unigram_delta(tagged, 1));
+        assert_eq!(
+            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            Some(base + 1)
+        );
+    }
+}
+/// Every pin scoring step reads the token's phrase item first and skips the
+/// token when the read fails (`phrase_lookup.cpp:310,329`,
+/// `phonetic_lookup.h:646,674`). A phrase-table token of library 7 whose item
+/// is gone is skipped by the segmenter and the sentence guess however strong
+/// its sentence-start bigram; the same bigram admits the readable item with a
+/// zero unigram. The stale phase has no sentence witness: the n-best result
+/// is the same with and without the gate, so the segmenter is the C-visible
+/// one and the model layer covers the n-best costs.
+#[rstest::rstest]
+#[case::pinyin(UserConfLaw::Pinyin)]
+#[case::zhuyin(UserConfLaw::Zhuyin)]
+fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] law: UserConfLaw) {
+    let user = TempUserDir::new("stale-user-file-token");
+    let mut runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
+    if law == UserConfLaw::Pinyin {
+        import_rows(&mut runtime, 7, &[("龘", "ni", 0), ("龘", "ni", 1)]);
+    } else {
+        import_rows(&mut runtime, 7, &[("龘", "ㄋㄧˇ", 0)]);
+    }
+    let token = runtime
+        .dict()
+        .tokens_for_text("龘")
+        .iter()
+        .find(|token| token.value() >> 24 == 7)
+        .unwrap()
+        .value();
+    runtime.user_store_mut().save_reporting().unwrap();
+    drop(runtime);
+    let file = user.path.join("user.bin");
+    let original = std::fs::read(&file).unwrap();
+    let gram = gram_bytes(100, &[(token, 100)]);
+    let empty = oxpinyin_data::chunk_write::build_chunk(&[]).unwrap();
+    for present in [false, true] {
+        std::fs::write(&file, if present { &original } else { &empty }).unwrap();
+        native_fixture::plant_bigram(
+            &user.path,
+            vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
+        );
+        let runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
+        assert_eq!(
+            runtime
+                .dict()
+                .tokens_for_text("龘")
+                .iter()
+                .map(|token| token.value())
+                .collect::<Vec<_>>(),
+            [token]
+        );
+        let mut state = native_session(&runtime, OptionBits::USE_TONE);
+        let (matched, tokens) = runtime.session(&mut state).phrase_segment("龘").unwrap();
+        assert_eq!(
+            (
+                matched,
+                tokens.iter().map(|token| token.value()).collect::<Vec<_>>()
+            ),
+            (present, vec![if present { token } else { 0 }])
+        );
+        if law == UserConfLaw::Pinyin {
+            if present {
+                assert_eq!(
+                    runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+                    Some(0)
+                );
+            }
+            runtime.session(&mut state).replace_raw("ni").unwrap();
+            assert!(runtime.session(&mut state).guess_sentence().unwrap());
+            assert_eq!(
+                runtime.session(&mut state).sentence_text(0).unwrap(),
+                if present { "龘" } else { "你" }
+            );
+        }
+    }
+}
+/// The token getters select the library with `PHRASE_INDEX_LIBRARY_INDEX`
+/// and the slot with `PHRASE_MASK` (`pinyin.cpp:2776`, `:2801-2818`,
+/// `phrase_index.h:647`, `phrase_index.cpp:186`, `novel_types.h:44` at the
+/// pin `074a2219`), so a token with high bits set reads the same item, in a
+/// system library and in a user library.
+#[test]
+fn the_phrase_and_reading_getters_ignore_the_high_bits_of_a_token() {
+    let user = TempUserDir::new("tagged-getters");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
+    runtime.user_store_mut().save_reporting().unwrap();
+    let dada = runtime.dict().tokens_for_text("龘龘")[0].value();
+    drop(runtime);
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let dict = runtime.dict();
+    for (token, text) in [
+        (dict.tokens_for_text("你")[0].value(), "你"),
+        (dada, "龘龘"),
+    ] {
+        assert_eq!(dict.token_phrase(token).unwrap().text.unwrap(), text);
+        assert_eq!(
+            dict.token_phrase(token | 0x8000_0000)
+                .unwrap()
+                .text
+                .unwrap(),
+            text
+        );
+        let reading = |token| {
+            dict.with_user_nth_pronunciation_words(token, 0, |length, words| {
+                (length, words.unwrap().to_vec())
+            })
+            .or_else(|| {
+                dict.token_nth_pronunciation(token, 0).map(|reading| {
+                    (
+                        reading.phrase_length,
+                        reading
+                            .keys
+                            .unwrap()
+                            .into_iter()
+                            .flat_map(u16::to_le_bytes)
+                            .collect(),
+                    )
+                })
+            })
+            .unwrap()
+        };
+        assert_eq!(reading(token | 0x8000_0000), reading(token));
+    }
+}
+/// A user pinyin-index record whose token has high bits set. The table
+/// files it under its masked library (`chewing_large_table2.h:107`), the
+/// candidate keeps its value (`pinyin.cpp:1784`) and is a user candidate
+/// (`pinyin.cpp:3719`). Training stores the gram item under that value
+/// with the first seed `23 * 3` and adds `69 * 7 = 483` to the unigram of
+/// the item its masked library and slot name
+/// (`phonetic_lookup.h:856-927`, `phrase_index.h:629`).
+#[test]
+fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
+    const TAG: u32 = 0x8000_0000;
+    let user = TempUserDir::new("tagged-candidate");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
+    runtime.user_store_mut().save_reporting().unwrap();
+    let token = runtime.dict().tokens_for_text("龘龘")[0].value();
+    drop(runtime);
+    let path = user.path.join("user_pinyin_index.bin");
+    let mut rows = native_fixture::store_rows(&path, false);
+    let mut retagged = 0;
+    for (_, value) in &mut rows {
+        for at in 0..value.len().saturating_sub(3) {
+            if value[at..at + 4] == token.to_le_bytes() {
+                value[at..at + 4].copy_from_slice(&(token | TAG).to_le_bytes());
+                retagged += 1;
+            }
+        }
+    }
+    assert!(retagged > 0, "the index holds the token");
+    native_fixture::craft_user_index(&path, &rows);
+
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let base = runtime
+        .lm()
+        .unigram_freq(&PhraseToken::new(token))
+        .unwrap()
+        .unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("dada").unwrap();
+    let candidate = runtime
+        .session(&mut state)
+        .candidates_at_for_abi(0, false)
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row.kind() == oxpinyin_engine::CandidateKind::Phrase
+                && row.token() == Some(PhraseToken::new(token | TAG))
+        })
+        .unwrap()
+        .clone();
+    runtime
+        .session(&mut state)
+        .select_target(&oxpinyin_engine::SelectionTarget::of_candidate(
+            &candidate, 0, None,
+        ))
+        .unwrap();
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert!(runtime.train_session(&state, 0).unwrap());
+    assert_eq!(
+        runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+        Some(base + 483)
+    );
+    assert_eq!(
+        runtime.user_store().bigram_successors(1).unwrap(),
+        [(token | TAG, 69)]
+    );
+}
+
+#[cfg(feature = "tkrzw")]
+/// A system chunk's total and its items by slot (`_system_items`).
+fn system_items(name: &str) -> (u32, std::collections::BTreeMap<u32, Vec<u8>>) {
+    let bytes =
+        std::fs::read(contract_data::contract_data_dir().join(name)).expect("a system library");
+    let payload = &bytes[8..];
+    let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().expect("a word"));
+    let (total, index, content) = (word(0), word(4) as usize, word(8) as usize);
+    let mut items = std::collections::BTreeMap::new();
+    for slot in 0..(content - index - 1) / 4 {
+        let offset = word(index + slot * 4);
+        if offset != 0 {
+            let start = content + offset as usize;
+            let (length, prons) = (usize::from(payload[start]), usize::from(payload[start + 1]));
+            let size = 6 + 4 * length + prons * (2 * length + 4);
+            let end = (start + size).min(payload.len());
+            items.insert(
+                u32::try_from(slot).expect("a slot"),
+                payload[start..end].to_vec(),
+            );
+        }
+    }
+    (total, items)
+}
+
+#[cfg(feature = "tkrzw")]
+/// The reading key bytes of each pronunciation of a stored item.
+fn item_readings(item: &[u8]) -> Vec<&[u8]> {
+    let (length, prons) = (usize::from(item[0]), usize::from(item[1]));
+    let start = 6 + 4 * length;
+    let stride = 2 * length + 4;
+    (0..prons)
+        .map(|nth| {
+            let at = (start + stride * nth).min(item.len());
+            &item[at..(at + 2 * length).min(item.len())]
+        })
+        .collect()
+}
+
+#[cfg(feature = "tkrzw")]
+/// A merged-library item removed by the journal adds no candidate, and the
+/// search over its reading answers normally
+/// (docs/findings/compatibility-policy.md, row 102).
+#[test]
+fn a_journal_removed_item_adds_no_candidate() {
+    let (total, items) = system_items("merged.bin");
+    let mut longer = std::collections::BTreeSet::new();
+    for name in ["merged.bin", "opengram.bin", "gb_char.bin", "gbk_char.bin"] {
+        for item in system_items(name).1.values() {
+            if item[0] > 4 {
+                longer.extend(
+                    item_readings(item)
+                        .iter()
+                        .map(|reading| reading[..8.min(reading.len())].to_vec()),
+                );
+            }
+        }
+    }
+    let (slot, item) = items
+        .iter()
+        .find(|(_, item)| item[0] == 4 && item[1] == 1 && !longer.contains(item_readings(item)[0]))
+        .expect("a four-character item no longer phrase extends");
+    let token = 0x0400_0000 | slot;
+    let user = TempUserDir::new("removed-candidate");
+
+    let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+    let phrase = runtime.dict().token_phrase(token).unwrap().text.unwrap();
+    let reading: String = item_readings(item)[0]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| {
+            oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes(*bytes)).pinyin_string()
+        })
+        .collect();
+    drop(runtime);
+    native_fixture::write_user_conf(&user.path, &contract_data::contract_data_dir());
+    let mut remove = 2_u32.to_le_bytes().to_vec();
+    remove.extend(token.to_le_bytes());
+    remove.extend(u16::try_from(item.len()).expect("a length").to_le_bytes());
+    remove.extend(item);
+    let log = [native_fixture::modify_header(0, total, total), remove].concat();
+    std::fs::write(
+        user.path.join("merged.dbin"),
+        oxpinyin_data::chunk_format::build_memory_chunk(&log).expect("frame"),
+    )
+    .expect("write the journal");
+
+    let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+    assert!(runtime.dict().token_phrase(token).is_none());
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw(&reading).unwrap();
+    assert_eq!(runtime.session(&mut state).full_parsed_len(), reading.len());
+    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    assert!(
+        !normal_texts(&runtime, &mut state)
+            .iter()
+            .any(|text| phrase == text.as_str())
+    );
+}
+
+#[cfg(feature = "tkrzw")]
+fn native_rows(
+    runtime: &Runtime,
+    state: &mut oxpinyin_engine::SessionState,
+    offset: usize,
+) -> Vec<(oxpinyin_engine::CandidateKind, String, Option<u8>)> {
+    runtime.session(state).set_sort_options(0x1e).unwrap();
+    runtime
+        .session(state)
+        .candidates_at_for_abi(offset, false)
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.kind(),
+                row.text().as_str().unwrap().to_owned(),
+                row.nbest_row(),
+            )
+        })
+        .collect()
+}
+#[cfg(feature = "tkrzw")]
+fn choose_native(
+    runtime: &Runtime,
+    state: &mut oxpinyin_engine::SessionState,
+    offset: usize,
+    index: usize,
+) -> usize {
+    runtime.session(state).set_sort_options(0x1e).unwrap();
+    let row = runtime
+        .session(state)
+        .candidates_at_for_abi(offset, false)
+        .unwrap()
+        .iter()
+        .nth(index)
+        .unwrap()
+        .clone();
+    let target = oxpinyin_engine::SelectionTarget::of_candidate(&row, offset, None);
+    let end = target.span_end;
+    assert_ne!(
+        runtime.session(state).select_target(&target).unwrap(),
+        oxpinyin_engine::Selection::Refused
+    );
+    end
+}
+
+#[cfg(feature = "tkrzw")]
+/// D5: `pinyin.cpp:1711-1758,2200-2215` at 074a2219 selects the prior
+/// result token and conditionally merges its bigram for dynamic adjustment.
+#[test]
+fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
+    use oxpinyin_engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
+    let row = |kind, text: &str, rank| (kind, text.to_owned(), rank);
+    for (options, expected) in [
+        (
+            0x18a,
+            [
+                "矣", "移", "蛇", "遗", "毅", "疑", "佚", "驿", "姨", "贻", "轶", "薏", "翌", "饴",
+            ],
+        ),
+        (
+            0x38a,
+            [
+                "遗", "矣", "移", "蛇", "疑", "毅", "驿", "佚", "贻", "姨", "薏", "轶", "饴", "翌",
+            ],
+        ),
+    ] {
+        let user = TempUserDir::new("dynamic-chosen-de");
+        let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+        let mut state = native_session(&runtime, OptionBits::from_bits_retain(options));
+        runtime.session(&mut state).replace_raw("deyi").unwrap();
+        assert_eq!(runtime.session(&mut state).full_parsed_len(), 4);
+        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        let initial = native_rows(&runtime, &mut state, 0);
+        assert_eq!(initial.len(), 33);
+        assert_eq!(initial[6], row(NORMAL, "的", None));
+        assert_eq!(choose_native(&runtime, &mut state, 0, 6), 2);
+        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        let rows = native_rows(&runtime, &mut state, 2);
+        assert_eq!(rows.len(), 599);
+        assert_eq!(
+            &rows[..3],
+            &[
+                row(NBEST, "的一", Some(0)),
+                row(NBEST, "的以", Some(2)),
+                row(NORMAL, "一", None)
+            ]
+        );
+        for (index, text) in [23, 24, 25, 26, 32, 33, 38, 39, 52, 53, 70, 71, 75, 76]
+            .into_iter()
+            .zip(expected)
+        {
+            assert_eq!(
+                rows[index],
+                row(NORMAL, text, None),
+                "options {options:#x}, row {index}"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "tkrzw")]
+/// D8: the n-best training sequence (`pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589`, `:2670-2691` at 074a2219): three
+/// rounds of 你 then 浩 at the cursor, then three of 你 then 好, by text, on the default options.
+/// `train_result3` trains each ONESTEP token and the next: a new pair seeds 69, an existing one
+/// adds `max(freq, 69) * 2` (`lookup/phonetic_lookup.h:886-903` at 074a2219), so three rounds
+/// leave 621 on (你, 浩) and on (你, 好); the unigram adds the seed times 7 (`:930`). The trained
+/// pairs reorder the n-best sentences (observation `nbest-train/ordinary`, runs 1 and 2
+/// identical), and survive a save and reopen.
+///
+/// The bigram export of the trained grams is derived from source, with no capture (the 2026-11-01
+/// ruling on register row 1's `g_strjoinv` misuse, `pinyin.cpp:849`, `:862`): 你's gram holds both
+/// successors in token order, `insert_freq` keeping it ascending (`storage/ngram.cpp:178-193`),
+/// 浩 (16779426) before 好 (16779429); each row's count is the stored 621 doubled (`pinyin.cpp:906`).
+#[test]
+fn ordinary_training_reorders_the_nbest_rows() {
+    use oxpinyin_engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
+    let row = |kind, text: &str, rank| (kind, text.to_owned(), rank);
+    let user = TempUserDir::new("pinned-nbest-train");
+    let mut runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let surface = |runtime: &Runtime, state: &mut oxpinyin_engine::SessionState| {
+        runtime.session(state).replace_raw("nihao").unwrap();
+        assert!(runtime.session(state).guess_sentence().unwrap());
+        let rows = native_rows(runtime, state, 0);
+        let mut indexes: Vec<_> = rows.iter().filter_map(|row| row.2).collect();
+        indexes.sort_unstable();
+        let sentences: Vec<_> = indexes
+            .iter()
+            .take(3)
+            .map(|&index| {
+                runtime
+                    .session(state)
+                    .sentence_text(index)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        runtime.session(state).reset();
+        (
+            rows.len(),
+            rows.into_iter().take(8).collect::<Vec<_>>(),
+            sentences,
+        )
+    };
+    let train = |runtime: &mut Runtime,
+                 state: &mut oxpinyin_engine::SessionState,
+                 first: &str,
+                 second: &str| {
+        runtime.session(state).replace_raw("nihao").unwrap();
+        assert!(runtime.session(state).guess_sentence().unwrap());
+        for (offset, text, end) in [(0, first, 2), (2, second, 5)] {
+            let index = native_rows(runtime, state, offset)
+                .iter()
+                .position(|row| row.1 == text)
+                .unwrap();
+            assert_eq!(choose_native(runtime, state, offset, index), end);
+            assert!(runtime.session(state).guess_sentence().unwrap());
+        }
+        assert!(runtime.train_session(state, 0).unwrap());
+        runtime.session(state).reset();
+    };
+    let normal = |texts: &[&str]| {
+        texts
+            .iter()
+            .map(|&text| row(NORMAL, text, None))
+            .collect::<Vec<_>>()
+    };
+    let mut baseline = vec![row(NBEST, "你好", Some(0))];
+    baseline.extend(normal(&["你", "尼", "呢", "泥", "妮", "拟", "逆"]));
+    assert_eq!(
+        surface(&runtime, &mut state),
+        (126, baseline, vec!["你好".to_owned()])
+    );
+    for _ in 0..3 {
+        train(&mut runtime, &mut state, "你", "浩");
+    }
+    let mut user_only = vec![row(NBEST, "你浩", Some(0)), row(NBEST, "你好", Some(1))];
+    user_only.extend(normal(&["你", "尼", "呢", "泥", "妮", "拟"]));
+    assert_eq!(
+        surface(&runtime, &mut state),
+        (127, user_only, vec!["你浩".to_owned(), "你好".to_owned()])
+    );
+    for _ in 0..3 {
+        train(&mut runtime, &mut state, "你", "好");
+    }
+    let mut augmented = vec![row(NBEST, "你好", Some(0)), row(NBEST, "你浩", Some(1))];
+    augmented.extend(normal(&["你", "尼", "呢", "泥", "妮", "拟"]));
+    let trained = (127, augmented, vec!["你好".to_owned(), "你浩".to_owned()]);
+    assert_eq!(surface(&runtime, &mut state), trained);
+
+    assert!(runtime.user_store().export_phrases_in(7).is_empty());
+    runtime.user_store_mut().save_reporting().unwrap();
+    drop(runtime);
+    let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    assert_eq!(
+        surface(&runtime, &mut state),
+        trained,
+        "after a save and reopen"
+    );
+}
+
+#[path = "../../oxpinyin-data/tests/support/mod.rs"]
+mod chunk_fixture;
+#[path = "../../oxpinyin-data/tests/support/unreadable_fixture.rs"]
+mod unreadable_fixture;
+
+/// The sole unreadable user-index row survives the system miss and keeps its token.
+#[test]
+fn a_sole_unreadable_row_survives_the_user_table_fallback() {
+    let (system, user) = unreadable_fixture::dirs(unreadable_fixture::Case::Fallback);
+    let runtime =
+        Runtime::open_with_law(system.path(), Some(user.path()), UserConfLaw::Zhuyin).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
+    native_chewing(&runtime, &mut state, "su3");
+    runtime
+        .session(&mut state)
+        .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+    let rows = runtime
+        .session(&mut state)
+        .candidates_at_for_abi(0, false)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows.sole_unreadable_candidate().unwrap().token(),
+        Some(PhraseToken::new(0x0100_0010))
+    );
+    assert!(runtime.dict().token_phrase(0x0100_0010).is_none());
+}
+
+/// The library mask does not read the malformed ni'hao extension while searching ni alone.
+#[test]
+fn a_library_mask_does_not_read_extension_rows() {
+    for (unload, expected) in [(false, 1), (true, 0)] {
+        let (system, user) = unreadable_fixture::dirs(unreadable_fixture::Case::MaskedExtension);
+        let mut runtime =
+            Runtime::open_with_law(system.path(), Some(user.path()), UserConfLaw::Zhuyin).unwrap();
+        if unload {
+            assert!(runtime.unload_library(2));
+        }
+        let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
+        native_chewing(&runtime, &mut state, "su3");
+        runtime
+            .session(&mut state)
+            .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+        let rows = runtime
+            .session(&mut state)
+            .candidates_at_for_abi(0, false)
+            .unwrap();
+        assert_eq!(
+            usize::from(rows.sole_unreadable_candidate().is_some()),
+            expected,
+            "unload {unload}"
+        );
+        if expected == 1 {
+            assert!(
+                runtime
+                    .dict()
+                    .token_phrase(
+                        rows.sole_unreadable_candidate()
+                            .unwrap()
+                            .token()
+                            .unwrap()
+                            .value()
+                    )
+                    .is_none()
+            );
+        }
+    }
+}
+
+fn ucs4_bytes(text: &str) -> Vec<u8> {
+    text.chars()
+        .flat_map(|word| u32::from(word).to_le_bytes())
+        .collect()
+}
+
+/// The raw phrase-table key selects the user token; runtime reads the live item's text.
+#[test]
+fn a_raw_user_key_predicts_its_live_item() {
+    let user = TempUserDir::new("raw-key-prediction");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
+    runtime.user_store_mut().save_reporting().unwrap();
+    let token = runtime.dict().tokens_for_text("龘龘")[0].value();
+    drop(runtime);
+    native_fixture::craft_user_index(
+        &user.path.join("user_phrase_index.bin"),
+        &[
+            (ucs4_bytes("你"), Vec::new()),
+            (
+                [ucs4_bytes("你"), 0x0011_0000_u32.to_le_bytes().to_vec()].concat(),
+                token.to_le_bytes().to_vec(),
+            ),
+        ],
+    );
+    native_fixture::write_user_conf(&user.path, &system_dir());
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let user_rows = runtime
+        .user_store()
+        .lookup()
+        .suggest_after(&[u32::from('你')]);
+    let system = runtime
+        .dict()
+        .system()
+        .suggestion_tokens(&[u32::from('你')])
+        .unwrap();
+    assert!(merge_suggestion_rows(&system, &user_rows).contains(&token));
+    assert_eq!(
+        runtime.dict().token_phrase(token).unwrap().text.unwrap(),
+        "龘龘"
+    );
+}
+
+/// Library 15 has no loaded sub-index, so its raw phrase rows are not usable tokens.
+#[test]
+fn rows_of_a_never_loaded_library_are_filtered() {
+    let user = TempUserDir::new("never-loaded-library");
+    let token = (15_u32 << 24) | 1;
+    let value = token.to_le_bytes().to_vec();
+    native_fixture::craft_user_index(
+        &user.path.join("user_phrase_index.bin"),
+        &[
+            (ucs4_bytes("你"), Vec::new()),
+            ([ucs4_bytes("你"), ucs4_bytes("龘")].concat(), value.clone()),
+            (ucs4_bytes("龘龘"), value),
+        ],
+    );
+    native_fixture::write_user_conf(&user.path, &system_dir());
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    assert!(runtime.dict().tokens_for_text("龘龘").is_empty());
+    assert!(!runtime.dict().phrase_table_token_enabled(token));
+    let suggestions = runtime
+        .user_store()
+        .lookup()
+        .suggest_after(&[u32::from('你')]);
+    assert_eq!(suggestions.len(), 1);
+    assert!(
+        suggestions
+            .iter()
+            .all(|(token, _)| !runtime.dict().phrase_table_token_enabled(*token))
+    );
+}
+
+/// The pinned suggestion merge preserves library and raw UCS-4 key order within score ties.
+#[test]
+fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
+    let user = TempUserDir::new("pred-defined-order");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    import_rows(
+        &mut runtime,
+        7,
+        &[
+            ("中", "zhong", 9),
+            ("中年", "zhongnian", 7),
+            ("中华", "zhonghua", 7),
+            ("中型", "zhongxing", 7),
+            ("中文", "zhongwen", 7),
+        ],
+    );
+    let prefix = [u32::from('中')];
+    let system = runtime.dict().system().suggestion_tokens(&prefix).unwrap();
+    let user_rows = runtime.user_store().lookup().suggest_after(&prefix);
+    let tokens = merge_suggestion_rows(&system, &user_rows);
+    let dict = runtime.dict();
+    let rows: Vec<_> = tokens
+        .iter()
+        .map(|&token| {
+            let text = dict.token_text(token).unwrap();
+            (
+                oxpinyin_user::phrase_index_library_index(token),
+                ucs4_bytes(text.as_str().unwrap()),
+                text,
+            )
+        })
+        .collect();
+    for pair in rows.windows(2) {
+        assert!((&pair[0].0, &pair[0].1) <= (&pair[1].0, &pair[1].1));
+    }
+    let user_texts: Vec<_> = rows
+        .iter()
+        .filter(|row| row.0 == 7)
+        .map(|row| row.2.as_str().unwrap())
+        .collect();
+    assert_eq!(user_texts, ["中华", "中年", "中文", "中型"]);
 }

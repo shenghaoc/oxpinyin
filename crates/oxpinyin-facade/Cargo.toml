@@ -32,6 +32,8 @@ rstest = { version = "0.28", default-features = false }
 # through oxpinyin-runtime).
 oxpinyin-data.workspace = true
 tempfile.workspace = true
+oxpinyin-store = { workspace = true, features = ["test-hooks"] }
+sha2 = "0.11"
 
 [features]
 # Backend selection, forwarded to oxpinyin-runtime, which carries it down

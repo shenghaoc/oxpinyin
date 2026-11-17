@@ -378,3 +378,6 @@ where
 
     walk(dictionary, &columns, &tokens, 0, offset, 0).map(|count| (count, true))
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,3 +1,4 @@
+// Nextest isolates the process-wide copy-fault hooks by running each test in its own process.
 use super::*;
 use crate::test_session::tempdir;
 use crate::test_session::{load, load_checked, load_profile, save_state as save_state_reporting};
@@ -2823,3 +2824,343 @@ mod save_boundaries_929 {
         }
     }
 }
+
+/// Each save writes its session's whole profile (pinyin.cpp:1132-1147 at 074a2219).
+#[test]
+fn when_two_sessions_save_the_later_save_is_the_profile() {
+    use crate::test_session::{native_exports, native_keys, open_w3};
+    for first_saves_last in [false, true] {
+        let user = tempfile::tempdir().unwrap();
+        let mut first = open_w3(user.path());
+        let mut second = open_w3(user.path());
+        first
+            .add_phrase_in(7, &"你好".into(), &native_keys("nihao"), Some(5))
+            .unwrap();
+        second
+            .add_phrase_in(7, &"世界".into(), &native_keys("shijie"), Some(3))
+            .unwrap();
+        first.compact_libraries();
+        second.compact_libraries();
+        first.mark_modified();
+        second.mark_modified();
+        let exported = |store: &crate::UserStore| {
+            native_exports(store, 7)
+                .into_iter()
+                .map(|(phrase, _, count)| (phrase, count))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(exported(&first), [("你好".to_owned(), 5)]);
+        assert_eq!(exported(&second), [("世界".to_owned(), 3)]);
+        let (earlier, later) = if first_saves_last {
+            (&mut second, &mut first)
+        } else {
+            (&mut first, &mut second)
+        };
+        earlier.save_reporting().unwrap();
+        later.save_reporting().unwrap();
+        let expected = exported(later);
+        drop(first);
+        drop(second);
+        assert_eq!(
+            exported(&open_w3(user.path())),
+            expected,
+            "first saves last: {first_saves_last}"
+        );
+    }
+}
+
+/// Hex of each `(key, value)` row.
+fn hex_rows(rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(String, String)> {
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    rows.iter()
+        .map(|(key, value)| (hex(key), hex(value)))
+        .collect()
+}
+
+/// The saved user index trees hold the pin's records: each reading key
+/// with its prefix marker, and each phrase key with its token.
+#[test]
+fn saved_user_indexes_hold_the_pins_records() {
+    use crate::native_fixture::TempUserDir;
+    let user = TempUserDir::new("saved-index-format");
+    let mut store = crate::test_session::open_w3(&user.path);
+    for (text, reading, count) in [
+        ("龘龘", "da2'da2", 100),
+        ("龘龘", "da4'da4", 100),
+        ("靐靐", "bing4'bing4", 100),
+    ] {
+        store
+            .add_phrase_in(
+                7,
+                &text.into(),
+                &crate::test_session::native_keys(reading),
+                Some(count),
+            )
+            .unwrap();
+    }
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    let rows = |name: &str| crate::native_fixture::store_rows(&user.path.join(name), false);
+    let pairs = |rows: &[(&str, &str)]| -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+    assert_eq!(
+        hex_rows(rows("user_pinyin_index.bin")),
+        pairs(&[
+            ("0100", ""),
+            ("01000100", "0200000781488148"),
+            ("0400", ""),
+            ("04000400", "0100000784208420"),
+            ("8108", ""),
+            ("81088108", "0200000781488148"),
+            ("8400", ""),
+            ("84008400", "0100000784208420"),
+        ])
+    );
+    assert_eq!(
+        hex_rows(rows("user_phrase_index.bin")),
+        pairs(&[
+            ("50970000", ""),
+            ("5097000050970000", "02000007"),
+            ("989f0000", ""),
+            ("989f0000989f0000", "01000007"),
+        ])
+    );
+    let store = crate::test_session::open_w3(&user.path);
+    assert_eq!(
+        store.phrase_table_tokens_for_text("龘龘").unwrap(),
+        [0x0700_0001]
+    );
+    assert_eq!(
+        store.phrase_table_tokens_for_text("靐靐").unwrap(),
+        [0x0700_0002]
+    );
+}
+
+/// An absolute USER_FILE name stays under the user directory:
+/// `g_build_filename(user, "/…/nest/u.bin")` is `<user>/…/nest/u.bin`.
+// Unix only: the table.conf row spells a POSIX absolute path.
+#[cfg(unix)]
+#[test]
+fn an_absolute_user_file_lands_under_the_user_directory() {
+    use crate::native_fixture::{private_system, system_dir};
+    let scratch = tempfile::tempdir().expect("scratch");
+    let user = scratch.path().join("user");
+    let nested = format!("{}/nest", user.display());
+    let beneath = format!("{}{nested}", user.display());
+    std::fs::create_dir_all(&nested).expect("the nested directory");
+    std::fs::create_dir_all(&beneath).expect("the user-rooted directory");
+    let system = private_system(scratch.path());
+    let path = system.join("table.conf");
+    let text = std::fs::read_to_string(system_dir().join("table.conf")).unwrap();
+    assert!(text.contains("user.bin USER_FILE"));
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(
+        path,
+        text.replace("user.bin USER_FILE", &format!("{nested}/u.bin USER_FILE")),
+    )
+    .unwrap();
+    let mut store = crate::test_session::open_native(&user, &system, UserConfLaw::Pinyin);
+    store
+        .add_phrase_in(
+            7,
+            &"你好".into(),
+            &crate::test_session::native_keys("ni3'hao3"),
+            Some(1),
+        )
+        .unwrap();
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    assert!(Path::new(&beneath).join("u.bin").is_file());
+    assert!(!Path::new(&nested).join("u.bin").exists());
+}
+
+/// The control: a user bigram that does not open is the pin's soft
+/// `return false` (`ngram_tkrzwdb.cpp:55-56`, `ngram_bdb.cpp:67-70`), so no
+/// copy runs and init answers a context, though every source read fails.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_survives_a_user_bigram_that_does_not_open() {
+    let scratch = tempfile::tempdir().unwrap();
+    let user = scratch.path();
+    crate::native_fixture::plant_bigram(
+        user,
+        vec![
+            (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+            (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        ],
+    );
+    let bigram = user.join("user_bigram.db");
+    std::fs::remove_file(&bigram).expect("unlink the user bigram");
+    std::fs::create_dir(&bigram).expect("a directory in its place");
+    oxpinyin_store::copy_faults::fail_source_read_after(0);
+    let _store = crate::test_session::open_w3(user);
+}
+
+/// `copy_tkrzwdb` and `copy_bdb` return `false` without an assert when no
+/// source iterator is made (`tkrzwdb_utils.h:52-54`, `bdb_utils.h:49-52`),
+/// and `load_db` ignores the answer (`ngram_tkrzwdb.cpp:58`,
+/// `chewing_large_table2_tkrzwdb.cpp:104`): init answers a context, though
+/// every source read of a copy would fail.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn init_survives_a_copy_whose_source_iterator_is_not_made() {
+    let scratch = tempfile::tempdir().unwrap();
+    let user = scratch.path();
+    crate::native_fixture::plant_bigram(
+        user,
+        vec![
+            (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+            (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        ],
+    );
+    oxpinyin_store::copy_faults::fail_iterator_creation_after(0);
+    oxpinyin_store::copy_faults::fail_source_read_after(0);
+    let _store = crate::test_session::open_w3(user);
+}
+
+/// The stale directory is renamed over an absent or, on Unix, empty directory.
+/// A live file keeps its bytes and the temporary directory (register row 76).
+#[test]
+fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {
+    const NAME: &str = "persistence::tests::a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name";
+    const ENV: &str = "OXPINYIN_STALE_INDEX_CHILD";
+    if let Some(root) = std::env::var_os(ENV) {
+        let root = std::path::PathBuf::from(root);
+        let marker: &[u8] = b"unchanged temporary directory";
+        let system = crate::native_fixture::system_dir();
+        // The first su3cl3 candidate is 你好, whose training arms each save.
+        let token = crate::test_session::native_tokens(&system, "你好")[0];
+        for (round, (destination, moved)) in [
+            ("absent", true),
+            ("empty-directory", cfg!(not(windows))),
+            ("live-file", false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let user = root.join(format!("round-{round}"));
+            std::fs::create_dir(&user).unwrap();
+            let mut store = crate::test_session::open_native(&user, &system, UserConfLaw::Zhuyin);
+            store.observe_selection(1, token).unwrap();
+            let live = user.join("user_phrase_index.bin");
+            let mut before = None;
+            if destination == "live-file" {
+                store.save_reporting().unwrap();
+                before = Some(std::fs::read(&live).unwrap());
+                store.observe_selection(1, token).unwrap();
+            } else if destination == "empty-directory" {
+                std::fs::create_dir(&live).unwrap();
+            }
+            let tmp = user.join("user_phrase_index.bin.tmp");
+            std::fs::create_dir(&tmp).unwrap();
+            std::fs::write(tmp.join("stale-marker"), marker).unwrap();
+            store.save_reporting().unwrap();
+            assert_eq!(tmp.exists(), !moved, "{destination}");
+            assert_eq!(
+                std::fs::read(live.join("stale-marker")).ok().as_deref(),
+                moved.then_some(marker),
+                "{destination}"
+            );
+            if let Some(before) = before {
+                assert_eq!(std::fs::read(&live).unwrap(), before);
+            }
+        }
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let output = crate::test_child::run_exact(NAME, [(ENV, root.path().as_os_str())]);
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("user_phrase_index.bin failed.").count(),
+        if cfg!(windows) { 2 } else { 1 },
+        "{stderr}"
+    );
+}
+
+/// A journal ADD can retain a surrogate word no import writes. The saved
+/// bytes are the original pin-derived row-107 fixture, unchanged.
+#[test]
+fn a_journal_word_no_import_writes_is_kept() {
+    use crate::native_fixture::TempUserDir;
+    let scratch = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::items_system(
+        &crate::native_fixture::system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532, 0x4e01, 0x4e59], &[0x1084; 3], 100),
+            (&[0x4e19], &[0x1081], 100),
+        ],
+        200,
+    );
+    let user = TempUserDir::new("stored-words-surrogate");
+    let mut store = crate::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
+    let token = store
+        .add_system_phrase_in(
+            1,
+            None,
+            &"甲戊乙".into(),
+            &crate::test_session::native_keys("da1'da1'da1"),
+            Some(1000),
+        )
+        .unwrap();
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    let path = user.path.join("gb_char.dbin");
+    let original: Vec<u8> = [0x7532_u32, 0x620a, 0x4e59]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    let replacement: Vec<u8> = [0x7532_u32, 0xd800, 0x4e59]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect();
+    let mut payload = std::fs::read(&path).expect("gb_char.dbin")[8..].to_vec();
+    let at = payload
+        .windows(original.len())
+        .position(|window| window == original.as_slice())
+        .expect("the imported item");
+    payload.splice(at..at + original.len(), replacement);
+    std::fs::write(
+        &path,
+        oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+    )
+    .unwrap();
+
+    let mut store = crate::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
+    let words = store
+        .with_live_item_fields(token, |item| {
+            oxpinyin_data::chunk_write::decode_phrase_item(item)
+                .unwrap()
+                .phrase
+        })
+        .flatten()
+        .unwrap();
+    assert_eq!(words, [0x7532, 0xd800, 0x4e59]);
+    assert_eq!(store.system_unigram(token), Some(3000));
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    let native: String = std::fs::read(&path)
+        .expect("gb_char.dbin")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(
+        native,
+        "380000006f1285e404000000000000000400c8000000800c000001000000030000001c000301b80b0000\
+         3275000000d80000594e0000841084108410e8030000"
+    );
+}
+
+#[cfg(feature = "tkrzw")]
+mod pinned_profiles;

@@ -3,7 +3,9 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::packed_key;
 use crate::test_support::{alloc, close, init_at, open_at, parse, token_of};
+use crate::test_support::{candidate_at, saved_user_phrase};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
@@ -13,11 +15,11 @@ use crate::candidates::{
 
 use crate::config::{pinyin_load_addon_phrase_library, pinyin_unload_phrase_library};
 
-use crate::context::{pinyin_fini, pinyin_init, pinyin_save};
+use crate::context::{pinyin_fini, pinyin_init};
 
 use crate::dict::{pinyin_token_add_unigram_frequency, pinyin_token_get_unigram_frequency};
 
-use crate::e2e_tests::{capture_rows, import_batch, predicted_row, with_store};
+use crate::test_support::{capture_rows, predicted_row, with_store};
 
 use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
 
@@ -36,7 +38,7 @@ use crate::test_support::{
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
-use crate::union_e2e_tests::promotion_system;
+use crate::test_support::promotion_system;
 
 use oxpinyin_core::{Dictionary as _, PhraseToken};
 
@@ -66,30 +68,6 @@ fn row_of(instance: *mut PinyinInstance, kind: lookup_candidate_type_t) -> *mut 
         .position(|(found, _, _)| *found == kind)
         .unwrap_or_else(|| panic!("a {kind:?} row is listed"));
     candidate_at(instance, index)
-}
-
-fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandidate {
-    let mut cand: *mut LookupCandidate = ptr::null_mut();
-    assert!(unsafe {
-        pinyin_get_candidate(
-            instance,
-            u32::try_from(index).expect("small index"),
-            &raw mut cand,
-        )
-    });
-    cand
-}
-
-/// Imports and saves 龘龘 (da2'da2) in library 7, then closes the context;
-/// answers its token.
-fn saved_user_phrase(user: &Path) -> u32 {
-    let (context, instance) = open_at(user);
-    assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
-    assert!(unsafe { pinyin_save(context) });
-    let token = lookup(instance, "龘龘")[0];
-    assert_eq!(token >> 24, 7);
-    close(context, instance);
-    token
 }
 
 /// The first NORMAL user row of `dada` on a new context over `user`.
@@ -772,7 +750,7 @@ impl Drop for Pair {
     }
 }
 
-fn unigram(instance: *mut PinyinInstance, token: u32) -> u32 {
+fn unigram_or_zero(instance: *mut PinyinInstance, token: u32) -> u32 {
     let mut freq = 0;
     unsafe { pinyin_token_get_unigram_frequency(instance, token, &raw mut freq) };
     freq
@@ -788,8 +766,8 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
     #[values(true, false)] same_context: bool,
 ) {
     use crate::candidates::pinyin_choose_predicted_candidate;
-    use crate::e2e_tests::{predicted_row, with_store};
     use crate::predict::pinyin_guess_predicted_candidates;
+    use crate::test_support::{predicted_row, with_store};
 
     let pair = Pair::open(same_context);
     let ni = *lookup(pair.receiver, "你").first().expect("你");
@@ -799,12 +777,14 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
         pair.producer,
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
-    let (receiver_before, producer_before) =
-        (unigram(pair.receiver, word), unigram(pair.producer, word));
+    let (receiver_before, producer_before) = (
+        unigram_or_zero(pair.receiver, word),
+        unigram_or_zero(pair.producer, word),
+    );
     assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver, prefix_row) });
-    assert_eq!(unigram(pair.receiver, word), receiver_before + 483);
+    assert_eq!(unigram_or_zero(pair.receiver, word), receiver_before + 483);
     if !same_context {
-        assert_eq!(unigram(pair.producer, word), producer_before);
+        assert_eq!(unigram_or_zero(pair.producer, word), producer_before);
     }
 
     // Seed both predecessor buckets. The producer holds 你 and the
@@ -1336,14 +1316,6 @@ fn training_a_stale_forcing_aborts() {
     );
 }
 
-/// The packed key of `spelling` at `tone`, as an addon item stores it.
-fn packed_key(spelling: &str, tone: u8) -> u16 {
-    oxpinyin_core::ChewingKey::from_pinyin(spelling)
-        .expect("frozen syllable")
-        .with_tone(tone)
-        .to_packed()
-}
-
 /// Chooses the only addon row of `input` and answers the context, the
 /// instance and the promoted token.
 fn choose_addon_row(
@@ -1467,4 +1439,95 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     }
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };
+}
+
+/// A user pinyin-index record whose token has high bits set. The table
+/// files it under its masked library (`chewing_large_table2.h:107`), the
+/// candidate keeps its value (`pinyin.cpp:1784`) and is a user candidate
+/// (`pinyin.cpp:3719`). Training stores the gram item under that value
+/// with the first seed `23 * 3` and adds `69 * 7 = 483` to the unigram of
+/// the item its masked library and slot name
+/// (`phonetic_lookup.h:856-927`, `phrase_index.h:629`).
+#[test]
+fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
+    let user = TempUserDir::new("tagged-candidate");
+    let token = saved_user_phrase(&user.path);
+    let path = user.path.join("user_pinyin_index.bin");
+    let mut rows = crate::test_support::store_rows(&path, false);
+    let mut retagged = 0;
+    for (_, value) in &mut rows {
+        for at in 0..value.len().saturating_sub(3) {
+            if value[at..at + 4] == token.to_le_bytes() {
+                value[at..at + 4].copy_from_slice(&(token | 0x8000_0000).to_le_bytes());
+                retagged += 1;
+            }
+        }
+    }
+    assert!(retagged > 0, "the index holds the token");
+    crate::test_support::craft_user_index(&path, &rows);
+    let (instance, candidate) = user_row_of_dada(&user.path);
+    let context = unsafe { crate::instance::pinyin_get_context(instance) };
+    let (found, base) = crate::test_support::unigram(instance, token);
+    assert!(found);
+    assert!(unsafe { pinyin_choose_candidate(instance, 0, candidate) } > 0);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    assert_eq!(
+        crate::test_support::unigram(instance, token),
+        (true, base + 483)
+    );
+    {
+        // SAFETY: the instance is live and this read ends before the close.
+        let inst = unsafe { crate::state::instance_ref(instance) };
+        assert_eq!(
+            inst.core.user.bigram_successors(1).expect("the start gram"),
+            [(token | 0x8000_0000, 69)]
+        );
+    }
+    close(context, instance);
+}
+
+/// Choosing a retained pointer twice does not invalidate its handle.
+#[test]
+fn an_accepted_candidate_pointer_can_be_chosen_twice() {
+    let user = TempUserDir::new("repeat-choose-handle");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(parse(instance, "nihao"), 5);
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+    let row = crate::test_support::row_with(instance, NORMAL, "你");
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 2);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 2);
+    let mut text = ptr::null();
+    assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut text) });
+    assert_eq!(
+        // SAFETY: the getter borrows the retained row, still live after both chooses.
+        unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes(),
+        "你".as_bytes()
+    );
+    close(context, instance);
+}
+
+#[test]
+fn a_normal_choose_after_punctuation_dispatches_the_retained_span() {
+    let user = TempUserDir::new("punctuation-normal-dispatch");
+    let (context, instance) = open_at(&user.path);
+    assert_eq!(parse(instance, "nihao"), 5);
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
+    });
+    let punctuation = row_of(instance, PREDICTED_PUNCTUATION);
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(instance, 0, punctuation) },
+        0
+    );
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+    assert!(
+        capture_rows(instance)
+            .iter()
+            .all(|(kind, _, _)| *kind != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
+    );
+    let normal = crate::test_support::row_with(instance, NORMAL, "你");
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, normal) }, 2);
+    close(context, instance);
 }
