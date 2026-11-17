@@ -29,11 +29,11 @@ oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false, features 
 oxpinyin-zhuyin-capi = { path = "../oxpinyin-zhuyin-capi", default-features = false, features = ["tools"] }
 
 [dev-dependencies]
-assert_cmd = "2.2"
-assert_fs = "1.1"
+assert_cmd.workspace = true
+assert_fs.workspace = true
 libc.workspace = true
-regex = "1.13"
-rstest = { version = "0.28", default-features = false }
-sha2 = "0.11"
+regex.workspace = true
+rstest.workspace = true
+sha2.workspace = true
 oxpinyin-store.workspace = true
 tempfile.workspace = true
