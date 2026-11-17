@@ -74,93 +74,7 @@ fn save_reports_an_absent_system_library_and_answers_false() {
     assert!(stderr.contains(&line), "{stderr}");
 }
 
-/// A save cut by a four-byte file-size limit aborts after the chunk's
-/// length word: the staged log holds four bytes and the
-/// marker keeps the raised counter.
-// Unix only: RLIMIT_FSIZE and SIGXFSZ.
 #[cfg(unix)]
-#[test]
-fn save_aborts_where_the_chunk_header_write_fails() {
-    let run = crate::test_support::assert_aborts_in_dir(
-        "boundary_tests::init_and_save::save_aborts_where_the_chunk_header_write_fails",
-        |user| {
-            let context = init_at(&system_dir(), user);
-            assert!(!context.is_null());
-            train_once(context);
-            let limit = libc::rlimit {
-                rlim_cur: 4,
-                rlim_max: 4,
-            };
-            // SAFETY: ignores SIGXFSZ and lowers this child's own file-size
-            // limit; the child ends in the save.
-            unsafe {
-                libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
-                assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &raw const limit), 0);
-            }
-            unsafe { pinyin_save(context) };
-        },
-    );
-    let staged = std::fs::metadata(run.user_dir.join("gb_char.dbin.tmp")).expect("staged log");
-    assert_eq!(staged.len(), 4);
-    let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    let newline = oxpinyin_input::TEXT_NEWLINE;
-    assert!(
-        conf.ends_with(&format!("open counter:1{newline}")),
-        "{conf}"
-    );
-}
-
-/// Init refuses a NULL system directory, a missing one and one without
-/// table.conf: each answers NULL after the two `open`/`load` lines.
-#[test]
-fn init_refuses_a_system_directory_without_table_conf() {
-    let run = crate::test_support::run_in_child(
-        "boundary_tests::init_and_save::init_refuses_a_system_directory_without_table_conf",
-        |user| {
-            let user_c = cstr(user.to_str().expect("UTF-8 path"));
-            assert!(unsafe { pinyin_init(ptr::null(), user_c.as_ptr()) }.is_null());
-            assert!(init_at(Path::new("/nonexistent-system-dir"), user).is_null());
-            let system = private_system(user.parent().expect("the child's scratch"));
-            std::fs::remove_file(system.join("table.conf")).expect("unlink table.conf");
-            assert!(init_at(&system, user).is_null());
-        },
-    );
-    // GLib joins with the separator that last occurs in its arguments: `/`
-    // after the literal directory, the platform's own after a native path.
-    let conf = run
-        .user_dir
-        .parent()
-        .expect("scratch")
-        .join("system")
-        .join("table.conf");
-    let missing = |conf: &str| format!("open {conf} failed.{NL}load {conf} failed!{NL}");
-    let expected = format!(
-        "open  failed.{NL}load  failed!{NL}{}{}",
-        missing("/nonexistent-system-dir/table.conf"),
-        missing(&conf.display().to_string())
-    );
-    assert_eq!(String::from_utf8_lossy(&run.stderr), expected);
-}
-
-/// A NULL user directory prints the empty-path open line at init and the
-/// two write lines at fini, and nothing else.
-#[test]
-fn a_null_user_directory_reports_its_empty_path() {
-    let run = crate::test_support::run_in_child(
-        "boundary_tests::init_and_save::a_null_user_directory_reports_its_empty_path",
-        |_| {
-            let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-            let context = unsafe { pinyin_init(system.as_ptr(), ptr::null()) };
-            assert!(!context.is_null());
-            unsafe { pinyin_fini(context) };
-        },
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&run.stderr),
-        format!("open  failed.write  failed.{NL}write  failed.{NL}")
-    );
-}
-
 /// A private system whose table.conf has `from` replaced by `to`.
 fn conf_system(parent: &Path, from: &str, to: &str) -> std::path::PathBuf {
     let system = private_system(parent);
@@ -170,46 +84,6 @@ fn conf_system(parent: &Path, from: &str, to: &str) -> std::path::PathBuf {
     std::fs::remove_file(&path).expect("unlink the linked table.conf");
     std::fs::write(&path, text.replace(from, to)).expect("write table.conf");
     system
-}
-
-/// An unknown database format in table.conf aborts the init before it
-/// writes the user directory.
-#[test]
-fn init_aborts_on_an_unknown_table_conf_database_format() {
-    let run = crate::test_support::assert_aborts_in_dir(
-        "boundary_tests::init_and_save::init_aborts_on_an_unknown_table_conf_database_format",
-        |user| {
-            let format = format!("database format:{}", oxpinyin_data::DEFAULT_STORE_DB_FORMAT);
-            let system = conf_system(
-                user.parent().expect("scratch"),
-                &format,
-                "database format:LMDB",
-            );
-            init_at(&system, user);
-        },
-    );
-    assert!(files_of(&run.user_dir).is_empty());
-}
-
-/// An unknown database format in user.conf aborts the init and leaves
-/// user.conf as it was.
-#[test]
-fn init_aborts_on_an_unknown_user_conf_database_format() {
-    let run = crate::test_support::assert_aborts_in_dir(
-        "boundary_tests::init_and_save::init_aborts_on_an_unknown_user_conf_database_format",
-        |user| {
-            write_user_conf(user, &system_dir());
-            let path = user.join("user.conf");
-            let text = std::fs::read_to_string(&path).expect("user.conf");
-            let format = format!("database format:{}", oxpinyin_data::DEFAULT_STORE_DB_FORMAT);
-            std::fs::write(&path, text.replace(&format, "database format:LMDB"))
-                .expect("write user.conf");
-            init_at(&system_dir(), user);
-        },
-    );
-    let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    assert!(conf.contains("database format:LMDB\n"), "{conf}");
-    assert!(conf.ends_with("open counter:0\n"), "{conf}");
 }
 
 /// An absolute USER_FILE name stays under the user directory:
@@ -344,40 +218,5 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
             oxpinyin_store::copy_faults::fail_source_read_after(0);
             assert!(!init_at(&system_dir(), user).is_null());
         },
-    );
-}
-
-/// The pin's copies assert on a failed destination write
-/// (`tkrzwdb_utils.h:65`, `bdb_utils.h:61`): the save stops in
-/// `_write_files` after one record, before `_rename_files` and
-/// `mark_version` (`pinyin.cpp:1141-1143`), so no saved file is replaced.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-#[test]
-fn save_aborts_where_a_copy_fails_a_destination_write() {
-    let run = crate::test_support::assert_aborts_in_dir(
-        "boundary_tests::init_and_save::save_aborts_where_a_copy_fails_a_destination_write",
-        |user| {
-            plant_bigram(user, two_bigram_rows());
-            let context = init_at(&system_dir(), user);
-            assert!(!context.is_null());
-            // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
-            train_once(context);
-            assert!(unsafe { pinyin_save(context) });
-            keep_before(user);
-            train_once(context);
-            // The first copy writes one record and fails the next.
-            oxpinyin_store::copy_faults::fail_destination_write_after(1);
-            unsafe { pinyin_save(context) };
-        },
-    );
-    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
-    let after = files_of(&run.user_dir);
-    for (name, bytes) in &before {
-        assert_eq!(after.get(name), Some(bytes), "{name} was replaced");
-    }
-    assert!(
-        after.keys().any(|name| name.ends_with(".tmp")),
-        "the copy left no staged file: {:?}",
-        after.keys()
     );
 }

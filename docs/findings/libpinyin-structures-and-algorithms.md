@@ -801,7 +801,7 @@ its survival through the next guess and through a shorter parse that no
 guess sees, and its clearing by a guess on the shorter parse. oxpinyin gives
 the same value at every call; the test
 `a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does` in
-`pinned_data_tests.rs` of `oxpinyin-capi` and of `oxpinyin-zhuyin-capi`
+`tests/it/pinned_data.rs` of `oxpinyin-capi` and of `oxpinyin-zhuyin-capi`
 holds each leg. The zhuyin leg parses `zhg` as full pinyin, because the
 chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
 

@@ -5,14 +5,32 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::dict::pinyin_token_add_unigram_frequency;
+
+use crate::state::instance_ref;
+
+use crate::context::pinyin_init;
+
+use std::path::Path;
+
+use crate::context::pinyin_fini;
+
+use crate::instance::pinyin_free_instance;
+
 use std::ffi::CString;
+
 use std::os::raw::c_uint;
+
 use std::path::PathBuf;
 
 use crate::candidates::pinyin_get_candidate;
+
 use crate::instance::pinyin_alloc_instance;
+
 use crate::parse::pinyin_parse_more_full_pinyins;
+
 use crate::sentence::pinyin_guess_candidates;
+
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 // Oxpinyin retains the owner for a surviving instance. This is a safety
@@ -294,15 +312,14 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun
     let scratch = tempfile::tempdir().expect("child scratch");
     let user_dir = scratch.path().join("user");
     std::fs::create_dir(&user_dir).expect("child user directory");
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args(["--exact", name, "--test-threads=1"])
-        .env(DEATH_TEST, name)
-        .env(CHILD_DIR, &user_dir)
-        .env("TMPDIR", scratch.path())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .expect("re-run the test binary");
+    let output = crate::test_child::run_exact(
+        name,
+        [
+            (DEATH_TEST, std::ffi::OsStr::new(name)),
+            (CHILD_DIR, user_dir.as_os_str()),
+            ("TMPDIR", scratch.path().as_os_str()),
+        ],
+    );
     // libtest reports a child's panic on stdout.
     assert!(
         output.status.success(),
@@ -318,6 +335,7 @@ pub fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> ChildRun
     }
 }
 
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 /// [`assert_aborts`] with a directory the parent keeps: `body` gets a
 /// fresh, empty directory, and the parent reads the files the child left in
 /// it before the abort. Answers the child's stderr and that directory.
@@ -538,18 +556,6 @@ pub mod logs {
     #[must_use]
     pub fn header_token() -> Vec<u8> {
         record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    /// A null-token `MODIFY_HEADER`.
-    #[must_use]
-    pub fn header() -> Vec<u8> {
-        record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    /// An ADD of a six-byte item at slot `0x99`.
-    #[must_use]
-    pub fn add() -> Vec<u8> {
-        record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
     }
 
     /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
@@ -1049,35 +1055,66 @@ pub fn addon_system(
     system
 }
 
-mod death_tests {
-    /// A panic that reaches this non-unwinding function aborts the process,
-    /// as a facade panic inside an entry point would.
-    extern "C" fn panic_in_an_entry_point() {
-        panic!("an unrelated panic");
-    }
+mod tests;
 
-    /// The witness: a death test whose operation panics at a C boundary
-    /// fails with its own result, not as the pin's abort.
-    #[test]
-    fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
-        const NAME: &str =
-            "test_support::death_tests::a_panic_at_the_c_boundary_is_not_the_pins_abort";
-        let parent = std::panic::catch_unwind(|| {
-            super::assert_aborts(NAME, || panic_in_an_entry_point());
-        });
-        let message = parent.expect_err("a panic must not pass as an abort");
-        let message = message
-            .downcast_ref::<String>()
-            .expect("the helper's assertion message");
-        assert!(message.contains("OperationPanicked"), "{message}");
-        assert!(message.contains("an unrelated panic"), "{message}");
-    }
+pub fn alloc(context: *mut PinyinContext) -> *mut PinyinInstance {
+    let instance = unsafe { pinyin_alloc_instance(context) };
+    assert!(!instance.is_null());
+    instance
+}
 
-    /// The control: an operation that aborts directly still passes.
-    #[test]
-    fn a_direct_abort_passes() {
-        super::assert_aborts("test_support::death_tests::a_direct_abort_passes", || {
-            std::process::abort()
-        });
-    }
+pub fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
+}
+
+/// A context on `system` and `user`; NULL when init refuses.
+pub fn init_at(system: &Path, user: &Path) -> *mut PinyinContext {
+    let system = cstr(system.to_str().expect("UTF-8 path"));
+    let user = cstr(user.to_str().expect("UTF-8 path"));
+    unsafe { pinyin_init(system.as_ptr(), user.as_ptr()) }
+}
+
+/// A context and instance on the mini fixture and `user`.
+pub fn open_at(user: &Path) -> (*mut PinyinContext, *mut PinyinInstance) {
+    open(user.to_str().expect("UTF-8 path"))
+}
+
+pub fn parse(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> usize {
+    let text = std::ffi::CString::new(text.as_ref()).expect("no interior NUL");
+    unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) }
+}
+
+/// The token snapshotted on the candidate pointer.
+pub fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
+    // SAFETY: `cand` was produced by `pinyin_get_candidate` on `instance`
+    // and no later guess invalidated the snapshot.
+    let inst = unsafe { instance_ref(instance) };
+    inst.state
+        .candidates
+        .iter()
+        .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
+        .and_then(|c| c.token.get())
+        .expect("a phrase candidate carries its token")
+        .value()
+}
+
+/// Adds the negation of the loaded facade total to token 0x01000001, so
+/// the total the model divides by wraps to zero (register row 61).
+pub fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
+    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+    let total = unsafe { crate::state::instance_ref(instance) }
+        .core
+        .lm
+        .amplified_total();
+    let total = u32::try_from(total).expect("a guint32 total");
+    assert!(unsafe {
+        pinyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
+    });
+    // SAFETY: as above.
+    let after = unsafe { crate::state::instance_ref(instance) }
+        .core
+        .lm
+        .amplified_total();
+    assert_eq!(after, 0, "the facade total wraps to zero");
 }

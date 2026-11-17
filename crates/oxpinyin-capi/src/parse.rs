@@ -221,16 +221,24 @@ mod tests {
     use rstest::rstest;
 
     use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
+
     use crate::candidates::pinyin_get_candidate;
+
     use crate::config::pinyin_set_options;
+
     use crate::cursor::{
         pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest, pinyin_get_pinyin_key_rest_positions,
         pinyin_get_pinyin_string,
     };
+
     use crate::instance::pinyin_reset;
+
     use crate::sentence::pinyin_guess_candidates;
+
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, key_slot_guard, open};
+
     use crate::text::pinyin_get_full_pinyin_auxiliary_text;
+
     use crate::types::{ChewingKey, ChewingKeyRest, GChar};
 
     /// An apostrophe-only parse under the default options. The pin's
@@ -266,130 +274,6 @@ mod tests {
             unsafe { pinyin_get_parsed_input_length(instance) },
             parsed_length
         );
-
-        unsafe { crate::instance::pinyin_free_instance(instance) };
-        unsafe { crate::context::pinyin_fini(context) };
-    }
-
-    // At 074a2219, pinyin.cpp:1497-1609,2183-2196,2693-2704,2873-2878: parsing
-    // leaves candidate storage alone; guessing and reset free it. Keep the
-    // original C pointers, not just copied text or a row fetched after parse.
-    #[rstest]
-    #[case::full(crate::parse::pinyin_parse_more_full_pinyins, "ni")]
-    #[case::double(crate::parse::pinyin_parse_more_double_pinyins, "ni")]
-    #[case::chewing(crate::parse::pinyin_parse_more_chewings, "su3")]
-    fn reparse_preserves_candidate_strings_until_guess_or_reset(
-        #[case] parse: unsafe extern "C" fn(
-            *mut crate::types::PinyinInstance,
-            *const std::ffi::c_char,
-        ) -> usize,
-        #[case] input: &str,
-    ) {
-        use crate::candidates::{
-            pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
-        };
-        use std::ffi::CStr;
-        use std::ptr;
-
-        let user_dir = TempUserDir::new("candidate-lifetime");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
-            5
-        );
-        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-        let mut count = 0;
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
-        assert!(count > 0);
-        let mut original = ptr::null_mut();
-        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut original) });
-        let mut string = ptr::null();
-        assert!(unsafe { pinyin_get_candidate_string(instance, original, &raw mut string) });
-        assert!(!string.is_null());
-        // SAFETY: the freshly guessed candidate owns a NUL-terminated string.
-        let expected = unsafe { CStr::from_ptr(string) }.to_owned();
-
-        assert_eq!(
-            unsafe { parse(instance, cstr(input).as_ptr()) },
-            input.len()
-        );
-        let mut after = 0;
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
-        assert_eq!(after, count, "a reparse preserves the original list");
-        let mut current = ptr::null_mut();
-        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
-        assert_eq!(current, original);
-        let mut current_string = ptr::null();
-        assert!(unsafe {
-            pinyin_get_candidate_string(instance, original, &raw mut current_string)
-        });
-        assert_eq!(current_string, string);
-        // SAFETY: parsing has preserved the original snapshot, as checked above;
-        // no guess or reset has invalidated either saved pointer.
-        assert_eq!(unsafe { CStr::from_ptr(string) }, expected.as_c_str());
-
-        // A successful guess replaces the old list with the reparsed input's
-        // candidates. Read only newly obtained pointers after this boundary.
-        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
-        assert!(unsafe { pinyin_get_candidate_string(instance, current, &raw mut current_string) });
-        assert_ne!(
-            // SAFETY: this pointer comes from the new candidate list.
-            unsafe { CStr::from_ptr(current_string) },
-            expected.as_c_str()
-        );
-
-        // Even a refused empty-input guess invalidates the preceding list.
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
-        assert!(count > 0);
-        assert_eq!(unsafe { parse(instance, cstr("").as_ptr()) }, 0);
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
-        assert_eq!(after, count);
-        assert!(!unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
-        assert_eq!(after, 0);
-        assert!(!unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
-        assert!(current.is_null());
-
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
-            5
-        );
-        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-        assert!(unsafe { crate::instance::pinyin_reset(instance) });
-        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
-        assert_eq!(after, 0);
-        assert!(!unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
-        assert!(current.is_null());
-        unsafe { crate::instance::pinyin_free_instance(instance) };
-        unsafe { crate::context::pinyin_fini(context) };
-    }
-
-    /// The pin hands the parser the raw bytes (`pinyin.cpp:1498-1509`), so
-    /// valid pinyin before an invalid sequence is consumed and the count is
-    /// the prefix's; the bytes behind the sequence are never reached.
-    #[test]
-    fn invalid_utf8_after_valid_pinyin_keeps_the_parsed_prefix() {
-        let user_dir = TempUserDir::new("invalid-utf8-prefix");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-        for (bytes, consumed) in [
-            (&b"ni\xffhao"[..], 2),
-            (b"nihao\xff", 5),
-            (b"ni\xe4\xbd", 2),
-            (b"\xffnihao", 0),
-        ] {
-            let text = std::ffi::CString::new(bytes).expect("no interior NUL");
-            assert_eq!(
-                unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-                consumed,
-                "{bytes:?}"
-            );
-            assert_eq!(
-                unsafe { pinyin_get_parsed_input_length(instance) },
-                consumed
-            );
-        }
 
         unsafe { crate::instance::pinyin_free_instance(instance) };
         unsafe { crate::context::pinyin_fini(context) };
@@ -450,14 +334,6 @@ mod tests {
         pinyin: Option<String>,
     }
 
-    fn step(key: Option<u16>, span: Option<(u16, u16)>, pinyin: Option<&str>) -> Step {
-        Step {
-            key,
-            span,
-            pinyin: pinyin.map(str::to_owned),
-        }
-    }
-
     /// Every offset from 0 to the parsed length, the calls in `key_walk`'s order.
     fn walk(instance: *mut crate::types::PinyinInstance, parsed: usize) -> Vec<Step> {
         (0..=parsed)
@@ -511,85 +387,10 @@ mod tests {
             .collect()
     }
 
-    /// A key query at offset 0 of an apostrophe-only parse aborts. The column holds the zero key,
-    /// so `_compute_pinyin_start` (`pinyin.cpp:2903-2919` at 074a2219) walks to the reserved
-    /// slot, where `get_item` asserts `row < column->len` (`storage/phonetic_key_matrix.h:115`,
-    /// reached from `pinyin.cpp:2933-2938`). Pin capture of 2026-11-07, runs 1 and 2 identical,
-    /// observations `key-abort/'`, `key-abort/''` and `key-abort/'''`: the parse and the parsed
-    /// length answer the input's length, then the key query ends in SIGABRT.
-    ///
-    /// The abort is an `assert()` on user input, the same root cause as ibus-libpinyin #570.
-    /// A lowercase letter in the parsed prefix avoids the abort, so `ni'`, `'ni`, `a'a` and
-    /// `ni''hao` do not abort.
-    #[rstest]
-    #[case::one("'")]
-    #[case::two("''")]
-    #[case::three("'''")]
-    fn a_key_query_on_an_apostrophe_only_parse_aborts(#[case] input: &str) {
-        let case = ["one", "two", "three"][input.len() - 1];
-        let name = format!(
-            "parse::tests::a_key_query_on_an_apostrophe_only_parse_aborts::case_{}_{case}",
-            input.len()
-        );
-        crate::test_support::assert_aborts(&name, || {
-            let _slots = key_slot_guard();
-            let user_dir = TempUserDir::new("apostrophe-key-abort");
-            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-            let text = cstr(input);
-            assert_eq!(
-                unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-                input.len()
-            );
-            assert_eq!(
-                unsafe { pinyin_get_parsed_input_length(instance) },
-                input.len()
-            );
-            let mut key: *mut ChewingKey = ptr::null_mut();
-            unsafe { pinyin_get_pinyin_key(instance, 0, &raw mut key) };
-        });
-    }
-
-    /// The key walk of `ni` with a trailing apostrophe, then junk or a vowel the parse leaves.
-    /// Pin capture of 2026-11-07, runs 1 and 2 identical, observations `key-walk/ni'`,
-    /// `key-walk/ni'!` and `key-walk/ni'i`, on the default options:
-    /// - the parse consumes `ni'`, 3 bytes: `ni`, then the separator, which places the zero key
-    ///   (`storage/pinyin_parser2.cpp:238-250`);
-    /// - offset 0 is `ni`, packed 43, raw span 0..2;
-    /// - offset 1 is inside the key: no key and no rest (`pinyin.cpp:2930-2931`);
-    /// - offset 2 is the zero key's column: `_compute_pinyin_start` (`:2903-2919`) walks past it
-    ///   to the reserved slot, so the key is the zero key, its rest spans 3..4, and the zero key
-    ///   renders nothing (`storage/chewing_key.cpp:91-116`);
-    /// - offset 3 is the reserved slot, `offset >= matrix.size() - 1` (`:2927-2928`).
-    #[rstest]
-    #[case::trailing("ni'")]
-    #[case::junk("ni'!")]
-    #[case::vowel("ni'i")]
-    fn a_trailing_apostrophe_walks_as_the_pin_does(#[case] input: &str) {
-        let _slots = key_slot_guard();
-        let user_dir = TempUserDir::new("apostrophe-key-walk");
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        let text = cstr(input);
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-            3
-        );
-        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 3);
-        assert_eq!(
-            walk(instance, 3),
-            vec![
-                step(Some(43), Some((0, 2)), Some("ni")),
-                step(None, None, None),
-                step(Some(0), Some((3, 4)), None),
-                step(None, None, None),
-            ]
-        );
-        unsafe { crate::instance::pinyin_free_instance(instance) };
-        unsafe { crate::context::pinyin_fini(context) };
-    }
-
     /// `OPTION_BASE` of `tools/oracle/pin_capture.py`: PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
     /// USE_RESPLIT_TABLE, the base word of the option cases (`pinyin_set_options`, `pinyin.cpp:1299-1307` at 074a2219).
     const OPTION_BASE: u32 = 0x188;
+
     /// PINYIN_CORRECT_ALL | PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH (`pinyin_custom2.h:51-52,79`).
     const OPTION_GATES: u32 = 0x1FE0_1800;
 

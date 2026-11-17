@@ -463,23 +463,4 @@ pub fn snapshot_candidates(
 }
 
 #[cfg(test)]
-mod tests {
-    /// `phonetic_lookup.h:904`: training stores into the failed Berkeley DB
-    /// user bigram container and the pin's `check_result` dies. Only
-    /// running out of memory makes that container, so the training answer
-    /// is handed to the refusal directly.
-    #[test]
-    fn a_store_into_the_failed_user_bigram_aborts_training() {
-        let stderr = crate::test_support::assert_aborts(
-            "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
-            || {
-                super::train_answer(Err(oxpinyin_engine::EngineError::FailedUserBigramStore {
-                    token: 0x0100_0001,
-                }));
-            },
-        );
-        // No Rust panic text or other line: the pin writes none here but
-        // glibc's assert line, the register's policy-accepted missing line.
-        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-    }
-}
+mod tests;

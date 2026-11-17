@@ -15,7 +15,7 @@ They record the default tone refusal, the guess-at-3 abort, and the guess-at-2 c
 
 The `constraint-revalidation` observations force 整个 over its abbreviation `zhg`, on the pinyin facade
 and through libzhuyin's full-pinyin parse. They record the keys of the columns, the forcing, the guesses
-that keep it and the guess on `zh` that clears it. `pinned_data_tests.rs` of each capi crate holds one.
+that keep it and the guess on `zh` that clears it. `tests/it/pinned_data.rs` of each capi crate holds one.
 
 The crates that own the behaviour test the apostrophe inputs natively.
 `crates/oxpinyin-capi/src/parse.rs` and `crates/oxpinyin-zhuyin-capi/src/parse.rs` hold the

@@ -32,7 +32,7 @@ An entry holds nothing else.
 - **Pin:** `pinyin_get_chewing_auxiliary_text` calls `g_utf8_substring(zhuyin, len, end)` with the absolute raw offset `m_raw_end` as `end_pos` (`src/pinyin.cpp:3555-3560`). GLib steps `end_pos - len` scalars with no terminator check (GLib 2.89.4 `glib/gutf8.c:298-322`, `:376-386`), so for an interior cursor the copy passes the NUL and can read past the allocation.
 - **oxpinyin:** `split_zhuyin` (`crates/oxpinyin-capi/src/aux_matrix.rs`) and `chewing_aux_text` (`text.rs`) cut the spelling at scalar `len`, with an empty right half at or past the scalar count. For `len` up to the scalar count the visible bytes are the pin's.
 - **Decision:** accepted, class (b): no safe, deterministic reproduction of the over-read exists.
-- **Tests:** `aux_matrix::tests::chewing_cuts_the_zhuyin_spelling_by_scalar`, `boundary_tests::parse_keys::chewing_auxiliary_text_clamps_a_cursor_past_the_input`.
+- **Tests:** `parse_keys::chewing_cuts_the_zhuyin_spelling_by_scalar`, `parse_keys::chewing_auxiliary_text_clamps_a_cursor_past_the_input`.
 
 ### Unterminated punctuation value over-read
 
@@ -46,21 +46,21 @@ An entry holds nothing else.
 - **Pin:** `pinyin_guess_predicted_candidates` frees every candidate string and empties `m_prefixes` (`src/pinyin.cpp:2420-2423`, `:1335-1344`), then reads `prefix` (`:2424`, `:1389-1398`). When `prefix` is one of the instance's candidate strings, that read is a use after free; the punctuation entry calls it first and returns `true` (`:2459`, `:2498`).
 - **oxpinyin:** `clear_borrowed_prefix` (`crates/oxpinyin-capi/src/predict.rs`) finds the alias by pointer identity before the read, empties the candidates and prefixes, and gives the no-prefix outcome: `false` from the plain entry, `true` with an empty list from the punctuation entry.
 - **Decision:** accepted, class (b): the read of freed storage is not reproduced; the defined parts are the pin's.
-- **Tests:** `e2e_tests::borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers`, `boundary_tests::guess_predict::a_borrowed_punctuation_prefix_answers_true_with_no_row`.
+- **Tests:** `guess_predict::borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers`, `guess_predict::a_borrowed_punctuation_prefix_answers_true_with_no_row`.
 
 ### NULL prediction prefix
 
 - **Pin:** `_compute_prefixes` passes `prefix` to `g_utf8_to_ucs4` with no NULL guard (`src/pinyin.cpp:1389-1398`; GLib 2.84.4 `gutf8.c:950`), after the defined resets of its callers (`:2420-2423`, `:2459`, `:1431-1432`; `src/zhuyin.cpp:912-918`, `:949-953`). A NULL `prefix` dies of SIGSEGV.
 - **oxpinyin:** `ucs4::prefix_text` (`oxpinyin-capi-marshal`) turns a NULL, invalid or empty prefix into `None`: the plain entry answers `false`, the punctuation entry `true` with an empty list, and both sentence entries guess on `[sentence_start]`.
 - **Decision:** accepted, class (b), by maintainer ruling: a NULL prefix is a prefix that adds no token.
-- **Tests:** `boundary_tests::sentence::a_null_sentence_prefix_is_no_prefix`.
+- **Tests:** `sentence::a_null_sentence_prefix_is_no_prefix`.
 
 ### NULL pointer arguments: the pin dereferences, oxpinyin null-guards (policy row 41)
 
 - **Pin:** 68 `pinyin_*` exports dereference a NULL argument before any check: the instance (`src/pinyin.cpp:1312`), the context or iterator (`:509`, `:665`, `:777`, `:1196`), an out-parameter (`:2847`, `:2876`, `:2982`), a candidate in an `assert` (`:2507`, `:2593`), a key (`:2711`, `:2722`, `:2733`, `:2744`). The libzhuyin exports have the same shape.
 - **oxpinyin:** guards the NULL arguments covered by row 41 and returns the entry point’s prescribed refusal. Other NULL cases retain their own rules.
 - **Decision:** accepted, class (b): a NULL dereference is undefined.
-- **Tests:** `e2e_tests::null_handles_answer_false`; `oxpinyin-zhuyin-capi` `boundary_tests::null_arguments::null_arguments_answer_the_declared_value`.
+- **Tests:** `null_arguments::null_handles_answer_false`; `oxpinyin-zhuyin-capi` `null_arguments::null_arguments_answer_the_declared_value`.
 
 ### A guess on an instance whose context was finalised (policy row 42)
 
@@ -74,7 +74,7 @@ An entry holds nothing else.
 - **Pin:** `zhuyin_begin_add_phrases` stores any index (`src/zhuyin.cpp:392-398`), and `_add_phrase` reads `m_sub_phrase_indices[16]` past the 16-entry array (`:475`; `src/storage/phrase_index.cpp:611`, `phrase_index.h:441`) and calls through it: SIGSEGV.
 - **oxpinyin:** `zhuyin_begin_add_phrases` stores any index; `zhuyin_iterator_add_phrase` (`crates/oxpinyin-zhuyin-capi/src/iterators.rs`) answers `false` when index 16 cannot be used by the phrase store.
 - **Decision:** accepted, class (b): an out-of-bounds read through a wild pointer.
-- **Tests:** `boundary_tests::null_arguments::null_arguments_answer_the_declared_value` (includes import at index 16).
+- **Tests:** `null_arguments::null_arguments_answer_the_declared_value` (includes import at index 16).
 
 ### `pinyin_token_get_nth_pronunciation` past the last reading (policy row 51)
 
@@ -88,7 +88,7 @@ An entry holds nothing else.
 - **Pin:** the zhuyin twin of row 51: it appends `phrase_length` keys of an uninitialised buffer and answers `true` (`src/zhuyin.cpp:1793-1811`; `src/storage/phrase_index.cpp:33-44`).
 - **oxpinyin:** answers `true` and appends `phrase_length` zeroed keys (`crates/oxpinyin-zhuyin-capi/src/dict.rs`).
 - **Decision:** accepted, class (b): an uninitialised read.
-- **Tests:** `boundary_tests::token_getters::token_getters_answer_the_pins_ranges_and_outputs` (out-of-range return value).
+- **Tests:** `token_getters::token_getters_answer_the_pins_ranges_and_outputs` (out-of-range return value).
 
 ### `pinyin_alloc_instance` on a finalised context (policy row 60)
 
@@ -110,7 +110,7 @@ An entry holds nothing else.
 - **oxpinyin:** both return at once, with no log, for a context the live-context registry does not hold.
 - **Decision:** accepted, class (b): a double free.
 - **Rejected:** a registry of live instances for a second `*_free_instance` (`pinyin.cpp:1347-1356`, `zhuyin.cpp:876-884`), which would cost time and space on every alloc and free; that call stays caller UB.
-- **Tests:** `e2e_tests::fini_twice_returns_silently` (both C facades).
+- **Tests:** `init_and_save::fini_twice_returns_silently` (`oxpinyin-capi`) and `init_and_save::fini_twice_returns_silently` (`oxpinyin-zhuyin-capi`).
 
 ### A prediction candidate whose phrase item a journal REMOVE took out (policy row 106a, class (b))
 
@@ -145,7 +145,7 @@ An entry holds nothing else.
 - **Pin:** `_token_get_phrase` copies the stored words into `ucs4_t buffer[MAX_PHRASE_LENGTH]` (`src/pinyin.cpp:1633`, `:1639`; `src/zhuyin.cpp:1101`, `:1107`), and both `*_token_get_nth_pronunciation` getters copy the reading into `ChewingKey buffer[MAX_PHRASE_LENGTH]` (`src/pinyin.cpp:2808`, `:2815`; `src/zhuyin.cpp:1800`, `:1807`). A stored phrase length of 17 to 255 writes past the 16-entry stack buffer.
 - **oxpinyin:** answers true and returns the whole item. `*_token_get_phrase` writes the stored length and the UTF-8 of the words before the first zero. `*_token_get_nth_pronunciation` appends all of the reading's keys (`crates/oxpinyin-capi/src/dict.rs`, `crates/oxpinyin-zhuyin-capi/src/dict.rs`).
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result. It needs a crafted chunk or user library; an import refuses a phrase of sixteen characters or more (`src/pinyin.cpp:643-644`).
-- **Tests:** `token_getters_return_a_phrase_longer_than_sixteen_whole` (`crates/oxpinyin-capi/src/boundary_tests/token_getters.rs`, `crates/oxpinyin-zhuyin-capi/src/boundary_tests/token_getters.rs`). Nothing runs on the pin: its result is undefined.
+- **Tests:** `token_getters_return_a_phrase_longer_than_sixteen_whole` (`crates/oxpinyin-capi/tests/it/token_getters.rs`, `crates/oxpinyin-zhuyin-capi/tests/it/token_getters.rs`). Nothing runs on the pin: its result is undefined.
 
 ### Shipped item with a reading past the content end (policy row 130, class (b))
 
@@ -197,7 +197,7 @@ An entry holds nothing else.
 - **Pin:** `SingleGram::retrieve_all` walks with `cur != end` and reads a whole item (`src/storage/ngram.cpp:133-143`, from `src/pinyin.cpp:789-889`), so a value of `4 + 8k + r` bytes, `1 <= r <= 7`, is read past its end.
 - **oxpinyin:** the export walk returns `false` with one `libpinyin` warning when it reaches a predecessor with a partial tail. A mask or candidate removal over such a surviving predecessor answers `false` with one warning; the raw value is kept for save.
 - **Decision:** accepted, class (b): an out-of-bounds read.
-- **Tests:** `e2e_tests::bigram_export_ends_at_a_partial_predecessor`, `e2e_tests::mask_out_refuses_a_partial_bigram_tail`.
+- **Tests:** `import_export::bigram_export_ends_at_a_partial_predecessor`, `user_store::mask_out_refuses_a_partial_bigram_tail`.
 
 ### Training on a malformed user-gram value reads past a partial item (policy row 100, class (b))
 
@@ -262,7 +262,7 @@ An entry holds nothing else.
 - **oxpinyin:** search, suggestion and reading membership use the whole records at every size. Writes preserve the tail bytes.
 - **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
 - **Rejected:** reporting a miss for the entire row loses complete records.
-- **Tests:** `boundary_tests::user_store::a_user_index_row_with_a_partial_record_keeps_its_whole_records` (`oxpinyin-capi`) and `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin-user`).
+- **Tests:** `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin-user`).
 
 ## Accepted divergences — utilities
 
@@ -450,14 +450,14 @@ An entry holds nothing else.
 | `pinyin_save` effect | Pin | oxpinyin |
 | --- | --- | --- |
 | Journal on disk | `_write_files` stages the full payload under the wrapped length. `_rename_files` can publish a journal with broken record boundaries (`src/pinyin.cpp:963-971,1047-1062`). | The encoder refuses before writing any bytes for that record. The save stops before staging that journal, running the rename pass or writing the version marker (`crates/oxpinyin-user/src/persistence.rs:2065-2083,2303-2313`). |
-| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:224-228`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
+| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:189-193`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
 
 ### Key positions past byte 65535
 
 - **Pin:** the double-pinyin and keyboard zhuyin parsers store `int` positions into the `guint16`s of `ChewingKeyRest` (`src/storage/pinyin_parser2.cpp:565`, `zhuyin_parser2.cpp:259`, `chewing_key.h:102-103`), and `fill_matrix` puts each key at its wrapped begin (`phonetic_key_matrix.cpp:51-55`), so the getters answer `false` from column 65536 (`src/pinyin.cpp:2930-2931`).
 - **oxpinyin:** stores the positions `as u16`, as the pin does, but keeps the facade's columns at real offsets.
 - **Decision:** accepted under the [key-positions ruling](compatibility-policy.md#key-positions-past-byte-65535): no IME composition reaches 65536 bytes.
-- **Tests:** `cursor::preedit_key_tests::key_rest_positions_past_byte_65535_wrap`, `oxpinyin-zhuyin-capi` `e2e_tests::key_rest_positions_past_byte_65535_wrap`.
+- **Tests:** `keys::key_rest_positions_past_byte_65535_wrap`, `oxpinyin-zhuyin-capi` `parse_keys::key_rest_positions_past_byte_65535_wrap`.
 - **Candidate bounds:** a candidate's `m_begin` and `m_end` are `guint16` too (`src/pinyin.cpp:103-104`, `src/zhuyin.cpp:83-84`). oxpinyin stores them `as u16` and answers them from `zhuyin_choose_candidate` as the pin does, while a choose reads them against real-offset columns; the same ruling covers it.
 
 ### A candidate pointer that is not a row of a live published list
@@ -465,7 +465,7 @@ An entry holds nothing else.
 - **Pin:** `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` dereference the candidate (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`). A pointer past a regenerated, shorter list reads a stale row only because `GArray` keeps its capacity when the list shrinks.
 - **oxpinyin:** all four read the row directly, as the candidate getters do; a pointer that is not a row of a live instance's published list is a caller precondition violation.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): GLib's retained capacity is a library internal, and in Rust the read is undefined. A row of another live instance's list follows the pin.
-- **Tests:** `foreign_candidate_tests` (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) for rows of other instances; none for an invalid pointer.
+- **Tests:** `tests/it/foreign_candidates.rs` (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) for rows of other instances; none for an invalid pointer.
 
 ### FlexibleBigram unsorted-record search
 
@@ -483,7 +483,7 @@ These entries are pin defects that oxpinyin collects for the libpinyin report-ba
 - **Pin:** `UserTableInfo::load` and `SystemTableInfo2::load` set `LC_NUMERIC` to `"C"` and restore it only on success (`src/storage/table_info.cpp:328`, `:372`, `:197`, `:291`; `save` at `:378`, `:394`), so after any init `LC_NUMERIC` is `"C"`.
 - **oxpinyin:** installs `"C"` with the C library's `setlocale` at the pin's points.
 - **Decision:** reproduced under the [`LC_NUMERIC` ruling](compatibility-policy.md#lc_numeric-after-init-row-39); item 6 of the report drafts.
-- **Tests:** `lc_numeric_follows_the_pins_table_info_sites` (`crates/oxpinyin-capi/tests/locale.rs`), `a_failed_init_leaves_lc_numeric_at_c` (`crates/oxpinyin-zhuyin-capi/tests/locale.rs`).
+- **Tests:** `lc_numeric_follows_the_pins_table_info_sites` (`crates/oxpinyin-capi/tests/it/locale.rs`), `a_failed_init_leaves_lc_numeric_at_c` (`crates/oxpinyin-zhuyin-capi/tests/locale.rs`).
 
 ### Pinyin candidate frequency: out-of-range `float`-to-`guint32` store (class (b))
 
@@ -507,44 +507,44 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 
 | Site | Pin cite | Test |
 |---|---|---|
-| Toned initial-only key in a table search, both facades (row 4) | `storage/pinyin_phrase3.h:152`; `pinyin.cpp:2769` | `boundary_tests::guess_predict::guess_candidates_aborts_on_a_toned_initial`, `boundary_tests::sentence::guess_sentence_aborts_on_a_toned_initial`, `boundary_tests::parse_keys::is_incomplete_aborts_on_a_toned_initial`, `keys::toned_initial_only_key_aborts` |
+| Toned initial-only key in a table search, both facades (row 4) | `storage/pinyin_phrase3.h:152`; `pinyin.cpp:2769` | `guess_predict::guess_candidates_aborts_on_a_toned_initial`, `sentence::guess_sentence_aborts_on_a_toned_initial`, `parse_keys::is_incomplete_aborts_on_a_toned_initial`, `keys::toned_initial_only_key_aborts` |
 | `pinyin_set_double_pinyin_scheme(30)` (row 5a) | `storage/pinyin_parser2.cpp:611` | `contract::double_customized_aborts` |
-| Zhuyin scheme 7 (row 5c) | `storage/zhuyin_parser2.cpp:295` | `contract::zhuyin_standard_dvorak_aborts`, `e2e_tests::the_dvorak_chewing_scheme_aborts` |
-| Zhuyin scheme outside the enum; full-pinyin scheme outside 1 to 3 (row 5d) | `pinyin.cpp:1189`; `zhuyin.cpp:736`; `storage/pinyin_parser2.cpp:398` | `contract::zhuyin_out_of_enum_aborts`, `contract::full_pinyin_out_of_enum_aborts`, `e2e_tests::an_out_of_enum_chewing_scheme_aborts`, `e2e_tests::an_out_of_range_full_pinyin_scheme_aborts` |
-| `*_train` on a stale forcing (row 6) | `lookup/phonetic_lookup.h:868` | `e2e_tests::training_a_stale_forcing_aborts`, `pinned_data_tests::training_a_stale_forced_choice_aborts` |
-| `pinyin_get_sentence` past the rows (row 10) | `pinyin.cpp:1474` | `boundary_tests::sentence::get_sentence_aborts_past_the_rows` |
-| Pinyin left and right offset after a separator or past the matrix (row 14) | `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `storage/phonetic_key_matrix.h:103` | `boundary_tests::parse_keys::left_offset_aborts_after_a_separator`, `boundary_tests::parse_keys::right_offset_aborts_after_a_separator`, `matrix_bound_tests::the_left_move_past_an_early_stopped_parse_aborts`, `matrix_bound_tests::the_right_move_from_past_the_last_column_aborts` |
-| `*_get_character_offset` past the matrix or after a separator (row 19) | `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`; `zhuyin.cpp:2110`, `:2158`, `:1453` | `boundary_tests::parse_keys::character_offset_aborts_on_an_empty_leading_column`, `matrix_bound_tests::the_character_offset_past_the_last_column_aborts`, `matrix_bound_tests::the_character_offset_after_a_separator_aborts`, `matrix_bound_tests::a_null_phrase_past_the_last_column_aborts` (both facades), `boundary_tests::parse_keys::character_offset_on_a_leading_separator_aborts` |
-| `*_parse_full_pinyin` with `'`; pinyin library unload at index 16 or more (row 21) | `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:466`, `:499` | `boundary_tests::parse_keys::full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes`, `e2e_tests::a_single_key_apostrophe_aborts`, `e2e_tests::null_context_unload_phrase_library_orders_assert_first`, `e2e_tests::null_context_unload_addon_phrase_library_aborts_on_index_16` |
-| `pinyin_train` past nonempty results (row 38) | `pinyin.cpp:2684` | `pinned_data_tests::training_one_past_the_nbest_results_aborts` |
-| `*_init` on an unknown `user.conf` database format (row 44) | `storage/table_info.cpp:132`, from `:353-354` | `boundary_tests::init_and_save::init_aborts_on_an_unknown_user_conf_database_format`, `boundary_tests::init_and_save::an_unknown_user_database_format_aborts_and_keeps_user_conf` |
-| `pinyin_choose_candidate` at a nonzero offset without sentence candidates (row 45) | `pinyin.cpp:2566` | `boundary_tests::choose::choose_candidate_aborts_at_offset_one_without_a_sentence` |
-| `pinyin_choose_candidate` of an `NBEST_MATCH_CANDIDATE` row on an instance whose results hold no row 0 or no row at its rank | `pinyin.cpp:2516`, `:2517` | `foreign_candidate_tests::an_nbest_row_on_a_receiver_without_results_aborts` |
-| A searched phrase row with a zero facade total, before the dedup (row 61) | `pinyin.cpp:1859`; `zhuyin.cpp:1261` | `boundary_tests::guess_predict::guess_candidates_aborts_on_a_zero_facade_total`, `boundary_tests::guess_predict::predicted_bigram_rows_abort_on_a_zero_facade_total`, `boundary_tests::sentence_and_candidates::a_zero_facade_total_aborts_the_after_cursor_ranking` |
-| Pinyin library load at index 0 or 8; export iterator reads (row 62) | `pinyin.cpp:457`, `:709`, `:721`, `:902`; `storage/chewing_key.cpp:30-32`, `:48`, `:50` | `boundary_tests::library_loading::load_of_the_reserved_library_aborts`, `boundary_tests::import_export::bigram_get_next_aborts_on_an_empty_export`, `boundary_tests::import_export::export_aborts_on_a_system_reading_with_a_tone_past_the_tones`, `boundary_tests::import_export::export_aborts_on_a_system_reading_with_a_field_outside_the_table`; `e2e_tests::export_iterator_aborts_on_a_reading_it_cannot_spell` |
-| Pinyin key getters on an empty matrix, below `SIZE_MAX`; auxiliary text (row 63) | `storage/phonetic_key_matrix.h:103`; `pinyin.cpp:3311`, `:3488` | `boundary_tests::parse_keys::key_rest_aborts_on_an_empty_matrix`, `boundary_tests::parse_keys::full_auxiliary_text_aborts_on_a_leading_apostrophe`, `boundary_tests::parse_keys::double_auxiliary_text_aborts_three_bytes_into_a_key`; `e2e_tests::the_key_getters_answer_false_at_size_max_on_an_empty_matrix` |
-| A candidate of the wrong row type or a non-user token (row 64) | `pinyin.cpp:2507`, `:2593`, `:2883`, `:3734`, `:3738` | `boundary_tests::choose::choose_candidate_aborts_on_a_predicted_prefix_row`, `boundary_tests::choose::choose_predicted_candidate_aborts_on_a_normal_row`, `boundary_tests::choose::nbest_index_aborts_on_a_normal_row`, `boundary_tests::choose::remove_user_candidate_aborts_on_a_system_token`, `boundary_tests::choose::remove_user_candidate_aborts_on_a_sentence_row` |
-| Pinyin right offset on an empty matrix; candidates two or more past the reserved slot (row 66) | `storage/phonetic_key_matrix.h:103`, through `pinyin.cpp:3085` and `:2226` | `matrix_bound_tests::guess_candidates_past_an_early_stopped_parse_aborts` |
-| Zhuyin library load and unload, key accessors below `SIZE_MAX`, offsets and cursor guesses past the matrix (row 66) | `zhuyin.cpp:372`, `:381`, `:1453`, `:1261`; `storage/phonetic_key_matrix.h:103` | `boundary_tests::init_and_save::loading_library_zero_aborts`, `e2e_tests::null_context_unload_phrase_library_orders_assert_first`, `boundary_tests::parse_keys::key_rest_on_an_empty_matrix_aborts`, `boundary_tests::parse_keys::left_offset_past_the_matrix_aborts`, `boundary_tests::parse_keys::right_offset_past_the_matrix_aborts`, `boundary_tests::parse_keys::left_offset_just_past_a_separator_aborts`, `boundary_tests::parse_keys::right_offset_just_past_a_separator_aborts`, `boundary_tests::parse_keys::key_rest_just_past_a_separator_aborts`, `boundary_tests::sentence_and_candidates::after_cursor_guess_one_past_the_reserved_slot_aborts`, `boundary_tests::sentence_and_candidates::a_zero_facade_total_aborts_the_after_cursor_ranking`, `matrix_bound_tests::a_cursor_over_a_keyless_parse_aborts`; `e2e_tests::the_key_accessors_answer_false_at_size_max_on_an_empty_matrix` |
-| More than four libraries hold a searched string (row 74) | `storage/phrase_large_table3.h:95`, `:106`; `pinyin.cpp:541`, `:1415`, `:2664`, `:3117`; `zhuyin.cpp:427`, `:933`, `:1690`, `:2080` | `boundary_tests::library_tokens::the_prefix_guess_aborts_on_five_tokens`, `boundary_tests::library_tokens::the_prediction_aborts_on_five_tokens`, `boundary_tests::library_tokens::the_character_offset_aborts_on_five_tokens`, `boundary_tests::library_tokens::remember_aborts_on_five_tokens`, `pinned_data_tests::an_import_into_an_unused_library_after_five_aborts`, `pinned_data_tests::a_prefix_guess_over_five_library_tokens_aborts`; `boundary_tests::library_tokens::an_import_aborts_on_five_tokens_before_the_library_refusal` |
-| `*_save` on a chunk header or checksum write (row 77) | `include/memory_chunk.h:543`, `:547` | `boundary_tests::init_and_save::save_aborts_where_the_chunk_header_write_fails`, `boundary_tests::init_and_save::a_save_cut_after_the_chunk_length_word_aborts` |
-| `table.conf` rows and library loads the pin refuses (row 79) | `storage/table_info.cpp:119`, `:132`, `:142`, `:156`, `:175`, `:276`; `pinyin.cpp:388`, `:457`, `:491`; `zhuyin.cpp:330`, `:372`; `include/memory_chunk.h:434`, `:493` | `boundary_tests::init_and_save::init_aborts_on_an_unknown_table_conf_database_format`, `boundary_tests::init_and_save::an_unknown_table_database_format_aborts_before_any_user_file` |
-| `pinyin_remove_user_candidate` on a removal the store refuses (row 81) | `pinyin.cpp:3743`, `:3750`, `:3759` | `boundary_tests::choose::remove_user_candidate_aborts_without_the_phrase_table`; `a_removal_assert_comes_before_the_bigram_fault` |
+| Zhuyin scheme 7 (row 5c) | `storage/zhuyin_parser2.cpp:295` | `contract::zhuyin_standard_dvorak_aborts`, `parse_keys::the_dvorak_chewing_scheme_aborts` |
+| Zhuyin scheme outside the enum; full-pinyin scheme outside 1 to 3 (row 5d) | `pinyin.cpp:1189`; `zhuyin.cpp:736`; `storage/pinyin_parser2.cpp:398` | `contract::zhuyin_out_of_enum_aborts`, `contract::full_pinyin_out_of_enum_aborts`, `parse_keys::an_out_of_enum_chewing_scheme_aborts`, `parse_keys::an_out_of_range_full_pinyin_scheme_aborts` |
+| `*_train` on a stale forcing (row 6) | `lookup/phonetic_lookup.h:868` | `candidates::tests::training_a_stale_forcing_aborts`, `pinned_data::training_a_stale_forced_choice_aborts` |
+| `pinyin_get_sentence` past the rows (row 10) | `pinyin.cpp:1474` | `sentence::get_sentence_aborts_past_the_rows` |
+| Pinyin left and right offset after a separator or past the matrix (row 14) | `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `storage/phonetic_key_matrix.h:103` | `parse_keys::left_offset_aborts_after_a_separator`, `parse_keys::right_offset_aborts_after_a_separator`, `matrix_bounds::the_left_move_past_an_early_stopped_parse_aborts`, `matrix_bounds::the_right_move_from_past_the_last_column_aborts` |
+| `*_get_character_offset` past the matrix or after a separator (row 19) | `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`; `zhuyin.cpp:2110`, `:2158`, `:1453` | `parse_keys::character_offset_aborts_on_an_empty_leading_column`, `matrix_bounds::the_character_offset_past_the_last_column_aborts`, `sentence::tests::the_character_offset_after_a_separator_aborts`, `matrix_bounds::a_null_phrase_past_the_last_column_aborts` (both facades), `parse_keys::character_offset_on_a_leading_separator_aborts` |
+| `*_parse_full_pinyin` with `'`; pinyin library unload at index 16 or more (row 21) | `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:466`, `:499` | `parse_keys::full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes`, `parse_keys::a_single_key_apostrophe_aborts`, `null_arguments::null_context_unload_phrase_library_orders_assert_first`, `null_arguments::null_context_unload_addon_phrase_library_aborts_on_index_16` |
+| `pinyin_train` past nonempty results (row 38) | `pinyin.cpp:2684` | `pinned_data::training_one_past_the_nbest_results_aborts` |
+| `*_init` on an unknown `user.conf` database format (row 44) | `storage/table_info.cpp:132`, from `:353-354` | `init_and_save::init_aborts_on_an_unknown_user_conf_database_format`, `init_and_save::an_unknown_user_database_format_aborts_and_keeps_user_conf` |
+| `pinyin_choose_candidate` at a nonzero offset without sentence candidates (row 45) | `pinyin.cpp:2566` | `choose::choose_candidate_aborts_at_offset_one_without_a_sentence` |
+| `pinyin_choose_candidate` of an `NBEST_MATCH_CANDIDATE` row on an instance whose results hold no row 0 or no row at its rank | `pinyin.cpp:2516`, `:2517` | `foreign_candidates::an_nbest_row_on_a_receiver_without_results_aborts` |
+| A searched phrase row with a zero facade total, before the dedup (row 61) | `pinyin.cpp:1859`; `zhuyin.cpp:1261` | `sentence::tests::guess_candidates_aborts_on_a_zero_facade_total`, `predict::tests::predicted_bigram_rows_abort_on_a_zero_facade_total`, `sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking` |
+| Pinyin library load at index 0 or 8; export iterator reads (row 62) | `pinyin.cpp:457`, `:709`, `:721`, `:902`; `storage/chewing_key.cpp:30-32`, `:48`, `:50` | `library_loading::load_of_the_reserved_library_aborts`, `import_export::bigram_get_next_aborts_on_an_empty_export`, `boundary_tests::import_export::export_aborts_on_a_system_reading_with_a_tone_past_the_tones`, `boundary_tests::import_export::export_aborts_on_a_system_reading_with_a_field_outside_the_table`; `iterators::tests::export_iterator_aborts_on_a_reading_it_cannot_spell` |
+| Pinyin key getters on an empty matrix, below `SIZE_MAX`; auxiliary text (row 63) | `storage/phonetic_key_matrix.h:103`; `pinyin.cpp:3311`, `:3488` | `parse_keys::key_rest_aborts_on_an_empty_matrix`, `parse_keys::full_auxiliary_text_aborts_on_a_leading_apostrophe`, `parse_keys::double_auxiliary_text_aborts_three_bytes_into_a_key`; `parse_keys::the_key_getters_answer_false_at_size_max_on_an_empty_matrix` |
+| A candidate of the wrong row type or a non-user token (row 64) | `pinyin.cpp:2507`, `:2593`, `:2883`, `:3734`, `:3738` | `choose::choose_candidate_aborts_on_a_predicted_prefix_row`, `choose::choose_predicted_candidate_aborts_on_a_normal_row`, `choose::nbest_index_aborts_on_a_normal_row`, `choose::remove_user_candidate_aborts_on_a_system_token`, `choose::remove_user_candidate_aborts_on_a_sentence_row` |
+| Pinyin right offset on an empty matrix; candidates two or more past the reserved slot (row 66) | `storage/phonetic_key_matrix.h:103`, through `pinyin.cpp:3085` and `:2226` | `matrix_bounds::guess_candidates_past_an_early_stopped_parse_aborts` |
+| Zhuyin library load and unload, key accessors below `SIZE_MAX`, offsets and cursor guesses past the matrix (row 66) | `zhuyin.cpp:372`, `:381`, `:1453`, `:1261`; `storage/phonetic_key_matrix.h:103` | `init_and_save::loading_library_zero_aborts`, `null_arguments::null_context_unload_phrase_library_orders_assert_first`, `parse_keys::key_rest_on_an_empty_matrix_aborts`, `parse_keys::left_offset_past_the_matrix_aborts`, `parse_keys::right_offset_past_the_matrix_aborts`, `parse_keys::left_offset_just_past_a_separator_aborts`, `parse_keys::right_offset_just_past_a_separator_aborts`, `parse_keys::key_rest_just_past_a_separator_aborts`, `sentence_and_candidates::after_cursor_guess_one_past_the_reserved_slot_aborts`, `sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking`, `matrix_bounds::a_cursor_over_a_keyless_parse_aborts`; `parse_keys::the_key_accessors_answer_false_at_size_max_on_an_empty_matrix` |
+| More than four libraries hold a searched string (row 74) | `storage/phrase_large_table3.h:95`, `:106`; `pinyin.cpp:541`, `:1415`, `:2664`, `:3117`; `zhuyin.cpp:427`, `:933`, `:1690`, `:2080` | `library_tokens::the_prefix_guess_aborts_on_five_tokens`, `library_tokens::the_prediction_aborts_on_five_tokens`, `library_tokens::the_character_offset_aborts_on_five_tokens`, `library_tokens::remember_aborts_on_five_tokens`, `pinned_data_tests::an_import_into_an_unused_library_after_five_aborts`, `pinned_data::a_prefix_guess_over_five_library_tokens_aborts`; `boundary_tests::library_tokens::an_import_aborts_on_five_tokens_before_the_library_refusal` |
+| `*_save` on a chunk header or checksum write (row 77) | `include/memory_chunk.h:543`, `:547` | `init_and_save::save_aborts_where_the_chunk_header_write_fails`, `init_and_save::a_save_cut_after_the_chunk_length_word_aborts` |
+| `table.conf` rows and library loads the pin refuses (row 79) | `storage/table_info.cpp:119`, `:132`, `:142`, `:156`, `:175`, `:276`; `pinyin.cpp:388`, `:457`, `:491`; `zhuyin.cpp:330`, `:372`; `include/memory_chunk.h:434`, `:493` | `init_and_save::init_aborts_on_an_unknown_table_conf_database_format`, `init_and_save::an_unknown_table_database_format_aborts_before_any_user_file` |
+| `pinyin_remove_user_candidate` on a removal the store refuses (row 81) | `pinyin.cpp:3743`, `:3750`, `:3759` | `choose::remove_user_candidate_aborts_without_the_phrase_table`; `a_removal_assert_comes_before_the_bigram_fault` |
 | `*_train` after a re-parse past the matrix (row 82) | `storage/phonetic_key_matrix.cpp:661`, `:663`, `:664` | `session::tests::train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length` |
-| `*_mask_out` on an over-long user index key (rows 84, 94) | `storage/chewing_large_table2_bdb.cpp:529` (kc `:499`, tkrzw `:466`) | `boundary_tests::user_store::mask_out_aborts_on_an_overlong_index_key_before_the_reload`, `boundary_tests::user_store::mask_out_aborts_on_an_empty_index_key`, `boundary_tests::import_and_user_store::mask_out_over_an_overlong_user_index_key_aborts` |
-| `pinyin_guess_candidates` LONGER walk on an over-long index key (rows 84, 95) | `storage/chewing_large_table2_bdb.cpp:282` (kc `:269`, tkrzw `:252`) | `boundary_tests::user_store::guess_candidates_aborts_on_an_overlong_index_key`; `boundary_tests::import_and_user_store::cursor_guesses_ignore_an_overlong_user_index_key` |
-| A user-bigram key that is not a token (row 86) | `storage/ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`) | `boundary_tests::user_store::mask_out_aborts_on_a_non_token_bigram_key`, `boundary_tests::user_store::bigram_export_aborts_on_a_non_token_key`, `boundary_tests::import_and_user_store::mask_out_over_a_non_token_bigram_key_aborts` |
-| A residual user-bigram gram at mask-out or removal (row 87) | `storage/ngram.cpp:70`, through `ngram_bdb.cpp:243` | `boundary_tests::user_store::mask_out_aborts_on_a_residual_bigram_gram`, `boundary_tests::choose::remove_user_candidate_aborts_on_a_residual_bigram_gram`, `boundary_tests::import_and_user_store::mask_out_over_a_residual_bigram_gram_aborts` |
-| An empty bigram gram in a prediction (row 88) | `storage/ngram.cpp:70`, through `pinyin.cpp:2332` | `boundary_tests::guess_predict::prediction_aborts_on_an_item_less_gram_with_a_total` |
-| Zhuyin import token checks (rows 89, 90, 104) | `zhuyin.cpp:440`, `:454`, `:457` | `boundary_tests::import_and_user_store::adding_a_phrase_with_two_library_tokens_aborts`, `boundary_tests::import_and_user_store::adding_a_phrase_whose_index_token_has_other_text_aborts`, `boundary_tests::import_and_user_store::adding_a_user_phrase_again_after_a_reload_aborts` |
-| Pinyin import token checks (row 93) | `pinyin.cpp:554`, `:568`, `:571` | `boundary_tests::library_tokens::import_aborts_on_two_tokens_of_one_library`, `e2e_tests::remember_user_input_aborts_on_two_same_library_tokens`, `e2e_tests::remember_user_input_aborts_on_an_item_length_mismatch`, `e2e_tests::remember_user_input_aborts_on_an_item_text_mismatch` |
-| A journal header record with a token, at init, reload or mask-out (row 91) | `storage/phrase_index_logger.h:202` | `e2e_tests::reload_aborts_on_a_log_header_token` (both facades), `e2e_tests::init_aborts_on_a_log_header_token` (both facades); `a_bad_log_aborts_before_a_later_library_that_cannot_map` |
-| More than one journal header at mask-out (row 92) | `storage/phrase_index.cpp:745` | `boundary_tests::user_store::mask_out_aborts_on_two_log_headers_and_leaves_the_files` |
+| `*_mask_out` on an over-long user index key (rows 84, 94) | `storage/chewing_large_table2_bdb.cpp:529` (kc `:499`, tkrzw `:466`) | `user_store::mask_out_aborts_on_an_overlong_index_key_before_the_reload`, `boundary_tests::user_store::mask_out_aborts_on_an_empty_index_key`, `import_and_user_store::mask_out_over_an_overlong_user_index_key_aborts` |
+| `pinyin_guess_candidates` LONGER walk on an over-long index key (rows 84, 95) | `storage/chewing_large_table2_bdb.cpp:282` (kc `:269`, tkrzw `:252`) | `user_store::guess_candidates_aborts_on_an_overlong_index_key`; `import_and_user_store::cursor_guesses_ignore_an_overlong_user_index_key` |
+| A user-bigram key that is not a token (row 86) | `storage/ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`) | `user_store::mask_out_aborts_on_a_non_token_bigram_key`, `user_store::bigram_export_aborts_on_a_non_token_key`, `import_and_user_store::mask_out_over_a_non_token_bigram_key_aborts` |
+| A residual user-bigram gram at mask-out or removal (row 87) | `storage/ngram.cpp:70`, through `ngram_bdb.cpp:243` | `user_store::mask_out_aborts_on_a_residual_bigram_gram`, `choose::remove_user_candidate_aborts_on_a_residual_bigram_gram`, `import_and_user_store::mask_out_over_a_residual_bigram_gram_aborts` |
+| An empty bigram gram in a prediction (row 88) | `storage/ngram.cpp:70`, through `pinyin.cpp:2332` | `guess_predict::prediction_aborts_on_an_item_less_gram_with_a_total` |
+| Zhuyin import token checks (rows 89, 90, 104) | `zhuyin.cpp:440`, `:454`, `:457` | `import_and_user_store::adding_a_phrase_with_two_library_tokens_aborts`, `boundary_tests::import_and_user_store::adding_a_phrase_whose_index_token_has_other_text_aborts`, `boundary_tests::import_and_user_store::adding_a_user_phrase_again_after_a_reload_aborts` |
+| Pinyin import token checks (row 93) | `pinyin.cpp:554`, `:568`, `:571` | `library_tokens::import_aborts_on_two_tokens_of_one_library`, `user_store::remember_user_input_aborts_on_two_same_library_tokens`, `e2e_tests::remember_user_input_aborts_on_an_item_length_mismatch`, `e2e_tests::remember_user_input_aborts_on_an_item_text_mismatch` |
+| A journal header record with a token, at init, reload or mask-out (row 91) | `storage/phrase_index_logger.h:202` | `library_loading::reload_aborts_on_a_log_header_token` (`oxpinyin-capi`), `init_and_save::reload_aborts_on_a_log_header_token` (`oxpinyin-zhuyin-capi`), `init_and_save::init_aborts_on_a_log_header_token` (`oxpinyin-capi`); `a_bad_log_aborts_before_a_later_library_that_cannot_map` |
+| More than one journal header at mask-out (row 92) | `storage/phrase_index.cpp:745` | `user_store::mask_out_aborts_on_two_log_headers_and_leaves_the_files` |
 | A kept ADD or REMOVE record at mask-out (row 97) | `storage/phrase_index_logger.h:245`, `:257`, through `storage/phrase_index.cpp:838` | `mask_out_aborts_on_a_surviving_add` |
 | A journal ADD payload under six bytes (row 108) | `include/memory_chunk.h:390`, through `storage/phrase_index.cpp:457`, `:215` and `:778`-`:795` | `a_short_add_payload_is_the_load_fault` |
-| A user-bigram value under four bytes, at mask-out, removal, prediction, training, lookup or export (row 85) | `include/memory_chunk.h:390`, through `storage/ngram.cpp:48-51`, `:80`, `:62-70`, `:133-141`, `:165`, `:303-304`; `lookup/phonetic_lookup.h:884`, `:903` | `e2e_tests::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, `e2e_tests::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one`; `mask_out_aborts_on_a_short_bigram_value`; `e2e_tests::a_short_sentence_start_gram_aborts_the_guess_after_parsing` |
+| A user-bigram value under four bytes, at mask-out, removal, prediction, training, lookup or export (row 85) | `include/memory_chunk.h:390`, through `storage/ngram.cpp:48-51`, `:80`, `:62-70`, `:133-141`, `:165`, `:303-304`; `lookup/phonetic_lookup.h:884`, `:903` | `import_export::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, `import_export::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one`; `mask_out_aborts_on_a_short_bigram_value`; `sentence::a_short_sentence_start_gram_aborts_the_guess_after_parsing` |
 | A system library that is a directory, from 8 bytes of reported size (row 96) | `include/memory_chunk.h:493`, through `pinyin.cpp:255`, `:289`, `:955`, `:1264`; `zhuyin.cpp:199`, `:588`, `:799` | `{init,save,mask_out,reload}_aborts_on_a_directory_library`, `addon_load_aborts_on_a_directory_library` |
-| A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `phrase::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
+| A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `sentence::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
 | A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `boundary_tests::table_reads::a_pinyin_table_body_read_failure_after_the_check_aborts` |
 | A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `boundary_tests::table_reads::a_phrase_table_body_read_failure_after_the_check_aborts` |
 

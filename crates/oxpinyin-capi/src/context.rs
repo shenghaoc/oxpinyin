@@ -82,41 +82,6 @@ pub unsafe extern "C" fn pinyin_init(
     init_context(systemdir, userdir)
 }
 
-/// Test-only: overwrite a user-bigram successor count by phrase text.
-///
-/// Public `pinyin_train` first-seeds 69 (`23 * 3`), so
-/// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
-/// reached through the C ABI. Looks up `prev` and `cur` in the user
-/// phrase index.
-#[cfg(test)]
-pub(crate) fn oxpinyin_test_set_user_bigram(
-    context: *mut PinyinContext,
-    prev: *const c_char,
-    cur: *const c_char,
-    count: u64,
-) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
-    let user = ctx.core.user_store_mut();
-    let prev_text =
-        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(prev))
-            .unwrap_or_default();
-    let cur_text =
-        oxpinyin_capi_marshal::input::scalar_text(oxpinyin_capi_marshal::borrow_c_string!(cur))
-            .unwrap_or_default();
-    let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
-        return false;
-    };
-    let Some(cur_tok) = user.token_for_phrase(&cur_text).ok().flatten() else {
-        return false;
-    };
-    user.set_bigram_count(prev_tok, cur_tok, count).is_ok()
-}
-
 /// Finalize and free a pinyin context.
 ///
 /// # C signature
@@ -229,57 +194,4 @@ pub unsafe extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    #![expect(
-        clippy::undocumented_unsafe_blocks,
-        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
-    )]
-
-    use super::pinyin_init;
-    use crate::test_support::{TempSystemDir, TempUserDir, cstr};
-
-    /// The session could not be built once the library loop had handed it
-    /// the system libraries (`OpenError::UserSession`): the pin dies at each
-    /// counterpart. No input makes those steps fail, so the open's answer
-    /// is handed to the init's refusal directly.
-    #[test]
-    fn a_user_session_fault_aborts_the_init() {
-        let stderr = crate::test_support::assert_aborts(
-            "context::tests::a_user_session_fault_aborts_the_init",
-            || {
-                let error = oxpinyin_facade::OpenFailure::Runtime(
-                    oxpinyin_runtime::OpenError::UserSession(
-                        oxpinyin_user::UserStoreError::SessionSeed("injected".into()),
-                    ),
-                );
-                super::refuse_init(&error, std::path::Path::new("system"));
-            },
-        );
-        // No Rust panic text or other line: the pin writes none here but
-        // glibc's assert line, the register's policy-accepted missing line.
-        assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-    }
-
-    #[test]
-    fn public_init_missing_pinyin_index_follows_backend_attach() {
-        let system = TempSystemDir::new("no-dbms");
-        for entry in std::fs::read_dir(&system.path).expect("dir") {
-            let path = entry.expect("entry").path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with("pinyin_index") {
-                std::fs::remove_file(&path).expect("remove");
-            }
-        }
-        let user = TempUserDir::new("no-dbms-user");
-        let context = unsafe {
-            pinyin_init(
-                cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-                cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-            )
-        };
-        // Every backend keeps the failed native object: the pin ignores the
-        // attach's answer (pinyin.cpp:357 at 074a2219) and fini closes it.
-        assert!(!context.is_null(), "the pin ignores a failed system attach");
-        unsafe { crate::context::pinyin_fini(context) };
-    }
-}
+mod tests;

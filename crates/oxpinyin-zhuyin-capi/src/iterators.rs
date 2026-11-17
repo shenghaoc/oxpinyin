@@ -199,3 +199,6 @@ pub unsafe extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
     let context = unsafe { owner_mut(owner) };
     context.core.end_import();
 }
+
+#[cfg(test)]
+mod tests;

@@ -165,41 +165,6 @@ fn a_save_after_an_import_into_a_failed_layout_journals_the_item_sum() {
     assert_eq!((u64::from(word(10)), word(14)), (total, 27));
 }
 
-/// `load_phrase_library(0)` asserts on the reserved library.
-#[test]
-fn load_of_the_reserved_library_aborts() {
-    assert_aborts(
-        "boundary_tests::library_loading::load_of_the_reserved_library_aborts",
-        || {
-            let user = TempUserDir::new("load-library-0");
-            let (context, _) = open_at(&user.path);
-            unsafe { pinyin_load_phrase_library(context, 0) };
-        },
-    );
-}
-
-/// Pinyin unloads only the GBK library on a live context: libraries 1, 15
-/// and 7 answer false, the user library keeps its items, and loading 7
-/// answers false.
-#[test]
-fn pinyin_unloads_only_the_gbk_library() {
-    let user = TempUserDir::new("unload-gate");
-    let (context, instance) = open_at(&user.path);
-    assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
-    let token = lookup(instance, "龘龘")[0];
-    for library in [1, 15, 7] {
-        assert!(
-            !unsafe { crate::config::pinyin_unload_phrase_library(context, library) },
-            "unload {library}"
-        );
-    }
-    let mut count = UNTOUCHED;
-    assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
-    assert_eq!(count, 1);
-    assert!(!unsafe { pinyin_load_phrase_library(context, 7) });
-    close(context, instance);
-}
-
 /// The GBK-library tokens of the current candidate list.
 fn gbk_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.

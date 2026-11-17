@@ -6,7 +6,7 @@
 //!
 //! Per the postconditions defined there: no per-call assertions on
 //! return values — valid-sequence contracts are pinned by
-//! `crates/oxpinyin-capi/tests/abi/contract.rs`; here a finding is any abort, panic, or sanitizer
+//! `crates/oxpinyin-capi/tests/it/contract.rs`; here a finding is any abort, panic, or sanitizer
 //! report (cargo-fuzz's default `-s address` instrumentation includes
 //! LeakSanitizer on Linux). Mispaired iterator lifecycles are UB by
 //! contract, so every begin reaches its end within the same
@@ -116,7 +116,7 @@ fn session() -> &'static Session {
     SESSION.get_or_init(|| {
         // The compiled-in backend's own fixture directory — the same
         // contract as the capi suites' system_dir() twins (crates/
-        // oxpinyin-capi/src/test_support.rs, tests/abi/common.rs):
+        // oxpinyin-capi/src/test_support.rs, tests/it/support.rs):
         // fixtures/w3 carries one complete DBM set per backend under its
         // DEFAULT_STORE_EXT subdirectory, and the runtime opens only that
         // backend's files. Passing the fixtures/w3 root asks for DBMs that
