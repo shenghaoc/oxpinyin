@@ -702,18 +702,6 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     return 0 if not failed else 1
 
 
-def sanitize_toolchain():
-    """Print the single sanitizer nightly for callers that select the toolchain.
-
-    Return 0, or 1 with a diagnostic when the toolchain file is missing.
-    """
-    try:
-        print(sanitizer_nightly())
-    except FileNotFoundError:
-        print(_toolchain_file_missing('sanitize-toolchain'), file=sys.stderr, flush=True)
-        return 1
-    return 0
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run the CI Python harness suite.')
     parser.add_argument('files', nargs='*', metavar='FILE')

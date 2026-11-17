@@ -323,7 +323,7 @@ class Provision:
 
     def cargo_tools(self):
         """Keep tools at their floors or install their crates.io fallbacks: a pinned version, or the newest release."""
-        for crate, pin in doctor.CARGO_TOOL_PINS.items():
+        for crate, pin in doctor.cargo_tool_pins(self.root).items():
             tool = doctor.cargo_tool(crate, self.root)
             if self.accepted(tool):
                 continue

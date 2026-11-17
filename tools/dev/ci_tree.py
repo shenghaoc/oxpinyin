@@ -114,6 +114,7 @@ RUST_READS = (
 SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/codegen/string_tables.rs", "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
+        "vcpkg-overlays", "triplets",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and

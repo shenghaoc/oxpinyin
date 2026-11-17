@@ -116,7 +116,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_cargo_c_fallback_is_separate_from_the_installed_floor(self):
         self.assertEqual(doctor.cargo_tool('cargo-c').minimum, '0.10.11')
-        self.assertEqual(doctor.CARGO_TOOL_PINS['cargo-c'], '0.10.25')
+        self.assertEqual(doctor.cargo_tool_pins()['cargo-c'], '0.10.25')
 
     def test_python_outside_the_series_is_refused(self):
         for numbers, level, found in (((3, 13, 7), 'final', '3.13.7'),
