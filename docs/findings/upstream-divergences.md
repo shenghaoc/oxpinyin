@@ -450,7 +450,7 @@ An entry holds nothing else.
 | `pinyin_save` effect | Pin | oxpinyin |
 | --- | --- | --- |
 | Journal on disk | `_write_files` stages the full payload under the wrapped length. `_rename_files` can publish a journal with broken record boundaries (`src/pinyin.cpp:963-971,1047-1062`). | The encoder refuses before writing any bytes for that record. The save stops before staging that journal, running the rename pass or writing the version marker (`crates/oxpinyin-user/src/persistence.rs:2065-2083,2303-2313`). |
-| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:209-213`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
+| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:224-228`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
 
 ### Key positions past byte 65535
 

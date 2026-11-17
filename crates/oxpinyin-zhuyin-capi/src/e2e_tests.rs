@@ -13,6 +13,11 @@
 //! session buffer `ni3'hao3`), the same composition the cursor tests in
 //! `lib.rs` pin.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::os::raw::c_char;
 use std::ptr;
 
@@ -38,12 +43,12 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     .unwrap();
     let system = crate::test_support::cstr(system.to_str().unwrap());
     let user_name = crate::test_support::cstr(user.to_str().unwrap());
-    let context = crate::context::zhuyin_init(system.as_ptr(), user_name.as_ptr());
+    let context = unsafe { crate::context::zhuyin_init(system.as_ptr(), user_name.as_ptr()) };
     assert!(!context.is_null());
     // End arms the writer without changing the phrase data.
-    zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY));
-    assert!(zhuyin_save(context));
-    crate::context::zhuyin_fini(context);
+    unsafe { zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY)) };
+    assert!(unsafe { zhuyin_save(context) });
+    unsafe { crate::context::zhuyin_fini(context) };
     assert!(user.join("user.conf").is_file());
 }
 
@@ -76,28 +81,24 @@ fn partial_candidate_gram_logs_once() {
     gram.push(1);
     crate::test_support::plant_bigram(&user.path, vec![(token.to_le_bytes().to_vec(), gram)]);
     let (context, instance) = open_with_user(&user.path);
-    assert!(crate::config::zhuyin_set_options(
-        context,
-        oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits()
-    ));
-    assert!(!crate::sentence::zhuyin_guess_sentence_with_prefix(
-        instance,
-        c"你好".as_ptr()
-    ));
+    assert!(unsafe {
+        crate::config::zhuyin_set_options(context, oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits())
+    });
+    assert!(!unsafe {
+        crate::sentence::zhuyin_guess_sentence_with_prefix(instance, c"你好".as_ptr())
+    });
     assert_eq!(
-        crate::parse::zhuyin_parse_more_full_pinyins(instance, c"hao".as_ptr()),
+        unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, c"hao".as_ptr()) },
         3
     );
     let logs = LogCapture::new();
-    assert!(!crate::sentence::zhuyin_guess_candidates_after_cursor(
-        instance, 0
-    ));
+    assert!(!unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
     assert_eq!(
         logs.take(),
         [(Some("libzhuyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
     );
     let mut count = u32::MAX;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(count, 0);
     close(context, instance);
 }
@@ -112,9 +113,9 @@ fn train_records_the_pinned_doubling_sequence() {
 
     let first = candidate(instance, "su3cl3", 0);
     let t1 = token_of(instance, first);
-    assert!(zhuyin_choose_candidate(instance, 0, first) > 0);
+    assert!(unsafe { zhuyin_choose_candidate(instance, 0, first) } > 0);
     assert!(
-        !zhuyin_train(instance),
+        !unsafe { zhuyin_train(instance) },
         "a choose without decoded results refuses"
     );
     // The system item's live count, as the chunk shipped it.
@@ -124,8 +125,8 @@ fn train_records_the_pinned_doubling_sequence() {
     });
 
     // 69 on first selection; the predecessor is sentence_start.
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_train(instance) });
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 69);
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
@@ -133,13 +134,13 @@ fn train_records_the_pinned_doubling_sequence() {
     });
 
     // 138 on reselection (count 207), then 414 (count 621).
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_train(instance) });
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 207);
     });
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_train(instance) });
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 621);
         assert_eq!(store.system_unigram(t1), Some(shipped + 483 + 966 + 2898));
@@ -148,13 +149,13 @@ fn train_records_the_pinned_doubling_sequence() {
     // A new composition starts fresh at sentence_start: the explicit
     // reset (the frontend's reset-on-commit contract), then a different
     // row trains from 69 again with no cross-sentence bigram.
-    assert!(zhuyin_reset(instance));
+    assert!(unsafe { zhuyin_reset(instance) });
     let second = candidate(instance, "su3cl3", 1);
     let t2 = token_of(instance, second);
     assert_ne!(t1, t2, "distinct rows carry distinct tokens");
-    assert!(zhuyin_choose_candidate(instance, 0, second) > 0);
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_train(instance));
+    assert!(unsafe { zhuyin_choose_candidate(instance, 0, second) } > 0);
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_train(instance) });
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t2).unwrap(), 69);
         assert_eq!(store.bigram_count(t1, t2).unwrap(), 0);
@@ -166,7 +167,7 @@ fn train_records_the_pinned_doubling_sequence() {
 /// The decoded sentence of n-best row 0.
 fn sentence_of(instance: *mut crate::types::ZhuyinInstance) -> String {
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
     take_sentence(sentence)
 }
 
@@ -176,11 +177,7 @@ fn unigrams_of(instance: *mut crate::types::ZhuyinInstance, tokens: &[u32]) -> V
         .iter()
         .map(|&token| {
             let mut freq = 0;
-            assert!(zhuyin_token_get_unigram_frequency(
-                instance,
-                token,
-                &raw mut freq
-            ));
+            assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
             freq
         })
         .collect()
@@ -207,8 +204,11 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     let (context, instance) = open_with_user(&user_dir.path);
     let logs = LogCapture::new();
     let input = cstr("su3cl3");
-    assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
-    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(
+        unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
+        6
+    );
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
     let sentence = sentence_of(instance);
     // Every token of the sentence and of each of its characters: the
     // decoded row's tokens are among them, whatever its segmentation.
@@ -220,7 +220,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     let unigrams = unigrams_of(instance, &tokens);
 
     assert!(
-        zhuyin_train(instance),
+        unsafe { zhuyin_train(instance) },
         "the live sentence result admits the train"
     );
     assert_eq!(unigrams_of(instance, &tokens), unigrams, "no unigram moved");
@@ -228,11 +228,14 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     with_store(instance, |store| {
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
     });
-    assert!(zhuyin_guess_sentence(instance));
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert_eq!(sentence_of(instance), sentence, "a fresh decode");
 
-    assert!(zhuyin_save(context), "the train armed the save");
-    assert!(!zhuyin_save(context), "the save cleared the flag");
+    assert!(unsafe { zhuyin_save(context) }, "the train armed the save");
+    assert!(
+        !unsafe { zhuyin_save(context) },
+        "the save cleared the flag"
+    );
     assert_eq!(logs.take(), Vec::new(), "no diagnostics");
     drop(logs);
     close(context, instance);
@@ -288,9 +291,9 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     // refusing, never to a write.
     let (context, instance) = open();
     let chosen = candidate(instance, "su3cl3", 0);
-    assert!(zhuyin_choose_candidate(instance, 0, chosen) > 0);
+    assert!(unsafe { zhuyin_choose_candidate(instance, 0, chosen) } > 0);
     assert!(
-        !zhuyin_train(instance),
+        !unsafe { zhuyin_train(instance) },
         "NULL user directory refuses training"
     );
     close(context, instance);
@@ -302,37 +305,22 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
 
     let user_dir = TempUserDir::new("dict-unigram-zero");
     let (context, instance) = open_with_user(&user_dir.path);
-    let iter = zhuyin_begin_add_phrases(context, USER_DICTIONARY);
+    let iter = unsafe { zhuyin_begin_add_phrases(context, USER_DICTIONARY) };
     assert!(!iter.is_null());
-    assert!(zhuyin_iterator_add_phrase(
-        iter,
-        cstr("网词").as_ptr(),
-        cstr("ㄨㄤˇ ㄘˊ").as_ptr(),
-        0,
-    ));
-    zhuyin_end_add_phrases(iter);
+    assert!(unsafe {
+        zhuyin_iterator_add_phrase(iter, cstr("网词").as_ptr(), cstr("ㄨㄤˇ ㄘˊ").as_ptr(), 0)
+    });
+    unsafe { zhuyin_end_add_phrases(iter) };
     let token = with_store(instance, |store| store.phrases()[0].token());
     assert_eq!(token >> 24, u32::from(USER_DICTIONARY));
     let mut freq = u32::MAX;
-    assert!(zhuyin_token_get_unigram_frequency(
-        instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
     assert_eq!(freq, 0);
     freq = u32::MAX;
-    assert!(!zhuyin_token_get_unigram_frequency(
-        instance,
-        token + 1,
-        &raw mut freq
-    ));
+    assert!(!unsafe { zhuyin_token_get_unigram_frequency(instance, token + 1, &raw mut freq) });
     assert_eq!(freq, 0);
-    assert!(zhuyin_token_add_unigram_frequency(instance, token, 7));
-    assert!(zhuyin_token_get_unigram_frequency(
-        instance,
-        token,
-        &raw mut freq
-    ));
+    assert!(unsafe { zhuyin_token_add_unigram_frequency(instance, token, 7) });
+    assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
     assert_eq!(freq, 7);
     close(context, instance);
 }
@@ -343,29 +331,29 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
 fn null_and_empty_inputs_are_refused() {
     // Empty system dir: init's NULL.
     let empty = cstr("");
-    assert!(zhuyin_init(empty.as_ptr(), empty.as_ptr()).is_null());
+    assert!(unsafe { zhuyin_init(empty.as_ptr(), empty.as_ptr()) }.is_null());
 
     // Null handles: every entry point answers its false shape.
-    assert!(zhuyin_alloc_instance(ptr::null_mut()).is_null());
-    assert!(!zhuyin_train(ptr::null_mut()));
-    assert!(!zhuyin_guess_sentence(ptr::null_mut()));
+    assert!(unsafe { zhuyin_alloc_instance(ptr::null_mut()) }.is_null());
+    assert!(!unsafe { zhuyin_train(ptr::null_mut()) });
+    assert!(!unsafe { zhuyin_guess_sentence(ptr::null_mut()) });
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(!zhuyin_get_sentence(ptr::null_mut(), &raw mut sentence));
+    assert!(!unsafe { zhuyin_get_sentence(ptr::null_mut(), &raw mut sentence) });
     let mut count = 0;
-    assert!(!zhuyin_get_n_candidate(ptr::null_mut(), &raw mut count));
+    assert!(!unsafe { zhuyin_get_n_candidate(ptr::null_mut(), &raw mut count) });
     assert_eq!(
-        zhuyin_choose_candidate(ptr::null_mut(), 0, ptr::null_mut()),
+        unsafe { zhuyin_choose_candidate(ptr::null_mut(), 0, ptr::null_mut()) },
         -1
     );
-    assert!(!zhuyin_save(ptr::null_mut()));
-    assert!(!zhuyin_reset(ptr::null_mut()));
+    assert!(!unsafe { zhuyin_save(ptr::null_mut()) });
+    assert!(!unsafe { zhuyin_reset(ptr::null_mut()) });
     assert_eq!(
-        zhuyin_parse_more_chewings(ptr::null_mut(), empty.as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(ptr::null_mut(), empty.as_ptr()) },
         0
     );
     // The free paths are no-ops on null.
-    zhuyin_free_instance(ptr::null_mut());
-    zhuyin_fini(ptr::null_mut());
+    unsafe { zhuyin_free_instance(ptr::null_mut()) };
+    unsafe { zhuyin_fini(ptr::null_mut()) };
 }
 
 /// #523's libzhuyin half: `zhuyin_init` only reads `user.conf` and
@@ -381,8 +369,8 @@ fn zhuyin_launches_never_move_the_open_counter() {
     let (context, instance) = open_with_user(&user_dir.path);
     assert!(!marker.exists(), "zhuyin_init wrote user.conf");
     // End arms m_modified with or without an add (zhuyin.cpp:543).
-    zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY));
-    assert!(zhuyin_save(context));
+    unsafe { zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY)) };
+    assert!(unsafe { zhuyin_save(context) });
     let saved = std::fs::read(&marker).expect("zhuyin_save writes user.conf");
     let newline = oxpinyin_input::TEXT_NEWLINE;
     assert!(
@@ -429,11 +417,11 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
         "su3cl3",
         u32::try_from(first).expect("small index"),
     );
-    assert_eq!(zhuyin_choose_candidate(instance, 0, cand), 3);
-    assert!(zhuyin_guess_sentence(instance));
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 3));
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 0, cand) }, 3);
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 3) });
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     let other = (0..usize::try_from(count).expect("count fits"))
         .find(|index| {
             let text = candidate_text(instance, *index);
@@ -442,15 +430,17 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
         .expect("a one-character row other than 好 is offered at 3");
     let text = candidate_text(instance, other);
     let mut chosen: *mut crate::types::LookupCandidate = ptr::null_mut();
-    assert!(zhuyin_get_candidate(
-        instance,
-        u32::try_from(other).expect("small index"),
-        &raw mut chosen
-    ));
-    assert_eq!(zhuyin_choose_candidate(instance, 3, chosen), 6);
-    assert!(zhuyin_guess_sentence(instance));
+    assert!(unsafe {
+        zhuyin_get_candidate(
+            instance,
+            u32::try_from(other).expect("small index"),
+            &raw mut chosen,
+        )
+    });
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 3, chosen) }, 6);
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
     assert_eq!(
         take_sentence(sentence),
         format!("你{text}"),
@@ -466,7 +456,7 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
 fn the_dvorak_chewing_scheme_aborts() {
     crate::test_support::assert_aborts("e2e_tests::the_dvorak_chewing_scheme_aborts", || {
         let (context, _instance) = open();
-        crate::config::zhuyin_set_chewing_scheme(context, 7);
+        unsafe { crate::config::zhuyin_set_chewing_scheme(context, 7) };
     });
 }
 
@@ -477,7 +467,7 @@ fn the_dvorak_chewing_scheme_aborts() {
 fn an_out_of_enum_chewing_scheme_aborts() {
     crate::test_support::assert_aborts("e2e_tests::an_out_of_enum_chewing_scheme_aborts", || {
         let (context, _instance) = open();
-        crate::config::zhuyin_set_chewing_scheme(context, 10);
+        unsafe { crate::config::zhuyin_set_chewing_scheme(context, 10) };
     });
 }
 
@@ -487,7 +477,7 @@ fn an_out_of_range_full_pinyin_scheme_aborts() {
         "e2e_tests::an_out_of_range_full_pinyin_scheme_aborts",
         || {
             let (context, _instance) = open();
-            crate::config::zhuyin_set_full_pinyin_scheme(context, 4);
+            unsafe { crate::config::zhuyin_set_full_pinyin_scheme(context, 4) };
         },
     );
 }
@@ -500,7 +490,7 @@ fn a_single_key_apostrophe_aborts() {
         let (_context, instance) = open();
         let text = cstr("n'i");
         let mut key = crate::types::ChewingKey::ZERO;
-        crate::keys::zhuyin_parse_full_pinyin(instance, text.as_ptr(), &raw mut key);
+        unsafe { crate::keys::zhuyin_parse_full_pinyin(instance, text.as_ptr(), &raw mut key) };
     });
 }
 
@@ -512,18 +502,12 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
     let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
     let mut key = std::ptr::NonNull::<crate::types::ChewingKey>::dangling().as_ptr();
-    assert!(!crate::cursor::zhuyin_get_zhuyin_key(
-        instance,
-        usize::MAX,
-        &raw mut key
-    ));
+    assert!(!unsafe { crate::cursor::zhuyin_get_zhuyin_key(instance, usize::MAX, &raw mut key) });
     assert!(key.is_null());
     let mut rest = std::ptr::NonNull::<crate::types::ChewingKeyRest>::dangling().as_ptr();
-    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest(
-        instance,
-        usize::MAX,
-        &raw mut rest
-    ));
+    assert!(!unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest(instance, usize::MAX, &raw mut rest)
+    });
     assert!(rest.is_null());
     close(context, instance);
 }
@@ -537,31 +521,29 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
 fn key_rest_positions_past_byte_65535_wrap() {
     let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
-    assert!(crate::config::zhuyin_set_options(context, 1 << 5));
-    assert!(crate::config::zhuyin_set_chewing_scheme(context, 1));
+    assert!(unsafe { crate::config::zhuyin_set_options(context, 1 << 5) });
+    assert!(unsafe { crate::config::zhuyin_set_chewing_scheme(context, 1) });
     let input = format!("su3{}", "su".repeat(32_769));
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, cstr(&input).as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, cstr(&input).as_ptr()) },
         65_541
     );
     for (offset, begin, end) in [(65_535_usize, 65_535_u16, 1_u16), (65_537, 1, 3)] {
         let mut rest: *mut crate::types::ChewingKeyRest = ptr::null_mut();
-        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest(
-            instance,
-            offset,
-            &raw mut rest
-        ));
+        assert!(unsafe {
+            crate::cursor::zhuyin_get_zhuyin_key_rest(instance, offset, &raw mut rest)
+        });
         let (mut b, mut e) = (0_u16, 0_u16);
-        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-            instance, rest, &raw mut b, &raw mut e
-        ));
+        assert!(unsafe {
+            crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+                instance, rest, &raw mut b, &raw mut e,
+            )
+        });
         assert_eq!((b, e), (begin, end), "offset {offset}");
         let mut length = 0_u16;
-        assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_length(
-            instance,
-            rest,
-            &raw mut length
-        ));
+        assert!(unsafe {
+            crate::cursor::zhuyin_get_zhuyin_key_rest_length(instance, rest, &raw mut length)
+        });
         assert_eq!(length, 2, "offset {offset}");
     }
     close(context, instance);
@@ -571,14 +553,11 @@ fn key_rest_positions_past_byte_65535_wrap() {
 /// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
 fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries: u8) {
     for library in 1..=libraries {
-        let iter = zhuyin_begin_add_phrases(context, library);
-        assert!(zhuyin_iterator_add_phrase(
-            iter,
-            cstr("你好").as_ptr(),
-            cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
-            1,
-        ));
-        zhuyin_end_add_phrases(iter);
+        let iter = unsafe { zhuyin_begin_add_phrases(context, library) };
+        assert!(unsafe {
+            zhuyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
+        });
+        unsafe { zhuyin_end_add_phrases(iter) };
     }
 }
 
@@ -604,7 +583,9 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
             }
             let (context, instance) = open_with_user(&path);
             hold_nihao_in_libraries(context, 5);
-            crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut());
+            unsafe {
+                crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
+            };
         },
     );
     let (context, instance) = open_with_user(&path);
@@ -638,11 +619,9 @@ fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
     let user_dir = TempUserDir::new("lookup-null-four");
     let (context, instance) = open_with_user(&user_dir.path);
     hold_nihao_in_libraries(context, 4);
-    assert!(crate::dict::zhuyin_lookup_tokens(
-        instance,
-        cstr("你好").as_ptr(),
-        ptr::null_mut()
-    ));
+    assert!(unsafe {
+        crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
+    });
     close(context, instance);
 }
 
@@ -672,10 +651,8 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
         };
         if unload.result.is_none() && message_text.to_bytes().starts_with(b"g_array_set_size") {
             unload.result = Some(false);
-            unload.result = Some(crate::config::zhuyin_unload_phrase_library(
-                unload.context,
-                2,
-            ));
+            unload.result =
+                Some(unsafe { crate::config::zhuyin_unload_phrase_library(unload.context, 2) });
         } else if message_text.to_bytes().starts_with(b"g_array_append_vals") {
             unload.appends += 1;
         }
@@ -711,8 +688,9 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
                     (&raw mut unload).cast(),
                 )
             };
-            let answer =
-                crate::dict::zhuyin_lookup_tokens(instance, c"你好".as_ptr(), ptr::null_mut());
+            let answer = unsafe {
+                crate::dict::zhuyin_lookup_tokens(instance, c"你好".as_ptr(), ptr::null_mut())
+            };
             // SAFETY: Remove the handler before reading or dropping its data.
             unsafe { glib_sys::g_log_remove_handler(c"GLib".as_ptr(), handler) };
             assert!(answer);
@@ -736,7 +714,7 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
 fn init_at(user_dir: &std::path::Path) -> *mut crate::types::ZhuyinContext {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir.to_str().expect("UTF-8 path"));
-    zhuyin_init(system.as_ptr(), user.as_ptr())
+    unsafe { zhuyin_init(system.as_ptr(), user.as_ptr()) }
 }
 
 /// Register row 91: init's library loop merges `gb_char.dbin` and
@@ -768,7 +746,7 @@ fn init_completes_when_the_merge_stops_before_a_bad_header() {
     crate::test_support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
     let context = init_at(&user_dir.path);
     assert!(!context.is_null());
-    zhuyin_fini(context);
+    unsafe { zhuyin_fini(context) };
 }
 
 /// Register row 91 on the reload path: `zhuyin_load_phrase_library` of an
@@ -780,13 +758,13 @@ fn reload_aborts_on_a_log_header_token() {
         crate::test_support::plant_log(&user_dir.path, "gbk_char.dbin", &[]);
         let context = init_at(&user_dir.path);
         assert!(!context.is_null());
-        assert!(crate::config::zhuyin_unload_phrase_library(context, 2));
+        assert!(unsafe { crate::config::zhuyin_unload_phrase_library(context, 2) });
         crate::test_support::plant_log(
             &user_dir.path,
             "gbk_char.dbin",
             &crate::test_support::logs::header_token(),
         );
-        let _ = crate::config::zhuyin_load_phrase_library(context, 2);
+        let _ = unsafe { crate::config::zhuyin_load_phrase_library(context, 2) };
     });
 }
 
@@ -805,7 +783,7 @@ fn mask_out_aborts_on_a_surviving_add() {
         ]
         .concat();
         crate::test_support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
-        let _ = crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0x0100_0001);
+        let _ = unsafe { crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0x0100_0001) };
     });
 }
 
@@ -824,7 +802,7 @@ fn mask_out_aborts_on_a_short_bigram_value() {
             );
             let context = init_at(&user_dir.path);
             assert!(!context.is_null());
-            let _ = crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0);
+            let _ = unsafe { crate::config::zhuyin_mask_out(context, 0xffff_ffff, 0) };
         },
     );
 }
@@ -840,8 +818,8 @@ fn mask_out_of_a_selected_short_key_completes() {
     );
     let context = init_at(&user_dir.path);
     assert!(!context.is_null());
-    assert!(crate::config::zhuyin_mask_out(context, 0xffff_ffff, 1));
-    zhuyin_fini(context);
+    assert!(unsafe { crate::config::zhuyin_mask_out(context, 0xffff_ffff, 1) });
+    unsafe { zhuyin_fini(context) };
 }
 
 /// Whether a directory reads as a chunk on this host's temporary file
@@ -868,9 +846,9 @@ fn map_a_directory_library(site: &str) -> bool {
     let user_c = cstr(user.to_str().expect("UTF-8 path"));
     if site == "init" {
         crate::test_support::directory_library(&system, "merged.bin");
-        return !zhuyin_init(system_c.as_ptr(), user_c.as_ptr()).is_null();
+        return !unsafe { zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) }.is_null();
     }
-    let context = zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+    let context = unsafe { zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) };
     assert!(!context.is_null());
     match site {
         "save" => {
@@ -879,16 +857,16 @@ fn map_a_directory_library(site: &str) -> bool {
             let ctx = unsafe { crate::state::context_mut(context) };
             ctx.core.user_store_mut().mark_modified();
             crate::test_support::directory_library(&system, "merged.bin");
-            zhuyin_save(context)
+            unsafe { zhuyin_save(context) }
         }
         "mask" => {
             crate::test_support::directory_library(&system, "merged.bin");
-            crate::config::zhuyin_mask_out(context, 0xff00_0000, 0x0400_0000)
+            unsafe { crate::config::zhuyin_mask_out(context, 0xff00_0000, 0x0400_0000) }
         }
         _ => {
-            assert!(crate::config::zhuyin_unload_phrase_library(context, 2));
+            assert!(unsafe { crate::config::zhuyin_unload_phrase_library(context, 2) });
             crate::test_support::directory_library(&system, "gbk_char.bin");
-            crate::config::zhuyin_load_phrase_library(context, 2)
+            unsafe { crate::config::zhuyin_load_phrase_library(context, 2) }
         }
     }
 }
@@ -990,9 +968,9 @@ fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
 fn fini_twice_returns_silently() {
     let run = crate::test_support::run_in_child("e2e_tests::fini_twice_returns_silently", |user| {
         let (context, instance) = open_with_user(user);
-        zhuyin_free_instance(instance);
-        zhuyin_fini(context);
-        zhuyin_fini(context);
+        unsafe { zhuyin_free_instance(instance) };
+        unsafe { zhuyin_fini(context) };
+        unsafe { zhuyin_fini(context) };
     });
     assert_eq!(
         String::from_utf8_lossy(&run.stderr),
@@ -1066,19 +1044,19 @@ fn table_conf_919_short_row_merged() {
             }
             let system_c = cstr(system.to_str().expect("UTF-8 path"));
             let user_c = cstr(user.to_str().expect("UTF-8 path"));
-            let context = zhuyin_init(system_c.as_ptr(), user_c.as_ptr());
+            let context = unsafe { zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) };
             assert!(!context.is_null());
             for text in ["ni3hao3", "yi4shu4"] {
-                let inst = zhuyin_alloc_instance(context);
-                crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr(text).as_ptr());
-                zhuyin_guess_sentence(inst);
+                let inst = unsafe { zhuyin_alloc_instance(context) };
+                unsafe { crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr(text).as_ptr()) };
+                unsafe { zhuyin_guess_sentence(inst) };
                 let mut sentence: *mut c_char = ptr::null_mut();
-                zhuyin_get_sentence(inst, &raw mut sentence);
+                unsafe { zhuyin_get_sentence(inst, &raw mut sentence) };
                 if !sentence.is_null() {
                     take_sentence(sentence);
                 }
                 assert!(
-                    crate::sentence::zhuyin_guess_candidates_after_cursor(inst, 0),
+                    unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(inst, 0) },
                     "{text}"
                 );
                 // The original GB table still points to 你 at slot 4645.
@@ -1092,20 +1070,22 @@ fn table_conf_919_short_row_merged() {
                     "{text}"
                 );
             }
-            let inst = zhuyin_alloc_instance(context);
-            crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr("ni3hao3").as_ptr());
-            zhuyin_guess_sentence(inst);
-            let train = zhuyin_train(inst);
-            let it = zhuyin_begin_add_phrases(context, 7);
-            let add = zhuyin_iterator_add_phrase(
-                it,
-                cstr("测试词").as_ptr(),
-                cstr("ㄘㄜˋ ㄕˋ ㄘˊ").as_ptr(),
-                1,
-            );
-            zhuyin_end_add_phrases(it);
-            let save = zhuyin_save(context);
-            zhuyin_fini(context);
+            let inst = unsafe { zhuyin_alloc_instance(context) };
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(inst, cstr("ni3hao3").as_ptr()) };
+            unsafe { zhuyin_guess_sentence(inst) };
+            let train = unsafe { zhuyin_train(inst) };
+            let it = unsafe { zhuyin_begin_add_phrases(context, 7) };
+            let add = unsafe {
+                zhuyin_iterator_add_phrase(
+                    it,
+                    cstr("测试词").as_ptr(),
+                    cstr("ㄘㄜˋ ㄕˋ ㄘˊ").as_ptr(),
+                    1,
+                )
+            };
+            unsafe { zhuyin_end_add_phrases(it) };
+            let save = unsafe { zhuyin_save(context) };
+            unsafe { zhuyin_fini(context) };
             assert!(train && add && save, "train {train} add {add} save {save}");
             let mut sizes = std::collections::BTreeMap::new();
             let mut marker = String::new();
@@ -1174,11 +1154,9 @@ fn null_instance_candidate_type_answers() {
     let (context, instance) = open();
     let cand = candidate(instance, "su3cl3", 0);
     let mut kind = crate::types::lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-    assert!(crate::candidates::zhuyin_get_candidate_type(
-        ptr::null_mut(),
-        cand,
-        &raw mut kind
-    ));
+    assert!(unsafe {
+        crate::candidates::zhuyin_get_candidate_type(ptr::null_mut(), cand, &raw mut kind)
+    });
     assert_eq!(
         kind,
         crate::types::lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
@@ -1192,11 +1170,9 @@ fn null_instance_candidate_string_answers() {
     let (context, instance) = open();
     let cand = candidate(instance, "su3cl3", 0);
     let mut text = ptr::null();
-    assert!(crate::candidates::zhuyin_get_candidate_string(
-        ptr::null_mut(),
-        cand,
-        &raw mut text
-    ));
+    assert!(unsafe {
+        crate::candidates::zhuyin_get_candidate_string(ptr::null_mut(), cand, &raw mut text)
+    });
     assert!(!text.is_null());
     // SAFETY: the candidate text is NUL-terminated and borrowed from the instance.
     let text = unsafe { std::ffi::CStr::from_ptr(text) };
@@ -1209,17 +1185,13 @@ fn null_instance_candidate_string_answers() {
 fn null_instance_zhuyin_string_answers() {
     let (context, instance) = open();
     let mut key = crate::types::ChewingKey::ZERO;
-    assert!(crate::keys::zhuyin_parse_chewing(
-        instance,
-        cstr("su3").as_ptr(),
-        &raw mut key
-    ));
+    assert!(unsafe {
+        crate::keys::zhuyin_parse_chewing(instance, cstr("su3").as_ptr(), &raw mut key)
+    });
     let mut out = ptr::null_mut();
-    assert!(crate::keys::zhuyin_get_zhuyin_string(
-        ptr::null_mut(),
-        &raw mut key,
-        &raw mut out
-    ));
+    assert!(unsafe {
+        crate::keys::zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut out)
+    });
     assert_eq!(take_sentence(out), "ㄋㄧˇ");
     close(context, instance);
 }
@@ -1231,52 +1203,58 @@ fn key_rest_positions_follow_the_pins_reads() {
     let _slots = crate::test_support::key_slot_guard();
     let (context, instance) = open();
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
         6
     );
     let mut rest = ptr::null_mut();
-    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest(
-        instance,
-        0,
-        &raw mut rest
-    ));
+    assert!(unsafe { crate::cursor::zhuyin_get_zhuyin_key_rest(instance, 0, &raw mut rest) });
     // NULL `key_rest` with both outs NULL: no read, `true` (`:1933-1938`).
-    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-        instance,
-        ptr::null_mut(),
-        ptr::null_mut(),
-        ptr::null_mut()
-    ));
-    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-        ptr::null_mut(),
-        ptr::null_mut(),
-        ptr::null_mut(),
-        ptr::null_mut()
-    ));
+    assert!(unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            instance,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    });
+    assert!(unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    });
     // NULL `key_rest` with an out: the pin reads it (row 41), so this stays guarded.
     let mut begin = u16::MAX;
-    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-        instance,
-        ptr::null_mut(),
-        &raw mut begin,
-        ptr::null_mut()
-    ));
+    assert!(!unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            instance,
+            ptr::null_mut(),
+            &raw mut begin,
+            ptr::null_mut(),
+        )
+    });
     assert_eq!(begin, u16::MAX);
     let mut end = u16::MAX;
-    assert!(!crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-        instance,
-        ptr::null_mut(),
-        ptr::null_mut(),
-        &raw mut end
-    ));
+    assert!(!unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            instance,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &raw mut end,
+        )
+    });
     // A real rest with a NULL instance fills both.
     let (mut begin, mut end) = (u16::MAX, u16::MAX);
-    assert!(crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
-        ptr::null_mut(),
-        rest,
-        &raw mut begin,
-        &raw mut end
-    ));
+    assert!(unsafe {
+        crate::cursor::zhuyin_get_zhuyin_key_rest_positions(
+            ptr::null_mut(),
+            rest,
+            &raw mut begin,
+            &raw mut end,
+        )
+    });
     assert_eq!((begin, end), (0, 3));
     close(context, instance);
 }
@@ -1288,21 +1266,15 @@ fn key_rest_positions_follow_the_pins_reads() {
 /// `zhuyin_end_add_phrases` reads it at `:542` (row 41), so the handle is freed.
 #[test]
 fn null_context_import_handle_is_returned_and_freed() {
-    let iter = zhuyin_begin_add_phrases(ptr::null_mut(), 1);
+    let iter = unsafe { zhuyin_begin_add_phrases(ptr::null_mut(), 1) };
     assert!(!iter.is_null());
-    assert!(!zhuyin_iterator_add_phrase(
-        iter,
-        ptr::null(),
-        cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
-        1
-    ));
-    assert!(!zhuyin_iterator_add_phrase(
-        iter,
-        cstr("你好").as_ptr(),
-        cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(),
-        1
-    ));
-    zhuyin_end_add_phrases(iter);
+    assert!(!unsafe {
+        zhuyin_iterator_add_phrase(iter, ptr::null(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
+    });
+    assert!(!unsafe {
+        zhuyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
+    });
+    unsafe { zhuyin_end_add_phrases(iter) };
 }
 
 /// The index assert (`zhuyin.cpp:381`) precedes any read of the context, so a
@@ -1310,14 +1282,16 @@ fn null_context_import_handle_is_returned_and_freed() {
 /// (`:385-386`) without reading it.
 #[test]
 fn null_context_unload_phrase_library_orders_assert_first() {
-    assert!(!crate::config::zhuyin_unload_phrase_library(
-        ptr::null_mut(),
-        1 // TSI_DICTIONARY
-    ));
+    assert!(!unsafe {
+        crate::config::zhuyin_unload_phrase_library(
+            ptr::null_mut(),
+            1, // TSI_DICTIONARY
+        )
+    });
     crate::test_support::assert_aborts(
         "e2e_tests::null_context_unload_phrase_library_orders_assert_first",
         || {
-            crate::config::zhuyin_unload_phrase_library(ptr::null_mut(), 16);
+            unsafe { crate::config::zhuyin_unload_phrase_library(ptr::null_mut(), 16) };
         },
     );
 }
@@ -1340,14 +1314,16 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
     ] {
         let user_dir = TempUserDir::new("import-separators");
         let (context, instance) = open_with_user(&user_dir.path);
-        let iter = zhuyin_begin_add_phrases(context, USER_DICTIONARY);
+        let iter = unsafe { zhuyin_begin_add_phrases(context, USER_DICTIONARY) };
         assert!(!iter.is_null());
         assert_eq!(
-            zhuyin_iterator_add_phrase(iter, cstr(phrase).as_ptr(), cstr(reading).as_ptr(), 5),
+            unsafe {
+                zhuyin_iterator_add_phrase(iter, cstr(phrase).as_ptr(), cstr(reading).as_ptr(), 5)
+            },
             added,
             "{reading:?}"
         );
-        zhuyin_end_add_phrases(iter);
+        unsafe { zhuyin_end_add_phrases(iter) };
         let rows = with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY));
         let expected: Vec<oxpinyin_user::ExportedPhrase> = if added {
             vec![oxpinyin_user::ExportedPhrase {

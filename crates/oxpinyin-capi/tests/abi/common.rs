@@ -5,6 +5,11 @@
 //! target, so this file deliberately mirrors the small surface the
 //! black-box suites need (`TempUserDir`, `cstr`, `open`).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::CString;
 use std::path::PathBuf;
 
@@ -45,12 +50,12 @@ pub fn cstr(value: impl AsRef<str>) -> CString {
 pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = pinyin_init(system.as_ptr(), user.as_ptr());
+    let context = unsafe { pinyin_init(system.as_ptr(), user.as_ptr()) };
     assert!(
         !context.is_null(),
         "fixture init must open the mini fixture"
     );
-    let instance = pinyin_alloc_instance(context);
+    let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
     (context, instance)
 }

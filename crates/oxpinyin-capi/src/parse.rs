@@ -47,8 +47,13 @@ fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
 /// ```
 ///
 /// Returns number of bytes consumed, 0 on failure.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `pinyins` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_more_full_pinyins(
+pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
@@ -65,8 +70,13 @@ pub extern "C" fn pinyin_parse_more_full_pinyins(
 ///
 /// Parses through [`oxpinyin_core::DoublePinyinParser`] and drives the
 /// session with the apostrophe-joined full-pinyin spelling.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `pinyins` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_more_double_pinyins(
+pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
@@ -92,8 +102,13 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
 ///
 /// Parses through [`oxpinyin_core::ZhuyinParser`] (STANDARD) and drives
 /// the session with the apostrophe-joined full-pinyin spelling.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `chewings` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_parse_more_chewings(
+pub unsafe extern "C" fn pinyin_parse_more_chewings(
     instance: *mut PinyinInstance,
     chewings: *const c_char,
 ) -> usize {
@@ -120,8 +135,13 @@ pub extern "C" fn pinyin_parse_more_chewings(
 /// Returns the byte count of raw input consumed by the most recent parse
 /// call, `0` before any parse and after [`pinyin_reset`](crate::instance::pinyin_reset),
 /// matching upstream `pinyin.cpp:1611-1613` and reset `pinyin.cpp:2692`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) -> usize {
+pub unsafe extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) -> usize {
     if instance.is_null() {
         return 0;
     }
@@ -146,8 +166,13 @@ pub extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) 
 /// `g_strfreev`.
 ///
 /// Returns the Zhuyin symbol(s) for `key` under the current scheme.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `symbols` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_in_chewing_keyboard(
+pub unsafe extern "C" fn pinyin_in_chewing_keyboard(
     instance: *mut PinyinInstance,
     key: c_char,
     symbols: *mut *mut *mut GChar,
@@ -186,6 +211,11 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use std::ptr;
 
     use rstest::rstest;
@@ -229,13 +259,16 @@ mod tests {
 
         let text = cstr(input);
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
             consumed
         );
-        assert_eq!(pinyin_get_parsed_input_length(instance), parsed_length);
+        assert_eq!(
+            unsafe { pinyin_get_parsed_input_length(instance) },
+            parsed_length
+        );
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     // At 074a2219, pinyin.cpp:1497-1609,2183-2196,2693-2704,2873-2878: parsing
@@ -246,7 +279,7 @@ mod tests {
     #[case::double(crate::parse::pinyin_parse_more_double_pinyins, "ni")]
     #[case::chewing(crate::parse::pinyin_parse_more_chewings, "su3")]
     fn reparse_preserves_candidate_strings_until_guess_or_reset(
-        #[case] parse: extern "C" fn(
+        #[case] parse: unsafe extern "C" fn(
             *mut crate::types::PinyinInstance,
             *const std::ffi::c_char,
         ) -> usize,
@@ -261,42 +294,35 @@ mod tests {
         let user_dir = TempUserDir::new("candidate-lifetime");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
             5
         );
-        assert!(crate::sentence::pinyin_guess_candidates(
-            instance,
-            0,
-            DEFAULT_SORT
-        ));
+        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
         let mut count = 0;
-        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
         assert!(count > 0);
         let mut original = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &raw mut original));
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut original) });
         let mut string = ptr::null();
-        assert!(pinyin_get_candidate_string(
-            instance,
-            original,
-            &raw mut string
-        ));
+        assert!(unsafe { pinyin_get_candidate_string(instance, original, &raw mut string) });
         assert!(!string.is_null());
         // SAFETY: the freshly guessed candidate owns a NUL-terminated string.
         let expected = unsafe { CStr::from_ptr(string) }.to_owned();
 
-        assert_eq!(parse(instance, cstr(input).as_ptr()), input.len());
+        assert_eq!(
+            unsafe { parse(instance, cstr(input).as_ptr()) },
+            input.len()
+        );
         let mut after = 0;
-        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, count, "a reparse preserves the original list");
         let mut current = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
         assert_eq!(current, original);
         let mut current_string = ptr::null();
-        assert!(pinyin_get_candidate_string(
-            instance,
-            original,
-            &raw mut current_string
-        ));
+        assert!(unsafe {
+            pinyin_get_candidate_string(instance, original, &raw mut current_string)
+        });
         assert_eq!(current_string, string);
         // SAFETY: parsing has preserved the original snapshot, as checked above;
         // no guess or reset has invalidated either saved pointer.
@@ -304,17 +330,9 @@ mod tests {
 
         // A successful guess replaces the old list with the reparsed input's
         // candidates. Read only newly obtained pointers after this boundary.
-        assert!(crate::sentence::pinyin_guess_candidates(
-            instance,
-            0,
-            DEFAULT_SORT
-        ));
-        assert!(pinyin_get_candidate(instance, 0, &raw mut current));
-        assert!(pinyin_get_candidate_string(
-            instance,
-            current,
-            &raw mut current_string
-        ));
+        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
+        assert!(unsafe { pinyin_get_candidate_string(instance, current, &raw mut current_string) });
         assert_ne!(
             // SAFETY: this pointer comes from the new candidate list.
             unsafe { CStr::from_ptr(current_string) },
@@ -322,37 +340,29 @@ mod tests {
         );
 
         // Even a refused empty-input guess invalidates the preceding list.
-        assert!(pinyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
         assert!(count > 0);
-        assert_eq!(parse(instance, cstr("").as_ptr()), 0);
-        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(unsafe { parse(instance, cstr("").as_ptr()) }, 0);
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, count);
-        assert!(!crate::sentence::pinyin_guess_candidates(
-            instance,
-            0,
-            DEFAULT_SORT
-        ));
-        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert!(!unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, 0);
-        assert!(!pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(!unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
         assert!(current.is_null());
 
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
             5
         );
-        assert!(crate::sentence::pinyin_guess_candidates(
-            instance,
-            0,
-            DEFAULT_SORT
-        ));
-        assert!(crate::instance::pinyin_reset(instance));
-        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+        assert!(unsafe { crate::instance::pinyin_reset(instance) });
+        assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut after) });
         assert_eq!(after, 0);
-        assert!(!pinyin_get_candidate(instance, 0, &raw mut current));
+        assert!(!unsafe { pinyin_get_candidate(instance, 0, &raw mut current) });
         assert!(current.is_null());
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     /// The pin hands the parser the raw bytes (`pinyin.cpp:1498-1509`), so
@@ -371,15 +381,18 @@ mod tests {
         ] {
             let text = std::ffi::CString::new(bytes).expect("no interior NUL");
             assert_eq!(
-                pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+                unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
                 consumed,
                 "{bytes:?}"
             );
-            assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
+            assert_eq!(
+                unsafe { pinyin_get_parsed_input_length(instance) },
+                consumed
+            );
         }
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     #[test]
@@ -387,32 +400,44 @@ mod tests {
         let user_dir = TempUserDir::new("parsed-len");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 0);
 
         let nihao = cstr("nihao");
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()), 5);
-        assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()) },
+            5
+        );
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 5);
 
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
         let mut first = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &raw mut first));
-        assert!(crate::candidates::pinyin_choose_candidate(instance, 0, first) > 0);
-        assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut first) });
+        assert!(unsafe { crate::candidates::pinyin_choose_candidate(instance, 0, first) } > 0);
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 5);
 
         let partial = cstr("nihaoXYZ");
-        let consumed = pinyin_parse_more_full_pinyins(instance, partial.as_ptr());
-        assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
+        let consumed = unsafe { pinyin_parse_more_full_pinyins(instance, partial.as_ptr()) };
+        assert_eq!(
+            unsafe { pinyin_get_parsed_input_length(instance) },
+            consumed
+        );
 
-        assert!(pinyin_reset(instance));
-        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+        assert!(unsafe { pinyin_reset(instance) });
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 0);
 
         let empty = cstr("");
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, empty.as_ptr()), 0);
-        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
-        assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, empty.as_ptr()) },
+            0
+        );
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 0);
+        assert_eq!(
+            unsafe { pinyin_get_parsed_input_length(ptr::null_mut()) },
+            0
+        );
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     /// One offset of a key walk as `tools/oracle/pin_capture.py`'s `key_walk` observes it: the
@@ -438,14 +463,15 @@ mod tests {
         (0..=parsed)
             .map(|offset| {
                 let mut key: *mut ChewingKey = ptr::null_mut();
-                let found = pinyin_get_pinyin_key(instance, offset, &raw mut key);
+                let found = unsafe { pinyin_get_pinyin_key(instance, offset, &raw mut key) };
                 assert_eq!(
                     found,
                     !key.is_null(),
                     "offset {offset}: answer and out-param"
                 );
                 let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-                let rest_found = pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest);
+                let rest_found =
+                    unsafe { pinyin_get_pinyin_key_rest(instance, offset, &raw mut rest) };
                 assert_eq!(
                     rest_found,
                     !rest.is_null(),
@@ -453,12 +479,14 @@ mod tests {
                 );
                 let span = (!rest.is_null()).then(|| {
                     let (mut begin, mut end) = (0_u16, 0_u16);
-                    assert!(pinyin_get_pinyin_key_rest_positions(
-                        instance,
-                        rest,
-                        &raw mut begin,
-                        &raw mut end
-                    ));
+                    assert!(unsafe {
+                        pinyin_get_pinyin_key_rest_positions(
+                            instance,
+                            rest,
+                            &raw mut begin,
+                            &raw mut end,
+                        )
+                    });
                     (begin, end)
                 });
                 let (packed, pinyin) = if key.is_null() {
@@ -467,7 +495,8 @@ mod tests {
                     // SAFETY: a true answer points `key` at the instance's key slot.
                     let packed = unsafe { (*key).packed };
                     let mut text: *mut GChar = ptr::null_mut();
-                    let rendered = pinyin_get_pinyin_string(instance, key, &raw mut text);
+                    let rendered =
+                        unsafe { pinyin_get_pinyin_string(instance, key, &raw mut text) };
                     (
                         Some(packed),
                         rendered.then(|| crate::ffi::take_owned_cstr(text)),
@@ -508,12 +537,15 @@ mod tests {
             let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
             let text = cstr(input);
             assert_eq!(
-                pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+                unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
                 input.len()
             );
-            assert_eq!(pinyin_get_parsed_input_length(instance), input.len());
+            assert_eq!(
+                unsafe { pinyin_get_parsed_input_length(instance) },
+                input.len()
+            );
             let mut key: *mut ChewingKey = ptr::null_mut();
-            pinyin_get_pinyin_key(instance, 0, &raw mut key);
+            unsafe { pinyin_get_pinyin_key(instance, 0, &raw mut key) };
         });
     }
 
@@ -537,8 +569,11 @@ mod tests {
         let user_dir = TempUserDir::new("apostrophe-key-walk");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
         let text = cstr(input);
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, text.as_ptr()), 3);
-        assert_eq!(pinyin_get_parsed_input_length(instance), 3);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
+            3
+        );
+        assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 3);
         assert_eq!(
             walk(instance, 3),
             vec![
@@ -548,8 +583,8 @@ mod tests {
                 step(None, None, None),
             ]
         );
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     /// `OPTION_BASE` of `tools/oracle/pin_capture.py`: PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
@@ -659,10 +694,10 @@ mod tests {
         let _slots = key_slot_guard();
         let user_dir = TempUserDir::new("gated-row");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(pinyin_set_options(context, options));
+        assert!(unsafe { pinyin_set_options(context, options) });
         let text = cstr(input);
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) },
             parsed
         );
         let found: Vec<(u16, u16, u16, String)> = walk(instance, parsed)
@@ -678,13 +713,9 @@ mod tests {
             .collect();
         assert_eq!(found, expected);
         let mut text: *mut GChar = ptr::null_mut();
-        assert!(pinyin_get_full_pinyin_auxiliary_text(
-            instance,
-            parsed,
-            &raw mut text
-        ));
+        assert!(unsafe { pinyin_get_full_pinyin_auxiliary_text(instance, parsed, &raw mut text) });
         assert_eq!(crate::ffi::take_owned_cstr(text), aux);
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

@@ -1,7 +1,7 @@
 //! The C ABI of libpinyin's public API — the full live surface, all 79
 //! `pinyin_*` symbols `libpinyin.ver` exports, built as `libpinyin.so.15`.
 //!
-//! Every `#[unsafe(no_mangle)] pub extern "C" fn` matches the signature in
+//! Every `#[unsafe(no_mangle)] pub unsafe extern "C" fn` matches the signature in
 //! upstream's `src/pinyin.h` at the pin (`074a2219`, 2.11.92)
 //! symbol-for-symbol; that header is byte-identical to tag 2.11.91's, and
 //! the checked-in `pinyin.h` is that file. History: the W8 bootstrap set
@@ -33,6 +33,33 @@
 //! release profile is `unwind`; `panic = "abort"` was tried and reverted
 //! for its keystroke-cycle cost).
 //!
+//! ## Safety
+//!
+//! Every entry point is an `unsafe extern "C" fn`: its caller upholds the
+//! `pinyin.h` contract. Each function's `# Safety` section names the rules
+//! below that bind its arguments, and adds its own requirements.
+//!
+//! - **Handles.** A context pointer is NULL or a pointer that `pinyin_init`
+//!   returned and `pinyin_fini` has not taken. `pinyin_fini` and
+//!   `pinyin_alloc_instance` also accept a pointer that `pinyin_fini` took:
+//!   they look it up in the registry of live contexts and refuse it. An
+//!   instance pointer is NULL or a pointer that `pinyin_alloc_instance`
+//!   returned and `pinyin_free_instance` has not freed. An iterator pointer
+//!   is NULL or a pointer that its `begin` function returned and its `end`
+//!   function has not freed.
+//! - **Strings.** A `const char *` argument is NULL or points to a
+//!   NUL-terminated string that stays valid and unchanged for the call.
+//! - **Out-parameters.** A pointer the function writes through is NULL or is
+//!   valid and aligned for a write of its pointee type.
+//! - **Borrowed objects.** A candidate pointer is NULL or a row that
+//!   `pinyin_get_candidate` answered, from a candidate list that is still
+//!   the current list of a live instance: the next call that rebuilds or
+//!   clears that instance's list, and its free, end the row. A key or
+//!   key-rest pointer is NULL or points to a `ChewingKey` or
+//!   `ChewingKeyRest` that is valid for reads.
+//! - **Serial calls.** Calls that use one context, its instances or its
+//!   iterators do not overlap: the caller serializes them.
+//!
 //! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
 //! `Box::from_raw`. Every incoming pointer is null-checked before deref.
 //! `// SAFETY:` documents each `unsafe` block.
@@ -50,15 +77,6 @@
 #![expect(
     unsafe_code,
     reason = "the C ABI crate; every block carries a SAFETY comment (constitution §5)"
-)]
-// The entire crate is a pointer-taking C ABI: soundness of these entry
-// points rests on the documented pinyin.h contract (opaque handles,
-// out-params, ownership), not on Rust-side unsafe marking. Exposing the
-// fuzz_api facade makes that pointer-by-contract style lint-visible, so
-// the deviation is recorded here once instead of per function.
-#![allow(
-    clippy::not_unsafe_ptr_arg_deref,
-    reason = "pointer-by-contract C ABI; fires only when the fuzz-api facade is compiled in, so an expectation would fail the default build"
 )]
 #![warn(missing_docs)]
 

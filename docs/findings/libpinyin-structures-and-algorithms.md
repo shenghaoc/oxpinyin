@@ -559,16 +559,16 @@ relative to `crates/`.
 | `BIGRAM_FREQUENCY_DISCOUNT` | 0.1f in pinyin, unit weight in zhuyin | `pinyin.cpp:33,1862`, `zhuyin.cpp:1264` | `oxpinyin-engine/src/session/mod.rs:455,499`, `oxpinyin-engine/src/session/lookup.rs:493-500` |
 | Candidate frequency scale | 256 × 256 × 256 = 2²⁴ | `pinyin.cpp:1823,1840,1865`, `zhuyin.cpp:1267` | `oxpinyin-engine/src/session/mod.rs:461,501`, `oxpinyin-engine/src/session/lookup.rs:498` |
 | Longer-candidate phonetic lookup | At most `2 * prefix_len` keys, capped at 16 | `storage/phonetic_key_matrix.cpp:452-458,512` | `oxpinyin-engine/src/session/lookup.rs:119-126` |
-| Longer and predicted-prefix phrase length | At most `2 * prefix_len + 1` characters | `pinyin.cpp:1897,2395` | `oxpinyin-engine/src/session/lookup.rs:191`, `oxpinyin-capi/src/predict.rs:450,480` |
-| Predicted bigram phrase lengths | 2, then 1 | `pinyin.cpp:2312,2345-2359` | `oxpinyin-capi/src/predict.rs:347-360` |
-| Predicted bigram minimum count | 10 | `pinyin.cpp:2313,2351` | `oxpinyin-capi/src/predict.rs:26,390` |
+| Longer and predicted-prefix phrase length | At most `2 * prefix_len + 1` characters | `pinyin.cpp:1897,2395` | `oxpinyin-engine/src/session/lookup.rs:191`, `oxpinyin-capi/src/predict.rs:455,485` |
+| Predicted bigram phrase lengths | 2, then 1 | `pinyin.cpp:2312,2345-2359` | `oxpinyin-capi/src/predict.rs:352-365` |
+| Predicted bigram minimum count | 10 | `pinyin.cpp:2313,2351` | `oxpinyin-capi/src/predict.rs:26,395` |
 | Training `initial_seed` | 23 × 3 = 69 | `lookup/phonetic_lookup.h:847` | `oxpinyin-user/src/seed.rs:14` |
 | Training `expand_factor` | 2 | `lookup/phonetic_lookup.h:848` | `oxpinyin-user/src/seed.rs:17,42-47` |
 | Training `unigram_factor` | 7 | `lookup/phonetic_lookup.h:849,928-929` | `oxpinyin-user/src/seed.rs:23,64`, `oxpinyin-user/src/store.rs:1545-1558` |
 | Training `pinyin_factor` | 1 | `lookup/phonetic_lookup.h:850,925-927` | `oxpinyin-user/src/store.rs:1461-1467` |
 | Training `ceiling_seed` | 23 × 15 × 64 = 22080 | `lookup/phonetic_lookup.h:851` | `oxpinyin-user/src/seed.rs:20,47` |
-| Predicted choice seed × unigram factor | 69 × 7 = 483 | `pinyin.cpp:2597-2598,2609-2639` | `oxpinyin-user/src/seed.rs:53-64`, `oxpinyin-user/src/store.rs:1494-1495`, `oxpinyin-capi/src/candidates.rs:725` |
-| Longer and without-sentence choice unigram increment | 69 × 7 = 483 | `pinyin.cpp:2504-2505,2523-2527,2565-2571` | `oxpinyin-capi/src/candidates.rs:433,465` |
+| Predicted choice seed × unigram factor | 69 × 7 = 483 | `pinyin.cpp:2597-2598,2609-2639` | `oxpinyin-user/src/seed.rs:53-64`, `oxpinyin-user/src/store.rs:1494-1495`, `oxpinyin-capi/src/candidates.rs:778` |
+| Longer and without-sentence choice unigram increment | 69 × 7 = 483 | `pinyin.cpp:2504-2505,2523-2527,2565-2571` | `oxpinyin-capi/src/candidates.rs:473,505` |
 | `_add_phrase` default count and unigram factor | 5 and 3 | `pinyin.cpp:521-523`, `zhuyin.cpp:407-409` | `oxpinyin-user/src/phrase.rs:41-46`, `oxpinyin-user/src/store_arena.rs:383` |
 | Bigram export threshold | Count above `initial_seed - 1` = 68 | `pinyin.cpp:791-792,809` | `oxpinyin-facade/src/export_rows.rs:603,695` |
 | Bigram export count multiplier | 2 | `pinyin.cpp:901-906` | `oxpinyin-facade/src/export_rows.rs:748` |
@@ -576,16 +576,16 @@ relative to `crates/`.
 | Parse-step distance | 1 on the 232 `PINYIN_CORRECT_*` rows and the two ambiguity rows `sua` and `zua`. 0 on the other 428 rows and all Luoma and secondary zhuyin rows | `storage/pinyin_parser_table.h:9-1491`, `storage/pinyin_parser2.cpp:289-309` | `oxpinyin-core/src/vocab.rs:141-151`, `oxpinyin-core/src/graph.rs:493`, `oxpinyin-core/src/full_pinyin_index.rs:175-183` |
 | Double-pinyin probe window | 3 bytes. A key takes 1 byte if incomplete, 2 if complete without tone, or 3 with tone | `storage/pinyin_parser2.cpp:84,412-452,550-562` | `oxpinyin-core/src/scheme.rs:345,448-465` |
 | Double-pinyin final and fallback probes | Two finals per key. The first successful final wins. Fallback compares two bytes | `storage/pinyin_parser2.h:76-78`, `storage/pinyin_parser2.cpp:473-517` | `oxpinyin-core/src/scheme.rs:149-152,489-511` |
-| Double-pinyin auxiliary-text interior cut | 1 or 2 bytes into a key. Other interior cuts abort | `pinyin.cpp:3479-3488` | `oxpinyin-capi/src/aux_matrix.rs:298-302`, `oxpinyin-capi/src/text.rs:313` |
+| Double-pinyin auxiliary-text interior cut | 1 or 2 bytes into a key. Other interior cuts abort | `pinyin.cpp:3479-3488` | `oxpinyin-capi/src/aux_matrix.rs:298-302`, `oxpinyin-capi/src/text.rs:323` |
 | Zhuyin keyboard windows | 4 keystrokes for Simple and Discrete, 12 for DaChen CP26, including tone | `storage/zhuyin_parser2.cpp:37-39,243,435,744` | `oxpinyin-core/src/scheme.rs:1188-1204` |
 | DaChen CP26 repeat cycles | `(count - 1) % 2` for dual initials, dual finals and `m`. `(count - 1) % 3` for `u` | `storage/zhuyin_parser2.cpp:623,642,654,687` | `oxpinyin-core/src/scheme.rs:1538,1552,1562,1583` |
 | Keyboard symbol counts | At most 2 per slot and at most 3 display entries before the terminator for Discrete and CP26 | `storage/zhuyin_parser2.cpp:158,534,841` | Fixed shipped tables bound the counts in place of the asserts. `oxpinyin-core/src/scheme.rs:1035-1068,1607-1616` |
 | Tone digits and direct Zhuyin default | Digits 1–5. Direct Zhuyin defaults to tone 1 | `storage/pinyin_parser2.cpp:179,443,542,638`, `storage/zhuyin_parser2.cpp:865,882-889` | `oxpinyin-core/src/full_pinyin_index.rs:151`, `oxpinyin-core/src/scheme.rs:338,821-828` |
 | Chewing-key table bounds | 24 initials, 4 middles, 18 finals, 6 tones | `storage/chewing_enum.h:38-40,53-55,81-83,97-99`, `storage/chewing_key.cpp:28-48,75,92,105` | `oxpinyin-core/src/chewing_key_tables.rs:3-7`, `oxpinyin-core/src/chewing_key.rs:100-111` |
 | Full-pinyin consumed length | At most 32767 from the signed 16-bit parse step | `storage/pinyin_parser2.cpp:67-70,289-292,353-359` | Wider internal positions under the [16-bit parse-step ruling](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps). `oxpinyin-core/src/graph.rs:18-26` |
-| Key rests and candidate positions | Wrap modulo 65536 | `storage/chewing_key.h:102-103`, `pinyin.cpp:103-104`, `zhuyin.cpp:83-84` | ABI values wrap. Internal placement follows the [key-position ruling](upstream-divergences.md#key-positions-past-byte-65535). `oxpinyin-capi/src/cursor.rs:102-103`, `oxpinyin-zhuyin-capi/src/cursor.rs:122-123` |
+| Key rests and candidate positions | Wrap modulo 65536 | `storage/chewing_key.h:102-103`, `pinyin.cpp:103-104`, `zhuyin.cpp:83-84` | ABI values wrap. Internal placement follows the [key-position ruling](upstream-divergences.md#key-positions-past-byte-65535). `oxpinyin-capi/src/cursor.rs:108-109`, `oxpinyin-zhuyin-capi/src/cursor.rs:128-129` |
 | `MAX_PHRASE_LENGTH` | 16 keys. Import and remember accept lengths 1–15 | `include/novel_types.h:119`, `pinyin.cpp:643,1406,3602,3680`, `zhuyin.cpp:528,924`, `storage/phonetic_key_matrix.cpp:362,452,512` | `oxpinyin-engine/src/session/mod.rs:24`, `oxpinyin-user/src/phrase.rs:38`, `oxpinyin-data/src/chewing_table.rs:438`, `oxpinyin-facade/src/import.rs:44` |
-| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin-facade/src/import.rs:102-119`, `oxpinyin-facade/src/predict.rs:47`, `oxpinyin-engine/src/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:73`, `oxpinyin-zhuyin-capi/src/dict.rs:42` |
+| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin-facade/src/import.rs:102-119`, `oxpinyin-facade/src/predict.rs:47`, `oxpinyin-engine/src/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:79`, `oxpinyin-zhuyin-capi/src/dict.rs:48` |
 | `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` | `oxpinyin-data/src/table_info.rs:41`, `oxpinyin-runtime/src/lib.rs:44` |
 | Token slot mask and allocation wrap | `0x00ffffff`. After the last slot, import uses slot 1 and addon promotion uses slot 0 | `include/novel_types.h:41-46`, `storage/phrase_index.cpp:620`, `pinyin.cpp:589-594,2541-2545` | `oxpinyin-user/src/phrase.rs:29,110-116`, `oxpinyin-user/src/store_arena.rs:378-382` |
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32,409,423` | `oxpinyin-data/src/user_files.rs:291,300,500` |
@@ -1150,12 +1150,12 @@ matrix and search costs. The pin also validates twice.
 **Equivalence: argued.** A sentence-row choose after a keyless parse
 returns −1 (#1989).
 The snapshot is cleared only by guess, reset and prediction
-(`oxpinyin-capi/src/instance.rs:101`, `predict.rs`, `sentence.rs`;
-`oxpinyin-zhuyin-capi/src/instance.rs:71`, `sentence.rs`). The refusal size
+(`oxpinyin-capi/src/instance.rs:122`, `predict.rs`, `sentence.rs`;
+`oxpinyin-zhuyin-capi/src/instance.rs:86`, `sentence.rs`). The refusal size
 is computed in input coordinates (`oxpinyin-facade/src/instance.rs:509-517`)
 and guarded again in the engine (`oxpinyin-engine/src/session/selection.rs:398-409`). The answers are
-`choose_answer` (`oxpinyin-capi/src/candidates.rs:490,532-535`) and the
-zhuyin span answer (`oxpinyin-zhuyin-capi/src/candidates.rs:214-240`).
+`choose_answer` (`oxpinyin-capi/src/candidates.rs:530,572-575`) and the
+zhuyin span answer (`oxpinyin-zhuyin-capi/src/candidates.rs:244-270`).
 A guess clears the old candidates at entry (#1989).
 
 ### Candidate dedup over malformed phrase text

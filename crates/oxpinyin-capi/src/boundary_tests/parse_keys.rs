@@ -1,6 +1,11 @@
 //! Parsing, the key and offset getters, the auxiliary texts and the
 //! keyboard wrapper.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// The luoma and secondary-zhuyin renderers answer false on the zero key
@@ -10,17 +15,17 @@ fn luoma_and_secondary_zhuyin_refuse_the_zero_key() {
     let _slots = crate::test_support::key_slot_guard();
     let user = TempUserDir::new("zero-key-renderers");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, 0x1aa));
+    assert!(unsafe { pinyin_set_options(context, 0x1aa) });
     assert_eq!(parse(instance, "xi'"), 3);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut key: *mut ChewingKey = ptr::null_mut();
-    assert!(pinyin_get_pinyin_key(instance, 2, &raw mut key));
+    assert!(unsafe { pinyin_get_pinyin_key(instance, 2, &raw mut key) });
     for render in [
         crate::keys::pinyin_get_luoma_pinyin_string,
         crate::keys::pinyin_get_secondary_zhuyin_string,
     ] {
         let mut out = UNTOUCHED as usize as *mut c_char;
-        assert!(!render(instance, key, &raw mut out));
+        assert!(!unsafe { render(instance, key, &raw mut out) });
         assert!(out.is_null());
     }
     close(context, instance);
@@ -35,9 +40,9 @@ fn init_options_parse_tones_but_not_initials() {
     for (text, parsed) in [("n", 0), ("ni3", 3), ("zzz", 0), ("ni2hao", 6)] {
         let instance = alloc(context);
         assert_eq!(parse(instance, text), parsed, "{text}");
-        pinyin_free_instance(instance);
+        unsafe { pinyin_free_instance(instance) };
     }
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
 }
 
 /// `is_incomplete` asserts on a toned initial.
@@ -48,10 +53,10 @@ fn is_incomplete_aborts_on_a_toned_initial() {
         || {
             let user = TempUserDir::new("toned-incomplete");
             let (context, instance) = open_at(&user.path);
-            assert!(pinyin_set_options(context, 0x28));
+            assert!(unsafe { pinyin_set_options(context, 0x28) });
             let mut key = 0_u16;
-            pinyin_parse_full_pinyin(instance, c"n4".as_ptr(), (&raw mut key).cast());
-            pinyin_get_pinyin_is_incomplete(instance, (&raw mut key).cast());
+            unsafe { pinyin_parse_full_pinyin(instance, c"n4".as_ptr(), (&raw mut key).cast()) };
+            unsafe { pinyin_get_pinyin_is_incomplete(instance, (&raw mut key).cast()) };
         },
     );
 }
@@ -66,7 +71,9 @@ fn full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes() {
             let user = TempUserDir::new("full-key-invalid");
             let (_context, instance) = open_at(&user.path);
             let mut key = 0xCDEF_u16;
-            pinyin_parse_full_pinyin(instance, c"ni\xff'".as_ptr(), (&raw mut key).cast());
+            unsafe {
+                pinyin_parse_full_pinyin(instance, c"ni\xff'".as_ptr(), (&raw mut key).cast())
+            };
         },
     );
 }
@@ -81,7 +88,7 @@ fn full_auxiliary_text_aborts_on_a_leading_apostrophe() {
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "'nihao"), 6);
             let mut aux: *mut c_char = ptr::null_mut();
-            pinyin_get_full_pinyin_auxiliary_text(instance, 2, &raw mut aux);
+            unsafe { pinyin_get_full_pinyin_auxiliary_text(instance, 2, &raw mut aux) };
         },
     );
 }
@@ -97,7 +104,7 @@ fn double_auxiliary_text_aborts_three_bytes_into_a_key() {
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "zhong"), 5);
             let mut aux: *mut c_char = ptr::null_mut();
-            pinyin_get_double_pinyin_auxiliary_text(instance, 3, &raw mut aux);
+            unsafe { pinyin_get_double_pinyin_auxiliary_text(instance, 3, &raw mut aux) };
         },
     );
 }
@@ -111,7 +118,7 @@ fn key_rest_aborts_on_an_empty_matrix() {
             let user = TempUserDir::new("key-rest-empty");
             let (_context, instance) = open_at(&user.path);
             let mut rest = ptr::null_mut();
-            pinyin_get_pinyin_key_rest(instance, 0, &raw mut rest);
+            unsafe { pinyin_get_pinyin_key_rest(instance, 0, &raw mut rest) };
         },
     );
 }
@@ -126,7 +133,7 @@ fn left_offset_aborts_after_a_separator() {
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "ni'hao"), 6);
             let mut left = 0_usize;
-            pinyin_get_left_pinyin_offset(instance, 3, &raw mut left);
+            unsafe { pinyin_get_left_pinyin_offset(instance, 3, &raw mut left) };
         },
     );
 }
@@ -141,7 +148,7 @@ fn right_offset_aborts_after_a_separator() {
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "ni'hao"), 6);
             let mut right = 0_usize;
-            pinyin_get_right_pinyin_offset(instance, 3, &raw mut right);
+            unsafe { pinyin_get_right_pinyin_offset(instance, 3, &raw mut right) };
         },
     );
 }
@@ -155,11 +162,11 @@ fn character_offset_aborts_on_an_empty_leading_column() {
         || {
             let user = TempUserDir::new("character-leading-separator");
             let (context, instance) = open_at(&user.path);
-            assert!(pinyin_set_options(context, SEPARATOR_OPTIONS));
+            assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
             assert_eq!(parse(instance, "'ni"), 3);
-            pinyin_guess_sentence(instance);
+            unsafe { pinyin_guess_sentence(instance) };
             let mut length = 0_usize;
-            pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length);
+            unsafe { pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length) };
         },
     );
 }
@@ -170,16 +177,16 @@ fn character_offset_aborts_on_an_empty_leading_column() {
 fn right_offset_at_a_leading_separator_is_refused() {
     let user = TempUserDir::new("right-leading-separator");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, SEPARATOR_OPTIONS));
+    assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
     assert_eq!(parse(instance, "''ni"), 4);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut right = UNTOUCHED as usize;
-    assert!(!pinyin_get_right_pinyin_offset(instance, 0, &raw mut right));
+    assert!(!unsafe { pinyin_get_right_pinyin_offset(instance, 0, &raw mut right) });
     assert_eq!(right, UNTOUCHED as usize);
     close(context, instance);
 }
 
-type Render = extern "C" fn(*mut PinyinInstance, usize, *mut *mut c_char) -> bool;
+type Render = unsafe extern "C" fn(*mut PinyinInstance, usize, *mut *mut c_char) -> bool;
 
 const FULL_AUX: Render = pinyin_get_full_pinyin_auxiliary_text;
 
@@ -189,7 +196,7 @@ const CHEWING_AUX: Render = crate::text::pinyin_get_chewing_auxiliary_text;
 
 fn aux(instance: *mut PinyinInstance, render: Render, cursor: usize) -> Option<String> {
     let mut out = UNTOUCHED as usize as *mut c_char;
-    let ret = render(instance, cursor, &raw mut out);
+    let ret = unsafe { render(instance, cursor, &raw mut out) };
     assert!(
         out as usize != UNTOUCHED as usize,
         "the renderer writes its out-parameter"
@@ -204,7 +211,7 @@ fn auxiliary_text_cuts_before_a_tone() {
     let user = TempUserDir::new("aux-tones");
     let (context, instance) = open_at(&user.path);
     assert_eq!(
-        crate::parse::pinyin_parse_more_double_pinyins(instance, c"ni3hk4".as_ptr()),
+        unsafe { crate::parse::pinyin_parse_more_double_pinyins(instance, c"ni3hk4".as_ptr()) },
         6
     );
     for (render, cursor, text) in [
@@ -233,20 +240,18 @@ fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess
     let user = TempUserDir::new("aux-parse-options");
     let (context, instance) = open_at(&user.path);
     let incomplete = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE;
-    assert!(pinyin_set_options(
-        context,
-        (incomplete | oxpinyin_core::OptionBits::USE_TONE).bits()
-    ));
+    assert!(unsafe {
+        pinyin_set_options(
+            context,
+            (incomplete | oxpinyin_core::OptionBits::USE_TONE).bits(),
+        )
+    });
     assert_eq!(parse(instance, "ni3hao3"), 7);
     assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
 
-    assert!(pinyin_set_options(context, incomplete.bits()));
+    assert!(unsafe { pinyin_set_options(context, incomplete.bits()) });
     if after_guess {
-        assert!(pinyin_guess_candidates(
-            instance,
-            0,
-            crate::test_support::DEFAULT_SORT
-        ));
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     }
     assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
 
@@ -264,7 +269,7 @@ fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
     assert_eq!(parse(full, "nihao"), 5);
     let chewing = alloc(context);
     assert_eq!(
-        crate::parse::pinyin_parse_more_chewings(chewing, c"su3cl3".as_ptr()),
+        unsafe { crate::parse::pinyin_parse_more_chewings(chewing, c"su3cl3".as_ptr()) },
         6
     );
     for (instance, cursors, text) in [
@@ -274,9 +279,9 @@ fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
         for cursor in cursors {
             assert_eq!(aux(instance, CHEWING_AUX, cursor).as_deref(), Some(text));
         }
-        pinyin_free_instance(instance);
+        unsafe { pinyin_free_instance(instance) };
     }
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
 }
 
 /// Under USE_DIVIDED_TABLE the renderers show the parsed keys, not the
@@ -285,7 +290,7 @@ fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
 fn auxiliary_text_shows_the_parsed_keys_under_the_divided_table() {
     let user = TempUserDir::new("aux-divided");
     let (context, _) = open_at(&user.path);
-    assert!(pinyin_set_options(context, 0xA0));
+    assert!(unsafe { pinyin_set_options(context, 0xA0) });
     for (input, expected) in [
         (
             "xianan",
@@ -313,9 +318,9 @@ fn auxiliary_text_shows_the_parsed_keys_under_the_divided_table() {
                 "{input} {cursor}"
             );
         }
-        pinyin_free_instance(instance);
+        unsafe { pinyin_free_instance(instance) };
     }
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
 }
 
 /// With no parse each renderer answers false and writes an empty string
@@ -326,7 +331,7 @@ fn auxiliary_text_without_a_parse_is_an_empty_string() {
     let (context, instance) = open_at(&user.path);
     for render in [FULL_AUX, DOUBLE_AUX, CHEWING_AUX] {
         let mut out = UNTOUCHED as usize as *mut c_char;
-        assert!(!render(instance, 0, &raw mut out));
+        assert!(!unsafe { render(instance, 0, &raw mut out) });
         assert!(!out.is_null() && out as usize != UNTOUCHED as usize);
         assert_eq!(crate::ffi::take_owned_cstr(out), "");
     }
@@ -343,45 +348,37 @@ fn null_string_arguments_after_prior_work() {
     let (context, instance) = open_at(&user.path);
     let logs = crate::test_support::LogCapture::new();
 
-    assert!(crate::phrase::pinyin_phrase_segment(
-        instance,
-        c"你好".as_ptr()
-    ));
+    assert!(unsafe { crate::phrase::pinyin_phrase_segment(instance, c"你好".as_ptr()) });
     logs.take();
-    assert!(crate::phrase::pinyin_phrase_segment(instance, ptr::null()));
+    assert!(unsafe { crate::phrase::pinyin_phrase_segment(instance, ptr::null()) });
     let mut count = UNTOUCHED;
-    assert!(crate::phrase::pinyin_get_n_phrase(instance, &raw mut count));
+    assert!(unsafe { crate::phrase::pinyin_get_n_phrase(instance, &raw mut count) });
     assert_eq!(count, 0);
     assert_eq!(logs.take(), [(Some("GLib".to_owned()), CRITICAL)]);
 
     assert_eq!(parse(instance, "nihao"), 5);
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, ptr::null()), 0);
-    assert_eq!(crate::parse::pinyin_get_parsed_input_length(instance), 0);
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, ptr::null()) },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::parse::pinyin_get_parsed_input_length(instance) },
+        0
+    );
 
     let mut key = 0xCDEF_u16;
-    assert!(!pinyin_parse_full_pinyin(
-        instance,
-        ptr::null(),
-        (&raw mut key).cast()
-    ));
+    assert!(!unsafe { pinyin_parse_full_pinyin(instance, ptr::null(), (&raw mut key).cast()) });
     assert_eq!(key, 0xCDEF);
 
-    let iter = crate::iterators::pinyin_begin_add_phrases(context, 7);
-    assert!(!crate::iterators::pinyin_iterator_add_phrase(
-        iter,
-        ptr::null(),
-        c"da1'da1'da1".as_ptr(),
-        5
-    ));
-    crate::iterators::pinyin_end_add_phrases(iter);
+    let iter = unsafe { crate::iterators::pinyin_begin_add_phrases(context, 7) };
+    assert!(!unsafe {
+        crate::iterators::pinyin_iterator_add_phrase(iter, ptr::null(), c"da1'da1'da1".as_ptr(), 5)
+    });
+    unsafe { crate::iterators::pinyin_end_add_phrases(iter) };
 
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "da1da1da1"), 9);
-    assert!(!crate::user_data::pinyin_remember_user_input(
-        instance,
-        ptr::null(),
-        5
-    ));
+    assert!(!unsafe { crate::user_data::pinyin_remember_user_input(instance, ptr::null(), 5) });
     close(context, instance);
 }
 
@@ -392,16 +389,18 @@ fn null_string_arguments_after_prior_work() {
 fn invalid_input_bytes_stop_each_pinyin_parser() {
     let user = TempUserDir::new("invalid-bytes");
     let (context, instance) = open_at(&user.path);
-    let iter = crate::iterators::pinyin_begin_add_phrases(context, 7);
+    let iter = unsafe { crate::iterators::pinyin_begin_add_phrases(context, 7) };
     let add = |text: &[u8], reading: &[u8]| {
         let text = std::ffi::CString::new(text).expect("no NUL");
         let reading = std::ffi::CString::new(reading).expect("no NUL");
-        crate::iterators::pinyin_iterator_add_phrase(iter, text.as_ptr(), reading.as_ptr(), 1)
+        unsafe {
+            crate::iterators::pinyin_iterator_add_phrase(iter, text.as_ptr(), reading.as_ptr(), 1)
+        }
     };
     assert!(add("你好".as_bytes(), b"ni'ha\xffo"));
     assert!(add("世界".as_bytes(), b"shi'jie\xff"));
     assert!(!add(b"\xe4\xbd\xa0\xe5\xa5\xbd\xff", b"ni'hao"));
-    crate::iterators::pinyin_end_add_phrases(iter);
+    unsafe { crate::iterators::pinyin_end_add_phrases(iter) };
     assert_eq!(
         crate::e2e_tests::export_of(context, 7),
         [
@@ -409,12 +408,12 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
             ("世界".to_owned(), "shi'jie".to_owned(), 1),
         ]
     );
-    let consumed = |parser: extern "C" fn(*mut PinyinInstance, *const c_char) -> usize,
+    let consumed = |parser: unsafe extern "C" fn(*mut PinyinInstance, *const c_char) -> usize,
                     text: &[u8]| {
         let fresh = alloc(context);
         let text = std::ffi::CString::new(text).expect("no NUL");
-        let parsed = parser(fresh, text.as_ptr());
-        pinyin_free_instance(fresh);
+        let parsed = unsafe { parser(fresh, text.as_ptr()) };
+        unsafe { pinyin_free_instance(fresh) };
         parsed
     };
     let double = crate::parse::pinyin_parse_more_double_pinyins;
@@ -431,11 +430,13 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
 /// The symbols `in_chewing_keyboard` answers for `key`, freed.
 fn keyboard(instance: *mut PinyinInstance, key: u8) -> (bool, Option<Vec<String>>) {
     let mut symbols: *mut *mut c_char = UNTOUCHED as usize as *mut *mut c_char;
-    let ret = crate::parse::pinyin_in_chewing_keyboard(
-        instance,
-        c_char::from_ne_bytes([key]),
-        &raw mut symbols,
-    );
+    let ret = unsafe {
+        crate::parse::pinyin_in_chewing_keyboard(
+            instance,
+            c_char::from_ne_bytes([key]),
+            &raw mut symbols,
+        )
+    };
     if symbols.is_null() {
         return (ret, None);
     }
@@ -463,15 +464,15 @@ fn keyboard(instance: *mut PinyinInstance, key: u8) -> (bool, Option<Vec<String>
 fn the_pinyin_chewing_keyboard_wrapper_answers_per_key() {
     let user = TempUserDir::new("chewing-keyboard");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, 0));
-    assert!(crate::config::pinyin_set_zhuyin_scheme(context, 1));
+    assert!(unsafe { pinyin_set_options(context, 0) });
+    assert!(unsafe { crate::config::pinyin_set_zhuyin_scheme(context, 1) });
     assert_eq!(
         keyboard(instance, b's'),
         (true, Some(vec!["ㄋ".to_owned()]))
     );
     assert_eq!(keyboard(instance, b'3'), (false, None));
     assert_eq!(keyboard(instance, b'!'), (false, None));
-    assert!(pinyin_set_options(context, 0x60));
+    assert!(unsafe { pinyin_set_options(context, 0x60) });
     assert_eq!(keyboard(instance, b'3'), (true, Some(vec!["ˇ".to_owned()])));
     close(context, instance);
 }

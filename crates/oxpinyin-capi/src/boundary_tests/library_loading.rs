@@ -1,6 +1,11 @@
 //! Phrase-library load and unload, and the facade total of a failed
 //! layout.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// The facade total of a fresh instance on `context`.
@@ -11,7 +16,7 @@ fn facade_total(context: *mut PinyinContext) -> u64 {
         .core
         .lm
         .amplified_total();
-    pinyin_free_instance(instance);
+    unsafe { pinyin_free_instance(instance) };
     total
 }
 
@@ -41,7 +46,7 @@ fn layout_failed_gbk_context(scratch: &Path) -> (*mut PinyinContext, u64) {
     let context = init_at(&system, &user);
     assert!(!context.is_null());
     let total = facade_total(context);
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
     assert!(total > 0, "the other libraries hold a total");
     write(u32::try_from(total).expect("a guint32 total"));
     let context = init_at(&system, &user);
@@ -66,12 +71,12 @@ fn an_unload_inside_an_open_import_zeroes_the_facade_total() {
         || {
             let scratch = tempfile::tempdir().expect("scratch");
             let (context, _) = layout_failed_gbk_context(scratch.path());
-            let iter = pinyin_begin_add_phrases(context, 1);
+            let iter = unsafe { pinyin_begin_add_phrases(context, 1) };
             assert!(!iter.is_null());
-            assert!(pinyin_unload_phrase_library(context, 2));
+            assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
             let instance = alloc(context);
             assert_eq!(parse(instance, "nihao"), 5);
-            pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT);
+            unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) };
         },
     );
 }
@@ -88,13 +93,13 @@ fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
         || {
             let scratch = tempfile::tempdir().expect("scratch");
             let (context, _) = layout_failed_gbk_context(scratch.path());
-            let iter = pinyin_begin_add_phrases(context, 1);
+            let iter = unsafe { pinyin_begin_add_phrases(context, 1) };
             assert!(!iter.is_null());
-            assert!(pinyin_unload_phrase_library(context, 2));
-            pinyin_end_add_phrases(iter);
+            assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
+            unsafe { pinyin_end_add_phrases(iter) };
             let instance = alloc(context);
             assert_eq!(parse(instance, "nihao"), 5);
-            pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT);
+            unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) };
         },
     );
 }
@@ -106,18 +111,14 @@ fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
 fn an_unload_after_the_import_ends_keeps_the_facade_total() {
     let scratch = tempfile::tempdir().expect("scratch");
     let (context, total) = layout_failed_gbk_context(scratch.path());
-    let iter = pinyin_begin_add_phrases(context, 1);
+    let iter = unsafe { pinyin_begin_add_phrases(context, 1) };
     assert!(!iter.is_null());
-    pinyin_end_add_phrases(iter);
-    assert!(pinyin_unload_phrase_library(context, 2));
+    unsafe { pinyin_end_add_phrases(iter) };
+    assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
     assert_eq!(facade_total(context), total);
     let instance = alloc(context);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     assert!(n_candidate(instance) > 0);
     close(context, instance);
 }
@@ -137,11 +138,7 @@ fn an_increment_after_an_import_into_a_failed_layout_sees_the_item_sum() {
         .into_iter()
         .find(|token| token >> 24 == 2)
         .expect("the imported token");
-    assert!(pinyin_token_add_unigram_frequency(
-        instance,
-        token,
-        u32::MAX - 27
-    ));
+    assert!(unsafe { pinyin_token_add_unigram_frequency(instance, token, u32::MAX - 27) });
     close(context, instance);
 }
 
@@ -157,10 +154,10 @@ fn a_save_after_an_import_into_a_failed_layout_journals_the_item_sum() {
     let scratch = tempfile::tempdir().expect("scratch");
     let (context, total) = layout_failed_gbk_context(scratch.path());
     assert_eq!(import_batch(context, 2, &[("龘龘", "da2'da2", 9)]), [true]);
-    assert!(pinyin_save(context));
-    assert!(pinyin_unload_phrase_library(context, 2));
+    assert!(unsafe { pinyin_save(context) });
+    assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
     assert_eq!(facade_total(context), total);
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
     let journal = std::fs::read(scratch.path().join("user/gbk_char.dbin")).expect("gbk_char.dbin");
     let word = |at: usize| u32::from_le_bytes(journal[8 + at..12 + at].try_into().expect("a word"));
     // LOG_MODIFY_HEADER, null token, then the old and the new total.
@@ -176,7 +173,7 @@ fn load_of_the_reserved_library_aborts() {
         || {
             let user = TempUserDir::new("load-library-0");
             let (context, _) = open_at(&user.path);
-            pinyin_load_phrase_library(context, 0);
+            unsafe { pinyin_load_phrase_library(context, 0) };
         },
     );
 }
@@ -192,18 +189,14 @@ fn pinyin_unloads_only_the_gbk_library() {
     let token = lookup(instance, "龘龘")[0];
     for library in [1, 15, 7] {
         assert!(
-            !crate::config::pinyin_unload_phrase_library(context, library),
+            !unsafe { crate::config::pinyin_unload_phrase_library(context, library) },
             "unload {library}"
         );
     }
     let mut count = UNTOUCHED;
-    assert!(pinyin_token_get_n_pronunciation(
-        instance,
-        token,
-        &raw mut count
-    ));
+    assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
     assert_eq!(count, 1);
-    assert!(!pinyin_load_phrase_library(context, 7));
+    assert!(!unsafe { pinyin_load_phrase_library(context, 7) });
     close(context, instance);
 }
 
@@ -225,20 +218,12 @@ fn gbk_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
 fn an_unload_hides_its_rows_without_a_reparse() {
     let user = TempUserDir::new("row54-unload");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "ni"), 2);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     assert!(!gbk_tokens(instance).is_empty());
-    assert!(crate::config::pinyin_unload_phrase_library(context, 2));
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { crate::config::pinyin_unload_phrase_library(context, 2) });
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     assert!(gbk_tokens(instance).is_empty());
     assert!(n_candidate(instance) > 0);
     close(context, instance);
@@ -262,17 +247,15 @@ fn rows_of_a_never_loaded_library_are_filtered() {
     let (context, instance) = open_at(&user.path);
     // SAFETY: a fresh GArray of four-byte elements, freed below.
     let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
-    assert!(!crate::dict::pinyin_lookup_tokens(
-        instance,
-        c"龘龘".as_ptr(),
-        array.cast()
-    ));
+    assert!(!unsafe {
+        crate::dict::pinyin_lookup_tokens(instance, c"龘龘".as_ptr(), array.cast())
+    });
     // SAFETY: a live GArray, freed once.
     unsafe {
         assert_eq!((*array).len, 0);
         glib_sys::g_array_free(array, 1);
     }
-    assert!(pinyin_guess_predicted_candidates(instance, c"你".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     assert!(
         !capture_rows(instance)
             .iter()

@@ -1,6 +1,11 @@
 //! Candidate guesses, predictions, prefix and punctuation rows and the
 //! zero facade total.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// Adds the negation of the loaded facade total to token 0x01000001, so
@@ -12,11 +17,9 @@ fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
         .lm
         .amplified_total();
     let total = u32::try_from(total).expect("a guint32 total");
-    assert!(pinyin_token_add_unigram_frequency(
-        instance,
-        0x0100_0001,
-        total.wrapping_neg()
-    ));
+    assert!(unsafe {
+        pinyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
+    });
     // SAFETY: as above.
     let after = unsafe { crate::state::instance_ref(instance) }
         .core
@@ -34,10 +37,10 @@ fn guess_candidates_aborts_on_a_toned_initial() {
         || {
             let user = TempUserDir::new("toned-candidates");
             let (context, instance) = open_at(&user.path);
-            assert!(pinyin_set_options(context, 0x28));
+            assert!(unsafe { pinyin_set_options(context, 0x28) });
             assert_eq!(parse(instance, "n4"), 2);
             // SORT_WITHOUT_SENTENCE_CANDIDATE | SORT_WITHOUT_LONGER_CANDIDATE.
-            pinyin_guess_candidates(instance, 0, 0x3);
+            unsafe { pinyin_guess_candidates(instance, 0, 0x3) };
         },
     );
 }
@@ -58,10 +61,9 @@ fn a_predicted_bigram_row_is_not_a_user_candidate() {
         .collect();
     replace_user_bigram(&user.path, &rows);
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"你".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
+    });
     let index = capture_rows(instance)
         .iter()
         .position(|(kind, _, _)| *kind == PREDICTED_BIGRAM)
@@ -69,9 +71,9 @@ fn a_predicted_bigram_row_is_not_a_user_candidate() {
     assert_eq!(capture_rows(instance)[index].1, "龘龘");
     let row = candidate_at(instance, index);
     let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-    assert!(pinyin_get_candidate_type(instance, row, &raw mut kind));
+    assert!(unsafe { pinyin_get_candidate_type(instance, row, &raw mut kind) });
     assert_eq!(kind, PREDICTED_BIGRAM);
-    assert!(!pinyin_is_user_candidate(instance, row));
+    assert!(!unsafe { pinyin_is_user_candidate(instance, row) });
     close(context, instance);
 }
 
@@ -86,7 +88,7 @@ fn guess_candidates_aborts_on_a_zero_facade_total() {
             let (_context, instance) = open_at(&user.path);
             wrap_facade_total_to_zero(instance);
             assert_eq!(parse(instance, "nihao"), 5);
-            pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT);
+            unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) };
         },
     );
 }
@@ -104,12 +106,15 @@ fn a_guess_with_no_word_row_ranks_nothing_on_a_zero_total() {
         let instance = alloc(context);
         assert_eq!(parse(instance, "nihao"), 5);
         wrap_facade_total_to_zero(instance);
-        assert!(pinyin_guess_candidates(instance, offset, sort), "{offset}");
+        assert!(
+            unsafe { pinyin_guess_candidates(instance, offset, sort) },
+            "{offset}"
+        );
         assert_eq!(n_candidate(instance), 0, "{offset}");
-        pinyin_free_instance(instance);
+        unsafe { pinyin_free_instance(instance) };
     }
     assert!(logs.take().is_empty());
-    pinyin_fini(context);
+    unsafe { pinyin_fini(context) };
 }
 
 /// Predicted bigram rows on a zero facade total abort in the scorer
@@ -132,7 +137,7 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
             );
             let (_context, instance) = open_at(&user.path);
             wrap_facade_total_to_zero(instance);
-            pinyin_guess_predicted_candidates(instance, c"你".as_ptr());
+            unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) };
         },
     );
 }
@@ -155,7 +160,7 @@ fn prediction_aborts_on_an_item_less_gram_with_a_total() {
                     .collect(),
             );
             let (_context, instance) = open_at(&user.path);
-            pinyin_guess_predicted_candidates(instance, c"你".as_ptr());
+            unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) };
         },
     );
 }
@@ -175,7 +180,7 @@ fn prediction_reads_only_the_prefixes_it_reaches() {
             .collect(),
     );
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates(instance, c"中".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"中".as_ptr()) });
     close(context, instance);
 }
 
@@ -186,7 +191,7 @@ fn a_prefix_choose_past_the_unigram_limit_is_refused() {
     let user = TempUserDir::new("row58-prefix-overflow");
     let (context, instance) = open_at(&user.path);
     // PINYIN_INCOMPLETE | DYNAMIC_ADJUST | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN.
-    assert!(pinyin_set_options(context, 0x38a));
+    assert!(unsafe { pinyin_set_options(context, 0x38a) });
     assert_eq!(
         import_batch(
             context,
@@ -197,9 +202,9 @@ fn a_prefix_choose_past_the_unigram_limit_is_refused() {
     );
     let token = lookup(instance, "我甲甲")[0];
     assert_eq!(unigram(instance, token), (true, 4_294_966_893));
-    assert!(pinyin_guess_predicted_candidates(instance, c"我".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"我".as_ptr()) });
     let row = row_with(instance, PREDICTED_PREFIX, "甲甲");
-    assert!(!pinyin_choose_predicted_candidate(instance, row));
+    assert!(!unsafe { pinyin_choose_predicted_candidate(instance, row) });
     assert_eq!(unigram(instance, token), (true, 4_294_966_893));
     close(context, instance);
 }
@@ -224,10 +229,10 @@ fn a_prefix_choose_past_the_library_total_is_refused() {
         &crate::test_support::modify_header(0, total, u32::MAX - 483),
     );
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates(instance, c"你".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     let row = row_of(instance, PREDICTED_PREFIX);
-    assert!(pinyin_choose_predicted_candidate(instance, row));
-    assert!(!pinyin_choose_predicted_candidate(instance, row));
+    assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
+    assert!(!unsafe { pinyin_choose_predicted_candidate(instance, row) });
     close(context, instance);
 }
 
@@ -239,22 +244,18 @@ fn a_borrowed_punctuation_prefix_answers_true_with_no_row() {
     let user = TempUserDir::new("punct-alias");
     let (context, instance) = open_at(&user.path);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     let sentence = sentence_out(instance, 0);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     let mut text: *const c_char = ptr::null();
-    assert!(crate::candidates::pinyin_get_candidate_string(
-        instance,
-        candidate_at(instance, 0),
-        &raw mut text
-    ));
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance, text
-    ));
+    assert!(unsafe {
+        crate::candidates::pinyin_get_candidate_string(
+            instance,
+            candidate_at(instance, 0),
+            &raw mut text,
+        )
+    });
+    assert!(unsafe { pinyin_guess_predicted_candidates_with_punctuations(instance, text) });
     assert_eq!(n_candidate(instance), 0);
     assert_eq!(sentence_out(instance, 0), sentence);
     close(context, instance);
@@ -289,11 +290,13 @@ fn punct_texts(instance: *mut PinyinInstance) -> Vec<String> {
         .filter(|(_, (kind, _, _))| *kind == PREDICTED_PUNCTUATION)
         .map(|(index, _)| {
             let mut text: *const c_char = ptr::null();
-            assert!(crate::candidates::pinyin_get_candidate_string(
-                instance,
-                candidate_at(instance, index),
-                &raw mut text
-            ));
+            assert!(unsafe {
+                crate::candidates::pinyin_get_candidate_string(
+                    instance,
+                    candidate_at(instance, index),
+                    &raw mut text,
+                )
+            });
             // SAFETY: a true answer points at the row's borrowed string.
             let bytes = unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes();
             bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -317,10 +320,9 @@ fn non_scalar_punctuations_dedup_by_their_bytes() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"你好".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"你好".as_ptr())
+    });
     let mut puncts = punct_texts(instance);
     puncts.sort();
     assert_eq!(puncts, ["eda080", "f4908080"]);
@@ -333,7 +335,7 @@ fn non_scalar_punctuations_dedup_by_their_bytes() {
 fn the_punctuation_dedup_ignores_the_candidates() {
     let user = TempUserDir::new("punct-candidate-probe");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates(instance, c"你".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     let first = capture_rows(instance)[0].1.clone();
     close(context, instance);
     let mut words: Vec<u32> = first.chars().map(u32::from).collect();
@@ -344,10 +346,9 @@ fn the_punctuation_dedup_ignores_the_candidates() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"你".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
+    });
     let first_hex: String = first.bytes().map(|byte| format!("{byte:02x}")).collect();
     assert_eq!(punct_texts(instance), [first_hex, "efbc8c".to_owned()]);
     assert!(
@@ -377,7 +378,7 @@ fn a_raw_user_key_predicts_its_live_item() {
     );
     write_user_conf(&user.path, &system_dir());
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates(instance, c"你".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     assert!(
         capture_rows(instance)
             .iter()

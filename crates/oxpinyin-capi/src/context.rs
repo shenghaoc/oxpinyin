@@ -70,8 +70,12 @@ fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Pa
 /// A NULL `systemdir` returns NULL and writes the pin's raw stderr lines
 /// `open  failed.` and `load  failed!`, without a GLib warning. Required-file
 /// failures also return NULL; diagnostics follow the failing load path.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `systemdir` and `userdir` are strings.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_init(
+pub unsafe extern "C" fn pinyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
@@ -137,8 +141,14 @@ pub(crate) fn oxpinyin_test_set_user_bigram(
 /// handed out by `pinyin_init`) returns at once: the pin reads and deletes
 /// the freed context again (`pinyin.cpp:1194-1222`), a double free that
 /// kills it with SIGSEGV (register row 105, class (b)).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies. After the call `context` is dangling: only the two functions that the handle rule
+/// names may receive it again.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
+pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // One step: the registry held the address and this call removed it, so
     // of two calls on one context only the first goes on to free it.
     if context.is_null() || !crate::live::unregister(context) {
@@ -174,8 +184,13 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// compacts the store and clears `m_modified`. Durability is save-gated, as
 /// at the pin: training reaches the user files only here, and a crash before
 /// the save loses it (`docs/findings/user-store.md` §6).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
+pub unsafe extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
@@ -215,6 +230,11 @@ pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::pinyin_init;
     use crate::test_support::{TempSystemDir, TempUserDir, cstr};
 
@@ -251,13 +271,15 @@ mod tests {
             }
         }
         let user = TempUserDir::new("no-dbms-user");
-        let context = pinyin_init(
-            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-        );
+        let context = unsafe {
+            pinyin_init(
+                cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+                cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+            )
+        };
         // Every backend keeps the failed native object: the pin ignores the
         // attach's answer (pinyin.cpp:357 at 074a2219) and fini closes it.
         assert!(!context.is_null(), "the pin ignores a failed system attach");
-        crate::context::pinyin_fini(context);
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

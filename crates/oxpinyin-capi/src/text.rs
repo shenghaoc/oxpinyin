@@ -248,8 +248,13 @@ fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
 /// ```
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `aux_text` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
+pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
     cursor: usize,
     aux_text: *mut *mut GChar,
@@ -302,8 +307,13 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `aux_text` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
+pub unsafe extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
     cursor: usize,
     aux_text: *mut *mut GChar,
@@ -338,8 +348,13 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `aux_text` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_chewing_auxiliary_text(
+pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
     instance: *mut PinyinInstance,
     cursor: usize,
     aux_text: *mut *mut GChar,

@@ -16,8 +16,14 @@ use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 /// bool zhuyin_lookup_tokens(zhuyin_instance_t * instance,
 ///                           const char * phrase, GArray * tokenarray);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `phrase` is a
+/// string. The serial-calls rule applies. `tokenarray` is NULL or a live GLib `GArray` whose
+/// element size is four bytes (`phrase_token_t`).
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_lookup_tokens(
+pub unsafe extern "C" fn zhuyin_lookup_tokens(
     instance: *mut ZhuyinInstance,
     phrase: *const c_char,
     tokenarray: *mut GArray,
@@ -86,8 +92,13 @@ pub extern "C" fn zhuyin_lookup_tokens(
 ///                              phrase_token_t token, guint * len,
 ///                              gchar ** utf8_str);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `len` and `utf8_str`
+/// are out-parameters. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_token_get_phrase(
+pub unsafe extern "C" fn zhuyin_token_get_phrase(
     instance: *mut ZhuyinInstance,
     token: PhraseTokenT,
     len: *mut GUint,
@@ -140,8 +151,13 @@ pub extern "C" fn zhuyin_token_get_phrase(
 /// bool zhuyin_token_get_n_pronunciation(zhuyin_instance_t * instance,
 ///                                       phrase_token_t token, guint * num);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_token_get_n_pronunciation(
+pub unsafe extern "C" fn zhuyin_token_get_n_pronunciation(
     instance: *mut ZhuyinInstance,
     token: PhraseTokenT,
     num: *mut GUint,
@@ -215,8 +231,14 @@ unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[
 ///                                         phrase_token_t token, guint nth,
 ///                                         ChewingKeyVector keys);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies. `keys` is NULL or a live GLib `GArray` whose element size is two bytes
+/// (`ChewingKey`).
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_token_get_nth_pronunciation(
+pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
     instance: *mut ZhuyinInstance,
     token: PhraseTokenT,
     nth: GUint,
@@ -309,8 +331,13 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
 /// `gen_unigram`'s `+1` already included for system items), system and
 /// `USER_FILE` tokens alike. `*freq` is zeroed before the dispatch, so a
 /// `false` still delivers 0.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `freq` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_token_get_unigram_frequency(
+pub unsafe extern "C" fn zhuyin_token_get_unigram_frequency(
     instance: *mut ZhuyinInstance,
     token: PhraseTokenT,
     freq: *mut GUint,
@@ -351,8 +378,13 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
 /// bool zhuyin_token_add_unigram_frequency(zhuyin_instance_t * instance,
 ///                                         phrase_token_t token, guint delta);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_token_add_unigram_frequency(
+pub unsafe extern "C" fn zhuyin_token_add_unigram_frequency(
     instance: *mut ZhuyinInstance,
     token: PhraseTokenT,
     delta: GUint,

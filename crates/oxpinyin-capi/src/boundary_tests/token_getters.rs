@@ -1,6 +1,11 @@
 //! The token getters: phrases, readings, pronunciation counts, caller
 //! arrays and phrase texts.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// `token_get_n_pronunciation` of a token in a library with no sub-index
@@ -10,11 +15,7 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
     let user = TempUserDir::new("count-no-sub-index");
     let (context, instance) = open_at(&user.path);
     let mut count = UNTOUCHED;
-    assert!(!pinyin_token_get_n_pronunciation(
-        instance,
-        0x0f00_0001,
-        &raw mut count
-    ));
+    assert!(!unsafe { pinyin_token_get_n_pronunciation(instance, 0x0f00_0001, &raw mut count) });
     assert_eq!(count, 0);
     close(context, instance);
 }
@@ -55,39 +56,30 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     for (slot, expected, key) in [rows[0], rows[2]] {
         let token = 0x0700_0000 | slot;
         let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
-        assert!(crate::dict::pinyin_token_get_phrase(
-            instance,
-            token,
-            &raw mut length,
-            &raw mut phrase
-        ));
+        assert!(unsafe {
+            crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
+        });
         assert_eq!(
             (length, crate::ffi::take_owned_cstr(phrase).as_str()),
             (1, expected)
         );
         let mut count = UNTOUCHED;
-        assert!(pinyin_token_get_n_pronunciation(
-            instance,
-            token,
-            &raw mut count
-        ));
+        assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
         assert_eq!(count, 1);
         assert_eq!(reading_bytes(instance, token, 0), key.to_le_bytes());
     }
     let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
-    assert!(!crate::dict::pinyin_token_get_phrase(
-        instance,
-        0x0700_0002,
-        &raw mut length,
-        &raw mut phrase
-    ));
+    assert!(!unsafe {
+        crate::dict::pinyin_token_get_phrase(
+            instance,
+            0x0700_0002,
+            &raw mut length,
+            &raw mut phrase,
+        )
+    });
     assert_eq!((length, phrase), (UNTOUCHED, ptr::null_mut()));
     let mut count = UNTOUCHED;
-    assert!(!pinyin_token_get_n_pronunciation(
-        instance,
-        0x0700_0002,
-        &raw mut count
-    ));
+    assert!(!unsafe { pinyin_token_get_n_pronunciation(instance, 0x0700_0002, &raw mut count) });
     assert_eq!(count, 0);
     close(context, instance);
 }
@@ -122,12 +114,9 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
     let (context, instance) = open_at(&user.path);
     let token = 0x0700_0001;
     let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
-    assert!(crate::dict::pinyin_token_get_phrase(
-        instance,
-        token,
-        &raw mut length,
-        &raw mut phrase
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
+    });
     assert_eq!(
         (length, crate::ffi::take_owned_cstr(phrase).as_str()),
         (17, text)
@@ -147,7 +136,7 @@ fn a_stored_user_key_word_is_read_back_verbatim() {
         .into_iter()
         .find(|token| token >> 24 == 7)
         .expect("a user token");
-    assert!(pinyin_save(context));
+    assert!(unsafe { pinyin_save(context) });
     close(context, instance);
     let path = user.path.join("user.bin");
     let mut payload = std::fs::read(&path).expect("user.bin")[8..].to_vec();
@@ -165,12 +154,9 @@ fn a_stored_user_key_word_is_read_back_verbatim() {
     .expect("write user.bin");
     let (context, instance) = open_at(&user.path);
     let (mut length, mut phrase) = (UNTOUCHED, ptr::null_mut());
-    assert!(crate::dict::pinyin_token_get_phrase(
-        instance,
-        token,
-        &raw mut length,
-        &raw mut phrase
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
+    });
     assert_eq!(
         (length, crate::ffi::take_owned_cstr(phrase).as_str()),
         (1, "你")
@@ -191,12 +177,14 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
     assert!(!context.is_null());
     let instance = alloc(context);
     let (mut length, mut phrase) = (UNTOUCHED, UNTOUCHED as usize as *mut c_char);
-    assert!(crate::dict::pinyin_token_get_phrase(
-        instance,
-        0x0100_0001,
-        &raw mut length,
-        &raw mut phrase
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_token_get_phrase(
+            instance,
+            0x0100_0001,
+            &raw mut length,
+            &raw mut phrase,
+        )
+    });
     assert_eq!((length, phrase), (3, ptr::null_mut()));
     close(context, instance);
 }
@@ -236,12 +224,9 @@ fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
     assert_eq!(reading_bytes(instance, token, 0), 0x1081_u16.to_le_bytes());
     // SAFETY: a fresh GArray of two-byte elements, freed below.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
-    assert!(!crate::dict::pinyin_token_get_nth_pronunciation(
-        instance,
-        token,
-        1,
-        keys.cast()
-    ));
+    assert!(!unsafe {
+        crate::dict::pinyin_token_get_nth_pronunciation(instance, token, 1, keys.cast())
+    });
     // SAFETY: allocated above, freed once.
     unsafe { glib_sys::g_array_free(keys, 1) };
     close(context, instance);
@@ -295,19 +280,15 @@ fn lookup_tokens_resets_the_callers_array() {
         glib_sys::g_array_append_vals(array, (&raw const seed).cast(), 1);
         array
     };
-    assert!(crate::dict::pinyin_lookup_tokens(
-        instance,
-        c"你好".as_ptr(),
-        array.cast()
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_lookup_tokens(instance, c"你好".as_ptr(), array.cast())
+    });
     assert_eq!(take_cleared(), [0x1234]);
     let found = terminated_u32(array);
     assert_eq!(found, [0x0100_6205]);
-    assert!(!crate::dict::pinyin_lookup_tokens(
-        instance,
-        c"not-a-phrase".as_ptr(),
-        array.cast()
-    ));
+    assert!(!unsafe {
+        crate::dict::pinyin_lookup_tokens(instance, c"not-a-phrase".as_ptr(), array.cast())
+    });
     assert_eq!(take_cleared(), found);
     assert!(terminated_u32(array).is_empty());
     // SAFETY: the array is freed once, with its data.
@@ -327,12 +308,9 @@ fn nth_pronunciation_into_a_null_array_logs_the_glib_criticals() {
     let logs = crate::test_support::LogCapture::new();
     let glib = (Some("GLib".to_owned()), CRITICAL);
     for token in [token, user_token] {
-        assert!(crate::dict::pinyin_token_get_nth_pronunciation(
-            instance,
-            token,
-            0,
-            ptr::null_mut()
-        ));
+        assert!(unsafe {
+            crate::dict::pinyin_token_get_nth_pronunciation(instance, token, 0, ptr::null_mut())
+        });
         let records = logs.take_with_messages();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].0, glib);
@@ -340,12 +318,9 @@ fn nth_pronunciation_into_a_null_array_logs_the_glib_criticals() {
         assert_eq!(records[1].0, glib);
         assert!(records[1].1.contains("g_array_append_vals"));
     }
-    assert!(!crate::dict::pinyin_token_get_nth_pronunciation(
-        instance,
-        0xFFFF_FFFF,
-        0,
-        ptr::null_mut()
-    ));
+    assert!(!unsafe {
+        crate::dict::pinyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, ptr::null_mut())
+    });
     let records = logs.take_with_messages();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0, glib);
@@ -398,7 +373,7 @@ fn a_journal_word_no_import_writes_is_kept() {
         .into_iter()
         .find(|token| token >> 24 == 1)
         .expect("the imported token");
-    assert!(pinyin_save(context));
+    assert!(unsafe { pinyin_save(context) });
     close(context, instance);
     let path = user.path.join("gb_char.dbin");
     let original: Vec<u8> = [0x7532_u32, 0x620a, 0x4e59]
@@ -420,17 +395,14 @@ fn a_journal_word_no_import_writes_is_kept() {
     assert!(!context.is_null());
     let instance = alloc(context);
     let (mut length, mut text) = (UNTOUCHED, ptr::null_mut());
-    assert!(crate::dict::pinyin_token_get_phrase(
-        instance,
-        token,
-        &raw mut length,
-        &raw mut text
-    ));
+    assert!(unsafe {
+        crate::dict::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut text)
+    });
     assert_eq!((length, take_hex(text).as_str()), (3, "e794b2eda080e4b999"));
     assert_eq!(unigram(instance, token), (true, 3000));
     // Ending an import batch arms the save without changing an item.
     assert!(import_batch(context, 7, &[]).is_empty());
-    assert!(pinyin_save(context));
+    assert!(unsafe { pinyin_save(context) });
     let native: String = std::fs::read(&path)
         .expect("gb_char.dbin")
         .iter()
@@ -454,37 +426,35 @@ fn a_system_phrase_above_unicode_is_chosen_and_trained() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(pinyin_set_options(context, 1 << 5));
+    assert!(unsafe { pinyin_set_options(context, 1 << 5) });
     assert_eq!(parse(instance, "da1da1da1ba1"), 12);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     assert_eq!(
-        pinyin_choose_candidate(instance, 0, row_of(instance, NORMAL)),
+        unsafe { pinyin_choose_candidate(instance, 0, row_of(instance, NORMAL)) },
         9
     );
-    assert!(pinyin_guess_sentence(instance));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(pinyin_get_sentence(instance, 0, &raw mut sentence));
+    assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut sentence) });
     assert_eq!(take_hex(sentence), "e794b2f4908080e4b999e4b899");
-    assert!(crate::candidates::pinyin_train(instance, 0));
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
     assert_eq!(unigram(instance, 0x0100_0001), (true, 583));
     assert_eq!(unigram(instance, 0x0100_0002), (true, 583));
-    let iter = crate::iterators::pinyin_begin_get_phrases(context, 1);
+    let iter = unsafe { crate::iterators::pinyin_begin_get_phrases(context, 1) };
     let mut rows = Vec::new();
-    while crate::iterators::pinyin_iterator_has_next_phrase(iter) {
+    while unsafe { crate::iterators::pinyin_iterator_has_next_phrase(iter) } {
         let (mut phrase, mut reading, mut count) = (ptr::null_mut(), ptr::null_mut(), 0);
-        assert!(crate::iterators::pinyin_iterator_get_next_phrase(
-            iter,
-            &raw mut phrase,
-            &raw mut reading,
-            &raw mut count
-        ));
+        assert!(unsafe {
+            crate::iterators::pinyin_iterator_get_next_phrase(
+                iter,
+                &raw mut phrase,
+                &raw mut reading,
+                &raw mut count,
+            )
+        });
         rows.push((take_hex(phrase), take_hex(reading), count));
     }
-    crate::iterators::pinyin_end_get_phrases(iter);
+    unsafe { crate::iterators::pinyin_end_get_phrases(iter) };
     let row = |text: &str, reading: &str| (text.to_owned(), reading.to_owned(), 79);
     assert_eq!(
         rows,
@@ -515,14 +485,10 @@ fn a_stored_words_row_is_chosen_through_its_handle_with_its_stored_text(
     assert!(!context.is_null());
     let instance = alloc(context);
     assert_eq!(parse(instance, "da1da1da1ba1"), 12);
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     let row = row_of(instance, NORMAL);
     assert_eq!(parse(instance, "da1da1da1ba1"), 12);
-    assert_eq!(pinyin_choose_candidate(instance, 0, row), 9);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 9);
     // SAFETY: the live instance is read between serialized ABI calls.
     let inst = unsafe { crate::state::instance_ref(instance) };
     let selected = inst.core.session.selected_text();

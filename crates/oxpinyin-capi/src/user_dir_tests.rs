@@ -4,6 +4,11 @@
 //! its own, and each `pinyin_save` writes that context's whole state, every
 //! file written and renamed into place (`pinyin.cpp:1132-1147` at 074a2219).
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::{CStr, c_char, c_int};
 use std::ptr;
 
@@ -37,42 +42,36 @@ fn take_exported(text: *mut c_char) -> String {
 /// The user dictionary's phrases and counts, as the export iterator lists
 /// them.
 fn exported_phrases(context: *mut PinyinContext) -> Vec<(String, c_int)> {
-    let iter = pinyin_begin_get_phrases(context, oxpinyin_user::USER_DICTIONARY.into());
+    let iter = unsafe { pinyin_begin_get_phrases(context, oxpinyin_user::USER_DICTIONARY.into()) };
     assert!(!iter.is_null());
     let mut rows = Vec::new();
-    while pinyin_iterator_has_next_phrase(iter) {
+    while unsafe { pinyin_iterator_has_next_phrase(iter) } {
         let mut phrase: *mut c_char = ptr::null_mut();
         let mut pinyin: *mut c_char = ptr::null_mut();
         let mut count: c_int = 0;
-        assert!(pinyin_iterator_get_next_phrase(
-            iter,
-            &raw mut phrase,
-            &raw mut pinyin,
-            &raw mut count,
-        ));
+        assert!(unsafe {
+            pinyin_iterator_get_next_phrase(iter, &raw mut phrase, &raw mut pinyin, &raw mut count)
+        });
         take_exported(pinyin);
         rows.push((take_exported(phrase), count));
     }
-    pinyin_end_get_phrases(iter);
+    unsafe { pinyin_end_get_phrases(iter) };
     rows
 }
 
 /// Imports `phrase` under `pinyin` into the user dictionary.
 fn import(context: *mut PinyinContext, phrase: &str, pinyin: &str, count: c_int) {
-    let iter = pinyin_begin_add_phrases(context, oxpinyin_user::USER_DICTIONARY);
+    let iter = unsafe { pinyin_begin_add_phrases(context, oxpinyin_user::USER_DICTIONARY) };
     assert!(!iter.is_null());
-    assert!(pinyin_iterator_add_phrase(
-        iter,
-        cstr(phrase).as_ptr(),
-        cstr(pinyin).as_ptr(),
-        count,
-    ));
-    pinyin_end_add_phrases(iter);
+    assert!(unsafe {
+        pinyin_iterator_add_phrase(iter, cstr(phrase).as_ptr(), cstr(pinyin).as_ptr(), count)
+    });
+    unsafe { pinyin_end_add_phrases(iter) };
 }
 
 fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
-    pinyin_free_instance(instance);
-    pinyin_fini(context);
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
 }
 
 #[test]
@@ -95,8 +94,8 @@ fn when_two_sessions_save_the_later_save_is_the_profile() {
         } else {
             (first, second)
         };
-        assert!(pinyin_save(earlier));
-        assert!(pinyin_save(later));
+        assert!(unsafe { pinyin_save(earlier) });
+        assert!(unsafe { pinyin_save(later) });
         let expected = exported_phrases(later);
         close(first, first_instance);
         close(second, second_instance);

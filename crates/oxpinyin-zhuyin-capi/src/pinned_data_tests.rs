@@ -5,6 +5,11 @@
 //! `just fetch-contract-data` provides the package; a missing one is a
 //! failure, not a skip.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -36,7 +41,7 @@ use contract_data::contract_data_dir;
 fn open_on(system: &Path, user_dir: &Path) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
     let context = init_on(system, Some(user_dir));
     assert!(!context.is_null(), "zhuyin_init opens the pinned data");
-    let instance = zhuyin_alloc_instance(context);
+    let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
     (context, instance)
 }
@@ -120,7 +125,7 @@ fn a_pin_written_profile_opens_and_saves_with_its_logical_records() {
         .collect();
     assert_eq!(tokens, [vec![0x0700_0001], vec![0x0700_0002], vec![]]);
     assert!(import(context, 7, "龘龘", "ㄉㄚˊ ㄉㄚˊ".as_bytes(), 0));
-    assert!(zhuyin_save(context));
+    assert!(unsafe { zhuyin_save(context) });
     close(context, instance);
     assert_eq!(logs.take(), []);
     assert_eq!(user_rows(&user_dir.path), expected);
@@ -186,7 +191,7 @@ fn collision_saves(system: &Path, user_dir: &Path) {
     for (text, reading) in [("达达", "ㄉㄚˊ ㄉㄚˊ"), ("你你", "ㄋㄧˇ ㄋㄧˇ")] {
         let (context, instance) = open_on(system, user_dir);
         assert!(import(context, 7, text, reading.as_bytes(), 100));
-        assert!(zhuyin_save(context));
+        assert!(unsafe { zhuyin_save(context) });
         close(context, instance);
         let raw = std::fs::read(&path).expect("the saved bigram");
         assert_eq!(raw.len(), 4_199_312);
@@ -208,7 +213,7 @@ fn colliding_bigram_keys_save_the_pins_bytes() {
     let own = TempUserDir::new("collision-own");
     let context = init_on(&system, Some(&own.path));
     assert!(!context.is_null());
-    zhuyin_fini(context);
+    unsafe { zhuyin_fini(context) };
     craft_hash(&own.path.join("user_bigram.db"), &collision_rows());
     write_user_conf(&own.path, &system);
     collision_saves(&system, &own.path);
@@ -268,8 +273,8 @@ fn a_prefix_guess_over_five_library_tokens_aborts() {
         || {
             let user_dir = TempUserDir::new("prefix-five");
             let (context, _instance) = five_libraries(&user_dir.path);
-            let instance = zhuyin_alloc_instance(context);
-            zhuyin_guess_sentence_with_prefix(instance, cstr("你好").as_ptr());
+            let instance = unsafe { zhuyin_alloc_instance(context) };
+            unsafe { zhuyin_guess_sentence_with_prefix(instance, cstr("你好").as_ptr()) };
         },
     );
 }
@@ -283,19 +288,19 @@ fn training_a_stale_forced_choice_aborts() {
         || {
             let user_dir = TempUserDir::new("stale-forcing");
             let (context, _instance) = open_on(&contract_data_dir(), &user_dir.path);
-            let instance = zhuyin_alloc_instance(context);
+            let instance = unsafe { zhuyin_alloc_instance(context) };
             assert_eq!(
-                zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+                unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
                 6
             );
-            assert!(zhuyin_guess_sentence(instance));
-            assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+            assert!(unsafe { zhuyin_guess_sentence(instance) });
+            assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
             let (chosen, _, _) = candidate_rows(instance)
                 .into_iter()
                 .find(|(_, _, text)| text.as_slice() == "泥".as_bytes())
                 .expect("a 泥 row");
-            zhuyin_choose_candidate(instance, 0, chosen);
-            zhuyin_train(instance);
+            unsafe { zhuyin_choose_candidate(instance, 0, chosen) };
+            unsafe { zhuyin_train(instance) };
         },
     );
 }
@@ -314,23 +319,15 @@ fn candidate_rows(
     instance: *mut ZhuyinInstance,
 ) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t, Vec<u8>)> {
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     (0..count)
         .map(|index| {
             let mut candidate: *mut LookupCandidate = ptr::null_mut();
-            assert!(zhuyin_get_candidate(instance, index, &raw mut candidate));
+            assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut candidate) });
             let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-            assert!(zhuyin_get_candidate_type(
-                instance,
-                candidate,
-                &raw mut kind
-            ));
+            assert!(unsafe { zhuyin_get_candidate_type(instance, candidate, &raw mut kind) });
             let mut text: *const c_char = ptr::null();
-            assert!(zhuyin_get_candidate_string(
-                instance,
-                candidate,
-                &raw mut text
-            ));
+            assert!(unsafe { zhuyin_get_candidate_string(instance, candidate, &raw mut text) });
             (candidate, kind, bytes_at(text))
         })
         .collect()
@@ -343,12 +340,12 @@ fn candidate_rows(
 fn the_resplit_xian_window_lists_single_syllables_only() {
     let user_dir = TempUserDir::new("resplit-xian");
     let (context, instance) = open_on(&contract_data_dir(), &user_dir.path);
-    assert!(zhuyin_set_options(context, 0x18a));
+    assert!(unsafe { zhuyin_set_options(context, 0x18a) });
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(instance, cstr("xian").as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("xian").as_ptr()) },
         4
     );
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     let texts: Vec<String> = candidate_rows(instance)
         .into_iter()
         .map(|(_, _, text)| String::from_utf8(text).expect("UTF-8"))
@@ -451,30 +448,29 @@ fn a_stored_phrase_above_unicode_is_chosen_and_trained_byte_for_byte() {
     write_user_conf(&user_dir.path, &system);
     let (context, instance) = open_on(&system, &user_dir.path);
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(instance, cstr("da1da1da1ba1").as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("da1da1da1ba1").as_ptr()) },
         12
     );
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     let (candidate, _, chosen) = candidate_rows(instance)
         .into_iter()
         .find(|(_, kind, _)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR)
         .expect("the stored phrase row");
     assert_eq!(hex(&chosen), "e794b2f4908080e4b999");
-    assert_eq!(zhuyin_choose_candidate(instance, 0, candidate), 9);
-    assert!(zhuyin_guess_sentence(instance));
+    assert_eq!(
+        unsafe { zhuyin_choose_candidate(instance, 0, candidate) },
+        9
+    );
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
     assert_eq!(hex(&bytes_at(sentence)), "e794b2f4908080e4b999e4b899");
     // SAFETY: the sentence is the caller's GLib string, freed once.
     unsafe { glib_sys::g_free(sentence.cast()) };
-    assert!(zhuyin_train(instance));
+    assert!(unsafe { zhuyin_train(instance) });
     for token in [0x0100_0001, 0x0100_0002] {
         let mut freq = 0;
-        assert!(zhuyin_token_get_unigram_frequency(
-            instance,
-            token,
-            &raw mut freq
-        ));
+        assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
         assert_eq!(freq, 583, "{token:#x}");
     }
     close(context, instance);
@@ -497,10 +493,10 @@ fn key_at(instance: *mut ZhuyinInstance, offset: usize) -> Option<(u16, (u16, u1
     // The key and its rest are read from the pin's process-wide key slots.
     let _slots = crate::test_support::key_slot_guard();
     let mut key: *mut crate::types::ChewingKey = ptr::null_mut();
-    let found = zhuyin_get_zhuyin_key(instance, offset, &raw mut key);
+    let found = unsafe { zhuyin_get_zhuyin_key(instance, offset, &raw mut key) };
     let mut rest: *mut crate::types::ChewingKeyRest = ptr::null_mut();
     assert_eq!(
-        zhuyin_get_zhuyin_key_rest(instance, offset, &raw mut rest),
+        unsafe { zhuyin_get_zhuyin_key_rest(instance, offset, &raw mut rest) },
         found
     );
     assert_eq!((key.is_null(), rest.is_null()), (!found, !found));
@@ -508,39 +504,32 @@ fn key_at(instance: *mut ZhuyinInstance, offset: usize) -> Option<(u16, (u16, u1
         return None;
     }
     let (mut begin, mut end) = (0_u16, 0_u16);
-    assert!(zhuyin_get_zhuyin_key_rest_positions(
-        instance,
-        rest,
-        &raw mut begin,
-        &raw mut end
-    ));
+    assert!(unsafe {
+        zhuyin_get_zhuyin_key_rest_positions(instance, rest, &raw mut begin, &raw mut end)
+    });
     // SAFETY: a true answer points `key` at the instance's key slot.
     let packed = unsafe { (*key).packed };
     let mut text: *mut c_char = ptr::null_mut();
-    assert!(crate::keys::zhuyin_get_zhuyin_string(
-        instance,
-        key,
-        &raw mut text
-    ));
+    assert!(unsafe { crate::keys::zhuyin_get_zhuyin_string(instance, key, &raw mut text) });
     Some((packed, (begin, end), take_text(text)))
 }
 
 /// Guesses and answers the sentence.
 fn guessed(instance: *mut ZhuyinInstance) -> String {
-    assert!(zhuyin_guess_sentence(instance));
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
     take_text(sentence)
 }
 
 /// Parses `text` as full pinyin; the parse and the parsed length are its byte length.
 fn parse_full(instance: *mut ZhuyinInstance, text: &str) {
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) },
         text.len()
     );
     assert_eq!(
-        crate::parse::zhuyin_get_parsed_input_length(instance),
+        unsafe { crate::parse::zhuyin_get_parsed_input_length(instance) },
         text.len()
     );
 }
@@ -553,7 +542,7 @@ fn leading_rows(
     Vec<(lookup_candidate_type_t, String)>,
     *mut LookupCandidate,
 ) {
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     let rows = candidate_rows(instance);
     let third = rows[2].0;
     let leading = rows[..3]
@@ -584,7 +573,7 @@ fn a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does() {
     let row = |kind, text: &str| (kind, text.to_owned());
     let user_dir = TempUserDir::new("constraint-revalidation");
     let (context, instance) = open_on(&contract_data_dir(), &user_dir.path);
-    assert!(zhuyin_set_options(context, 0x8));
+    assert!(unsafe { zhuyin_set_options(context, 0x8) });
     parse_full(instance, "zhg");
     assert_eq!(
         (0..=3)
@@ -604,7 +593,7 @@ fn a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does() {
         rows,
         [row(BEST, "中国"), row(AFTER, "这个"), row(AFTER, "整个")]
     );
-    assert_eq!(zhuyin_choose_candidate(instance, 0, third), 3);
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 0, third) }, 3);
 
     // Revalidated by the guess.
     assert_eq!(guessed(instance), "整个");

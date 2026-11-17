@@ -16,8 +16,13 @@ use crate::types::ZhuyinInstance;
 /// ```c
 /// bool zhuyin_guess_sentence(zhuyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
+pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -80,8 +85,13 @@ fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
 /// bool zhuyin_guess_sentence_with_prefix(zhuyin_instance_t * instance,
 ///                                        const char * prefix);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `prefix` is a
+/// string. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_guess_sentence_with_prefix(
+pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     instance: *mut ZhuyinInstance,
     prefix: *const c_char,
 ) -> bool {
@@ -130,8 +140,13 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
 /// the pin: the 1-best row's text while a sentence lookup is active, `false`
 /// with `*sentence` untouched otherwise. If no phrase in the row converts,
 /// the getter writes NULL and answers `true` (`lookup/lookup.cpp:27-70`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `sentence` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_sentence(
+pub unsafe extern "C" fn zhuyin_get_sentence(
     instance: *mut ZhuyinInstance,
     sentence: *mut *mut c_char,
 ) -> bool {
@@ -180,8 +195,13 @@ oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::sentence_text);
 /// no key path satisfies. Where the pin asserts (`zhuyin.cpp:2110`,
 /// `:2158`, and `:1453` through `:2159`) the process aborts (register row
 /// 19).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `phrase` is a string
+/// and `length` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_character_offset(
+pub unsafe extern "C" fn zhuyin_get_character_offset(
     instance: *mut ZhuyinInstance,
     phrase: *const c_char,
     offset: usize,
@@ -272,8 +292,13 @@ pub extern "C" fn zhuyin_get_character_offset(
 /// The zhuyin equivalent of `pinyin_guess_candidates` at an offset, from the
 /// first key past the cursor onward. Uses the zhuyin enum's
 /// `NORMAL_CANDIDATE_AFTER_CURSOR` tag.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_guess_candidates_after_cursor(
+pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
@@ -289,8 +314,13 @@ pub extern "C" fn zhuyin_guess_candidates_after_cursor(
 /// ```
 ///
 /// The span ending at the cursor, tagged `NORMAL_CANDIDATE_BEFORE_CURSOR`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_guess_candidates_before_cursor(
+pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
@@ -518,6 +548,11 @@ fn guess_candidates_result(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use std::ptr;
 
     use super::{zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence};
@@ -548,13 +583,13 @@ mod tests {
     /// Every row's type in the current list.
     fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candidate_type_t> {
         let mut count = 0;
-        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         (0..count)
             .map(|index| {
                 let mut cand: *mut LookupCandidate = ptr::null_mut();
-                assert!(zhuyin_get_candidate(instance, index, &raw mut cand));
+                assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut cand) });
                 let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-                assert!(zhuyin_get_candidate_type(instance, cand, &raw mut kind));
+                assert!(unsafe { zhuyin_get_candidate_type(instance, cand, &raw mut kind) });
                 kind
             })
             .collect()
@@ -580,11 +615,11 @@ mod tests {
             let (context, instance) = open();
             let text = cstr(keys);
             assert_eq!(
-                zhuyin_parse_more_chewings(instance, text.as_ptr()),
+                unsafe { zhuyin_parse_more_chewings(instance, text.as_ptr()) },
                 consumed
             );
             assert_eq!(
-                zhuyin_guess_candidates_before_cursor(instance, offset),
+                unsafe { zhuyin_guess_candidates_before_cursor(instance, offset) },
                 answer,
                 "{keys}@{offset}"
             );
@@ -604,8 +639,11 @@ mod tests {
         for offset in [3, 6] {
             let (context, instance) = open();
             let text = cstr("su3cl3");
-            assert_eq!(zhuyin_parse_more_chewings(instance, text.as_ptr()), 6);
-            assert!(zhuyin_guess_candidates_before_cursor(instance, offset));
+            assert_eq!(
+                unsafe { zhuyin_parse_more_chewings(instance, text.as_ptr()) },
+                6
+            );
+            assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, offset) });
             let unguessed = kinds(instance);
             assert!(!unguessed.is_empty());
             assert!(
@@ -614,8 +652,8 @@ mod tests {
                     .all(|kind| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR),
                 "{offset}: {unguessed:?}"
             );
-            assert!(zhuyin_guess_sentence(instance));
-            assert!(zhuyin_guess_candidates_before_cursor(instance, offset));
+            assert!(unsafe { zhuyin_guess_sentence(instance) });
+            assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, offset) });
             let guessed = kinds(instance);
             assert_eq!(
                 guessed[0],
@@ -632,9 +670,12 @@ mod tests {
         }
         let (context, instance) = open();
         let text = cstr("su3cl3");
-        assert_eq!(zhuyin_parse_more_chewings(instance, text.as_ptr()), 6);
-        assert!(zhuyin_guess_sentence(instance));
-        assert!(zhuyin_guess_candidates_before_cursor(instance, 0));
+        assert_eq!(
+            unsafe { zhuyin_parse_more_chewings(instance, text.as_ptr()) },
+            6
+        );
+        assert!(unsafe { zhuyin_guess_sentence(instance) });
+        assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 0) });
         assert_eq!(
             kinds(instance),
             [lookup_candidate_type_t::BEST_MATCH_CANDIDATE]
@@ -645,6 +686,11 @@ mod tests {
 
 #[cfg(test)]
 mod prefix_ranking_tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::*;
     use crate::test_support::{TempUserDir, cstr, open_with_user};
     use oxpinyin_core::{Dictionary, OptionBits};
@@ -676,20 +722,16 @@ mod prefix_ranking_tests {
                     .expect("seed real bigram row");
             }
         }
-        assert!(crate::config::zhuyin_set_options(
-            context,
-            OptionBits::DYNAMIC_ADJUST.bits()
-        ));
-        assert!(!zhuyin_guess_sentence_with_prefix(
-            instance,
-            cstr("你好").as_ptr()
-        ));
+        assert!(unsafe {
+            crate::config::zhuyin_set_options(context, OptionBits::DYNAMIC_ADJUST.bits())
+        });
+        assert!(!unsafe { zhuyin_guess_sentence_with_prefix(instance, cstr("你好").as_ptr()) });
         assert_eq!(
-            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()) },
             3
         );
         let rank = || {
-            assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+            assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
             // SAFETY: the guess completed; its snapshot remains live for this read.
             let inst = unsafe { crate::state::instance_ref(instance) };
             let position = |text| {
@@ -705,37 +747,33 @@ mod prefix_ranking_tests {
             rank(),
             "the longer prefix's gram must outrank sentence_start and the shorter suffix"
         );
-        assert!(crate::config::zhuyin_set_options(context, 0));
+        assert!(unsafe { crate::config::zhuyin_set_options(context, 0) });
         assert!(!rank(), "without DYNAMIC_ADJUST only unigram order remains");
-        assert!(crate::config::zhuyin_set_options(
-            context,
-            OptionBits::DYNAMIC_ADJUST.bits()
-        ));
+        assert!(unsafe {
+            crate::config::zhuyin_set_options(context, OptionBits::DYNAMIC_ADJUST.bits())
+        });
         assert!(rank(), "option changes preserve the prefix tokens");
 
         // A plain sentence guess clears prefixes even when its matrix is empty.
         assert_eq!(
-            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("").as_ptr()),
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("").as_ptr()) },
             0
         );
-        assert!(!zhuyin_guess_sentence(instance));
+        assert!(!unsafe { zhuyin_guess_sentence(instance) });
         assert_eq!(
-            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()) },
             3
         );
         assert!(!rank(), "plain guess restores sentence_start");
 
-        assert!(zhuyin_guess_sentence_with_prefix(
-            instance,
-            cstr("你好").as_ptr()
-        ));
-        assert!(crate::instance::zhuyin_reset(instance));
+        assert!(unsafe { zhuyin_guess_sentence_with_prefix(instance, cstr("你好").as_ptr()) });
+        assert!(unsafe { crate::instance::zhuyin_reset(instance) });
         assert_eq!(
-            crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()),
+            unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, cstr("hao").as_ptr()) },
             3
         );
         assert!(!rank(), "full reset clears prefixes");
-        crate::instance::zhuyin_free_instance(instance);
-        crate::context::zhuyin_fini(context);
+        unsafe { crate::instance::zhuyin_free_instance(instance) };
+        unsafe { crate::context::zhuyin_fini(context) };
     }
 }

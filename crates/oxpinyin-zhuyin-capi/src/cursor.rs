@@ -84,8 +84,14 @@ fn key_lookup_failed(error: &oxpinyin_engine::EngineError, name: &str) -> bool {
 /// bool zhuyin_get_zhuyin_key_rest(zhuyin_instance_t * instance,
 ///                                 size_t offset, ChewingKeyRest ** key_rest);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `key_rest` is an
+/// out-parameter. The serial-calls rule applies. The pointer written to `*key_rest` addresses a
+/// process-wide slot, which the next call of this function overwrites.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_key_rest(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     instance: *mut ZhuyinInstance,
     offset: usize,
     key_rest: *mut *mut ChewingKeyRest,
@@ -142,8 +148,14 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
 /// instance is a defined call there, so it is unused here. The key-rest
 /// pointer is read only to fill a non-NULL `begin` or `end`, so a NULL one
 /// answers `true` when both are NULL and `false` (row 41) when either is not.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key_rest` is a borrowed object and `begin` and
+/// `end` are out-parameters. `_instance` is not read. `key_rest` is read only when `begin` or
+/// `end` is not NULL.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
     _instance: *mut ZhuyinInstance,
     key_rest: *mut ChewingKeyRest,
     begin: *mut u16,
@@ -185,9 +197,14 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
 /// pointer is read and `length` is written unconditionally by the pin, so a
 /// NULL `length` is register row 41's class (b) site; the optional write is
 /// skipped and the call still answers `true`, as the pinyin twin does
-/// (`crates/oxpinyin-capi/src/cursor.rs:189-201`).
+/// (`crates/oxpinyin-capi/src/cursor.rs:201-218`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key_rest` is a borrowed object and `length` is
+/// an out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_key_rest_length(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_length(
     _instance: *mut ZhuyinInstance,
     key_rest: *mut ChewingKeyRest,
     length: *mut u16,
@@ -214,8 +231,14 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_length(
 /// bool zhuyin_get_zhuyin_key(zhuyin_instance_t * instance,
 ///                            size_t offset, ChewingKey ** key);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `key` is an
+/// out-parameter. The serial-calls rule applies. The pointer written to `*key` addresses a
+/// process-wide slot, which the next call of this function overwrites.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_key(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
     instance: *mut ZhuyinInstance,
     offset: usize,
     key: *mut *mut ChewingKey,
@@ -260,8 +283,13 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
 /// bool zhuyin_get_zhuyin_offset(zhuyin_instance_t * instance,
 ///                               size_t cursor, size_t * offset);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `offset` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_offset(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_offset(
     instance: *mut ZhuyinInstance,
     cursor: usize,
     offset: *mut usize,
@@ -311,8 +339,13 @@ fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
 /// bool zhuyin_get_left_zhuyin_offset(zhuyin_instance_t * instance,
 ///                                    size_t offset, size_t * left);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `left` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_left_zhuyin_offset(
+pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     instance: *mut ZhuyinInstance,
     offset: usize,
     left: *mut usize,
@@ -363,8 +396,13 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
 /// bool zhuyin_get_right_zhuyin_offset(zhuyin_instance_t * instance,
 ///                                     size_t offset, size_t * right);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `right` is an
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_right_zhuyin_offset(
+pub unsafe extern "C" fn zhuyin_get_right_zhuyin_offset(
     instance: *mut ZhuyinInstance,
     offset: usize,
     right: *mut usize,

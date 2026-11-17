@@ -1,14 +1,19 @@
 //! Choosing a candidate, the candidate-type asserts and removing a user
 //! candidate.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// Parses `nihao`, guesses the sentence and the candidates at 0 with sort 0.
 fn guessed_nihao(context: *mut PinyinContext) -> *mut PinyinInstance {
     let instance = alloc(context);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     instance
 }
 
@@ -20,11 +25,10 @@ fn choose_candidate_aborts_on_a_predicted_prefix_row() {
         || {
             let user = TempUserDir::new("choose-prefix-row");
             let (_context, instance) = open_at(&user.path);
-            assert!(pinyin_guess_predicted_candidates_with_punctuations(
-                instance,
-                c"你".as_ptr()
-            ));
-            pinyin_choose_candidate(instance, 0, row_of(instance, PREDICTED_PREFIX));
+            assert!(unsafe {
+                pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
+            });
+            unsafe { pinyin_choose_candidate(instance, 0, row_of(instance, PREDICTED_PREFIX)) };
         },
     );
 }
@@ -38,7 +42,7 @@ fn choose_predicted_candidate_aborts_on_a_normal_row() {
             let user = TempUserDir::new("choose-predicted-normal");
             let (context, _) = open_at(&user.path);
             let instance = guessed_nihao(context);
-            pinyin_choose_predicted_candidate(instance, row_of(instance, NORMAL));
+            unsafe { pinyin_choose_predicted_candidate(instance, row_of(instance, NORMAL)) };
         },
     );
 }
@@ -53,7 +57,9 @@ fn nbest_index_aborts_on_a_normal_row() {
             let (context, _) = open_at(&user.path);
             let instance = guessed_nihao(context);
             let mut index = 0xAB_u8;
-            pinyin_get_candidate_nbest_index(instance, row_of(instance, NORMAL), &raw mut index);
+            unsafe {
+                pinyin_get_candidate_nbest_index(instance, row_of(instance, NORMAL), &raw mut index)
+            };
         },
     );
 }
@@ -67,7 +73,7 @@ fn remove_user_candidate_aborts_on_a_sentence_row() {
             let user = TempUserDir::new("remove-sentence-row");
             let (context, _) = open_at(&user.path);
             let instance = guessed_nihao(context);
-            pinyin_remove_user_candidate(instance, row_of(instance, NBEST));
+            unsafe { pinyin_remove_user_candidate(instance, row_of(instance, NBEST)) };
         },
     );
 }
@@ -81,7 +87,7 @@ fn remove_user_candidate_aborts_on_a_system_token() {
             let user = TempUserDir::new("remove-system-token");
             let (context, _) = open_at(&user.path);
             let instance = guessed_nihao(context);
-            pinyin_remove_user_candidate(instance, row_of(instance, NORMAL));
+            unsafe { pinyin_remove_user_candidate(instance, row_of(instance, NORMAL)) };
         },
     );
 }
@@ -93,17 +99,17 @@ fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] fin
     let user = TempUserDir::new("remove-retained-owner");
     let token = saved_user_phrase(&user.path);
     let (instance, candidate) = user_row_of_dada(&user.path);
-    let context = crate::instance::pinyin_get_context(instance);
+    let context = unsafe { crate::instance::pinyin_get_context(instance) };
     if finalized {
         crate::test_support::finalize_public_context(context, instance);
     }
-    assert!(pinyin_remove_user_candidate(instance, candidate));
+    assert!(unsafe { pinyin_remove_user_candidate(instance, candidate) });
     // SAFETY: the instance remains live; the removal's exclusive borrow ended.
     let inst = unsafe { crate::state::instance_ref(instance) };
     assert!(inst.core.user.phrase(token).is_none());
-    crate::instance::pinyin_free_instance(instance);
+    unsafe { crate::instance::pinyin_free_instance(instance) };
     if !finalized {
-        crate::context::pinyin_fini(context);
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }
 
@@ -122,7 +128,7 @@ fn remove_user_candidate_aborts_without_the_phrase_table() {
             )
             .expect("move the phrase table");
             let (instance, cand) = user_row_of_dada(&user.path);
-            pinyin_remove_user_candidate(instance, cand);
+            unsafe { pinyin_remove_user_candidate(instance, cand) };
         },
     );
 }
@@ -141,7 +147,7 @@ fn remove_user_candidate_aborts_on_a_residual_bigram_gram() {
                 &[(1_u32.to_le_bytes().to_vec(), gram_bytes(7, &[(token, 3)]))],
             );
             let (instance, cand) = user_row_of_dada(&user.path);
-            pinyin_remove_user_candidate(instance, cand);
+            unsafe { pinyin_remove_user_candidate(instance, cand) };
         },
     );
 }
@@ -157,8 +163,8 @@ fn choose_candidate_aborts_at_offset_one_without_a_sentence() {
             let (_context, instance) = open_at(&user.path);
             assert_eq!(parse(instance, "nihao"), 5);
             // SORT_WITHOUT_SENTENCE_CANDIDATE.
-            assert!(pinyin_guess_candidates(instance, 0, 0x1));
-            pinyin_choose_candidate(instance, 1, row_of(instance, NORMAL));
+            assert!(unsafe { pinyin_guess_candidates(instance, 0, 0x1) });
+            unsafe { pinyin_choose_candidate(instance, 1, row_of(instance, NORMAL)) };
         },
     );
 }
@@ -168,13 +174,12 @@ fn choose_candidate_aborts_at_offset_one_without_a_sentence() {
 fn a_predicted_punctuation_row_chooses() {
     let user = TempUserDir::new("choose-punctuation");
     let (context, instance) = open_at(&user.path);
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"好".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
+    });
     let row = row_of(instance, PREDICTED_PUNCTUATION);
-    assert!(pinyin_choose_predicted_candidate(instance, row));
-    assert!(pinyin_choose_predicted_candidate(instance, row));
+    assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
+    assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
     close(context, instance);
 }
 
@@ -186,12 +191,12 @@ fn an_nbest_choose_after_a_keyless_reparse_answers_minus_one() {
     let user = TempUserDir::new("keyless-nbest-choose");
     let (context, instance) = open_at(&user.path);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(pinyin_guess_candidates(instance, 0, 0));
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     let row = row_of(instance, NBEST);
     assert_eq!(parse(instance, "'''"), 3);
     assert_eq!(
-        crate::candidates::pinyin_choose_candidate(instance, 0, row),
+        unsafe { crate::candidates::pinyin_choose_candidate(instance, 0, row) },
         -1
     );
     close(context, instance);
@@ -224,18 +229,14 @@ fn a_repeat_choose_of_an_accepted_row_forces_its_own_span_again() {
         let user = TempUserDir::new(tag);
         let (context, instance) = open_at(&user.path);
         assert_eq!(parse(instance, "nihao"), 5);
-        assert!(pinyin_guess_candidates(
-            instance,
-            0,
-            crate::test_support::DEFAULT_SORT
-        ));
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
         let row = row_with(instance, NORMAL, "你");
-        assert_eq!(pinyin_choose_candidate(instance, 0, row), 2);
+        assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 2);
         (user, context, instance, row)
     };
     let (_once_dir, once_ctx, once, _) = start("repeat-choose-once");
     let (_twice_dir, twice_ctx, twice, row) = start("repeat-choose-twice");
-    assert_eq!(pinyin_choose_candidate(twice, 0, row), 2);
+    assert_eq!(unsafe { pinyin_choose_candidate(twice, 0, row) }, 2);
     assert_eq!(selected_tokens(twice), [NI]);
     assert_eq!(selected_tokens(twice), selected_tokens(once));
     assert_eq!(sentence_after_guess(once).as_deref(), Some("你好"));
@@ -252,8 +253,8 @@ fn a_repeat_choose_of_an_accepted_row_forces_its_own_span_again() {
     };
     let before = (unigrams(once), unigrams(twice));
     assert_eq!(before.0, before.1);
-    assert!(crate::candidates::pinyin_train(once, 0));
-    assert!(crate::candidates::pinyin_train(twice, 0));
+    assert!(unsafe { crate::candidates::pinyin_train(once, 0) });
+    assert!(unsafe { crate::candidates::pinyin_train(twice, 0) });
     assert_ne!(
         unigrams(once),
         before.0,
@@ -298,32 +299,31 @@ fn a_predicted_punctuation_row_chooses_as_the_pin_does(
     let user = TempUserDir::new("choose-punctuation-normal");
     let (context, instance) = open_at(&user.path);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_candidates(instance, 0, sort));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, sort) });
     assert_eq!(sentence_after_guess(instance).as_deref(), Some("你好"));
     if reset {
-        assert!(pinyin_reset(instance));
+        assert!(unsafe { pinyin_reset(instance) });
     }
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"好".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
+    });
     let row = row_of(instance, PREDICTED_PUNCTUATION);
-    assert_eq!(pinyin_choose_candidate(instance, 0, row), answer);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, answer);
     assert_eq!(selected_tokens(instance), Vec::<u32>::new());
     assert_eq!(sentence_after_guess(instance).as_deref(), after);
     assert_eq!(
-        crate::candidates::pinyin_train(instance, 0),
+        unsafe { crate::candidates::pinyin_train(instance, 0) },
         after.is_some()
     );
     assert_eq!(
-        crate::candidates::pinyin_clear_constraint(instance, 0),
+        unsafe { crate::candidates::pinyin_clear_constraint(instance, 0) },
         cleared
     );
     if !reset && after.is_none() {
         // The cell survives its clear and a reparse. Reset clears it.
         assert_eq!(parse(instance, "nihao"), 5);
         assert_eq!(sentence_after_guess(instance), None);
-        assert!(pinyin_reset(instance));
+        assert!(unsafe { pinyin_reset(instance) });
         assert_eq!(parse(instance, "nihao"), 5);
         assert_eq!(sentence_after_guess(instance).as_deref(), Some("你好"));
     }
@@ -342,18 +342,14 @@ fn a_predicted_punctuation_row_chooses_as_the_pin_does(
 #[test]
 fn a_choose_at_zero_after_a_predicted_punctuation_choose_brings_the_sentence_back() {
     let choose_first = |instance: *mut PinyinInstance| {
-        assert!(pinyin_guess_candidates(
-            instance,
-            0,
-            crate::test_support::DEFAULT_SORT
-        ));
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
         assert!(
             capture_rows(instance)
                 .iter()
                 .all(|(kind, _, _)| *kind != NBEST)
         );
         let first = row_with(instance, NORMAL, "你");
-        assert_eq!(pinyin_choose_candidate(instance, 0, first), 2);
+        assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, first) }, 2);
         sentence_after_guess(instance)
     };
     let plain_dir = TempUserDir::new("null-step-overwrite-plain");
@@ -365,12 +361,14 @@ fn a_choose_at_zero_after_a_predicted_punctuation_choose_brings_the_sentence_bac
     let user = TempUserDir::new("null-step-overwrite");
     let (context, instance) = open_at(&user.path);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_predicted_candidates_with_punctuations(
-        instance,
-        c"好".as_ptr()
-    ));
+    assert!(unsafe {
+        pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
+    });
     let punctuation = row_of(instance, PREDICTED_PUNCTUATION);
-    assert_eq!(pinyin_choose_candidate(instance, 0, punctuation), 0);
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(instance, 0, punctuation) },
+        0
+    );
     assert_eq!(sentence_after_guess(instance), None);
     assert_eq!(choose_first(instance), expected);
     close(plain_context, plain);
@@ -388,16 +386,12 @@ fn a_choose_at_another_offset_answers_that_offset_plus_the_row_span() {
     let user = TempUserDir::new("choose-other-offset");
     let (context, instance) = open_at(&user.path);
     assert_eq!(parse(instance, "nihao"), 5);
-    assert!(pinyin_guess_candidates(
-        instance,
-        2,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 2, crate::test_support::DEFAULT_SORT) });
     let row = row_with(instance, NORMAL, "好");
-    assert_eq!(pinyin_choose_candidate(instance, 0, row), 3);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 3);
     // The forcing is the row's `[2, 5)`, not one from the caller's 0.
-    assert!(!crate::candidates::pinyin_clear_constraint(instance, 0));
-    assert!(crate::candidates::pinyin_clear_constraint(instance, 2));
+    assert!(!unsafe { crate::candidates::pinyin_clear_constraint(instance, 0) });
+    assert!(unsafe { crate::candidates::pinyin_clear_constraint(instance, 2) });
     close(context, instance);
 }
 
@@ -410,14 +404,10 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
     let (context, instance) = open_at(&user.path);
     let input = format!("ni{}hao", "'".repeat(300));
     assert_eq!(parse(instance, &input), input.len());
-    assert!(pinyin_guess_candidates(
-        instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) });
     let row = row_with(instance, NORMAL, "你好");
     assert_eq!(
-        pinyin_choose_candidate(instance, 0, row),
+        unsafe { pinyin_choose_candidate(instance, 0, row) },
         i32::try_from(input.len() % 256).expect("small")
     );
     close(context, instance);

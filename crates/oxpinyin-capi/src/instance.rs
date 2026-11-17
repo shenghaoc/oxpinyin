@@ -15,8 +15,13 @@ use crate::types::{PinyinContext, PinyinInstance};
 ///
 /// Returns NULL on failure, on a null context and on a context that
 /// `pinyin_fini` already finalised (register row 60).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance {
+pub unsafe extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance {
     if context.is_null() {
         return ptr::null_mut();
     }
@@ -45,8 +50,14 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
 /// Upstream is a one-line field read (`pinyin.cpp:1358-1360`); the
 /// returned handle is the caller's to keep using under the context's own
 /// lifetime. NULL for a null instance.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies. The returned pointer is the context handle the instance was allocated from;
+/// `pinyin_fini` may already have taken it.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {
+pub unsafe extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {
     if instance.is_null() {
         return ptr::null_mut();
     }
@@ -63,8 +74,13 @@ pub extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut Piny
 /// ```c
 /// void pinyin_free_instance(pinyin_instance_t * instance);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies. After the call `instance` is dangling, and so is every pointer borrowed from it.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
+pub unsafe extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     if instance.is_null() {
         return;
     }
@@ -88,8 +104,13 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
 /// [`oxpinyin_facade::InstanceView::reset_parse_state`] split deliberately
 /// leaves it alive across keystrokes — and the phrase result
 /// (`pinyin.cpp:2699`), which this clears with it.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
+pub unsafe extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }

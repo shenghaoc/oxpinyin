@@ -1,6 +1,11 @@
 //! The library bits of a token: tokens under high bits, two tokens of one
 //! library and five libraries that hold one string.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// An import aborts where the user phrase table maps the phrase to two
@@ -60,11 +65,7 @@ fn an_import_finds_the_token_of_its_library_under_high_bits() {
     assert_eq!(import_batch(context, 7, &[("龘龘", "da4'da4", 5)]), [true]);
     assert_eq!(lookup(instance, "龘龘"), [token | TAG], "no second token");
     let mut count = UNTOUCHED;
-    assert!(pinyin_token_get_n_pronunciation(
-        instance,
-        token,
-        &raw mut count
-    ));
+    assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
     assert_eq!(count, 2);
     close(context, instance);
 }
@@ -99,16 +100,16 @@ fn a_prefix_row_under_high_bits_is_listed_and_trains_its_item() {
         import_batch(context, 7, &[("龘", "da2", 1), ("龘龘", "da2'da2", 1)]),
         [true, true]
     );
-    assert!(pinyin_save(context));
+    assert!(unsafe { pinyin_save(context) });
     let token = lookup(instance, "龘龘")[0];
     close(context, instance);
     set_phrase_table_row(&user.path, "龘龘", &[token | TAG]);
     let (context, instance) = open_at(&user.path);
     let (found, base) = unigram(instance, token);
     assert!(found);
-    assert!(pinyin_guess_predicted_candidates(instance, c"龘".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"龘".as_ptr()) });
     let row = row_with(instance, PREDICTED_PREFIX, "龘");
-    assert!(pinyin_choose_predicted_candidate(instance, row));
+    assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
     assert_eq!(unigram(instance, token), (true, base + 483));
     close(context, instance);
 }
@@ -138,12 +139,12 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     assert!(retagged > 0, "the index holds the token");
     craft_user_index(&path, &rows);
     let (instance, candidate) = user_row_of_dada(&user.path);
-    let context = crate::instance::pinyin_get_context(instance);
+    let context = unsafe { crate::instance::pinyin_get_context(instance) };
     let (found, base) = unigram(instance, token);
     assert!(found);
-    assert!(pinyin_choose_candidate(instance, 0, candidate) > 0);
-    assert!(pinyin_guess_sentence(instance));
-    assert!(crate::candidates::pinyin_train(instance, 0));
+    assert!(unsafe { pinyin_choose_candidate(instance, 0, candidate) } > 0);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
     assert_eq!(unigram(instance, token), (true, base + 483));
     {
         // SAFETY: the instance is live and this read ends before the close.
@@ -180,9 +181,9 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
     let (context, instance) = open_at(&user.path);
     let (found, base) = unigram(instance, successor);
     assert!(found);
-    assert!(pinyin_guess_predicted_candidates(instance, c"你".as_ptr()));
+    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     let row = row_with(instance, PREDICTED_BIGRAM, "龘龘");
-    assert!(pinyin_choose_predicted_candidate(instance, row));
+    assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
     assert_eq!(unigram(instance, successor), (true, base + 483));
     let trained: Vec<_> = {
         // SAFETY: the instance is live and this read ends before the close.
@@ -209,7 +210,7 @@ fn mask_out_ignores_the_bits_above_the_library_index() {
     let (context, instance) = open_at(&user.path);
     assert_eq!(import_batch(context, 7, &[("测测", "ce4'ce4", 5)]), [true]);
     assert!(unigram(instance, 0x0700_0001).0);
-    assert!(pinyin_mask_out(context, 0x1000_0000, 0x1000_0000));
+    assert!(unsafe { pinyin_mask_out(context, 0x1000_0000, 0x1000_0000) });
     assert_eq!(unigram(instance, 0x0700_0001), (false, 0));
     close(context, instance);
 }
@@ -263,7 +264,9 @@ fn the_prefix_guess_aborts_on_five_tokens() {
             let user = TempUserDir::new("combined-prefix-guess");
             let (context, instance) = open_at(&user.path);
             hold_in_five_libraries(context, "你好", "ni3'hao3");
-            crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"你好".as_ptr());
+            unsafe {
+                crate::sentence::pinyin_guess_sentence_with_prefix(instance, c"你好".as_ptr())
+            };
         },
     );
 }
@@ -277,7 +280,7 @@ fn the_prediction_aborts_on_five_tokens() {
             let user = TempUserDir::new("combined-prediction");
             let (context, instance) = open_at(&user.path);
             hold_in_five_libraries(context, "你好", "ni3'hao3");
-            pinyin_guess_predicted_candidates(instance, c"你好".as_ptr());
+            unsafe { pinyin_guess_predicted_candidates(instance, c"你好".as_ptr()) };
         },
     );
 }
@@ -293,7 +296,7 @@ fn the_character_offset_aborts_on_five_tokens() {
             hold_in_five_libraries(context, "你", "ni3");
             assert_eq!(parse(instance, "ni"), 2);
             let mut length = 0_usize;
-            pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length);
+            unsafe { pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length) };
         },
     );
 }
@@ -308,7 +311,7 @@ fn remember_aborts_on_five_tokens() {
             let (context, instance) = open_at(&user.path);
             hold_in_five_libraries(context, "你", "ni3");
             assert_eq!(parse(instance, "ni"), 2);
-            crate::user_data::pinyin_remember_user_input(instance, c"你".as_ptr(), 1);
+            unsafe { crate::user_data::pinyin_remember_user_input(instance, c"你".as_ptr(), 1) };
         },
     );
 }

@@ -6,6 +6,11 @@
 //! columns the divided step fills in the other key and offset functions
 //! (`:2930-2964`, `:3010-3028`, `:3063-3095`). Register rows 19 and 66.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ptr;
 
 use crate::config::{
@@ -53,14 +58,11 @@ impl Fixture {
     /// of `nong` pronounces it.
     fn with_long_only(tag: &str) -> Self {
         let fixture = Self::new(tag);
-        let import = pinyin_begin_add_phrases(fixture.context, 7);
-        assert!(pinyin_iterator_add_phrase(
-            import,
-            cstr("弄").as_ptr(),
-            cstr("long").as_ptr(),
-            1
-        ));
-        pinyin_end_add_phrases(import);
+        let import = unsafe { pinyin_begin_add_phrases(fixture.context, 7) };
+        assert!(unsafe {
+            pinyin_iterator_add_phrase(import, cstr("弄").as_ptr(), cstr("long").as_ptr(), 1)
+        });
+        unsafe { pinyin_end_add_phrases(import) };
         fixture
     }
 
@@ -68,10 +70,10 @@ impl Fixture {
     /// pin's matrix also holds `xi` at column 0 and `an` at column 2.
     fn luoma_xian(tag: &str) -> Self {
         let fixture = Self::new(tag);
-        assert!(pinyin_set_options(fixture.context, 0x8 | DIVIDED));
-        assert!(pinyin_set_full_pinyin_scheme(fixture.context, 2));
+        assert!(unsafe { pinyin_set_options(fixture.context, 0x8 | DIVIDED) });
+        assert!(unsafe { pinyin_set_full_pinyin_scheme(fixture.context, 2) });
         assert_eq!(
-            pinyin_parse_more_full_pinyins(fixture.instance, cstr("sian").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(fixture.instance, cstr("sian").as_ptr()) },
             4
         );
         fixture
@@ -79,30 +81,27 @@ impl Fixture {
 
     fn character_offset(&self, offset: usize) -> (bool, usize) {
         let mut length = usize::MAX;
-        let ok = pinyin_get_character_offset(
-            self.instance,
-            cstr("弄").as_ptr(),
-            offset,
-            &raw mut length,
-        );
+        let ok = unsafe {
+            pinyin_get_character_offset(self.instance, cstr("弄").as_ptr(), offset, &raw mut length)
+        };
         (ok, length)
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        pinyin_free_instance(self.instance);
-        pinyin_fini(self.context);
+        unsafe { pinyin_free_instance(self.instance) };
+        unsafe { pinyin_fini(self.context) };
     }
 }
 
 #[test]
 fn the_character_offset_reads_the_double_pinyin_fuzzy_alternative() {
     let fixture = Fixture::with_long_only("char-offset-double-fuzzy");
-    assert!(pinyin_set_options(fixture.context, 0x8 | L_N));
-    assert!(pinyin_set_double_pinyin_scheme(fixture.context, 2));
+    assert!(unsafe { pinyin_set_options(fixture.context, 0x8 | L_N) });
+    assert!(unsafe { pinyin_set_double_pinyin_scheme(fixture.context, 2) });
     assert_eq!(
-        pinyin_parse_more_double_pinyins(fixture.instance, cstr("ns").as_ptr()),
+        unsafe { pinyin_parse_more_double_pinyins(fixture.instance, cstr("ns").as_ptr()) },
         2
     );
     assert_eq!(fixture.character_offset(2), (true, 1));
@@ -111,10 +110,10 @@ fn the_character_offset_reads_the_double_pinyin_fuzzy_alternative() {
 #[test]
 fn the_character_offset_reads_the_chewing_fuzzy_alternative() {
     let fixture = Fixture::with_long_only("char-offset-chewing-fuzzy");
-    assert!(pinyin_set_options(fixture.context, 0x8 | L_N));
-    assert!(pinyin_set_zhuyin_scheme(fixture.context, 1));
+    assert!(unsafe { pinyin_set_options(fixture.context, 0x8 | L_N) });
+    assert!(unsafe { pinyin_set_zhuyin_scheme(fixture.context, 1) });
     assert_eq!(
-        pinyin_parse_more_chewings(fixture.instance, cstr("sj/").as_ptr()),
+        unsafe { pinyin_parse_more_chewings(fixture.instance, cstr("sj/").as_ptr()) },
         3
     );
     assert_eq!(fixture.character_offset(3), (true, 1));
@@ -125,11 +124,7 @@ fn the_left_offset_reads_the_divided_column() {
     // The divided `an` ends at 4 from column 2, so the pin's scan stops there.
     let fixture = Fixture::luoma_xian("left-divided");
     let mut left = usize::MAX;
-    assert!(pinyin_get_left_pinyin_offset(
-        fixture.instance,
-        4,
-        &raw mut left
-    ));
+    assert!(unsafe { pinyin_get_left_pinyin_offset(fixture.instance, 4, &raw mut left) });
     assert_eq!(left, 2);
 }
 
@@ -137,11 +132,7 @@ fn the_left_offset_reads_the_divided_column() {
 fn the_right_offset_reads_the_divided_column() {
     let fixture = Fixture::luoma_xian("right-divided");
     let mut right = usize::MAX;
-    assert!(pinyin_get_right_pinyin_offset(
-        fixture.instance,
-        2,
-        &raw mut right
-    ));
+    assert!(unsafe { pinyin_get_right_pinyin_offset(fixture.instance, 2, &raw mut right) });
     assert_eq!(right, 4);
 }
 
@@ -149,11 +140,7 @@ fn the_right_offset_reads_the_divided_column() {
 fn the_cursor_offset_stops_at_the_divided_column() {
     let fixture = Fixture::luoma_xian("offset-divided");
     let mut offset = usize::MAX;
-    assert!(pinyin_get_pinyin_offset(
-        fixture.instance,
-        2,
-        &raw mut offset
-    ));
+    assert!(unsafe { pinyin_get_pinyin_offset(fixture.instance, 2, &raw mut offset) });
     assert_eq!(offset, 2);
 }
 
@@ -161,7 +148,7 @@ fn the_cursor_offset_stops_at_the_divided_column() {
 fn the_key_getter_reads_the_divided_column() {
     let fixture = Fixture::luoma_xian("key-divided");
     let mut key: *mut ChewingKey = ptr::null_mut();
-    assert!(pinyin_get_pinyin_key(fixture.instance, 2, &raw mut key));
+    assert!(unsafe { pinyin_get_pinyin_key(fixture.instance, 2, &raw mut key) });
     assert!(!key.is_null());
 }
 
@@ -169,18 +156,11 @@ fn the_key_getter_reads_the_divided_column() {
 fn the_key_rest_getter_reads_the_divided_column() {
     let fixture = Fixture::luoma_xian("key-rest-divided");
     let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-    assert!(pinyin_get_pinyin_key_rest(
-        fixture.instance,
-        2,
-        &raw mut rest
-    ));
+    assert!(unsafe { pinyin_get_pinyin_key_rest(fixture.instance, 2, &raw mut rest) });
     let (mut begin, mut end) = (0_u16, 0_u16);
-    assert!(pinyin_get_pinyin_key_rest_positions(
-        fixture.instance,
-        rest,
-        &raw mut begin,
-        &raw mut end
-    ));
+    assert!(unsafe {
+        pinyin_get_pinyin_key_rest_positions(fixture.instance, rest, &raw mut begin, &raw mut end)
+    });
     assert_eq!((begin, end), (2, 4));
 }
 
@@ -199,43 +179,35 @@ const RESPLIT: u32 = 1 << 8;
 #[rstest::rstest]
 fn a_resplit_key_pair_spells_a_phrase_under_every_scheme(#[values(1, 2, 3)] scheme: i32) {
     let fixture = Fixture::new("resplit-scheme");
-    let import = pinyin_begin_add_phrases(fixture.context, 7);
-    assert!(pinyin_iterator_add_phrase(
-        import,
-        cstr("方案").as_ptr(),
-        cstr("fang'an").as_ptr(),
-        1
-    ));
-    pinyin_end_add_phrases(import);
-    assert!(pinyin_set_options(fixture.context, 0x8 | RESPLIT));
-    assert!(pinyin_set_full_pinyin_scheme(fixture.context, scheme));
+    let import = unsafe { pinyin_begin_add_phrases(fixture.context, 7) };
+    assert!(unsafe {
+        pinyin_iterator_add_phrase(import, cstr("方案").as_ptr(), cstr("fang'an").as_ptr(), 1)
+    });
+    unsafe { pinyin_end_add_phrases(import) };
+    assert!(unsafe { pinyin_set_options(fixture.context, 0x8 | RESPLIT) });
+    assert!(unsafe { pinyin_set_full_pinyin_scheme(fixture.context, scheme) });
     assert_eq!(
-        pinyin_parse_more_full_pinyins(fixture.instance, cstr("fangan").as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(fixture.instance, cstr("fangan").as_ptr()) },
         6
     );
-    assert!(crate::sentence::pinyin_guess_candidates(
-        fixture.instance,
-        0,
-        crate::test_support::DEFAULT_SORT
-    ));
+    assert!(unsafe {
+        crate::sentence::pinyin_guess_candidates(
+            fixture.instance,
+            0,
+            crate::test_support::DEFAULT_SORT,
+        )
+    });
     let mut count = 0;
-    assert!(crate::candidates::pinyin_get_n_candidate(
-        fixture.instance,
-        &raw mut count
-    ));
+    assert!(unsafe { crate::candidates::pinyin_get_n_candidate(fixture.instance, &raw mut count) });
     let offered = (0..count).any(|index| {
         let mut row = ptr::null_mut();
-        assert!(crate::candidates::pinyin_get_candidate(
-            fixture.instance,
-            index,
-            &raw mut row
-        ));
+        assert!(unsafe {
+            crate::candidates::pinyin_get_candidate(fixture.instance, index, &raw mut row)
+        });
         let mut text = ptr::null();
-        assert!(crate::candidates::pinyin_get_candidate_string(
-            fixture.instance,
-            row,
-            &raw mut text
-        ));
+        assert!(unsafe {
+            crate::candidates::pinyin_get_candidate_string(fixture.instance, row, &raw mut text)
+        });
         // SAFETY: the getter returns this live row's NUL-terminated string.
         unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes() == "方案".as_bytes()
     });

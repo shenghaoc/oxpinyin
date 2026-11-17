@@ -21,8 +21,16 @@ const GBK_DICTIONARY: u8 = 2;
 /// `USE_TONE` off the stored word. Already-allocated full-pinyin sessions
 /// read the rest of the word at their next parse; a guess reads it over
 /// the matrix that parse filled (`pinyin.cpp:1299-1306` at 074a2219).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
+pub unsafe extern "C" fn pinyin_set_options(
+    context: *mut PinyinContext,
+    options: PinyinOptionT,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -55,8 +63,13 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 ///
 /// Exported in every build: it is in the pin's `libpinyin.ver`, and the
 /// export gate (`just abi exports`) checks the shipped artifact.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_full_pinyin_scheme(
+pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
     context: *mut PinyinContext,
     scheme: c_int,
 ) -> bool {
@@ -97,8 +110,13 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
 /// cleared (the unconditional `m_fallback_table = NULL` at `:580`) and
 /// the wrapper returns `true` (ignoring the parser's `false` at
 /// `:614`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_double_pinyin_scheme(
+pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
     scheme: c_int,
 ) -> bool {
@@ -148,8 +166,16 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// slot (`zhuyin_parser2.cpp:295`) — and every out-of-enum value
 /// (`pinyin.cpp:1189`) abort the process, as upstream does (register rows
 /// 5c and 5d).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
+pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
+    context: *mut PinyinContext,
+    scheme: c_int,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -178,8 +204,16 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
 /// system tables. Returns `false` when the context is null, the library is
 /// already loaded, or the exported tables are missing
 /// (`docs/findings/phrase-union.md` §3.5).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+pub unsafe extern "C" fn pinyin_load_addon_phrase_library(
+    context: *mut PinyinContext,
+    index: u8,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -232,8 +266,13 @@ mod addon_load_tests {
 /// more aborts the process (register row 21, `pinyin.cpp:499`).
 ///
 /// Live call site: fcitx-libpinyin (`eim.cpp`).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_unload_addon_phrase_library(
+pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
     context: *mut PinyinContext,
     index: u8,
 ) -> bool {
@@ -265,8 +304,16 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
 /// `pinyin.cpp:457`). The only `true` on a healthy context is GBK (2)
 /// after an unload, re-attaching from disk upstream and clearing the
 /// visibility mask here.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+pub unsafe extern "C" fn pinyin_load_phrase_library(
+    context: *mut PinyinContext,
+    index: u8,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -321,8 +368,16 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 /// (register row 21), any other non-GBK library answers `false` — and
 /// for GBK calls `unload` and answers `true` whatever it returned
 /// (`:473-474`), so a repeat unload answers `true` as well.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+pub unsafe extern "C" fn pinyin_unload_phrase_library(
+    context: *mut PinyinContext,
+    index: u8,
+) -> bool {
     if index >= PHRASE_INDEX_LIBRARY_COUNT {
         // Register row 21, `pinyin.cpp:466`: `assert`, before the context is
         // read, so a NULL context aborts as well.
@@ -372,8 +427,17 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
 /// residual total (`ngram.cpp:70`); the reload of each loaded system
 /// library then asserts on one that is a directory (`memory_chunk.h:493`).
 /// The process aborts at each (register rows 84, 85, 86, 87, 94 and 96).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value: u32) -> bool {
+pub unsafe extern "C" fn pinyin_mask_out(
+    context: *mut PinyinContext,
+    mask: u32,
+    value: u32,
+) -> bool {
     if context.is_null() {
         return false;
     }
@@ -431,6 +495,11 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use super::pinyin_set_options;
     use crate::candidates::{pinyin_get_candidate, pinyin_get_candidate_string};
     use crate::parse::pinyin_parse_more_full_pinyins;
@@ -440,11 +509,11 @@ mod tests {
     use oxpinyin_core::OptionBits;
 
     fn first_candidate_text(instance: *mut crate::types::PinyinInstance) -> String {
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
         let mut cand = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &raw mut cand));
+        assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut cand) });
         let mut text: *const GChar = std::ptr::null();
-        assert!(pinyin_get_candidate_string(instance, cand, &raw mut text));
+        assert!(unsafe { pinyin_get_candidate_string(instance, cand, &raw mut text) });
         assert!(!text.is_null());
         // SAFETY: `text` borrows the snapshot until the next guess.
         unsafe { std::ffi::CStr::from_ptr(text) }
@@ -457,16 +526,19 @@ mod tests {
     fn set_options_before_alloc_controls_incomplete_parse_length() {
         let user_dir = TempUserDir::new("set-options-before");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        crate::instance::pinyin_free_instance(instance);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
 
-        assert!(pinyin_set_options(context, 0));
-        let instance = crate::instance::pinyin_alloc_instance(context);
+        assert!(unsafe { pinyin_set_options(context, 0) });
+        let instance = unsafe { crate::instance::pinyin_alloc_instance(context) };
         let nih = cstr("nih");
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, nih.as_ptr()) },
+            2
+        );
         assert_eq!(first_candidate_text(instance), "你");
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     #[test]
@@ -476,23 +548,26 @@ mod tests {
 
         let nih = cstr("nih");
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, nih.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, nih.as_ptr()) },
             2,
             "the USE_TONE default leaves the incomplete tail"
         );
 
-        assert!(pinyin_set_options(context, 0));
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
+        assert!(unsafe { pinyin_set_options(context, 0) });
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, nih.as_ptr()) },
+            2
+        );
         assert_eq!(first_candidate_text(instance), "你");
 
-        assert!(pinyin_set_options(
-            context,
-            OptionBits::PINYIN_INCOMPLETE.bits()
-        ));
-        assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 3);
+        assert!(unsafe { pinyin_set_options(context, OptionBits::PINYIN_INCOMPLETE.bits()) });
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, nih.as_ptr()) },
+            3
+        );
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 
     #[test]
@@ -503,41 +578,40 @@ mod tests {
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
         let zai4 = cstr("zai4");
-        assert!(pinyin_set_options(
-            context,
-            OptionBits::PINYIN_INCOMPLETE.bits()
-        ));
+        assert!(unsafe { pinyin_set_options(context, OptionBits::PINYIN_INCOMPLETE.bits()) });
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()) },
             3,
             "a toneless word leaves the digit unparsed"
         );
 
-        assert!(pinyin_set_options(
-            context,
-            (OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE).bits()
-        ));
+        assert!(unsafe {
+            pinyin_set_options(
+                context,
+                (OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE).bits(),
+            )
+        });
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()) },
             4,
             "USE_TONE consumes the digit with the syllable"
         );
 
         let zhuang4 = cstr("zhuang4");
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, zhuang4.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, zhuang4.as_ptr()) },
             7,
             "the 7-byte window admits zhuang4 whole"
         );
 
         let rejected = cstr("zai6");
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, rejected.as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, rejected.as_ptr()) },
             3,
             "6 is not a tone: the digit stays junk"
         );
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

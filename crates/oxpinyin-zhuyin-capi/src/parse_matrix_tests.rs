@@ -7,6 +7,11 @@
 //! pinyin twins hold the first-item reads, which go through the shared
 //! facade code.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use crate::candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
     zhuyin_get_candidate_string, zhuyin_get_candidate_type, zhuyin_get_n_candidate,
@@ -34,21 +39,17 @@ const L_N: u32 = 1 << 15;
 /// Secondary zhuyin spells 好 `hau`.
 fn scheme_separator(scheme: i32, text: &str) -> Fixture {
     let fixture = Fixture::new("full-pinyin-separator");
-    assert!(crate::config::zhuyin_set_full_pinyin_scheme(
-        fixture.context,
-        scheme
-    ));
+    assert!(unsafe { crate::config::zhuyin_set_full_pinyin_scheme(fixture.context, scheme) });
     let input = cstr(text);
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()) },
         0
     );
-    assert!(zhuyin_set_options(
-        fixture.context,
-        oxpinyin_core::OptionBits::USE_TONE.bits()
-    ));
+    assert!(unsafe {
+        zhuyin_set_options(fixture.context, oxpinyin_core::OptionBits::USE_TONE.bits())
+    });
     assert_eq!(
-        zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()),
+        unsafe { zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()) },
         6
     );
     fixture
@@ -91,7 +92,7 @@ fn guess_after_the_separator_aborts(name: &str, scheme: i32, text: &str) {
         name,
         || scheme_separator(scheme, text),
         |fixture| {
-            zhuyin_guess_candidates_after_cursor(fixture.instance, 3);
+            unsafe { zhuyin_guess_candidates_after_cursor(fixture.instance, 3) };
         },
     );
 }
@@ -106,17 +107,17 @@ fn a_full_pinyin_separator_forcing_clears_at_either_column(
 ) {
     let fixture = scheme_separator(scheme.0, scheme.1);
     let instance = fixture.instance;
-    assert!(zhuyin_guess_candidates_after_cursor(instance, 2));
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 2) });
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     let row = (0..count)
         .find_map(|index| {
             let mut row = std::ptr::null_mut();
-            assert!(zhuyin_get_candidate(instance, index, &raw mut row));
+            assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut row) });
             let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
-            assert!(zhuyin_get_candidate_type(instance, row, &raw mut kind));
+            assert!(unsafe { zhuyin_get_candidate_type(instance, row, &raw mut kind) });
             let mut text = std::ptr::null();
-            assert!(zhuyin_get_candidate_string(instance, row, &raw mut text));
+            assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut text) });
             assert!(!text.is_null());
             // SAFETY: the getter returns this live row's NUL-terminated string.
             let text = unsafe { std::ffi::CStr::from_ptr(text) };
@@ -125,9 +126,9 @@ fn a_full_pinyin_separator_forcing_clears_at_either_column(
             .then_some(row)
         })
         .expect("after-cursor 好");
-    assert_eq!(zhuyin_choose_candidate(instance, 2, row), 6);
-    assert!(zhuyin_clear_constraint(instance, probe));
-    assert!(!zhuyin_clear_constraint(instance, probe));
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 2, row) }, 6);
+    assert!(unsafe { zhuyin_clear_constraint(instance, probe) });
+    assert!(!unsafe { zhuyin_clear_constraint(instance, probe) });
 }
 
 /// A context and instance that release themselves.
@@ -151,41 +152,35 @@ impl Fixture {
     /// 弄 imported with the one reading ㄌㄨㄥ (`long`).
     fn with_long_only(tag: &str) -> Self {
         let fixture = Self::new(tag);
-        let import = zhuyin_begin_add_phrases(fixture.context, 5);
-        assert!(zhuyin_iterator_add_phrase(
-            import,
-            cstr("弄").as_ptr(),
-            cstr("ㄌㄨㄥ").as_ptr(),
-            1
-        ));
-        zhuyin_end_add_phrases(import);
+        let import = unsafe { zhuyin_begin_add_phrases(fixture.context, 5) };
+        assert!(unsafe {
+            zhuyin_iterator_add_phrase(import, cstr("弄").as_ptr(), cstr("ㄌㄨㄥ").as_ptr(), 1)
+        });
+        unsafe { zhuyin_end_add_phrases(import) };
         fixture
     }
 }
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        zhuyin_free_instance(self.instance);
-        zhuyin_fini(self.context);
+        unsafe { zhuyin_free_instance(self.instance) };
+        unsafe { zhuyin_fini(self.context) };
     }
 }
 
 #[test]
 fn the_character_offset_reads_the_chewing_fuzzy_alternative() {
     let fixture = Fixture::with_long_only("z-char-offset-fuzzy");
-    assert!(zhuyin_set_options(fixture.context, 0x8 | L_N));
-    assert!(zhuyin_set_chewing_scheme(fixture.context, 1));
+    assert!(unsafe { zhuyin_set_options(fixture.context, 0x8 | L_N) });
+    assert!(unsafe { zhuyin_set_chewing_scheme(fixture.context, 1) });
     assert_eq!(
-        zhuyin_parse_more_chewings(fixture.instance, cstr("sj/").as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(fixture.instance, cstr("sj/").as_ptr()) },
         3
     );
     let mut length = usize::MAX;
-    assert!(zhuyin_get_character_offset(
-        fixture.instance,
-        cstr("弄").as_ptr(),
-        2,
-        &raw mut length
-    ));
+    assert!(unsafe {
+        zhuyin_get_character_offset(fixture.instance, cstr("弄").as_ptr(), 2, &raw mut length)
+    });
     // Offset 2, not the parsed length 3: at 3 the pin's walk reaches the zero
     // key and fails (`zhuyin.cpp:2108-2128`; see `zhuyin_get_character_offset`).
     // The key's end lies past offset 2, so no character is consumed yet; the

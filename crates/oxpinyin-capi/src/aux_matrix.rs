@@ -389,6 +389,11 @@ fn tone_digit(key: ChewingKey) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use crate::parse::pinyin_parse_more_full_pinyins;
     use crate::test_support::{TempUserDir, cstr, open};
     use crate::text::pinyin_get_chewing_auxiliary_text;
@@ -396,12 +401,12 @@ mod tests {
 
     /// `(true, text)` for an answer, `(false, "")` for the empty matrix.
     fn aux(
-        render: extern "C" fn(*mut PinyinInstance, usize, *mut *mut GChar) -> bool,
+        render: unsafe extern "C" fn(*mut PinyinInstance, usize, *mut *mut GChar) -> bool,
         instance: *mut PinyinInstance,
         cursor: usize,
     ) -> (bool, String) {
         let mut text: *mut GChar = std::ptr::null_mut();
-        let answered = render(instance, cursor, &raw mut text);
+        let answered = unsafe { render(instance, cursor, &raw mut text) };
         (answered, crate::ffi::take_owned_cstr(text))
     }
 
@@ -416,7 +421,7 @@ mod tests {
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
             5
         );
         // "hao" spans bytes 2..5 and spells two scalars: cursor 3 cuts after
@@ -438,7 +443,7 @@ mod tests {
         // "zhong" spells three scalars in five raw bytes, so cursor 4 is a
         // scalar past the spelling.
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("zhong").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("zhong").as_ptr()) },
             5
         );
         assert_eq!(
@@ -449,7 +454,7 @@ mod tests {
         // A tone-1 key keeps its digit in the raw span but not in the
         // zhuyin spelling: cursor 2 lands exactly on the terminator.
         assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, cstr("ni1").as_ptr()),
+            unsafe { pinyin_parse_more_full_pinyins(instance, cstr("ni1").as_ptr()) },
             3
         );
         assert_eq!(
@@ -457,7 +462,7 @@ mod tests {
             (true, "ㄋㄧ| ".to_owned())
         );
 
-        crate::instance::pinyin_free_instance(instance);
-        crate::context::pinyin_fini(context);
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+        unsafe { crate::context::pinyin_fini(context) };
     }
 }

@@ -29,8 +29,13 @@ struct ImportHandle {
 /// Returns a handle for any context (a NULL context gets a handle that holds
 /// none, as at the pin); caller must call
 /// `zhuyin_end_add_phrases` to free it.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
+/// applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_begin_add_phrases(
+pub unsafe extern "C" fn zhuyin_begin_add_phrases(
     context: *mut ZhuyinContext,
     index: u8,
 ) -> *mut ImportIterator {
@@ -79,8 +84,13 @@ pub extern "C" fn zhuyin_begin_add_phrases(
 /// them in the target library (`zhuyin.cpp:440`), or the target library's
 /// item with another length (`:454`) or other text (`:457`) — the process
 /// aborts (register rows 74, 89, 104 and 90).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
+/// are strings. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_iterator_add_phrase(
+pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
     iter: *mut ImportIterator,
     phrase: *const c_char,
     pinyin: *const c_char,
@@ -166,8 +176,13 @@ fn plan_import(
 /// ```c
 /// void zhuyin_end_add_phrases(import_iterator_t * iter);
 /// ```
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
+/// applies. After the call `iter` is dangling.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
+pub unsafe extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }

@@ -29,8 +29,13 @@ use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 /// masked first (`zhuyin.cpp:1013`). A string holding `'` aborts the
 /// process, as that probe's assert does (`pinyin_parser2.cpp:170`, register
 /// row 21).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `onepinyin` is a string
+/// and `onekey` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_parse_full_pinyin(
+pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
     instance: *mut ZhuyinInstance,
     onepinyin: *const c_char,
     onekey: *mut ChewingKey,
@@ -80,8 +85,13 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
 /// The context's live Zhuyin scheme parses the probe after the API's
 /// `ZHUYIN_CORRECT_ALL` strip (`zhuyin.cpp:1045-1056`). The key is written
 /// only on success.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `onechewing` is a
+/// string and `onekey` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_parse_chewing(
+pub unsafe extern "C" fn zhuyin_parse_chewing(
     instance: *mut ZhuyinInstance,
     onechewing: *const c_char,
     onekey: *mut ChewingKey,
@@ -117,8 +127,13 @@ pub extern "C" fn zhuyin_parse_chewing(
 /// instance is a defined call there, so only the key and the out-param are
 /// touched and the instance parameter is unused (register row 41's class (b)
 /// guard does not apply to a parameter the pin never dereferences).
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `key` is a borrowed object and `utf8_str` is an
+/// out-parameter. `_instance` is not read.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_zhuyin_string(
+pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     _instance: *mut ZhuyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
@@ -138,8 +153,13 @@ pub extern "C" fn zhuyin_get_zhuyin_string(
 /// Unlike the zhuyin getter this one reads the instance's scheme, so the pin
 /// dereferences it and a NULL one is register row 41's class (b) site; the
 /// guard answers `false`.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle, `key` is a borrowed
+/// object and `utf8_str` is an out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
-pub extern "C" fn zhuyin_get_pinyin_string(
+pub unsafe extern "C" fn zhuyin_get_pinyin_string(
     instance: *mut ZhuyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,

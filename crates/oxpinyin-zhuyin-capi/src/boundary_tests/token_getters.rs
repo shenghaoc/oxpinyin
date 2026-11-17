@@ -1,11 +1,16 @@
 //! The token getters: phrases, readings, pronunciation counts and caller
 //! arrays.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 fn n_pronunciation(instance: *mut ZhuyinInstance, token: u32) -> (bool, u32) {
     let mut count = UNTOUCHED;
-    let ret = zhuyin_token_get_n_pronunciation(instance, token, &raw mut count);
+    let ret = unsafe { zhuyin_token_get_n_pronunciation(instance, token, &raw mut count) };
     (ret, count)
 }
 
@@ -138,12 +143,9 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
     let (context, instance) = open_with_user(&user.path);
     let mut length = UNTOUCHED;
     let mut text = SEEDED as *mut c_char;
-    assert!(zhuyin_token_get_phrase(
-        instance,
-        0x0700_0001,
-        &raw mut length,
-        &raw mut text
-    ));
+    assert!(unsafe {
+        zhuyin_token_get_phrase(instance, 0x0700_0001, &raw mut length, &raw mut text)
+    });
     assert_eq!((length, text), (2, ptr::null_mut()));
     close(context, instance);
 }
@@ -159,7 +161,7 @@ fn a_stored_key_word_reads_back_verbatim() {
         nth_pronunciation(instance, token, 0),
         (true, 1, "2b30".to_owned())
     );
-    assert!(zhuyin_save(context));
+    assert!(unsafe { zhuyin_save(context) });
     close(context, instance);
     let path = user_dir.path.join("user.bin");
     let mut payload = std::fs::read(&path).expect("user.bin")[8..].to_vec();
@@ -225,9 +227,9 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
         unsafe { glib_sys::g_array_append_vals(array, (&raw const seed).cast(), 1) };
         take_cleared();
         let ret = if width == 4 {
-            crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), array)
+            unsafe { crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), array) }
         } else {
-            zhuyin_token_get_nth_pronunciation(instance, token, 0, array)
+            unsafe { zhuyin_token_get_nth_pronunciation(instance, token, 0, array) }
         };
         assert!(ret);
         assert_eq!(take_cleared(), [0x1234]);
@@ -237,9 +239,11 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
             token = filled[0];
         }
         let refused = if width == 4 {
-            crate::dict::zhuyin_lookup_tokens(instance, cstr("not-a-phrase").as_ptr(), array)
+            unsafe {
+                crate::dict::zhuyin_lookup_tokens(instance, cstr("not-a-phrase").as_ptr(), array)
+            }
         } else {
-            zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, array)
+            unsafe { zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, array) }
         };
         assert!(!refused);
         assert!(elements(array, width as usize).is_empty());
@@ -267,12 +271,7 @@ fn a_null_pronunciation_array_logs_the_glib_criticals() {
     let logs = LogCapture::new();
     let glib = (Some("GLib".to_owned()), CRITICAL);
     for token in [token, user_token] {
-        assert!(zhuyin_token_get_nth_pronunciation(
-            instance,
-            token,
-            0,
-            ptr::null_mut()
-        ));
+        assert!(unsafe { zhuyin_token_get_nth_pronunciation(instance, token, 0, ptr::null_mut()) });
         let records = logs.take_with_messages();
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].0, glib);
@@ -280,12 +279,9 @@ fn a_null_pronunciation_array_logs_the_glib_criticals() {
         assert_eq!(records[1].0, glib);
         assert!(records[1].1.contains("g_array_append_vals"));
     }
-    assert!(!zhuyin_token_get_nth_pronunciation(
-        instance,
-        0xFFFF_FFFF,
-        0,
-        ptr::null_mut()
-    ));
+    assert!(!unsafe {
+        zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, ptr::null_mut())
+    });
     let records = logs.take_with_messages();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0, glib);
@@ -314,12 +310,7 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
     let seed: u16 = 0x1234;
     // SAFETY: one two-byte element from a live local.
     unsafe { glib_sys::g_array_append_vals(keys, (&raw const seed).cast(), 1) };
-    assert!(!zhuyin_token_get_nth_pronunciation(
-        instance,
-        0xFFFF_FFFF,
-        0,
-        keys
-    ));
+    assert!(!unsafe { zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, keys) });
     // SAFETY: the array is live; it is freed once.
     unsafe {
         assert_eq!((*keys).len, 0);
@@ -331,39 +322,21 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
         (true, 2, Some("你好".to_owned()))
     );
     let mut length = UNTOUCHED;
-    assert!(zhuyin_token_get_phrase(
-        instance,
-        token,
-        &raw mut length,
-        ptr::null_mut()
-    ));
+    assert!(unsafe { zhuyin_token_get_phrase(instance, token, &raw mut length, ptr::null_mut()) });
     assert_eq!(length, 2);
     let mut text: *mut c_char = ptr::null_mut();
-    assert!(zhuyin_token_get_phrase(
-        instance,
-        token,
-        ptr::null_mut(),
-        &raw mut text
-    ));
+    assert!(unsafe { zhuyin_token_get_phrase(instance, token, ptr::null_mut(), &raw mut text) });
     assert_eq!(take_sentence(text), "你好");
-    assert!(zhuyin_token_get_phrase(
-        instance,
-        token,
-        ptr::null_mut(),
-        ptr::null_mut()
-    ));
+    assert!(unsafe { zhuyin_token_get_phrase(instance, token, ptr::null_mut(), ptr::null_mut()) });
     for miss in [0xFFFF_FFFF, 0x0DEA_DBEE, 0x0100_0000] {
         assert_eq!(
             token_phrase(instance, miss),
             (false, UNTOUCHED, None),
             "{miss:#x}"
         );
-        assert!(!zhuyin_token_get_phrase(
-            instance,
-            miss,
-            ptr::null_mut(),
-            ptr::null_mut()
-        ));
+        assert!(!unsafe {
+            zhuyin_token_get_phrase(instance, miss, ptr::null_mut(), ptr::null_mut())
+        });
         assert_eq!(n_pronunciation(instance, miss), (false, 0), "{miss:#x}");
     }
     close(context, instance);
@@ -391,15 +364,15 @@ fn an_unloaded_user_library_hides_its_token_until_the_load() {
         );
     };
     shown(instance);
-    assert!(zhuyin_save(context));
-    assert!(zhuyin_unload_phrase_library(context, 7));
+    assert!(unsafe { zhuyin_save(context) });
+    assert!(unsafe { zhuyin_unload_phrase_library(context, 7) });
     assert_eq!(n_pronunciation(instance, token), (false, 0));
     assert_eq!(
         nth_pronunciation(instance, token, 0),
         (false, 0, String::new())
     );
     assert_eq!(token_phrase(instance, token), (false, UNTOUCHED, None));
-    assert!(zhuyin_load_phrase_library(context, 7));
+    assert!(unsafe { zhuyin_load_phrase_library(context, 7) });
     shown(instance);
     close(context, instance);
 }

@@ -1,5 +1,10 @@
 //! Data-table reads that fail.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use super::*;
 
 /// A phrase-table read that fails is a miss: `PhraseLargeTable3::search`
@@ -41,20 +46,16 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
         |user| {
             let (context, instance) = open_with_user(user);
             let mut key = ChewingKey::ZERO;
-            assert!(zhuyin_parse_chewing(
-                instance,
-                cstr("su3").as_ptr(),
-                &raw mut key
-            ));
+            assert!(unsafe { zhuyin_parse_chewing(instance, cstr("su3").as_ptr(), &raw mut key) });
             // The index key: the packed key with its tone bits, 12 to 14,
             // zero.
             let row = (key.packed & 0x0fff).to_le_bytes();
             assert_eq!(
-                zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()),
+                unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) },
                 6
             );
             oxpinyin_store::read_faults::fail_point_read_of(&row, 0);
-            assert!(zhuyin_guess_candidates_after_cursor(instance, 0));
+            assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
             close(context, instance);
         },
     );

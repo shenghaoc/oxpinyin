@@ -42,6 +42,33 @@
 //! release profile is `unwind`; `panic = "abort"` was tried and reverted
 //! for its keystroke-cycle cost).
 //!
+//! ## Safety
+//!
+//! Every entry point is an `unsafe extern "C" fn`: its caller upholds the
+//! `zhuyin.h` contract. Each function's `# Safety` section names the rules
+//! below that bind its arguments, and adds its own requirements.
+//!
+//! - **Handles.** A context pointer is NULL or a pointer that `zhuyin_init`
+//!   returned and `zhuyin_fini` has not taken. `zhuyin_fini` and
+//!   `zhuyin_alloc_instance` also accept a pointer that `zhuyin_fini` took:
+//!   they look it up in the registry of live contexts and refuse it. An
+//!   instance pointer is NULL or a pointer that `zhuyin_alloc_instance`
+//!   returned and `zhuyin_free_instance` has not freed. An iterator pointer
+//!   is NULL or a pointer that `zhuyin_begin_add_phrases` returned and
+//!   `zhuyin_end_add_phrases` has not freed.
+//! - **Strings.** A `const char *` argument is NULL or points to a
+//!   NUL-terminated string that stays valid and unchanged for the call.
+//! - **Out-parameters.** A pointer the function writes through is NULL or is
+//!   valid and aligned for a write of its pointee type.
+//! - **Borrowed objects.** A candidate pointer is NULL or a row that
+//!   `zhuyin_get_candidate` answered, from a candidate list that is still
+//!   the current list of a live instance: the next call that rebuilds or
+//!   clears that instance's list, and its free, end the row. A key or
+//!   key-rest pointer is NULL or points to a `ChewingKey` or
+//!   `ChewingKeyRest` that is valid for reads.
+//! - **Serial calls.** Calls that use one context, its instances or its
+//!   iterators do not overlap: the caller serializes them.
+//!
 //! Opaque handles cross as `*mut T` via `Box::into_raw` / `Box::from_raw`;
 //! every incoming pointer is null-checked. `// SAFETY:` documents each
 //! `unsafe` block.
@@ -53,10 +80,6 @@
 #![expect(
     unsafe_code,
     reason = "the C ABI crate; every block carries a SAFETY comment (constitution §5)"
-)]
-#![allow(
-    clippy::not_unsafe_ptr_arg_deref,
-    reason = "pointer-by-contract C ABI; fires only when the fuzz-api facade is compiled in, so an expectation would fail the default build"
 )]
 #![warn(missing_docs)]
 
@@ -116,6 +139,11 @@ mod test_support;
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+    )]
+
     use std::ffi::c_char;
     use std::ptr;
 
@@ -183,14 +211,14 @@ mod tests {
         let (context, instance) = open();
         let input = cstr("su3cl3");
         assert_eq!(
-            zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
             "su3cl3".len(),
             "the whole keystroke run parses"
         );
 
-        assert!(zhuyin_guess_candidates_before_cursor(instance, 6));
+        assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) });
         let mut count = 0;
-        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         assert!(count > 1, "the before-cursor window carries several rows");
 
         // No sentence was guessed, so nothing is prepended
@@ -199,7 +227,7 @@ mod tests {
         let displayed = candidate_text(instance, 1);
         assert_eq!(displayed, "好", "the fixture's before(6) row 1");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(zhuyin_get_candidate(instance, 1, &raw mut cand));
+        assert!(unsafe { zhuyin_get_candidate(instance, 1, &raw mut cand) });
         assert!(!cand.is_null());
 
         // The chosen span is `[3, 6)` — the second key alone. Upstream
@@ -208,7 +236,7 @@ mod tests {
         // (`zhuyin.cpp:1656-1660` at the pin): 3, the span's start — not
         // the span's end. (The cached list's row 1 also ends at 3; the
         // committed text below is what tells the two rows apart.)
-        assert_eq!(zhuyin_choose_candidate(instance, 6, cand), 3);
+        assert_eq!(unsafe { zhuyin_choose_candidate(instance, 6, cand) }, 3);
         // The session's own composition offset advanced to the span's end,
         // which is the whole joined buffer here.
         // SAFETY: the instance is live and no other reference is held.
@@ -225,16 +253,16 @@ mod tests {
         // hit anywhere inside a forced run; probing 0 first cannot disturb
         // the run at 3.)
         assert!(
-            !zhuyin_clear_constraint(instance, 0),
+            !unsafe { zhuyin_clear_constraint(instance, 0) },
             "no forcing covers the first key"
         );
 
         // The pin's constrain-and-re-decode: a re-guess keeps the leading
         // key's conversion and the forced 好 (register, measured
         // 2026-09-05 on the pin-built oracle: 你好 after the choose).
-        assert!(zhuyin_guess_sentence(instance));
+        assert!(unsafe { zhuyin_guess_sentence(instance) });
         let mut sentence: *mut c_char = ptr::null_mut();
-        assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+        assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
         assert!(!sentence.is_null());
         // SAFETY: `sentence` is a NUL-terminated string this facade just
         // malloc'd for the caller; it is read, then released with the
@@ -248,11 +276,11 @@ mod tests {
         unsafe { glib_sys::g_free(sentence.cast()) };
         assert_eq!(decoded, "你好", "the re-decode keeps 你 and forces 好");
         assert!(
-            zhuyin_clear_constraint(instance, 3),
+            unsafe { zhuyin_clear_constraint(instance, 3) },
             "the forcing starts where 好 starts"
         );
-        zhuyin_free_instance(instance);
-        zhuyin_fini(context);
+        unsafe { zhuyin_free_instance(instance) };
+        unsafe { zhuyin_fini(context) };
     }
 
     /// The zhuyin twin of issue #356: `zhuyin_get_character_offset` runs
@@ -264,43 +292,37 @@ mod tests {
     fn character_offset_searches_the_phrase_and_walks_the_keys() {
         let (context, instance) = open();
         let input = cstr("su3cl3");
-        assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
+        assert_eq!(
+            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
+            6
+        );
 
         let phrase = cstr("su3cl3");
         for offset in [0, 3, 6] {
             let mut length = usize::MAX;
-            assert!(!zhuyin_get_character_offset(
-                instance,
-                phrase.as_ptr(),
-                offset,
-                &raw mut length
-            ));
+            assert!(!unsafe {
+                zhuyin_get_character_offset(instance, phrase.as_ptr(), offset, &raw mut length)
+            });
             assert_eq!(length, usize::MAX, "offset {offset}");
         }
         let phrase = cstr("你好");
         for (offset, expected) in [(0, 0), (3, 1)] {
             let mut length = usize::MAX;
-            assert!(zhuyin_get_character_offset(
-                instance,
-                phrase.as_ptr(),
-                offset,
-                &raw mut length
-            ));
+            assert!(unsafe {
+                zhuyin_get_character_offset(instance, phrase.as_ptr(), offset, &raw mut length)
+            });
             assert_eq!(length, expected, "offset {offset}");
         }
         // At the reserved slot the pin's zhuyin walk has no zero-key skip: it
         // steps onto the last column, finds no reading and fails, storing the
         // length it reached (`zhuyin.cpp:2095-2140`, `:2192`).
         let mut length = usize::MAX;
-        assert!(!zhuyin_get_character_offset(
-            instance,
-            phrase.as_ptr(),
-            6,
-            &raw mut length
-        ));
+        assert!(!unsafe {
+            zhuyin_get_character_offset(instance, phrase.as_ptr(), 6, &raw mut length)
+        });
         assert_eq!(length, 0);
 
-        zhuyin_free_instance(instance);
-        zhuyin_fini(context);
+        unsafe { zhuyin_free_instance(instance) };
+        unsafe { zhuyin_fini(context) };
     }
 }

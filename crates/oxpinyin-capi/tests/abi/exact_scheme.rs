@@ -11,6 +11,11 @@
 //! exact seam, the zhuyin path drove the decoder with the joined text
 //! and offered the `xi'an` phrases too.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::os::raw::c_uint;
 
 use pinyin_capi::{
@@ -23,15 +28,15 @@ use crate::common::{TempUserDir, cstr, open};
 
 /// Collects the candidate texts for the current composition.
 fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
-    assert!(pinyin_guess_candidates(instance, 0, 0x1e));
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0x1e) });
     let mut count: c_uint = 0;
-    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     let mut out = Vec::new();
     for index in 0..count {
         let mut cand: *mut LookupCandidate = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index, &raw mut cand));
+        assert!(unsafe { pinyin_get_candidate(instance, index, &raw mut cand) });
         let mut text: *const pinyin_capi::GChar = std::ptr::null();
-        assert!(pinyin_get_candidate_string(instance, cand, &raw mut text));
+        assert!(unsafe { pinyin_get_candidate_string(instance, cand, &raw mut text) });
         assert!(!text.is_null());
         // SAFETY: `text` was just returned by `pinyin_get_candidate_string`
         // as a valid, NUL-terminated pointer into the instance snapshot.
@@ -51,7 +56,10 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
 
     // STANDARD (dachen) keyboard: v=ㄒ u=ㄧ 0=ㄢ → the single key ㄒㄧㄢ (xian).
     let vu0 = cstr("vu0");
-    assert_eq!(pinyin_parse_more_chewings(instance, vu0.as_ptr()), 3);
+    assert_eq!(
+        unsafe { pinyin_parse_more_chewings(instance, vu0.as_ptr()) },
+        3
+    );
     let zhuyin = candidate_texts(instance);
 
     // The xian rows are present …
@@ -80,17 +88,20 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
     // The context default is USE_TONE (0x20) alone; the divided
     // pair `xian` -> `xi` + `an` needs USE_DIVIDED_TABLE, so set
     // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE (0x188).
-    assert!(pinyin_set_options(context, 0x188));
+    assert!(unsafe { pinyin_set_options(context, 0x188) });
     let xian = cstr("xian");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, xian.as_ptr()) },
+        4
+    );
     let full = candidate_texts(instance);
     assert!(
         full.iter().any(|text| text == "西安"),
         "full-pinyin xian lost its xi+an segmentation: {full:?}"
     );
 
-    pinyin_capi::pinyin_free_instance(instance);
-    pinyin_capi::pinyin_fini(context);
+    unsafe { pinyin_capi::pinyin_free_instance(instance) };
+    unsafe { pinyin_capi::pinyin_fini(context) };
 }
 
 #[test]
@@ -103,15 +114,18 @@ fn zhuyin_only_spellings_do_not_fall_back_to_shorter_pinyin_keys() {
     // exact seam must keep the key whole — an empty window — instead of
     // re-parsing the text as `de` plus leftovers.
     let den = cstr("2p");
-    assert_eq!(pinyin_parse_more_chewings(instance, den.as_ptr()), 2);
+    assert_eq!(
+        unsafe { pinyin_parse_more_chewings(instance, den.as_ptr()) },
+        2
+    );
     let texts = candidate_texts(instance);
     assert!(
         !texts.iter().any(|text| text == "的" || text == "得"),
         "den re-parsed as de: {texts:?}"
     );
 
-    pinyin_capi::pinyin_free_instance(instance);
-    pinyin_capi::pinyin_fini(context);
+    unsafe { pinyin_capi::pinyin_free_instance(instance) };
+    unsafe { pinyin_capi::pinyin_fini(context) };
 }
 
 /// Row 17 at `0x0`: `jv` and `zon` are not valid full-pinyin syllables
@@ -125,56 +139,62 @@ fn option_gating_jv_zon_and_divided_table() {
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     // --- jv and zon at option word 0x0 parse nothing ---
-    assert!(pinyin_set_options(context, 0x0));
+    assert!(unsafe { pinyin_set_options(context, 0x0) });
 
     let jv = cstr("jv");
     assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, jv.as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(instance, jv.as_ptr()) },
         0,
         "jv is not a valid full-pinyin syllable at 0x0"
     );
-    assert!(!pinyin_guess_candidates(instance, 0, 0x1e));
+    assert!(!unsafe { pinyin_guess_candidates(instance, 0, 0x1e) });
     let mut count: c_uint = 0;
-    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(count, 0, "jv yields no candidates at 0x0");
 
-    assert!(pinyin_reset(instance));
+    assert!(unsafe { pinyin_reset(instance) });
 
     let zon = cstr("zon");
     assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, zon.as_ptr()),
+        unsafe { pinyin_parse_more_full_pinyins(instance, zon.as_ptr()) },
         0,
         "zon is not a valid full-pinyin syllable at 0x0"
     );
-    assert!(!pinyin_guess_candidates(instance, 0, 0x1e));
-    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert!(!unsafe { pinyin_guess_candidates(instance, 0, 0x1e) });
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(count, 0, "zon yields no candidates at 0x0");
 
-    assert!(pinyin_reset(instance));
+    assert!(unsafe { pinyin_reset(instance) });
 
     // --- divided-table contrast on xian ---
     // Without USE_DIVIDED_TABLE the `xian` -> `xi` + `an` segmentation
     // does not fire, so the xi'an phrases are absent.
-    assert!(pinyin_set_options(context, 0x8)); // PINYIN_INCOMPLETE only
+    assert!(unsafe { pinyin_set_options(context, 0x8) }); // PINYIN_INCOMPLETE only
     let xian = cstr("xian");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, xian.as_ptr()) },
+        4
+    );
     let without = candidate_texts(instance);
     assert!(
         !without.iter().any(|text| text == "\u{897f}\u{5b89}"),
         "without USE_DIVIDED_TABLE, xian must not include \u{897f}\u{5b89}: {without:?}"
     );
 
-    assert!(pinyin_reset(instance));
+    assert!(unsafe { pinyin_reset(instance) });
 
     // With USE_DIVIDED_TABLE the segmentation fires and xi'an phrases appear.
-    assert!(pinyin_set_options(context, 0x88)); // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
+    assert!(unsafe { pinyin_set_options(context, 0x88) }); // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, xian.as_ptr()) },
+        4
+    );
     let with = candidate_texts(instance);
     assert!(
         with.iter().any(|text| text == "\u{897f}\u{5b89}"),
         "with USE_DIVIDED_TABLE, xian must include \u{897f}\u{5b89}: {with:?}"
     );
 
-    pinyin_capi::pinyin_free_instance(instance);
-    pinyin_capi::pinyin_fini(context);
+    unsafe { pinyin_capi::pinyin_free_instance(instance) };
+    unsafe { pinyin_capi::pinyin_fini(context) };
 }

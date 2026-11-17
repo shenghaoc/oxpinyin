@@ -1,6 +1,11 @@
 //! Shared fixtures for crate tests — the zhuyin twin of
 //! `oxpinyin-capi/src/test_support.rs`.
 
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
 use std::ffi::CString;
 use std::os::raw::{c_char, c_uint};
 use std::path::{Path, PathBuf};
@@ -75,17 +80,17 @@ pub fn open_with_user(user_dir: impl AsRef<Path>) -> (*mut ZhuyinContext, *mut Z
 
 fn open_at(user: *const c_char) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let context = zhuyin_init(system.as_ptr(), user);
+    let context = unsafe { zhuyin_init(system.as_ptr(), user) };
     assert!(!context.is_null(), "the mini fixture must open");
-    let instance = zhuyin_alloc_instance(context);
+    let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
     (context, instance)
 }
 
 /// Releases a pair [`open`] / [`open_with_user`] returned.
 pub fn close(context: *mut ZhuyinContext, instance: *mut ZhuyinInstance) {
-    crate::instance::zhuyin_free_instance(instance);
-    zhuyin_fini(context);
+    unsafe { crate::instance::zhuyin_free_instance(instance) };
+    unsafe { zhuyin_fini(context) };
 }
 
 /// Parses `keys` (standard chewing keystrokes), fills the
@@ -95,23 +100,23 @@ pub fn close(context: *mut ZhuyinContext, instance: *mut ZhuyinInstance) {
 pub fn candidate(instance: *mut ZhuyinInstance, keys: &str, index: c_uint) -> *mut LookupCandidate {
     let input = cstr(keys);
     assert_eq!(
-        zhuyin_parse_more_chewings(instance, input.as_ptr()),
+        unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
         keys.len(),
         "the whole keystroke run parses"
     );
     assert!(
-        zhuyin_guess_candidates_after_cursor(instance, 0),
+        unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) },
         "the composition window fills"
     );
     let mut count = 0;
-    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     assert!(
         usize::try_from(index).expect("small candidate index")
             < usize::try_from(count).expect("candidate count fits"),
         "candidate {index} exists (n = {count})"
     );
     let mut cand: *mut LookupCandidate = std::ptr::null_mut();
-    assert!(zhuyin_get_candidate(instance, index, &raw mut cand));
+    assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut cand) });
     assert!(!cand.is_null());
     cand
 }
@@ -480,10 +485,12 @@ pub fn ucs4_key(text: &str) -> Vec<u8> {
 pub fn init_on(system: &Path, user: Option<&Path>) -> *mut ZhuyinContext {
     let system = cstr(system.to_str().expect("UTF-8 path"));
     let user = user.map(|user| cstr(user.to_str().expect("UTF-8 path")));
-    zhuyin_init(
-        system.as_ptr(),
-        user.as_ref().map_or(std::ptr::null(), |user| user.as_ptr()),
-    )
+    unsafe {
+        zhuyin_init(
+            system.as_ptr(),
+            user.as_ref().map_or(std::ptr::null(), |user| user.as_ptr()),
+        )
+    }
 }
 
 /// Imports `text` with the chewing `reading` and `count` into `library`.
@@ -495,13 +502,14 @@ pub fn import(
     reading: &[u8],
     count: i32,
 ) -> bool {
-    let iter = crate::iterators::zhuyin_begin_add_phrases(context, library);
+    let iter = unsafe { crate::iterators::zhuyin_begin_add_phrases(context, library) };
     assert!(!iter.is_null(), "the import iterator");
     let text = cstr(text);
     let reading = std::ffi::CString::new(reading).expect("no interior NUL");
-    let added =
-        crate::iterators::zhuyin_iterator_add_phrase(iter, text.as_ptr(), reading.as_ptr(), count);
-    crate::iterators::zhuyin_end_add_phrases(iter);
+    let added = unsafe {
+        crate::iterators::zhuyin_iterator_add_phrase(iter, text.as_ptr(), reading.as_ptr(), count)
+    };
+    unsafe { crate::iterators::zhuyin_end_add_phrases(iter) };
     added
 }
 
@@ -509,7 +517,7 @@ pub fn import(
 pub fn tokens_of(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
     // SAFETY: a fresh GArray of four-byte elements, freed below.
     let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
-    crate::dict::zhuyin_lookup_tokens(instance, cstr(text).as_ptr(), array);
+    unsafe { crate::dict::zhuyin_lookup_tokens(instance, cstr(text).as_ptr(), array) };
     // SAFETY: the array is live and holds `len` four-byte elements.
     let tokens = unsafe {
         let view = &*array;
