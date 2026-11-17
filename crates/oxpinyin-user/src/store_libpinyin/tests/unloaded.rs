@@ -26,8 +26,10 @@ fn unloaded(name: &str) -> (Profile, UserStore) {
 }
 
 fn keys(syllable: &str) -> Vec<crate::phrase::PinyinKey> {
-    super::packed_to_pinyin_keys(&[ChewingKey::from_pinyin(syllable).expect("key").to_packed()])
-        .expect("keys")
+    super::super::packed_to_pinyin_keys(&[ChewingKey::from_pinyin(syllable)
+        .expect("key")
+        .to_packed()])
+    .expect("keys")
 }
 
 /// What an unloaded library must leave alone: the facade total's extra and

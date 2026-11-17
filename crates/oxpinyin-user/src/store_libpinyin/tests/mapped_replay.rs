@@ -9,19 +9,12 @@ use oxpinyin_data::user_files::{LogRecord, SystemVersions, encode_log_records};
 
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::store::UserStore;
+use crate::test_session::tempdir;
 
 pub(super) const LIBRARY: u32 = 0x0100_0000;
 
 fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
-}
-
-fn tempdir(name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("oxpinyin-provenance-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("tmpdir");
-    dir
 }
 
 fn item(code: u32, unigram: u32) -> ChunkItem {
@@ -156,7 +149,7 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     assert!(store.with_user_item(LIBRARY | 5, |_| ()).is_none());
     // The pin merges a reading into the live item at the token found by
     // the phrase table (pinyin.cpp:545-569).
-    let keys = super::packed_to_pinyin_keys(&item(0x56db, 7).prons[0].0).unwrap();
+    let keys = super::super::packed_to_pinyin_keys(&item(0x56db, 7).prons[0].0).unwrap();
     assert_eq!(
         store
             .add_system_phrase_in(1, Some(LIBRARY | 4), &"四".into(), &keys, Some(3))
