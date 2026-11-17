@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -226,8 +227,19 @@ class FetchTests(unittest.TestCase):
             finally:
                 child.kill()
                 child.wait(timeout=10)
-        with cachedir.exclusive_fetch(entry):
-            self.assertTrue(lock.is_file())
+        # Windows can release the child's byte-range lock after wait() returns.
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                with cachedir.exclusive_fetch(entry):
+                    self.assertTrue(lock.is_file())
+                break
+            except OSError as error:
+                if os.name != 'nt' or not str(error).startswith('cache entry is busy: '):
+                    raise
+                time.sleep(0.02)
+                if time.monotonic() >= deadline:
+                    raise
         self.assertTrue(lock.is_file())
 
     def test_marker_publication_failure_restores_the_previous_extraction(self):
