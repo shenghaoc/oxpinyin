@@ -697,3 +697,48 @@ pub fn unescape(text: &str) -> Vec<u8> {
     }
     out
 }
+
+#[path = "../../tests/common/parser_rows.rs"]
+mod parser_rows;
+
+parser_rows::gated_parser_rows! {
+    fn a_gated_parser_row_follows_its_option_bit(
+        #[case] input: &str,
+        #[case] options: u32,
+        #[case] parsed: usize,
+        #[case] keys: &[(u16, u16, u16, &str)],
+        #[case] _aux: &str,
+    ) {
+        let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::from_bits_retain(options)).unwrap();
+        assert_eq!(graph.consumed(), parsed);
+        let found: Vec<_> = graph.fewest_keys(true).iter().map(|edge| {
+            let key = edge.key().chewing_key().with_tone(edge.tone());
+            (key.to_packed(), u16::try_from(edge.syllable_start()).unwrap(), u16::try_from(edge.to()).unwrap(), key.pinyin_string())
+        }).collect();
+        let expected: Vec<_> = keys.iter().map(|&(key, begin, end, pinyin)| (key, begin, end, pinyin.to_owned())).collect();
+        assert_eq!(found, expected);
+    }
+}
+
+/// The import parser crosses long separator runs and keeps the two toned keys.
+#[test]
+fn an_import_reading_parses_past_long_separator_runs() {
+    for reading in [
+        [&b"ni3"[..], &[b'\''; 40_000], b"hao3"].concat(),
+        [&b"ni3'hao3"[..], &[b'\''; 70_000]].concat(),
+    ] {
+        let graph = SegmentGraph::build_with_options(&reading, OptionBits::USE_TONE).unwrap();
+        assert_eq!(graph.consumed(), reading.len());
+        let keys: Vec<_> = graph
+            .fewest_keys(false)
+            .iter()
+            .map(|edge| {
+                edge.key()
+                    .chewing_key()
+                    .with_tone(edge.tone())
+                    .pinyin_string()
+            })
+            .collect();
+        assert_eq!(keys, ["ni3", "hao3"]);
+    }
+}

@@ -376,9 +376,111 @@ pub(crate) fn open_with_conf(
     law: UserConfLaw,
 ) -> UserStore {
     let layout = UserFileLayout::from_conf(conf);
-    let check = UserStore::check_profile(user_dir, &versions(), &layout, law).expect("profile");
+    let versions = SystemVersions::for_this_build(
+        conf.binary_format_version().try_into().unwrap(),
+        conf.model_data_version().try_into().unwrap(),
+    );
+    let check = UserStore::check_profile(user_dir, &versions, &layout, law).expect("profile");
     let mut originals = SystemOriginals::new(Default::default(), layout);
     let rows = LibraryLoopRows::new(system_dir, conf, Some(user_dir));
-    UserStore::open_libpinyin_checked(user_dir, &mut originals, &rows, versions(), law, check)
+    UserStore::open_libpinyin_checked(user_dir, &mut originals, &rows, versions, law, check)
         .expect("open profile")
+}
+
+/// The committed W3 system, through the production profile and library loop.
+pub(crate) fn open_w3(user: &Path) -> UserStore {
+    open_native(
+        user,
+        &crate::native_fixture::system_dir(),
+        UserConfLaw::Pinyin,
+    )
+}
+
+pub(crate) fn open_native(user: &Path, system: &Path, law: UserConfLaw) -> UserStore {
+    let conf = TableConf::load_from_dir(system).expect("table.conf");
+    open_with_conf(user, system, &conf, law)
+}
+
+pub(crate) fn native_keys(reading: &str) -> Vec<crate::PinyinKey> {
+    let graph = oxpinyin_core::graph::SegmentGraph::build_with_options(
+        reading.as_bytes(),
+        oxpinyin_core::OptionBits::USE_TONE,
+    )
+    .unwrap();
+    assert_eq!(graph.consumed(), reading.len());
+    let packed: Vec<_> = graph
+        .fewest_keys(false)
+        .iter()
+        .map(|edge| edge.key().chewing_key().with_tone(edge.tone()).to_packed())
+        .collect();
+    crate::store_libpinyin::packed_to_pinyin_keys(&packed).unwrap()
+}
+
+pub(crate) fn native_tokens(system: &Path, text: &str) -> Vec<u32> {
+    oxpinyin_data::SystemDictionary::open(system)
+        .unwrap()
+        .tokens_for_text(text)
+        .unwrap()
+}
+
+pub(crate) fn native_unigram(store: &UserStore, token: u32) -> Option<u32> {
+    if store.is_system_library(crate::phrase::phrase_index_library_index(token)) {
+        store.system_unigram(token)
+    } else {
+        store
+            .user_unigram_frequency(token)
+            .map(|value| u32::try_from(value).unwrap())
+    }
+}
+
+pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, String, u64)> {
+    if store.is_system_library(library) {
+        return (1..(store.system_range_end(library).unwrap() & 0x00ff_ffff))
+            .flat_map(|slot| {
+                let token = (u32::from(library) << 24) | slot;
+                store
+                    .with_effective_system_item(token, Clone::clone)
+                    .or_else(|| store.originals.get(&library)?.item(slot))
+                    .map(|item| {
+                        let text: String = item
+                            .phrase
+                            .iter()
+                            .map(|&word| char::from_u32(word).unwrap())
+                            .collect();
+                        item.prons
+                            .iter()
+                            .map(|(keys, count)| {
+                                (
+                                    text.clone(),
+                                    keys.iter()
+                                        .map(|&key| {
+                                            oxpinyin_core::ChewingKey::from_packed(key)
+                                                .pinyin_string()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("'"),
+                                    u64::from(*count),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+    }
+
+    store
+        .export_phrases_in(library)
+        .into_iter()
+        .map(|row| {
+            (
+                row.text
+                    .into_iter()
+                    .map(|word| char::from_u32(word).unwrap())
+                    .collect(),
+                row.pinyin,
+                row.count,
+            )
+        })
+        .collect()
 }

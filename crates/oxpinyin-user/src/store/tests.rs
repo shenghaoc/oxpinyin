@@ -1749,3 +1749,257 @@ mod backend_files {
         ));
     }
 }
+
+/// The compaction at the end of an import copies the tokens of the range
+/// `[1, end)` into a fresh sub-index, so an item at the reserved slot 0 is
+/// dropped (`pinyin.cpp:655-660`, `phrase_index.cpp:624-675` at 074a2219).
+/// Before the compaction the item is readable: `get_phrase_item` has no
+/// slot-0 exclusion (`phrase_index.cpp:180-206`).
+#[test]
+fn import_end_compaction_drops_the_reserved_slot() {
+    use crate::native_fixture::{TempUserDir, system_dir, write_user_conf};
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-slot-zero");
+    write_user_conf(&user.path, &system_dir());
+    let item = ChunkItem {
+        phrase: vec![u32::from('你')],
+        unigram: 17,
+        prons: vec![(vec![0x302b], 5)],
+    };
+    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    // Move the item's offset word from slot 1 to slot 0.
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_zero = offsets_start as usize;
+    payload.copy_within(slot_zero + 4..slot_zero + 8, slot_zero);
+    payload[slot_zero + 4..slot_zero + 8].fill(0);
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let mut store = crate::test_session::open_w3(&user.path);
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0700_0000),
+        Some(17)
+    );
+    store.compact_libraries();
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0700_0000),
+        None
+    );
+}
+
+/// A selected short value is removed without loading it (ngram_bdb.cpp:231-238).
+#[test]
+fn mask_out_of_a_selected_short_key_completes() {
+    let user = tempfile::tempdir().unwrap();
+    crate::native_fixture::plant_bigram(
+        user.path(),
+        vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+    );
+    let mut store = crate::test_session::open_w3(user.path());
+    store.mask_out(0xffff_ffff, 1).unwrap();
+}
+
+/// The mask uses the four-bit library index and low 24 slot bits
+/// (novel_types.h:41-44, phrase_index.cpp:677-715 at 074a2219).
+#[test]
+fn mask_out_ignores_the_bits_above_the_library_index() {
+    let user = tempfile::tempdir().unwrap();
+    let mut store = crate::test_session::open_w3(user.path());
+    store
+        .add_phrase_in(
+            7,
+            &"测测".into(),
+            &crate::test_session::native_keys("ce4'ce4"),
+            Some(5),
+        )
+        .unwrap();
+    store.compact_libraries();
+    assert!(crate::test_session::native_unigram(&store, 0x0700_0001).is_some());
+    store.mask_out(0x1000_0000, 0x1000_0000).unwrap();
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0700_0001),
+        None
+    );
+}
+
+/// The C shared mask-abort path converts this owner error to abort.
+#[test]
+fn mask_out_aborts_on_an_empty_index_key() {
+    let user = tempfile::tempdir().unwrap();
+    crate::native_fixture::write_user_conf(user.path(), &crate::native_fixture::system_dir());
+    crate::native_fixture::craft_user_index(
+        &user.path().join("user_pinyin_index.bin"),
+        &[(Vec::new(), Vec::new()), (vec![0, 1], Vec::new())],
+    );
+    let mut store = crate::test_session::open_w3(user.path());
+    assert!(matches!(
+        store.check_mask_out(0xffff_ffff, 0),
+        Err(UserStoreError::OverlongIndexKey)
+    ));
+    assert!(matches!(
+        store.mask_out(0xffff_ffff, 0),
+        Err(UserStoreError::OverlongIndexKey)
+    ));
+}
+
+/// Removing the item subtracts its whole live unigram (phrase_index.cpp:233,713-715).
+#[test]
+fn removing_a_user_item_takes_its_unigram_increment_out_of_the_total() {
+    let user = tempfile::tempdir().unwrap();
+    let mut store = crate::test_session::open_w3(user.path());
+    let before = store.unigram_total();
+    let token = store
+        .add_phrase_in(
+            7,
+            &"龘龘".into(),
+            &crate::test_session::native_keys("da2'da2"),
+            Some(0),
+        )
+        .unwrap();
+    store.compact_libraries();
+    assert!(store.add_unigram_outcome(token, 9).is_accepted());
+    assert_eq!(store.unigram_total(), before + 9);
+    store.mask_out(u32::MAX, token).unwrap();
+    assert_eq!(store.user_unigram_frequency(token), None);
+    assert_eq!(store.unigram_total(), before);
+}
+
+/// U6: the persisted sub-index total is independent of item sums. The
+/// pin guards that total and wraps the item's `guint32` (074a2219
+/// `phrase_index.cpp:169-175,345`).
+#[test]
+fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
+    use crate::native_fixture::TempUserDir;
+    use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-unigram-wrap");
+    drop(crate::test_session::open_w3(&user.path));
+    let chunk = build_chunk(&[(
+        1,
+        ChunkItem {
+            phrase: vec![u32::from('词')],
+            unigram: u32::MAX - 2,
+            prons: vec![],
+        },
+    )])
+    .unwrap();
+    let mut payload = chunk[CHUNK_HEADER_SIZE..].to_vec();
+    payload[..4].copy_from_slice(&3_u32.to_le_bytes());
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).unwrap(),
+    )
+    .unwrap();
+
+    let mut store = crate::test_session::open_w3(&user.path);
+    let token = crate::FIRST_USER_TOKEN;
+    assert_eq!(
+        store.user_unigram_frequency(token),
+        Some(u64::from(u32::MAX - 2))
+    );
+    assert!(store.add_unigram_outcome(token, 4).is_accepted());
+    assert_eq!(store.user_unigram_frequency(token), Some(1));
+}
+
+/// The predicted-prefix write masks the tagged token to its live item
+/// (pinyin.cpp:2608-2616, phrase_index.h:629 at 074a2219).
+#[test]
+fn a_prefix_row_under_high_bits_is_listed_and_trains_its_item() {
+    let user = tempfile::tempdir().unwrap();
+    let mut store = crate::test_session::open_w3(user.path());
+    store
+        .add_phrase_in(
+            7,
+            &"龘".into(),
+            &crate::test_session::native_keys("da2"),
+            Some(1),
+        )
+        .unwrap();
+    let token = store
+        .add_phrase_in(
+            7,
+            &"龘龘".into(),
+            &crate::test_session::native_keys("da2'da2"),
+            Some(1),
+        )
+        .unwrap();
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    crate::native_fixture::set_phrase_table_row(user.path(), "龘龘", &[token | 0x8000_0000]);
+    let mut store = crate::test_session::open_w3(user.path());
+    let base = store.user_unigram_frequency(token).unwrap();
+    store.observe_predicted_prefix(token | 0x8000_0000).unwrap();
+    assert_eq!(store.user_unigram_frequency(token), Some(base + 483));
+}
+
+/// The gram retains the whole tagged token while the unigram masks it.
+#[test]
+fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
+    let user = tempfile::tempdir().unwrap();
+    let mut store = crate::test_session::open_w3(user.path());
+    let token = store
+        .add_phrase_in(
+            7,
+            &"龘龘".into(),
+            &crate::test_session::native_keys("da2'da2"),
+            Some(5),
+        )
+        .unwrap();
+    store.compact_libraries();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    let prefixes = crate::test_session::native_tokens(&crate::native_fixture::system_dir(), "你");
+    let gram = crate::native_fixture::gram_bytes(20, &[(token | 0x8000_0000, 20)]);
+    let rows: Vec<_> = prefixes
+        .iter()
+        .map(|token| (token.to_le_bytes().to_vec(), gram.clone()))
+        .collect();
+    crate::native_fixture::craft_user_bigram(&user.path().join("user_bigram.db"), &rows);
+    crate::native_fixture::write_user_conf(user.path(), &crate::native_fixture::system_dir());
+    let mut store = crate::test_session::open_w3(user.path());
+    let base = store.user_unigram_frequency(token).unwrap();
+    store
+        .observe_predicted(prefixes[0], token | 0x8000_0000)
+        .unwrap();
+    assert_eq!(store.user_unigram_frequency(token), Some(base + 483));
+    let trained: Vec<_> = prefixes
+        .iter()
+        .map(|prefix| store.bigram_successors(*prefix).unwrap())
+        .filter(|items| *items != [(token | 0x8000_0000, 20)])
+        .collect();
+    assert_eq!(trained, [[(token | 0x8000_0000, 89)]]);
+}
+
+/// The pinned training seeds are 69, 138, 414 (counts 69, 207, 621).
+#[test]
+fn train_records_the_pinned_doubling_sequence() {
+    let user = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::system_dir();
+    let mut store =
+        crate::test_session::open_native(user.path(), &system, crate::UserConfLaw::Zhuyin);
+    let token = crate::test_session::native_tokens(&system, "你好")[0];
+    let shipped = store.system_unigram(token).unwrap();
+    assert_eq!(store.bigram_count(1, token).unwrap(), 0);
+    assert_eq!(store.observe_selection(1, token).unwrap(), 69);
+    assert_eq!(store.bigram_count(1, token).unwrap(), 69);
+    assert_eq!(store.bigram_total(1).unwrap(), 69);
+    assert_eq!(store.system_unigram(token), Some(shipped + 483));
+    assert_eq!(store.observe_selection(1, token).unwrap(), 138);
+    assert_eq!(store.bigram_count(1, token).unwrap(), 207);
+    assert_eq!(store.observe_selection(1, token).unwrap(), 414);
+    assert_eq!(store.bigram_count(1, token).unwrap(), 621);
+    assert_eq!(
+        store.system_unigram(token),
+        Some(shipped + 483 + 966 + 2898)
+    );
+}

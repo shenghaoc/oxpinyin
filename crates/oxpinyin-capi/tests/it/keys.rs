@@ -249,7 +249,7 @@ fn open_with_dir(tag: &str) -> (*mut PinyinContext, *mut PinyinInstance, TempUse
 /// key (upstream zeroes `*onekey` before the probe). An apostrophe is the
 /// pin's assert (`pinyin_parser2.cpp:170`), held by
 /// `parse_keys::full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes`
-/// in `src/boundary_tests/parse_keys.rs`.
+/// in `tests/it/parse_keys.rs`.
 #[test]
 fn full_pinyin_one_key_surface() {
     let fixture = Fixture::new("keys-full");

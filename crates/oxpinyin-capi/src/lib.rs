@@ -235,25 +235,6 @@ pub use types::GUint;
 pub use types::PinyinOptionT;
 pub use user_data::pinyin_remember_user_input;
 
-// The verification tests live in `tests/it`. The suites declared here hold
-// the tests of behaviour implemented below this crate until they move to
-// the crates that implement it (docs/testing/README.md#where-tests-belong).
-#[cfg(test)]
-mod boundary_tests;
-#[cfg(test)]
-mod e2e_tests;
-#[cfg(test)]
-mod guess_offset_tests;
-#[cfg(test)]
-mod parse_matrix_tests;
-#[cfg(all(test, feature = "tkrzw"))]
-mod pinned_data_tests;
-#[cfg(test)]
-#[path = "../../oxpinyin-user/src/test_child.rs"]
-mod test_child;
+// C publication and conversion tests live in sibling tests.rs files and tests/it.
 #[cfg(test)]
 mod test_support;
-#[cfg(test)]
-mod union_e2e_tests;
-#[cfg(test)]
-mod user_dir_tests;

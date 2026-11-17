@@ -214,3 +214,77 @@ fn a_zero_facade_total_aborts_the_after_cursor_ranking() {
         },
     );
 }
+
+#[cfg(feature = "tkrzw")]
+mod configured_window {
+    use super::*;
+    use crate::candidates::{
+        zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_candidate_type,
+        zhuyin_get_n_candidate,
+    };
+    use crate::config::zhuyin_set_options;
+    use crate::instance::zhuyin_alloc_instance;
+    use crate::parse::zhuyin_parse_more_full_pinyins;
+    use crate::test_support::contract_data::contract_data_dir;
+    use crate::test_support::init_on;
+    use crate::test_support::{TempUserDir, close, cstr};
+    use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
+    use std::{os::raw::c_char, path::Path, ptr};
+    /// A context and instance on `system` with `user_dir`, which must open.
+    fn open_on(system: &Path, user_dir: &Path) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
+        let context = init_on(system, Some(user_dir));
+        assert!(!context.is_null(), "zhuyin_init opens the pinned data");
+        let instance = unsafe { zhuyin_alloc_instance(context) };
+        assert!(!instance.is_null());
+        (context, instance)
+    }
+    /// The raw bytes of a NUL-terminated string.
+    fn bytes_at(text: *const c_char) -> Vec<u8> {
+        assert!(!text.is_null());
+        // SAFETY: the facade answered a live NUL-terminated string.
+        unsafe { std::ffi::CStr::from_ptr(text) }
+            .to_bytes()
+            .to_vec()
+    }
+    /// The candidate rows of the current list: type and text bytes.
+    fn candidate_rows(
+        instance: *mut ZhuyinInstance,
+    ) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t, Vec<u8>)> {
+        let mut count = 0;
+        assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
+        (0..count)
+            .map(|index| {
+                let mut candidate: *mut LookupCandidate = ptr::null_mut();
+                assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut candidate) });
+                let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+                assert!(unsafe { zhuyin_get_candidate_type(instance, candidate, &raw mut kind) });
+                let mut text: *const c_char = ptr::null();
+                assert!(unsafe { zhuyin_get_candidate_string(instance, candidate, &raw mut text) });
+                (candidate, kind, bytes_at(text))
+            })
+            .collect()
+    }
+    /// The resplit table under the separator options: the window at offset 0 of
+    /// `xian` holds the single syllables, led by 县, 见 and 线, and no two-syllable
+    /// 西安 split.
+    #[test]
+    fn the_instance_publishes_the_configured_resplit_window() {
+        let user_dir = TempUserDir::new("resplit-xian");
+        let (context, instance) = open_on(&contract_data_dir(), &user_dir.path);
+        assert!(unsafe { zhuyin_set_options(context, 0x18a) });
+        assert_eq!(
+            unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("xian").as_ptr()) },
+            4
+        );
+        assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
+        let texts: Vec<String> = candidate_rows(instance)
+            .into_iter()
+            .map(|(_, _, text)| String::from_utf8(text).expect("UTF-8"))
+            .collect();
+        assert_eq!(texts[..3], ["县", "见", "线"]);
+        for split in ["西安", "西岸", "锡安"] {
+            assert!(!texts.iter().any(|text| text == split), "{split}");
+        }
+        close(context, instance);
+    }
+}

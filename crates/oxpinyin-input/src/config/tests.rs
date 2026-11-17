@@ -159,3 +159,61 @@ fn windows_config_paths_keep_cjk_and_lone_surrogates() {
         assert!(!path.exists());
     }
 }
+
+mod numeric_locale {
+    // Nextest must run each test in its own process to isolate the process locale.
+    #![expect(
+        unsafe_code,
+        reason = "queries and restores the process numeric locale"
+    )]
+
+    use std::ffi::{CStr, CString};
+    use std::ptr;
+
+    use libc::{LC_NUMERIC, setlocale};
+
+    fn numeric_locale() -> CString {
+        // SAFETY: a NULL locale queries LC_NUMERIC. Nextest runs this test in its own
+        // process with no other locale-changing threads; copy libc's string before
+        // the next setlocale call can invalidate it.
+        let name = unsafe { setlocale(LC_NUMERIC, ptr::null()) };
+        assert!(!name.is_null(), "LC_NUMERIC query failed");
+        // SAFETY: the successful query returns a NUL-terminated libc string
+        // and no intervening call or other thread can invalidate it.
+        unsafe { CStr::from_ptr(name) }.to_owned()
+    }
+
+    struct RestoreNumericLocale(CString);
+
+    impl Drop for RestoreNumericLocale {
+        fn drop(&mut self) {
+            // SAFETY: the saved name came from a successful LC_NUMERIC query
+            // in this process, is NUL-terminated, and remains alive for the
+            // call. The only test owns all locale changes, including unwind.
+            unsafe { setlocale(LC_NUMERIC, self.0.as_ptr()) };
+        }
+    }
+
+    /// A failed init still inherits table_info.cpp's LC_NUMERIC reset at the
+    /// pin (074a2219). The setup locale is the host's UTF-8 locale.
+    #[test]
+    fn a_failed_init_leaves_lc_numeric_at_c() {
+        let _restore = RestoreNumericLocale(numeric_locale());
+        let utf8_locale = if cfg!(windows) { c".UTF-8" } else { c"C.UTF-8" };
+        // SAFETY: the literal is NUL-terminated and outlives the call. No
+        // other test or thread in this process can change the locale.
+        let installed = unsafe { setlocale(LC_NUMERIC, utf8_locale.as_ptr()) };
+        assert!(
+            !installed.is_null(),
+            "missing input: {utf8_locale:?} locale"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(numeric_locale().as_c_str(), utf8_locale);
+        // UCRT expands .UTF-8 to the current language and UTF-8 code page.
+        #[cfg(windows)]
+        assert_ne!(numeric_locale().as_c_str(), c"C");
+
+        assert!(super::SystemTableInfoReader::open(c"table.conf").is_err());
+        assert_eq!(numeric_locale().as_c_str(), c"C");
+    }
+}

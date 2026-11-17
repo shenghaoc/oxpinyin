@@ -71,3 +71,24 @@ fn full_pinyin_one_key_law() {
     assert_eq!(ang.pinyin_string(), "ang");
     assert_eq!(parser.parse_one_key(OptionBits::empty(), b"agn"), None);
 }
+
+/// The single-key tone law formerly exercised through the C facade.
+#[test]
+fn full_pinyin_tone_law() {
+    let parser = FullPinyinParser;
+    assert_eq!(
+        parser.parse_one_key(OptionBits::PINYIN_INCOMPLETE, b"ni3"),
+        None
+    );
+    let key = parser.parse_one_key(OptionBits::USE_TONE, b"ni3").unwrap();
+    assert_eq!(key.pinyin_string(), "ni3");
+    assert!(parser.parse_one_key(OptionBits::USE_TONE, b"ni").is_some());
+    let forced = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
+    assert_eq!(parser.parse_one_key(forced, b"ni"), None);
+    assert!(parser.parse_one_key(forced, b"ni3").is_some());
+    assert!(
+        parser
+            .parse_one_key(OptionBits::FORCE_TONE, b"ni")
+            .is_some()
+    );
+}

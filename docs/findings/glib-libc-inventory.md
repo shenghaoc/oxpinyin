@@ -706,10 +706,9 @@ oxpinyin→pin workers open the donor's exact directory, recover the saved
 tokens, re-add one existing reading with count zero (which keeps it,
 `pinyin.cpp:561-582`, `zhuyin.cpp:449-469`), save and must give the same
 logical rows; each receiver is checked against its donor and the other
-receiver. `oxpinyin-capi`
-`pinned_data_tests::the_pins_saved_profile_opens_with_its_records` and
-`oxpinyin-zhuyin-capi`
-`pinned_data_tests::a_pin_written_profile_opens_and_saves_with_its_logical_records`
+receiver. `oxpinyin-user`
+`persistence::tests::pinned_profiles::the_pins_saved_profile_opens_with_its_records` and
+`persistence::tests::pinned_profiles::a_pin_written_profile_opens_and_saves_with_its_logical_records`
 hold this on the frozen pin profiles.
 
 No language/runtime exception is established; the divergence register has
@@ -798,7 +797,7 @@ values, so every case is backend-independent):
 
 | Partition | Verdict | Held by |
 | --- | --- | --- |
-| Version `%d`: LP64 `strtol` saturation, then the low 32 bits of the `int` store: `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, `-9223372036854775808` is `0` | contract | `oxpinyin-capi` `pinned_data_tests::user_conf_versions_past_int_take_the_scanners_int` |
+| Version `%d`: LP64 `strtol` saturation, then the low 32 bits of the `int` store: `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, `-9223372036854775808` is `0` | contract | `oxpinyin-user` `persistence::tests::pinned_profiles::user_conf_versions_past_int_take_the_scanners_int` |
 | Open counter `%d`: the same conversion; a missing directive reads 0; a counter above `OPEN_COUNTER_LIMIT` is non-conforming and `get_open_counter` turns it into 0; the load raises `get_open_counter(existing) + 1` and fini lowers it | contract | `oxpinyin-data` `user_files::tests::marker_fields_follow_the_scanner` |
 | `database format:%255s`: a known C string selects the backend; an unknown token aborts (row 44); EOF before the conversion leaves `UNKNOWN_FORMAT`; a missing literal or matching failure reads an unwritten `str` (class (b)); a NUL ends the C string, as the pin's `strcmp` does (`:122-131,350-354`) | contract; abort; class (b) | `marker_fields_follow_the_scanner`; `oxpinyin-capi` `init_and_save::init_aborts_on_an_unknown_user_conf_database_format` |
 | Missing or malformed version directive: `load` returns `false` with the reset defaults (`0/0/UNKNOWN/0`); `check_format` sees a non-conforming marker and wipes the profile | contract | `user_conf_versions_past_int_take_the_scanners_int` |
@@ -825,8 +824,8 @@ or return, so no legal return or error path leaves a different locale:
 | `zhuyin_fini` | `zhuyin.cpp:741-757` releases state and writes no marker | unchanged | none |
 
 Guards: `oxpinyin-capi` `tests/it/locale.rs`
-(`lc_numeric_follows_the_pins_table_info_sites`) and `oxpinyin-zhuyin-capi`
-`tests/locale.rs` (`a_failed_init_leaves_lc_numeric_at_c`).
+(`lc_numeric_follows_the_pins_table_info_sites`) and `oxpinyin-input`
+`src/config/tests.rs` (`a_failed_init_leaves_lc_numeric_at_c`).
 
 The "Locale after" results assume that no other thread changes the locale
 at the same time. `setlocale` is process-wide and not thread-safe, in the

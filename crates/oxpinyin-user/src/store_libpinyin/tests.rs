@@ -3418,3 +3418,318 @@ fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
 mod mapped_replay;
 mod replayed_readings;
 mod unloaded;
+
+/// `FacadePhraseIndex::compact` copies every readable item of a system
+/// sub-index into a fresh one, and `add_phrase_item` stores each at its own
+/// offset (`phrase_index.cpp:208-217`, `:648-675` at 074a2219). Slots 1 and
+/// 2 of `gb_char.bin` name one body. After the compaction at the end of an
+/// import (`pinyin.cpp:655-660`), an increment of token 1's unigram
+/// (`phrase_index.cpp:150-178`) leaves token 2's as it was.
+#[test]
+fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
+    use crate::native_fixture::{TempUserDir, system_dir};
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::native_fixture::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
+        1000,
+    );
+    // Point slot 2 at slot 1's body.
+    let chunk = system.join("gb_char.bin");
+    let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_one = offsets_start as usize + 4;
+    payload.copy_within(slot_one..slot_one + 4, slot_one + 4);
+    std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
+
+    let user = TempUserDir::new("system-aliased-slots");
+    let mut store = crate::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0100_0002),
+        Some(100)
+    );
+    store.compact_libraries();
+    assert!(store.add_unigram_outcome(0x0100_0001, 5).is_accepted());
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0100_0001),
+        Some(105)
+    );
+    assert_eq!(
+        crate::test_session::native_unigram(&store, 0x0100_0002),
+        Some(100)
+    );
+}
+
+/// Compaction copies each readable item independently (`phrase_index.cpp:648-675`
+/// at 074a2219), including bodies at distinct offsets that overlap. Adding 256
+/// to the first unigram changes the second's low byte only before compaction.
+#[test]
+fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
+    use crate::native_fixture::{TempUserDir, system_dir};
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+
+    for write_before_compaction in [false, true] {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::native_fixture::items_system(
+            &system_dir(),
+            scratch.path(),
+            &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
+            1000,
+        );
+        let chunk = system.join("gb_char.bin");
+        let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
+        let offsets_start =
+            u32::from_le_bytes(payload[4..8].try_into().expect("offset header")) as usize;
+        let content_start =
+            u32::from_le_bytes(payload[8..12].try_into().expect("content header")) as usize;
+        let slot_one = offsets_start + 4;
+        let offset =
+            u32::from_le_bytes(payload[slot_one..slot_one + 4].try_into().expect("slot 1"));
+        payload[slot_one + 4..slot_one + 8].copy_from_slice(&(offset + 1).to_le_bytes());
+        let body = content_start + offset as usize;
+        // The first item has one character and one reading (16 bytes).
+        // The second starts one byte later, with one character and no readings
+        // (10 bytes). Both unigrams start at zero and both bodies are readable.
+        payload[body..body + 16].fill(0);
+        payload[body..body + 2].copy_from_slice(&[1, 1]);
+        std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
+
+        let user = TempUserDir::new("system-overlapping-slots");
+        let mut store = crate::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
+        assert_eq!(
+            crate::test_session::native_unigram(&store, 0x0100_0001),
+            Some(0)
+        );
+        assert_eq!(
+            crate::test_session::native_unigram(&store, 0x0100_0002),
+            Some(0)
+        );
+        let (first, second) = if write_before_compaction {
+            assert!(store.add_unigram_outcome(0x0100_0001, 256).is_accepted());
+            assert_eq!(
+                crate::test_session::native_unigram(&store, 0x0100_0002),
+                Some(1)
+            );
+            (256, 1)
+        } else {
+            (0, 0)
+        };
+        store.compact_libraries();
+        assert!(store.add_unigram_outcome(0x0100_0001, 256).is_accepted());
+        assert_eq!(
+            crate::test_session::native_unigram(&store, 0x0100_0001),
+            Some(first + 256)
+        );
+        assert_eq!(
+            crate::test_session::native_unigram(&store, 0x0100_0002),
+            Some(second)
+        );
+    }
+}
+
+/// An import of a reading its phrase already holds removes the item, edits
+/// a copy and adds the copy back at the content's end
+/// (`pinyin.cpp:563-582`, `phrase_index.cpp:208-235` at 074a2219), so the
+/// bytes the slot named before are not written. Slots 1 and 2 of `user.bin`
+/// name one body and the phrase table holds token 1 alone: the import
+/// raises token 1's count and token 2 keeps the old one.
+#[test]
+fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
+    use crate::native_fixture::{TempUserDir, set_phrase_table_row, system_dir, write_user_conf};
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-aliased-slots");
+    write_user_conf(&user.path, &system_dir());
+    let ce4 = oxpinyin_core::ChewingKey::from_pinyin("ce")
+        .expect("ce")
+        .with_tone(4)
+        .to_packed();
+    let item = || ChunkItem {
+        phrase: "测测".chars().map(u32::from).collect(),
+        unigram: 15,
+        prons: vec![(vec![ce4, ce4], 5)],
+    };
+    let chunk = build_chunk(&[(1, item()), (2, item())]).expect("two-item user chunk");
+    // Point slot 2 at slot 1's body.
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_one = offsets_start as usize + 4;
+    payload.copy_within(slot_one..slot_one + 4, slot_one + 4);
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+    set_phrase_table_row(&user.path, "测测", &[0x0700_0001]);
+
+    let mut store = crate::test_session::open_w3(&user.path);
+    store
+        .add_phrase_in(
+            7,
+            &"测测".into(),
+            &crate::test_session::native_keys("ce4'ce4"),
+            Some(7),
+        )
+        .unwrap();
+    assert_eq!(
+        crate::test_session::native_exports(&store, 7)
+            .into_iter()
+            .map(|(_, reading, count)| (reading, count))
+            .collect::<Vec<_>>(),
+        [("ce4'ce4".to_owned(), 12), ("ce4'ce4".to_owned(), 5)]
+    );
+    store.compact_libraries();
+}
+
+/// The approved partition divergence permits the same five-record start gram.
+#[test]
+fn training_over_an_unsorted_start_gram_answers_true() {
+    let user = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::system_dir();
+    let ni = crate::test_session::native_tokens(&system, "你")[0];
+    let hao = crate::test_session::native_tokens(&system, "好")[0];
+    let items = [
+        (ni - 4, 1),
+        (ni - 3, 1),
+        (ni - 2, 1),
+        (ni + 1, 1),
+        (ni - 1, 1),
+    ];
+    crate::native_fixture::plant_bigram(
+        user.path(),
+        vec![(
+            1_u32.to_le_bytes().to_vec(),
+            crate::native_fixture::gram_bytes(5, &items),
+        )],
+    );
+    let mut store = crate::test_session::open_w3(user.path());
+    store.observe_selection(1, ni).unwrap();
+    store.observe_selection(ni, hao).unwrap();
+}
+
+/// The gram total cannot take the seed, while the unigram takes seed * 7.
+#[test]
+fn training_past_the_gram_total_limit_keeps_the_gram() {
+    const COUNT: u32 = 0xffff_ffff - 22_080 + 1;
+    let user = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::system_dir();
+    let [ni, hao, zhong] =
+        ["你", "好", "中"].map(|text| crate::test_session::native_tokens(&system, text)[0]);
+    let gram = crate::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
+    crate::native_fixture::plant_bigram(
+        user.path(),
+        vec![
+            (ni.to_le_bytes().to_vec(), gram.clone()),
+            (zhong.to_le_bytes().to_vec(), gram),
+            (1_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        ],
+    );
+    let mut store = crate::test_session::open_w3(user.path());
+    let before = store.system_unigram(hao).unwrap();
+    store.observe_selection(1, ni).unwrap();
+    store.observe_selection(ni, hao).unwrap();
+    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
+    store.save_reporting().unwrap();
+    drop(store);
+    let stored = crate::native_fixture::store_rows(&user.path().join("user_bigram.db"), true)
+        .into_iter()
+        .find(|(key, _)| *key == ni.to_le_bytes())
+        .unwrap()
+        .1;
+    assert_eq!(
+        stored,
+        crate::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)])
+    );
+    let store = crate::test_session::open_w3(user.path());
+    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
+}
+
+#[test]
+fn masking_system_imports_restores_originals_and_removes_appended_items() {
+    use crate::test_session::{native_exports, native_keys, native_tokens, open_w3};
+    let user = tempfile::tempdir().unwrap();
+    let mut store = open_w3(user.path());
+    let original = native_exports(&store, 1);
+    assert!(!original.is_empty());
+    let token = native_tokens(&crate::native_fixture::system_dir(), &original[0].0)
+        .into_iter()
+        .find(|token| token >> 24 == 1)
+        .unwrap();
+    store
+        .add_system_phrase_in(
+            1,
+            Some(token),
+            &original[0].0.as_str().into(),
+            &native_keys(&original[0].1),
+            Some(5),
+        )
+        .unwrap();
+    store
+        .add_system_phrase_in(1, None, &"你你你".into(), &native_keys("ni'ni'ni"), Some(5))
+        .unwrap();
+    store.compact_libraries();
+    store.mark_modified();
+    let modified = native_exports(&store, 1);
+    assert_ne!(modified, original);
+    assert!(modified.iter().any(|row| row.0 == "你你你"));
+    store.mask_out(0, 0).unwrap();
+    let system = crate::native_fixture::system_dir();
+    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system).unwrap();
+    let libraries = conf
+        .default_row_steps(Some(user.path()))
+        .into_iter()
+        .filter_map(|(index, step)| {
+            let oxpinyin_data::table_info::DefaultRowStep::System { file, .. } = step else {
+                return None;
+            };
+            let path = system.join(file.as_ref());
+            Some((
+                index,
+                crate::SystemLibrary::from_library(
+                    oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap(),
+                ),
+            ))
+        })
+        .collect();
+    let baselines = crate::SystemOriginals::new(libraries, store.originals.layout().clone());
+    store.reload_system_libraries(baselines, 0, 0).unwrap();
+    store.compact_libraries();
+
+    assert_eq!(native_exports(&store, 1), original);
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    drop(store);
+    assert_eq!(native_exports(&open_w3(user.path()), 1), original);
+}
+
+/// The missing sub-index refuses the unigram but keeps the predicted bigram
+/// (pinyin.cpp:2609-2639 at 074a2219).
+#[test]
+fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
+    let user = tempfile::tempdir().unwrap();
+    let system = crate::native_fixture::system_dir();
+    let dict = oxpinyin_data::SystemDictionary::open(&system).unwrap();
+    use oxpinyin_core::Dictionary as _;
+    let ni_key = oxpinyin_core::SyllableKey::from_text("ni").unwrap();
+    let gbk = dict
+        .lookup(&[ni_key])
+        .unwrap()
+        .into_iter()
+        .find(|row| row.token().value() >> 24 == 2)
+        .unwrap()
+        .token()
+        .value();
+    let ni = dict.tokens_for_text("你").unwrap()[0];
+    let mut store = crate::test_session::open_w3(user.path());
+    store.set_bigram_count(ni, gbk, 10).unwrap();
+    store.reset_system_library(2);
+    let total = store.unigram_total();
+    let before = store.bigram_count(ni, gbk).unwrap();
+    store.observe_predicted(ni, gbk).unwrap();
+    assert_eq!(store.bigram_count(ni, gbk).unwrap(), before + 69);
+    assert_eq!(store.unigram_total(), total);
+}

@@ -386,3 +386,48 @@ fn a_total_past_u32_is_stored_wrapped() {
     let saved = library.store().unwrap();
     assert_eq!(UserLibrary::load(&saved).unwrap().total(), 5);
 }
+
+/// At 074a2219 the USER_FILE load installs the whole offset and content
+/// sections (phrase_index.cpp:335-362). A bad offset fails only the item
+/// read (phrase_index.cpp:180-205); neighbouring items remain readable.
+#[test]
+fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
+    use crate::native_fixture::{TempUserDir, system_dir, write_user_conf};
+    use oxpinyin_data::chunk_format::build_memory_chunk;
+    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+
+    let user = TempUserDir::new("user-file-bad-item");
+    write_user_conf(&user.path, &system_dir());
+    let rows = [(1, "你", 0x302b_u16), (2, "好", 0x30a7), (3, "吗", 0x5083)];
+    let items = rows.map(|(slot, phrase, key)| {
+        (
+            slot,
+            ChunkItem {
+                phrase: phrase.chars().map(u32::from).collect(),
+                unigram: 17,
+                prons: vec![(vec![key], 5)],
+            },
+        )
+    });
+    let chunk = build_chunk(&items).expect("three-item user chunk");
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
+    let slot_two = offsets_start as usize + 2 * 4;
+    payload[slot_two..slot_two + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    std::fs::write(
+        user.path.join("user.bin"),
+        build_memory_chunk(&payload).expect("frame"),
+    )
+    .expect("write user.bin");
+
+    let library = UserLibrary::load(&std::fs::read(user.path.join("user.bin")).unwrap()).unwrap();
+    for (slot, expected, key) in [rows[0], rows[2]] {
+        let item = library.item(slot).unwrap();
+        assert_eq!(item.phrase_length(), 1);
+        assert_eq!(item.phrase_text(), Some(expected.into()));
+        assert_eq!(library.pronunciation_count(slot), Some(1));
+        assert_eq!(item.pronunciation(0).unwrap().keys, key.to_le_bytes());
+    }
+    assert!(library.item(2).is_none());
+    assert_eq!(library.pronunciation_count(2), None);
+}

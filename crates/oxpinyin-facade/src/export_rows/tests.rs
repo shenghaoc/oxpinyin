@@ -571,3 +571,331 @@ fn a_user_library_import_after_begin_is_exported() {
         ]
     );
 }
+
+mod native {
+    use super::super::{BigramExportWalk, BigramStep, ExportAssert, ExportStep};
+    use crate::ContextCore;
+    #[cfg(unix)]
+    use crate::SaveOutcome;
+    use crate::test_fixture::{native_fixture::*, *};
+    use oxpinyin_user::UserConfLaw;
+
+    #[derive(Debug, PartialEq)]
+    enum WalkStep {
+        NoNext,
+        Row(bool, String, String, i64),
+    }
+
+    fn row(context: &ContextCore, walk: &mut BigramExportWalk) -> WalkStep {
+        let (first, second) = walk.pair().unwrap();
+        let text = format!("{}{}", first.as_str().unwrap(), second.as_str().unwrap());
+        let BigramStep::Row(row, more) = walk.get_next(context) else {
+            panic!("a buffered row")
+        };
+        WalkStep::Row(more.unwrap(), text, row.pinyin, row.count)
+    }
+
+    fn walk_steps(context: &ContextCore) -> Vec<WalkStep> {
+        let mut walk = context.bigram_export_walk().unwrap();
+        let mut steps = Vec::new();
+        let mut falses = 0;
+        while falses < 2 && steps.len() < 16 {
+            if !walk.has_next(context).unwrap() {
+                falses += 1;
+                steps.push(WalkStep::NoNext);
+                continue;
+            }
+            falses = 0;
+            steps.push(row(context, &mut walk));
+        }
+        steps
+    }
+
+    fn lay_gram(user: &std::path::Path, predecessor: u32, items: &[(u32, u32)]) {
+        let total: u32 = items.iter().map(|(_, count)| count).sum();
+        let planted = TempUserDir::new("export-gram-plant");
+        plant_bigram(
+            &planted.path,
+            vec![(predecessor.to_le_bytes().to_vec(), gram_bytes(total, items))],
+        );
+        std::fs::copy(
+            planted.path.join("user_bigram.db"),
+            user.join("user_bigram.db"),
+        )
+        .unwrap();
+    }
+
+    fn export_walk(
+        tag: &str,
+        items: impl FnOnce(u32, u32, u32) -> Vec<(u32, u32)>,
+    ) -> Vec<WalkStep> {
+        let user = TempUserDir::new(tag);
+        let dalong = saved_user_phrase(&user.path);
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let [ni, hao, hao_alt] = ["你", "好", "号"].map(|text| tokens(&context, text)[0]);
+        context.finish();
+        drop(context);
+        lay_gram(&user.path, ni, &items(hao, hao_alt, dalong));
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        walk_steps(&context)
+    }
+
+    #[test]
+    fn the_bigram_export_count_wraps() {
+        let user = TempUserDir::new("d18-export-ffffffff");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let [ni, hao, zhong] = ["你", "好", "中"].map(|text| tokens(&context, text)[0]);
+        context.finish();
+        drop(context);
+        let gram = gram_bytes(u32::MAX, &[(hao, u32::MAX)]);
+        plant_bigram(
+            &user.path,
+            vec![
+                (ni.to_le_bytes().to_vec(), gram.clone()),
+                (zhong.to_le_bytes().to_vec(), gram),
+                (1_u32.to_le_bytes().to_vec(), vec![0; 4]),
+            ],
+        );
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let mut walk = context.bigram_export_walk().unwrap();
+        let mut rows = Vec::new();
+        while walk.has_next(&context).unwrap() {
+            let WalkStep::Row(_, text, reading, count) = row(&context, &mut walk) else {
+                unreachable!()
+            };
+            rows.push((text, reading, count));
+        }
+        rows.sort();
+        assert_eq!(
+            rows,
+            [
+                ("中好".to_owned(), "zhong'hao".to_owned(), -2),
+                ("你好".to_owned(), "ni'hao".to_owned(), -2)
+            ]
+        );
+    }
+
+    /// chewing_key.cpp:29-57 validates the tone before the key dimensions.
+    #[rstest::rstest]
+    #[case::tone(0x6081, ExportAssert::KeyTone)]
+    #[case::fields(0x109f, ExportAssert::KeyFields)]
+    fn export_refuses_an_invalid_system_reading(#[case] key: u16, #[case] expected: ExportAssert) {
+        let scratch = tempfile::tempdir().unwrap();
+        let system = items_system(
+            &system_dir(),
+            scratch.path(),
+            &[(&[0x4f60], &[key], 100)],
+            1000,
+        );
+        let user = TempUserDir::new("export-system-key");
+        let context = native_context(&system, &user.path, UserConfLaw::Pinyin);
+        let mut cursor = context.phrase_export_cursor(1);
+        assert!(
+            matches!(cursor.get_next_with(&context, |_| ()), ExportStep::Assert(site) if site == expected)
+        );
+    }
+    /// `user-gram-unsorted-export`: 你's stored gram holds `[龘龘 90, 号 80,
+    /// 好 70]`, descending by token, not the ascending order the pin writes.
+    /// The pin's export reads `retrieve_all`, which appends the raw items in
+    /// stored order (`ngram.cpp:133-151` at 074a2219), and the walk hands the
+    /// array out in that order; the `std::lower_bound` over the raw array
+    /// (`:86-99`) is a lookup and does not re-sort it. The walk's first
+    /// `has_next` answers false (its do/while loads the last predecessor's gram
+    /// on a false answer, register row 36); the last row's `get_next` answer is
+    /// the walk's, `false` at the end of the gram.
+    #[test]
+    fn user_gram_unsorted_export_follows_the_stored_order() {
+        let steps = export_walk("export-unsorted", |hao, hao_alt, dalong| {
+            let mut items = vec![(dalong, 90), (hao_alt, 80), (hao, 70)];
+            items.sort_by(|a, b| b.cmp(a));
+            items
+        });
+        let row = |ok: bool, phrase: &str, pinyin: &str, count: i64| {
+            WalkStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
+        };
+        assert_eq!(
+            steps,
+            [
+                WalkStep::NoNext,
+                row(true, "你龘龘", "ni'da2'da2", 180),
+                row(true, "你号", "ni'hao", 160),
+                row(false, "你好", "ni'hao", 140),
+                WalkStep::NoNext,
+                WalkStep::NoNext,
+            ]
+        );
+    }
+
+    /// `user-gram-duplicate-export`: 你's stored gram holds 好 and 龘龘 twice,
+    /// sorted: `[好 70, 好 80, 龘龘 90, 龘龘 100]`. `retrieve_all` appends
+    /// every stored item, duplicates included (`ngram.cpp:133-151` at
+    /// 074a2219), so the export lists each twice, in stored order.
+    #[test]
+    fn user_gram_duplicate_export_lists_every_stored_item() {
+        let steps = export_walk("export-duplicate", |hao, _, dalong| {
+            vec![(hao, 70), (hao, 80), (dalong, 90), (dalong, 100)]
+        });
+        let row = |ok: bool, phrase: &str, pinyin: &str, count: i64| {
+            WalkStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
+        };
+        assert_eq!(
+            steps,
+            [
+                WalkStep::NoNext,
+                row(true, "你好", "ni'hao", 140),
+                row(true, "你好", "ni'hao", 160),
+                row(true, "你龘龘", "ni'da2'da2", 180),
+                row(false, "你龘龘", "ni'da2'da2", 200),
+                WalkStep::NoNext,
+                WalkStep::NoNext,
+            ]
+        );
+    }
+
+    /// D6: the bigram export lists an item only when its count is above
+    /// `threshold = initial_seed - 1`, 68 (`pinyin.cpp:791-792`, `:809` at 074a2219), and doubles
+    /// it (`:906`): 你's gram `[好 68, 号 69]` exports only 你号, at 138. Source-derived, with no
+    /// capture, per the 2026-11-01 ruling: the unpatched pin joins the pinyin strings with
+    /// `g_strjoinv` over an unterminated array (`:849`, `:862`; compatibility register row 1).
+    #[cfg(unix)]
+    #[test]
+    fn the_bigram_export_skips_a_count_at_the_threshold() {
+        let steps = export_walk("export-threshold", |hao, hao_alt, _| {
+            vec![(hao, 68), (hao_alt, 69)]
+        });
+        assert_eq!(
+            steps,
+            [
+                WalkStep::NoNext,
+                WalkStep::Row(false, "你号".to_owned(), "ni'hao".to_owned(), 138),
+                WalkStep::NoNext,
+                WalkStep::NoNext,
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_bigram_export_crosses_both_items_readings() {
+        let user = TempUserDir::new("export-cross-product");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        assert_eq!(
+            import_native(
+                &mut context,
+                7,
+                &[("龘龘", "da2'da2", 5), ("龘龘", "da4'da4", 5)]
+            ),
+            [true, true]
+        );
+        let dalong = context
+            .user_store()
+            .token_for_phrase("龘龘")
+            .unwrap()
+            .unwrap();
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        context.finish();
+        drop(context);
+        lay_gram(&user.path, dalong, &[(dalong, 100)]);
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let row =
+            |more, pinyin: &str| WalkStep::Row(more, "龘龘龘龘".to_owned(), pinyin.to_owned(), 200);
+        assert_eq!(
+            walk_steps(&context),
+            [
+                WalkStep::NoNext,
+                row(true, "da2'da2'da2'da2"),
+                row(true, "da2'da2'da4'da4"),
+                row(true, "da4'da4'da2'da2"),
+                row(false, "da4'da4'da4'da4"),
+                WalkStep::NoNext,
+                WalkStep::NoNext
+            ]
+        );
+    }
+
+    #[test]
+    fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
+        for live_successor in [false, true] {
+            let user = TempUserDir::new("export-live-item");
+            let user_token = saved_user_phrase(&user.path);
+            let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+            let system_token = tokens(&context, "好")[0];
+            context.finish();
+            drop(context);
+            let (predecessor, successor) = if live_successor {
+                (system_token, user_token)
+            } else {
+                (user_token, system_token)
+            };
+            lay_gram(&user.path, predecessor, &[(successor, 69), (successor, 70)]);
+            let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+            let mut walk = context.bigram_export_walk().unwrap();
+            assert!(!walk.has_next(&context).unwrap());
+            assert!(walk.has_next(&context).unwrap());
+            assert_eq!(
+                import_native(&mut context, 7, &[("龘龘", "da4'da4", 5)]),
+                [true]
+            );
+            let expected = |more, reading: &str, count| {
+                let (text, pinyin) = if live_successor {
+                    ("好龘龘", format!("hao'{reading}"))
+                } else {
+                    ("龘龘好", format!("{reading}'hao"))
+                };
+                WalkStep::Row(more, text.to_owned(), pinyin, count)
+            };
+            assert_eq!(row(&context, &mut walk), expected(true, "da2'da2", 138));
+            assert_eq!(row(&context, &mut walk), expected(true, "da2'da2", 140));
+            assert_eq!(row(&context, &mut walk), expected(false, "da4'da4", 140));
+        }
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn ordinary_training_exports_its_grams() {
+        let user = TempUserDir::new("pinned-nbest-train");
+        let mut context = native_context(
+            &contract_data::contract_data_dir(),
+            &user.path,
+            UserConfLaw::Pinyin,
+        );
+        let mut instance = context.alloc_instance();
+        for second in ["浩", "好"] {
+            for _ in 0..3 {
+                assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
+                assert!(guess(&context, &mut instance));
+                let first = published(&context, &mut instance, 0, "你");
+                assert_eq!(first.end, 2);
+                assert_ne!(
+                    choose(&context, &mut instance, &first),
+                    oxpinyin_engine::Selection::Refused
+                );
+                assert!(guess(&context, &mut instance));
+                let second = published(&context, &mut instance, 2, second);
+                assert_eq!(second.end, 5);
+                assert_ne!(
+                    choose(&context, &mut instance, &second),
+                    oxpinyin_engine::Selection::Refused
+                );
+                guess(&context, &mut instance);
+                assert!(context.train(&instance, 0).unwrap());
+                instance.bind(&context.runtime).full_reset();
+            }
+        }
+        assert_eq!(export_native(&context, 7), []);
+        let rows: Vec<_> = walk_steps(&context)
+            .into_iter()
+            .filter_map(|step| match step {
+                WalkStep::Row(_, text, pinyin, count) => Some((text, pinyin, count)),
+                WalkStep::NoNext => None,
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("你浩".to_owned(), "ni'hao".to_owned(), 1242),
+                ("你好".to_owned(), "ni'hao".to_owned(), 1242)
+            ]
+        );
+    }
+}

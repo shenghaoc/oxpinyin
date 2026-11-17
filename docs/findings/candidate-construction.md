@@ -86,7 +86,7 @@ These invariants hold in the current code:
    The scan enumerates exactly the keys that the pinned matrix admits: the selected parse plus the split tables.
    A doubled (`ni''hao`) or leading (`'ni`) apostrophe run is not an exception: the parser and graph consume it as the pin does ([parser spec, Apostrophes](parser-spec.md#apostrophes)).
    Apostrophe-only input (`'`, `''`, `'''`) places no key.
-   The capture holds no candidates for it, and a key query on it aborts as the pin's does (`a_key_query_on_an_apostrophe_only_parse_aborts` in `crates/oxpinyin-capi/src/parse.rs`).
+   The capture holds no candidates for it, and a key query on it aborts as the pin's does (`a_key_query_on_an_apostrophe_only_parse_aborts` in `crates/oxpinyin-capi/tests/it/parse_keys.rs`).
 2. **One `f32` frequency key.**
    The amplified key of §8.2 is the one `f32` computation in the construction.
    `amplified_frequency` evaluates the C `float` chain in C order, and the unit test `amplified_frequency_pins_the_class_a_probe_values` holds its values.

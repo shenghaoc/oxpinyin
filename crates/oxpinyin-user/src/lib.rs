@@ -84,3 +84,7 @@ pub use store::{
 
 #[cfg(feature = "tools")]
 pub use replay::tool;
+
+#[cfg(test)]
+#[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
+mod native_fixture;

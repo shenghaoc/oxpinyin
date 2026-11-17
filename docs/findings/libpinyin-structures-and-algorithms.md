@@ -695,7 +695,7 @@ expected O(s) time and O(s) space for s occurrences, instead of O(u) node
 space for u distinct tokens. The C prefix path supplies at most 65 seeds
 (one start and four tokens per suffix, up to sixteen suffixes); the beam
 still keeps 32. Held by `repeated_prefix_tokens_keep_duplicate_sentence_rows`
-in `oxpinyin-capi/src/boundary_tests/sentence.rs`.
+in `oxpinyin-runtime/src/tests.rs`.
 
 ONESTEP still requires a successful span search, but its forced token need
 not be in the returned ranges (`lookup/phonetic_lookup.h:552-554,601-612,
@@ -707,7 +707,7 @@ lookup costs. It adds one forced slot and one token sum, reuses the path
 inventory, and shares the sum across at most 32 beam predecessors.
 An unranged user item is read from its stored body. Held by
 `an_unranged_onestep_token_still_produces_a_sentence` in
-`oxpinyin-capi/src/boundary_tests/sentence.rs`, for system and user libraries.
+`oxpinyin-runtime/src/tests.rs`, for system and user libraries.
 
 A zero stored tone compares equal to any query tone
 (`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
@@ -801,8 +801,8 @@ its survival through the next guess and through a shorter parse that no
 guess sees, and its clearing by a guess on the shorter parse. oxpinyin gives
 the same value at every call; the test
 `a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does` in
-`tests/it/pinned_data.rs` of `oxpinyin-capi` and of `oxpinyin-zhuyin-capi`
-holds each leg. The zhuyin leg parses `zhg` as full pinyin, because the
+`crates/oxpinyin-facade/src/instance/tests.rs` holds each leg as a case. The
+zhuyin leg parses `zhg` as full pinyin, because the
 chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
 
 A read never fails: `UserStore::phrase` (`crates/oxpinyin-user/src/store.rs`)

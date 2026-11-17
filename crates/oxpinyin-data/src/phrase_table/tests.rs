@@ -1,3 +1,4 @@
+// Nextest isolates the process-wide read-fault key by running each test in its own process.
 use super::*;
 
 use std::collections::BTreeMap;
@@ -122,4 +123,89 @@ fn search_prefix_marker_returns_empty() {
     let table = PhraseTable::new(dbm);
     let tokens = table.search("你").unwrap();
     assert!(tokens.is_empty());
+}
+
+fn native_table() -> PhraseTable {
+    PhraseTable::new(
+        DefaultDbm::attach(
+            &crate::native_fixture::system_dir().join("phrase_index.bin"),
+            false,
+        )
+        .unwrap(),
+    )
+}
+
+/// SEARCH_NONE on failed get/check (phrase_large_table3_tkrzwdb.cpp:136-139,
+/// _bdb.cpp:196-198, _kyotodb.cpp:174-177 at 074a2219).
+#[test]
+fn a_failed_phrase_table_read_is_a_miss() {
+    let table = native_table();
+    oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("测测"), 0);
+    assert!(table.search("测测").unwrap().is_empty());
+}
+
+#[test]
+fn a_failed_phrase_table_read_is_a_miss_for_zhuyin() {
+    let table = native_table();
+    oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("你你"), 0);
+    assert!(table.search("你你").unwrap().is_empty());
+}
+
+/// A failed cursor read ends the walk after the prior rows
+/// (phrase_large_table3_tkrzwdb.cpp:171-186 at 074a2219).
+#[test]
+fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
+    use oxpinyin_store::RawReadStore as _;
+    let prefix = encode_ucs4_key("你");
+    let store = oxpinyin_store::DefaultStore::open_read_only(
+        &crate::native_fixture::system_dir().join("phrase_index.bin"),
+    )
+    .unwrap();
+    let mut extensions = Vec::new();
+    store
+        .range_raw(
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Unbounded,
+            |key, value| {
+                if key.len() > prefix.len() && key.starts_with(&prefix) && !value.is_empty() {
+                    extensions.push((key.to_vec(), decode_tokens(value).unwrap()));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    extensions.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(extensions.len() >= 2);
+    let table = native_table();
+    oxpinyin_store::read_faults::fail_point_read_of(&extensions[1].0, 0);
+    assert_eq!(
+        table.search_suggestion(&[u32::from('你')]).unwrap(),
+        extensions[0].1
+    );
+}
+
+/// The successful check is followed by a failing checked body read
+/// (phrase_large_table3_kyotodb.cpp:174-187, pinyin_utils.h:27-31).
+#[cfg(feature = "kyotocabinet")]
+#[test]
+fn a_phrase_table_body_read_failure_after_the_check_aborts() {
+    const NAME: &str =
+        "phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts";
+    if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
+        let table = native_table();
+        oxpinyin_store::read_faults::fail_point_read_of(&encode_ucs4_key("你好"), 1);
+        let _ = table.search("你好");
+        panic!("the checked body read must abort");
+    }
+    let output = crate::test_child::run_exact(NAME, [("OXPINYIN_DATA_CHILD", NAME)]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        assert_eq!(output.status.signal(), Some(6));
+    }
+    #[cfg(windows)]
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes()))
+    );
 }

@@ -24,6 +24,7 @@ oxpinyin-input = { workspace = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 tempfile.workspace = true
 
 [features]

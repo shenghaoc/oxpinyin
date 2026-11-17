@@ -145,21 +145,6 @@ pub fn with_store<R>(
     f(inst.core.user)
 }
 
-/// The token the candidate pointer's row was published with.
-pub fn token_of(instance: *mut ZhuyinInstance, cand: *mut LookupCandidate) -> u32 {
-    // SAFETY: `cand` was produced by a guess on `instance` and no later
-    // guess invalidated the snapshot.
-    let inst = unsafe { instance_mut(instance) };
-    let row = inst
-        .candidates
-        .iter()
-        .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
-        .expect("the candidate is in the snapshot");
-    row.token
-        .expect("a phrase candidate carries its token")
-        .value()
-}
-
 /// Reads the malloc'd sentence a getter handed out and frees it with the
 /// matching allocator.
 pub fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
@@ -306,57 +291,27 @@ pub fn assert_aborts_after_setup<T>(
     wait_for_abort(name, command).stderr
 }
 
-/// The environment variable that names the user directory a
-/// [`run_in_child`] child works in.
+/// The user directory a file-state death-test child works in.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 const CHILD_DIR: &str = "OXPINYIN_ZHUYIN_CAPI_CHILD_DIR";
 
-/// What a [`run_in_child`] child left behind.
+/// The files a death-test child left behind.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 pub struct ChildRun {
-    /// The child's fd 2, byte for byte: the C-style `fprintf(stderr, ...)`
-    /// lines and GLib's default log handler write there directly.
-    pub stderr: Vec<u8>,
     /// The user directory the child was given, still on disk while the
     /// parent holds this value.
     pub user_dir: PathBuf,
     _scratch: tempfile::TempDir,
 }
 
-/// Runs `body` in a child process that exits 0 when it returns, the way
-/// [`assert_aborts`] runs one that must abort, and answers the child's
-/// stderr. `body` gets a fresh, empty user directory the parent created, so
-/// the parent can name it in the expected text. `name` is the calling
-/// test's full path as libtest prints it (`module::test`). A child that
-/// panics or dies fails the parent's assertion on its exit status.
-pub fn run_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
-    let (command, user_dir, scratch) = child_command(name, false, body);
-    let output = assert_cmd::Command::from_std(command)
-        .timeout(CHILD_LIMIT)
-        .output()
-        .expect("re-run the test binary");
-    // libtest reports a child's panic on stdout.
-    assert!(
-        output.status.success(),
-        "{name} child failed ({:?}): {}{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    ChildRun {
-        stderr: output.stderr,
-        user_dir,
-        _scratch: scratch,
-    }
-}
-
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
-/// [`assert_aborts`] with the user directory of [`run_in_child`]: `body`
+/// [`assert_aborts`] with a retained user directory: `body`
 /// gets a fresh user directory that stays on disk for the parent, so a test
 /// can read the files the child left before its abort.
 pub fn abort_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
     let (command, user_dir, scratch) = child_command(name, true, body);
-    let output = wait_for_abort(name, command);
+    let _output = wait_for_abort(name, command);
     ChildRun {
-        stderr: output.stderr,
         user_dir,
         _scratch: scratch,
     }
@@ -367,6 +322,7 @@ pub fn abort_in_child(name: &str, body: impl FnOnce(&Path)) -> ChildRun {
 /// [`OPERATION_PANICKED`]. In the parent, makes the scratch and user
 /// directories and answers the command that re-runs the test `name` as that
 /// child.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 fn child_command(
     name: &str,
     strict: bool,
@@ -392,22 +348,10 @@ fn child_command(
     (command, user_dir, scratch)
 }
 
-/// Writes a conforming `user.conf` for the fixture data set and `payload`,
-/// framed as a `MemoryChunk`, as the user `.dbin` named `file`: the shape a
-/// journal-replay test needs, since a non-conforming profile is wiped
-/// before any library loads.
-pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
-    write_user_conf(user_dir, &system_dir());
-    std::fs::write(
-        user_dir.join(file),
-        oxpinyin_data::chunk_format::build_memory_chunk(payload).expect("frame"),
-    )
-    .expect("write the log");
-}
-
 /// Writes a conforming profile for the fixture data set whose user bigram
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     use oxpinyin_store::WriteStore as _;
     let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system_dir())
@@ -423,45 +367,6 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     .expect("write the user bigram");
 }
 
-/// Writes a `user.conf` in `user_dir` that conforms to the `table.conf` of
-/// `system`, so the next init keeps the user files beside it.
-pub fn write_user_conf(user_dir: &Path, system: &Path) {
-    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(system).expect("table.conf");
-    let versions = oxpinyin_data::user_files::SystemVersions::from_conf(&conf);
-    std::fs::write(
-        user_dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .expect("write user.conf");
-}
-
-/// Replaces the user index at `path` with one that holds exactly `rows`,
-/// raw keys and values that the library may never write. It is written as
-/// the library's own save writes a user index: a snapshot on Kyoto
-/// Cabinet, a tree file on tkrzw and Berkeley DB.
-pub fn craft_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_store::WriteStore as _;
-    if path.exists() {
-        std::fs::remove_file(path).expect("replace the user index");
-    }
-    oxpinyin_store::DefaultStore::write_user_index(path, |sink| {
-        for (key, value) in rows {
-            sink(key, value)?;
-        }
-        Ok(())
-    })
-    .expect("write the user index");
-}
-
-/// Each character of `text` as a little-endian UCS-4 word: the key of the
-/// user phrase index.
-pub fn ucs4_key(text: &str) -> Vec<u8> {
-    text.chars()
-        .flat_map(|ch| u32::from(ch).to_le_bytes())
-        .collect()
-}
-
-#[cfg(feature = "tkrzw")]
 /// `zhuyin_init` on `system` with `user` (NULL when `None`). The answer can
 /// be NULL.
 pub fn init_on(system: &Path, user: Option<&Path>) -> *mut ZhuyinContext {
@@ -593,49 +498,6 @@ impl Drop for LogCapture {
     }
 }
 
-/// Writes the pin-written profile `case_id` of `testdata/pin-profiles.txt`
-/// into `dir`: each file at its size, the listed bytes at their offsets, and
-/// zero elsewhere.
-/// The profiles hold tkrzw files, so only the tkrzw pinned-data tests read them.
-#[cfg(feature = "tkrzw")]
-pub fn write_pin_profile(case_id: &str, dir: &Path) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/pin-profiles.txt");
-    let text = std::fs::read_to_string(&path).expect("testdata/pin-profiles.txt");
-    let mut active = false;
-    let mut file: Option<(PathBuf, Vec<u8>)> = None;
-    let flush = |file: &mut Option<(PathBuf, Vec<u8>)>| {
-        if let Some((name, bytes)) = file.take() {
-            std::fs::write(name, bytes).expect("write a profile file");
-        }
-    };
-    for line in text.lines().filter(|line| !line.starts_with('#')) {
-        if let Some(id) = line.strip_prefix("profile ") {
-            flush(&mut file);
-            active = id == case_id;
-            continue;
-        }
-        if !active {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("file ") {
-            flush(&mut file);
-            let (name, size) = rest.split_once(' ').expect("file <name> <size>");
-            let size = size.parse().expect("a file size");
-            file = Some((dir.join(name), vec![0; size]));
-        } else {
-            let (offset, hex) = line.split_once(' ').expect("<offset> <hex>");
-            let offset: usize = offset.parse().expect("a byte offset");
-            let (_, bytes) = file.as_mut().expect("a run follows its file line");
-            for (at, pair) in hex.as_bytes().chunks(2).enumerate() {
-                let pair = std::str::from_utf8(pair).expect("hex");
-                bytes[offset + at] = u8::from_str_radix(pair, 16).expect("hex");
-            }
-        }
-    }
-    flush(&mut file);
-    assert!(dir.join("user.conf").is_file(), "no profile {case_id}");
-}
-
 /// A private system directory under `parent`: every fixture file linked in,
 /// so a test can replace one library (register row 96).
 pub fn private_system(parent: &std::path::Path) -> PathBuf {
@@ -683,28 +545,24 @@ pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
 }
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
-/// (`phrase_index_logger.h:158-215` layout, little-endian).
-pub mod logs {
-    fn record(kind: u32, token: u32, tail: &[u8]) -> Vec<u8> {
-        [&kind.to_le_bytes()[..], &token.to_le_bytes(), tail].concat()
-    }
-
-    /// A `MODIFY_HEADER` carrying token `0x01000001` (row 91).
-    #[must_use]
-    pub fn header_token() -> Vec<u8> {
-        record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
-    /// there (`phrase_index.cpp:483-484`).
-    #[must_use]
-    pub fn mismatched_modify() -> Vec<u8> {
-        record(
-            3,
-            0x0100_0001,
-            &[6, 0, 6, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        )
-    }
-}
-
 mod tests;
+
+#[cfg(feature = "tkrzw")]
+#[path = "../../oxpinyin-runtime/tests/common/contract_data.rs"]
+pub(crate) mod contract_data;
+
+/// The two short rows of the table-conf-919-short-row-merged witness.
+pub fn short_row_system(parent: &std::path::Path) -> PathBuf {
+    let system = private_system(parent);
+    let conf = system.join("table.conf");
+    let stock = std::fs::read_to_string(&conf).unwrap();
+    std::fs::remove_file(&conf).unwrap();
+    std::fs::write(
+        &conf,
+        stock
+            + "default GB_DICTIONARY gbk_char.table gbk_char.bin gbk_char.dbin\n"
+            + "SYSTEM_FILE default RESERVED NULL NULL NULL\n",
+    )
+    .unwrap();
+    system
+}
