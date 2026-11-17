@@ -2,7 +2,9 @@
  * Sentence: parse outside the anchor; collect guess_sentence alone.
  * Typing: one reset, then parse/guess_sentence/guess_candidates at offset 0
  * for each accumulated ASCII prefix on the same instance. Observations and
- * cleanup stay outside both anchors. No training or saving is performed. */
+ * cleanup stay outside both anchors. No training or saving is performed.
+ * Each anchor switches Callgrind's collection on at its start and off before
+ * it returns (CALLGRIND_TOGGLE_COLLECT, see bisect.c). */
 
 struct sentence_perf_step {
     size_t parsed;
@@ -12,16 +14,21 @@ struct sentence_perf_step {
 
 __attribute__((noinline)) bool
 bisect_sentence_unit(const struct symbols *s, pinyin_instance_t *inst) {
-    return s->guess_sentence(inst);
+    CALLGRIND_TOGGLE_COLLECT;
+    bool sentence = s->guess_sentence(inst);
+    CALLGRIND_TOGGLE_COLLECT;
+    return sentence;
 }
 
 __attribute__((noinline)) struct sentence_perf_step
 bisect_typing_unit(const struct symbols *s, pinyin_instance_t *inst,
                    const char *input) {
     struct sentence_perf_step step;
+    CALLGRIND_TOGGLE_COLLECT;
     step.parsed = s->parse_full(inst, input);
     step.sentence = s->guess_sentence(inst);
     step.candidates = s->guess_candidates(inst, 0, DEFAULT_SORT);
+    CALLGRIND_TOGGLE_COLLECT;
     return step;
 }
 

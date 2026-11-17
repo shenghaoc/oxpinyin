@@ -277,7 +277,9 @@ class CampaignTests(unittest.TestCase):
                 return types.SimpleNamespace(status=0, stdout=b'1 T bisect_sentence_unit\n2 T bisect_typing_unit\n')
             self.assertEqual(command[:3], ['taskset', '-c', '0'])
             commands.append(command)
-            self.assertIn('--toggle-collect=' + sentence.ANCHORS[workload], command)
+            # The anchor's client requests bracket the count; a --toggle-collect would invert it.
+            self.assertIn('--collect-atstart=no', command)
+            self.assertFalse([part for part in command if part.startswith('--toggle-collect')])
             self.assertEqual(command[-5:], ['--perf-' + workload, command[-4], str(Path('/data')), 'ni', '1'])
             arm = Path(command[-4]).parent.name
             output = Path(next(c.split('=', 1)[1] for c in command if c.startswith('--callgrind-out-file=')))

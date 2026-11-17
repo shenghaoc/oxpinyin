@@ -4,7 +4,7 @@ callgrind-differential answers one question: does oxpinyin execute more
 instructions than libpinyin on the keystroke path, or the same instructions more
 slowly? One harness binary runs under callgrind against each library in turn;
 because bisect.c drives both through the same C ABI the totals are comparable,
-and because the collection anchors live in the harness the toggled region is the
+and because the collection anchors live in the harness the collected region is the
 same. Nothing here interprets the numbers; the decision rule lives in the
 findings document.
 
@@ -22,7 +22,7 @@ from collections.abc import Mapping, Sequence
 
 from .. import pool, slot
 from ..runners import Finished, emit, write
-from . import bench, identity, reports
+from . import bench, identity, instructions, reports
 from .bench import Arm, Bench, fail, setting
 
 SCRATCH = Path('/performance/tmp')
@@ -34,7 +34,8 @@ ANCHOR = 'bisect_perf_steady_unit'
 # Where the image installs the three libraries the differential uses.
 ROOTS = dict(lp=LP_ROOT, ox=Path('/opt/oxpinyin-tkrzw/stage'), nodebug=Path('/opt/oxpinyin-nodebug/stage'))
 # The tool options of every callgrind run; the output file is added per run.
-CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no', f'--toggle-collect={ANCHOR}',
+# The steady anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT in bisect.c).
+CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no',
                      '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no')
 
 
@@ -87,7 +88,7 @@ def environment_table(artifacts: Sequence[Path], run=None) -> str:
 
 
 def anchors_table(harness: Path, run=None) -> tuple[int, str]:
-    """Stage 1: the two collection anchors are distinct symbols, or the toggle would collect the cold cycle.
+    """Stage 1: the two collection anchors are distinct symbols, or the cold cycle would be collected.
 
     Return the table and the status the group ended with.
     """
@@ -103,10 +104,10 @@ def anchors_table(harness: Path, run=None) -> tuple[int, str]:
     address = {name: row[0] for row in symbols if len(row) >= 3
                for name in ('bisect_perf_cold_unit', ANCHOR) if row[2] == name}
     if address.get('bisect_perf_cold_unit') == address.get(ANCHOR):
-        lines.append('FAIL: anchors folded to one address; the toggle would collect the cold cycle')
+        lines.append('FAIL: anchors folded to one address; the cold cycle would be collected')
         return 1, '\n'.join(lines) + '\n'
-    lines += [f'PASS: distinct addresses, so --toggle-collect={ANCHOR}',
-              '      excludes process init and the cold cycle']
+    lines += [f'PASS: distinct addresses, so the client requests in {ANCHOR}',
+              '      exclude process init and the cold cycle']
     return 0, '\n'.join(lines) + '\n'
 
 
@@ -119,7 +120,7 @@ def malloc_interception(worker: Bench, arm: Arm, out: Path, cycles: str = '2') -
     The probe's own failure does not stop the capture; its diagnostics land in its files.
     """
     profile = out / 'callgrind.redir-probe.out'
-    prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no', f'--toggle-collect={ANCHOR}',
+    prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
               '--trace-redir=yes', f'--callgrind-out-file={profile}']
     diagnostics = io.StringIO()
     done = None
@@ -272,6 +273,13 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
             Path(f'{stem}.stderr').write_bytes(done.stderr)
             if done.status:
                 raise Finished(done.status)
+            # A harness built without <valgrind/callgrind.h> never switches collection on.
+            try:
+                counted = instructions.callgrind_costs(profile.read_text(errors='replace'), arm.so)['totals']['Ir']
+            except (OSError, ValueError):
+                counted = 0
+            if counted <= 0:
+                fail(f'fatal: {profile.name} counts no instructions; the anchor client requests did not run')
     annotate(out)
 
     # 5. hardware instruction counters: the interception distortion. Callgrind's Ir counts allocation

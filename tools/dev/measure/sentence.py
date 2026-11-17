@@ -292,8 +292,8 @@ def campaign(args, env):
         for arm in order:
             stem = args.out / f'{arm}.{round_index}'
             profile = Path(str(stem) + '.callgrind')
-            command = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                       '--toggle-collect=' + ANCHORS[args.workload], '--cache-sim=no',
+            # The anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT).
+            command = ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--cache-sim=no',
                        '--branch-sim=no', '--separate-threads=no', '--callgrind-out-file=' + str(profile),
                        str(harness), '--perf-' + args.workload, str(libraries[arm]),
                        str(args.system_dir), args.input, str(args.iterations)]

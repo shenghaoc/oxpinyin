@@ -160,7 +160,7 @@ LINUX_SOURCES = {'perf_event_open': 'loop_hw_instructions', 'callgrind': 'loop_c
 LINUX_UNITS = {'loop_hw_instructions': 'instructions retired in user space in the measured loop'
                                        ' (perf_event_open PERF_COUNT_HW_INSTRUCTIONS)',
                'loop_callgrind_ir': 'Callgrind Ir collected in the measured loop'
-                                    ' (--toggle-collect=bisect_perf_steady_unit)',
+                                    ' (CALLGRIND_TOGGLE_COLLECT in bisect_perf_steady_unit)',
                'wall_seconds': 'seconds, measured loop (CLOCK_MONOTONIC)',
                'cpu_seconds': 'seconds, measured loop (CLOCK_PROCESS_CPUTIME_ID)',
                'anonymous_kib': 'KiB after the measured loop (/proc/self/smaps_rollup Anonymous)',
