@@ -4,9 +4,9 @@
 //! Pure Rust over the context's user store and optional runtime — no C
 //! types cross this boundary.
 
+use crate::runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_capi_marshal::phrase_text::phrase_text_bytes;
 use oxpinyin_core::{ChewingKey, PhraseText};
-use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 
 use std::collections::VecDeque;
@@ -494,7 +494,7 @@ type RenderedItem = (PhraseText, Vec<String>);
 #[derive(Clone)]
 struct ExportSource<'a> {
     user: &'a oxpinyin_user::UserStore,
-    dict: oxpinyin_runtime::RuntimeDict<'a>,
+    dict: crate::runtime::RuntimeDict<'a>,
 }
 
 impl ExportSource<'_> {

@@ -28,9 +28,9 @@ use oxpinyin_core::{OptionBits, PhraseToken};
 pub(crate) const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
+pub use oxpinyin_facade::runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_facade::{CandidateSnapshot, SnapshotRow, TextSpan};
 use oxpinyin_facade::{ContextCore, OpenFailure};
-pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 

@@ -1,7 +1,7 @@
 //! The pinned libpinyin-data package (`tools/oracle/libpinyin-data.json`), in
 //! tkrzw format. A missing package is a failure, not a skip.
 //!
-//! The package tests of `oxpinyin-runtime`, `oxpinyin-data`, `oxpinyin-capi`
+//! The package tests of `oxpinyin-facade`, `oxpinyin-data`, `oxpinyin-capi`
 //! and `oxpinyin-zhuyin-capi` include this file by path.
 
 use std::path::PathBuf;

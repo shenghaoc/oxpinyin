@@ -4,7 +4,7 @@ This page describes the frozen expectations of the C-boundary tests and the loca
 
 The frozen expectations live beside the modules that implement them, in
 `crates/oxpinyin-core`, `oxpinyin-engine`, `oxpinyin-data`, `oxpinyin-input`,
-`oxpinyin-user`, `oxpinyin-runtime` and `oxpinyin-facade`. The C crates retain
+`oxpinyin-user`, `oxpinyin-facade`. The C crates retain
 conversion, dispatch and publication checks in their sibling `tests.rs` files
 and `tests/it` targets.
 

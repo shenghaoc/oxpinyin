@@ -24,7 +24,7 @@ fn a_directory_that_reads_as_a_chunk_gets_no_line() {
 
 use super::{ContextCore, OpenFailure};
 use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
-use oxpinyin_runtime::OpenError;
+use crate::runtime::OpenError;
 use oxpinyin_user::UserConfLaw;
 
 #[test]
@@ -46,7 +46,7 @@ fn missing_system_dir_carries_the_runtime_error() {
     assert!(
         matches!(
             error,
-            OpenError::TableConf(oxpinyin_runtime::TableConfError::Unopenable)
+            OpenError::TableConf(crate::runtime::TableConfError::Unopenable)
         ),
         "got {error:?}"
     );
@@ -497,7 +497,7 @@ mod library_directory {
 
     /// Whether a directory in `system`'s place reads as a chunk here.
     fn reaches_the_assert(system: &Path) -> bool {
-        oxpinyin_runtime::directory_reads_as_a_chunk(system)
+        crate::runtime::directory_reads_as_a_chunk(system)
     }
 
     /// The user directory's file names, sorted.
@@ -541,7 +541,7 @@ mod library_directory {
     /// A conforming profile for `system` in `user`: the marker a save writes,
     /// so neither law's `check_format` wipes it.
     fn conforming_profile(system: &Path, user: &Path) {
-        let conf = oxpinyin_runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
+        let conf = crate::runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
         let mut marker =
             oxpinyin_data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
         marker.open_counter = 1;
@@ -594,7 +594,7 @@ mod library_directory {
                     "{law:?}: {failure}"
                 );
                 assert!(
-                    matches!(error, oxpinyin_runtime::OpenError::Journal(_)),
+                    matches!(error, crate::runtime::OpenError::Journal(_)),
                     "{law:?}: {failure}"
                 );
             }
@@ -610,11 +610,11 @@ mod library_directory {
         user: &Path,
         law: UserConfLaw,
     ) -> (
-        Result<oxpinyin_runtime::Runtime, oxpinyin_runtime::OpenError>,
+        Result<crate::runtime::Runtime, crate::runtime::OpenError>,
         Vec<PathBuf>,
     ) {
         let mut lines = Vec::new();
-        let opened = oxpinyin_runtime::Runtime::open_with_law_reporting(
+        let opened = crate::runtime::Runtime::open_with_law_reporting(
             system,
             Some(user),
             law,
@@ -654,7 +654,7 @@ mod library_directory {
             plant_header_token_log(&user, "gb_char.dbin");
             let (opened, lines) = open_lines(&system, &user, law);
             assert!(
-                matches!(opened, Err(oxpinyin_runtime::OpenError::Journal(_))),
+                matches!(opened, Err(crate::runtime::OpenError::Journal(_))),
                 "{law:?}"
             );
             assert!(lines.is_empty(), "{law:?}: {lines:?}");
@@ -960,7 +960,7 @@ mod native {
         assert!(
             matches!(
                 error,
-                crate::OpenFailure::Runtime(oxpinyin_runtime::OpenError::UserSession(
+                crate::OpenFailure::Runtime(crate::runtime::OpenError::UserSession(
                     oxpinyin_user::UserStoreError::FatalCopy
                 ))
             ),

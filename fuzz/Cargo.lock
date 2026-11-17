@@ -340,7 +340,6 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
- "oxpinyin-runtime",
  "oxpinyin-user",
  "rustc-hash",
 ]
@@ -392,9 +391,9 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
+ "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-input",
- "oxpinyin-runtime",
  "oxpinyin-user",
 ]
 
@@ -417,17 +416,6 @@ dependencies = [
  "glib-sys",
  "libc",
  "memmap2",
-]
-
-[[package]]
-name = "oxpinyin-runtime"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-data",
- "oxpinyin-engine",
- "oxpinyin-input",
- "oxpinyin-user",
 ]
 
 [[package]]

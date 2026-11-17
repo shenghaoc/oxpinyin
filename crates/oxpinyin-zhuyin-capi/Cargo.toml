@@ -41,7 +41,7 @@ capi = []
 tools = []
 # Backend selection (one backend per binary; see oxpinyin-store's
 # [features] for the model and precedence). Each peer feature forwards to
-# oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->
+# oxpinyin-facade, which carries it down facade -> user -> data ->
 # store. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
 # because `cargo cinstall --features <peer>` names them. `just packaging

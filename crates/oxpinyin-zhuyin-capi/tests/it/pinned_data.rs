@@ -20,7 +20,7 @@ use crate::support::{
 
 use contract_data::contract_data_dir;
 
-#[path = "../../../oxpinyin-runtime/tests/common/contract_data.rs"]
+#[path = "../../../oxpinyin-facade/tests/common/contract_data.rs"]
 mod contract_data;
 
 /// A context and instance on `system` with `user_dir`, which must open.

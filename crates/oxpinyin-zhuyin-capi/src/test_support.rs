@@ -537,7 +537,7 @@ pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
 mod tests;
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../oxpinyin-runtime/tests/common/contract_data.rs"]
+#[path = "../../oxpinyin-facade/tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 
 /// The two short rows of the table-conf-919-short-row-merged witness.

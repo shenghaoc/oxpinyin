@@ -2,8 +2,8 @@
 //! iterator's length gate, the phrase-table search, the pin's assertions
 //! before a phrase is added, and the add calls.
 
+use crate::runtime::RuntimeDict;
 use oxpinyin_core::PhraseText;
-use oxpinyin_runtime::RuntimeDict;
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
 
 use crate::ContextCore;

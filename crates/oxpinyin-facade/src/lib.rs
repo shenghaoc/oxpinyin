@@ -2,7 +2,7 @@
 //! facades.
 //!
 //! Both `oxpinyin-capi` and `oxpinyin-zhuyin-capi` drive the same
-//! `oxpinyin-runtime` session assembly through the same laws — the
+//! `oxpinyin-facade` session assembly through the same laws — the
 //! parse-mode state machine (`begin_parse`'s continuation rule, the three
 //! batch-parse seams, the stored-parse originals), the candidate-snapshot
 //! machinery's shared halves, the cursor/offset matrix laws, and the
@@ -44,6 +44,7 @@ mod instance;
 mod offsets;
 mod parse;
 mod predict;
+pub mod runtime;
 mod snapshot;
 #[cfg(test)]
 #[path = "../../oxpinyin-user/src/test_child.rs"]
@@ -75,9 +76,6 @@ pub use offsets::{
 pub use parse::{PinyinCorrections, ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
-
-/// The runtime's open error, which [`OpenFailure::Runtime`] carries.
-pub use oxpinyin_runtime::OpenError;
 
 /// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
 /// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing

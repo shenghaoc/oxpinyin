@@ -602,7 +602,6 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
- "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
@@ -663,7 +662,6 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-input",
- "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",
  "rstest",
@@ -693,8 +691,8 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-facade",
  "oxpinyin-input",
- "oxpinyin-runtime",
  "oxpinyin-store",
  "oxpinyin-user",
  "oxpinyin-utils",
@@ -702,20 +700,6 @@ dependencies = [
  "regex",
  "rstest",
  "sha2",
- "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-runtime"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-data",
- "oxpinyin-engine",
- "oxpinyin-input",
- "oxpinyin-store",
- "oxpinyin-user",
- "rstest",
  "tempfile",
 ]
 

@@ -10,8 +10,8 @@ fn check(value: bool) {
 use oxpinyin_core::tool::Key;
 use oxpinyin_core::{ChewingKey, OptionBits};
 use oxpinyin_engine::tool::{parse_full, physical_matrix, prepare_lookup};
+use oxpinyin_facade::runtime::tool::Lookup;
 use oxpinyin_input::tool::lookup_tests as output;
-use oxpinyin_runtime::tool::Lookup;
 
 fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
     let conf = conf(data);

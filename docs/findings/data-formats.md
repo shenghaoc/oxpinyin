@@ -97,7 +97,7 @@ On the pinned model the four system libraries hold 138,096 items.
 的 (`0x010005DB`) carries two readings, `de 2213855` and `di 11000`.
 The `package_libraries` tests in `crates/oxpinyin-data/src/phrase_library/tests.rs` hold these
 values on the pinned data package (`just fetch-contract-data`).
-The `pin_data` test in `crates/oxpinyin-runtime/src/tests.rs` opens the same package through
+The `pin_data` test in `crates/oxpinyin-facade/src/runtime/tests.rs` opens the same package through
 `Runtime::open` and holds its facade unigram total, 51,051,831.
 
 ---

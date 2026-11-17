@@ -7,7 +7,7 @@ use oxpinyin_data::table_info::TableConf;
 
 use oxpinyin_engine::tool::prepare_lookup;
 
-use crate::tool::Lookup;
+use crate::runtime::tool::Lookup;
 
 use std::path::PathBuf;
 

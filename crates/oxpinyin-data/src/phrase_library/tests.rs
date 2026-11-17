@@ -418,7 +418,7 @@ mod phrase_library {
 }
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../../oxpinyin-runtime/tests/common/contract_data.rs"]
+#[path = "../../../oxpinyin-facade/tests/common/contract_data.rs"]
 mod contract_data;
 
 #[cfg(feature = "tkrzw")]

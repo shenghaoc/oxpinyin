@@ -14,7 +14,7 @@ The union covers the default facade (system, user, network and
 choose-promoted addon phrases), the addon facade, and prediction. At zero
 user data and zero loaded addons the union is the identity: the addon and
 prediction paths are empty, and the empty-store candidate surface does not
-move (`oxpinyin-runtime`'s `candidate_surface` test;
+move (`oxpinyin-facade`'s `candidate_surface` test;
 [goldens and pins](../runbooks/goldens-and-pins.md)).
 
 Decisions:
@@ -292,7 +292,7 @@ from the model's `.table` text.
 oxpinyin mirrors upstream's two-facade split:
 
 - **Default union** = `SystemDictionary` + `UserLookup`, exposed as one
-  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin-runtime`). Its
+  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin-facade`). Its
   `lookup` returns tokens in ascending library-nibble order — system, then
   default `USER_FILE` entries 5, 6 and 7 — as upstream's append does. Its
   `phrase_prefix_exists` ORs the system probe and the user-file probe. At

@@ -13,15 +13,15 @@ workspace = true
 
 [features]
 default = ["tkrzw"]
-tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin-runtime/tkrzw", "oxpinyin-capi/tkrzw", "oxpinyin-zhuyin-capi/tkrzw"]
-bdb = ["oxpinyin-utils/bdb", "oxpinyin-runtime/bdb", "oxpinyin-capi/bdb", "oxpinyin-zhuyin-capi/bdb"]
-kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin-runtime/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxpinyin-zhuyin-capi/kyotocabinet"]
+tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin-facade/tkrzw", "oxpinyin-capi/tkrzw", "oxpinyin-zhuyin-capi/tkrzw"]
+bdb = ["oxpinyin-utils/bdb", "oxpinyin-facade/bdb", "oxpinyin-capi/bdb", "oxpinyin-zhuyin-capi/bdb"]
+kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin-facade/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxpinyin-zhuyin-capi/kyotocabinet"]
 
 [dependencies]
 oxpinyin-utils = { path = "../oxpinyin-utils", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-core = { workspace = true, features = ["tools"] }
 oxpinyin-engine = { workspace = true, features = ["tools"] }
-oxpinyin-runtime = { workspace = true, features = ["tools"] }
+oxpinyin-facade = { workspace = true, features = ["tools"] }
 oxpinyin-data.workspace = true
 oxpinyin-user = { workspace = true, features = ["tools"] }
 oxpinyin-input = { workspace = true, features = ["tools"] }
