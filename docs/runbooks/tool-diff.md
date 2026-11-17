@@ -24,7 +24,7 @@ Their nextest names are `frozen::<utility>::captured_cases::case_<number>_<name>
 The numeric prefixes of rstest, including zero padding for larger groups, are accepted.
 The four unique save-refusal scenarios stay plain `#[test]` functions,
 named `frozen::<utility>::<name>`.
-Each test is in its existing integration suite:
+Each test is in its suite's module of the `it` test target (`crates/oxpinyin-utils/tests/it/`):
 
 | Suite | Utilities |
 |---|---|
@@ -43,15 +43,15 @@ Shared setup uses `#[fixture]` and `assert_fs`. Commands use
 `assert_cmd::cargo::cargo_bin_cmd!`, with the existing 300-second timeout.
 The group function sets up its files, runs its utility, then calls `check`.
 There is no invocation interpreter, custom test runner or fixture-update mode.
-`tests/common/mod.rs` contains only the complete file inventory, the DBM row reader
+`tests/it/support.rs` contains only the complete file inventory, the DBM row reader
 and the narrow masks, with their internal traversal and digest operations.
-The backend w3 copy and the save-refusal setup in `tests/fixtures/mod.rs` are shared rstest fixtures.
+The backend w3 copy and the save-refusal setup in `tests/it/support/fixtures.rs` are shared rstest fixtures.
 Groups with nested working directories put that copy under `data/`.
 The unigram group keeps its explicit subset of the bdb chunk inputs.
 
 ## Expectations
 
-`tests/common/expected.rs` defines `Run` and `check`:
+`tests/it/support/expected.rs` defines `Run` and `check`:
 
 - `status` is `Exit(code)` or `Signal(number)`.
 - `stdout` is `Exact(bytes)`, or `GlibOption(text)` for GLib help.
@@ -98,7 +98,7 @@ The masks are:
 
 The fixed-name programs run under private scratch directories; the default stays `/tmp`.
 Sealed inputs stay sealed memory files on Linux (also when tests run as root), and read-only files on macOS.
-`frozen_observations.rs` tests the masks, the row reader and `check`.
+`tests/it/support/tests.rs` tests the masks, the row reader and `check`.
 
 The macOS notes stay beside their cases: libc error numbers, stdio flushing on abort, and page-size-dependent container sizes.
 Architecture-dependent NaN spellings and the three accepted GLib help spellings stay unchanged.

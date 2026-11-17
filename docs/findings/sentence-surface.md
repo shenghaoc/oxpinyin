@@ -334,8 +334,8 @@ from it: the candidate surface is bit-identical on the same tables, and a
 phrase slice that shifts because a different number of NBEST rows survive
 is an intact phrase order seen through a shifted 6-row window.
 
-The fixture holds the pin's answer. The gate is the integration test
-`sentence_surface_parity` (`crates/oxpinyin-runtime/tests/`), which calls
+The fixture holds the pin's answer. The gate is the test module
+`sentence_surface_parity` (`crates/oxpinyin-runtime/src/tests.rs`), which calls
 `sentence_tail::measure` over the pinned libpinyin-data package and asserts
 the current numbers. A move is a deliberate change of this section, not a
 silent drift.

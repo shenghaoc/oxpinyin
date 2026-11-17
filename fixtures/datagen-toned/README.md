@@ -28,6 +28,6 @@ The recipe compared every chunk file byte for byte (tone bits included).
 Neither side read the output of the other side.
 
 The `gbf-toned-model` case in
-the `frozen::gen_binary_files` module of `crates/oxpinyin-utils/tests/storage_tools.rs` runs `gen_binary_files`
+the `frozen::gen_binary_files` module of `crates/oxpinyin-utils/tests/it/storage_tools.rs` runs `gen_binary_files`
 over the same tables. It compares the complete output inventory with the
 frozen pin capture, including the toned pinyin-index rows.

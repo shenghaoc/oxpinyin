@@ -44,4 +44,7 @@ pub mod validate_k_mixture_model;
 /// models. Its edge calls are `oxpinyin-input`'s.
 pub use utils_helper::taglib;
 
+#[cfg(test)]
+#[path = "../../oxpinyin-user/src/test_child.rs"]
+mod test_child;
 mod utils_helper;

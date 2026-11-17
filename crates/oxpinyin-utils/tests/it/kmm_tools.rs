@@ -353,16 +353,10 @@ fn the_committed_kmm_fixtures_are_the_pin_records() {
     assert!(!dir.path().join("k_mixture_model_ngram.db").exists());
 }
 
-#[cfg(unix)]
-mod common;
-
-#[cfg(unix)]
-mod fixtures;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
-    use crate::common::CELL;
+    use crate::support::CELL;
 
     const WRONG_ARGUMENTS: &[u8] = b"wrong arguments.\n";
     fn empty_db_not_berkeley_db_twice() -> &'static [u8] {
@@ -374,16 +368,16 @@ mod frozen {
     }
 
     mod estimate_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
         use std::time::Duration;
 
         use super::empty_db_not_berkeley_db_twice;
-        use crate::common::CELL;
         use crate::fixtures::w3;
+        use crate::support::CELL;
 
         #[rstest]
         // kmm-estimate-bad-option: utils/training/estimate_k_mixture_model.cpp at 074a2219:
@@ -451,7 +445,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/estimate_k_mixture_model/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/estimate_k_mixture_model/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -524,15 +518,15 @@ mod frozen {
         }
     }
     mod export_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
         use std::time::Duration;
 
-        use crate::common::CELL;
         use crate::fixtures::w3;
+        use crate::support::CELL;
 
         #[rstest]
         // export_k_mixture_model-family-e-truncated-first-chunk:
@@ -614,8 +608,8 @@ mod frozen {
             Run {
                 status: Exit(0),
                 stdout: match CELL {
-                    "bdb" | "tkrzw" => Exact(include_bytes!("fixtures/export_k_mixture_model/model-bdb-tkrzw-order.txt")),
-                    "kc" => Exact(include_bytes!("fixtures/export_k_mixture_model/model-kc-order.txt")),
+                    "bdb" | "tkrzw" => Exact(include_bytes!("../fixtures/export_k_mixture_model/model-bdb-tkrzw-order.txt")),
+                    "kc" => Exact(include_bytes!("../fixtures/export_k_mixture_model/model-kc-order.txt")),
                     _ => unreachable!("unknown cell {CELL}"),
                 },
                 stderr: b"",
@@ -633,7 +627,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/export_k_mixture_model/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/export_k_mixture_model/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -698,8 +692,8 @@ mod frozen {
         }
     }
     mod gen_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -793,7 +787,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/gen_k_mixture_model/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/gen_k_mixture_model/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -861,8 +855,8 @@ mod frozen {
         }
     }
     mod import_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -977,7 +971,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/import_k_mixture_model/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/import_k_mixture_model/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -1048,8 +1042,8 @@ mod frozen {
         }
     }
     mod merge_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -1168,8 +1162,8 @@ mod frozen {
         }
     }
     mod prune_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{CELL, inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -1279,7 +1273,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/prune_k_mixture_model/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/prune_k_mixture_model/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -1332,16 +1326,16 @@ mod frozen {
         }
     }
     mod validate_k_mixture_model {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
         use std::time::Duration;
 
         use super::WRONG_ARGUMENTS;
-        use crate::common::CELL;
         use crate::fixtures::w3;
+        use crate::support::CELL;
 
         const NO_MAGIC_HEADER: &[u8] =
             b"no magic header in k mixture model.\nk mixture model validation failed.\n";

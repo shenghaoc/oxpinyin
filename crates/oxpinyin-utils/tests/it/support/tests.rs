@@ -1,7 +1,6 @@
 //! The shared comparison and the narrow masks that every frozen case uses.
-mod common;
-use common::expected::*;
-use common::*;
+use crate::support::expected::*;
+use crate::support::*;
 use oxpinyin_store::{DefaultStore, WriteStore as _, WriteTxn as _};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;

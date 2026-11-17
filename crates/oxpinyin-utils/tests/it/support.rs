@@ -1,5 +1,6 @@
 //! Byte-exact helpers for ordinary utility integration tests. No capture or fixture writer.
 #![allow(dead_code)]
+#[path = "support/expected.rs"]
 pub mod expected;
 use oxpinyin_store::{DefaultStore, RawReadStore as _};
 use regex::bytes::Regex;

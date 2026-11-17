@@ -147,15 +147,10 @@ fn eval_correction_rate_refuses_an_unknown_token() {
         expected_text("error: unknown token:999999.\n").as_bytes()
     );
 }
-#[cfg(unix)]
-mod common;
-#[cfg(unix)]
-mod fixtures;
-
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {
-    use crate::common::CELL;
+    use crate::support::CELL;
 
     fn bigram_db_not_berkeley_db() -> &'static [u8] {
         match CELL {
@@ -166,16 +161,16 @@ mod frozen {
     }
 
     mod estimate_interpolation {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
         use std::time::Duration;
 
         use super::bigram_db_not_berkeley_db;
-        use crate::common::CELL;
         use crate::fixtures::w3;
+        use crate::support::CELL;
 
         fn w3_lambdas() -> Stdout {
             match CELL {
@@ -345,8 +340,8 @@ mod frozen {
         }
     }
     mod eval_correction_rate {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -531,8 +526,8 @@ mod frozen {
         }
     }
     mod gen_deleted_ngram {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -604,7 +599,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/gen_deleted_ngram/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/gen_deleted_ngram/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -693,8 +688,8 @@ mod frozen {
         }
     }
     mod gen_ngram {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
@@ -772,7 +767,7 @@ mod frozen {
             &[],
             Run {
                 status: Exit(0),
-                stdout: GlibOption(include_str!("fixtures/gen_ngram/help.txt")),
+                stdout: GlibOption(include_str!("../fixtures/gen_ngram/help.txt")),
                 stderr: b"",
                 files: &[],
             },
@@ -898,8 +893,8 @@ mod frozen {
         }
     }
     mod gen_unigram {
-        use crate::common::expected::*;
-        use crate::common::{inventory, mask_glib_prefix, snapshot_inputs};
+        use crate::support::expected::*;
+        use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::{fixture, rstest};
@@ -953,7 +948,7 @@ mod frozen {
         }
 
         fn art_only_table_conf() -> &'static [u8] {
-            let config = include_str!("../../../fixtures/w3/tkt/table.conf");
+            let config = include_str!("../../../../fixtures/w3/tkt/table.conf");
             let (with_art, _) = config.split_once("addon 5 ").expect("first unused addon");
             with_art.as_bytes()
         }

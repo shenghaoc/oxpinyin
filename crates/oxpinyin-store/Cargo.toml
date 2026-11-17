@@ -20,7 +20,7 @@ workspace = true
 cxx = { version = "1.0.205", optional = true }
 [dev-dependencies]
 # The frozen rows digest of the pin-written Berkeley DB tests (src/bdb/tests.rs, pin_data),
-# the one crates/oxpinyin-utils/tests/common computes.
+# the one crates/oxpinyin-utils/tests/it/support.rs computes.
 sha2 = "0.11"
 tempfile.workspace = true
 

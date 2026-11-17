@@ -27,26 +27,6 @@ oxpinyin-user.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
-# These read the pinned libpinyin-data package, which is in tkrzw format
-# (`just fetch-contract-data`).
-[[test]]
-name = "candidate_surface"
-required-features = ["tkrzw"]
-
-[[test]]
-name = "libpinyin_data_dir"
-required-features = ["tkrzw"]
-
-[[test]]
-name = "sentence_surface_parity"
-required-features = ["tkrzw"]
-
-# Reads W3 through the nonshipping lookup assembly; without `tools` the
-# target is not built, so it cannot pass empty.
-[[test]]
-name = "tool_lookup"
-required-features = ["tools"]
-
 [features]
 # Nonshipping pin lookup program assembly.
 tools = ["oxpinyin-engine/tools", "oxpinyin-input/tools"]

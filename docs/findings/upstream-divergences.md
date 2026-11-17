@@ -246,7 +246,7 @@ An entry holds nothing else.
 - **Pin:** keeps a Berkeley DB handle whose `DB->open` failed and calls it again, so libdb prints `BDB1565 DB-><method>: method not permitted before handle's open method` ([policy row 113](compatibility-policy.md#bdb-failed-handles)).
 - **oxpinyin:** On Berkeley DB, the KMM estimator closes failed handles and omits the `BDB1565` diagnostic in the existing-empty database and no-models cases.
 - **Decision:** accepted under the external API misuse ruling: Berkeley DB requires `DB->close` after a failed open.
-- **Tests:** `kmm_estimate_existing_empty`, `kmm_estimate_no_models` (`crates/oxpinyin-utils/tests/kmm_tools.rs`, Berkeley DB).
+- **Tests:** `kmm_estimate_existing_empty`, `kmm_estimate_no_models` (`crates/oxpinyin-utils/tests/it/kmm_tools.rs`, Berkeley DB).
 
 ### Pinyin-table row with a partial record (policy row 128, class (b))
 
@@ -271,42 +271,42 @@ An entry holds nothing else.
 - **Pin:** a phrase that is not valid UTF-8 can pass `feed_line`'s checks and enter the tree with a NULL `uniphrase` (`utils/storage/gen_pinyin_table.cpp:160-232`, at `:174`); `gen_phrase_file` opens the output (`:261`) and then reads through the NULL (`:280-281`), or `phrase_item_compare` does earlier (`:85-94`): SIGSEGV. `gen_zhuyin_table` is the same (`utils/storage/gen_zhuyin_table.cpp:168-192`, `:90-98`, `:286-287`).
 - **oxpinyin:** prints the node count, opens the output at the pin's point, writes the rows before the invalid one, then refuses with `<utility>: invalid UTF-8 phrase: <bytes>` and exit 1.
 - **Decision:** accepted, class (b): a NULL read; the pin's lost stdout buffers are not reproduced.
-- **Tests:** `pinyin-invalid-utf8`, `pinyin-invalid-utf8-after-row`, `zhuyin-invalid-utf8`, `zhuyin-invalid-utf8-after-row` (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`, `gen_zhuyin_table.rs`).
+- **Tests:** `pinyin-invalid-utf8`, `pinyin-invalid-utf8-after-row`, `zhuyin-invalid-utf8`, `zhuyin-invalid-utf8-after-row` (`crates/oxpinyin-utils/tests/it/gen_pinyin_table.rs`, `gen_zhuyin_table.rs`).
 
 ### gen_zhuyin_table missing frequency (class (b))
 
 - **Pin:** `atoi(strs[1])` runs before the field count check (`utils/storage/gen_zhuyin_table.cpp:148-159`, `:153` before `:156`), so an empty or one-field line dereferences NULL: SIGSEGV.
 - **oxpinyin:** refuses with `gen_zhuyin_table: missing frequency: <line>` and exit 1, before it opens the output.
 - **Decision:** accepted, class (b): a NULL read.
-- **Tests:** `zhuyin-missing-frequency`; control `zhuyin-normal` (`crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`).
+- **Tests:** `zhuyin-missing-frequency`; control `zhuyin-normal` (`crates/oxpinyin-utils/tests/it/gen_zhuyin_table.rs`).
 
 ### gen_zhuyin_table truncated final lead byte (policy row 125, class (b))
 
 - **Pin:** a phrase field that ends in a truncated UTF-8 lead byte, such as the line `"\xE3 5 ㄅ"`, makes `g_utf8_strlen` step past the end of the `g_strsplit_set` allocation (`utils/storage/gen_zhuyin_table.cpp:150`, `:168`): a heap over-read, so the length is undefined.
 - **oxpinyin:** counts the length over zero bytes after the field (`crates/oxpinyin-utils/src/gen_zhuyin_table.rs`), so the example has length 1. The row then takes the invalid UTF-8 phrase path above: the output opens at the pin's point, the earlier rows are written, and the utility refuses with exit 1.
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
-- **Tests:** `a_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`). Nothing runs on the pin: its result is undefined.
+- **Tests:** `a_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/it/gen_zhuyin_table.rs`). Nothing runs on the pin: its result is undefined.
 
 ### gen_pinyin_table truncated lead byte on the first line (policy row 126, class (b))
 
 - **Pin:** `char phrase[1024]` starts indeterminate (`utils/storage/gen_pinyin_table.cpp:135`). When the first phrase ends in a truncated UTF-8 lead byte, `g_utf8_strlen` (`:168`) reads the indeterminate bytes after the terminator. On later lines it reads the bytes that earlier lines left.
 - **oxpinyin:** starts the buffer zeroed (`TableInput`, `crates/oxpinyin-input/src/tool.rs`), so the count stops at the first zero past the lead byte's skip; the row then takes the invalid UTF-8 phrase path above. Later lines read the same stale bytes as the pin.
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
-- **Tests:** `a_first_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`). Nothing runs on the pin: its result is undefined.
+- **Tests:** `a_first_phrase_ending_in_a_truncated_lead_byte_is_refused` (`crates/oxpinyin-utils/tests/it/gen_pinyin_table.rs`). Nothing runs on the pin: its result is undefined.
 
 ### Generator phrase index of 256 or more, or negative (policy row 127, class (b))
 
 - **Pin:** `phrase_index` is a `gint` (`utils/storage/gen_pinyin_table.cpp:36`, `:41`; `utils/storage/gen_zhuyin_table.cpp:42`, `:47`), and `PHRASE_INDEX_MAKE_TOKEN` shifts it left by 24 (`src/include/novel_types.h:45-46`). The pin builds at C++11 or later (`configure.ac:51`). Under CWG 1457, which compilers also apply to C++11, a non-negative shift whose result fits the unsigned type is defined, and GCC and Clang wrap the conversion back to `int`. A value from 128 to 255 therefore gives the library nibble as the value modulo 16: pin behaviour reproduced, held by the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131`. A value of 256 or more, or a negative value, is undefined behaviour.
 - **oxpinyin:** shifts the value as an unsigned 32-bit word and masks it (`wrapping_shl(24) & LIBRARY_MASK`, `crates/oxpinyin-utils/src/gen_pinyin_table.rs`), so the library nibble is the value modulo 16, and the tokens print through `%d`.
 - **Decision:** accepted, class (b), by maintainer ruling (2026-11-15): the pin's behaviour is undefined, so oxpinyin gives a defined result.
-- **Tests:** `a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble` (`crates/oxpinyin-utils/tests/gen_pinyin_table.rs`, `crates/oxpinyin-utils/tests/gen_zhuyin_table.rs`), with 259 and −1. Nothing runs on the pin: its result is undefined.
+- **Tests:** `a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble` (`crates/oxpinyin-utils/tests/it/gen_pinyin_table.rs`, `crates/oxpinyin-utils/tests/it/gen_zhuyin_table.rs`), with 259 and −1. Nothing runs on the pin: its result is undefined.
 
 ### k_mixture_model_to_interpolation undefined lines
 
 - **Pin:** `taglib_read` reads `tokens[0]` as the line tag (`src/storage/tag_utility.cpp:179-190`): an empty line, a re-read empty last line (`utils/training/k_mixture_model_to_interpolation.cpp:86-88`) and a trailing escape that makes `split_line` return NULL (`tag_utility.cpp:137`) read through NULL: SIGSEGV. A truncated UTF-8 sequence at the line end reads past the string.
 - **oxpinyin:** makes the pin's calls up to that read, then writes `k_mixture_model_to_interpolation: <reason>: <line>` and exits 1.
 - **Decision:** accepted, class (b): a NULL read or an over-read.
-- **Tests:** `kti-blank-line`, `kti-end-missing`, `kti-trailing-escape` (`crates/oxpinyin-utils/tests/k_mixture_model_to_interpolation.rs`).
+- **Tests:** `kti-blank-line`, `kti-end-missing`, `kti-trailing-escape` (`crates/oxpinyin-utils/tests/it/k_mixture_model_to_interpolation.rs`).
 
 ### g_utf8_next_char from a byte that leads no sequence
 
@@ -321,14 +321,14 @@ An entry holds nothing else.
 - **Pin:** In the reference build, `check_result` is `assert` (`src/include/pinyin_utils.h:26-31`). The malformed interpolation input checks can emit GLib criticals (`src/storage/tag_utility.cpp:202`, `:246`) and the glibc assertion line before SIGABRT.
 - **oxpinyin:** `k_mixture_model_to_interpolation` aborts without the check-macro diagnostics in the unknown-line, missing-value, bigram and last-line-reread cases.
 - **Decision:** accepted, language artefact, by maintainer ruling: oxpinyin does not imitate the macros' text.
-- **Tests:** `kti_unknown_line_assert`, `kti_missing_value_assert`, `kti_bigram_assert`, `kti_last_line_reread_assert` (`crates/oxpinyin-utils/tests/k_mixture_model_to_interpolation.rs`).
+- **Tests:** `kti_unknown_line_assert`, `kti_missing_value_assert`, `kti_bigram_assert`, `kti_last_line_reread_assert` (`crates/oxpinyin-utils/tests/it/k_mixture_model_to_interpolation.rs`).
 
 ### KMM tool asserts write no macro text
 
 - **Pin:** The reference build emits assertion text and aborts at the missing merge result file, zero estimation total and generator document assertion sites (`utils/training/merge_k_mixture_model.cpp:127`, `estimate_k_mixture_model.cpp:45`, `gen_k_mixture_model.cpp:380`).
 - **oxpinyin:** The KMM merge, estimate and generate tools abort without the assertion text in the missing-result-file, zero-total and good-document cases.
 - **Decision:** accepted under the check-macro ruling above.
-- **Tests:** `kmm_merge_no_result_file`, `kmm_estimate_zero_total`, `kmm_gen_good_document` (`crates/oxpinyin-utils/tests/kmm_tools.rs`).
+- **Tests:** `kmm_merge_no_result_file`, `kmm_estimate_zero_total`, `kmm_gen_good_document` (`crates/oxpinyin-utils/tests/it/kmm_tools.rs`).
 
 ### FlexibleBigram malformed record lengths
 

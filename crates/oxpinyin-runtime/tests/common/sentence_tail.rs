@@ -10,10 +10,10 @@
 
 use std::path::Path;
 
+use crate::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
-use oxpinyin_runtime::{Runtime, RuntimeDict, RuntimeLm};
 
-use crate::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
+use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
 pub struct PortSession {
