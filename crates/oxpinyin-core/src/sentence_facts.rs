@@ -1,37 +1,7 @@
 //! Operation-local token facts shared by sentence pricing and scoring.
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
 
-/// A multiplicative hasher for the trellis's `u32` token keys.
-///
-/// These maps are only probed (`get`, `entry`), never iterated: the order of
-/// a position's nodes is its position's node vector, so the hash function
-/// cannot reach the output. SipHash's per-lookup cost dominated the step expansion.
-#[derive(Default, Clone, Copy)]
-pub struct TokenHasher(u64);
-
-impl Hasher for TokenHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.write_u64(u64::from(byte));
-        }
-    }
-
-    fn write_u32(&mut self, value: u32) {
-        self.write_u64(u64::from(value));
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-/// Probe-only token map; iteration must never determine output order.
-pub type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
+/// Token map for keyed lookup only; it does not decide output order.
+pub type TokenMap<V> = rustc_hash::FxHashMap<u32, V>;
 
 /// A readable ordinary overlay item. Other origins use the existing readers.
 #[derive(Clone, Copy, Debug)]

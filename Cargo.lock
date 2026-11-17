@@ -629,6 +629,7 @@ dependencies = [
  "phf_codegen",
  "proptest",
  "rstest",
+ "rustc-hash",
 ]
 
 [[package]]
