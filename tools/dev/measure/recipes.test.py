@@ -41,8 +41,18 @@ class RecipeTests(unittest.TestCase):
         operation = mock.Mock()
         status, _, err = run(operation, pin_comparison=True)
         self.assertEqual(status, 2)
-        self.assertIn('require the local oracle performance stage', err)
+        self.assertIn('pin comparisons are local-only', err)
         operation.assert_not_called()
+
+    def test_a_local_pin_comparison_runs_with_the_vcpkg_tkrzw_first(self):
+        from tools.dev import vcpkg
+        operation = mock.Mock(return_value=0)
+        selected = {'OXPINYIN_TKRZW_PREFIX': '/cache/vcpkg/installed/x'}
+        with mock.patch.object(vcpkg, 'environment', return_value=selected) as environment, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(recipes.run(operation, ['a'], {'OXPINYIN_CACHE': '/cache'}, pin_comparison=True), 0)
+        environment.assert_called_once_with({'OXPINYIN_CACHE': '/cache'})
+        operation.assert_called_once_with(['a'], selected)
 
 
 class NativeCompareTests(unittest.TestCase):

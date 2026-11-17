@@ -38,7 +38,7 @@ if __name__ == '__main__' and __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools import cachedir
-from tools.dev import cell, model
+from tools.dev import cell, model, vcpkg
 from tools.dev.process import ROOT, capture, fail, run, text
 from tools.dev.runners import Finished, guarded
 from tools.oracle.build import fields, recipe_hash
@@ -772,11 +772,32 @@ def performance_resources(engine):
     return ['--cpus', '4', '--memory', '6G'] if is_apple(engine) else []
 
 
+def oracle_build_command(engine, root, selected_platform, tag, target):
+    """The build of Dockerfile.oracle's TARGET stage (docker grammar)."""
+    return [engine, 'build', *performance_resources(engine), '--platform', selected_platform,
+            '--build-arg', f'ORACLE_PLATFORM={selected_platform}', '--target', target,
+            '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root]
+
+
 def performance_build_command(engine, root, selected_platform, tag):
     """The build of Dockerfile.oracle's performance target (docker grammar)."""
-    return [engine, 'build', *performance_resources(engine), '--platform', selected_platform,
-            '--build-arg', f'ORACLE_PLATFORM={selected_platform}', '--target', 'performance',
-            '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root]
+    return oracle_build_command(engine, root, selected_platform, tag, 'performance')
+
+
+# The inputs of Dockerfile.oracle's deps stage. .python-version: the stage installs the managed
+# interpreter it names.
+DEPS_INPUTS = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json',
+               'tools/oracle/oracle-pin.txt', '.python-version')
+# The deps stage installs the version manifest here; `provision oracle` takes it as the image's mark.
+DEPS_MARKER = Path('/usr/local/share/oxpinyin/version-manifest.json')
+
+
+def deps_tag(root=ROOT):
+    """The local deps image's tag, which `just provision` and `just provision-oracle` share."""
+    digest = hashlib.sha256()
+    for path in DEPS_INPUTS:
+        digest.update((Path(root) / path).read_bytes())
+    return 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
 
 
 def provision_cache(env, root=ROOT):
@@ -793,7 +814,7 @@ def model_cache(env):
 
 PROVISION_ORACLE_USAGE = '''usage: just provision-oracle [--cells CELLS] [--jobs N]
 
-Run `provision oracle` in the performance image, through the selected runtime
+Run `provision oracle` in the oracle's deps image, through the selected runtime
 (OXPINYIN_CONTAINER overrides it). The cache root OXPINYIN_CACHE is mounted at
 /cache, and its provisioning cache pin-<commit> also at /provision, where it
 receives oracle/<cell> (the pin's libraries and data). The image is built when absent;
@@ -802,7 +823,7 @@ OXPINYIN_CAPTURE_BUILD_FLAGS carries site flags for that build (no quoting insid
 
 
 def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, shared):
-    """The run of `provision oracle` in the performance image TAG (docker grammar).
+    """The run of `provision oracle` in the deps image TAG (docker grammar).
 
     The host's cache root SHARED is mounted at /cache, which the run receives as OXPINYIN_CACHE,
     so the model20 entry is the host's. The provisioning cache CACHE is mounted at /provision
@@ -824,7 +845,7 @@ def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, 
 
 
 def provision_oracle(argv, *, root=ROOT, env=None):
-    """Provision the oracle cells into the host's provisioning cache, inside the performance image."""
+    """Provision the oracle cells into the host's provisioning cache, inside the deps image."""
     environment = os.environ if env is None else env
     if argv[:1] in (['-h'], ['--help']):
         print(PROVISION_ORACLE_USAGE, end='')
@@ -842,10 +863,10 @@ def provision_oracle(argv, *, root=ROOT, env=None):
     if selected is None:
         fail('FAIL: provision-oracle supports only native x86_64 and aarch64', 2)
     engine = select_runtime(env=environment)
-    tag = performance_tag(root, selected.split('/', 1)[1])
+    tag = deps_tag(root)
     if quiet([engine, 'image', 'inspect', tag], environment):
         flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
-        build = performance_build_command(engine, root, selected, tag)
+        build = oracle_build_command(engine, root, selected, tag, 'deps')
         if run(runtime_command([*build[:2], *flags, *build[2:]]), cwd=root, env=environment, check=False):
             raise Finished(1)
     cache = provision_cache(environment, root)
@@ -909,8 +930,8 @@ def performance(argv, *, root=ROOT):
 
 def check_reproducible(argv, *, root=ROOT):
     """Build twice in distinct paths and compare only those two builds."""
-    from tools.dev.measure.recipes import require_performance_environment
-    require_performance_environment(os.environ)
+    from tools.dev.measure.recipes import require_local_measurement
+    require_local_measurement(os.environ)
     parser = argparse.ArgumentParser(prog='check-reproducible')
     parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=list(cell.CELLS))
     parser.add_argument('--work-dir', type=Path, required=True)
@@ -926,11 +947,12 @@ def check_reproducible(argv, *, root=ROOT):
         for directory in directories:
             if directory.exists():
                 fail(f'reproducibility work directory already exists: {directory}')
+        env = vcpkg.pin_build_environment(os.environ, backend)
         try:
             for directory in directories:
                 run([sys.executable, Path(root) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',
                      '--dbm', backend, '--work-dir', directory / 'build', '--prefix', prefix,
-                     '--jobs', args.jobs], heavy=True)
+                     '--jobs', args.jobs], env=env, heavy=True)
                 saved = directory / 'libraries'
                 shutil.copytree(prefix / 'lib', saved, symlinks=True)
                 builds.append(saved)

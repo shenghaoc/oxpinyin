@@ -14,7 +14,6 @@ if __name__ == '__main__':
 
 from . import cell as backend_cell
 from contextlib import ExitStack
-import hashlib
 import os
 from pathlib import Path
 import platform
@@ -409,15 +408,13 @@ class Provision:
         print('This report does not verify all measured files are on ext4; non-measurement setup may continue.')
 
     def oracle(self, argv):
-        """Provision only oracle cells inside the native oracle performance image."""
+        """Provision only oracle cells inside the native oracle deps image."""
         self.refuse_overrides()
         self.options(argv, in_image=True)
         if self.without_oracle or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
             fail('provision oracle needs positive --jobs and does not accept --python-only or --dev-tools', 2)
-        marker = Path('/usr/local/share/oxpinyin/performance-os-release')
-        if (self.env.get('GITHUB_ACTIONS') == 'true' or not marker.is_file()
-                or marker.read_bytes() != Path('/etc/os-release').read_bytes()):
-            self.die('provision oracle runs locally inside just provision-oracle (or just performance)')
+        if self.env.get('GITHUB_ACTIONS') == 'true' or not images.DEPS_MARKER.is_file():
+            self.die('provision oracle runs locally inside just provision-oracle')
         self.cache = self.cache.resolve()
         self.cache.mkdir(parents=True, exist_ok=True)
         self.model_cache = images.model_cache(self.env)
@@ -911,11 +908,7 @@ class Provision:
             published = 'ghcr.io/shenghaoc/oxpinyin-oracle:' + images.image_tag(self.root)
             self.published = published + ('-arm64' if self.platform == 'linux/arm64' else '')
             self.published_deps = self.published + '-deps'
-            digest = hashlib.sha256()
-            # .python-version: the deps stage installs the managed interpreter it names.
-            for path in ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json', 'tools/oracle/oracle-pin.txt', '.python-version'):
-                digest.update((self.root / path).read_bytes())
-            self.deps_image = 'oxpinyin-oracle-deps:' + digest.hexdigest()[:12]
+            self.deps_image = images.deps_tag(self.root)
             self.ctr = images.select_runtime(env=self.env)
             self.backend_tools()
             for cell in self.cells:

@@ -1139,6 +1139,25 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertEqual(service.cache, Path('/provision'))
         self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
 
+    def test_provision_oracle_runs_only_where_the_deps_image_marker_is(self):
+        marker = self.work / 'version-manifest.json'
+        for present in (False, True):
+            if present:
+                marker.write_text('{}')
+            service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')})
+            with (self.subTest(present=present), mock.patch.object(provision.images, 'DEPS_MARKER', marker),
+                  mock.patch.object(service, 'refuse_overrides'), mock.patch.object(service, 'libraries') as libraries,
+                  mock.patch.object(service, 'data_ok', return_value=True),
+                  contextlib.redirect_stderr(io.StringIO()) as error):
+                if present:
+                    self.assertEqual(service.oracle(['--cache-dir', str(self.work / 'provision'), '--cells', 'tkrzw']), 0)
+                    libraries.assert_called_once_with()
+                else:
+                    with self.assertRaises(Finished):
+                        service.oracle(['--cache-dir', str(self.work / 'provision')])
+                    self.assertIn('provision oracle runs locally inside just provision-oracle', error.getvalue())
+                    libraries.assert_not_called()
+
     def test_the_platform_comes_from_the_host_architecture_on_every_os(self):
         for machine, expected in (('x86_64', 'linux/amd64'), ('AMD64', 'linux/amd64'), ('aarch64', 'linux/arm64'),
                                   ('ARM64', 'linux/arm64')):

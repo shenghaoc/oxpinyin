@@ -20,45 +20,56 @@ A section that uses Callgrind or Massif is an attribution procedure under that r
 
 ## Where measurements run
 
-Pin comparisons run locally in the `performance` target of
-`tools/oracle/Dockerfile.oracle`. This target inherits the unpinned Debian testing `deps`
-stage of the oracle (`debian:testing`). It covers `callgrind-differential` and
-`system-import-profile`. Both the pin and the subject inputs are built there. The
-oracle is never built or run on GitHub Actions.
+Pin comparisons run locally and natively on a Linux host, with no container.
+They cover `callgrind-differential` and `system-import-profile`.
+Valgrind and Callgrind exist only on Linux, so these recipes run only on Linux hosts.
+macOS and Windows keep the native `just measure` paths.
+The oracle is never built or run on GitHub Actions; the recipes and the preparation refuse to run there.
+
+Prepare the host as the [setup runbook](setup.md) states: `just doctor` checks Valgrind and cargo-c,
+and `just provision` installs the vcpkg overlay tkrzw.
+The pin's build needs the host packages that [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json)
+lists as `common`, and `bdb` or `kc` for those cells. The tkrzw cell takes libtkrzw from the overlay, not from
+the distribution. Then prepare the inputs:
 
 ```sh
-just performance
-# Inside the shell:
-uv run --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
+OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
 ```
 
-These rules apply to the `performance` shell:
+A direct `uv run` command needs `OXPINYIN_CACHE` ([cache directory](setup.md#cache-directory)).
 
-- `just performance --build-only` builds without entering. `--skip-build` enters
-  an already built matching image.
-- The architecture follows the host; there is no platform option, and conflicting platform environment overrides are refused.
+These rules apply:
+
+- Builds match the host operating system and architecture.
   The [procedure-specific rules](verification.md#procedure-specific-rules) state the reference platform, the arm64 capture and the emulation ban.
-- The local Cargo/model cache uses a
-  named volume (`--volume NAME` selects another). The source is mounted read-only at `/repo`.
-- Recipe outputs default to `/performance/results/<recipe>/`. Explicit
-  output overrides stay supported. The harness and scratch builds live under
-  `/performance`.
+- Every prepared input lives under the `measure` entry of the cache root (`just cache-root`):
+  the pin prefixes in `pinyin-oracle/<cell>`, the subject stages in `oxpinyin-tkrzw` and `oxpinyin-nodebug`,
+  their Cargo target directories in `target`, and the `bisect` driver in `tmp`.
+- Recipe outputs default to `results/<recipe>/` under that entry. Explicit
+  output overrides stay supported.
 - Each `callgrind-differential` capture and each `system-import-profile` run needs a new
   output directory. Both refuse a directory that exists. A second differential capture
   must set `CG_OUT` to a new path.
-- Prepared pin prefixes also persist under `/performance`. Preparation reuses a prefix only when its
-  `versions.txt` equals the inventory of the running image, so that the pin and the subject share one base,
-  and rebuilds changed or damaged inputs.
-- Rosetta Python is refused; native Python is required.
+- `tools/oracle/build.py` builds the pin natively: `--libs-only`, then `--regen-data` from the pinned model.
+  Preparation reuses a prefix only when its `versions.txt` equals this host's inventory, so that the pin
+  and the subject share one base, and rebuilds changed or damaged inputs.
+  The pin is linked as its recipe links it, with no RPATH or RUNPATH. `build.py` replaces `LD_LIBRARY_PATH`
+  with the prefix's own library directories while it generates the data, so for the tkrzw cell's data build
+  only, the prefix's `lib` directory holds a symbolic link to the overlay's `libtkrzw.so.1`.
+  Preparation removes the link afterwards, also after a failed build.
 - `--cells` is valid only with `oracle` preparation.
 
-Preparation lives in `tools/dev/measure/prepare.py`, not in image layers.
+Preparation lives in `tools/dev/measure/prepare.py`.
 `callgrind` selects the profiled and shipping Tkrzw arms, and
 `oracle --cells tkrzw` selects pin data only. Model data stays local.
-Both arms load Debian's packaged libtkrzw ([sound tkrzw library](verification.md#9-sound-tkrzw-library)).
-Additional base or PR revisions are built in this testing environment as well,
+The pin, the subject and the recipes use the vcpkg overlay libtkrzw, and both arms load it
+([sound tkrzw library](verification.md#9-sound-tkrzw-library)).
+Additional base or PR revisions are built on the same host as well,
 with separate Cargo target directories. The existing recipe options are set to
-the resulting paths. Ordinary development stays native.
+the resulting paths.
+
+Pin-versus-subject numbers are comparable only within one session on one host.
+The host's compiler, C library and libtkrzw build both arms, and the recipes record them in `environment.txt`.
 
 ## Shipping measurement inputs
 
@@ -66,7 +77,6 @@ Measurements use ordinary shipping builds. See the [function-layout ruling](../p
 Each recipe keeps the backend, artifact identity, input-digest and runtime checks.
 The recipes are `just measure-callgrind-control`, `just measure-callgrind-differential` and
 `just measure-system-import-profile`. Their direct `uv run` invocations are in the justfile.
-The measurement image has no `just`, so it runs the `uv run` form.
 The sampling loops are serial and interleave the arms one process at a time.
 A timed or resident-set sample belongs to its arm only if nothing runs
 beside it.

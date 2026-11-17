@@ -79,7 +79,7 @@ class PerformanceImageTests(unittest.TestCase):
                     for library in ('libpinyin', 'libzhuyin'):
                         (prefix / 'lib' / (library + '.so')).write_text(str(len(builds) if mismatch else 1))
                     return 0
-                with mock.patch.object(recipes, 'require_performance_environment'), \
+                with mock.patch.object(recipes, 'require_local_measurement'), \
                      mock.patch.object(images, 'run', side_effect=build), \
                      contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     args = ['--cells', 'bdb', '--work-dir', directory]
@@ -93,7 +93,7 @@ class PerformanceImageTests(unittest.TestCase):
 
     def check_reproducible(self, directory, build):
         from tools.dev.measure import recipes
-        with mock.patch.object(recipes, 'require_performance_environment'), \
+        with mock.patch.object(recipes, 'require_local_measurement'), \
              mock.patch.object(images, 'run', side_effect=build), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return images.check_reproducible(['--cells', 'bdb', 'kc', '--work-dir', str(directory)])
@@ -585,7 +585,7 @@ class RuntimeAdapterTests(unittest.TestCase):
 
 
 class ProvisionOracleTests(unittest.TestCase):
-    """just provision-oracle: the performance image build and the provision oracle run, per runtime."""
+    """just provision-oracle: the deps image build and the provision oracle run, per runtime."""
     def setUp(self):
         as_macos(self)
         directory = tempfile.TemporaryDirectory()
@@ -608,11 +608,14 @@ class ProvisionOracleTests(unittest.TestCase):
             self.assertEqual(images.provision_oracle(list(argv), env=environment), 0)
         return calls
 
-    def test_each_runtime_builds_the_performance_target_and_runs_provision_oracle(self):
+    def test_each_runtime_builds_the_deps_target_and_runs_provision_oracle(self):
         for engine in ('docker', 'podman', 'wslc', 'container'):
             with self.subTest(engine=engine):
                 build, launch = self.calls(engine, ['--cells', 'tkrzw'])
-                self.assertEqual(build[build.index('--target') + 1], 'performance')
+                self.assertEqual(build[build.index('--target') + 1], 'deps')
+                # `just provision` builds and checks prefixes in the image of this same tag.
+                self.assertIn(images.deps_tag(ROOT), build)
+                self.assertIn(images.deps_tag(ROOT), launch)
                 self.assertIn('ORACLE_PLATFORM=linux/amd64', build)
                 self.assertEqual('--platform' in build, engine != 'wslc')
                 self.assertEqual('--platform' in launch, engine != 'wslc')
@@ -631,7 +634,7 @@ class ProvisionOracleTests(unittest.TestCase):
                 self.assertEqual(self.cache.parent, self.root)
                 self.assertEqual(launch[launch.index('-m') + 1:],
                                  ['tools.dev.provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
-                self.assertTrue(launch[launch.index('-w') + 2].startswith('oxpinyin-performance:TAG-'))
+                self.assertEqual(launch[launch.index('-w') + 2], images.deps_tag(ROOT))
 
     def test_rootful_docker_runs_as_the_host_user_with_a_writable_uv(self):
         with mock.patch.object(images, 'run_user', return_value=['--user', '1000:1001']):

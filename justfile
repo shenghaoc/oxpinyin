@@ -269,7 +269,7 @@ capture-pin run:
 
 # Provision the oracle cells into the provisioning cache `just provision` also uses
 # (the pin's entry of the cache root), running `provision oracle` in the
-# performance image through the selected runtime (docs/runbooks/pin-captures.md).
+# oracle deps image through the selected runtime (docs/runbooks/pin-captures.md).
 [unix]
 provision-oracle *args:
     @uv run --managed-python python -X utf8 -m tools.oracle.image provision-oracle "$@"

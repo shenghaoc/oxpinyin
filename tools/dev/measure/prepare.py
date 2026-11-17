@@ -1,10 +1,10 @@
-"""Input preparation for the Valgrind recipes inside Dockerfile.oracle's performance stage (#1290).
+"""Input preparation for the Valgrind recipes on a native Linux host (#1290).
 
 `python -m tools.dev.measure.prepare oracle|callgrind` prepares what
-callgrind-differential and system-import-profile read: oracle prepares only the
-selected pin cells; callgrind also builds the profiling and shipping arms over
-the pin's data. Model data and subject artifacts are runtime working
-data, never image layers.
+callgrind-differential and system-import-profile read: oracle builds only the
+selected pin cells with tools/oracle/build.py; callgrind also builds the profiling
+and shipping arms over the pin's data. Every input is working data under the
+`measure` entry of the cache root, and every build uses the vcpkg overlay tkrzw.
 """
 import argparse
 import contextlib
@@ -15,16 +15,44 @@ from pathlib import Path
 import shutil
 import sys
 
+from .. import vcpkg
 from ..runners import Finished, emit
 from . import bench
 from .bench import fail
 
-SCRATCH = Path('/performance/tmp')
 DATA_SUBDIRECTORY = 'lib/libpinyin/data'
+# The name the pin's tkrzw cell needs; tools/tkrzw/runtime.py certifies the overlay's file of this name.
+TKRZW_SONAME = 'libtkrzw.so.1'
+
+
+def measure_root(env):
+    """The `measure` entry of the cache root, which holds every prepared measurement input."""
+    from tools import cachedir
+    return cachedir.root(env) / 'measure'
+
+
+def pin_prefix(env, backend):
+    """The prepared pin prefix of BACKEND."""
+    return measure_root(env) / 'pinyin-oracle' / backend
+
+
+def subject_stage(env, name):
+    """The staged cargo-c install of the subject arm NAME (tkrzw: profiled, nodebug: shipping)."""
+    return measure_root(env) / f'oxpinyin-{name}' / 'stage'
+
+
+def harness_path(env):
+    """The bisect driver that the preparation builds and the differential runs."""
+    return measure_root(env) / 'tmp' / 'bisect'
+
+
+def results(env, recipe):
+    """The default output directory of RECIPE."""
+    return measure_root(env) / 'results' / recipe
 
 
 def running_inventory():
-    """The running image's installed versions, from the versions.py code that records them."""
+    """This host's installed versions, from the versions.py code that records them."""
     from tools.oracle import versions
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -34,7 +62,7 @@ def running_inventory():
 
 def prepared_pin_refusal(prefix, backend):
     """What stops reuse of the prepared PREFIX, or None: prefix_ok for the libraries, the pinned
-    model, the running image's installed versions, so pin and subject share one base, and both
+    model, this host's installed versions, so pin and subject share one base, and both
     data manifests."""
     from tools.oracle.image import fields, model_ok, prefix_ok
     try:
@@ -47,7 +75,7 @@ def prepared_pin_refusal(prefix, backend):
         inventory = running_inventory()
         if versions != inventory:
             differ = sorted(set(versions.splitlines()) ^ set(inventory.splitlines()))
-            return "versions.txt differs from the running image's inventory: " + '; '.join(differ)
+            return "versions.txt differs from this host's inventory: " + '; '.join(differ)
         for manifest, key in (('oracle-data.sha256', 'data_manifest_sha256'),
                               ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
             content = (prefix / manifest).read_bytes()
@@ -72,11 +100,42 @@ def prepared_pin_matches(prefix, backend):
     return prepared_pin_refusal(prefix, backend) is None
 
 
+def build_pin(prefix, backend, extracted, work, env):
+    """Build the pin's libraries and data for BACKEND into the empty PREFIX with tools/oracle/build.py.
+
+    The libraries are linked as the pin's own recipe links them, with no run path.
+    The pin's configure finds the overlay tkrzw through pkg-config, then links a bare -ltkrzw, and
+    its Makefile.am does not use TKRZW_CFLAGS, so only default compiler and linker directories
+    satisfy it. For the tkrzw cell, both build.py calls therefore get a CPATH that starts with the
+    overlay's include directory and a LIBRARY_PATH that starts with its lib directory; build.py
+    keeps both, and neither changes the compiler or linker flags.
+    build.py replaces LD_LIBRARY_PATH with the prefix's own library directories, so the tkrzw
+    cell's data generators would not find the overlay libtkrzw. For the data build only, the
+    prefix's lib directory therefore holds a symbolic link to the overlay's libtkrzw.so.1; the
+    link is removed afterwards, so the prefix holds only what build.py wrote.
+    """
+    env = vcpkg.pin_build_environment(env, backend)
+    shutil.rmtree(prefix, ignore_errors=True)
+    shutil.rmtree(work, ignore_errors=True)
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    common = [sys.executable, bench.ROOT / 'tools/oracle/build.py', '--dbm', backend, '--enable-libzhuyin',
+              '--prefix', prefix]
+    bench.heavy([*common, '--libs-only', '--work-dir', work / 'libs', '--jobs', str(os.cpu_count() or 1)], env=env)
+    link = prefix / 'lib' / TKRZW_SONAME
+    if backend == 'tkrzw':
+        link.symlink_to(Path(env['OXPINYIN_TKRZW_PREFIX']) / 'lib' / TKRZW_SONAME)
+    try:
+        bench.heavy([*common, '--regen-data', '--model-dir', extracted, '--work-dir', work / 'data'], env=env)
+    finally:
+        if backend == 'tkrzw':
+            link.unlink(missing_ok=True)
+
+
 def prepare(argv, env):
-    """Prepare the local inputs after entering Dockerfile.oracle's performance stage."""
-    from .recipes import require_performance_environment
+    """Prepare the local inputs on this host, under the cache root."""
+    from .recipes import require_local_measurement
     from .. import model
-    require_performance_environment(env)
+    require_local_measurement(env)
     parser = argparse.ArgumentParser(prog='python -m tools.dev.measure.prepare')
     parser.add_argument('mode', choices=('oracle', 'callgrind'))
     parser.add_argument('--cells', nargs='+', choices=('tkrzw', 'kc', 'bdb'), default=None)
@@ -86,44 +145,35 @@ def prepare(argv, env):
     cells = (args.cells or ['tkrzw', 'kc']) if args.mode == 'oracle' else ['tkrzw']
     extracted = model.fetch(env=env)
     for backend in cells:
-        seed = Path('/opt/pinyin-oracle') / backend
-        prefix = Path('/performance/pinyin-oracle') / backend
+        prefix = pin_prefix(env, backend)
         if not prepared_pin_matches(prefix, backend):
-            shutil.rmtree(prefix, ignore_errors=True)
-            prefix.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(seed, prefix, symlinks=True)
-            bench.heavy([sys.executable, bench.ROOT / 'tools/oracle/build.py', '--regen-data',
-                         '--dbm', backend, '--enable-libzhuyin', '--prefix', prefix, '--model-dir', extracted,
-                         '--work-dir', f'/performance/oracle-{backend}'], env=env)
+            build_pin(prefix, backend, extracted, measure_root(env) / f'oracle-{backend}', env)
             refusal = prepared_pin_refusal(prefix, backend)
             if refusal:
                 fail(f'preparation: the rebuilt {backend} prefix {prefix} does not match: {refusal}')
-        alias = Path('/opt/libpinyin-' + backend)
-        if alias.is_symlink():
-            alias.unlink()
-        elif alias.exists():
-            shutil.rmtree(alias)
-        alias.symlink_to(prefix, target_is_directory=True)
+        emit(f'{backend}: pin prefix {prefix}')
     if args.mode == 'oracle':
         return 0
+    # Build and certify the subject against the same overlay as the pin.
+    env = vcpkg.environment(env)
+    stages = {}
     for name, debug in (('tkrzw', True), ('nodebug', False)):
-        installed = Path(f'/performance/oxpinyin-{name}')
-        installed.mkdir(parents=True, exist_ok=True)
-        alias = Path(f'/opt/oxpinyin-{name}')
-        if not alias.exists():
-            alias.symlink_to(installed, target_is_directory=True)
-        build_env = dict(env)
+        stage = subject_stage(env, name)
+        shutil.rmtree(stage, ignore_errors=True)
+        build_env = dict(env, CARGO_TARGET_DIR=str(measure_root(env) / 'target' / name))
         if debug:
             build_env['RUSTFLAGS'] = '-Cdebuginfo=1 -Cstrip=none'
         else:
             build_env.pop('RUSTFLAGS', None)
         bench.heavy(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
-                     '--no-default-features', '--features', 'tkrzw', f'--destdir={installed / "stage"}',
+                     '--no-default-features', '--features', 'tkrzw', f'--destdir={stage}',
                      '--prefix=/usr'], env=build_env)
-    harness = SCRATCH / 'bisect'
+        stages[name] = stage
+    harness = harness_path(env)
+    harness.parent.mkdir(parents=True, exist_ok=True)
     bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')))
     from . import valgrind
-    status = valgrind.callgrind_control(['/opt/oxpinyin-tkrzw/stage', '/opt/oxpinyin-nodebug/stage'], env)
+    status = valgrind.callgrind_control([str(stages['tkrzw']), str(stages['nodebug'])], env)
     if status:
         raise Finished(status)
     status, report = valgrind.anchors_table(harness)
@@ -150,7 +200,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
     from .. import packaging
     if linux:
         # The managed checkout under the cache root, or an explicit VCPKG_ROOT.
-        from .. import cell, vcpkg
+        from .. import cell
         triplet, installed = vcpkg.triplet(), vcpkg.prefix(env)
         # Compilation, the loader and the libtkrzw certification all read the overlay install.
         env = vcpkg.environment(env)
