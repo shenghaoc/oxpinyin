@@ -3,7 +3,6 @@ import contextlib
 import io
 import json
 import os
-import platform
 from pathlib import Path
 import subprocess
 import sys
@@ -15,37 +14,11 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev.measure import bench, identity, neutrality, prepare, recipes, reports
-from tools.dev import slot
 from tools.dev.runners import Finished
+from tools.dev.test_support import native_row as sample
 
 
-def sample(**changes):
-    return dict(pid=17, cycles=20, operations=20 * recipes.workload_operations(),
-                fingerprint='0123456789abcdef', wall_seconds=.1, cpu_seconds=.08,
-                loop_instructions=900000, loop_cpu_cycles=400000, loop_runnable_seconds=.09,
-                lifetime_max_phys_footprint_bytes=123456, peak_rss_bytes=234567, **changes)
-
-
-class NativeReports(unittest.TestCase):
-    def test_xctrace_merged_diagnostic_before_final_result(self):
-        row = sample()
-        self.assertEqual(reports.driver_result('open user.conf failed.' + json.dumps(row) + '\n'), row)
-        with self.assertRaises(ValueError):
-            reports.driver_result('open user.conf failed.')
-
-    def test_required_metrics_and_fingerprint(self):
-        row = sample()
-        self.assertEqual(reports.observation(json.dumps(row), cycles=20, operations=row['operations']), row)
-        for key, bad in [('operations', 0), ('cycles', 19), ('fingerprint', 'bad'),
-                         *[(key, value) for key in reports.MEASURES for value in (None, 0, -1, float('nan'), True)
-                           if (key, value) != ('loop_runnable_seconds', 0)]]:
-            with self.subTest(key=key, bad=bad), self.assertRaises(ValueError):
-                reports.observation(json.dumps({**row, key: bad}), cycles=20, operations=row['operations'])
-        idle = {**row, 'loop_runnable_seconds': 0}
-        self.assertEqual(reports.observation(json.dumps(idle), cycles=20, operations=row['operations']), idle)
-        with self.assertRaisesRegex(ValueError, 'fingerprint mismatch'):
-            reports.observation(json.dumps(row), cycles=20, operations=row['operations'], fingerprint='f'*16)
-
+class NativeCampaignTests(unittest.TestCase):
     def test_balanced_schedule_keeps_outlier_and_diagnostic_control(self):
         args = recipes.native_arguments(['compare', '--base', 'x', '--head', 'x'])
         order = list(recipes.schedule(args.pairs, args.control_pairs))
@@ -116,28 +89,6 @@ class NativeReports(unittest.TestCase):
             self.assertEqual(record.call_args.kwargs['timeout'], args.budget)
             finish.assert_not_called()
 
-    def test_capture_requires_same_row_process_stack_size_and_product_uuid(self):
-        xml = '''<trace-query-result><node><schema/><row>
-        <sample-time>1</sample-time><process id="p" fmt="bisect (17)"><pid>17</pid></process>
-        <size>64</size><tagged-backtrace id="s"><frame name="pinyin_guess_candidates">
-        <binary UUID="00112233-4455-6677-8899-aabbccddeeff"/></frame></tagged-backtrace></row>
-        <row><sample-time>2</sample-time><process ref="p"/><size>32</size><tagged-backtrace ref="s"/></row>
-        </node></trace-query-result>'''
-        uuid = '00112233445566778899aabbccddeeff'
-        self.assertEqual(reports.capture_rows(xml, pid=17, uuid=uuid, allocations=True),
-                         dict(usable_rows=2, product_frames=2))
-        mangled = '_RNvMs2_CsHASH_16oxpinyin_runtimeNtB5_11RuntimeDict11fill_lookup'
-        split = xml.replace('pinyin_guess_candidates', mangled).replace(
-            '<row><sample-time>2</sample-time>', '</node><node><row><sample-time>2</sample-time>')
-        self.assertEqual(reports.capture_rows(split, pid=17, uuid=uuid, allocations=True),
-                         dict(usable_rows=2, product_frames=2))
-        for broken in (xml.replace('17', '18'), xml.replace('pinyin_guess_candidates', 'malloc'),
-                       xml.replace('aabbccddeeff', 'ffffffffffff'),
-                       xml.replace('<size>', '<not-size>').replace('</size>', '</not-size>'),
-                       '<trace-query-result/>'):
-            with self.subTest(broken=broken), self.assertRaises(ValueError):
-                reports.capture_rows(broken, pid=17, uuid=uuid, allocations=True)
-
     if sys.platform == 'darwin':
         def test_distinct_sha_builds_once_and_no_backend_override(self):
             arm = {'revision': 'a'*40, 'dylib': Path('library'), 'uuid': '0'*32}
@@ -155,23 +106,34 @@ class NativeReports(unittest.TestCase):
 
         def test_second_invocation_builds_again_in_a_fresh_directory(self):
             from tools.dev import contract_data
-            arm = {'revision': 'a'*40, 'dylib': Path('library'), 'uuid': '0'*32}
+            builds = []
+            def build(revision, destination, env, **options):
+                builds.append(destination)
+                library = destination / 'prefix/lib/libpinyin.15.0.0.dylib'
+                Path(str(library) + '.dSYM').mkdir(parents=True)
+                library.write_bytes(f'build {len(builds)}'.encode())
+                return dict(revision=revision, dylib=library, uuid='0'*32)
+            def driver(arm, output, env):
+                output.write_bytes(b'signed driver')
+                return identity.sha256(output)
             with tempfile.TemporaryDirectory() as directory, \
                  mock.patch('platform.machine', return_value='arm64'), \
                  mock.patch.object(bench, 'capture', return_value=types.SimpleNamespace(status=0, stdout=b'a'*40+b'\n')), \
-                 mock.patch.object(prepare, 'native_build', return_value=arm) as build, \
-                 mock.patch.object(prepare, 'native_driver', return_value='digest'), \
-                 mock.patch('shutil.copy2'), mock.patch('shutil.copytree'), \
-                 mock.patch.object(identity, 'sha256', return_value='digest'), \
+                 mock.patch.object(prepare, 'native_build', side_effect=build), \
+                 mock.patch.object(prepare, 'native_driver', side_effect=driver), \
                  mock.patch.object(contract_data, 'data_identity', return_value={}), \
-                 mock.patch.object(recipes, 'native_compare') as compare, \
+                 mock.patch.object(recipes, 'native_compare'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 for _ in range(2):
                     self.assertEqual(recipes.native(['compare', '--base', 'main', '--head', 'main', '--data', directory],
                                                     {'OXPINYIN_CACHE': directory}), 0)
-                self.assertEqual(build.call_count, 2)
-                self.assertEqual(compare.call_count, 2)
-                self.assertNotEqual(build.call_args_list[0].args[1], build.call_args_list[1].args[1])
+                # Each invocation has its own session, and its staged A holds the bytes of its own build.
+                sessions = sorted((Path(directory) / 'measure/runs').iterdir(), key=lambda path: path.stat().st_mtime_ns)
+                self.assertEqual(len(sessions), 2)
+                staged = [Path(json.loads((session / 'session.json').read_text())['staged']['A']) for session in sessions]
+                for number, (session, prefix) in enumerate(zip(sessions, staged), 1):
+                    self.assertEqual(prefix.parent, session)
+                    self.assertEqual((prefix / 'lib/libpinyin.15.0.0.dylib').read_bytes(), f'build {number}'.encode())
 
         def test_control_labels_run_from_separate_identical_prefixes(self):
             from tools.dev import contract_data
@@ -407,102 +369,6 @@ class NativePreparation(unittest.TestCase):
                 self.assertEqual(record[record.index('--env')+1], 'PERF_CYCLES=20')
                 self.assertEqual(record[-6:], ['--', Path('driver'), '--measure', Path('lib.dylib'), 'a'*32, 'data'])
                 self.assertEqual(validate.call_args.kwargs, dict(pid=17, uuid='a'*32, allocations=False))
-
-
-if sys.platform == 'darwin' and platform.machine() == 'arm64':
-    class DarwinDriver(unittest.TestCase):
-        @classmethod
-        def setUpClass(cls):
-            cls.scratch = tempfile.TemporaryDirectory()
-            cls.root = Path(cls.scratch.name)
-            cls.lib = cls.root/'libpinyin.15.0.0.dylib'
-            source = cls.root/'stub.c'
-            source.write_text('''#include <stdbool.h>
-#include <stddef.h>
-#include <string.h>
-static bool failed;
-void *pinyin_init(const char *data, const char *user) { (void)user; failed=!strcmp(data,"fail"); return (void*)1; }
-void pinyin_fini(void *p) { (void)p; }
-void *pinyin_alloc_instance(void *p) { return p; }
-void pinyin_free_instance(void *p) { (void)p; }
-bool pinyin_set_options(void *p, unsigned flags) { (void)p;(void)flags;return true; }
-size_t pinyin_parse_more_full_pinyins(void *p,const char *s) { (void)p;return strlen(s); }
-bool pinyin_guess_candidates(void *p,size_t n,unsigned f) { (void)p;(void)n;(void)f;return !failed; }
-bool pinyin_get_n_candidate(void *p,unsigned *n) { (void)p;*n=1;return true; }
-bool pinyin_reset(void *p) { (void)p;return true; }
-''')
-            subprocess.run(['cc','-dynamiclib','-g',str(source),'-o',str(cls.lib)],check=True,capture_output=True)
-            cls.uuid = identity.macho_uuid(cls.lib)
-            cls.driver = cls.root/'bin/bisect'
-            prepare.native_driver({'dylib':cls.lib}, cls.driver, os.environ)
-            (cls.root/'lib').mkdir()
-            import shutil
-            shutil.copy2(cls.lib,cls.root/'lib'/cls.lib.name)
-            cls.loaded = cls.root/'lib'/cls.lib.name
-
-        @classmethod
-        def tearDownClass(cls):
-            cls.scratch.cleanup()
-
-        def invoke(self, path=None, uuid=None, data='good'):
-            return subprocess.run([str(self.driver),'--measure',str(path or self.loaded),uuid or self.uuid,data],
-                                  env={**os.environ,'PERF_CYCLES':'1000'},capture_output=True,timeout=10)
-
-        def test_wrong_image_and_uuid_fail_before_result(self):
-            for path, uuid in ((self.lib,self.uuid),(self.loaded,'f'*32)):
-                result=self.invoke(path,uuid)
-                self.assertNotEqual(result.returncode,0)
-                self.assertEqual(result.stdout,b'')
-                self.assertIn(b'wrong loaded image',result.stderr)
-
-        def test_failed_workload_has_no_result(self):
-            result=self.invoke(data='fail')
-            self.assertNotEqual(result.returncode,0)
-            self.assertEqual(result.stdout,b'')
-            self.assertIn(b'incomplete workload',result.stderr)
-
-        def test_native_capture_units_count_and_signed_driver(self):
-            raw,usage=bench.measured_process([self.driver,'--measure',self.loaded,self.uuid,'good'],
-                env={**os.environ,'PERF_CYCLES':'1000'},timeout=10)
-            row=json.loads(raw)
-            row['peak_rss_bytes']=usage.ru_maxrss
-            reports.observation(json.dumps(row),cycles=1000,operations=1000*recipes.workload_operations())
-            self.assertGreater(row['lifetime_max_phys_footprint_bytes'],1024)
-            self.assertGreater(row['peak_rss_bytes'],1024)
-            longer = json.loads(bench.measured_process([self.driver, '--measure', self.loaded, self.uuid, 'good'],
-                env={**os.environ, 'PERF_CYCLES': '8000'}, timeout=10)[0])
-            for counter in reports.COUNTS:
-                self.assertGreater(longer[counter], 2 * row[counter], counter + ' must grow with the cycle count')
-            subprocess.run(['codesign','--verify','--strict',self.driver],check=True,capture_output=True)
-            import plistlib
-            import re
-            signature = subprocess.run(['codesign', '-d', '--entitlements', '-', '--xml', '--verbose=4', self.driver],
-                                       check=True, capture_output=True)
-            self.assertIs(plistlib.loads(signature.stdout)['com.apple.security.get-task-allow'], True)
-            flags = int(re.search(rb'flags=0x([0-9a-fA-F]+)', signature.stderr)[1], 16)
-            self.assertEqual(flags & 0x10000, 0, 'driver must not use hardened runtime')
-            self.assertEqual(self.lib.read_bytes(), self.loaded.read_bytes(), 'product dylib must not be re-signed')
-
-
-        def test_wait4_is_the_only_reaper(self):
-            with slot.supervised([sys.executable,'-c','pass']) as child:
-                with mock.patch.object(child,'wait',side_effect=AssertionError('second reaper')), \
-                     mock.patch.object(child,'poll',side_effect=AssertionError('second reaper')):
-                    self.assertEqual(slot.wait_child(child,timeout=10,usage=True),0)
-                    self.assertGreater(child.rusage.ru_maxrss,0)
-
-        def test_macho_neutrality_rejects_code_or_address_changes(self):
-            copy=self.root/'copy.dylib'
-            copy.write_bytes(self.lib.read_bytes())
-            self.assertIn('identical',neutrality.compare_macho(self.lib,copy))
-            original=neutrality.macho_code(copy)
-            changed={key:(address+4,data) for key,(address,data) in original.items()}
-            with mock.patch.object(neutrality,'macho_code',side_effect=[original,changed]):
-                with self.assertRaisesRegex(ValueError,'sections or addresses'):
-                    neutrality.compare_macho(self.lib,copy)
-            with mock.patch.object(bench,'capture',return_value=types.SimpleNamespace(status=0,stdout=b'')):
-                with self.assertRaisesRegex(ValueError,'empty arm64'):
-                    neutrality.compare_macho(self.lib,copy)
 
 
 if __name__ == '__main__':

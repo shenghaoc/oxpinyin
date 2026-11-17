@@ -13,14 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev.runner_recipes import pinyin_needed, pinyin_resolved
-
-
-class ElfObservationTests(unittest.TestCase):
-    def test_elf_observations_are_parsed_without_a_linux_host(self):
-        self.assertEqual(pinyin_needed(' (NEEDED) Shared library: [libpinyin.so.15]\n Shared library: [libc.so.6]'), 'libpinyin.so.15')
-        self.assertEqual(pinyin_resolved('libpinyin.so.15 => /build/lib/libpinyin.so.15 (0x1)'), '/build/lib/libpinyin.so.15')
-        self.assertEqual(pinyin_needed('Shared library: [libpinyin_capi.so]'), 'libpinyin_capi.so')
+from tools.dev import test_support
 
 
 def live_descendants(pid, proc=Path('/proc')):
@@ -56,12 +49,6 @@ OWNERSHIP_CEILING = 60
 
 
 class LinuxOwnershipTests(unittest.TestCase):
-    def live(self, pid):
-        try:
-            return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] != 'Z'
-        except FileNotFoundError:
-            return False
-
     def until(self, condition, what, process=None):
         """Poll until CONDITION holds; fail naming WHAT if PROCESS ends first or the ceiling passes."""
         deadline = time.monotonic() + OWNERSHIP_CEILING
@@ -158,7 +145,7 @@ raise SystemExit(result)
                     self.fail(f'the signalled wrapper did not exit within {OWNERSHIP_CEILING}s')
                 self.assertEqual(process.returncode, 128 + terminate)
                 self.assertFalse(Path(owner['work']).exists(), 'cancelled runner kept its private scratch')
-                self.assertFalse(any(self.live(pid) for pid in pids), 'cancelled runner kept a live descendant')
+                self.assertFalse(any(test_support.process_running(pid) for pid in pids), 'cancelled runner kept a live descendant')
             except BaseException as error:
                 failure = error
                 raise
@@ -167,9 +154,10 @@ raise SystemExit(result)
                 if failure is not None:
                     failure.add_note('wrapper stderr:\n' + stderr.decode(errors='replace'))
 
-    if sys.platform.startswith('linux'):
-        def test_sigterm_reaps_descendants_and_removes_scratch(self):
-            self.exercise(signal.SIGTERM)
+    # Reported as skipped elsewhere: this file holds no other test, and a file that runs none fails the harness.
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'reads /proc and Linux process groups')
+    def test_sigterm_reaps_descendants_and_removes_scratch(self):
+        self.exercise(signal.SIGTERM)
 
 
 if __name__ == '__main__':

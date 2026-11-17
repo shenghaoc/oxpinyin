@@ -257,17 +257,7 @@ class ProcessTests(Scratch):
 
     @staticmethod
     def is_dead(pid):
-        if sys.platform == 'win32':
-            return not test_support.process_running(pid)    # os.kill(pid, 0) is no liveness probe there
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return True
-        try:
-            # A zombie is dead but waits for its adopter to reap it, and a container's init may never.
-            return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] == 'Z'
-        except OSError:
-            return False
+        return not test_support.process_running(pid)
 
     def test_a_cancellation_reaps_a_captured_child_and_its_descendants(self):
         self.cancelled_while_running(bench.capture, (slot.Cancelled, pool.UnitStopped, pool.UnitsCancelled))

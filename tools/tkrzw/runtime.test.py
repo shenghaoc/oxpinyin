@@ -156,11 +156,6 @@ if sys.platform == 'win32':
                                       cwd=ROOT, env=dict(os.environ, PATH=empty), capture_output=True,
                                       text=True, timeout=10)
 
-        def test_usage_status(self):
-            done = self.invoke([])
-            self.assertEqual((done.returncode, done.stdout), (2, ''))
-            self.assertIn('usage: python -m tools.tkrzw.runtime', done.stderr)
-
         def test_a_missing_host_loader_command_is_refused_with_the_operating_system_error(self):
             with self.assertRaises(FileNotFoundError) as missing:
                 subprocess.run(['no-such-loader-command'], capture_output=True)

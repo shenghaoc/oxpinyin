@@ -13,15 +13,20 @@ import contract_kit
 
 class KitTests(unittest.TestCase):
     def test_constructor_passes_the_cell_and_guard_at_call_time(self):
-        guard = MagicMock()
+        # The guard checks the subject for the cell before the facade is loaded; a refusal loads
+        # nothing and makes no user directory.
+        refused = MagicMock(side_effect=RuntimeError('REFUSED: subject: libtkrzw resolved to /usr'))
         with tempfile.TemporaryDirectory() as scratch, \
-                patch.object(contract_kit.C, 'CDLL', return_value=MagicMock()):
-            kit = contract_kit.Kit('pinyin', '/subject.so', '/data', scratch,
-                                   cell='kc', check_tkrzw=guard)
+                patch.object(contract_kit.C, 'CDLL', return_value=MagicMock()) as cdll:
+            with self.assertRaisesRegex(RuntimeError, 'REFUSED'):
+                contract_kit.Kit('pinyin', '/subject.so', '/data', scratch, cell='kc', check_tkrzw=refused)
+            self.assertEqual(cdll.call_count, 0)
+            self.assertEqual(list(Path(scratch).iterdir()), [])
+            guard = MagicMock()
+            kit = contract_kit.Kit('pinyin', '/subject.so', '/data', scratch, cell='kc', check_tkrzw=guard)
             guard.assert_called_once_with('kc', 'reverse_cross_open.py', 'subject', '/subject.so')
-            self.assertEqual((kit.mode, kit.data, kit.scratch), ('pinyin', '/data', scratch))
-            self.assertEqual(Path(kit.user).parent, Path(scratch))
-            self.assertEqual((kit.logs, kit.log_messages), ([], []))
+            self.assertEqual(list(Path(scratch).iterdir()), [Path(kit.user)])
+            self.assertEqual(list(Path(kit.user).iterdir()), [])
 
     def test_glib_resolves_through_the_facade_handle(self):
         with tempfile.TemporaryDirectory() as scratch, \

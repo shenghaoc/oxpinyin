@@ -57,15 +57,17 @@ class RustTablesTests(unittest.TestCase):
                 rust_tables.verify_acceptance(changed)
 
     def test_default_and_explicit_modes_do_not_write_without_write_flag(self):
-        with mock.patch.object(rust_tables, 'regenerate', return_value=0) as regenerate:
-            self.assertEqual(rust_tables.main([]), 0)
-            regenerate.assert_called_once_with(check=True)
-            regenerate.reset_mock()
-            self.assertEqual(rust_tables.main(['--check']), 0)
-            regenerate.assert_called_once_with(check=True)
-            regenerate.reset_mock()
-            self.assertEqual(rust_tables.main(['--write']), 0)
-            regenerate.assert_called_once_with(check=False)
+        # A write mode copies every output (regenerate's shutil.copyfile), so any write moves an mtime.
+        committed = [rust_tables.ROOT / name for name in self.outputs]
+        for argv in ([], ['--check']):
+            before = {path: path.stat().st_mtime_ns for path in committed}
+            with self.subTest(argv=argv), \
+                    mock.patch('subprocess.run', side_effect=AssertionError('external command')), \
+                    mock.patch('socket.socket', side_effect=AssertionError('network')), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(rust_tables.main(argv), 0)
+                self.assertIn(f'{len(self.outputs)} files match', out.getvalue())
+                self.assertEqual({path: path.stat().st_mtime_ns for path in committed}, before)
 
     def test_write_repairs_drift_in_an_explicit_destination(self):
         with tempfile.TemporaryDirectory() as temp:

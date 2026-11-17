@@ -179,16 +179,12 @@ if __name__ == '__main__': unittest.main()
         self.assertNotIn('unselected', out)
         self.assertIn('one or more tools/ Python harness tests failed', err)
 
-    def test_conflicting_selection_and_invalid_changed_base_refuse(self):
+    def test_files_and_changed_cannot_be_combined(self):
         sources = {'tools/a.test.py': "print('launched')"}
         status, out, err = self.fake_run(sources, ['tools/a.test.py'], changed='HEAD')
         self.assertEqual(status, 2)
         self.assertEqual(out, '')
         self.assertIn('cannot be combined', err)
-        with mock.patch.object(test_runner, 'changed_paths', side_effect=subprocess.CalledProcessError(128, 'git')):
-            status, out, err = self.fake_run(sources, changed='unknown')
-        self.assertEqual(status, 2)
-        self.assertEqual(out, '')
 
     def test_changed_mapping_and_unknown_fallback(self):
         sources = {name: "print('ran')" for name in

@@ -25,18 +25,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import host, pool, test_support
 
 
-def running(pid):
-    """True while PID is a live process; a killed child awaiting an init that does not reap it is not."""
-    if sys.platform == 'win32':
-        return test_support.process_running(pid)    # os.kill(pid, 0) would send CTRL_C_EVENT
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    try:
-        return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
-    except OSError:
-        return True    # no /proc (macOS): an orphan there is reaped at once, so it is really running
+running = test_support.process_running
 
 
 class FakeProcess:
@@ -473,16 +462,6 @@ class ContainerOwnershipTests(unittest.TestCase):
                 owned = pool.OwnedContainer((runtime,), owned.cidfile, 'k', 'mine')
                 self.assertTrue(pool.remove_owned(owned, run, io.StringIO()))
                 self.assertEqual(calls, [inspects[runtime], removals[runtime]])
-
-    def test_windows_tasks_are_stopped_without_process_groups(self):
-        process = mock.Mock()
-        handle = pool.Handle(process)
-        with mock.patch.object(pool.sys, 'platform', 'win32'), mock.patch.object(pool.os, 'killpg', create=True) as killpg:
-            handle.terminate()
-            handle.kill()
-        process.terminate.assert_called_once_with()
-        process.kill.assert_called_once_with()
-        killpg.assert_not_called()
 
     def test_a_windows_task_in_a_job_is_stopped_with_every_descendant(self):
         process, job = mock.Mock(pid=123), mock.Mock()

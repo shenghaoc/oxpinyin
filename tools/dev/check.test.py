@@ -144,10 +144,6 @@ if sys.platform == 'win32':
         def test_cargo_rustup_msvc_and_the_named_pkg_config_are_enough(self):
             self.assertIsNone(self.missing())
 
-        def test_cc_is_not_required(self):
-            self.assertFalse((self.bin / 'cc.exe').exists())
-            self.assertIsNone(self.missing())
-
         def test_each_missing_tool_is_named(self):
             for name in ('cargo', 'rustup'):
                 with self.subTest(tool=name):

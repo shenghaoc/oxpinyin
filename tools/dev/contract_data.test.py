@@ -48,9 +48,9 @@ class PinTests(unittest.TestCase):
     def test_the_cache_is_the_contract_data_entry_of_an_absolute_root(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(contract_data.default_cache({'OXPINYIN_CACHE': directory}), Path(directory, 'contract-data'))
-        for env in ({}, {'OXPINYIN_CACHE': ''}, {'OXPINYIN_CACHE': 'relative/root'}):
-            with self.subTest(env=env), self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute'):
-                contract_data.default_cache(env)
+        # The root comes from tools/cachedir.py, whose refusals model.test.py covers.
+        with self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute'):
+            contract_data.default_cache({})
 
     def test_extraction_keeps_only_the_data_directory_and_both_digests_agree(self):
         payload = deb({'usr/lib/x/libpinyin/data/table.conf': b'c', 'usr/lib/x/libpinyin/data/a.bin': b'1',

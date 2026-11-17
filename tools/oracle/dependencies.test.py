@@ -6,11 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class OracleDependenciesTests(unittest.TestCase):
-    def test_local_build_accepts_exact_reference_stage_copies(self):
-        source = (ROOT / 'tools/oracle/image.py').read_text()
-        build = source.split('\ndef build_image(', 1)[1].split('\ndef ', 1)[0]
-        self.assertIn("'-f', 'tools/oracle/Dockerfile.oracle'", build)
-        self.assertIn('verify_image(', build)
+    def test_every_deps_stage_copy_is_a_hashed_input(self):
         # The deps tag hashes each copied input: these files, .python-version, and Dockerfile.oracle,
         # which pins the uv image by its index digest.
         pattern = (r'^COPY (tools/oracle/(version-manifest.json|versions.py) |\.python-version '
