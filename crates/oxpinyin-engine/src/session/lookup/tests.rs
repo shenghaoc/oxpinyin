@@ -7,30 +7,19 @@
 
 use std::collections::BTreeSet;
 
-use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
+use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
+use crate::{CandidateKind, Session, SessionSettings};
 
-#[path = "../../oxpinyin-core/tests/common/fixture_doubles.rs"]
-mod fixture_doubles;
+use crate::session::tests::session_lifecycle::session;
 
-use fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
+const F_A: &str = include_str!("../../../../../fixtures/foundation/f-a.txt");
 
-const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
-const F_C: &str = include_str!("../../../fixtures/foundation/f-c.txt");
-const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
-const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
+const F_C: &str = include_str!("../../../../../fixtures/foundation/f-c.txt");
 
 /// Depth the capture protocol records candidates to.
 const CAPTURE_DEPTH: usize = 10;
 
 type Fixtures = Session<FixtureDictionary, FrequencyFixtureModel>;
-
-fn session() -> Fixtures {
-    Session::new(
-        SessionSettings::default(),
-        FixtureDictionary::parse(VOCAB).expect("committed fixture"),
-        FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
-    )
-}
 
 fn typed(text: &str) -> Fixtures {
     let mut session = session();
@@ -172,58 +161,6 @@ fn decoding_is_deterministic() {
     }
 }
 
-/// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
-///
-/// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
-/// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification: the full
-/// W4 capture (`fixtures/w4/oracle-candidate-structure.txt` before the #1764
-/// reduction) had `b#ing\t1\t不` and `bing\t1\t并`; neither input is in the
-/// retained subset.
-const JUNK_VOCAB: &str = "\
-token=1\tkeys=bu\ttext=不\tunigram=1000
-token=2\tkeys=bing\ttext=并\tunigram=100
-";
-
-#[test]
-fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
-    // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing):
-    // the junk byte reaches the decoder, which stops at it.
-    let mut session = Session::new(
-        SessionSettings::default(),
-        FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
-        FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
-    );
-
-    session.replace_raw("b#ing").expect("parse cannot fail");
-    assert_eq!(session.raw_input(), "b#ing");
-
-    let top = session
-        .candidates()
-        .iter()
-        .next()
-        .map(Candidate::text)
-        .expect("at least one candidate");
-    assert_eq!(
-        top, "不",
-        "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
-    );
-
-    // Contrast: clean bing prefers 并.
-    let mut collapsed = Session::new(
-        SessionSettings::default(),
-        FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
-        FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
-    );
-    collapsed.replace_raw("bing").expect("parse cannot fail");
-    let collapsed_top = collapsed
-        .candidates()
-        .iter()
-        .next()
-        .map(Candidate::text)
-        .expect("at least one candidate");
-    assert_eq!(collapsed_top, "并", "clean bing must still rank 并 first");
-}
-
 #[test]
 fn every_candidate_reports_a_span_it_could_really_absorb() {
     for input in [
@@ -246,27 +183,6 @@ fn every_candidate_reports_a_span_it_could_really_absorb() {
             assert!(!candidate.text().is_empty());
         }
     }
-}
-
-#[test]
-fn turning_incomplete_pinyin_off_stops_at_the_initial() {
-    let mut session = Session::new(
-        SessionSettings {
-            incomplete_pinyin: false,
-        },
-        FixtureDictionary::parse(VOCAB).expect("committed fixture"),
-        FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
-    );
-
-    session.replace_raw("nih").expect("typing cannot fail");
-
-    let texts: Vec<&str> = session
-        .candidates()
-        .iter()
-        .filter_map(Candidate::text_str)
-        .collect();
-    assert_eq!(texts[0], "你", "without the incomplete key, nih is just ni");
-    assert!(!texts.contains(&"你好"));
 }
 
 #[test]

@@ -1357,3 +1357,6 @@ struct SuggestionPath {
     keys: SmallVec<[SyllableKey; 16]>,
     tones: SmallVec<[u8; 16]>,
 }
+
+#[cfg(test)]
+mod tests;

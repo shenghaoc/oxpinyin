@@ -95,7 +95,7 @@ Facts the readers rely on:
 
 On the pinned model the four system libraries hold 138,096 items.
 的 (`0x010005DB`) carries two readings, `de 2213855` and `di 11000`.
-`crates/oxpinyin-data/tests/package_libraries.rs` and
+The `package_libraries` tests in `crates/oxpinyin-data/src/phrase_library/tests.rs` and
 `crates/oxpinyin-runtime/tests/libpinyin_data_dir.rs` hold these
 values on the pinned data package (`just fetch-contract-data`).
 
