@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+publish = false
 description = "C ABI of libpinyin's zhuyin facade (libzhuyin.so.15), the --enable-libzhuyin counterpart to libpinyin.so.15. Linux only."
 
 # The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object

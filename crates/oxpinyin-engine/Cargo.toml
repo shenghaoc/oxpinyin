@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+publish = false
 description = "oxpinyin internal crate — no stability promise; the supported interfaces are the C APIs."
 
 [lib]

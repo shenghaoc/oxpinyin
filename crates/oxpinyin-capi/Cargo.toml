@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+publish = false
 description = "C ABI of libpinyin (libpinyin.so.15): all 79 pinyin_* exports of the pinned libpinyin.ver. Linux only."
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
