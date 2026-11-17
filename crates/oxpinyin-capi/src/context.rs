@@ -43,17 +43,12 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
 /// process aborts where the pin dies, and a refusal writes the pin's line or
 /// one warning.
 fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Path) {
-    use oxpinyin_facade::InitRefusal;
-    match error.init_refusal(system_path) {
-        InitRefusal::Abort => std::process::abort(),
-        InitRefusal::TableConfLoadFailed => {
-            oxpinyin_data::c_stderr::table_conf_load_failed(Some(system_path));
-        }
-        InitRefusal::TableConfWarning(message) => crate::ffi::log_warning(message),
-        InitRefusal::OpenWarning => {
-            crate::ffi::log_warning(&format!("pinyin_init: {error} (systemdir {system_path:?})"));
-        }
-    }
+    error.refuse_init(
+        system_path,
+        "pinyin_init",
+        |path| oxpinyin_data::c_stderr::table_conf_load_failed(Some(path)),
+        crate::ffi::log_warning,
+    );
 }
 
 /// Create a new pinyin context.

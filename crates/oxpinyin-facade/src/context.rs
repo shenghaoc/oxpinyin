@@ -193,6 +193,25 @@ pub enum InitRefusal {
 }
 
 impl OpenFailure {
+    /// Applies the pin's failed-init decision and delegates only diagnostics
+    /// to the C boundary that owns their GLib and stderr calls.
+    pub fn refuse_init(
+        &self,
+        system_path: &Path,
+        init_name: &str,
+        table_conf_load_failed: impl FnOnce(&Path),
+        log_warning: impl FnOnce(&str),
+    ) {
+        match self.init_refusal(system_path) {
+            InitRefusal::Abort => std::process::abort(),
+            InitRefusal::TableConfLoadFailed => table_conf_load_failed(system_path),
+            InitRefusal::TableConfWarning(message) => log_warning(message),
+            InitRefusal::OpenWarning => {
+                log_warning(&format!("{init_name}: {self} (systemdir {system_path:?})"));
+            }
+        }
+    }
+
     /// Classifies the failure at the point where init stopped.
     ///
     /// Unknown format aborts while reading user.conf (074a2219,
