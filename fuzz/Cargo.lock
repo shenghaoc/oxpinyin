@@ -331,7 +331,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "oxpinyin-capi"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glib-sys",
  "num_enum",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-capi-marshal"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-input",
@@ -354,7 +354,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bitflags",
  "compact_str",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-data"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-input",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-engine"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "compact_str",
  "oxpinyin-core",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-facade"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-input"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glib-sys",
  "libc",
@@ -419,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-runtime"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-store"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cc",
  "cxx",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "oxpinyin-user"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
