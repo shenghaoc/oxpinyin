@@ -70,10 +70,11 @@ assertions.
 Punctuation removal (`punct_table.cpp:117-145`, `:169-177`) is library code with no
 oxpinyin caller, so no test writes a post-removal row.
 
-The REPL-only refusal of invalid text for a new phrase item is not a
-product witness: only `oxpinyin-repl` passes `refuse_invalid`, and the
-`gen_binary_files` utility does not. Its three EINVAL paths are held by
-`oxpinyin-repl`'s `tests::invalid_text_for_a_new_item_is_refused_at_the_table_reader`.
+The REPL selects strict text loading. In `oxpinyin-utils`,
+`storage::gen_binary_files::tests::invalid_text_for_a_new_item_is_refused_at_the_table_reader`
+checks the three EINVAL paths in `read_phrase_items`.
+`storage::gen_binary_files::tests::phrase_table_invalid_text` checks the
+refusal in `load_phrase_table`.
 
 ### Interactive modes
 
@@ -92,19 +93,22 @@ accepts its parser/scheme options, for example
 | `test_phrase` | `phrase` | C phrase segmentation, token text and saved-profile effects |
 | `test_chewing` | `chewing` | Pinyin ABI keyboard parsing, sentence and auxiliary cursors |
 | `test_zhuyin` | `zhuyin` | Separate Zhuyin parse/guess/train/reset/save and profile effects |
-| `test_parser2` | `parser2` | Full/double/keyboard/direct parser results, scheme differences, exact consumed/key-rest spans and final unterminated input |
+| `test_parser2` | `parser2` | Full/double/keyboard/direct parser dispatch, scheme differences, exact consumed/key-rest spans |
 | `test_phrase_table` | `phrase_table` | Native text-table lookup, empty-row continuation, Unicode refusal and preceding results |
 | `test_chewing_table` | `chewing_table` | Native ranges/order, zero-token cursor, incomplete-tone abort before overlong refusal |
 | `test_matrix` | `matrix` | Physical columns, separator/terminal zero keys and search continuation |
 | `test_pinyin_lookup` | `pinyin_lookup` | Real-table/model n-best results, original byte-length bound, ordered tokens and text |
-| `test_phrase_lookup` | `phrase_lookup` | Real phrase/model segmentation, invalid conversion and required chunk errors |
+| `test_phrase_lookup` | `phrase_lookup` | Real phrase/model segmentation and invalid conversion |
 
-`crates/oxpinyin-repl/tests/interactive.rs` holds the frozen
-product outputs and complete file-effect assertions for these modes.
-Only timing lines and the temporary data path spelling are
-normalized; the frozen expected bytes are not.
-`table_guards.rs` preserves prior successful output before a later EINVAL,
-and the two table state-machine tests sit beside their code.
+`crates/oxpinyin-repl/tests/it` checks the frozen product outputs and
+complete file effects for these modes.
+The comparisons account for retired timing lines, temporary data paths,
+and volatile GLib diagnostic prefixes.
+The matrix module checks the shared lookup loader's required chunk errors.
+`table_guards.rs` checks exact prior output and the input tree after a later EINVAL.
+The two table state-machine tests live in `crates/oxpinyin-repl/src/tables/tests.rs`.
+The input crate's `getline_keeps_the_pins_lines_and_its_last_line` checks the
+unterminated final line and the C-string view of embedded NULs.
 Fixed-path missing-config cases and the upstream executable's help text
 are harness-specific; the data layer's missing-file/header tests cover the data side.
 
