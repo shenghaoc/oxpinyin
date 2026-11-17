@@ -132,7 +132,7 @@ The other cases of unload, reload and candidates are
 `reload-total-while-unloaded`, `unload-drops-accepted-bump`, the
 `library-*` and `stderr-library-control-*` loading cases (including
 `stderr-library-control-save-unloaded`) and `save-unloaded-replacement{,-zhuyin}`.
-`an_unloaded_library_leaves_the_model` (`crates/oxpinyin-data/src/lm/tests.rs`)
+`an_unloaded_library_leaves_the_model` (`crates/oxpinyin-user/src/data/lm/tests.rs`)
 holds `reload-total-while-unloaded`.
 The export iterator cases are those whose names contain `iterator`.
 

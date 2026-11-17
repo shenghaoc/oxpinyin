@@ -27,8 +27,8 @@ use std::sync::{Mutex, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_core::SyllableKey;
-use oxpinyin_data::table_info::TableConf;
-use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin_user::data::table_info::TableConf;
+use oxpinyin_user::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_user::{
     LibraryLoopRows, PinyinKey, SystemOriginals, USER_DICTIONARY, UserConfLaw, UserStore,
     UserStoreError, phrase_index_library_index,

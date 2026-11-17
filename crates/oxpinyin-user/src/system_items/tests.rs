@@ -1,5 +1,5 @@
+use crate::data::chunk_write::ChunkItem;
 use oxpinyin_core::ChewingKey;
-use oxpinyin_data::chunk_write::ChunkItem;
 
 use crate::persistence::{SystemLibrary, SystemOriginals};
 use crate::replay::UnigramAdd;

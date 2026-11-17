@@ -36,6 +36,10 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
+#[cfg(test)]
+extern crate self as oxpinyin_user;
+
+pub mod data;
 pub mod phrase;
 pub mod phrase_table;
 pub mod seed;
@@ -63,8 +67,7 @@ pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
 pub use library_table::{LibrarySet, LibraryTable};
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;
-pub use oxpinyin_data::c_stderr;
-pub use oxpinyin_data::user_files::SystemVersions;
+
 pub use persistence::{
     ChunkHeaderField, MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals,
     UserConfLaw, system_originals,
@@ -86,5 +89,9 @@ pub use store::{
 pub use replay::tool;
 
 #[cfg(test)]
-#[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
+#[path = "../tests/support/native_fixture.rs"]
 mod native_fixture;
+
+#[cfg(all(test, feature = "tkrzw"))]
+#[path = "../../oxpinyin-facade/tests/common/contract_data.rs"]
+mod contract_data;

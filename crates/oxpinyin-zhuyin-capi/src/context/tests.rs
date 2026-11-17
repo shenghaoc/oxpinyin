@@ -135,7 +135,7 @@ fn a_user_session_fault_aborts_the_init() {
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin_data::phrase_library::directory_reads_as_a_chunk(probe.path())
+    oxpinyin_user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// One call over a private system directory whose library is a directory
@@ -180,7 +180,7 @@ fn map_a_directory_library(site: &str) -> bool {
 /// Register row 96 at save; row 76's completed save elsewhere.
 // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
 // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
-// without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+// without a word there (`oxpinyin-user`, `phrase_libraries.rs`), which no pin observation
 // covers.
 #[cfg(unix)]
 #[test]

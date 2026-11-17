@@ -1,10 +1,10 @@
 //! Session phrase operations over the arenas and the live system items.
 
 use super::*;
+use crate::data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
+use crate::data::phrase_library::PhraseItemView;
 use crate::replay::UnigramAdd;
 use crate::user_library::{SessionPhrases, UserLibrary};
-use oxpinyin_data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
-use oxpinyin_data::phrase_library::PhraseItemView;
 
 fn encoded(item: &ChunkItem) -> Result<Vec<u8>, UserStoreError> {
     encode_phrase_item(item).map_err(|error| UserStoreError::Persistence(error.to_string()))

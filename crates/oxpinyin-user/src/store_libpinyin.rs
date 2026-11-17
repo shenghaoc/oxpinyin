@@ -45,8 +45,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use oxpinyin_data::chunk_write::ChunkItem;
-use oxpinyin_data::user_files::SystemVersions;
+use crate::data::chunk_write::ChunkItem;
+use crate::data::user_files::SystemVersions;
 use oxpinyin_store::{DefaultUserBigramDb, UserBigramDb};
 
 use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
@@ -211,7 +211,7 @@ impl UserStore {
     pub fn check_profile(
         user_dir: &Path,
         versions: &SystemVersions,
-        layout: &oxpinyin_data::user_files::UserFileLayout,
+        layout: &crate::data::user_files::UserFileLayout,
         law: UserConfLaw,
     ) -> Result<crate::persistence::ProfileCheck, UserStoreError> {
         Ok(persistence::check_format(user_dir, versions, layout, law)?)
@@ -358,7 +358,7 @@ impl UserStore {
                 originals,
                 SystemOriginals::new(
                     Default::default(),
-                    oxpinyin_data::user_files::UserFileLayout::stock(),
+                    crate::data::user_files::UserFileLayout::stock(),
                 ),
             ),
         ))
@@ -405,7 +405,7 @@ pub(crate) fn seed_totals_plain(
 /// same row conversion; no session reader or writer uses these views yet.
 enum SeedItem<'a> {
     Owned(&'a ChunkItem),
-    View(oxpinyin_data::phrase_library::PhraseItemView<'a>),
+    View(crate::data::phrase_library::PhraseItemView<'a>),
 }
 
 impl SeedItem<'_> {
@@ -461,7 +461,7 @@ pub(crate) struct SeedTotals {
 /// failure's own text.
 enum SeedItemError {
     /// The item could not be encoded.
-    Encode(oxpinyin_data::chunk_write::ChunkWriteError),
+    Encode(crate::data::chunk_write::ChunkWriteError),
     /// The encoded item could not be placed in its arena.
     Place(String),
 }
@@ -537,7 +537,7 @@ fn holds_user_data(
     let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
         oxpinyin_input::path::build_path(
             dir,
-            std::ffi::OsStr::new(&oxpinyin_data::user_files::UserDbm::Bigram.file_name()),
+            std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
         )
         .exists()
     });
@@ -704,7 +704,7 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
             continue;
         }
         for (slot, view) in library.items() {
-            let item = oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes())
+            let item = crate::data::chunk_write::decode_phrase_item(view.as_bytes())
                 .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
             if let Some(overrides) = state.system_overrides.get_or_default(nibble) {
                 overrides.insert(slot, Some(item));

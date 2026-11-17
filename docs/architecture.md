@@ -5,9 +5,8 @@
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
 | oxpinyin-core | Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers and frozen content tables. | forbid | yes | via engine |
-| oxpinyin-data | Native readers for the formats used by a same-backend libpinyin build (D3 route). | forbid | yes | via engine |
-| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via data |
-| oxpinyin-user | The libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
+| oxpinyin-input | External-I/O boundary through the `libc` crate and a safe API. Stage 1 covers configuration and locale. Stage 2 activates a single-owner memmap2 API for system and addon chunks; remaining chunk-load calls are separate. The `tools` feature adds the utilities' GLib option and text, C++ stream and C stdio calls; the shipping libraries never enable it. | deny, scoped allows | yes (`tools`: where GLib is installed) | via user |
+| oxpinyin-user | Native system-data readers and the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
 | oxpinyin-engine | Internal session API for in-tree C facades, tools and tests. No supported external Rust interface. | forbid | yes | yes |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
@@ -46,7 +45,7 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 
 Both C-ABI facades consume `oxpinyin-facade`.
 Its runtime module assembles sessions for both libraries.
-`oxpinyin-facade` depends on core, engine, data, input, marshal and user.
+`oxpinyin-facade` depends on core, engine, input, marshal and user.
 It holds the concrete dictionary, language-model and user handles of runtime by value.
 For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
 
@@ -117,7 +116,7 @@ Facades through `oxpinyin-facade`, capi and future adapters consume that assembl
 Nothing else assembles equivalents independently.
 This prevents native and C-ABI paths from silently diverging.
 
-Runtime connects the public Rust APIs of data, user and engine.
+The facade runtime connects the system and user models to the engine.
 Its deliberate pinned algorithms are:
 
 - The user-count overlay feed.

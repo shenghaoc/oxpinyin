@@ -24,7 +24,7 @@ use std::os::raw::c_uint;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::PathBuf;
 
-#[path = "../../oxpinyin-data/tests/support/native_fixture.rs"]
+#[path = "../../oxpinyin-user/tests/support/native_fixture.rs"]
 mod native_fixture;
 pub(crate) use native_fixture::*;
 

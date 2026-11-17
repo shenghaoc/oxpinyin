@@ -16,10 +16,10 @@ use std::ffi::{CString, OsStr};
 
 use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
-use oxpinyin_data::PhraseLibraries;
-use oxpinyin_data::phrase_library::LibraryError;
-use oxpinyin_data::table_info::{FileName, TableConf};
 use oxpinyin_input::tool::{self, k_mixture_model as edge};
+use oxpinyin_user::data::PhraseLibraries;
+use oxpinyin_user::data::phrase_library::LibraryError;
+use oxpinyin_user::data::table_info::{FileName, TableConf};
 
 /// One loaded phrase index.
 pub struct SystemPhraseIndex {

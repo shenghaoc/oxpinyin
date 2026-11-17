@@ -26,13 +26,13 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Class (b) rulings stay authoritative.
    The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
 5. **Unsafe code.** The target allowlist is:
-   - oxpinyin-core/data/user/engine/runtime forbid `unsafe`.
+   - oxpinyin-core/user/engine/facade forbid `unsafe`.
    - The bidirectional `oxpinyin-input` boundary permits scoped unsafe modules.
    - `oxpinyin-store` denies `unsafe`, with scoped backend allows.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
    - Every unsafe block has a `// SAFETY:` comment.
 
-   The system/addon mapping boundary is active: data uses the input mapping API and has `#![forbid(unsafe_code)]`.
+   The system/addon mapping boundary is active: the user crate uses the input mapping API and has `#![forbid(unsafe_code)]`.
    Crate-root `#![forbid]` attributes and scoped allows enforce the implemented allowlist.
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
    `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.

@@ -126,7 +126,7 @@ const fn available_payload_length(file_size: u64) -> u32 {
 
 /// A chunk's open descriptor, used only while preparing its mapping.
 /// Dropping this owner closes it. Header interpretation and checksum
-/// validation belong to the caller in `oxpinyin-data`.
+/// validation belong to the caller in `oxpinyin-user`.
 pub struct MappingSource {
     source: native::ReadChunk,
     file_size: u64,

@@ -9,11 +9,11 @@
 //! directory is the backend's native data directory — the one a
 //! libpinyin build on the same backend uses, or what the pin's
 //! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
-//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-data`
+//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-user`
 //! is a handle plus a point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
-//! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
-//! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods
+//! in `oxpinyin-user`, user state in `oxpinyin-user` — and the user-count
+//! overlay arithmetic lives in `oxpinyin-user`'s `*_with_user_delta` methods
 //! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
 //! ordering law held here is `merge_suggestion_rows`, the pinned
 //! suggestion row order the facades rank predicted candidates in.
@@ -34,17 +34,17 @@ use oxpinyin_core::{
     PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
     UserCountDelta,
 };
-pub(crate) use oxpinyin_data::phrase_library::{
+use oxpinyin_engine::{EngineError, Session, SessionSettings, StoragePaths};
+pub(crate) use oxpinyin_user::data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
-pub(crate) use oxpinyin_data::table_info::{FileType, TableConfSite};
-pub(crate) use oxpinyin_data::table_info::{TableConf, TableConfError};
-use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
-use oxpinyin_data::{
+pub(crate) use oxpinyin_user::data::table_info::{FileType, TableConfSite};
+pub(crate) use oxpinyin_user::data::table_info::{TableConf, TableConfError};
+use oxpinyin_user::data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin_user::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary,
 };
-use oxpinyin_engine::{EngineError, Session, SessionSettings, StoragePaths};
 use oxpinyin_user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
     UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
@@ -320,8 +320,8 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<oxpinyin_core::ChewingKey> {
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
     system: SystemDictionary<
-        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_data::dict::SystemTables,
+        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_user::data::dict::SystemTables,
     >,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
@@ -607,8 +607,8 @@ impl<'a> RuntimeDict<'a> {
     pub fn system(
         &self,
     ) -> &SystemDictionary<
-        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_data::dict::SystemTables,
+        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_user::data::dict::SystemTables,
     > {
         &self.system
     }
@@ -1296,8 +1296,8 @@ impl Dictionary for RuntimeDict<'_> {
 #[derive(Clone, Copy)]
 pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<
-        &'a oxpinyin_data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_data::lm::BigramTables,
+        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_user::data::lm::BigramTables,
         &'a Cell<u32>,
     >,
     user: &'a UserStore,
@@ -1476,8 +1476,8 @@ pub type RuntimeSession<'a> =
 /// training and saving.
 pub struct Runtime {
     paths: StoragePaths,
-    system: oxpinyin_data::dict::SystemTables,
-    model: oxpinyin_data::lm::BigramTables,
+    system: oxpinyin_user::data::dict::SystemTables,
+    model: oxpinyin_user::data::lm::BigramTables,
     user: UserStore,
     conf: TableConf,
     addons: RefCell<AddonSet>,
@@ -1724,7 +1724,7 @@ impl Runtime {
         // as freeing the sub-index does upstream.
         let library_mask = Cell::new(0);
         let mut originals = oxpinyin_user::system_originals(
-            oxpinyin_data::phrase_libraries::PhraseLibraries::empty(),
+            oxpinyin_user::data::phrase_libraries::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
         );
         // The library loop: each default row is judged, mapped and merged
@@ -1792,7 +1792,8 @@ impl Runtime {
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
-        let mut lm = oxpinyin_data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+        let mut lm =
+            oxpinyin_user::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
@@ -1824,7 +1825,7 @@ impl Runtime {
         })
     }
 
-    fn libraries(&self) -> &oxpinyin_data::phrase_libraries::PhraseLibraries {
+    fn libraries(&self) -> &oxpinyin_user::data::phrase_libraries::PhraseLibraries {
         self.user.originals().phrase_libraries()
     }
 
@@ -2039,7 +2040,7 @@ impl Runtime {
     pub(crate) fn check_system_libraries(
         &self,
         only: Option<u8>,
-    ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
+    ) -> oxpinyin_user::data::phrase_libraries::LibraryCheck {
         self.libraries().check_now(
             |nibble| {
                 only.is_some()
@@ -2096,7 +2097,7 @@ impl Runtime {
         let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
             return Ok(SaveBaseline::Keep);
         };
-        match oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
+        match oxpinyin_user::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                 Err(SaveRemapFault::ChunkHeaderRead)
@@ -2185,7 +2186,7 @@ impl Runtime {
             if !libraries.is_loaded(index) {
                 continue;
             }
-            match oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
+            match oxpinyin_user::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
                 Ok(library) => {
                     walk.originals.insert_mapping(index, path, library);
                     return Some(RemapStep::Mapped(index));

@@ -1,5 +1,5 @@
 use super::{PhraseIndex, SystemPhraseIndex};
-use oxpinyin_data::PhraseLibraries;
+use oxpinyin_user::data::PhraseLibraries;
 
 #[test]
 fn sentence_start_is_the_special_table() {

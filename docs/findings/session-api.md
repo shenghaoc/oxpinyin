@@ -13,7 +13,7 @@ The code is the reference for the current surface: `crates/oxpinyin-engine/src/l
 
 `oxpinyin-engine` is the in-tree session layer under the C facades.
 The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`).
-This crate and the crates below it (`oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`) are internal and carry no stability promise.
+This crate and the crates below it (`oxpinyin-core`, `oxpinyin-user`) are internal and carry no stability promise.
 
 The engine receives its inputs as data.
 `Session::new` takes a `SessionSettings` value, a dictionary and a language model.

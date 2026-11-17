@@ -13,9 +13,9 @@
 
 use std::ffi::OsString;
 
-use oxpinyin_data::table_info::FileType;
 use oxpinyin_input::tool;
 use oxpinyin_input::tool::OptionValue;
+use oxpinyin_user::data::table_info::FileType;
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::{Libraries, token_to_string};

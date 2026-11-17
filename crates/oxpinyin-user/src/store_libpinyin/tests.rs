@@ -278,9 +278,9 @@ fn the_actual_baseline_decides_the_journal_threshold() {
 /// item keeps unigram 0.
 #[test]
 fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::build_chunk;
-    use oxpinyin_data::user_files::read_chunk_payload;
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::chunk_write::build_chunk;
+    use crate::data::user_files::read_chunk_payload;
     let dir = tempdir("empty-chunk-total");
     // A profile the library saved once, so the open reads its chunks.
     let mut first =
@@ -477,8 +477,8 @@ fn predicted_prefix_trains_an_arena_resident_user_item() {
 /// `packed_to_pinyin_keys` has no key for this one.
 #[test]
 fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
+    use crate::data::chunk_write::build_chunk;
     use crate::user_library::UserLibrary;
-    use oxpinyin_data::chunk_write::build_chunk;
 
     let dir = tempdir("arena-foreign-word");
     let store =
@@ -569,8 +569,8 @@ fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
 
 #[test]
 fn failed_system_reload_keeps_the_unloaded_guard() {
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::user_files::{LogRecord, encode_log_records};
 
     let dir = tempdir("unloaded-failed-reload");
     let mut store =
@@ -601,9 +601,9 @@ fn failed_system_reload_keeps_the_unloaded_guard() {
 
 #[test]
 fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
+    use crate::data::chunk_write::{build_chunk, encode_phrase_item};
+    use crate::data::user_files::LogRecord;
     use crate::user_library::UserLibrary;
-    use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
-    use oxpinyin_data::user_files::LogRecord;
 
     let ni = ChewingKey::from_pinyin("ni").unwrap().to_packed();
     let eng = ChewingKey::from_pinyin("eng").unwrap().to_packed();
@@ -703,10 +703,10 @@ fn header_only_count_survives_session_transfer() {
     payload.push(b'#');
     std::fs::write(
         &path,
-        oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
-    let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
+    let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).unwrap();
     assert_eq!(mapped.pronunciation_count(1), Some(17));
     assert!(mapped.item(1).is_none());
     let originals: SystemOriginals =
@@ -729,8 +729,7 @@ fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
     let file_len = (1_u64 << 32) + 8;
     file.set_len(file_len).unwrap();
     drop(file);
-    let mapped =
-        oxpinyin_data::phrase_library::PhraseLibrary::open_retaining_layout(&path).unwrap();
+    let mapped = crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path).unwrap();
     assert!(mapped.is_layout_failed());
     let originals: SystemOriginals =
         crate::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
@@ -764,9 +763,9 @@ fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
 /// Opens a profile whose `gb_char.dbin` holds `records` over [`originals`].
 fn open_with_log(
     name: &str,
-    records: &[oxpinyin_data::user_files::LogRecord],
+    records: &[crate::data::user_files::LogRecord],
 ) -> (PathBuf, UserStore) {
-    let payload = oxpinyin_data::user_files::encode_log_records(records).expect("log");
+    let payload = crate::data::user_files::encode_log_records(records).expect("log");
     open_with_payload(name, originals(), &payload)
 }
 
@@ -779,12 +778,12 @@ fn open_with_payload(
     let dir = tempdir(name);
     std::fs::write(
         dir.join("gb_char.dbin"),
-        oxpinyin_data::chunk_format::build_memory_chunk(payload).expect("chunk"),
+        crate::data::chunk_format::build_memory_chunk(payload).expect("chunk"),
     )
     .expect("write log");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let store =
@@ -908,9 +907,9 @@ fn frequency_of(store: &UserStore, token: u32) -> crate::Lookup<(crate::ItemOrig
 
 #[test]
 fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::LogRecord;
     use crate::{ItemOrigin, Lookup};
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::LogRecord;
     let items = three_items();
     let encode = |item: &ChunkItem| encode_phrase_item(item).expect("item");
     let (mut first, mut third) = (items[0].clone(), items[2].clone());
@@ -951,7 +950,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
             new_item: encode(&fourth),
         },
     ];
-    let payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
+    let payload = crate::data::user_files::encode_log_records(&records).expect("log");
     let shipped_dir = tempdir("over-read-shipped");
     let shipped_path = shipped_dir.join("gb_char.bin");
     let shipped: Vec<_> = items
@@ -962,10 +961,10 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
         .collect();
     std::fs::write(
         &shipped_path,
-        oxpinyin_data::chunk_write::build_chunk(&shipped).expect("chunk"),
+        crate::data::chunk_write::build_chunk(&shipped).expect("chunk"),
     )
     .expect("write shipped chunk");
-    let library = oxpinyin_data::phrase_library::PhraseLibrary::open(&shipped_path)
+    let library = crate::data::phrase_library::PhraseLibrary::open(&shipped_path)
         .expect("open shipped chunk");
     let originals = crate::LibraryTable::from([(
         1_u8,
@@ -1004,14 +1003,14 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
 
 #[test]
 fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::LogRecord;
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::LogRecord;
     let items = three_items();
     let old = encode_phrase_item(&items[0]).expect("item");
     let mut new = old.clone();
     new[0] = 2;
     new[1] = 2;
-    let payload = oxpinyin_data::user_files::encode_log_records(&[LogRecord::Modify {
+    let payload = crate::data::user_files::encode_log_records(&[LogRecord::Modify {
         token: 1,
         old_item: old,
         new_item: new,
@@ -1096,8 +1095,8 @@ fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
 
 #[test]
 fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
-    use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
-    use oxpinyin_data::user_files::LogRecord;
+    use crate::data::chunk_write::{build_chunk, encode_phrase_item};
+    use crate::data::user_files::LogRecord;
     let items = three_items();
     let pairs: Vec<_> = items
         .iter()
@@ -1123,18 +1122,18 @@ fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
     let path = system_dir.join("gb_char.bin");
     std::fs::write(
         &path,
-        oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        crate::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("system chunk");
     let originals = || -> SystemOriginals {
-        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("library");
+        let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("library");
         crate::LibraryTable::from([(1_u8, SystemLibrary::from_library(mapped))]).into()
     };
     let old = encode_phrase_item(&items[0]).expect("old");
     let mut new = old.clone();
     new[0] = 2;
     new[1] = 2;
-    let log = oxpinyin_data::user_files::encode_log_records(&[LogRecord::Modify {
+    let log = crate::data::user_files::encode_log_records(&[LogRecord::Modify {
         token: 1,
         old_item: old,
         new_item: new,
@@ -1183,9 +1182,9 @@ fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
 
 #[test]
 fn a_payload_over_read_reverses_the_applied_records() {
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::LogRecord;
     use crate::{ItemOrigin, Lookup};
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::LogRecord;
     let items = three_items();
     let encode = |item: &ChunkItem| encode_phrase_item(item).expect("item");
     let (mut first, mut third) = (items[0].clone(), items[2].clone());
@@ -1207,7 +1206,7 @@ fn a_payload_over_read_reverses_the_applied_records() {
             new_item: encode(&third),
         },
     ];
-    let mut payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
+    let mut payload = crate::data::user_files::encode_log_records(&records).expect("log");
     // The last record's payload now runs past the end of the log.
     payload.truncate(payload.len() - 3);
     let (dir, store) = open_with_payload("over-read-tail", three_item_originals(), &payload);
@@ -1229,8 +1228,8 @@ fn a_payload_over_read_reverses_the_applied_records() {
 
 #[test]
 fn session_owns_the_replayed_overrides_it_was_opened_with() {
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::LogRecord;
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::LogRecord;
     let original = ChunkItem {
         phrase: vec![0x4f60],
         unigram: 100,
@@ -1299,7 +1298,7 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
     let dir = tempdir("owned-overrides-none");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1326,7 +1325,7 @@ fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
     .expect("write gram");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
 
@@ -1400,7 +1399,7 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
     .expect("write gram");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
 
@@ -1459,7 +1458,7 @@ fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
     .expect("write gram");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let mut store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1493,7 +1492,7 @@ fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
     let dir = tempdir("reload-keeps-grams");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let mut store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1523,13 +1522,13 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
     let dir = tempdir("set-freq-miss");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let mut store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
         .expect("open");
     let token = |n: u32| 0x0100_0000 | n;
-    let gram = oxpinyin_data::single_gram::encode_single_gram(
+    let gram = crate::data::single_gram::encode_single_gram(
         5,
         &[
             (token(1), 1),
@@ -1585,13 +1584,13 @@ fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
     let dir = tempdir("unsorted-gram-train");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let mut store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
         .expect("open");
     let (high, low) = (0x0100_0009_u32, 0x0100_0001_u32);
-    let gram = oxpinyin_data::single_gram::encode_single_gram;
+    let gram = crate::data::single_gram::encode_single_gram;
     store.plant_raw_bigram(2, &gram(10, &[(high, 4), (low, 6)]));
     assert_eq!(store.bigram_count(2, low).expect("miss"), 0);
     assert_eq!(store.observe_selection(2, low).expect("train"), 69);
@@ -1614,7 +1613,7 @@ fn a_partial_tail_created_in_session_refuses_training() {
     let dir = tempdir("partial-gram-in-session");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
     let mut store = crate::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1682,7 +1681,7 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
         .expect("write valid gram");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
 
@@ -1763,7 +1762,7 @@ fn a_non_token_bigram_key_is_the_masks_first_fault() {
     .expect("write grams");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
 
@@ -1793,7 +1792,7 @@ fn short_bigram_guard_reads_the_live_raw_value() {
     .expect("write short gram");
     std::fs::write(
         dir.join("user.conf"),
-        oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
     )
     .expect("write marker");
 
@@ -1831,9 +1830,9 @@ fn short_bigram_guard_reads_the_live_raw_value() {
 #[test]
 fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
     use crate::JournalFault;
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::{LogRecord, encode_log_records};
 
     let dir = tempdir("mask-faults");
     let original = originals();
@@ -1941,9 +1940,9 @@ fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
 /// Library 1's ADD of slot 2 and MODIFY of slot 1 (你 to 龘), with the
 /// header first when `header` is true.
 fn add_and_modify_log(header: bool) -> Vec<u8> {
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::encode_phrase_item;
-    use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::user_files::{LogRecord, encode_log_records};
 
     let old = originals()[&1].item(1).expect("original item");
     let mut new = old.clone();
@@ -2231,7 +2230,7 @@ fn reloading_a_system_library_drops_the_unsaved_session() {
 /// the same item, including empty-key readings, as initial raw replay.
 #[test]
 fn persisted_empty_add_survives_reload_save_and_reopen() {
-    use oxpinyin_data::user_files::LogRecord;
+    use crate::data::user_files::LogRecord;
     for prons in [vec![], vec![(vec![], 13), (vec![], 5)]] {
         let item = ChunkItem {
             phrase: vec![],
@@ -2842,8 +2841,8 @@ fn appended_system_readings_keep_absolute_training_counts() {
 
 #[test]
 fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
-    use oxpinyin_data::chunk_write::build_chunk;
-    use oxpinyin_data::phrase_library::PhraseLibrary;
+    use crate::data::chunk_write::build_chunk;
+    use crate::data::phrase_library::PhraseLibrary;
 
     let dir = tempdir("mapped-append-second-reading");
     let shipped_dir = tempdir("mapped-append-shipped");
@@ -2910,10 +2909,10 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
 /// `unigram_delta` sees.
 #[test]
 fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
-    use oxpinyin_data::chunk_format::chunk_checksum;
-    use oxpinyin_data::chunk_write::build_chunk;
-    use oxpinyin_data::phrase_library::PhraseLibrary;
-    use oxpinyin_data::user_files::{LogRecord, load_chunk_payload, log_records};
+    use crate::data::chunk_format::chunk_checksum;
+    use crate::data::chunk_write::build_chunk;
+    use crate::data::phrase_library::PhraseLibrary;
+    use crate::data::user_files::{LogRecord, load_chunk_payload, log_records};
 
     let dir = tempdir("aliased-offset");
     let shipped_dir = tempdir("aliased-offset-shipped");
@@ -3113,7 +3112,7 @@ fn train_save_reopen_carries_the_learning() {
         // wrote.
         assert_eq!(
             store.bigram_row(1).expect("row"),
-            Some(oxpinyin_data::single_gram::encode_single_gram(
+            Some(crate::data::single_gram::encode_single_gram(
                 69,
                 &[(0x0100_0001, 69)]
             ))
@@ -3152,7 +3151,7 @@ fn masked_and_removed_phrases_preserve_raw_index_records() {
     };
     let phrase_rows = || {
         let store = DefaultStore::open_user_index(
-            &dir.join(oxpinyin_data::user_files::UserDbm::PhraseIndex.file_name()),
+            &dir.join(crate::data::user_files::UserDbm::PhraseIndex.file_name()),
         )
         .expect("opens");
         let mut rows = BTreeMap::new();
@@ -3284,7 +3283,7 @@ fn a_preexisting_libpinyin_profile_seeds_the_session() {
     let state = UserState {
         bigram: vec![(
             1_u32.to_le_bytes().to_vec(),
-            oxpinyin_data::single_gram::encode_single_gram(
+            crate::data::single_gram::encode_single_gram(
                 207,
                 &[(0x0100_0001, 138), (0x0700_0001, 69)],
             ),
@@ -3336,7 +3335,7 @@ fn a_preexisting_libpinyin_profile_seeds_the_session() {
 /// The open counter `user.conf` records, as the next init reads it.
 fn recorded_counter(dir: &Path) -> Option<i32> {
     Some(
-        oxpinyin_data::user_files::UserTableInfo::load_path(&dir.join("user.conf"))
+        crate::data::user_files::UserTableInfo::load_path(&dir.join("user.conf"))
             .ok()?
             .open_counter,
     )
@@ -3427,8 +3426,8 @@ mod unloaded;
 /// (`phrase_index.cpp:150-178`) leaves token 2's as it was.
 #[test]
 fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
+    use crate::data::chunk_format::build_memory_chunk;
     use crate::native_fixture::{TempUserDir, system_dir};
-    use oxpinyin_data::chunk_format::build_memory_chunk;
 
     let scratch = tempfile::tempdir().expect("scratch");
     let system = crate::native_fixture::items_system(
@@ -3468,8 +3467,8 @@ fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
 /// to the first unigram changes the second's low byte only before compaction.
 #[test]
 fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
+    use crate::data::chunk_format::build_memory_chunk;
     use crate::native_fixture::{TempUserDir, system_dir};
-    use oxpinyin_data::chunk_format::build_memory_chunk;
 
     for write_before_compaction in [false, true] {
         let scratch = tempfile::tempdir().expect("scratch");
@@ -3538,9 +3537,9 @@ fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
 /// raises token 1's count and token 2 keeps the old one.
 #[test]
 fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
+    use crate::data::chunk_format::build_memory_chunk;
+    use crate::data::chunk_write::{ChunkItem, build_chunk};
     use crate::native_fixture::{TempUserDir, set_phrase_table_row, system_dir, write_user_conf};
-    use oxpinyin_data::chunk_format::build_memory_chunk;
-    use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-aliased-slots");
     write_user_conf(&user.path, &system_dir());
@@ -3678,19 +3677,19 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
     assert!(modified.iter().any(|row| row.0 == "你你你"));
     store.mask_out(0, 0).unwrap();
     let system = crate::native_fixture::system_dir();
-    let conf = oxpinyin_data::table_info::TableConf::load_from_dir(&system).unwrap();
+    let conf = crate::data::table_info::TableConf::load_from_dir(&system).unwrap();
     let libraries = conf
         .default_row_steps(Some(user.path()))
         .into_iter()
         .filter_map(|(index, step)| {
-            let oxpinyin_data::table_info::DefaultRowStep::System { file, .. } = step else {
+            let crate::data::table_info::DefaultRowStep::System { file, .. } = step else {
                 return None;
             };
             let path = system.join(file.as_ref());
             Some((
                 index,
                 crate::SystemLibrary::from_library(
-                    oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap(),
+                    crate::data::phrase_library::PhraseLibrary::open(&path).unwrap(),
                 ),
             ))
         })
@@ -3712,7 +3711,7 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
 fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
     let user = tempfile::tempdir().unwrap();
     let system = crate::native_fixture::system_dir();
-    let dict = oxpinyin_data::SystemDictionary::open(&system).unwrap();
+    let dict = crate::data::SystemDictionary::open(&system).unwrap();
     use oxpinyin_core::Dictionary as _;
     let ni_key = oxpinyin_core::SyllableKey::from_text("ni").unwrap();
     let gbk = dict

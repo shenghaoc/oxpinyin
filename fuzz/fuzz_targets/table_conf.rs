@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_data::table_info::TableConf;
+use oxpinyin_user::data::table_info::TableConf;
 
 /// One scratch file per fuzzing process: the scanner reads a `FILE *`.
 fn scratch() -> &'static Path {

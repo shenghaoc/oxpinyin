@@ -243,7 +243,7 @@ use oxpinyin_user::{KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw, 
 /// store is in memory, #642).
 fn open() -> ContextCore {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-    let extension = oxpinyin_data::DEFAULT_STORE_EXT;
+    let extension = oxpinyin_user::data::DEFAULT_STORE_EXT;
     ContextCore::open(
         &root.join(extension),
         None,
@@ -364,7 +364,7 @@ fn an_unused_nibble_and_the_pins_asserts_are_reported() {
 fn an_addon_promoted_into_a_missing_library_is_exported() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
-        .join(oxpinyin_data::DEFAULT_STORE_EXT);
+        .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
     let system = tempfile::tempdir().unwrap();
     for entry in std::fs::read_dir(root).unwrap() {
         let entry = entry.unwrap();
@@ -392,8 +392,8 @@ fn an_addon_promoted_into_a_missing_library_is_exported() {
     ctx.user_store_mut()
         .promote_addon_phrase(
             0x0500_0001,
-            &oxpinyin_data::chunk_write::encode_phrase_item(
-                &oxpinyin_data::chunk_write::ChunkItem {
+            &oxpinyin_user::data::chunk_write::encode_phrase_item(
+                &oxpinyin_user::data::chunk_write::ChunkItem {
                     phrase: "二簧".chars().map(u32::from).collect(),
                     unigram: 9,
                     prons: vec![(

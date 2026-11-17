@@ -598,7 +598,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
@@ -632,17 +631,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-data"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-input",
- "oxpinyin-store",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "oxpinyin-engine"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -659,7 +647,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-input",
  "oxpinyin-store",
@@ -689,7 +676,6 @@ dependencies = [
  "libc",
  "oxpinyin-capi",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
@@ -721,7 +707,6 @@ name = "oxpinyin-user"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-input",
  "oxpinyin-store",
  "proptest",
@@ -740,7 +725,6 @@ dependencies = [
  "assert_fs",
  "libc",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-input",
  "oxpinyin-store",
  "oxpinyin-user",
@@ -759,7 +743,6 @@ dependencies = [
  "libc",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",

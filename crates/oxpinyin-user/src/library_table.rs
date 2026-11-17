@@ -10,7 +10,7 @@
 //! (`novel_types.h:44`), which is below 16. An index of 16 or more names no
 //! slot: a read of one finds nothing and a write of one stores nothing.
 
-use oxpinyin_data::table_info::PHRASE_INDEX_LIBRARY_COUNT;
+use crate::data::table_info::PHRASE_INDEX_LIBRARY_COUNT;
 
 /// The library indexes that have a slot, so that a walk can lend each one.
 static LIBRARIES: [u8; PHRASE_INDEX_LIBRARY_COUNT] =

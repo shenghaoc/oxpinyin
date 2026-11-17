@@ -8,8 +8,8 @@
 
 use std::ffi::OsString;
 
-use oxpinyin_data::table_info::{FileType, TableConf};
 use oxpinyin_input::tool;
+use oxpinyin_user::data::table_info::{FileType, TableConf};
 
 use crate::storage::libraries::Libraries;
 use crate::training::{UNIGRAM_FILE_TYPES, load_table_conf};

@@ -18,10 +18,10 @@ use oxpinyin_store::StoreError;
 
 use std::collections::BTreeSet;
 
-use oxpinyin_core::ChewingKey;
-use oxpinyin_data::row_format::pinyin_index::{
+use crate::data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };
+use oxpinyin_core::ChewingKey;
 use smallvec::SmallVec;
 
 use crate::phrase::MAX_PHRASE_LENGTH;
@@ -518,8 +518,7 @@ impl UserIndex {
                 if len == 0 || len > MAX_PHRASE_LENGTH {
                     return Ok(());
                 }
-                if let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, len)
-                {
+                if let Ok(items) = crate::data::row_format::pinyin_index::decode_items(value, len) {
                     for item in items {
                         set.insert((
                             item.token,

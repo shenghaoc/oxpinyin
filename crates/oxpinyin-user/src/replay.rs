@@ -33,7 +33,7 @@
 //! * The first failure ends the merge and the records before it stay applied
 //!   (`pinyin.cpp:276` ignores the answer).
 //!
-//! The records come from [`oxpinyin_data::user_files::log_records`], the pin's
+//! The records come from [`crate::data::user_files::log_records`], the pin's
 //! own walk; the walk's and the merge's assertions are [`JournalFault`]s.
 //! Session opens keep each retained payload's private byte view. Typed
 //! [`ChunkItem`]s are cached on use.
@@ -42,11 +42,9 @@ use crate::persistence::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use oxpinyin_data::chunk_write::{
-    ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item,
-};
-use oxpinyin_data::phrase_library::PhraseLibrary;
-use oxpinyin_data::user_files::LogRecord;
+use crate::data::chunk_write::{ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item};
+use crate::data::phrase_library::PhraseLibrary;
+use crate::data::user_files::LogRecord;
 
 #[cfg(test)]
 use crate::persistence::SystemLibrary;
@@ -240,7 +238,7 @@ struct Appended {
 
 /// The private mapping the pin edits, or inline byte buffers for a fixture.
 enum Backing {
-    Mapped(oxpinyin_data::phrase_library::PhraseContent),
+    Mapped(crate::data::phrase_library::PhraseContent),
     Inline { offsets: Vec<u8>, content: Vec<u8> },
 }
 
@@ -1195,7 +1193,7 @@ impl std::fmt::Debug for ReplayedLibrary {
 
 impl ReplayedLibrary {
     pub(crate) fn from_mapping(
-        mapping: oxpinyin_data::phrase_library::PhraseContent,
+        mapping: crate::data::phrase_library::PhraseContent,
         total: u32,
     ) -> Self {
         let mut content = Content::new(Backing::Mapped(mapping));

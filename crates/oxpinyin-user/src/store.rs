@@ -310,7 +310,7 @@ enum SystemMerge {
 }
 
 fn plan_system_reading(
-    item: &oxpinyin_data::chunk_write::ChunkItem,
+    item: &crate::data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
 ) -> SystemMerge {
     let mut total = 0_u32;
@@ -341,7 +341,7 @@ fn plan_system_reading(
 /// import path; `true` means the count wrapped and the stored rows are the
 /// empty view.
 pub fn add_system_reading(
-    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    item: &mut crate::data::chunk_write::ChunkItem,
     packed: &[u16],
     delta: u32,
 ) -> bool {
@@ -352,7 +352,7 @@ pub fn add_system_reading(
 }
 
 fn apply_system_reading(
-    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    item: &mut crate::data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
     change: SystemMerge,
 ) {
@@ -374,7 +374,7 @@ fn apply_system_reading(
 /// copy. Malformed internal items still take the encoder's original error
 /// path, including its error text. Wrapping deliberately discards old rows.
 fn validate_system_merge(
-    item: &oxpinyin_data::chunk_write::ChunkItem,
+    item: &crate::data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
     change: SystemMerge,
 ) -> Result<(), StoreError> {
@@ -390,7 +390,7 @@ fn validate_system_merge(
     {
         let mut candidate = item.clone();
         apply_system_reading(&mut candidate, reading, change);
-        oxpinyin_data::chunk_write::encode_phrase_item(&candidate)
+        crate::data::chunk_write::encode_phrase_item(&candidate)
             .map_err(|error| StoreError::Backend(error.to_string().into()))?;
     }
     Ok(())
@@ -1289,7 +1289,7 @@ impl UserStore {
                 // of the library's share.
                 let current = original.mapped.map_or(
                     original.total,
-                    oxpinyin_data::phrase_library::PhraseLibrary::total_freq,
+                    crate::data::phrase_library::PhraseLibrary::total_freq,
                 );
                 let old = items
                     .library_total(library, Some(original))
@@ -1600,7 +1600,7 @@ impl UserStore {
         token: Token,
         item: &[u8],
     ) -> Result<(), UserStoreError> {
-        let view = oxpinyin_data::phrase_library::PhraseItemView::from_bytes(item)
+        let view = crate::data::phrase_library::PhraseItemView::from_bytes(item)
             .ok_or(UserStoreError::InvalidPhrase)?;
         if view.phrase_length() > crate::MAX_PHRASE_LENGTH {
             return Err(UserStoreError::InvalidPhrase);
@@ -2310,7 +2310,7 @@ impl UserStore {
     pub(crate) fn live_system_changes(
         &self,
         originals: &impl crate::persistence::OriginalLibraries,
-    ) -> std::collections::BTreeMap<Token, Option<oxpinyin_data::chunk_write::ChunkItem>> {
+    ) -> std::collections::BTreeMap<Token, Option<crate::data::chunk_write::ChunkItem>> {
         self.inner.system_items.borrow().changed_items(originals)
     }
 
@@ -2346,7 +2346,7 @@ impl UserStore {
     pub(crate) fn system_item_override(
         &self,
         token: Token,
-    ) -> Result<Option<oxpinyin_data::chunk_write::ChunkItem>, UserStoreError> {
+    ) -> Result<Option<crate::data::chunk_write::ChunkItem>, UserStoreError> {
         if !(1..=4).contains(&(token >> 24)) {
             return Ok(None);
         }
@@ -2452,14 +2452,14 @@ impl UserStore {
     pub(crate) fn with_effective_system_item<R>(
         &self,
         token: Token,
-        read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
+        read: impl FnOnce(&crate::data::chunk_write::ChunkItem) -> R,
     ) -> Option<R> {
         if !self.is_system_library(phrase_index_library_index(token)) {
             return None;
         }
         if let Some(item) = self
             .with_user_item(token, |view| {
-                oxpinyin_data::chunk_write::decode_phrase_item(view.as_bytes()).ok()
+                crate::data::chunk_write::decode_phrase_item(view.as_bytes()).ok()
             })
             .flatten()
         {
@@ -2596,7 +2596,7 @@ impl UserStore {
         // `remove_phrase_item`, `add_pronunciation`, `add_phrase_item` over
         // the buffer (`pinyin.cpp:559-569`). A slot the journal removed has
         // nothing to remove, so its total is left as the removal left it.
-        let bytes = oxpinyin_data::chunk_write::encode_phrase_item(&item)
+        let bytes = crate::data::chunk_write::encode_phrase_item(&item)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         let removed = items.remove_item(original, token).is_some();
         let _ = items.add_item(original, token, &bytes);
@@ -2624,7 +2624,7 @@ impl UserStore {
     /// bigram container, the user library arenas, the two user tables and
     /// the live system buffers.
     pub(crate) fn seed_from_state(&mut self, state: &crate::persistence::UserState) {
-        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use crate::data::chunk_write::encode_phrase_item;
         use oxpinyin_store::UserBigramDb as _;
         for (key, value) in &state.bigram {
             self.container().store(key, value).expect("store a gram");
@@ -2643,7 +2643,7 @@ impl UserStore {
             }
         }
         phrases.index = crate::user_index::UserIndex::from_entries(
-            oxpinyin_data::table_entries::pinyin_index_entries(&crate::persistence::chewing_rows(
+            crate::data::table_entries::pinyin_index_entries(&crate::persistence::chewing_rows(
                 state,
                 &self.originals,
             )),

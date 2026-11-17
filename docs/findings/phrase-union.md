@@ -247,8 +247,8 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin-data/src/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
-| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin-data/src/dict.rs`), held by the runtime's `AddonSet` |
+| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin-user/src/data/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
+| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin-user/src/data/dict.rs`), held by the runtime's `AddonSet` |
 | Default facade total (system + user) and addon facade total | `BigramLanguageModel` unigram total; `addon_unigram_total` |
 
 ### 4.2 Engine

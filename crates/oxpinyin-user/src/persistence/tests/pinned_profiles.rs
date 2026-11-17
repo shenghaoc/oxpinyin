@@ -1,11 +1,10 @@
 //! Saved profiles and pin-derived native rows through the user-store library loop.
+use crate::contract_data;
 use crate::native_fixture::{TempUserDir, craft_hash, store_rows, write_user_conf};
 use crate::test_session::{native_keys, native_unigram, open_native};
 use crate::{UserConfLaw, UserStore};
-use std::path::Path;
-#[path = "../../../../oxpinyin-facade/tests/common/contract_data.rs"]
-mod contract_data;
 use contract_data::contract_data_dir;
+use std::path::Path;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

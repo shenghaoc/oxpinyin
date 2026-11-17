@@ -14,9 +14,9 @@
 
 use std::cell::Cell;
 
+use crate::data::phrase_libraries::PhraseLibraries;
+use crate::data::phrase_library::PhraseItemView;
 use oxpinyin_core::PhraseText;
-use oxpinyin_data::phrase_libraries::PhraseLibraries;
-use oxpinyin_data::phrase_library::PhraseItemView;
 
 use crate::store::{Token, UserStore};
 

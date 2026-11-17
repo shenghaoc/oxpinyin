@@ -45,14 +45,13 @@ sha2 = "0.11"
 # Checked integer conversions for parser schemes and the Pinyin C candidate type.
 num_enum = { version = "0.7.6", default-features = false }
 oxpinyin-core = { path = "crates/oxpinyin-core", version = "=0.1.0-alpha.1" }
-# The four store-backend chain crates carry default-features = false at the
+# The store-backend chain crates carry default-features = false at the
 # workspace table so `--no-default-features` builds actually reach the
 # store's compile-time backend selection; each crate's [features] block
 # passes the backend choice to its next dependency toward the store (see
 # oxpinyin-store's [features] for the model and precedence). Cargo unifies
 # features, so one forwarding edge per crate reaches the store; every crate
 # that is built on its own keeps its `default` and peer features.
-oxpinyin-data = { path = "crates/oxpinyin-data", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-facade = { path = "crates/oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 # The external-I/O boundary: the pin's C library calls behind a safe API.
 oxpinyin-input = { path = "crates/oxpinyin-input", version = "=0.1.0-alpha.1" }
@@ -72,7 +71,7 @@ glib-sys = "0.22"
 libc = "0.2.189"
 # Derives Display, source() and From for the error enums.
 thiserror = "2.0"
-# The phrase-library chunk mapping (oxpinyin-data, Unix only). No features:
+# The phrase-library chunk mapping (oxpinyin-user, Unix only). No features:
 # `stable_deref_trait` stays off.
 memmap2 = { version = "0.9.11", default-features = false }
 # Test-only: collision-free, self-cleaning temp dirs for test harnesses.

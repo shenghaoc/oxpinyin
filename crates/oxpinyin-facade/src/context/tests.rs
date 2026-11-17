@@ -60,9 +60,9 @@ use super::SaveOutcome;
 use oxpinyin_core::ChewingKey;
 use oxpinyin_core::{PhraseText, SyllableKey};
 #[cfg(unix)]
-use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
 #[cfg(unix)]
-use oxpinyin_data::phrase_library::PhraseLibrary;
+use oxpinyin_user::data::phrase_library::PhraseLibrary;
 use oxpinyin_user::toned_key;
 
 const GB: u8 = 1;
@@ -72,7 +72,7 @@ const GBK: u8 = 2;
 /// with a user directory of its own.
 fn open(user: &Path) -> ContextCore {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-    let extension = oxpinyin_data::DEFAULT_STORE_EXT;
+    let extension = oxpinyin_user::data::DEFAULT_STORE_EXT;
     ContextCore::open(&root.join(extension), Some(user), WORD, UserConfLaw::Pinyin)
         .expect("committed backend fixtures")
 }
@@ -143,7 +143,7 @@ fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: boo
         payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         std::fs::write(
             user.join("gb_char.dbin"),
-            oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+            oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
         )
         .unwrap();
     }
@@ -268,7 +268,7 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
 /// SYSTEM_FILE`.
 fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-    let committed = root.join(oxpinyin_data::DEFAULT_STORE_EXT);
+    let committed = root.join(oxpinyin_user::data::DEFAULT_STORE_EXT);
     let system = scratch.join("system");
     std::fs::create_dir_all(&system).expect("system dir");
     for entry in std::fs::read_dir(committed).expect("committed fixtures") {
@@ -365,7 +365,7 @@ mod failed_attachment_fini {
     use oxpinyin_user::UserConfLaw;
 
     fn fixture_dir() -> PathBuf {
-        let extension = oxpinyin_data::DEFAULT_STORE_EXT;
+        let extension = oxpinyin_user::data::DEFAULT_STORE_EXT;
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
@@ -433,12 +433,12 @@ mod library_directory {
         ContextCore, InitRefusal, MaskOutOutcome, OpenFailure, PINYIN_DEFAULT_OPTION_WORD,
     };
 
-    use oxpinyin_user::{SystemVersions, UserConfLaw};
+    use oxpinyin_user::{UserConfLaw, data::user_files::SystemVersions};
 
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        let extension = oxpinyin_data::DEFAULT_STORE_EXT;
+        let extension = oxpinyin_user::data::DEFAULT_STORE_EXT;
         root.join(extension)
     }
 
@@ -542,8 +542,9 @@ mod library_directory {
     /// so neither law's `check_format` wipes it.
     fn conforming_profile(system: &Path, user: &Path) {
         let conf = crate::runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
-        let mut marker =
-            oxpinyin_data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
+        let mut marker = oxpinyin_user::data::user_files::UserTableInfo::conform_to(
+            &SystemVersions::from_conf(&conf),
+        );
         marker.open_counter = 1;
         std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
     }
@@ -671,7 +672,7 @@ mod library_directory {
     /// Nothing else is written, and the store's clean-up does not run.
     // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
     // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
-    // without a word there (`oxpinyin-data`, `phrase_libraries.rs`), which no pin observation
+    // without a word there (`oxpinyin-user`, `phrase_libraries.rs`), which no pin observation
     // covers.
     #[cfg(unix)]
     #[test]
@@ -760,7 +761,7 @@ mod library_totals {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
-        root.join(oxpinyin_data::DEFAULT_STORE_EXT)
+        root.join(oxpinyin_user::data::DEFAULT_STORE_EXT)
     }
 
     /// A private system directory under `parent`: every fixture file copied in,
@@ -807,7 +808,8 @@ mod library_totals {
             }
             payload[16] = b'#';
             payload[19] = b'!';
-            let chunk = oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("frame");
+            let chunk =
+                oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).expect("frame");
             std::fs::write(&library, chunk).expect("write gbk_char.bin");
         };
         write(0);
@@ -1032,7 +1034,7 @@ mod native {
             std::fs::remove_file(&library).unwrap();
             std::fs::write(
                 &library,
-                oxpinyin_data::chunk_format::build_memory_chunk(&payload).unwrap(),
+                oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
             )
             .unwrap();
         };
@@ -1125,7 +1127,7 @@ mod native {
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
         std::fs::write(
             user.path.join("gbk_char.dbin"),
-            oxpinyin_data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
+            oxpinyin_user::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
         )
         .unwrap();
         assert!(context.unload_phrase_library(2));
@@ -1404,7 +1406,7 @@ mod native {
 
     #[test]
     fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
-        use oxpinyin_data::chunk_write::{ChunkItem, build_chunk};
+        use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
         let system = TempSystemDir::new("oversized-journal-record");
         let user = TempUserDir::new("oversized-journal-record");
         let ni = oxpinyin_core::ChewingKey::from_pinyin("ni")

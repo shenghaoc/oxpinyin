@@ -337,7 +337,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-user",
@@ -365,16 +364,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-data"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-input",
- "oxpinyin-store",
- "thiserror",
-]
-
-[[package]]
 name = "oxpinyin-engine"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -391,7 +380,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-input",
  "oxpinyin-user",
@@ -404,7 +392,6 @@ dependencies = [
  "libfuzzer-sys",
  "oxpinyin-capi",
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-user",
  "tempfile",
 ]
@@ -433,7 +420,6 @@ name = "oxpinyin-user"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-data",
  "oxpinyin-input",
  "oxpinyin-store",
  "rustc-hash",
