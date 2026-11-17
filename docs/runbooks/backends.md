@@ -52,6 +52,12 @@ A downstream package's build-time and runtime dependencies are in
 
 ## Discovery and overrides
 
+The two C crate build scripts do not link GLib. The `glib-sys` build script
+links it through `system-deps`. If pkg-config is unavailable or cannot find
+GLib, set `SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG=1`, set
+`SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE` to the library directory, and set
+`SYSTEM_DEPS_GLIB_2_0_LIB` to the library name.
+
 `system-deps` finds every backend from `[package.metadata.system-deps]` in
 `crates/oxpinyin-store/Cargo.toml`, as the `configure.ac` of libpinyin does.
 
