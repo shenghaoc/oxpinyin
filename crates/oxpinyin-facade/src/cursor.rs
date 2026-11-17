@@ -3,7 +3,7 @@
 //!
 //! The cursor → lookup-offset normalization and the word-level left/right
 //! moves port the pin's matrix laws over the engine's positional data —
-//! `oxpinyin_engine::lookup_offset_over_spans` and the `*_word_offset`
+//! `oxpinyin_core::engine::lookup_offset_over_spans` and the `*_word_offset`
 //! pair. Where the pin's `_check_offset` aborts, these answer an error
 //! for the C layers to act on.
 //!
@@ -14,8 +14,8 @@
 //! same separator); double pinyin and the zhuyin keyboards hold no
 //! zero-key columns, so the law steps their parse's key spans only.
 
+use oxpinyin_core::engine::{EngineError, KeySpans, MatrixKey};
 use oxpinyin_core::{DoublePinyinKey, FullPinyinIndexKey, ZhuyinKey};
-use oxpinyin_engine::{EngineError, KeySpans, MatrixKey};
 
 use crate::instance::{InstanceState, InstanceView};
 
@@ -127,7 +127,7 @@ pub enum ModeKeys<'a> {
     /// The parse-time matrix a scheme parse keeps (`parse_matrix`).
     Matrix(&'a [MatrixKey]),
     /// The matrix the plain full-pinyin session's last parse filled.
-    Session(oxpinyin_engine::MatrixKeys<'a>),
+    Session(oxpinyin_core::engine::MatrixKeys<'a>),
 }
 
 impl ModeKeys<'_> {
@@ -292,8 +292,10 @@ pub struct KeyAt {
     pub end: usize,
 }
 
-impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
-    InstanceView<'_, S, E>
+impl<
+    S: std::borrow::Borrow<InstanceState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+> InstanceView<'_, S, E>
 {
     /// The mode dispatch shared by the three offset laws: zhuyin, then
     /// double pinyin, then the LUOMA / `SECONDARY_ZHUYIN` full-pinyin
@@ -342,7 +344,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// Forwards [`EngineError`] where the pin aborts.
     pub fn lookup_offset(&self, cursor: usize) -> Result<usize, EngineError> {
         match self.span_source() {
-            Some(source) => oxpinyin_engine::lookup_offset_over_spans(
+            Some(source) => oxpinyin_core::engine::lookup_offset_over_spans(
                 source.input,
                 source.parsed,
                 &source.spans,
@@ -366,7 +368,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
 
     fn left_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
         match self.span_source() {
-            Some(source) => oxpinyin_engine::left_word_offset_over_spans(
+            Some(source) => oxpinyin_core::engine::left_word_offset_over_spans(
                 source.input,
                 source.parsed,
                 &source.spans,
@@ -386,7 +388,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// Forwards [`EngineError`] where the pin aborts.
     pub fn right_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
         match self.span_source() {
-            Some(source) => oxpinyin_engine::right_word_offset_over_spans(
+            Some(source) => oxpinyin_core::engine::right_word_offset_over_spans(
                 source.input,
                 source.parsed,
                 &source.spans,
@@ -489,7 +491,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// Lookup byte offset → character count within `phrase` in the
     /// instance's active parse mode — the `pinyin_get_character_offset` /
     /// `zhuyin_get_character_offset` law
-    /// ([`oxpinyin_engine::character_offset_with_walk_over_keys`]) over
+    /// ([`oxpinyin_core::engine::character_offset_with_walk_over_keys`]) over
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character
@@ -509,7 +511,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return self.session.character_offset_with_walk(phrase, offset);
         };
         let (input, separators) = self.mode_input();
-        oxpinyin_engine::character_offset_with_walk_over_keys(
+        oxpinyin_core::engine::character_offset_with_walk_over_keys(
             input,
             source.parsed,
             self.parse_matrix.iter().copied(),
@@ -524,21 +526,21 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// `_remember_phrase_recur`'s walk; `None` is the empty matrix (a fresh
     /// instance, or a parse that placed no key).
     #[must_use]
-    pub fn matrix_columns(&self) -> Option<oxpinyin_engine::MatrixColumns> {
+    pub fn matrix_columns(&self) -> Option<oxpinyin_core::engine::MatrixColumns> {
         let (input, separators) = self.mode_input();
         let parsed = self.pin_parsed_len();
         // The index-parsed full pinyin, double pinyin and chewing modes keep
         // the matrix the pin built at the parse, with its fuzzy alternatives;
         // plain full pinyin reads the session's scan matrix, which has them.
         if self.span_source().is_some() {
-            oxpinyin_engine::matrix_columns(
+            oxpinyin_core::engine::matrix_columns(
                 input,
                 parsed,
                 self.parse_matrix.iter().copied(),
                 separators,
             )
         } else {
-            oxpinyin_engine::matrix_columns(
+            oxpinyin_core::engine::matrix_columns(
                 input,
                 parsed,
                 self.session.matrix_keys().iter(),
@@ -611,7 +613,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
         zhuyin: bool,
     ) -> Result<usize, EngineError> {
         let columns = self.abi_columns_over(keys);
-        oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
+        oxpinyin_core::engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if zhuyin {
             if offset > 0 && columns.packs_zero(offset - 1) {
                 return Err(EngineError::ZeroKeyOffsetCheck { offset });
@@ -671,7 +673,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
             return self.left_offset_impl(offset);
         }
         let columns = self.abi_columns();
-        oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
+        oxpinyin_core::engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if offset > 0 && columns.packs_zero(offset - 1) {
             return Err(EngineError::ZeroKeyOffsetCheck { offset });
         }
@@ -717,7 +719,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
 
 impl<
     S: std::borrow::BorrowMut<InstanceState>,
-    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+    E: std::borrow::BorrowMut<oxpinyin_core::engine::SessionState>,
 > InstanceView<'_, S, E>
 {
 }

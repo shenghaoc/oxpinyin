@@ -125,7 +125,7 @@ impl<R> CandidateSnapshot<R> {
     /// first zero word and drops the stored length
     /// (`oxpinyin_capi_marshal::phrase_text_bytes`), while the selection
     /// record and the constraint store keep every stored word
-    /// ([`oxpinyin_engine::SelectionTarget::text`]). Call it only for such
+    /// ([`oxpinyin_core::engine::SelectionTarget::text`]). Call it only for such
     /// a text; [`Self::phrase_text`] rebuilds every other one exactly from
     /// its packed bytes.
     pub fn keep_stored_text(&mut self, text: PhraseText) {

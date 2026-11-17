@@ -1,7 +1,7 @@
 //! The fault classification of the cursor and lookup laws, and the
 //! candidate-lookup offset of both facades.
 
-use oxpinyin_engine::EngineError;
+use oxpinyin_core::engine::EngineError;
 
 use super::{CursorFault, CursorLaw};
 use crate::ToneForwarding;
@@ -177,7 +177,7 @@ mod native {
     use crate::test_fixture::{native_fixture::*, *};
     use crate::{ContextCore, InstanceCore, ToneForwarding};
     use oxpinyin_core::OptionBits;
-    use oxpinyin_engine::CandidateKind;
+    use oxpinyin_core::engine::CandidateKind;
     use oxpinyin_user::UserConfLaw;
 
     fn luoma_xian() -> (ContextCore, InstanceCore) {
@@ -345,7 +345,7 @@ mod native {
             assert_eq!(row.end, 6);
             assert_ne!(
                 choose(&context, &mut instance, &row),
-                oxpinyin_engine::Selection::Refused
+                oxpinyin_core::engine::Selection::Refused
             );
             assert_eq!(
                 instance

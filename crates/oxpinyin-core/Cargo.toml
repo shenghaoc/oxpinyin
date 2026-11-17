@@ -11,7 +11,7 @@ include = [
     "/build.rs",
     "/codegen/**",
 ]
-description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine. The Rust interface is unstable."
+description = "oxpinyin internal crate — no stability promise. The Rust interface is unstable."
 
 [lib]
 doctest = false
@@ -25,6 +25,8 @@ bitflags.workspace = true
 num_enum.workspace = true
 compact_str.workspace = true
 phf.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
 
 [build-dependencies]
 # Generates the phf maps over the frozen syllable inventories (see build.rs).

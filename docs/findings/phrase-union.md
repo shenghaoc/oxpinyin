@@ -255,8 +255,8 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`crates/oxpinyin-engine/src/session/lookup.rs`) |
-| `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`crates/oxpinyin-engine/src/candidate.rs`) |
+| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`crates/oxpinyin-core/src/engine/session/lookup.rs`) |
+| `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`crates/oxpinyin-core/src/engine/candidate.rs`) |
 | Addon frequency: addon total, no bigram | `Session::candidate_frequencies` addon branch |
 
 ### 4.3 C ABI

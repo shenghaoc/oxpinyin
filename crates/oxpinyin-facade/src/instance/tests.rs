@@ -119,8 +119,8 @@ fn the_parse_reset_keeps_the_session_and_the_full_reset_clears_it() {
 mod native {
     use crate::test_fixture::{native_fixture::*, *};
     use crate::{ContextCore, InstanceCore, ToneForwarding};
+    use oxpinyin_core::engine::{CandidateKind, Selection};
     use oxpinyin_core::{OptionBits, PhraseToken};
-    use oxpinyin_engine::{CandidateKind, Selection};
     use oxpinyin_user::UserConfLaw;
 
     #[rstest::rstest]
@@ -494,7 +494,7 @@ mod native_full_data {
     use crate::test_fixture::{native_fixture::*, *};
     use crate::{ContextCore, InstanceCore};
     use oxpinyin_core::OptionBits;
-    use oxpinyin_engine::{CandidateKind, Selection};
+    use oxpinyin_core::engine::{CandidateKind, Selection};
     use oxpinyin_user::UserConfLaw;
     const NORMAL: CandidateKind = CandidateKind::Phrase;
     const NBEST: CandidateKind = CandidateKind::Sentence;

@@ -72,12 +72,12 @@ impl Lookup {
     /// Returns decoder/model errors.
     pub fn phonetic(
         &self,
-        prepared: &oxpinyin_engine::tool::PreparedLookup,
-    ) -> Result<Vec<oxpinyin_engine::tool::LookupRow>, EngineError> {
+        prepared: &oxpinyin_core::engine::tool::PreparedLookup,
+    ) -> Result<Vec<oxpinyin_core::engine::tool::LookupRow>, EngineError> {
         let Some(model) = &self.model else {
             return Ok(Vec::new());
         };
-        oxpinyin_engine::tool::lookup(
+        oxpinyin_core::engine::tool::lookup(
             prepared,
             &self.tables.read(&self.libraries),
             &model.read_all(&self.libraries),
@@ -91,7 +91,7 @@ impl Lookup {
         let Some(model) = &self.model else {
             return Ok(Vec::new());
         };
-        oxpinyin_engine::tool::phrase_lookup(
+        oxpinyin_core::engine::tool::phrase_lookup(
             words,
             &self.tables.read(&self.libraries),
             &model.read_all(&self.libraries),

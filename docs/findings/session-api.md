@@ -2,18 +2,18 @@
 
 Status: **reference**.
 
-This page describes the design of the internal `oxpinyin-engine` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
+This page describes the design of the internal `oxpinyin-core` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 What binds is the pin's behaviour as the C APIs show it — candidate order, preedit coverage, selection and commit, and errors — under the [compatibility policy](compatibility-policy.md).
 The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
-The code is the reference for the current surface: `crates/oxpinyin-engine/src/lib.rs` lists the public items, and `crates/oxpinyin-engine/src/session/` defines `Session`.
+The code is the reference for the current surface: `crates/oxpinyin-core/src/engine/mod.rs` lists the public items, and `crates/oxpinyin-core/src/engine/session/` defines `Session`.
 
 `docs/architecture.md` states the rules that this surface implements, under **Portability**.
 
 ## What this seam is for
 
-`oxpinyin-engine` is the in-tree session layer under the C facades.
+`oxpinyin-core` is the in-tree session layer under the C facades.
 The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`).
-This crate and the crates below it (`oxpinyin-core`, `oxpinyin-user`) are internal and carry no stability promise.
+The parser, engine and concrete models have internal Rust interfaces.
 
 The engine receives its inputs as data.
 `Session::new` takes a `SessionSettings` value, a dictionary and a language model.
@@ -112,7 +112,7 @@ So in that mode, a sort-word change on a composing session (`set_sort_options`) 
 ## Errors
 
 `EngineError` is the one error type of the engine.
-`crates/oxpinyin-engine/src/error.rs` lists the variants.
+`crates/oxpinyin-core/src/engine/error.rs` lists the variants.
 It implements `Display` and `std::error::Error`.
 
 ## Decoder vocabulary types

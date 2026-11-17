@@ -7,7 +7,7 @@ This SPEC states the pin's two split lists and the semantics by which they add k
 The candidate window scan ([candidate-construction.md](candidate-construction.md#8-the-construction-contract) §8) walks the key set that the pinned oracle's matrix admits at each byte position.
 That key set is the selected parse's keys plus two lists of alternative splits.
 This SPEC is the data half of the scan.
-The scan itself is in `crates/oxpinyin-engine/src/session/` (`RESPLIT_TABLE` and `DIVIDED_TABLE` in `split_tables.rs`).
+The scan itself is in `crates/oxpinyin-core/src/engine/session/` (`RESPLIT_TABLE` and `DIVIDED_TABLE` in `split_tables.rs`).
 
 ## Provenance
 

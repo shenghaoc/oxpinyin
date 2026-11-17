@@ -45,7 +45,7 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, sentence scores and incomplete keys | reference |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC: the byte-position key graph and the incomplete-key inventory | reference |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface: the n-best sentence rows and the measured selection residuals | reference, machine-read |
-| [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin-engine` session design under the C facades | reference |
+| [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin-core` session design under the C facades | reference |
 | [`session-replay`](session-replay.md) | Session replay: authored scenarios with the pin's expected candidates | reference |
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract for the whole stack | contract |
 | [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian ships libpinyin on tkrzw; Ubuntu's tkrzw corrupts records | reference, machine-read |

@@ -328,7 +328,7 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core
 just check
 ```
 
@@ -403,7 +403,7 @@ and run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core
 export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
@@ -489,9 +489,9 @@ Set-Location "$HOME/src"
 git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
 Set-Location oxpinyin
 rustup show
-cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core
 cargo fmt --all --check
-cargo clippy --locked -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
+cargo clippy --locked -p oxpinyin-core --all-targets -- -D warnings
 ```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
@@ -533,7 +533,7 @@ not selected, so those tests do not establish native Windows oracle behavior.
 A full local build or `just test` needs the same vcpkg ports as the
 CI job. Without GLib, `glib-sys` fails, and every crate except
 `oxpinyin-core`, `oxpinyin-store` and
-`oxpinyin-engine` fails to build. From Developer PowerShell, run:
+`oxpinyin-core` fails to build. From Developer PowerShell, run:
 
 ```powershell
 & "$env:VCPKG_ROOT\vcpkg.exe" install tkrzw:x64-windows pkgconf:x64-windows glib:x64-windows --overlay-ports=vcpkg-overlays
@@ -700,7 +700,7 @@ Types and local variables need the `dev-full` profile:
 
 ```bash
 cargo build --locked --profile dev-full -p oxpinyin-capi
-cargo test --locked --profile dev-full -p oxpinyin-engine --no-run
+cargo test --locked --profile dev-full -p oxpinyin-core --no-run
 ```
 
 The debugger reads the files in `target/dev-full/`.

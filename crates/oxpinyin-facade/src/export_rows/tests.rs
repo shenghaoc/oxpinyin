@@ -868,14 +868,14 @@ mod native {
                 assert_eq!(first.end, 2);
                 assert_ne!(
                     choose(&context, &mut instance, &first),
-                    oxpinyin_engine::Selection::Refused
+                    oxpinyin_core::engine::Selection::Refused
                 );
                 assert!(guess(&context, &mut instance));
                 let second = published(&context, &mut instance, 2, second);
                 assert_eq!(second.end, 5);
                 assert_ne!(
                     choose(&context, &mut instance, &second),
-                    oxpinyin_engine::Selection::Refused
+                    oxpinyin_core::engine::Selection::Refused
                 );
                 guess(&context, &mut instance);
                 assert!(context.train(&instance, 0).unwrap());

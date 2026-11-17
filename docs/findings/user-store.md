@@ -482,7 +482,7 @@ and exposes the stored counts as `UserCountDelta` for the §5 merge.
 | Behaviour | oxpinyin |
 |---|---|
 | §2.1 training seed arithmetic | `crates/oxpinyin-user/src/seed.rs` |
-| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-engine/src/session/selection.rs`, `crates/oxpinyin-facade` |
+| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-core/src/engine/session/selection.rs`, `crates/oxpinyin-facade` |
 | §3 user phrase index and token allocation | `crates/oxpinyin-user/src/phrase.rs`, `store.rs` |
 | §4 save cycle and `m_modified` gate | `crates/oxpinyin-user/src/persistence.rs`, `UserStore::save_reporting` |
 | §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin-user/src/data/lm/mod.rs`) |
@@ -537,7 +537,7 @@ the files themselves are a second comparison surface (§11).
 **Dependencies.**
 
 - The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs`) and the engine
-  `Session` (`crates/oxpinyin-engine/src/session/`).
+  `Session` (`crates/oxpinyin-core/src/engine/session/`).
 - The backend store (`oxpinyin-store`), which reads and writes the user
   files in the backend's own containers.
 - The export symbols (§9).

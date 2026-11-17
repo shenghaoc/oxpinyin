@@ -7,9 +7,9 @@ fn check(value: bool) {
         tool::abort();
     }
 }
+use oxpinyin_core::engine::tool::{parse_full, physical_matrix, prepare_lookup};
 use oxpinyin_core::tool::Key;
 use oxpinyin_core::{ChewingKey, OptionBits};
-use oxpinyin_engine::tool::{parse_full, physical_matrix, prepare_lookup};
 use oxpinyin_facade::runtime::tool::Lookup;
 use oxpinyin_input::tool::lookup_tests as output;
 

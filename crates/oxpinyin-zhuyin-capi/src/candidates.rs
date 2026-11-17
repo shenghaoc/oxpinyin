@@ -10,7 +10,7 @@
 use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_int;
 
-use oxpinyin_engine::CandidateKind;
+use oxpinyin_core::engine::CandidateKind;
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candidate_type_t};
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
                 begin,
                 end,
                 token,
-                text: oxpinyin_engine::RowText::Resolve,
+                text: oxpinyin_core::engine::RowText::Resolve,
             },
             false,
         ),
@@ -323,7 +323,7 @@ pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
-fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
+fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
     use oxpinyin_facade::TrainingRefusal;
     match oxpinyin_facade::training_answer(result) {
         Ok(trained) => trained,
@@ -343,14 +343,14 @@ fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
 /// row, and the facade total is not zero.
 fn sole_unreadable_row(
     inst: &crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_engine::CandidateList,
+    window: &oxpinyin_core::engine::CandidateList,
     sentence_rows_only: bool,
-) -> Option<oxpinyin_engine::Candidate> {
+) -> Option<oxpinyin_core::engine::Candidate> {
     window.sole_unreadable_candidate().filter(|_| {
         !sentence_rows_only
             && window
                 .iter()
-                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+                .all(|row| row.kind() == oxpinyin_core::engine::CandidateKind::Fallback)
             && !crate::sentence::facade_total_is_zero(&inst.read())
     })
 }
@@ -369,7 +369,7 @@ fn sole_unreadable_row(
 /// offset, where the pin's matrix column is empty (issue #577).
 pub fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_engine::CandidateList,
+    window: &oxpinyin_core::engine::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
     anchor: usize,

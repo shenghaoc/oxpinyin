@@ -55,7 +55,6 @@ oxpinyin-core = { path = "crates/oxpinyin-core", version = "=0.1.0-alpha.1" }
 oxpinyin-facade = { path = "crates/oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 # The external-I/O boundary: the pin's C library calls behind a safe API.
 oxpinyin-input = { path = "crates/oxpinyin-input", version = "=0.1.0-alpha.1" }
-oxpinyin-engine = { path = "crates/oxpinyin-engine", version = "=0.1.0-alpha.1" }
 oxpinyin-store = { path = "crates/oxpinyin-store", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-user = { path = "crates/oxpinyin-user", version = "=0.1.0-alpha.1", default-features = false }
 bindgen = { version = "0.73.2", default-features = false, features = ["logging", "runtime"] }

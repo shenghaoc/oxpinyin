@@ -59,10 +59,10 @@ impl CapiContext {
         // libzhuyin sorts its candidate lists with
         // `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`),
         // not the pinyin sort word.
-        session.set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+        session.set_candidate_ranking(oxpinyin_core::engine::CandidateRanking::LengthThenFrequency);
         // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
         // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
-        session.set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
+        session.set_nbest_shape(oxpinyin_core::engine::NbestShape::ZHUYIN);
         CapiInstance {
             owner,
             core,
@@ -182,7 +182,7 @@ pub type CapiInstanceMut<'a> =
 
 impl<
     S: std::borrow::Borrow<oxpinyin_facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin_engine::SessionState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
 > CapiInstance<oxpinyin_facade::InstanceView<'_, S, E>, V, O>
@@ -201,7 +201,7 @@ impl<
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
 oxpinyin_capi_marshal::state_handle_helpers! {
-    context: ZhuyinContext, instance: ZhuyinInstance, instance_binding: instance, error: oxpinyin_engine::EngineError, context_field: {  }
+    context: ZhuyinContext, instance: ZhuyinInstance, instance_binding: instance, error: oxpinyin_core::engine::EngineError, context_field: {  }
 }
 
 mod handles {

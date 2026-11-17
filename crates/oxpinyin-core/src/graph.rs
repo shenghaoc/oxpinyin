@@ -201,7 +201,7 @@ impl Edge {
 
     /// Whether a separator byte was consumed before the key.
     #[must_use]
-    pub const fn crosses_separator(&self) -> bool {
+    pub(crate) const fn crosses_separator(&self) -> bool {
         self.syllable_start > self.from
     }
 }

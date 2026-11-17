@@ -60,7 +60,7 @@ Without `PINYIN_INCOMPLETE`, the pin admits no initial-only key.
 
 Each apostrophe propagates a parse step without adding a key (`:237-250`).
 This includes leading, repeated and trailing apostrophes.
-The C APIs' parsed length includes a trailing apostrophe run; `full_parsed_len` in `crates/oxpinyin-engine/src/session/offsets.rs` reproduces that rule.
+The C APIs' parsed length includes a trailing apostrophe run; `full_parsed_len` in `crates/oxpinyin-core/src/engine/session/offsets.rs` reproduces that rule.
 
 ## Verification
 

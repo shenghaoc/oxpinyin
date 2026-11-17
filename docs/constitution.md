@@ -26,7 +26,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    Class (b) rulings stay authoritative.
    The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
 5. **Unsafe code.** The target allowlist is:
-   - oxpinyin-core/user/engine/facade forbid `unsafe`.
+   - oxpinyin-core/user/facade forbid `unsafe`.
    - The bidirectional `oxpinyin-input` boundary permits scoped unsafe modules.
    - `oxpinyin-store` denies `unsafe`, with scoped backend allows.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.

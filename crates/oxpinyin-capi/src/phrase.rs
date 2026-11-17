@@ -1,7 +1,7 @@
 //! The phrase-result surface: `pinyin_phrase_segment` and the two
 //! getters over `m_phrase_result` (`pinyin.cpp:3269-3287`).
 //!
-//! The segmenter is the engine's span DP (`oxpinyin_engine::Session::
+//! The segmenter is the engine's span DP (`oxpinyin_core::engine::Session::
 //! phrase_segment`, the `PhraseLookup::get_best_match` port); this
 //! module only stores its result on the instance and hands out reads.
 //! The result shape is the pin's: a character-length array with each

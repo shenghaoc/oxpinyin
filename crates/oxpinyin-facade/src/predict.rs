@@ -20,7 +20,7 @@ use oxpinyin_user::UserStore;
 ///
 /// # Errors
 ///
-/// [`oxpinyin_engine::EngineError::ReduceTokensCount`] at the first suffix
+/// [`oxpinyin_core::engine::EngineError::ReduceTokensCount`] at the first suffix
 /// whose search holds more than four tokens: `_compute_prefixes` reduces
 /// each search with the validating `reduce_tokens` (`pinyin.cpp:1415`,
 /// `zhuyin.cpp:933`), whose `assert(0 <= num && num <= 4)`
@@ -30,7 +30,7 @@ pub fn compute_prefixes(
     dict: &RuntimeDict,
     user: &UserStore,
     prefix: Option<&PhraseText>,
-) -> Result<Vec<u32>, oxpinyin_engine::EngineError> {
+) -> Result<Vec<u32>, oxpinyin_core::engine::EngineError> {
     let Some(prefix) = prefix else {
         return Ok(Vec::new());
     };
@@ -45,7 +45,7 @@ pub fn compute_prefixes(
         matches.retain(|token| dict.phrase_table_token_enabled(*token));
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
         if matches.len() > 4 {
-            return Err(oxpinyin_engine::EngineError::ReduceTokensCount {
+            return Err(oxpinyin_core::engine::EngineError::ReduceTokensCount {
                 count: matches.len(),
             });
         }

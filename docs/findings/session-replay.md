@@ -16,7 +16,7 @@ Every candidate asserted here is one that the pinned oracle emitted, taken from 
 
 ## Harness
 
-The `session_replay` module of `crates/oxpinyin-engine/src/session/selection/tests.rs` holds the scenarios inline and reads no scenario file; the robustness tests are in the `session_replay` module of `crates/oxpinyin-engine/src/session/tests.rs`.
+The `session_replay` module of `crates/oxpinyin-core/src/engine/session/selection/tests.rs` holds the scenarios inline and reads no scenario file; the robustness tests are in the `session_replay` module of `crates/oxpinyin-core/src/engine/session/tests.rs`.
 It opens each session with `Session::new` and `SessionSettings::default()`.
 The dictionary and the language model are fixture doubles over `fixtures/w4/mini-vocab.txt` and `fixtures/w4/mini-bigram.txt`.
 
@@ -50,7 +50,7 @@ The test doc comments state each upstream defect. F-E-12 is an `assert()` on the
 
 - **F-E-12**, the `zhuan` row of `recorded_candidate_scenarios_use_direct_operations` and `the_reset_session_converts_identically_to_a_fresh_one`.
   The row runs the full frontend-equivalent sequence, not a parse in isolation: it parses `zhuan`, takes `传`, reads the retained text and resets.
-  `the_reset_session_converts_identically_to_a_fresh_one` (the `session_lifecycle` module of `crates/oxpinyin-engine/src/session/tests.rs`) continues on a session after a choice and a reset.
+  `the_reset_session_converts_identically_to_a_fresh_one` (the `session_lifecycle` module of `crates/oxpinyin-core/src/engine/session/tests.rs`) continues on a session after a choice and a reset.
 
 The test `arbitrary_characters_never_panic` appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
 It requires no panic and no error: the totality property at session level.

@@ -10,7 +10,7 @@ include = [
     "/src/**",
     "/build.rs",
 ]
-description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine. The Rust interface is unstable."
+description = "oxpinyin internal crate — no stability promise. The Rust interface is unstable."
 
 [lib]
 doctest = false

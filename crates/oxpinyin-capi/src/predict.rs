@@ -194,7 +194,7 @@ fn guess_predicted_result(
 /// Stably rank predicted rows by phrase length and guarded wrapping frequency
 /// (`pinyin.cpp:2440-2445`). Prediction has no pinyin-span key.
 fn sort_predicted(items: &mut [Predicted]) {
-    oxpinyin_engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
+    oxpinyin_core::engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
 }
 
 /// Whether `prefix` is one of the instance's own candidate strings; if so,
@@ -544,7 +544,7 @@ fn predicted_frequency(
     // The pin's candidate `m_freq` for predicted rows is the same
     // expression as the lookup candidates' (`pinyin.cpp:1811-1824`, the
     // `PREDICTED_PREFIX` branch), so the engine's function computes it.
-    oxpinyin_engine::amplified_frequency(unigram, total, lambda)
+    oxpinyin_core::engine::amplified_frequency(unigram, total, lambda)
 }
 
 fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {

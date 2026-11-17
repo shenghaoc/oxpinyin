@@ -96,6 +96,6 @@ A model reports arithmetic or backend failure through `Result`.
 
 - Every fallible public method returns `Result`; no method panics on caller input.
 - The seam imposes no `Send`, `Sync`, `'static`, serialization or object-store requirement.
-- Associated types prevent `oxpinyin-core` from depending on data, user, engine or platform crates.
+- Associated types prevent `oxpinyin-core` from depending on the concrete data, user or platform implementations.
   The concrete types the engine seam names are in `crates/oxpinyin-core/src/vocab.rs`.
 - Implementations must be deterministic for the same explicit input and state.
