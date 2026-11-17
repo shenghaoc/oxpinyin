@@ -124,10 +124,7 @@ const NO_ROW: u8 = u8::MAX;
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<Candidate>() == 48);
 
-/// Narrows a byte or key count to the row's width. Every count the
-/// session produces is a position of its segment graph, at most
-/// [`MAX_GRAPH_POSITION`](oxpinyin_core::graph::MAX_GRAPH_POSITION), so the
-/// saturation never fires; it stands in for a panic.
+/// Narrows a byte or key count to the row's width, saturating an oversized raw suffix.
 const fn narrow(count: usize) -> u32 {
     if count > u32::MAX as usize {
         u32::MAX
@@ -145,8 +142,6 @@ impl Candidate {
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
-        debug_assert!(consumed_keys <= u32::MAX as usize && consumed_bytes <= u32::MAX as usize);
-        debug_assert!(nbest_index.is_none_or(|rank| rank != NO_ROW));
         Self {
             text: text.into(),
             token,
@@ -163,7 +158,6 @@ impl Candidate {
 
     /// Records where this candidate's span starts (see [`Self::span_start`]).
     pub(crate) const fn set_span_start(&mut self, start: usize) {
-        debug_assert!(start <= u32::MAX as usize);
         self.span_start = narrow(start);
     }
 

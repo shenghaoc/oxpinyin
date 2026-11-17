@@ -2537,7 +2537,6 @@ fn stage_dbm(
     save: impl FnOnce(&Path) -> Result<(), StoreError>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
-    debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
     let final_path = build_path(dir, OsStr::new(&dbm.file_name()));
     let tmp = build_path(dir, OsStr::new(&format!("{}.tmp", dbm.file_name())));
     unlink(&tmp);

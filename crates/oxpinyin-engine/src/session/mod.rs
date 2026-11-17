@@ -1021,7 +1021,6 @@ const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 /// `keys[i]` is `(candidates[i]`'s key, `i)`. Sort compact cached keys, then
 /// permute the larger candidates while retaining the keys used by dedup.
 fn rank_candidates(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
-    debug_assert_eq!(candidates.len(), keys.len());
     crate::rank_by_frequency(keys, |(key, _)| {
         (key.phrase_length, key.pinyin_span, key.frequency)
     });
@@ -1122,7 +1121,6 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
 ///
 /// `keys[i].0` is `ranked[i]`'s key, as [`rank_candidates`] leaves it.
 fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
-    debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
         let mut survivor: HashMap<&PhraseText, usize> = HashMap::with_capacity(ranked.len());

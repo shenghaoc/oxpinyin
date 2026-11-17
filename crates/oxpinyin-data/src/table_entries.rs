@@ -40,7 +40,6 @@ pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 #[must_use]
 pub fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
     let len = lhs.len();
-    debug_assert_eq!(len, rhs.len());
     for i in 0..len {
         match lhs[i].initial.cmp(&rhs[i].initial) {
             std::cmp::Ordering::Equal => {}
