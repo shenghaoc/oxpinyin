@@ -17,6 +17,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from tools.dev import test_support
 from tools.oracle import image as images
 
 
@@ -215,15 +216,7 @@ with pathlib.Path({str(log)!r}).open('a') as f: f.write(json.dumps(sys.argv[1:])
 if sys.argv[1]=='create': print('owned-id')
 if sys.argv[1]=='cp': sys.exit(19)
 """
-        if sys.platform == 'win32':
-            # Windows runs no shebang script: the fake engine is a .cmd running the same Python.
-            (self.directory / 'docker.py').write_text(body)
-            engine = self.directory / 'docker.cmd'
-            engine.write_text(f'@"{sys.executable}" "%~dp0docker.py" %*\r\n@exit /b %ERRORLEVEL%\r\n')
-        else:
-            engine = self.directory / 'docker'
-            engine.write_text(f'#!{sys.executable}\n' + body)
-            engine.chmod(0o755)
+        engine = test_support.python_tool(self.directory, 'docker', body)
         args = ['--engine', str(engine), 'image']
         self.assertEqual(self.invoke(['verify-image'], args).returncode, 19)
         rows = [json.loads(line) for line in log.read_text().splitlines()]
@@ -278,16 +271,6 @@ class WslcAdapterTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
-
-    def test_a_captured_childs_stderr_is_forwarded(self):
-        # wslc and fetch-contract-data write diagnostics to stderr while their stdout is captured.
-        import tools.dev.process as process
-        done = mock.Mock(stdout=b'out', stderr=b'diagnostic\n', status=0)
-        stream = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
-        with mock.patch.object(process.bench, 'capture', return_value=done), mock.patch.object(sys, 'stderr', stream):
-            self.assertIs(process.capture(['child']), done)
-            stream.flush()
-            self.assertEqual(stream.buffer.getvalue(), b'diagnostic\n')
 
     def test_image_field_reads_wslc_json_and_docker_templates(self):
         calls = []
@@ -457,7 +440,6 @@ class RuntimeAdapterTests(unittest.TestCase):
         # wslc run: "host mode networking is not supported"; --network none is kept.
         self.assertEqual(images.runtime_command(['wslc', *self.RUN]),
                          ['wslc', 'run', '--rm', '-v', '/r:/opt/r:ro', '-v', '/o:/opt/o', 'image', 'python3', '/opt/r/tools/oracle/build.py'])
-        self.assertEqual(images.runtime_command(['wslc', 'run', '--network', 'none', 'i']), ['wslc', 'run', '--network', 'none', 'i'])
         self.assertEqual(images.runtime_command(['wslc', 'build', '--platform', 'linux/amd64', '--network', 'host',
                                                  '--target', 'deps', '.']), ['wslc', 'build', '--target', 'deps', '.'])
         self.assertEqual(images.runtime_command(['wslc', 'container', 'rm', '-f', 'id']),

@@ -48,18 +48,15 @@ class SystemImportProfileTests(unittest.TestCase):
         return lines
 
     def test_every_collection_gets_the_same_captured_environment_in_both_modes(self):
-        runs = {}
-
-        def collect(side, mode, plan, environment, context):
-            runs.setdefault(self.mode, []).append(environment)
-            return []
-        with mock.patch.object(PROFILE, 'collect', collect), mock.patch.dict(os.environ, {'PROBE': 'x'}):
-            for self.mode, jobs in (('serial', 1), ('pooled', None)):
-                self.emitted(jobs)
-            for environments in runs.values():
-                self.assertEqual(len(environments), 6)
-                for environment in environments:
-                    test_support.assert_same_environment(self, environment, dict(os.environ))
+        # Callgrind counts move with the environment's size: every child gets the one captured copy.
+        with mock.patch.dict(os.environ, {'PROBE': 'x'}):
+            for mode, jobs in (('serial', 1), ('pooled', None)):
+                launch, calls = self.launcher(self.good_outcomes())
+                with self.subTest(mode=mode), mock.patch.object(pool.UnitContext, 'launch', launch):
+                    self.emitted(jobs)
+                    self.assertEqual(len(calls), 6)
+                    for *_, environment in calls:
+                        test_support.assert_same_environment(self, environment, dict(os.environ))
 
     def launcher(self, outcomes):
         """Record each launch and return the next outcome for its side and mode."""
@@ -68,7 +65,7 @@ class SystemImportProfileTests(unittest.TestCase):
         def launch(context, argv, env=None, **kwargs):
             user = Path(argv[-2])
             side, mode = user.name.split('-user-')[0].split('-')
-            calls.append((side, mode, user.name, threading.get_ident()))
+            calls.append((side, mode, user.name, threading.get_ident(), env))
             queued = outcomes[(side, mode)]
             status, out, err, create = queued.pop(0) if len(queued) > 1 else queued[0]
             if create:
@@ -100,11 +97,11 @@ class SystemImportProfileTests(unittest.TestCase):
         self.offsets = lambda: next(local.offsets) if local.offsets else 0
         with mock.patch.object(pool.UnitContext, 'launch', launch), mock.patch.object(PROFILE, 'collect', collect):
             reports = self.emitted(None)
-        names = [name for _, _, name, _ in calls]
+        names = [name for _, _, name, _, _ in calls]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(sorted(names), sorted(
             [f'{side}-{mode}-user-1' for side in PROFILE.SIDES for mode in PROFILE.MODES] + ['pin-heap-user-2']))
-        heap = [(name, thread) for side, mode, name, thread in calls if (side, mode) == ('pin', 'heap')]
+        heap = [(name, thread) for side, mode, name, thread, _ in calls if (side, mode) == ('pin', 'heap')]
         self.assertEqual([name for name, _ in heap], ['pin-heap-user-1', 'pin-heap-user-2'])
         self.assertEqual(heap[0][1], heap[1][1])
         self.assertTrue(reports[1][2][0].startswith('DISCARD pin heap: suspend_delta_ns='))
@@ -162,7 +159,7 @@ class SystemImportProfileTests(unittest.TestCase):
                                   'ox heap', 'ox peak heap', 'ox pages', 'ox peak pages'])
         self.assertEqual(checks, [('auto', 'system-import-profile', 'pin', str(Path('/pin.so'))),
                                   ('auto', 'system-import-profile', 'ox', str(Path('/ox.so')))])
-        self.assertEqual([name for _, _, name, _ in calls], [f'{side}-{mode}-user-1' for side in PROFILE.SIDES
+        self.assertEqual([name for _, _, name, _, _ in calls], [f'{side}-{mode}-user-1' for side in PROFILE.SIDES
                                                            for mode in PROFILE.MODES])
 
     def test_cold_open_is_a_workload_not_an_option(self):

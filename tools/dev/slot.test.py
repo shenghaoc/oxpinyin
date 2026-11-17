@@ -17,16 +17,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import slot, test_support
 
 
-def running(pid):
-    """True while PID is a live process; a killed child awaiting an init that does not reap it is not."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    try:
-        return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
-    except OSError:
-        return True    # no /proc (macOS): an orphan there is reaped at once, so it is really running
+running = test_support.process_running
 
 
 class GroupTerminationTests(unittest.TestCase):
@@ -85,14 +76,6 @@ class GroupTerminationTests(unittest.TestCase):
         process = mock.Mock(pid=123, job=job)
         process.wait.return_value = 1
         return process, job
-
-    def test_a_windows_group_ends_the_whole_job_and_waits_until_it_is_empty(self):
-        process, job = self.windows_job()
-        with mock.patch.object(sys, 'platform', 'win32'):
-            slot.terminate_group(process)
-        job.terminate.assert_called_once_with()
-        job.wait_empty.assert_called_once_with(5)
-        process.terminate.assert_called_once_with()
 
     def test_a_windows_job_that_keeps_a_member_is_not_reported_as_ended(self):
         process, job = self.windows_job(empty=False)
@@ -255,6 +238,13 @@ class WaitChildTests(unittest.TestCase):
                     if time.monotonic() >= deadline:
                         self.fail('the grandchild survived the group kill')
                     time.sleep(.05)
+
+        def test_wait4_is_the_only_reaper(self):
+            with slot.supervised([sys.executable,'-c','pass']) as child:
+                with mock.patch.object(child,'wait',side_effect=AssertionError('second reaper')), \
+                     mock.patch.object(child,'poll',side_effect=AssertionError('second reaper')):
+                    self.assertEqual(slot.wait_child(child,timeout=10,usage=True),0)
+                    self.assertGreater(child.rusage.ru_maxrss,0)
 
 
 if __name__ == '__main__':

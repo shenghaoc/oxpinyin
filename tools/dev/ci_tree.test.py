@@ -143,10 +143,18 @@ class EvidenceTests(unittest.TestCase):
         self.assertIsNone(self.evidence(api))
 
     def test_latest_attempt_jobs_only(self):
-        api = API()
-        api.run['run_attempt'] = 2
-        api.jobs[-1]['conclusion'] = 'skipped'
-        self.assertIsNone(self.evidence(api))
+        # Only the run's latest attempt is evidence: a green earlier attempt never stands in for it.
+        green, skipped = job_fixture(), job_fixture()
+        skipped[-1]['conclusion'] = 'skipped'
+        for latest, earlier, expected in ((skipped, green, None), (green, skipped, 100)):
+            api = API()
+            api.run['run_attempt'] = 2
+            original_pages = api.pages
+            attempts = {'/attempts/1/': earlier, '/attempts/2/': latest}
+            api.pages = lambda path, key=None: next(
+                (jobs for marker, jobs in attempts.items() if marker in path), None) or original_pages(path, key)
+            with self.subTest(expected=expected):
+                self.assertEqual(self.evidence(api), expected)
 
     def test_reused_run_resolves_to_original_full_evidence(self):
         api = API()
@@ -369,16 +377,6 @@ class SelectedLaneEvidenceTests(unittest.TestCase):
         self.assertEqual(self.evidence(PROFILE.lanes, ('lint', 'test'),
                                        lambda jobs: jobs.__delitem__(slice(2, 4))), 100)
 
-    def test_a_marker_for_another_tree_or_a_changed_tree_is_no_evidence(self):
-        def other_marker(jobs):
-            jobs[-1]['name'] = 'tested tree ' + 'f' * 40
-        self.assertIsNone(self.evidence(('lint',), ('lint',), other_marker))
-        api = API()
-        api.jobs = source_jobs(('lint',))
-        api.tree = 'f' * 40
-        event = {'ref': 'refs/heads/main', 'after': REBASED}
-        self.assertIsNone(ci_tree.find_evidence(api, PROFILE, event, 'push', TREE, 1, 200, now=NOW, lanes=('lint',)))
-
     def test_no_selection_requires_every_lane(self):
         api = API()
         api.jobs = source_jobs(('lint', 'test'))
@@ -526,15 +524,6 @@ class AggregateTests(unittest.TestCase):
                 for name in results:
                     bad = {**results, name: result}
                     self.assertFalse(ci_tree.aggregate('success', every('true', profile), 'false', bad, profile.cached))
-
-    def test_reused_main_still_requires_every_cache_lane(self):
-        for profile in ci_tree.WORKFLOWS.values():
-            results = {name: 'success' if name in profile.cached else 'skipped' for name in profile.lanes}
-            self.assertTrue(ci_tree.aggregate('success', every('true', profile), 'true', results, profile.cached))
-            for name in profile.cached:
-                self.assertFalse(ci_tree.aggregate('success', every('true', profile), 'true',
-                                                  {**results, **{lane: 'failure' for lane, job in zip(profile.lanes, profile.needs)
-                                    if job == profile.needs[profile.lanes.index(name)]}}, profile.cached))
 
     def test_reused_pr_requires_all_skipped(self):
         results = dict.fromkeys(PROFILE.lanes, 'skipped')

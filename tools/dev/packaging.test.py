@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import packaging
+from tools.dev import packaging, test_support
 
 DRIVER = '''import os, sys
 from pathlib import Path
@@ -184,15 +184,13 @@ if sys.platform != 'win32':
             self.target = self.work / 'trainer tree'
             self.tools = packaging.Tools(root=ROOT)
             for name in self.bin_names:
-                path = self.binaries / name
-                path.write_text('#!' + sys.executable + '\n' + '''import json, sys
+                test_support.python_tool(self.binaries, name, '''import json, sys
 from pathlib import Path
 with Path('calls').open('a') as out:
     out.write(json.dumps([Path(sys.argv[0]).name, *sys.argv[1:]]) + '\\n')
 if Path(sys.argv[0]).name == 'import_interpolation':
     Path('imported').write_bytes(sys.stdin.buffer.read())
 ''')
-                path.chmod(0o755)
 
         def stage(self, target=None, binaries=None):
             return packaging.main(['trainer-layout', str(target or self.target), '--bin-dir',
@@ -436,9 +434,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             self.fake('uv', 'import sys; from pathlib import Path; sys.argv[1:3] == ["python", "install"] and sys.exit(0); sys.path.insert(0, ' + repr(str(ROOT)) + '); from tools.dev.cell import main; sys.exit(main(["--shell"], root=Path.cwd()))')
 
         def fake(self, name, source):
-            path = self.bin / name
-            path.write_text('#!' + sys.executable + '\n' + source)
-            path.chmod(0o755)
+            test_support.python_tool(self.bin, name, source)
 
         def invoke(self, name, args=(), *, env=None):
             command = [sys.executable, '-X', 'utf8', '-c', DRIVER, str(self.root), name]

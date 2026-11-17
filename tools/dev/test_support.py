@@ -8,7 +8,9 @@ counts and the argument positions or variable names that differ, never values.
 Standard library only.
 """
 import contextlib
+import json
 import os
+from pathlib import Path
 import sys
 from unittest import mock
 
@@ -92,6 +94,26 @@ if sys.platform == 'win32':
             return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
         finally:
             kernel32.CloseHandle(handle)
+else:
+    def process_running(pid):
+        """True while PID is a live process; a killed child awaiting an init that does not reap it is not.
+
+        os.kill(pid, 0) finds the process; /proc shows whether it is a zombie (Z) or dead (X).
+        Without /proc (macOS) an orphan is reaped at once, so a process that answers is running.
+        A stat read that fails because the process was reaped in between finds no PID on the recheck.
+        """
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        try:
+            return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
+        except OSError:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            return True
 
 
 def assert_windows_launches(test, launch, jobs, ntdll, cwd=None):
@@ -143,29 +165,6 @@ def _differences(actual, expected):
     return labels
 
 
-def collect_declarations(*registrars, registry=None, **injected):
-    """Collect contract (name, args, metadata, function) declarations for harness assertions.
-
-    Keep registration order and pass injected fixture helpers to each registrar.
-    When a family decorates earlier cases during registration, publish each
-    declaration into its registry immediately. Return the original function
-    from the decorator, just as the driver does.
-    """
-    cases = []
-
-    def case(name, *args, **metadata):
-        def collect(fn):
-            cases.append((name, args, metadata, fn))
-            if registry is not None:
-                registry[name] = dict(metadata, fn=fn)
-            return fn
-        return collect
-
-    for register in registrars:
-        register(case, **injected)
-    return cases
-
-
 def python_tool(directory, name, source):
     """Write the command NAME in DIRECTORY that runs the Python SOURCE with this interpreter; return its path.
 
@@ -188,3 +187,28 @@ def python_tool(directory, name, source):
     with open(path, 'w', newline='\r\n') as stream:
         stream.write(f'@"{sys.executable}" "{script}" %*\n@exit /b %ERRORLEVEL%\n')
     return path
+
+
+# The library path a synthetic Linux driver row names, and the arm A prefix it sits in.
+PERF_LIBRARY = '/stage/A/lib/libpinyin.so.15.0.0'
+
+
+def perf_row(cycles=4, **changes):
+    """One bisect --perf row in rss-diag mode with the hardware counter granted, as JSON text."""
+    row = dict(pid=17, backend='A', so=PERF_LIBRARY, mode='rss-diag', repeats=1,
+               workload_checksum='0123456789abcdef',
+               cycles_ns=[9000, *[1000] * (cycles - 1)], cycles_cpu_ns=[8000, *[900] * (cycles - 1)],
+               rollup_cycle=dict(rss_kib=9000, anonymous_kib=4000, private_dirty_kib=4100),
+               steady_hw_cycles=cycles - 1, steady_hw_instructions=700000)
+    row.update(changes)
+    return json.dumps(row)
+
+
+def native_row(**changes):
+    """One macOS measurement-driver observation of twenty cycles, as a dict."""
+    from tools.dev.measure import recipes
+
+    return dict(pid=17, cycles=20, operations=20 * recipes.workload_operations(),
+                fingerprint='0123456789abcdef', wall_seconds=.1, cpu_seconds=.08,
+                loop_instructions=900000, loop_cpu_cycles=400000, loop_runnable_seconds=.09,
+                lifetime_max_phys_footprint_bytes=123456, peak_rss_bytes=234567, **changes)

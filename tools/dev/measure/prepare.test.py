@@ -2,12 +2,14 @@
 every recorded input still matches, and are rebuilt otherwise."""
 import contextlib
 import io
+import json
 import shutil
 from pathlib import Path
 import platform
 import re
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -16,7 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.dev import runners
-from tools.dev.measure import bench, prepare
+from tools.dev.measure import bench, identity, prepare
 from tools.oracle import image, versions
 
 
@@ -157,6 +159,27 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaises(runners.Finished):
                 prepare.prepare(['oracle'], {'GITHUB_ACTIONS': 'true'})
             fetch.assert_not_called()
+
+
+if sys.platform == 'win32':
+    class WindowsBuildTests(unittest.TestCase):
+        def test_release_build_has_no_overrides(self):
+            metadata={'packages':[{'name':'oxpinyin-capi','features':{'default':['tkrzw']}}]}
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);pc=root/'installed/x64-windows/lib/pkgconfig'
+                pc.mkdir(parents=True);(pc/'tkrzw.pc').touch()
+                with mock.patch('tools.dev.check.msvc_environment',side_effect=lambda env:env), \
+                     mock.patch.object(bench,'run') as run, \
+                     mock.patch.object(bench,'capture',return_value=types.SimpleNamespace(status=0,stdout=json.dumps(metadata).encode())), \
+                     mock.patch.object(identity,'sha256',return_value='digest'):
+                    arm=prepare.native_build('a'*40,root/'build',dict(VCPKG_ROOT=directory,
+                        RUSTFLAGS='bad',CARGO_ENCODED_RUSTFLAGS='bad',CARGO_PROFILE_RELEASE_DEBUG='2'),windows=True)
+                command=next(call for call in run.call_args_list if call.args[0][0]=='cargo')
+                self.assertEqual(command.args[0],['cargo','build','--locked','--release','-p','oxpinyin-capi'])
+                self.assertFalse(any(key in command.kwargs['env'] for key in
+                                    ('RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','CARGO_PROFILE_RELEASE_DEBUG')))
+                self.assertEqual(arm['dylib'].name,'pinyin_capi.dll')
+                self.assertEqual(command.kwargs['env']['PKG_CONFIG_PATH'],str(pc.resolve()))
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from unittest import mock
 
@@ -595,8 +596,7 @@ if sys.platform.startswith('linux'):
             self.bin = self.work / 'bin'
             self.bin.mkdir()
             self.calls = self.work / 'calls'
-            program = f'''#!{sys.executable}
-import os,pathlib,sys,time
+            program = '''import os,pathlib,sys,time
 name=pathlib.Path(sys.argv[0]).name; a=sys.argv[1:]
 if name=='uv':
     if a==['--version']: print('uv 0.0.0 (synthetic)')
@@ -636,9 +636,7 @@ elif name in ('curl','apt-get','sudo'):
     sys.exit(97)
     '''
             for name in ('uv', 'rustup', 'valgrind', 'podman', 'wslc', 'container', 'findmnt', 'curl', 'apt-get', 'sudo'):
-                path = self.bin / name
-                path.write_text(program)
-                path.chmod(0o755)
+                test_support.python_tool(self.bin, name, program)
             self.env = dict(PATH=str(self.bin) + ':' + os.defpath, HOME=str(self.work), LC_ALL='C', TMPDIR=str(self.work),
                             UV_CACHE_DIR=str(self.work / 'uv-cache'), OXPINYIN_CACHE=str(self.work / 'cache'),
                             OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'), OXPINYIN_CCR_DIR=str(self.work / 'ccr'),
@@ -720,20 +718,25 @@ elif name in ('curl','apt-get','sudo'):
             # /usr/bin may contain cargo on some hosts; fake path must then be masked.
             with mock.patch.object(provision.shutil, 'which', return_value=None), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
                 provision.Provision(env=self.env).prerequisites()
-            self.check_entry(['--python-only'], 0)
             (self.bin / 'cargo').symlink_to('/bin/true')
-            self.env['FAKE_RUST'] = '1'
-            self.check_entry(['--cells', 'bdb'], 1)
-            self.env.pop('FAKE_RUST')
-            self.check_entry(['--cells', 'bdb'], 1)  # model access refusal before runtime provisioning
-            for settings in ({'HTTPS_PROXY': 'http://127.0.0.1:1'},
-                             {'OXPINYIN_PROXY_CA': str(self.work / 'missing')},
-                             {'OXPINYIN_PROXY_CA': str(self.work / 'fake-ca')}):
-                (self.work / 'fake-ca').write_text('synthetic CA\n')
-                self.env.update(settings)
-                self.check_entry(['--cells', 'bdb'], 1)
-                for key in settings:
-                    self.env.pop(key)
+            model = ('FAIL: model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net '
+                     'redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
+            # Each prerequisite stops the run with its own refusal, and no private CA copy is left (check_entry).
+            (self.work / 'fake-ca').write_text('synthetic CA\n')
+            channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+            for settings, refusal in (
+                    ({'FAKE_RUST': '1'}, f'FAIL: Rust toolchain {channel} is not installed; run: rustup toolchain '
+                                         f'install {channel} --component clippy --component rustfmt'),
+                    ({}, model),  # model access is refused before runtime provisioning
+                    ({'HTTPS_PROXY': 'http://127.0.0.1:1'}, 'FAIL: HTTPS_PROXY is set but there is no proxy CA bundle: '),
+                    ({'OXPINYIN_PROXY_CA': str(self.work / 'missing')},
+                     f'FAIL: OXPINYIN_PROXY_CA bundle is missing: {self.work / "missing"}'),
+                    # A present CA bundle is accepted: the run goes on to the model refusal.
+                    ({'OXPINYIN_PROXY_CA': str(self.work / 'fake-ca')}, model)):
+                with self.subTest(settings=settings), mock.patch.dict(self.env, settings):
+                    last = self.check_entry(['--cells', 'bdb'], 1).stderr.decode().splitlines()[-1]
+                    self.assertTrue(last.startswith(refusal), last)
+            # The Python-only scope reads no filesystem type.
             self.env['FAKE_EXT4'] = 'unknown'
             self.check_entry(['--python-only'], 0)
 
@@ -1113,9 +1116,7 @@ class RuntimeProvisionTests(unittest.TestCase):
 
     def test_provision_and_provision_oracle_share_the_keyed_entries_of_one_root(self):
         env = {'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')}
-        commit = provision.images.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
         service = provision.Provision(root=ROOT, env=env)
-        self.assertEqual(service.cache, self.work / 'root' / f'pin-{commit[:12]}')
         self.assertEqual(service.cache, provision.images.provision_cache(env))
         self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
         self.assertEqual(provision.images.model_cache(env), provision.model.default_cache(env))

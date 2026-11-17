@@ -103,19 +103,23 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/fake_world.py': ('tools/dev/measure/valgrind.test.py',),
     'tools/dev/measure/prepare.py': ('tools/dev/measure/prepare.test.py',),
     # The oracle pin, image tag and runtime services; the importers of the shared process helpers.
-    'tools/oracle/image.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py'),
-    'tools/dev/process.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py',
-                             'tools/dev/model.test.py'),
+    'tools/oracle/image.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py',
+                              'tools/dev/process.test.py'),
+    'tools/dev/process.py': ('tools/dev/process.test.py', 'tools/oracle/image.test.py',
+                             'tools/dev/provision.test.py', 'tools/dev/model.test.py'),
     'tools/dev/measure/valgrind.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py',
                                       'tools/bisection/system_import_profile.test.py'),
     'tools/dev/measure/recipes.py': ('tools/dev/measure/recipes.test.py', 'tools/dev/just.test.py'),
     'tools/dev/measure/neutrality.py': ('tools/dev/measure/neutrality.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/w3_fixtures.py': ('tools/dev/w3_fixtures.test.py', 'tools/dev/just.test.py'),
 }
-# Native measurement extends these existing services. Keep its contracts selected.
+# Native measurement extends these existing services. Keep its contracts selected: the platform
+# campaigns, the reports, the C harness's measurement drivers and the per-child rusage reaper.
 for _measurement_source in ('bench', 'identity', 'neutrality', 'prepare', 'recipes', 'reports'):
     _measurement_path = f'tools/dev/measure/{_measurement_source}.py'
-    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py', 'tools/dev/measure/linux.test.py')
+    HARNESS_DEPENDENCIES[_measurement_path] += ('tools/dev/measure/native.test.py', 'tools/dev/measure/linux.test.py',
+                                                'tools/dev/measure/reports.test.py', 'tools/bisection/bisect.test.py',
+                                                'tools/dev/slot.test.py')
 
 # U3-owned oracle services and entry points only. Shared callers and
 # documentation stay unmapped: repository-wide audits read their tracked text.

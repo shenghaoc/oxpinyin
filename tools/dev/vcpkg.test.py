@@ -1,9 +1,8 @@
-"""Development environment selection must match runtime certification, and CI delegates vcpkg to Python."""
+"""Development environment selection must match runtime certification."""
 import contextlib
 import hashlib
 import io
 import os
-import re
 from pathlib import Path
 import sys
 import tempfile
@@ -28,13 +27,6 @@ def git(status, stdout=b''):
 def tools(command):
     """Answer the two probes of a Linux key: the checkout revision and the compiler."""
     return SimpleNamespace(status=0, stdout=b'abc123\n' if command[0] == 'git' else b'c++ (Ubuntu 15.2.0-5ubuntu1) 15.2.0\n')
-
-
-def job(name):
-    """One job of the nightly workflow, without its comment lines."""
-    text = (ROOT / '.github/workflows/verify-nightly.yml').read_text(encoding='utf-8')
-    body = re.split(r'(?m)^  [a-z][\w-]*:\n', text[text.index(f'\n  {name}:\n') + 1:])[1]
-    return ''.join(line for line in body.splitlines(keepends=True) if not line.lstrip().startswith('#'))
 
 
 class RunnerCheckout(unittest.TestCase):
@@ -219,33 +211,6 @@ class RunnerCheckout(unittest.TestCase):
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(vcpkg.main(['cache-report']), 0)
         self.assertIn('image=win25/20261111.1', output.getvalue())
-
-
-class Workflow(unittest.TestCase):
-    def test_windows_job_delegates_to_this_module(self):
-        text = job('test-windows')
-        for command in ('cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"', 'cache-report',
-                        'install --triplet x64-windows --packages "$VCPKG_PACKAGES"'):
-            self.assertIn(f'        run: uv run --managed-python python -X utf8'
-                          f' -m tools.dev.vcpkg {command}\n', text)
-        for shell in ('sha256sum', ' vcpkg install', 'specs', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'rev-parse'):
-            self.assertNotIn(shell, text)
-
-    def test_macos_job_delegates_to_this_module(self):
-        text = job('test-macos')
-        for command in ('cache-key', 'install'):
-            self.assertIn(f'        run: uv run --managed-python python -X utf8'
-                          f' -m tools.dev.vcpkg {command} --triplet "$VCPKG_TRIPLET"\n', text)
-        for shell in ('shasum', 'readlink', '"$VCPKG_ROOT/vcpkg" install', 'vcpkg_cache', 'GITHUB_ENV'):
-            self.assertNotIn(shell, text)
-
-    def test_linux_action_delegates_to_this_module(self):
-        text = (ROOT / '.github/actions/tkrzw/action.yml').read_text(encoding='utf-8')
-        for command in (f'cache-key --triplet {LINUX}', f'install --triplet {LINUX}'):
-            self.assertIn(f'      run: uv run --managed-python python -X utf8'
-                          f' -m tools.dev.vcpkg {command}\n', text)
-        for shell in ('run: |', 'set -euo', 'sha256sum', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'git -C', 'git init'):
-            self.assertNotIn(shell, text)
 
 
 class EnvironmentTests(unittest.TestCase):

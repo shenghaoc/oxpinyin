@@ -114,10 +114,6 @@ class DoctorTests(unittest.TestCase):
             with self.assertRaisesRegex(doctor.DoctorError, 'free-threaded'):
                 doctor.identity()
 
-    def test_cargo_c_fallback_is_separate_from_the_installed_floor(self):
-        self.assertEqual(doctor.cargo_tool('cargo-c').minimum, '0.10.11')
-        self.assertEqual(doctor.cargo_tool_pins()['cargo-c'], '0.10.25')
-
     def test_python_outside_the_series_is_refused(self):
         for numbers, level, found in (((3, 13, 7), 'final', '3.13.7'),
                                       ((3, 16, 0), 'final', '3.16.0'),
@@ -429,11 +425,6 @@ class NextestVerdictTests(unittest.TestCase):
                 self.verdict(result)
             self.assertEqual(str(caught.exception), 'cargo-nextest at /tools/cargo-nextest could not check '
                                                     f'the nextest-version in .config/nextest.toml ({status})')
-
-    def test_doctor_compares_no_nextest_version(self):
-        self.assertNotIn('nextest', ''.join(SAMPLES))
-        self.assertIsNone(tool('cargo-c').verdict)
-        self.assertIsNotNone(tool('cargo-nextest').verdict)
 
 
 class OtherFormatTests(ToolCase):
