@@ -20,7 +20,7 @@ P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 
 ## Sentence scores
 
-Sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin-engine/src/nbest.rs`), as the pin's `gfloat m_poss` does (`src/lookup/phonetic_lookup.h:41-52,663,692-693` at `074a2219`).
+Sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin-core/src/engine/nbest.rs`), as the pin's `gfloat m_poss` does (`src/lookup/phonetic_lookup.h:41-52,663,692-693` at `074a2219`).
 Candidate order is the list order; candidates carry no separate integer score.
 
 ## Incomplete keys

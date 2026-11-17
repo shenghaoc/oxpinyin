@@ -18,7 +18,7 @@ enum Parser {
 impl Parser {
     fn parse(&self, input: &[u8], options: OptionBits) -> Parse {
         match *self {
-            Self::Full => oxpinyin_engine::tool::parse_full(input, options),
+            Self::Full => oxpinyin_core::engine::tool::parse_full(input, options),
             Self::Double => {
                 let parsed = DoublePinyinParser::new().parse_with_options(input, options);
                 Parse {

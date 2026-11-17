@@ -50,7 +50,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
 /// (`ngram_kyotodb.cpp:136-137`). A read past the value (`ngram.cpp:241`,
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
-pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_core::engine::EngineError) -> bool {
     oxpinyin_facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
@@ -350,7 +350,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
 
 enum CandidateGuessRefusal {
     InvalidOffset,
-    Lookup(oxpinyin_engine::EngineError),
+    Lookup(oxpinyin_core::engine::EngineError),
 }
 
 /// Emit a refused lookup's diagnostic after its instance view is gone.
@@ -395,7 +395,7 @@ fn lookup_window(
     session_offset: usize,
     before_cursor: bool,
     abort_on_unreadable: bool,
-) -> Result<oxpinyin_engine::CandidateList, CandidateGuessRefusal> {
+) -> Result<oxpinyin_core::engine::CandidateList, CandidateGuessRefusal> {
     let looked_up = if before_cursor {
         inst.core
             .session
@@ -408,30 +408,32 @@ fn lookup_window(
     let window = match looked_up {
         Ok(window) => window,
         Err(
-            oxpinyin_engine::EngineError::TonedIncompleteKey
-            | oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+            oxpinyin_core::engine::EngineError::TonedIncompleteKey
+            | oxpinyin_core::engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::ReadAfterCheck { .. },
         ) => std::process::abort(),
         Err(
-            error @ (oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_)),
+            error @ (oxpinyin_core::engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_core::engine::EngineError::SelectionAnchorBeforeComposition {
+                ..
+            }
+            | oxpinyin_core::engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_core::engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_core::engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_core::engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::UnsafeLookupPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_core::engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_core::engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_core::engine::EngineError::OverlongUserIndexKey { .. }
+            | oxpinyin_core::engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_core::engine::EngineError::UserModel(_)
+            | oxpinyin_core::engine::EngineError::Graph(_)
+            | oxpinyin_core::engine::EngineError::Scoring(_)),
         ) => {
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));

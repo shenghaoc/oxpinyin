@@ -258,11 +258,11 @@
       "sha256": "c68156c9a7223e6242b5303e6e0931962612d09bc3d154a618346688147a57fa"
     },
     "RESPLIT_TABLE": {
-      "source": "crates/oxpinyin-engine/src/session/mod.rs",
+      "source": "crates/oxpinyin-core/src/engine/session/mod.rs",
       "sha256": "b0097884479f0c341f64bbc6442584f15976c5a995cd0a4cfa07bf236df99e9f"
     },
     "DIVIDED_TABLE": {
-      "source": "crates/oxpinyin-engine/src/session/mod.rs",
+      "source": "crates/oxpinyin-core/src/engine/session/mod.rs",
       "sha256": "abd247cef2c143d3a4aff62e5bbf44e93d76046e1743d3ac71c9c40efebb570f"
     },
     "CHEWING_ZERO_TONE": {

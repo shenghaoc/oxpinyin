@@ -370,7 +370,7 @@ An entry holds nothing else.
 ### Pinyin tail sort — S3 repair
 
 - **Pin:** `trellis_value_compare` returns the negated `gfloat` difference as `gint` (`src/lookup/phonetic_lookup.h:174-178`) and is passed to `g_ptr_array_sort` (`:337`); its equality is not transitive, against the consistent total order a qsort-style comparator needs.
-- **oxpinyin:** `tail_merge` (`crates/oxpinyin-engine/src/nbest.rs`) sorts the tails stably by raw possibility descending, NaN last, with no integer truncation.
+- **oxpinyin:** `tail_merge` (`crates/oxpinyin-core/src/engine/nbest.rs`) sorts the tails stably by raw possibility descending, NaN last, with no integer truncation.
 - **Decision:** accepted under the [S3 ruling](compatibility-policy.md#s3-stable-descending-possibility).
 - **Tests:** `nbest::tests::ieee_order_and_stable_raw_tails`.
 

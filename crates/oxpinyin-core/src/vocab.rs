@@ -158,7 +158,8 @@ impl SyllableKey {
     /// finals (`phonetic_key_matrix.cpp:238-306`), so an initial bit and a
     /// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
     #[must_use]
-    pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
+    #[cfg(any(test, feature = "tools"))]
+    pub(crate) fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
         fuzzy_chewing_alternatives(self.chewing_key(), options)
             .into_iter()
             .map(Self::from_matrix_key)
@@ -246,7 +247,7 @@ pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<C
 
 /// Initial swaps only; the matrix applies these to its column snapshot.
 #[must_use]
-pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+pub(crate) fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut initials = Vec::new();
     for (bit, a, b) in [
         (OptionBits::PINYIN_AMB_C_CH, "c", "ch"),
@@ -277,7 +278,7 @@ pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<Chewi
 
 /// Final swaps only, including combinations with no syllable-table row.
 #[must_use]
-pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+pub(crate) fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut out = Vec::new();
     for (bit, a, b) in FUZZY_FINALS {
         if !options.contains(bit) {
@@ -423,7 +424,7 @@ impl PhraseEntry {
 
     /// Consumes the entry and returns its phrase text.
     #[must_use]
-    pub fn into_text(self) -> PhraseText {
+    pub(crate) fn into_text(self) -> PhraseText {
         self.text
     }
 }

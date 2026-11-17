@@ -64,7 +64,7 @@ and handwritten consumers. The generated destinations are:
 | `oxpinyin-core/src/table_data/double_pinyin.rs` | Six schemes' sheng/yun tables and three fallback lists; exact values/order |
 | `oxpinyin-core/src/table_data/zhuyin_keyboards.rs` | Eight keyboards' 24 symbol/component/tone lists; exact values/order |
 | `oxpinyin-core/src/table_data/tone_symbols.rs` | Existing public tone-symbol match; exact values |
-| `oxpinyin-engine/src/session/split_tables.rs` | 85 resplit and 20 divided rows; exact values/order |
+| `oxpinyin-core/src/engine/session/split_tables.rs` | 85 resplit and 20 divided rows; exact values/order |
 
 Whole-file identity cannot hold, because banners, formatting and locations
 change. Identity is therefore value identity. `acceptance.json` records 67 original Rust literal declarations from the

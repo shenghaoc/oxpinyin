@@ -5,7 +5,7 @@ use oxpinyin_core::OptionBits;
 
 use oxpinyin_user::data::table_info::TableConf;
 
-use oxpinyin_engine::tool::prepare_lookup;
+use oxpinyin_core::engine::tool::prepare_lookup;
 
 use crate::runtime::tool::Lookup;
 

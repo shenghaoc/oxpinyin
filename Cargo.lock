@@ -598,7 +598,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
  "oxpinyin-store",
@@ -628,15 +627,6 @@ dependencies = [
  "proptest",
  "rstest",
  "rustc-hash",
-]
-
-[[package]]
-name = "oxpinyin-engine"
-version = "0.1.0-alpha.1"
-dependencies = [
- "compact_str",
- "oxpinyin-core",
- "rustc-hash",
  "smallvec",
  "thiserror",
 ]
@@ -647,7 +637,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-input",
  "oxpinyin-store",
  "oxpinyin-user",
@@ -676,7 +665,6 @@ dependencies = [
  "libc",
  "oxpinyin-capi",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
  "oxpinyin-store",
@@ -743,7 +731,6 @@ dependencies = [
  "libc",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-input",
  "oxpinyin-store",

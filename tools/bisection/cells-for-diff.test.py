@@ -274,7 +274,7 @@ class RunFlagTests(unittest.TestCase):
     """--run-flag, the line store-backends.yml's changes job appends to $GITHUB_OUTPUT."""
 
     BASE = {'README.md': 'a\n', 'crates/oxpinyin-store/src/lib.rs': 'fn a() {}\n',
-            'crates/oxpinyin-engine/src/lib.rs': 'fn a() {}\n',
+            'crates/oxpinyin-core/src/engine/mod.rs': 'fn a() {}\n',
             'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\n',
             'tools/tkrzw/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
     ALSO = ('--also', 'tools/tkrzw', '--also', 'tools/dev/check.py')
@@ -286,12 +286,12 @@ class RunFlagTests(unittest.TestCase):
 
     def test_each_kind_of_change_sets_the_flag(self):
         cases = (('store change', {'crates/oxpinyin-store/src/lib.rs': 'fn b() {}\n'}, 'true'),
-                 ('feature line', {'crates/oxpinyin-engine/src/lib.rs': gate('kyotocabinet') + '\n'}, 'true'),
+                 ('feature line', {'crates/oxpinyin-core/src/engine/mod.rs': gate('kyotocabinet') + '\n'}, 'true'),
                  ('backend Cargo.toml line', {'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
                   'true'),
                  ('infrastructure change', {'tools/tkrzw/build.sh': 'b\n'}, 'true'),
                  ('infrastructure file', {'tools/dev/check.py': 'b\n'}, 'true'),
-                 ('engine-only change', {'crates/oxpinyin-engine/src/lib.rs': 'fn b() {}\n'}, 'false'),
+                 ('engine-only change', {'crates/oxpinyin-core/src/engine/mod.rs': 'fn b() {}\n'}, 'false'),
                  ('docs-only change', {'README.md': gate('tkrzw') + '\n'}, 'false'))
         for name, head, expected in cases:
             with self.subTest(name):

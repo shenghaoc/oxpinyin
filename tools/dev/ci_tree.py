@@ -132,7 +132,7 @@ GENERATED_TABLES = (
     "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
     "crates/oxpinyin-core/src/table_data/zhuyin_keyboards.rs",
     "crates/oxpinyin-core/src/table_data/zhuyin_tones.rs",
-    "crates/oxpinyin-engine/src/session/split_tables.rs",
+    "crates/oxpinyin-core/src/engine/session/split_tables.rs",
 )
 CI_INPUTS = {
     # cargo fmt and the compile-only fuzz check read the fuzz workspace. The

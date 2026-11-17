@@ -23,6 +23,7 @@ extern crate self as oxpinyin_core;
 mod chewing_key;
 mod chewing_key_data;
 pub mod direct;
+pub mod engine;
 #[cfg(test)]
 #[path = "../tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
@@ -70,8 +71,8 @@ pub use syllables::{
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{
     PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey, fuzzy_chewing_alternatives,
-    fuzzy_chewing_finals, fuzzy_chewing_initials,
 };
+pub(crate) use vocab::{fuzzy_chewing_finals, fuzzy_chewing_initials};
 
 /// User-side count overlay for the decode-time additive merge
 /// (`docs/findings/user-store.md` §5).
@@ -896,7 +897,7 @@ impl<E> PhraseIndexRanges<E> {
     /// Appends `other`'s ranges after this one's, library by library, with
     /// its entries mapped through `map`; `other` is left empty. Per-library
     /// append order is kept, which is all the walk observes.
-    pub fn append_from<F>(
+    pub(crate) fn append_from<F>(
         &mut self,
         other: &mut PhraseIndexRanges<F>,
         mut map: impl FnMut(F) -> E,

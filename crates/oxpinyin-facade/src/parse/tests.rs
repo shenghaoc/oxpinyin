@@ -10,7 +10,8 @@ fn den_matrix_keeps_key_and_fuzzy_deng() {
         .iter()
         .collect::<Vec<_>>();
     let keys = crate::cursor::matrix_keys_of(&keys);
-    let matrix = oxpinyin_engine::parse_time_keys(&keys, 2, OptionBits::PINYIN_AMB_EN_ENG, false);
+    let matrix =
+        oxpinyin_core::engine::parse_time_keys(&keys, 2, OptionBits::PINYIN_AMB_EN_ENG, false);
     assert_eq!(
         matrix
             .iter()
@@ -172,7 +173,7 @@ mod native {
         let row = published(&context, &mut instance, 0, &first);
         assert_ne!(
             choose(&context, &mut instance, &row),
-            oxpinyin_engine::Selection::Refused
+            oxpinyin_core::engine::Selection::Refused
         );
         assert_eq!(instance.read(&context.runtime).parsed_input_length(), 5);
         let consumed = instance.bind(&context.runtime).parse_full_more("nihaoXYZ");

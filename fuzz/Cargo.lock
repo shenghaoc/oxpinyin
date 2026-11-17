@@ -337,7 +337,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-facade",
  "oxpinyin-user",
  "rustc-hash",
@@ -361,15 +360,6 @@ dependencies = [
  "phf",
  "phf_codegen",
  "rustc-hash",
-]
-
-[[package]]
-name = "oxpinyin-engine"
-version = "0.1.0-alpha.1"
-dependencies = [
- "compact_str",
- "oxpinyin-core",
- "rustc-hash",
  "smallvec",
  "thiserror",
 ]
@@ -380,7 +370,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-capi-marshal",
  "oxpinyin-core",
- "oxpinyin-engine",
  "oxpinyin-input",
  "oxpinyin-user",
 ]

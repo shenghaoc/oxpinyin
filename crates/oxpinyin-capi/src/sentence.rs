@@ -57,7 +57,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
 /// (`ngram_kyotodb.cpp:136-137`). A read past the value (`ngram.cpp:241`,
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
-pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_core::engine::EngineError) -> bool {
     oxpinyin_facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
@@ -399,7 +399,7 @@ impl GuessFrame {
 fn lookup_window(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     frame: &GuessFrame,
-) -> Option<oxpinyin_engine::CandidateList> {
+) -> Option<oxpinyin_core::engine::CandidateList> {
     let window = match inst
         .core
         .session
@@ -410,12 +410,14 @@ fn lookup_window(
         // `:269`, tkrzw `:252`): the suggestion walk reached an index key
         // past MAX_PHRASE_LENGTH syllables that extends this path, and the
         // pin's `search_suggestion` switch falls to `default: abort()`.
-        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => std::process::abort(),
+        Err(oxpinyin_core::engine::EngineError::OverlongUserIndexKey { .. }) => {
+            std::process::abort()
+        }
         // Register row 4, `pinyin_phrase3.h:152`: a table search of the
         // guess (the span loop from `offset`, `pinyin.cpp:2224-2262`, or
         // the LONGER suggestion walk, `:2292-2293`) met a key path whose
         // first initial-only key carries a tone.
-        Err(oxpinyin_engine::EngineError::TonedIncompleteKey) => std::process::abort(),
+        Err(oxpinyin_core::engine::EngineError::TonedIncompleteKey) => std::process::abort(),
         // Register rows 85 and 98: the DYNAMIC_ADJUST merge or read of the
         // previous token's grams asserts on a short user value, and the
         // process aborts in `refuse_lookup_gram`, or reads past a partial
@@ -424,32 +426,32 @@ fn lookup_window(
         // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
         // the process aborts in `refuse_lookup_gram` too.
         Err(
-            oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin_engine::EngineError::ReadAfterCheck { .. },
+            oxpinyin_core::engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::ReadAfterCheck { .. },
         ) => std::process::abort(),
-        Err(error @ oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }) => {
+        Err(error @ oxpinyin_core::engine::EngineError::UnsafeLookupPredecessor { .. }) => {
             inst.state.candidates.clear();
             refuse_lookup_gram("pinyin_guess_candidates", &error);
             return None;
         }
         Err(
-            oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetPastSeparator { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin_engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin_engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }
-            | oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin_engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin_engine::EngineError::StaleTrainingSpan { .. }
-            | oxpinyin_engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin_engine::EngineError::UserModel(_)
-            | oxpinyin_engine::EngineError::Graph(_)
-            | oxpinyin_engine::EngineError::Scoring(_),
+            oxpinyin_core::engine::EngineError::CandidateIndexOutOfRange { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetPastSeparator { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin_core::engine::EngineError::LookupOffsetInsideCharacter { .. }
+            | oxpinyin_core::engine::EngineError::SelectionAnchorBeforeComposition { .. }
+            | oxpinyin_core::engine::EngineError::ZeroKeyOffsetCheck { .. }
+            | oxpinyin_core::engine::EngineError::MatrixColumnAssert { .. }
+            | oxpinyin_core::engine::EngineError::StaleTrainingConstraint { .. }
+            | oxpinyin_core::engine::EngineError::UnsafeTrainingPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::ShortTrainingPredecessor { .. }
+            | oxpinyin_core::engine::EngineError::TrainingSetFreqMiss { .. }
+            | oxpinyin_core::engine::EngineError::FailedUserBigramStore { .. }
+            | oxpinyin_core::engine::EngineError::StaleTrainingSpan { .. }
+            | oxpinyin_core::engine::EngineError::ReduceTokensCount { .. }
+            | oxpinyin_core::engine::EngineError::UserModel(_)
+            | oxpinyin_core::engine::EngineError::Graph(_)
+            | oxpinyin_core::engine::EngineError::Scoring(_),
         ) => {
             // Unreachable for a well-formed lookup: the offset-shaped
             // contracts are refused by `validate_lookup_offset` and

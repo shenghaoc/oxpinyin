@@ -66,10 +66,10 @@ fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset
 /// (`zhuyin.cpp:1453` via `:1898`, `:1920`) aborts the process (register row
 /// 66); a parse the facade cannot read, which the pin has no counterpart
 /// for, answers `false` with one warning.
-fn key_lookup_failed(error: &oxpinyin_engine::EngineError, name: &str) -> bool {
+fn key_lookup_failed(error: &oxpinyin_core::engine::EngineError, name: &str) -> bool {
     if matches!(
         error,
-        oxpinyin_engine::EngineError::ZeroKeyOffsetCheck { .. }
+        oxpinyin_core::engine::EngineError::ZeroKeyOffsetCheck { .. }
     ) {
         std::process::abort();
     }

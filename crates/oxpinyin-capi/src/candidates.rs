@@ -5,7 +5,7 @@ use std::os::raw::c_int;
 
 use oxpinyin_capi_marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use oxpinyin_core::PhraseToken;
-use oxpinyin_engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
+use oxpinyin_core::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
 use oxpinyin_user::{UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
@@ -378,29 +378,33 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
 /// text: only when the lookup searched, every row is the engine's fallback
 /// row, and the facade total is not zero.
 fn sole_unreadable_row(
-    window: &oxpinyin_engine::CandidateList,
+    window: &oxpinyin_core::engine::CandidateList,
     frame: &crate::sentence::GuessFrame,
-) -> Option<oxpinyin_engine::Candidate> {
+) -> Option<oxpinyin_core::engine::Candidate> {
     window.sole_unreadable_candidate().filter(|_| {
         !frame.sentence_rows_only
             && window
                 .iter()
-                .all(|row| row.kind() == oxpinyin_engine::CandidateKind::Fallback)
+                .all(|row| row.kind() == oxpinyin_core::engine::CandidateKind::Fallback)
             && !frame.abort_on_unreadable
     })
 }
 
 /// The published type of a window row; `is_longer` names the LONGER row.
-fn row_type(cand: &oxpinyin_engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
+fn row_type(cand: &oxpinyin_core::engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
     match cand.kind() {
-        oxpinyin_engine::CandidateKind::Sentence => lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
-        oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
-        oxpinyin_engine::CandidateKind::Phrase | oxpinyin_engine::CandidateKind::Fallback
+        oxpinyin_core::engine::CandidateKind::Sentence => {
+            lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+        }
+        oxpinyin_core::engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
+        oxpinyin_core::engine::CandidateKind::Phrase
+        | oxpinyin_core::engine::CandidateKind::Fallback
             if is_longer =>
         {
             lookup_candidate_type_t::LONGER_CANDIDATE
         }
-        oxpinyin_engine::CandidateKind::Phrase | oxpinyin_engine::CandidateKind::Fallback => {
+        oxpinyin_core::engine::CandidateKind::Phrase
+        | oxpinyin_core::engine::CandidateKind::Fallback => {
             lookup_candidate_type_t::NORMAL_CANDIDATE
         }
     }
@@ -413,7 +417,7 @@ fn row_type(cand: &oxpinyin_engine::Candidate, is_longer: bool) -> lookup_candid
 /// caller returns the window to the session afterwards.
 pub(crate) fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_engine::CandidateList,
+    window: &oxpinyin_core::engine::CandidateList,
     frame: &crate::sentence::GuessFrame,
 ) {
     // One row vector and one text buffer, each sized once for the window
@@ -441,7 +445,7 @@ pub(crate) fn snapshot_candidates(
         // false (`pinyin.cpp:2193`), an empty result answers true
         // with no rows. The C ABI translates the engine shape, it
         // does not surface it.
-        if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
+        if cand.kind() == oxpinyin_core::engine::CandidateKind::Fallback {
             continue;
         }
         // §9: a LONGER row is the engine's token-carrying row with the
@@ -459,7 +463,7 @@ pub(crate) fn snapshot_candidates(
         // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
         // the LONGER row beneath them (row 65). Keep exactly those kinds.
         if frame.sentence_rows_only
-            && cand.kind() != oxpinyin_engine::CandidateKind::Sentence
+            && cand.kind() != oxpinyin_core::engine::CandidateKind::Sentence
             && !is_longer
         {
             continue;
@@ -478,13 +482,14 @@ pub(crate) fn snapshot_candidates(
         // `m_end` the span end in the same coordinates, both `guint16`
         // (`:103-104`). A sentence or LONGER row keeps the default zero
         // span (`:114`; `_prepend_sentence_candidates`, `:1936-1950`).
-        let (begin, end) = if is_longer || cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
-            (0, 0)
-        } else {
-            let selection =
-                oxpinyin_facade::SelectionSpan::of_candidate(cand, frame.session_offset);
-            (frame.offset as u16, published_bound(selection.end()) as u16)
-        };
+        let (begin, end) =
+            if is_longer || cand.kind() == oxpinyin_core::engine::CandidateKind::Sentence {
+                (0, 0)
+            } else {
+                let selection =
+                    oxpinyin_facade::SelectionSpan::of_candidate(cand, frame.session_offset);
+                (frame.offset as u16, published_bound(selection.end()) as u16)
+            };
         if cand.text().outward_bytes().is_none() {
             inst.state.candidates.keep_stored_text(cand.text().clone());
         }
@@ -508,7 +513,7 @@ fn choose_phrase_row(
     offset: usize,
     row: &RowArgs,
     token: Option<PhraseToken>,
-    text: oxpinyin_engine::RowText,
+    text: oxpinyin_core::engine::RowText,
 ) -> c_int {
     // A row with no token reaching the normal branch is a predicted
     // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
@@ -533,17 +538,18 @@ fn choose_phrase_row(
     };
     match inst.core.select_published(&published, true) {
         // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
-        Ok(oxpinyin_engine::Selection::Refused) => choose_answer(offset, 0),
+        Ok(oxpinyin_core::engine::Selection::Refused) => choose_answer(offset, 0),
         // The pin answers the caller's choose offset plus the length
         // `add_constraint` wrote, `m_end - m_begin` of the row's own span
         // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever
         // offset the caller passes.
-        Ok(oxpinyin_engine::Selection::Continued | oxpinyin_engine::Selection::Completed) => {
-            choose_answer(
-                offset,
-                usize::from(row.end).wrapping_sub(usize::from(row.begin)),
-            )
-        }
+        Ok(
+            oxpinyin_core::engine::Selection::Continued
+            | oxpinyin_core::engine::Selection::Completed,
+        ) => choose_answer(
+            offset,
+            usize::from(row.end).wrapping_sub(usize::from(row.begin)),
+        ),
         Err(_) => -1,
     }
 }
@@ -657,13 +663,13 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let mut token = row.token;
-    let mut text = oxpinyin_engine::RowText::Resolve;
+    let mut text = oxpinyin_core::engine::RowText::Resolve;
     if row.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE {
         // SAFETY: no instance or candidate view is live; the handle meets
         // the export's precondition.
         match unsafe { try_promote_addon(instance, candidate) } {
             Some(promoted) => token = Some(promoted),
-            None => text = oxpinyin_engine::RowText::Empty,
+            None => text = oxpinyin_core::engine::RowText::Empty,
         }
     }
     // SAFETY: promotion has released its context borrow; the live instance
@@ -1019,12 +1025,12 @@ pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) 
 
 /// `pinyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
-fn train_answer(result: Result<bool, oxpinyin_engine::EngineError>) -> bool {
+fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
     use oxpinyin_facade::TrainingRefusal;
     // The Pinyin caller supplies the n-best index (074a2219 pinyin.cpp:2684).
     if matches!(
         result,
-        Err(oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. })
+        Err(oxpinyin_core::engine::EngineError::CandidateIndexOutOfRange { .. })
     ) {
         std::process::abort();
     }

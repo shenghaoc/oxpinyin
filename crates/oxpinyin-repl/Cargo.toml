@@ -20,7 +20,6 @@ kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin-facade/kyotocabinet", "
 [dependencies]
 oxpinyin-utils = { path = "../oxpinyin-utils", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-core = { workspace = true, features = ["tools"] }
-oxpinyin-engine = { workspace = true, features = ["tools"] }
 oxpinyin-facade = { workspace = true, features = ["tools"] }
 oxpinyin-user = { workspace = true, features = ["tools"] }
 oxpinyin-input = { workspace = true, features = ["tools"] }

@@ -98,7 +98,7 @@ These invariants hold in the current code:
    No clock, locale or environment read enters.
 4. **No candidate cap.**
    The list is returned in full.
-   The scan bound is `MAX_PHRASE_LENGTH` (16 keys per phrase) in `crates/oxpinyin-engine/src/session/mod.rs`.
+   The scan bound is `MAX_PHRASE_LENGTH` (16 keys per phrase) in `crates/oxpinyin-core/src/engine/session/mod.rs`.
 
 ### 8.4 Tie classes
 
@@ -108,7 +108,7 @@ Equal keys then keep the pin's array order.
 Per window, `_append_items` lays the rows down library by library (system facade before addon).
 In each library, the rows follow the order in which the index chunk stores them: stored key first, then token (`chewing_large_table2.h:91-133`, `:208-230`).
 The first row of each token is kept.
-`flush_window_batch` in `crates/oxpinyin-engine/src/session/mod.rs` reproduces this order.
+`flush_window_batch` in `crates/oxpinyin-core/src/engine/session/mod.rs` reproduces this order.
 Recorded cases include `liangbi` (两笔 before 量比) and `goug` (沟谷 before 狗狗, which also tie on raw counts).
 
 **Class B — doubled apostrophe.**

@@ -11,7 +11,7 @@
 //! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
 //! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-user`
 //! is a handle plus a point read. The algorithms stay where they
-//! belong — decoding/composition in `oxpinyin-engine`, tables and model math
+//! belong — decoding/composition in `oxpinyin-core`, tables and model math
 //! in `oxpinyin-user`, user state in `oxpinyin-user` — and the user-count
 //! overlay arithmetic lives in `oxpinyin-user`'s `*_with_user_delta` methods
 //! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
@@ -29,12 +29,12 @@ use std::path::{Path, PathBuf};
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 
+use oxpinyin_core::engine::{EngineError, Session, SessionSettings, StoragePaths};
 use oxpinyin_core::{
     Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseItemRead, PhraseText, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo,
     UserCountDelta,
 };
-use oxpinyin_engine::{EngineError, Session, SessionSettings, StoragePaths};
 pub(crate) use oxpinyin_user::data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
@@ -1462,7 +1462,7 @@ impl LanguageModel for RuntimeLm<'_> {
 
 /// A [`Session`] over this crate's concrete backends.
 pub type RuntimeSession<'a> =
-    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_engine::SessionState>;
+    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_core::engine::SessionState>;
 
 /// One opened engine: configuration-independent wiring for the converted
 /// system tables, the unigram model, λ, the learning store, and the
@@ -1850,7 +1850,10 @@ impl Runtime {
     ///
     /// Construction cannot fail: [`Session::new`] reads no dictionary or
     /// model record.
-    pub(crate) fn new_session(&self, settings: SessionSettings) -> oxpinyin_engine::SessionState {
+    pub(crate) fn new_session(
+        &self,
+        settings: SessionSettings,
+    ) -> oxpinyin_core::engine::SessionState {
         Session::new(settings, self.dict(), self.lm()).into_state()
     }
 
@@ -1879,7 +1882,7 @@ impl Runtime {
     /// Borrow composition and phrase storage for one operation.
     pub fn session<'a>(
         &'a self,
-        state: &'a mut oxpinyin_engine::SessionState,
+        state: &'a mut oxpinyin_core::engine::SessionState,
     ) -> RuntimeSession<'a> {
         state.bind(self.dict(), self.lm())
     }
@@ -1897,7 +1900,7 @@ impl Runtime {
     /// The engine's ordered training errors; completed observations stay applied.
     pub fn train_session(
         &mut self,
-        state: &oxpinyin_engine::SessionState,
+        state: &oxpinyin_core::engine::SessionState,
         index: u8,
     ) -> Result<bool, EngineError> {
         let user = &self.user;

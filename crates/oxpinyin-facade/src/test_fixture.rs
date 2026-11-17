@@ -35,7 +35,7 @@ pub(crate) mod contract_data;
 pub(crate) mod native_fixture;
 
 use oxpinyin_core::OptionBits;
-use oxpinyin_engine::{CandidateKind, RowText, Selection};
+use oxpinyin_core::engine::{CandidateKind, RowText, Selection};
 
 pub(crate) fn native_context(
     system: &std::path::Path,
@@ -136,7 +136,7 @@ pub(crate) fn native_window(
     context: &ContextCore,
     instance: &mut InstanceCore,
     offset: usize,
-) -> Vec<oxpinyin_engine::Candidate> {
+) -> Vec<oxpinyin_core::engine::Candidate> {
     let offset = native_offset(context, instance, offset);
     let mut view = instance.bind(&context.runtime);
     let options = view.options();
@@ -169,9 +169,9 @@ pub(crate) fn native_instance(context: &ContextCore, law: UserConfLaw) -> Instan
         let mut view = instance.bind(&context.runtime);
         view.session.set_collapse_sentence_rows_to_best(true);
         view.session
-            .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+            .set_candidate_ranking(oxpinyin_core::engine::CandidateRanking::LengthThenFrequency);
         view.session
-            .set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
+            .set_nbest_shape(oxpinyin_core::engine::NbestShape::ZHUYIN);
     }
     instance
 }
@@ -187,7 +187,7 @@ pub(crate) fn published(
         .iter()
         .find(|row| row.kind() == CandidateKind::Phrase && row.text().as_str() == Some(text))
         .expect("normal row");
-    let target = oxpinyin_engine::SelectionTarget::of_candidate(
+    let target = oxpinyin_core::engine::SelectionTarget::of_candidate(
         row,
         native_offset(context, instance, offset),
         None,

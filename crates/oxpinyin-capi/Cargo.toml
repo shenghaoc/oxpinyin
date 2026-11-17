@@ -67,7 +67,6 @@ oxpinyin-core.workspace = true
 # carries it for the `workspace = true` ones) so `--no-default-features`
 # builds actually reach the store's backend selection; the [features] block
 # above forwards it.
-oxpinyin-engine.workspace = true
 # The shared facade-orchestration layer (instance/context state machines,
 # parse seams, cursor laws) this crate's C wrappers translate.
 oxpinyin-facade = { path = "../oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }

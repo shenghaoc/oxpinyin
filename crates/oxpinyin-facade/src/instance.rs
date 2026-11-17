@@ -3,13 +3,13 @@
 //! facades' C layers borrow against.
 
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
+use oxpinyin_core::engine::{
+    Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
+    check_lookup_offset_range, normalize_lookup_offset,
+};
 use oxpinyin_core::{
     Dictionary, DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken,
     ZhuyinParse,
-};
-use oxpinyin_engine::{
-    Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
-    check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_user::UserStore;
 
@@ -97,7 +97,7 @@ pub struct PublishedRow {
     /// (`pinyin.cpp:2559-2561`).
     pub token: oxpinyin_core::PhraseToken,
     /// Where the recorded text comes from.
-    pub text: oxpinyin_engine::RowText,
+    pub text: oxpinyin_core::engine::RowText,
 }
 
 /// State behind a facade's instance handle, minus the C parts: everything
@@ -109,7 +109,7 @@ pub struct PublishedRow {
 /// snapshot).
 pub struct InstanceCore {
     /// Retained composition, with no dictionary or model owner.
-    pub session: oxpinyin_engine::SessionState,
+    pub session: oxpinyin_core::engine::SessionState,
     state: InstanceState,
 }
 
@@ -149,7 +149,7 @@ pub struct InstanceState {
     /// (fuzzy alternatives, and for libpinyin full pinyin the resplit and divided
     /// passes). Empty for plain full pinyin, whose scan matrix the session
     /// keeps, and while no key was placed.
-    pub parse_matrix: Vec<oxpinyin_engine::MatrixKey>,
+    pub parse_matrix: Vec<oxpinyin_core::engine::MatrixKey>,
 }
 
 impl std::ops::Deref for InstanceCore {
@@ -167,7 +167,7 @@ impl std::ops::DerefMut for InstanceCore {
 /// One operation's composition and storage borrows.
 pub struct InstanceView<'a, S, E> {
     /// Composition borrowed with current dictionary and model readers.
-    pub session: oxpinyin_engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
+    pub session: oxpinyin_core::engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
     /// Learning store borrowed for this operation.
     pub user: &'a UserStore,
     /// Current dictionary reader.
@@ -180,9 +180,10 @@ pub struct InstanceView<'a, S, E> {
 
 /// An operation that can change composition but only read phrase storage.
 pub type InstanceMut<'a> =
-    InstanceView<'a, &'a mut InstanceState, &'a mut oxpinyin_engine::SessionState>;
+    InstanceView<'a, &'a mut InstanceState, &'a mut oxpinyin_core::engine::SessionState>;
 /// A shared operation over retained composition and current phrase storage.
-pub type InstanceRead<'a> = InstanceView<'a, &'a InstanceState, &'a oxpinyin_engine::SessionState>;
+pub type InstanceRead<'a> =
+    InstanceView<'a, &'a InstanceState, &'a oxpinyin_core::engine::SessionState>;
 
 impl<S: std::borrow::Borrow<InstanceState>, E> std::ops::Deref for InstanceView<'_, S, E> {
     type Target = InstanceState;
@@ -190,8 +191,10 @@ impl<S: std::borrow::Borrow<InstanceState>, E> std::ops::Deref for InstanceView<
         self.state.borrow()
     }
 }
-impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
-    InstanceView<'_, S, E>
+impl<
+    S: std::borrow::Borrow<InstanceState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+> InstanceView<'_, S, E>
 {
     /// Re-borrow a composition operation without taking any storage ownership.
     pub fn read(&self) -> InstanceRead<'_> {
@@ -213,7 +216,7 @@ impl<S: std::borrow::BorrowMut<InstanceState>, E> std::ops::DerefMut for Instanc
 
 impl<
     S: std::borrow::BorrowMut<InstanceState>,
-    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+    E: std::borrow::BorrowMut<oxpinyin_core::engine::SessionState>,
 > InstanceView<'_, S, E>
 {
     /// Ends a guess whose rows were published from `window`, each with its
@@ -225,7 +228,7 @@ impl<
 
 impl InstanceCore {
     /// Assemble retained state; operation readers are supplied by the context.
-    pub(crate) fn new(session: oxpinyin_engine::SessionState, live: LiveOptions) -> Self {
+    pub(crate) fn new(session: oxpinyin_core::engine::SessionState, live: LiveOptions) -> Self {
         Self {
             session,
             state: InstanceState {
@@ -266,8 +269,10 @@ impl InstanceCore {
     }
 }
 
-impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
-    InstanceView<'_, S, E>
+impl<
+    S: std::borrow::Borrow<InstanceState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+> InstanceView<'_, S, E>
 {
     /// The current live option word.
     #[must_use]
@@ -404,7 +409,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
     /// Whether training row `index` reaches one of the pin's own
     /// training aborts — the index past nonempty results, a stale forced
     /// phrase or a span outside the matrix
-    /// ([`oxpinyin_engine::Session::train_nbest_preflight`]) — after the
+    /// ([`oxpinyin_core::engine::Session::train_nbest_preflight`]) — after the
     /// same directory gate. Reads only.
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
@@ -439,7 +444,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
 
 impl<
     S: std::borrow::BorrowMut<InstanceState>,
-    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+    E: std::borrow::BorrowMut<oxpinyin_core::engine::SessionState>,
 > InstanceView<'_, S, E>
 {
     /// The parse-path reset: the composition's parse state goes, the
@@ -499,7 +504,7 @@ impl<
     /// bounds map onto this parse's store coordinates, the caller choosing
     /// the transformed seams its facade can populate. A bound inside a key
     /// names a matrix column no key fills, so the forcing does not survive
-    /// the second validation ([`oxpinyin_engine::Session::choose_unspellable_span`]).
+    /// the second validation ([`oxpinyin_core::engine::Session::choose_unspellable_span`]).
     /// The columns are the pin's own (`parse_matrix`), divided and resplit
     /// keys included.
     /// The caller's choose offset takes no part.

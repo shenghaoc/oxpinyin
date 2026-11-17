@@ -361,7 +361,7 @@ tiebreak too — heap-pop order is seeded by the exact-float comparator — so
 no fixed-point transform recovers the order either.
 
 This is **not** the Class A species. Class A's `amplified_frequency`
-(`crates/oxpinyin-engine/src/session/mod.rs`) is `(1−λ)·unigram/total·2²⁴`
+(`crates/oxpinyin-core/src/engine/session/mod.rs`) is `(1−λ)·unigram/total·2²⁴`
 — multiply, divide, cast: IEEE-754 basic ops, correctly rounded and
 bit-identical on every platform. The `gfloat` cost adds a transcendental,
 and the surfaces do not share the arithmetic (§11), so this divergence is
@@ -394,7 +394,7 @@ truncation (`:174–178`). `g_ptr_array_sort` calls GLib's stable
 The Rust port uses hand-written libstdc++ push/pop/make-heap assignments
 and that merge; no Rust sort takes the cyclic trellis comparator. The
 remaining generation sort orders integer library identifiers only. See
-`crates/oxpinyin-engine/src/nbest.rs` (`loses_to`, `heap_push`,
+`crates/oxpinyin-core/src/engine/nbest.rs` (`loses_to`, `heap_push`,
 `heap_adjust`, `heap_pop`, `heap_make`, `tail_compare`, `tail_merge`,
 `GenerationView`) and `session/guess.rs` (private separator provenance).
 Canonical formatting carries its separator provenance through
@@ -800,7 +800,7 @@ third pop is position 12 (䏻) for `neng` and position 11 (鐞) for `nou`:
 libstdc++'s order among equal heap elements.
 
 **Oxpinyin.** `Trellis::candidates` builds the same batch
-(`crates/oxpinyin-engine/src/nbest.rs:427–445`) and `selection_compare`
+(`crates/oxpinyin-core/src/engine/nbest.rs:427–445`) and `selection_compare`
 orders equal adjusted scores by earlier batch position (`:223–234`),
 selecting position 8 (㴰) and position 3 (鎒). S3 cannot change the
 selected set.

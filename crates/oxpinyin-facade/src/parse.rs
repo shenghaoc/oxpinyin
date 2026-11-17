@@ -151,8 +151,10 @@ fn parse_one_scheme_key(
     Some(key)
 }
 
-impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engine::SessionState>>
-    InstanceView<'_, S, E>
+impl<
+    S: std::borrow::Borrow<InstanceState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+> InstanceView<'_, S, E>
 {
     /// The one-key full-pinyin probe — the `parse_full_pinyin` law. The
     /// two facades' pins differ in exactly one bit, which
@@ -227,7 +229,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<oxpinyin_engi
 
 impl<
     S: std::borrow::BorrowMut<InstanceState>,
-    E: std::borrow::BorrowMut<oxpinyin_engine::SessionState>,
+    E: std::borrow::BorrowMut<oxpinyin_core::engine::SessionState>,
 > InstanceView<'_, S, E>
 {
     /// The pinyin full-pinyin batch parse. Its parse-time matrix applies
@@ -315,7 +317,7 @@ impl<
     fn keep_parse_matrix(&mut self, divided: bool) {
         let keys = crate::cursor::matrix_keys_of(&self.parser_key_list());
         self.parse_matrix =
-            oxpinyin_engine::parse_time_keys(&keys, self.parsed_len, self.options(), divided);
+            oxpinyin_core::engine::parse_time_keys(&keys, self.parsed_len, self.options(), divided);
     }
 
     /// The chewing batch seam — the shared skeleton (continue/restart,

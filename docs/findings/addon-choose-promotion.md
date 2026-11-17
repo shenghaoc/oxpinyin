@@ -91,7 +91,7 @@ too:
   the promotion for an `ADDON` candidate before selecting, rewrites the
   snapshot candidate to `NORMAL_CANDIDATE` at the promoted token, and selects
   the row with that token through `Session::select_target`
-  (`crates/oxpinyin-engine/src/session/selection.rs`); a later choose of the
+  (`crates/oxpinyin-core/src/engine/session/selection.rs`); a later choose of the
   same handle forces it again.
 
 After promotion the phrase surfaces through `UserLookup` as a
@@ -166,7 +166,7 @@ is first in the list and the addon row still wins. With
 `SORT_BY_FREQUENCY` set, the sort puts the addon row first.
 
 The engine implements the rule in `dedup_ranked_by_text`
-(`crates/oxpinyin-engine/src/session/mod.rs`). It runs on the sorted phrase
+(`crates/oxpinyin-core/src/engine/session/mod.rs`). It runs on the sorted phrase
 rows, where the true `m_freq` of each row is known. It includes the LONGER
 row before this dedup. The sentence prepend then keeps an n-best row over
 any phrase row with its text (`src/pinyin.cpp:2116-2125`).
@@ -192,7 +192,7 @@ item gets its own pinyin index entry (`src/pinyin.cpp:584-605`).
 Tests: the pin cases `addon-promoted-listing-unsorted`,
 `addon-promoted-listing-by-frequency`, `before-cursor-frequency-dedup`,
 `longer-normal-frequency-dedup` and `longer-normal-disabled`, with their
-`frequency-tie` variants; `oxpinyin-engine`'s
+`frequency-tie` variants; `oxpinyin-core`'s
 `session::tests::the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie`
 and `session::tests::a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set`.
 The final dedup also runs when sentence rows are suppressed.

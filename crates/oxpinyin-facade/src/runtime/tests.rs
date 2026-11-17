@@ -676,8 +676,8 @@ mod backend_files {
     //! private access).
 
     use crate::runtime::{OpenError, Runtime, TableConfError};
+    use oxpinyin_core::engine::{Selection, SelectionTarget, SessionSettings};
     use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
-    use oxpinyin_engine::{Selection, SelectionTarget, SessionSettings};
     use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
     use std::path::Path;
 
@@ -1846,7 +1846,7 @@ mod pin_data {
 
     use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 
-    use oxpinyin_engine::SessionSettings;
+    use oxpinyin_core::engine::SessionSettings;
 
     use crate::runtime::Runtime;
 
@@ -2011,7 +2011,7 @@ mod candidate_surface {
 
     use std::path::PathBuf;
 
-    use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
+    use oxpinyin_core::engine::{Candidate, CandidateKind, Session, SessionSettings};
 
     use crate::runtime::Runtime;
 
@@ -2214,7 +2214,7 @@ mod sentence_surface_parity {
                     .candidates()
                     .iter()
                     .filter(|candidate| {
-                        candidate.kind() == oxpinyin_engine::CandidateKind::Sentence
+                        candidate.kind() == oxpinyin_core::engine::CandidateKind::Sentence
                     })
                     .map(|candidate| {
                         (
@@ -2262,7 +2262,7 @@ use native_fixture::{
 };
 use oxpinyin_core::OptionBits;
 
-fn native_session(runtime: &Runtime, options: OptionBits) -> oxpinyin_engine::SessionState {
+fn native_session(runtime: &Runtime, options: OptionBits) -> oxpinyin_core::engine::SessionState {
     let mut state = runtime.new_session(SessionSettings::default());
     let mut session = runtime.session(&mut state);
     session.set_defer_list_builds(true);
@@ -2311,13 +2311,13 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
     runtime.user_store_mut().compact_libraries();
     runtime.user_store_mut().mark_modified();
 }
-fn normal_texts(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState) -> Vec<String> {
+fn normal_texts(runtime: &Runtime, state: &mut oxpinyin_core::engine::SessionState) -> Vec<String> {
     runtime
         .session(state)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
-        .filter(|candidate| candidate.kind() != oxpinyin_engine::CandidateKind::Sentence)
+        .filter(|candidate| candidate.kind() != oxpinyin_core::engine::CandidateKind::Sentence)
         .map(|candidate| candidate.text().as_str().unwrap().to_owned())
         .collect()
 }
@@ -2432,7 +2432,7 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
     assert_eq!(candidate.consumed_bytes(), 3);
     runtime
         .session(&mut state)
-        .select_target(&oxpinyin_engine::SelectionTarget::of_candidate(
+        .select_target(&oxpinyin_core::engine::SelectionTarget::of_candidate(
             &candidate, 0, None,
         ))
         .unwrap();
@@ -2745,12 +2745,13 @@ fn addon_candidate_continuation_uses_its_row_read() {
         .unwrap();
     for expected in ["甲", "乙丙"] {
         assert!(rows.iter().any(
-            |row| row.kind() == oxpinyin_engine::CandidateKind::Addon && row.text() == expected
+            |row| row.kind() == oxpinyin_core::engine::CandidateKind::Addon
+                && row.text() == expected
         ));
     }
 }
 
-fn native_chewing(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState, input: &str) {
+fn native_chewing(runtime: &Runtime, state: &mut oxpinyin_core::engine::SessionState, input: &str) {
     let options = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
     let parsed = oxpinyin_core::ZhuyinParser::with_scheme(oxpinyin_core::ZhuyinScheme::Standard)
         .parse_with_options(input.as_bytes(), options);
@@ -2764,7 +2765,7 @@ fn native_chewing(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState, 
         .collect();
     runtime
         .session(state)
-        .set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
+        .set_nbest_shape(oxpinyin_core::engine::NbestShape::ZHUYIN);
     runtime
         .session(state)
         .replace_raw_exact(input, &segments)
@@ -2811,7 +2812,7 @@ fn zhuyin_a_step_prices_a_user_item_from_its_readings() {
     assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
 }
 
-fn gbk_tokens(runtime: &Runtime, state: &mut oxpinyin_engine::SessionState) -> Vec<u32> {
+fn gbk_tokens(runtime: &Runtime, state: &mut oxpinyin_core::engine::SessionState) -> Vec<u32> {
     runtime
         .session(state)
         .candidates_at_for_abi(0, false)
@@ -2884,7 +2885,7 @@ fn an_unindexed_second_reading_dilutes_the_sentence_score() {
         &[("测侧", "ce'ce", 1_000_000), ("侧测", "ce'ce", 600_000)],
     );
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let sentence = |runtime: &Runtime, state: &mut oxpinyin_engine::SessionState| {
+    let sentence = |runtime: &Runtime, state: &mut oxpinyin_core::engine::SessionState| {
         runtime.session(state).replace_raw("cece").unwrap();
         assert!(runtime.session(state).guess_sentence().unwrap());
         let text = runtime.session(state).sentence_text(0).unwrap().clone();
@@ -2933,7 +2934,7 @@ fn user_rows_for_an_incomplete_key_follow_the_stored_key_order() {
         .iter()
         .filter(|row| phrases.iter().any(|&(phrase, _)| row.text() == phrase))
         .map(|row| {
-            assert_eq!(row.kind(), oxpinyin_engine::CandidateKind::Phrase);
+            assert_eq!(row.kind(), oxpinyin_core::engine::CandidateKind::Phrase);
             row.text().as_str().unwrap().to_owned()
         })
         .collect();
@@ -3141,14 +3142,14 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
         .unwrap()
         .iter()
         .find(|row| {
-            row.kind() == oxpinyin_engine::CandidateKind::Phrase
+            row.kind() == oxpinyin_core::engine::CandidateKind::Phrase
                 && row.token() == Some(PhraseToken::new(token | TAG))
         })
         .unwrap()
         .clone();
     runtime
         .session(&mut state)
-        .select_target(&oxpinyin_engine::SelectionTarget::of_candidate(
+        .select_target(&oxpinyin_core::engine::SelectionTarget::of_candidate(
             &candidate, 0, None,
         ))
         .unwrap();
@@ -3268,9 +3269,9 @@ fn a_journal_removed_item_adds_no_candidate() {
 #[cfg(feature = "tkrzw")]
 fn native_rows(
     runtime: &Runtime,
-    state: &mut oxpinyin_engine::SessionState,
+    state: &mut oxpinyin_core::engine::SessionState,
     offset: usize,
-) -> Vec<(oxpinyin_engine::CandidateKind, String, Option<u8>)> {
+) -> Vec<(oxpinyin_core::engine::CandidateKind, String, Option<u8>)> {
     runtime.session(state).set_sort_options(0x1e).unwrap();
     runtime
         .session(state)
@@ -3289,7 +3290,7 @@ fn native_rows(
 #[cfg(feature = "tkrzw")]
 fn choose_native(
     runtime: &Runtime,
-    state: &mut oxpinyin_engine::SessionState,
+    state: &mut oxpinyin_core::engine::SessionState,
     offset: usize,
     index: usize,
 ) -> usize {
@@ -3302,11 +3303,11 @@ fn choose_native(
         .nth(index)
         .unwrap()
         .clone();
-    let target = oxpinyin_engine::SelectionTarget::of_candidate(&row, offset, None);
+    let target = oxpinyin_core::engine::SelectionTarget::of_candidate(&row, offset, None);
     let end = target.span_end;
     assert_ne!(
         runtime.session(state).select_target(&target).unwrap(),
-        oxpinyin_engine::Selection::Refused
+        oxpinyin_core::engine::Selection::Refused
     );
     end
 }
@@ -3316,7 +3317,7 @@ fn choose_native(
 /// result token and conditionally merges its bigram for dynamic adjustment.
 #[test]
 fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
-    use oxpinyin_engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
+    use oxpinyin_core::engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
     let row = |kind, text: &str, rank| (kind, text.to_owned(), rank);
     for (options, expected) in [
         (
@@ -3381,12 +3382,12 @@ fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
 /// 浩 (16779426) before 好 (16779429); each row's count is the stored 621 doubled (`pinyin.cpp:906`).
 #[test]
 fn ordinary_training_reorders_the_nbest_rows() {
-    use oxpinyin_engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
+    use oxpinyin_core::engine::CandidateKind::{Phrase as NORMAL, Sentence as NBEST};
     let row = |kind, text: &str, rank| (kind, text.to_owned(), rank);
     let user = TempUserDir::new("pinned-nbest-train");
     let mut runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let surface = |runtime: &Runtime, state: &mut oxpinyin_engine::SessionState| {
+    let surface = |runtime: &Runtime, state: &mut oxpinyin_core::engine::SessionState| {
         runtime.session(state).replace_raw("nihao").unwrap();
         assert!(runtime.session(state).guess_sentence().unwrap());
         let rows = native_rows(runtime, state, 0);
@@ -3413,7 +3414,7 @@ fn ordinary_training_reorders_the_nbest_rows() {
         )
     };
     let train = |runtime: &mut Runtime,
-                 state: &mut oxpinyin_engine::SessionState,
+                 state: &mut oxpinyin_core::engine::SessionState,
                  first: &str,
                  second: &str| {
         runtime.session(state).replace_raw("nihao").unwrap();
@@ -3485,7 +3486,7 @@ fn a_sole_unreadable_row_survives_the_user_table_fallback() {
     native_chewing(&runtime, &mut state, "su3");
     runtime
         .session(&mut state)
-        .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+        .set_candidate_ranking(oxpinyin_core::engine::CandidateRanking::LengthThenFrequency);
     let rows = runtime
         .session(&mut state)
         .candidates_at_for_abi(0, false)
@@ -3512,7 +3513,7 @@ fn a_library_mask_does_not_read_extension_rows() {
         native_chewing(&runtime, &mut state, "su3");
         runtime
             .session(&mut state)
-            .set_candidate_ranking(oxpinyin_engine::CandidateRanking::LengthThenFrequency);
+            .set_candidate_ranking(oxpinyin_core::engine::CandidateRanking::LengthThenFrequency);
         let rows = runtime
             .session(&mut state)
             .candidates_at_for_abi(0, false)

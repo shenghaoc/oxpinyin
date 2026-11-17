@@ -172,7 +172,7 @@ pub fn chewing_main(data: &Path) {
         if input.line() == b"quit" {
             break;
         }
-        let parsed = oxpinyin_engine::tool::parse_full(
+        let parsed = oxpinyin_core::engine::tool::parse_full(
             input.line(),
             OptionBits::USE_TONE | OptionBits::PINYIN_INCOMPLETE,
         );

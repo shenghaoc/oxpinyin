@@ -9,8 +9,8 @@ use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
     directory_reads_as_a_chunk,
 };
+use oxpinyin_core::engine::SessionSettings;
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
-use oxpinyin_engine::SessionSettings;
 use oxpinyin_user::data::c_stderr;
 use oxpinyin_user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
@@ -935,7 +935,7 @@ impl ContextCore {
         &mut self,
         instance: &crate::InstanceCore,
         index: u8,
-    ) -> Result<bool, oxpinyin_engine::EngineError> {
+    ) -> Result<bool, oxpinyin_core::engine::EngineError> {
         self.runtime.train_session(&instance.session, index)
     }
 }

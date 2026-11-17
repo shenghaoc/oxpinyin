@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 oxpinyin-core.workspace = true
 oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal", version = "=0.1.0-alpha.1" }
-oxpinyin-engine.workspace = true
 # The boundary predicate for a directory row the chunk loader opens.
 oxpinyin-input.workspace = true
 # The workspace table carries default-features = false for the
@@ -33,7 +32,7 @@ oxpinyin-store = { workspace = true, features = ["test-hooks"] }
 sha2.workspace = true
 
 [features]
-tools = ["oxpinyin-engine/tools", "oxpinyin-input/tools"]
+tools = ["oxpinyin-core/tools", "oxpinyin-input/tools"]
 # Backend selection, forwarded to oxpinyin-user, which carries it down
 # user -> store (one backend per binary; see
 # oxpinyin-store's [features] for the model and precedence). InstanceCore

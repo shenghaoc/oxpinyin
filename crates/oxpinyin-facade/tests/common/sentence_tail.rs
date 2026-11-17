@@ -11,19 +11,19 @@
 use std::path::Path;
 
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
-use oxpinyin_engine::{Candidate, CandidateKind, Session, SessionSettings};
+use oxpinyin_core::engine::{Candidate, CandidateKind, Session, SessionSettings};
 
 use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
 pub struct PortSession {
     runtime: Runtime,
-    state: oxpinyin_engine::SessionState,
+    state: oxpinyin_core::engine::SessionState,
 }
 
 /// One operation over the retained composition and the runtime's tables.
 pub type PortRead<'a> =
-    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_engine::SessionState>;
+    Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin_core::engine::SessionState>;
 
 impl PortSession {
     /// Open the unchanged data directory and retain only composition.

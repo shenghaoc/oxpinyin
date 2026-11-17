@@ -313,7 +313,7 @@ pub type CapiInstanceMut<'a> =
 
 impl<
     S: std::borrow::Borrow<oxpinyin_facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin_engine::SessionState>,
+    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
 > CapiInstance<oxpinyin_facade::InstanceView<'_, S, E>, V, O>
@@ -333,7 +333,7 @@ impl<
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
 oxpinyin_capi_marshal::state_handle_helpers! {
-    context: PinyinContext, instance: PinyinInstance, instance_binding: instance, error: oxpinyin_engine::EngineError, context_field: { context: instance.context, }
+    context: PinyinContext, instance: PinyinInstance, instance_binding: instance, error: oxpinyin_core::engine::EngineError, context_field: { context: instance.context, }
 }
 
 mod handles {
