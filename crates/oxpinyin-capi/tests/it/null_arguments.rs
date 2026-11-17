@@ -48,31 +48,55 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     unsafe { crate::support::pinyin_fini(context) };
 }
 
-/// A NULL addon filename on a filesystem that refuses to map the system
-/// directory reaches the warning branch after the failed mapping.
+/// A private system directory under `parent` whose addon row 4 names no
+/// chunk (`art.table NULL`), and a context opened on it.
 #[cfg(unix)]
-#[test]
-fn null_addon_chunk_name_logs_once_after_load_refusal() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let system = crate::support::private_system(scratch.path());
-    if oxpinyin_facade::null_chunk_asserts(&system) {
-        return;
-    }
+fn null_addon_chunk_context(
+    parent: &std::path::Path,
+) -> (std::path::PathBuf, *mut crate::support::PinyinContext) {
+    let system = crate::support::private_system(parent);
     let conf = system.join("table.conf");
     let text = std::fs::read_to_string(&conf).expect("fixture table.conf");
     std::fs::remove_file(&conf).expect("remove the fixture symlink");
     std::fs::write(&conf, text.replace("art.table art.bin", "art.table NULL"))
         .expect("table.conf with NULL addon chunk name");
-    let system = cstr(system.to_str().expect("UTF-8 path"));
-    let context = unsafe { pinyin_init(system.as_ptr(), ptr::null()) };
+    let path = cstr(system.to_str().expect("UTF-8 path"));
+    let context = unsafe { pinyin_init(path.as_ptr(), ptr::null()) };
     assert!(!context.is_null());
-    let logs = crate::support::LogCapture::new();
-    assert!(!unsafe { crate::support::pinyin_load_addon_phrase_library(context, 4) });
-    assert_eq!(
-        logs.take(),
-        [(Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
-    );
-    unsafe { crate::support::pinyin_fini(context) };
+    (system, context)
+}
+
+/// A NULL addon filename maps the system directory itself
+/// (`g_build_filename(dir, NULL, NULL)`). Where the directory reads as a
+/// chunk, the pin asserts on the read of its length word
+/// (`memory_chunk.h:493`) and the process aborts. Elsewhere (tmpfs), `mmap`
+/// refuses it (`memory_chunk.h:486-489`): the load answers `false` with one
+/// warning.
+// Unix only, for the reason `oxpinyin-facade`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+#[cfg(unix)]
+#[test]
+fn null_addon_chunk_name_aborts_or_logs_once() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (system, context) = null_addon_chunk_context(scratch.path());
+    if oxpinyin_facade::null_chunk_asserts(&system) {
+        unsafe { crate::support::pinyin_fini(context) };
+        crate::support::assert_aborts(
+            "null_arguments::null_addon_chunk_name_aborts_or_logs_once",
+            || {
+                let child = tempfile::tempdir().expect("child scratch");
+                let (_system, context) = null_addon_chunk_context(child.path());
+                let _ = unsafe { crate::support::pinyin_load_addon_phrase_library(context, 4) };
+            },
+        );
+    } else {
+        let logs = crate::support::LogCapture::new();
+        assert!(!unsafe { crate::support::pinyin_load_addon_phrase_library(context, 4) });
+        assert_eq!(
+            logs.take(),
+            [(Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING)]
+        );
+        unsafe { crate::support::pinyin_fini(context) };
+    }
 }
 
 /// `pinyin_get_candidate_type` never reads `instance` (`pinyin.cpp:2866-2871`):

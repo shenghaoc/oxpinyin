@@ -290,7 +290,7 @@ fn remember_user_input_refuses_an_unknown_character_before_the_empty_matrix() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
-// Unix only, for the reason `init_aborts_on_a_directory_library` gives.
+// Unix only, for the reason `oxpinyin-facade`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {
