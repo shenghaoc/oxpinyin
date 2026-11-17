@@ -654,8 +654,8 @@ The C-facing path is `pinyin_save` / `zhuyin_save` →
 | Restart after interruption | `pinyin.cpp:173-217,922-1146`; `zhuyin.cpp:126-162,547-698`; `table_info.cpp:399-412` | Finals are loaded; `.tmp` is never replayed. No multi-file atomicity: pinyin before rename keeps old finals; either facade during renames can leave mixed generations; zhuyin even before all staging completes. |
 | Same-backend content | `pinyin.cpp:963-1018`; `zhuyin.cpp:596-685` | Encoded chunk/diff content, indexed records, bigram values and reload results. Logical records, not physical bytes (below). |
 
-Held by `crates/oxpinyin-user/tests/save_semantics_929.rs` and
-`save_boundaries_929.rs` (both facade laws:
+Held by the `save_semantics_929` and `save_boundaries_929` modules of
+`crates/oxpinyin-user/src/persistence/tests.rs` (both facade laws:
 `failed_renames_report_exact_order_and_preserve_destinations`,
 `interrupted_save_preserves_the_facade_specific_committed_prefix`,
 `sync_rejecting_chunk_target_does_not_stop_later_files`,

@@ -19,24 +19,15 @@ use oxpinyin_core::{ChewingKey, PhraseToken, UserModel};
 use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
 use oxpinyin_data::user_files::{LogRecord, SystemVersions};
 
-use super::{export_state, packed_to_pinyin_keys};
+use super::super::{export_state, packed_to_pinyin_keys};
 use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::store::UserStore;
+use crate::test_session::tempdir;
 
 const LIBRARY: u32 = 0x0100_0000;
 
 fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
-}
-
-fn tempdir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "oxpinyin-replayed-readings-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("tmpdir");
-    dir
 }
 
 fn tone(syllable: &str, tone: u8) -> Vec<u16> {
