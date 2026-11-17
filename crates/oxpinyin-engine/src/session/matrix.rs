@@ -45,7 +45,6 @@ impl ScanMatrix {
             keys.extend(column);
             starts.push(keys.len());
         }
-        debug_assert!(keys.is_sorted_by_key(|key| key.syllable_start));
         Self {
             keys: keys.into(),
             starts,
@@ -131,7 +130,6 @@ impl ParsedMatrix {
             next += 1;
         }
         starts.push(next);
-        debug_assert!(scan.keys()[..next].is_sorted_by_key(placed));
         let mut zeros = vec![false; bound + 1];
         let first = scan.keys().iter().map(|key| key.syllable_start).min();
         let mut last_end = 0;

@@ -1,4 +1,13 @@
 #[test]
+fn narrow_saturates_counts_above_the_row_width() {
+    let limit = u32::MAX as usize;
+    assert_eq!(super::narrow(limit - 1), u32::MAX - 1);
+    assert_eq!(super::narrow(limit), u32::MAX);
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(super::narrow(limit + 1), u32::MAX);
+}
+
+#[test]
 fn frequency_guard_agrees_with_the_order_laws_at_wrap_boundaries() {
     use super::{frequency_compare, frequency_order_is_consistent};
     let values = [

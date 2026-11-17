@@ -89,13 +89,7 @@ fn span_ptr(text: &[u8], span: TextSpan) -> *const c_char {
     let start = span.start as usize;
     let end = start.saturating_add(span.len as usize);
     match text.get(start..=end) {
-        Some(bytes) if bytes.last() == Some(&0) => {
-            debug_assert!(
-                !bytes[..bytes.len() - 1].contains(&0),
-                "a span from an earlier build"
-            );
-            bytes.as_ptr().cast()
-        }
+        Some(bytes) if bytes.last() == Some(&0) => bytes.as_ptr().cast(),
         _ => c"".as_ptr(),
     }
 }

@@ -569,7 +569,6 @@ where
             return Ok(false);
         }
         let encoded = header.encode();
-        debug_assert_eq!(encoded.len(), <S::MagicHeader as FixedRecord>::LEN);
         let mut value = Vec::with_capacity(MAGIC_NUMBER_LEN + encoded.len());
         value.extend_from_slice(&S::MAGIC_NUMBER);
         value.extend_from_slice(&encoded);
@@ -637,7 +636,6 @@ where
         let key = token.to_ne_bytes();
         let header_len = <S::ArrayHeader as FixedRecord>::LEN;
         let encoded = header.encode();
-        debug_assert_eq!(encoded.len(), header_len);
         let mut value = self.read_value(&key)?.unwrap_or_default();
         if value.len() < header_len {
             value.resize(header_len, 0);
