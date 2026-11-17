@@ -70,7 +70,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         const ZHUYIN_NI_TEMP_OUT_FILES: &[(&str, File)] = &[(
             "temp.out",
@@ -266,7 +265,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_zhuyin_table");
             output.stderr = mask_glib_prefix(&output.stderr);

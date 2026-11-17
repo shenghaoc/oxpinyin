@@ -166,7 +166,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::bigram_db_not_berkeley_db;
         use crate::fixtures::w3;
@@ -324,7 +323,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run estimate_interpolation");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -345,7 +343,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::bigram_db_not_berkeley_db;
         use crate::fixtures::w3;
@@ -513,7 +510,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run eval_correction_rate");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -531,7 +527,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use crate::fixtures::w3;
 
@@ -675,7 +670,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_deleted_ngram");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -693,7 +687,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use crate::fixtures::w3;
 
@@ -880,7 +873,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_ngram");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -899,7 +891,6 @@ mod frozen {
         use assert_fs::{TempDir, prelude::*};
         use rstest::{fixture, rstest};
         use std::path::Path;
-        use std::time::Duration;
 
         use crate::fixtures::w3;
 
@@ -1077,7 +1068,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_unigram");
             output.stderr = mask_glib_prefix(&output.stderr);

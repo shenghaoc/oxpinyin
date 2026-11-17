@@ -84,7 +84,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::TempDir;
         use rstest::rstest;
-        use std::time::Duration;
 
         const INTERPOLATION_HEADER: &[u8] = b"\\data model interpolation\n\\1-gram\n";
         const INTERPOLATION_ITEM_JIA: &[u8] =
@@ -324,7 +323,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run k_mixture_model_to_interpolation");
             output.stderr = mask_glib_prefix(&output.stderr);

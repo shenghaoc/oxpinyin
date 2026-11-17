@@ -134,7 +134,8 @@ jobs:
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
           # own script.
-          # store-features runs nextest, which reads .config/nextest.toml.
+          # store-features and the sanitizer jobs run nextest, which reads
+          # .config/nextest.toml.
           # Every Python step enters the uv project in pyproject.toml.
           uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
@@ -377,6 +378,8 @@ jobs:
           uv: 'true'
           rust-toolchain: 'true'
           rust-toolchain-dir: fuzz
+          # The sanitizer service runs the tests under nextest.
+          cargo-nextest: 'true'
       - name: Install build dependencies (apt)
         # libasan ships with gcc and is not a separate package.
         # libclang-dev is bindgen's runtime dependency.
@@ -452,6 +455,8 @@ jobs:
           uv: 'true'
           rust-toolchain: 'true'
           rust-toolchain-dir: fuzz
+          # The sanitizer service runs the tests under nextest.
+          cargo-nextest: 'true'
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
         # backend binds (and whose db.h bindgen reads); libclang-dev is
@@ -512,6 +517,8 @@ jobs:
           uv: 'true'
           rust-toolchain: 'true'
           rust-toolchain-dir: fuzz
+          # The sanitizer service runs the tests under nextest.
+          cargo-nextest: 'true'
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library this backend links and the
         # headers its cxx bridge compiles against with g++; no bindgen, so

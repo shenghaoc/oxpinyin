@@ -272,12 +272,17 @@ A full test run needs one `just fetch-contract-data` beforehand: the
 `candidate_surface` test of `oxpinyin-runtime` reads the pinned data that it
 fetches ([test inputs](../testing/README.md#test-inputs)).
 
+cargo-nextest is the only supported test runner. It runs each test in its
+own process, which the suite relies on, and its `terminate-after` limit in
+`.config/nextest.toml` is the only limit on a hung test: the test helpers set
+none. Plain `cargo test` has neither, so the commands below use nextest.
+
 The native Rust test entry point uses cargo-nextest at or above the
 `nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
 needs it); `just doctor` reports it. `cargo install
 cargo-nextest --locked` (or the prebuilt release) installs it. `just test` runs `cargo nextest run --profile local`
 with the given arguments, which take the same crate and
-feature selection as cargo test (see [backend selection](backends.md)). `--profile ci` selects the CI limits.
+feature selection as other Cargo commands (see [backend selection](backends.md)). `--profile ci` selects the CI limits.
 
 `just packaging install` and `just measure compare` build the shipping library
 with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
@@ -323,11 +328,11 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo test --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
 just check
 ```
 
-The `cargo test` command tests native Rust packages. `just check` (tkrzw by
+The `cargo nextest run` command tests native Rust packages. `just check` (tkrzw by
 default; `just check bdb` or `just check kyotocabinet` for the others)
 also links and runs storage and C-library tests. Headers
 are the native library declarations that the compiler uses. libclang reads
@@ -398,7 +403,7 @@ and run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo test --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
 export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
@@ -409,7 +414,7 @@ does not run the tests. In a fresh Bash terminal, go back to the checkout,
 source the Cargo environment, and repeat the exports and the check.
 
 The nightly macOS CI job installs tkrzw the same way and runs
-`cargo test --locked --workspace`. Berkeley DB is a non-default
+`cargo nextest run --locked --workspace`. Berkeley DB is a non-default
 backend. To use it:
 
 1. Run `brew install berkeley-db@5`.
@@ -484,7 +489,7 @@ Set-Location "$HOME/src"
 git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
 Set-Location oxpinyin
 rustup show
-cargo test --locked -p oxpinyin-core -p oxpinyin-engine
+cargo nextest run --locked -p oxpinyin-core -p oxpinyin-engine
 cargo fmt --all --check
 cargo clippy --locked -p oxpinyin-core -p oxpinyin-engine --all-targets -- -D warnings
 ```

@@ -97,7 +97,7 @@ esac
             self.assertEqual(rc, 0)
             self.assertIn('fixture cargo stdout', actual)
             self.assertNotIn('fixture cargo stdout', err)
-            self.assertEqual(calls[0][0], ['cargo', 'test', '--locked', '--no-default-features',
+            self.assertEqual(calls[0][0], ['cargo', 'nextest', 'run', '--locked', '--no-default-features',
                                            '--features', 'bdb', '-p', 'oxpinyin-store',
                                            '-p', 'oxpinyin-capi'])
             self.assertEqual(calls[0][1]['FIXTURE_CARGO_STATUS'], '0')
@@ -200,7 +200,7 @@ if sys.platform == 'win32':
             self.assertEqual((status, err.getvalue()), (0, ''))
             self.assertEqual([line.strip() for line in log.read_text().splitlines()],
                              ['--modversion libclang', '--modversion tkrzw'])
-            self.assertEqual(cargo.call_args.args[0][:2], ['cargo', 'test'])
+            self.assertEqual(cargo.call_args.args[0][:3], ['cargo', 'nextest', 'run'])
 
         def test_bdb_is_refused_without_cc(self):
             out, err = io.StringIO(), io.StringIO()

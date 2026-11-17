@@ -9,9 +9,9 @@ gives the reasons.
 ## Selecting a backend
 
 ```sh
-cargo test --locked --workspace                                                    # default
-cargo test --locked --workspace --no-default-features --features kyotocabinet
-cargo test --locked --workspace --no-default-features --features bdb
+cargo nextest run --locked --workspace                                             # default
+cargo nextest run --locked --workspace --no-default-features --features kyotocabinet
+cargo nextest run --locked --workspace --no-default-features --features bdb
 ```
 
 A peer requires `--no-default-features`: the default set already

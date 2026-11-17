@@ -71,8 +71,6 @@ oxpinyin-input.workspace = true
 # file-size limit of the interrupted-save test. Never a dependency of the C
 # ABI itself.
 libc.workspace = true
-# Dev-only: the death-test helpers wait for their child with a time limit.
-assert_cmd = "2.2"
 # Dev-only: shared-shape cases in the crate tests.
 rstest = { version = "0.28", default-features = false }
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the

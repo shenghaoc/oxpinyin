@@ -236,6 +236,7 @@ fuzz *args:
     @{{windows_args}} cargo fuzz run @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
+# cargo llvm-cov runs the tests under nextest, the only supported test runner.
 # Cargo owns argument and report selection; the arguments pass through unchanged.
 # Both state directories live in one scratch directory that is removed on exit.
 [unix]
@@ -248,12 +249,12 @@ coverage *args:
     trap 'exit 143' TERM
     export CARGO_LLVM_COV_TARGET_DIR="$scratch/target" CARGO_LLVM_COV_BUILD_DIR="$scratch/target"
     echo "CARGO_LLVM_COV_TARGET_DIR: $CARGO_LLVM_COV_TARGET_DIR" >&2
-    cargo llvm-cov "$@"
+    cargo llvm-cov nextest "$@"
 
 # Windows coverage execution is unverified.
 [windows]
 coverage *args:
-    @{{windows_args}} $scratch = Join-Path ([IO.Path]::GetTempPath()) ('oxpinyin-coverage-' + [guid]::NewGuid().ToString('N')); $target = Join-Path $scratch 'target'; New-Item -ItemType Directory -Path $scratch | Out-Null; $env:CARGO_LLVM_COV_TARGET_DIR = $target; $env:CARGO_LLVM_COV_BUILD_DIR = $target; [Console]::Error.WriteLine("CARGO_LLVM_COV_TARGET_DIR: $target"); try { cargo llvm-cov @forwarded; $status = $LASTEXITCODE } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $scratch }; exit $status
+    @{{windows_args}} $scratch = Join-Path ([IO.Path]::GetTempPath()) ('oxpinyin-coverage-' + [guid]::NewGuid().ToString('N')); $target = Join-Path $scratch 'target'; New-Item -ItemType Directory -Path $scratch | Out-Null; $env:CARGO_LLVM_COV_TARGET_DIR = $target; $env:CARGO_LLVM_COV_BUILD_DIR = $target; [Console]::Error.WriteLine("CARGO_LLVM_COV_TARGET_DIR: $target"); try { cargo llvm-cov nextest @forwarded; $status = $LASTEXITCODE } finally { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $scratch }; exit $status
 
 # Capture one run of the pin's apostrophe observations in the capture image
 # (docs/runbooks/pin-captures.md). The runtime is the platform's default; OXPINYIN_CAPTURE_RUNTIME

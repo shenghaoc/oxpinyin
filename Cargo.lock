@@ -594,7 +594,6 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "oxpinyin-capi"
 version = "0.1.0"
 dependencies = [
- "assert_cmd",
  "glib-sys",
  "libc",
  "num_enum",
@@ -768,7 +767,6 @@ dependencies = [
 name = "oxpinyin-zhuyin-capi"
 version = "0.1.0"
 dependencies = [
- "assert_cmd",
  "glib-sys",
  "libc",
  "oxpinyin-capi-marshal",

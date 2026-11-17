@@ -147,13 +147,13 @@ class BackendTests(unittest.TestCase):
         self.assertEqual((status, err), (0, ''), out)
         commands = [call[0] for call in tools.calls]
         test = next(command for command in commands
-                    if command[:3] == ['cargo', f'+{NIGHTLY}', 'test'])
+                    if command[:4] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertIn('--features', test)
         self.assertEqual(test[test.index('--features') + 1], 'bdb')
         self.assertTrue(any(command[0] == 'gcc' and '-fsanitize=address,undefined' in command
                             for command in commands))
         test_environment = next(env for command, env in tools.calls
-                                if command[:3] == ['cargo', f'+{NIGHTLY}', 'test'])
+                                if command[:4] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertEqual(test_environment['RUSTFLAGS'],
                          '-Zsanitizer=address -Cdebuginfo=1')
         self.assertIn('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', out)
@@ -165,8 +165,8 @@ class BackendTests(unittest.TestCase):
             status, _, err = run('kc', 'thread', tools=tools,
                                  environment=self.environment())
         self.assertEqual((status, err), (0, ''))
-        _, env = next(call for call in tools.calls if call[0][:3] ==
-                      ['cargo', f'+{NIGHTLY}', 'test'])
+        _, env = next(call for call in tools.calls if call[0][:4] ==
+                      ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertEqual(env['TSAN_OPTIONS'], 'detect_deadlocks=0:abort_on_error=1')
         self.assertEqual(env['RUSTFLAGS'],
                          '-Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer')
@@ -195,15 +195,40 @@ class BackendTests(unittest.TestCase):
                                        OXPINYIN_TKRZW_LIBRARY='/fixture/verified/libtkrzw.so.1'))
         self.assertEqual((status, err), (0, ''), out)
         build = next(call[0] for call in tools.calls if '--no-run' in call[0])
-        self.assertEqual(build[:4], ['setarch', 'x86_64', '-R', 'cargo'])
+        self.assertEqual(build[:6], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}', 'test'])
+        test = next(call[0] for call in tools.calls
+                    if call[0][3:7] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run']
+                    and 'oxpinyin-store' in call[0])
+        self.assertEqual(test[7:], build[6:-2])
         self.assertEqual(tools.checks, [(Path('/fixture/test-binary'), 'subject')])
         self.assertIn('libtkrzw: 1 test binaries resolve it to ' + str(Path('/fixture/libtkrzw.so.1')), out)
-        lifetime, environment = next(call for call in tools.calls if 'outlives_context' in call[0])
-        self.assertEqual(lifetime[:4], ['setarch', 'x86_64', '-R', 'cargo'])
+        lifetime, environment = next(call for call in tools.calls if 'test(outlives_context)' in call[0])
+        self.assertEqual(lifetime[:7], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}',
+                                        'nextest', 'run'])
         self.assertIn('oxpinyin-capi', lifetime)
         self.assertIn('oxpinyin-zhuyin-capi', lifetime)
-        self.assertEqual(lifetime[-2:], ['--lib', 'outlives_context'])
+        self.assertEqual(lifetime[-3:], ['--lib', '-E', 'test(outlives_context)'])
         self.assertIn('-Zsanitizer=address', environment['RUSTFLAGS'])
+
+    def test_every_gate_runs_its_tests_under_nextest(self):
+        cases = (('bdb', 'address', 'Darwin', {'SYSTEM_DEPS_BDB_INCLUDE': '/include'}),
+                 ('kc', 'thread', 'Darwin', {}),
+                 ('tkrzw', 'address', 'Linux',
+                  {'OXPINYIN_TKRZW_LIBRARY': '/fixture/verified/libtkrzw.so.1'}))
+        for backend, sanitizer, host, values in cases:
+            with self.subTest(backend=backend):
+                tools = FakeTools(host_library='/fixture/host/libtkrzw.so.1')
+                with mock.patch.object(test_runner.platform, 'system', return_value=host), \
+                        mock.patch.object(test_runner.platform, 'machine', return_value='x86_64'):
+                    status, out, err = run(backend, sanitizer, tools=tools,
+                                           environment=self.environment(**values))
+                self.assertEqual((status, err), (0, ''), out)
+                cargo = [call[0][call[0].index('cargo'):] for call in tools.calls
+                         if 'cargo' in call[0]]
+                plain = [command for command in cargo
+                         if command[2:3] == ['test'] and '--no-run' not in command]
+                self.assertEqual(plain, [])
+                self.assertTrue(any(command[2:4] == ['nextest', 'run'] for command in cargo))
 
     def test_tkrzw_reports_a_missing_verified_runtime(self):
         tools = FakeTools()

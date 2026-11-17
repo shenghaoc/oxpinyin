@@ -373,7 +373,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::empty_db_not_berkeley_db_twice;
         use crate::fixtures::w3;
@@ -505,7 +504,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run estimate_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -523,7 +521,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use crate::fixtures::w3;
         use crate::support::CELL;
@@ -679,7 +676,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run export_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -697,7 +693,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::empty_db_not_berkeley_db_twice;
         use crate::fixtures::w3;
@@ -842,7 +837,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run gen_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -860,7 +854,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::empty_db_not_berkeley_db_twice;
         use crate::fixtures::w3;
@@ -1029,7 +1022,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run import_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -1047,7 +1039,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::empty_db_not_berkeley_db_twice;
         use crate::fixtures::w3;
@@ -1149,7 +1140,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run merge_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -1167,7 +1157,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::WRONG_ARGUMENTS;
         use crate::fixtures::w3;
@@ -1313,7 +1302,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run prune_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -1331,7 +1319,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::WRONG_ARGUMENTS;
         use crate::fixtures::w3;
@@ -1485,7 +1472,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run validate_k_mixture_model");
             output.stderr = mask_glib_prefix(&output.stderr);

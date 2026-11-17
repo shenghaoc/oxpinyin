@@ -126,7 +126,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::{
             EMPTY_OUT_TXT_FILES, NULL_TOKEN_LINE, OPEN_FILE_FAILED_ENOENT, TOO_MANY_ARGUMENTS,
@@ -277,7 +276,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run mergeseq");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -295,7 +293,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::{
             EMPTY_OUT_TXT_FILES, NON_UCS4_CHARACTERS, NULL_TOKEN_LINE, OPEN_FILE_FAILED_ENOENT,
@@ -474,7 +471,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run ngseg");
             output.stderr = mask_glib_prefix(&output.stderr);
@@ -492,7 +488,6 @@ mod frozen {
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
         use rstest::rstest;
-        use std::time::Duration;
 
         use super::{
             EMPTY_OUT_TXT_FILES, NON_UCS4_CHARACTERS, NULL_TOKEN_LINE, OPEN_FILE_FAILED_ENOENT,
@@ -654,7 +649,6 @@ mod frozen {
                 .env("LC_ALL", "C")
                 .args(args)
                 .write_stdin(stdin)
-                .timeout(Duration::from_secs(300))
                 .output()
                 .expect("run spseg");
             output.stderr = mask_glib_prefix(&output.stderr);
