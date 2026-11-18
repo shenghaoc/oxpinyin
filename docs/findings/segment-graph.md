@@ -50,7 +50,8 @@ So the graph stays a plain walk over byte positions, and the segment that a path
 
 `Fuzzy`, `Typo` and `Abbrev` are Stage 3, and the enum does **not declare** them.
 A variant that nothing produces is a promise that the decoder must keep.
-`EdgeKind` is `#[non_exhaustive]`, so a later addition is not a break.
+`EdgeKind` is not `#[non_exhaustive]`.
+Each match on it lists every variant, so the compiler flags every in-tree match when a variant is added.
 
 The split between `Exact` and `Segmentation` lets a scorer charge for a split choice without re-deriving which split was greedy.
 The capture shows why that is necessary.

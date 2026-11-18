@@ -1051,7 +1051,31 @@ fn reporting_save_stops_at_a_chunk_header_write() {
         .expect_err("the header write must fail");
     match error {
         crate::user::UserStoreError::ChunkHeaderWrite(ChunkHeaderField::Length) => {}
-        other => panic!("expected the length write to fail: {other:?}"),
+        other @ (crate::user::UserStoreError::Io(_)
+        | crate::user::UserStoreError::Store(_)
+        | crate::user::UserStoreError::Decode
+        | crate::user::UserStoreError::InvalidPhrase
+        | crate::user::UserStoreError::Persistence(_)
+        | crate::user::UserStoreError::UnknownDatabaseFormat
+        | crate::user::UserStoreError::ChunkHeaderWrite(ChunkHeaderField::Checksum)
+        | crate::user::UserStoreError::LibraryChunkHeaderRead
+        | crate::user::UserStoreError::SaveRemapFailed
+        | crate::user::UserStoreError::SaveTooLarge
+        | crate::user::UserStoreError::FatalCopy
+        | crate::user::UserStoreError::UnigramTotalOverflow
+        | crate::user::UserStoreError::OverlongIndexKey
+        | crate::user::UserStoreError::NonTokenUserBigramKey
+        | crate::user::UserStoreError::ShortUserBigramValue
+        | crate::user::UserStoreError::PartialUserBigramTail
+        | crate::user::UserStoreError::ResidualUserBigramGram
+        | crate::user::UserStoreError::Journal(_)
+        | crate::user::UserStoreError::LibraryLoop(_)
+        | crate::user::UserStoreError::TrainingSetFreqMiss
+        | crate::user::UserStoreError::UserReadingRemoval
+        | crate::user::UserStoreError::SessionSeed(_)
+        | crate::user::UserStoreError::FailedUserBigramStore) => {
+            panic!("expected the length write to fail: {other:?}")
+        }
     }
     drop(store);
     std::fs::remove_dir_all(&dir).expect("cleanup");

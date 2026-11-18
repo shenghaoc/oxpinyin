@@ -190,7 +190,9 @@ fn diff_result_tail_phrase_spans_to_the_tail() {
     assert!(store.diff_result(&best, &other, 5));
     match store.cell(0) {
         Some(Cell::OneStep { end, .. }) => assert_eq!(*end, 5),
-        other => panic!("expected OneStep at 0, got {other:?}"),
+        other @ (Some(Cell::None | Cell::NoSearch { .. }) | None) => {
+            panic!("expected OneStep at 0, got {other:?}")
+        }
     }
 }
 

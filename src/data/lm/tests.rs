@@ -629,16 +629,17 @@ mod language_model {
         let mut row = crate::model::NbestStepRow::default();
         let prev = NI;
         for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
-            let item = match lm.nbest_successors_in_row(&prev, &mut row).unwrap() {
-                Some(NbestSuccessors::Row(gram)) => {
-                    assert_eq!(gram.to_bytes(), value.as_slice(), "stored, not sorted");
-                    assert_eq!(gram.get_freq(token).unwrap(), freq, "token {token:#x}");
-                    gram.get_freq(token)
-                        .unwrap()
-                        .map(|freq| (freq, gram.total().unwrap()))
-                }
-                _ => panic!("the system row is present"),
+            let Some(NbestSuccessors::Row(gram)) =
+                lm.nbest_successors_in_row(&prev, &mut row).unwrap()
+            else {
+                panic!("the system row is present")
             };
+            assert_eq!(gram.to_bytes(), value.as_slice(), "stored, not sorted");
+            assert_eq!(gram.get_freq(token).unwrap(), freq, "token {token:#x}");
+            let item = gram
+                .get_freq(token)
+                .unwrap()
+                .map(|freq| (freq, gram.total().unwrap()));
             assert_eq!(
                 lm.nbest_item_costs_in_row(&prev, &token, item, &mut row)
                     .unwrap(),

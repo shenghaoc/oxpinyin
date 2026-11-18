@@ -59,12 +59,11 @@ fn interrupted_payload_read_is_not_retried() {
     let path = dir.path().join("chunk");
     std::fs::write(&path, [4, 0, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4]).unwrap();
     let calls = std::cell::Cell::new(0);
-    let error = match load_with(&path, |_, _| {
+    let Err(ChunkLoadError::Io(error)) = load_with(&path, |_, _| {
         calls.set(calls.get() + 1);
         Err(io::ErrorKind::Interrupted.into())
-    }) {
-        Err(ChunkLoadError::Io(error)) => error,
-        _ => panic!("interrupted payload must fail"),
+    }) else {
+        panic!("interrupted payload must fail")
     };
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     assert_eq!(calls.get(), 1);

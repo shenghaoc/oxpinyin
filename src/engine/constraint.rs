@@ -98,9 +98,10 @@ impl ConstraintStore {
 
     /// The token the cell at `index` forces, `None` for any other cell.
     pub(crate) fn one_step_token_at(&self, index: usize) -> Option<PhraseToken> {
-        match self.cell(index) {
-            Some(Cell::OneStep { token, .. }) => Some(*token),
-            _ => None,
+        if let Some(Cell::OneStep { token, .. }) = self.cell(index) {
+            Some(*token)
+        } else {
+            None
         }
     }
 
@@ -177,7 +178,7 @@ impl ConstraintStore {
         let run_start = match self.cells.get(index) {
             Some(Cell::NoSearch { start }) => *start,
             Some(Cell::OneStep { .. }) => index,
-            _ => return false,
+            Some(Cell::None) | None => return false,
         };
         let Some(Cell::OneStep { end, .. }) = self.cells.get(run_start) else {
             return false;

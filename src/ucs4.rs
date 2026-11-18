@@ -296,7 +296,10 @@ impl PhraseText {
             (TextStorage::Stored(left), TextStorage::Stored(right)) => {
                 stored_outward(left) == stored_outward(right)
             }
-            _ => self.outward_words().eq(other.outward_words()),
+            (TextStorage::Scalar(_), TextStorage::Scalar(_) | TextStorage::Stored(_))
+            | (TextStorage::Stored(_), TextStorage::Scalar(_)) => {
+                self.outward_words().eq(other.outward_words())
+            }
         }
     }
 }
@@ -329,7 +332,10 @@ impl Ord for PhraseText {
             (TextStorage::Stored(left), TextStorage::Stored(right)) => {
                 stored_outward(left).cmp(stored_outward(right))
             }
-            _ => self.outward_words().cmp(other.outward_words()),
+            (TextStorage::Scalar(_), TextStorage::Scalar(_) | TextStorage::Stored(_))
+            | (TextStorage::Stored(_), TextStorage::Scalar(_)) => {
+                self.outward_words().cmp(other.outward_words())
+            }
         }
     }
 }

@@ -45,7 +45,7 @@ mod fixture {
             Case::ChooseToZero => u32::MAX - 482,
             #[cfg(unix)]
             Case::Zero => 0,
-            _ => 1,
+            Case::Single | Case::Pair | Case::Mixed | Case::Fallback | Case::MaskedExtension => 1,
         };
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))

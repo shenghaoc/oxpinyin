@@ -244,9 +244,10 @@ fn filename_entry(
 /// The `CString` a parsed `G_OPTION_ARG_FILENAME` holds, or `None` where
 /// the value holds a NUL or another kind.
 pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CString> {
-    match parsed.values.get(index) {
-        Some(OptionValue::Filename(Some(bytes))) => CString::new(bytes.clone()).ok(),
-        _ => None,
+    if let Some(OptionValue::Filename(Some(bytes))) = parsed.values.get(index) {
+        CString::new(bytes.clone()).ok()
+    } else {
+        None
     }
 }
 
