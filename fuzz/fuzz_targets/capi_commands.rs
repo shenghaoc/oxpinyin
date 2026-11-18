@@ -57,6 +57,12 @@
 //!   pin's stale-forcing assert.
 //! - `first-run`: `FF`, `01 05 "nihao"`, `02`, `05`. A parse, a guess and
 //!   a train on an empty user directory, the pin's first run.
+//! - `stale-sentence`: `00`, `06 01` (ZRM), `0A 02 "aa"`, `02`, `0A 00`
+//!   (no key), `02`, `01 03 "hao"`, `03 96 8C 68`. The second guess empties
+//!   the constraint array and keeps the results of "aa", so the list holds
+//!   sentence rows longer than the array. The row byte selects one whose
+//!   choose is the pin's assert, the case of `capi/tests/it/sentence.rs`,
+//!   and the harness skips it.
 //!
 //! # Findings and the pin's asserts
 //!
@@ -82,15 +88,20 @@
 //!   (`phonetic_key_matrix.cpp:47-48`).
 //! - The candidate list is guessed in the command that chooses from it.
 //!   `pinyin_get_n_candidate` answers only the current list's length
-//!   (`pinyin.cpp:2845-2849`), and a sentence row asserts where the
-//!   results no longer hold its rank (`:2516-2517`).
+//!   (`pinyin.cpp:2845-2849`).
 //! - The choose offset is 0: the pin asserts that under
 //!   `SORT_WITHOUT_SENTENCE_CANDIDATE` (`:2566`) and otherwise only adds
 //!   the offset to its answer (`:2588`).
-//! - A predicted row is not chosen: the pin's assert (`:2507`).
-//!   `pinyin_guess_candidates` lists none, so the check is a guard.
 //! - Conditions that depend on library state ask the library:
-//!   `oxpinyin_train_aborts` and `oxpinyin_import_aborts`.
+//!   `oxpinyin_choose_aborts`, `oxpinyin_train_aborts` and
+//!   `oxpinyin_import_aborts`. The choose asserts on a predicted row
+//!   (`:2507`), on a sentence row whose rank the results no longer hold
+//!   (`:2516-2517`), and on a sentence row with a differing phrase that
+//!   ends past the constraint array (`phonetic_lookup.cpp:64-65`, `:203`).
+//!   The array follows the matrix only at a sentence guess and at a normal
+//!   choose (`pinyin.cpp:1366`, `:2579`), and a sentence guess on an empty
+//!   matrix keeps the old results (`phonetic_lookup.h:743-748`), so a list
+//!   can hold a sentence row longer than the array.
 //!
 //! The other converted sites are not reachable from this alphabet: no
 //! options are set (a toned initial needs `PINYIN_INCOMPLETE`), the
@@ -134,12 +145,12 @@ use std::sync::OnceLock;
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_capi::fuzz_api::{
     ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
-    lookup_candidate_type_t, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
+    oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_choose_candidate,
     pinyin_clear_constraint, pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_fini,
     pinyin_free_instance, pinyin_get_candidate, pinyin_get_candidate_string,
-    pinyin_get_candidate_type, pinyin_get_n_candidate, pinyin_get_parsed_input_length,
-    pinyin_get_sentence, pinyin_guess_sentence, pinyin_init, pinyin_iterator_add_phrase,
+    pinyin_get_n_candidate, pinyin_get_parsed_input_length, pinyin_get_sentence,
+    pinyin_guess_sentence, pinyin_init, pinyin_iterator_add_phrase,
     pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
     pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_double_pinyin_scheme, pinyin_train,
 };
@@ -379,19 +390,13 @@ fn walk_and_choose(instance: *mut PinyinInstance, pick: u8) {
     {
         return;
     }
-    // A predicted row is the pin's assert (`pinyin.cpp:2507`), so it is
-    // not passed.
-    let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
-    // SAFETY: `candidate` from the ABI; `kind` is an out-param.
-    unsafe { pinyin_get_candidate_type(instance, candidate, &mut kind) };
-    if !matches!(
-        kind,
-        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
-            | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-    ) {
-        // SAFETY: live instance; `candidate` is a row of the list the
-        // caller guessed in this command. Offset 0: the pin asserts it
-        // under SORT_WITHOUT_SENTENCE_CANDIDATE (`pinyin.cpp:2566`).
+    // Offset 0: the pin asserts it under SORT_WITHOUT_SENTENCE_CANDIDATE
+    // (`pinyin.cpp:2566`). The library reports the pin's other choose
+    // asserts for this row.
+    // SAFETY: live instance; `candidate` is a row of the list the caller
+    // guessed in this command.
+    if !unsafe { oxpinyin_choose_aborts(instance, 0, candidate) } {
+        // SAFETY: as above.
         unsafe { pinyin_choose_candidate(instance, 0, candidate) };
     }
 }

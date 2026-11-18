@@ -232,6 +232,26 @@ where
         Ok(())
     }
 
+    /// Whether the pin's NBEST choose of row `rank` asserts (074a2219
+    /// `pinyin.cpp:2515-2520`): the results do not hold row 0 and row
+    /// `rank` (`:2516-2517`), or `diff_result` meets a write that answers
+    /// zero (`phonetic_lookup.cpp:203`). The store and the rows are read as
+    /// [`Session::select_nbest_row`] reads them, without validation. Reads
+    /// only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn nbest_choose_aborts(&self, rank: u8) -> bool {
+        let state = self.state.borrow();
+        let (Some(best), Some(chosen)) = (
+            state.sentence.rows.first(),
+            state.sentence.rows.get(usize::from(rank)),
+        ) else {
+            return true;
+        };
+        state
+            .constraints
+            .diff_result_refuses(&best.spans, &chosen.spans, chosen.span)
+    }
+
     /// The decoded row [`Session::prepare_training`] trains: `None` for no
     /// results (the pin's quiet `false`), the bounds error past nonempty
     /// results.

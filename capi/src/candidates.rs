@@ -690,6 +690,54 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
     choose_phrase_row(&mut inst, offset, &row, token, text)
 }
 
+/// Whether [`pinyin_choose_candidate`] with the same arguments reaches one
+/// of the pin's asserts, in the pin's order: a predicted row
+/// (`pinyin.cpp:2507`); for an `NBEST_MATCH_CANDIDATE` row, a result this
+/// instance does not hold (`:2516-2517`) or a differing phrase whose
+/// constraint write answers zero (`phonetic_lookup.cpp:203`), the facade's
+/// [`oxpinyin::facade::InstanceView::nbest_choose_aborts`]; a nonzero
+/// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`:2566`), which a
+/// `LONGER_CANDIDATE` row does not reach. Reads only. For the in-tree fuzz
+/// harness, which skips such a call: not in `pinyin.h`, a Rust function
+/// compiled only with `fuzz-api` and never into the shipped artifact.
+///
+/// # Safety
+///
+/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+/// borrowed object. The serial-calls rule applies.
+#[cfg(feature = "fuzz-api")]
+#[must_use]
+pub unsafe fn oxpinyin_choose_aborts(
+    instance: *mut PinyinInstance,
+    offset: usize,
+    candidate: *mut LookupCandidate,
+) -> bool {
+    if instance.is_null() || candidate.is_null() {
+        return false;
+    }
+    // SAFETY: `candidate` is non-null and is a row of a live published
+    // list (the export's precondition). The shared view ends here, before
+    // any view of `instance`.
+    let row = RowArgs::read(unsafe { candidate_ref(candidate) });
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    match row.candidate_type {
+        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+        | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE => true,
+        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE => {
+            inst.core.nbest_choose_aborts(row.nbest_index)
+        }
+        lookup_candidate_type_t::LONGER_CANDIDATE => false,
+        lookup_candidate_type_t::NORMAL_CANDIDATE
+        | lookup_candidate_type_t::ZOMBIE_CANDIDATE
+        | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
+        | lookup_candidate_type_t::ADDON_CANDIDATE => {
+            offset != 0 && inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
+        }
+    }
+}
+
 /// The scalars the pin's choose reads off a candidate (`pinyin.cpp:97-105`),
 /// copied so that no view of the row outlives the read.
 struct RowArgs {

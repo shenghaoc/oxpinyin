@@ -130,7 +130,7 @@ impl ConstraintStore {
         token: PhraseToken,
         text: PhraseText,
     ) -> usize {
-        if end > self.cells.len() || start >= end {
+        if self.add_refuses(start, end) {
             return 0;
         }
         for index in start..end {
@@ -275,15 +275,7 @@ impl ConstraintStore {
         tail: usize,
     ) -> bool {
         let mut changed = false;
-        for (index, span) in other.iter().enumerate() {
-            let best_token = best
-                .iter()
-                .find(|candidate| candidate.start == span.start)
-                .map(|candidate| candidate.token);
-            if best_token == Some(span.token) {
-                continue;
-            }
-            let next_pos = other.get(index + 1).map_or(tail, |next| next.start);
+        for (span, next_pos) in differing_spans(best, other, tail) {
             changed = true;
             // check_result is an assert at the n-best choose's write
             // (phonetic_lookup.cpp:189-203 at 074a2219).
@@ -292,6 +284,26 @@ impl ConstraintStore {
             }
         }
         changed
+    }
+
+    /// Whether [`Self::diff_result`] with the same arguments reaches its
+    /// abort: a write of a differing phrase answers zero. The store's length
+    /// decides each answer, and no write changes the length, so the store
+    /// before the first write decides them all. Reads only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn diff_result_refuses(
+        &self,
+        best: &[PhraseSpan],
+        other: &[PhraseSpan],
+        tail: usize,
+    ) -> bool {
+        differing_spans(best, other, tail)
+            .any(|(span, next_pos)| self.add_refuses(span.start, next_pos))
+    }
+
+    /// Whether [`Self::add`] answers zero for `[start, end)`.
+    fn add_refuses(&self, start: usize, end: usize) -> bool {
+        end > self.cells.len() || start >= end
     }
 
     /// The surviving forcings as `(start, end, token, text)` runs, left
@@ -313,6 +325,28 @@ impl ConstraintStore {
             })
             .collect()
     }
+}
+
+/// The walk of `diff_result` (`phonetic_lookup.cpp:172-205`): each phrase of
+/// `other` whose token differs from the token `best` holds at the same
+/// position, with the end of its write, which is the next phrase's start, or
+/// `tail` when no phrase follows.
+fn differing_spans<'a>(
+    best: &'a [PhraseSpan],
+    other: &'a [PhraseSpan],
+    tail: usize,
+) -> impl Iterator<Item = (&'a PhraseSpan, usize)> {
+    other.iter().enumerate().filter_map(move |(index, span)| {
+        let best_token = best
+            .iter()
+            .find(|candidate| candidate.start == span.start)
+            .map(|candidate| candidate.token);
+        if best_token == Some(span.token) {
+            return None;
+        }
+        let next_pos = other.get(index + 1).map_or(tail, |next| next.start);
+        Some((span, next_pos))
+    })
 }
 
 #[cfg(test)]
