@@ -438,7 +438,7 @@ pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, Str
     if store.is_system_library(library) {
         return (1..(store.system_range_end(library).unwrap() & 0x00ff_ffff))
             .flat_map(|slot| {
-                let token = (u32::from(library) << 24) | slot;
+                let token = crate::phrase_index_make_token(library, slot);
                 store
                     .with_effective_system_item(token, Clone::clone)
                     .or_else(|| store.originals.get(&library)?.item(slot))

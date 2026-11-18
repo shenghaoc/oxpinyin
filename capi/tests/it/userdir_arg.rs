@@ -19,12 +19,10 @@
 
 use crate::support::{names, system_dir_cstr};
 
+use oxpinyin::USER_DICTIONARY;
 use std::path::PathBuf;
 
 use std::ptr;
-
-/// `USER_DICTIONARY` (`novel_types.h:161`).
-const USER_DICTIONARY: u8 = 7;
 
 /// A fresh scratch directory. The thread keeps its `TempDir`, which
 /// removes the directory when the test's thread ends.

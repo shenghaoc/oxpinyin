@@ -10,6 +10,7 @@
 //! alone (`phrase_large_table3_tkrzwdb.cpp:124-153`).
 
 use oxpinyin::data::{PhraseIndexTable, PhraseLibraries};
+use oxpinyin::{phrase_index_library_index, phrase_index_make_token};
 
 /// One phrase-table search's answer.
 #[derive(Debug, Default)]
@@ -71,11 +72,11 @@ impl<'a> PhraseSearch<'a> {
         };
         let mut kept: Vec<u32> = tokens
             .into_iter()
-            .filter(|token| self.libraries.is_loaded(((token >> 24) & 0x0F) as u8))
+            .filter(|token| self.libraries.is_loaded(phrase_index_library_index(*token)))
             .collect();
         // `reduce_tokens`: library nibble ascending, the DBM value's order
         // inside one library. `sort_by_key` is stable.
-        kept.sort_by_key(|token| (token >> 24) & 0x0F);
+        kept.sort_by_key(|token| phrase_index_library_index(*token));
         Found {
             continued: true,
             tokens: kept,
@@ -95,7 +96,10 @@ impl<'a> PhraseSearch<'a> {
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` masks the library nibble to
         // four bits (`novel_types.h:44`); the further bits are not part of
         // it.
-        let library = self.libraries.library(((token >> 24) & 0x0F) << 24)?;
+        let library = self.libraries.library(phrase_index_make_token(
+            phrase_index_library_index(token),
+            0,
+        ))?;
         let item = library.item(token)?;
         let words = item.phrase_codes().collect::<Option<Vec<u32>>>()?;
         Some(Item {

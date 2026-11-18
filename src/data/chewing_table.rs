@@ -16,7 +16,7 @@
 //! See `docs/findings/data-formats.md` §4 and
 //! `chewing_large_table2_tkrzwdb.cpp:133-296`.
 
-use crate::ChewingKey;
+use crate::{ChewingKey, MAX_PHRASE_LENGTH};
 
 use crate::data::dict::DictError;
 // The key and record layouts this reader shares with
@@ -469,7 +469,9 @@ impl<D: ChewingDbm> ChewingTable<D> {
     }
 
     /// Whether some row extending the query's index key is past
-    /// [`MAX_INDEX_KEY_WORDS`] words — the key the pin's
+    /// [`MAX_PHRASE_LENGTH`] words, the most a `ChewingLargeTable2` index
+    /// key can hold (the pin instantiates its entries for lengths 1 through
+    /// `MAX_PHRASE_LENGTH`) — the key the pin's
     /// `ChewingLargeTable2::search_suggestion` reads with `phrase_length =
     /// key.size / sizeof(ChewingKey)` (so a trailing odd byte counts as no
     /// word) and whose `switch` has no case for it: `default: abort()`
@@ -484,7 +486,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         let upper = prefix_upper_bound(&encoded);
         let mut found = false;
         self.dbm.walk(&encoded, upper.as_deref(), |key, _value| {
-            found = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+            found = key.len() / 2 > MAX_PHRASE_LENGTH;
             Ok(found)
         })?;
         Ok(found)
@@ -508,7 +510,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         let upper = prefix_upper_bound(&encoded);
         let mut overlong = false;
         self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
-            overlong = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+            overlong = key.len() / 2 > MAX_PHRASE_LENGTH;
             if overlong {
                 return Ok(true);
             }
@@ -522,10 +524,6 @@ impl<D: ChewingDbm> ChewingTable<D> {
         Ok(overlong)
     }
 }
-
-/// The most words a `ChewingLargeTable2` index key can hold: the pin
-/// instantiates its entries for lengths 1 through `MAX_PHRASE_LENGTH` (16).
-const MAX_INDEX_KEY_WORDS: usize = 16;
 
 /// `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`): a syllable with
 /// neither middle nor final is an initial-only (incomplete) key.
@@ -549,11 +547,11 @@ pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
 /// (`chewing_large_table2.cpp:161-172` at 074a2219); a longer query, which
 /// that search never takes, is encoded on the heap.
 fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
-    if keys.len() > MAX_INDEX_KEY_WORDS {
+    if keys.len() > MAX_PHRASE_LENGTH {
         return read(&index_key(keys));
     }
     let incomplete = contains_incomplete(keys);
-    let mut buf = [0_u8; 2 * MAX_INDEX_KEY_WORDS];
+    let mut buf = [0_u8; 2 * MAX_PHRASE_LENGTH];
     for (word, key) in buf.as_chunks_mut::<2>().0.iter_mut().zip(keys) {
         let indexed = if incomplete {
             ChewingKey::new(key.initial, 0, 0, 0)

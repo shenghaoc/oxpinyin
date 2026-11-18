@@ -67,8 +67,12 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
     // SAFETY: `instance` is live until `close` below, and the reference is
     // not used after that.
     let inst = unsafe { crate::state::instance_ref(instance) };
-    let loaded = (0..16_u32)
-        .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+    let loaded = (0..oxpinyin::PHRASE_INDEX_LIBRARY_COUNT)
+        .filter(|&library| {
+            inst.core
+                .dict
+                .phrase_table_token_enabled(oxpinyin::phrase_index_make_token(library, 0))
+        })
         .count();
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
@@ -134,8 +138,12 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     let prepared = {
         // SAFETY: The live instance is serialized and the view ends here.
         let inst = unsafe { crate::state::instance_ref(instance) };
-        (0..16_u32)
-            .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+        (0..oxpinyin::PHRASE_INDEX_LIBRARY_COUNT)
+            .filter(|&library| {
+                inst.core
+                    .dict
+                    .phrase_table_token_enabled(oxpinyin::phrase_index_make_token(library, 0))
+            })
             .count()
     };
 

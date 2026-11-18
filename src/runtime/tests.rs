@@ -3581,7 +3581,7 @@ fn a_raw_user_key_predicts_its_live_item() {
 #[test]
 fn rows_of_a_never_loaded_library_are_filtered() {
     let user = TempUserDir::new("never-loaded-library");
-    let token = (15_u32 << 24) | 1;
+    let token = crate::phrase_index_make_token(15, 1);
     let value = token.to_le_bytes().to_vec();
     native_fixture::craft_user_index(
         &user.path.join("user_phrase_index.bin"),

@@ -2505,8 +2505,8 @@ mod save_semantics_929 {
                 .parse()
                 .unwrap();
             let mut store = open(Path::new(&dir), law);
-            for index in 1..=4_u32 {
-                store.add_system_unigram_frequency((index << 24) | 1, 17);
+            for index in 1..=4_u8 {
+                store.add_system_unigram_frequency(crate::phrase_index_make_token(index, 1), 17);
             }
             store.mark_modified();
             store
@@ -2530,8 +2530,12 @@ mod save_semantics_929 {
             for stop_before in 2..=4_usize {
                 let dir = tempfile::tempdir().unwrap();
                 let seeded = seed(dir.path(), law);
-                let shipped: Vec<u32> = (1..=4_u32)
-                    .map(|index| seeded.system_unigram((index << 24) | 1).expect("item"))
+                let shipped: Vec<u32> = (1..=4_u8)
+                    .map(|index| {
+                        seeded
+                            .system_unigram(crate::phrase_index_make_token(index, 1))
+                            .expect("item")
+                    })
                     .collect();
                 drop(seeded);
                 let old = data_bytes(dir.path());
@@ -2568,12 +2572,13 @@ mod save_semantics_929 {
                     }
                 }
                 let reopened = open(dir.path(), law);
-                for index in 1..=4_u32 {
+                for index in 1..=4_u8 {
                     assert_eq!(
-                        reopened.system_unigram((index << 24) | 1),
+                        reopened.system_unigram(crate::phrase_index_make_token(index, 1)),
                         Some(
-                            shipped[index as usize - 1]
-                                + if law == UserConfLaw::Zhuyin && index < stop_before as u32 {
+                            shipped[usize::from(index) - 1]
+                                + if law == UserConfLaw::Zhuyin && usize::from(index) < stop_before
+                                {
                                     17
                                 } else {
                                     0
@@ -2769,7 +2774,9 @@ mod save_boundaries_929 {
             assert_eq!(reopened.bigram_count(0x0700_0001, 0x0600_0001).unwrap(), 0);
             for library in 5..=6_u8 {
                 assert_eq!(
-                    reopened.phrase((u32::from(library) << 24) | 1).is_some(),
+                    reopened
+                        .phrase(crate::phrase_index_make_token(library, 1))
+                        .is_some(),
                     law == UserConfLaw::Zhuyin
                 );
             }
@@ -2809,10 +2816,10 @@ mod save_boundaries_929 {
                 );
                 let reopened = open(dir.path(), law);
                 assert_eq!(reopened.bigram_count(0x0700_0001, 0x0600_0001).unwrap(), 37);
-                for library in 5..=6_u32 {
+                for library in 5..=6_u8 {
                     assert_eq!(
                         reopened
-                            .phrase((library << 24) | 1)
+                            .phrase(crate::phrase_index_make_token(library, 1))
                             .unwrap()
                             .phrase_text()
                             .unwrap(),

@@ -180,7 +180,7 @@ fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     let (dir, mut store) = open_law(name, law);
     store
         .train_pronunciations(
-            (1_u32 << 24) | 1,
+            crate::phrase_index_make_token(1, 1),
             std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
             5,
         )
@@ -502,7 +502,7 @@ fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
     let mut phrases = target.phrases_mut();
     phrases.libraries.insert(crate::USER_DICTIONARY, library);
     drop(phrases);
-    let token = (u32::from(crate::USER_DICTIONARY) << 24) | 1;
+    let token = crate::phrase_index_make_token(crate::USER_DICTIONARY, 1);
     let mut borrowed = None;
     assert!(
         store
@@ -838,7 +838,7 @@ fn transient_reload_replaces_the_unloaded_system_baseline() {
     let mut store =
         UserStore::open_transient(three_item_originals(), versions(), UserConfLaw::Pinyin)
             .expect("transient session");
-    let token = (1_u32 << 24) | 2;
+    let token = crate::phrase_index_make_token(1, 2);
     assert_eq!(store.system_unigram(token), Some(50));
     let mut items = three_items();
     items[1].unigram = 57;
@@ -873,7 +873,7 @@ fn an_import_after_a_transient_reload_merges_into_the_replacement() {
     let mut store =
         UserStore::open_transient(three_item_originals(), versions(), UserConfLaw::Pinyin)
             .expect("transient session");
-    let token = (1_u32 << 24) | 2;
+    let token = crate::phrase_index_make_token(1, 2);
     let ni3 = ChewingKey::new(23, 0, 1, 0).with_tone(3).to_packed();
     let mut items = three_items();
     items[1].prons = vec![(vec![ni3], 50)];
@@ -959,7 +959,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
         },
         // An ADD after it grows the content past the shipped area.
         LogRecord::Add {
-            token: (1_u32 << 24) | 4,
+            token: crate::phrase_index_make_token(1, 4),
             new_item: encode(&fourth),
         },
     ];
@@ -990,7 +990,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     )])
     .into();
     let (dir, store) = open_with_payload("over-read-item", originals, &payload);
-    let token = |slot: u32| (1_u32 << 24) | slot;
+    let token = |slot: u32| crate::phrase_index_make_token(1, slot);
     assert_eq!(
         frequency_of(&store, token(1)),
         Lookup::Found((ItemOrigin::Overlay, 107))
@@ -1040,8 +1040,8 @@ fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
             three_item_originals(),
             &payload,
         );
-        let first = (1_u32 << 24) | 1;
-        let second = (1_u32 << 24) | 2;
+        let first = crate::phrase_index_make_token(1, 1);
+        let second = crate::phrase_index_make_token(1, 2);
         let reading = {
             let unloaded = std::cell::Cell::new(0);
             let live = crate::user::LiveSystemItems::new(
@@ -1154,8 +1154,8 @@ fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
     }])
     .expect("log");
     let (dir, mut store) = open_with_payload("overlap-header-profile", originals(), &log);
-    let first = (1_u32 << 24) | 1;
-    let second = (1_u32 << 24) | 2;
+    let first = crate::phrase_index_make_token(1, 1);
+    let second = crate::phrase_index_make_token(1, 2);
     let reading = {
         let unloaded = std::cell::Cell::new(0);
         let live = crate::user::LiveSystemItems::new(
@@ -1231,7 +1231,7 @@ fn a_payload_over_read_reverses_the_applied_records() {
     // The last record's payload now runs past the end of the log.
     payload.truncate(payload.len() - 3);
     let (dir, store) = open_with_payload("over-read-tail", three_item_originals(), &payload);
-    let token = |slot: u32| (1_u32 << 24) | slot;
+    let token = |slot: u32| crate::phrase_index_make_token(1, slot);
     // The library keeps its pre-replay content: the first record was
     // applied before the walk reached the faulty one, then reversed. The
     // reversed buffer is the library's live buffer.
@@ -1270,7 +1270,7 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
         },
     ];
     let (dir, mut store) = open_with_log("owned-overrides-modify", &modify);
-    let token = (1_u32 << 24) | 1;
+    let token = crate::phrase_index_make_token(1, 1);
     let live = store.live_system_changes(&originals());
     assert_eq!(live.len(), 1);
     assert_eq!(live.get(&token), Some(&Some(modified.clone())));
@@ -1691,7 +1691,7 @@ fn a_removal_assert_comes_before_the_bigram_fault() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     store.plant_raw_bigram(1, &[1, 0, 0]);
-    let absent = (u32::from(crate::USER_DICTIONARY) << 24) | 0x0000_0042;
+    let absent = crate::phrase_index_make_token(crate::USER_DICTIONARY, 0x0000_0042);
     assert!(matches!(store.remove_user_phrase(absent), Ok(false)));
     drop(store);
     std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -3311,7 +3311,7 @@ fn loaded_words_survive_lookup_and_native_save() {
                 .expect("load");
         for (&library, items) in &state.libraries {
             for (&slot, expected) in items {
-                let token = u32::from(library) << 24 | slot;
+                let token = crate::phrase_index_make_token(library, slot);
                 let phrase = store.phrase(token).expect("retained item");
                 assert_eq!(phrase.words(), expected.phrase);
                 assert_eq!(phrase.pronunciations()[0].count(), 10);

@@ -393,14 +393,16 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     #[must_use]
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
         let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
-        let nibble = token >> 24;
+        let nibble = crate::phrase_index_library_index(token);
         match nibble {
-            _ if self.dict.is_system_library(nibble as u8) => {
+            _ if self.dict.is_system_library(nibble) => {
                 self.dict.live_items().effective_unigram(token)
             }
             // Any other sub-index the pin holds is a `USER_FILE` row's
             // (`pinyin.cpp:303-321`); one it does not hold has no item.
-            _ if self.dict.library_visible(nibble) => self.user.user_unigram_frequency(token),
+            _ if self.dict.library_visible(u32::from(nibble)) => {
+                self.user.user_unigram_frequency(token)
+            }
             _ => None,
         }
     }

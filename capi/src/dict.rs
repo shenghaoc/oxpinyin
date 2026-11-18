@@ -83,8 +83,12 @@ pub unsafe extern "C" fn pinyin_lookup_tokens(
     // (`phrase_large_table3.h:81`) — an empty result clears too.
     let null_append_count = tokenarray.is_null().then(|| {
         // Count the pin's prepared arrays before GLib can call a log handler.
-        (0..16)
-            .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
+        (0..oxpinyin::PHRASE_INDEX_LIBRARY_COUNT)
+            .filter(|&library| {
+                inst.core
+                    .dict
+                    .phrase_table_token_enabled(oxpinyin::phrase_index_make_token(library, 0))
+            })
             .count()
     });
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
