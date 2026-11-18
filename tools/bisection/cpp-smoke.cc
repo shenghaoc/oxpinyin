@@ -1,4 +1,4 @@
-// cpp-smoke.cc — C++ translation-unit gate for crates/oxpinyin-capi/pinyin.h.
+// cpp-smoke.cc — C++ translation-unit gate for capi/pinyin.h.
 //
 // The fork consumes pinyin.h from C++ `.cc` files; this TU is the minimal
 // regression for that class of build breakage. It includes the generated

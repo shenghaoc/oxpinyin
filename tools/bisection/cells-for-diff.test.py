@@ -68,27 +68,27 @@ class Repo:
 
 class StoreCrateTests(unittest.TestCase):
     def test_a_path_under_the_store_crate_fires_check_1(self):
-        repo = Repo(self, {'README.md': 'a\n', 'crates/oxpinyin/src/store/old.rs': '// old\n'},
-                    {'crates/oxpinyin/src/store/new.rs': '// new\n', 'crates/oxpinyin/src/store/old.rs': None})
+        repo = Repo(self, {'README.md': 'a\n', 'src/store/old.rs': '// old\n'},
+                    {'src/store/new.rs': '// new\n', 'src/store/old.rs': None})
         got = repo.checks()
-        self.assertEqual(got[1], ['crates/oxpinyin/src/store/new.rs', 'crates/oxpinyin/src/store/old.rs'])
+        self.assertEqual(got[1], ['src/store/new.rs', 'src/store/old.rs'])
         self.assertEqual(fired(got), {1})
 
     def test_a_file_moved_out_of_the_store_crate_fires_check_1(self):
         body = ''.join(f'fn f{n}() {{}}\n' for n in range(20))
-        repo = Repo(self, {'crates/oxpinyin/src/store/moved.rs': body},
-                    {'crates/oxpinyin/src/store/moved.rs': None, 'crates/oxpinyin/src/moved.rs': body})
+        repo = Repo(self, {'src/store/moved.rs': body},
+                    {'src/store/moved.rs': None, 'src/moved.rs': body})
         for setting in ('true', 'false'):
             with self.subTest(diff_renames=setting):
                 repo.git('config', 'diff.renames', setting)
-                self.assertEqual(repo.checks()[1], ['crates/oxpinyin/src/store/moved.rs'])
+                self.assertEqual(repo.checks()[1], ['src/store/moved.rs'])
 
     def test_a_change_to_the_build_script_alone_selects_the_backend_jobs(self):
         # build.rs calls store::build(), the native backend build.
-        repo = Repo(self, {'crates/oxpinyin/build.rs': 'fn main() {}\n'},
-                    {'crates/oxpinyin/build.rs': 'fn main() {\n    store::build();\n}\n'})
+        repo = Repo(self, {'build.rs': 'fn main() {}\n'},
+                    {'build.rs': 'fn main() {\n    store::build();\n}\n'})
         got = repo.checks()
-        self.assertEqual(got[1], ['crates/oxpinyin/build.rs'])
+        self.assertEqual(got[1], ['build.rs'])
         self.assertEqual(fired(got), {1})
         result = repo.cli('--run-flag', 'base')
         self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
@@ -106,10 +106,10 @@ class StoreCrateTests(unittest.TestCase):
 
 class FeatureGateTests(unittest.TestCase):
     def test_a_gate_in_a_changed_file_fires_check_2_for_each_backend(self):
-        head = {f'crates/x/src/{backend}.rs': f'fn f() {{}}\n{gate(backend)}\nfn g() {{}}\n'
+        head = {f'x/src/{backend}.rs': f'fn f() {{}}\n{gate(backend)}\nfn g() {{}}\n'
                 for backend in BACKENDS}
         got = Repo(self, {'README.md': 'a\n'}, head).checks()
-        self.assertEqual(got[2], [f'crates/x/src/{backend}.rs:2: {gate(backend)}'
+        self.assertEqual(got[2], [f'x/src/{backend}.rs:2: {gate(backend)}'
                                   for backend in sorted(BACKENDS)])
         self.assertEqual(fired(got), {2})
 
@@ -119,73 +119,73 @@ class FeatureGateTests(unittest.TestCase):
                  '#[cfg(feature = "other")]',
                  f'#[cfg(not(feature = "{BACKENDS[2]}"))]',
                  f'// feature = {BACKENDS[0]}']
-        repo = Repo(self, {'a.txt': 'a\n'}, {'crates/x/src/lib.rs': '\n'.join(lines) + '\n'})
+        repo = Repo(self, {'a.txt': 'a\n'}, {'x/src/lib.rs': '\n'.join(lines) + '\n'})
         self.assertEqual([found.split(':')[1] for found in repo.checks()[2]], ['1', '2', '4'])
 
     def test_a_changed_file_is_read_whole_as_committed_at_head(self):
-        repo = Repo(self, {'crates/x/src/lib.rs': gate('bdb') + '\nfn a() {}\n', 'crates/x/src/gone.rs': gate('tkrzw') + '\n'},
-                    {'crates/x/src/lib.rs': gate('bdb') + '\nfn b() {}\n', 'crates/x/src/gone.rs': None})
-        self.assertEqual(repo.checks()[2], [f'crates/x/src/lib.rs:1: {gate("bdb")}'])
+        repo = Repo(self, {'x/src/lib.rs': gate('bdb') + '\nfn a() {}\n', 'x/src/gone.rs': gate('tkrzw') + '\n'},
+                    {'x/src/lib.rs': gate('bdb') + '\nfn b() {}\n', 'x/src/gone.rs': None})
+        self.assertEqual(repo.checks()[2], [f'x/src/lib.rs:1: {gate("bdb")}'])
 
     def test_markdown_and_unchanged_files_do_not_fire_check_2(self):
         text = '\n'.join(gate(backend) for backend in BACKENDS) + '\n'
-        repo = Repo(self, {'crates/x/src/gated.rs': text, 'NOTES.md': 'a\n', 'crates/x/src/other.rs': 'a\n'},
-                    {'NOTES.md': text, 'crates/x/src/other.rs': 'b\n'})
+        repo = Repo(self, {'x/src/gated.rs': text, 'NOTES.md': 'a\n', 'x/src/other.rs': 'a\n'},
+                    {'NOTES.md': text, 'x/src/other.rs': 'b\n'})
         self.assertEqual(fired(repo.checks()), set())
 
 
 class CargoTomlTests(unittest.TestCase):
     def test_removed_and_edited_lines_that_start_with_a_backend_name_fire_check_3(self):
-        got = Repo(self, {'crates/x/Cargo.toml': 'bdb = []\ntkrzw = []\nkyotocabinet = []\n'},
-                   {'crates/x/Cargo.toml': 'tkrzw = ["dep:y"]\nkyotocabinet = []\n'}).checks()
-        self.assertEqual(got[3], ['crates/x/Cargo.toml: -bdb = []', 'crates/x/Cargo.toml: -tkrzw = []',
-                                  'crates/x/Cargo.toml: +tkrzw = ["dep:y"]'])
+        got = Repo(self, {'x/Cargo.toml': 'bdb = []\ntkrzw = []\nkyotocabinet = []\n'},
+                   {'x/Cargo.toml': 'tkrzw = ["dep:y"]\nkyotocabinet = []\n'}).checks()
+        self.assertEqual(got[3], ['x/Cargo.toml: -bdb = []', 'x/Cargo.toml: -tkrzw = []',
+                                  'x/Cargo.toml: +tkrzw = ["dep:y"]'])
 
     def test_a_backend_named_later_in_a_line_fires_check_3(self):
         lines = ['default = ["bdb"]', 'store = { path = "../store", features = ["tkrzw"] }',
                  '# kyotocabinet only on Linux']
-        got = Repo(self, {'crates/x/Cargo.toml': 'x = 1\n'},
-                   {'crates/x/Cargo.toml': 'x = 1\n' + '\n'.join(lines) + '\n'}).checks()
-        self.assertEqual(got[3], [f'crates/x/Cargo.toml: +{line}' for line in lines])
+        got = Repo(self, {'x/Cargo.toml': 'x = 1\n'},
+                   {'x/Cargo.toml': 'x = 1\n' + '\n'.join(lines) + '\n'}).checks()
+        self.assertEqual(got[3], [f'x/Cargo.toml: +{line}' for line in lines])
 
     def test_file_headers_alone_fire_nothing(self):
         def crates(version):
-            return {f'crates/{backend}-notes/Cargo.toml': f'[package]\nversion = "{version}"\n'
+            return {f'{backend}-notes/Cargo.toml': f'[package]\nversion = "{version}"\n'
                     for backend in BACKENDS}
         repo = Repo(self, crates('0.1.0'), crates('0.1.1'))
         patch = repo.git('diff', '-U0', 'base', 'HEAD')
         for backend in BACKENDS:
-            self.assertIn(f'+++ b/crates/{backend}-notes/Cargo.toml', patch)
+            self.assertIn(f'+++ b/{backend}-notes/Cargo.toml', patch)
         self.assertEqual(fired(repo.checks()), set())
 
     def test_content_that_looks_like_a_file_header_is_still_content(self):
         lines = ['- bdb notes', '-- tkrzw notes', '++ kyotocabinet notes']
         text = 'x = 1\ndescription = """\n' + '\n'.join(lines) + '\n"""\n'
-        got = Repo(self, {'crates/x/Cargo.toml': 'x = 1\n'}, {'crates/x/Cargo.toml': text}).checks()
-        self.assertEqual(got[3], [f'crates/x/Cargo.toml: +{line}' for line in lines])
+        got = Repo(self, {'x/Cargo.toml': 'x = 1\n'}, {'x/Cargo.toml': text}).checks()
+        self.assertEqual(got[3], [f'x/Cargo.toml: +{line}' for line in lines])
 
     def test_unchanged_backend_lines_beside_a_change_do_not_fire(self):
         text = '[package]\nversion = "{}"\n[features]\nbdb = []\ntkrzw = []\nkyotocabinet = []\n'
-        repo = Repo(self, {'crates/x/Cargo.toml': text.format('0.1.0')},
-                    {'crates/x/Cargo.toml': text.format('0.1.1')})
+        repo = Repo(self, {'x/Cargo.toml': text.format('0.1.0')},
+                    {'x/Cargo.toml': text.format('0.1.1')})
         self.assertEqual(fired(repo.checks()), set())
 
 
 class SelectionTests(unittest.TestCase):
     def test_a_diff_touching_none_fires_nothing(self):
-        base = {'README.md': 'a\n', 'crates/oxpinyin/src/lib.rs': 'a\n', 'settings.toml': 'a = 1\n', 'fuzz/Cargo.lock': 'a\n'}
-        head = {'README.md': 'bdb and tkrzw notes\n', 'crates/oxpinyin/src/lib.rs': '// bdb, kyotocabinet\n',
+        base = {'README.md': 'a\n', 'src/lib.rs': 'a\n', 'settings.toml': 'a = 1\n', 'fuzz/Cargo.lock': 'a\n'}
+        head = {'README.md': 'bdb and tkrzw notes\n', 'src/lib.rs': '// bdb, kyotocabinet\n',
                 'settings.toml': 'tkrzw = 1\n', 'fuzz/Cargo.lock': 'name = "kyotocabinet-sys"\n'}
         self.assertEqual(Repo(self, base, head).checks(), {1: [], 2: [], 3: []})
 
     def test_uncommitted_changes_are_not_part_of_the_diff(self):
-        repo = Repo(self, {'crates/x/Cargo.toml': 'x = 1\n', 'crates/x/src/lib.rs': 'a\n'}, {'crates/x/src/lib.rs': 'b\n'})
-        (repo.root / 'crates/x/Cargo.toml').write_text('x = 1\nbdb = []\n')
-        (repo.root / 'crates/x/src/lib.rs').write_text(gate('bdb') + '\n')
+        repo = Repo(self, {'x/Cargo.toml': 'x = 1\n', 'x/src/lib.rs': 'a\n'}, {'x/src/lib.rs': 'b\n'})
+        (repo.root / 'x/Cargo.toml').write_text('x = 1\nbdb = []\n')
+        (repo.root / 'x/src/lib.rs').write_text(gate('bdb') + '\n')
         self.assertEqual(fired(repo.checks()), set())
 
     def test_repository_configuration_cannot_change_the_answer(self):
-        head = {'crates/oxpinyin/src/store/mod.rs': gate('bdb') + '\n', 'crates/y/Cargo.toml': 'tkrzw = []\n'}
+        head = {'src/store/mod.rs': gate('bdb') + '\n', 'y/Cargo.toml': 'tkrzw = []\n'}
         repo = Repo(self, {'a.txt': 'a\n'}, head)
         plain = repo.checks()
         for key, value in (('color.ui', 'always'), ('color.diff', 'always'), ('color.grep', 'always'),
@@ -200,9 +200,9 @@ class SelectionTests(unittest.TestCase):
 class DirectoryTests(unittest.TestCase):
     """The answer does not depend on where in the work tree the script is run."""
 
-    BASE = {'README.md': 'a\n', 'tools/notes.txt': 'a\n', 'crates/oxpinyin/src/store/mod.rs': 'fn a() {}\n',
-            'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\n', 'crates/oxpinyin-utils/src/lib.rs': 'fn a() {}\n'}
-    DIRECTORIES = ('.', 'tools', 'crates/oxpinyin')
+    BASE = {'README.md': 'a\n', 'tools/notes.txt': 'a\n', 'src/store/mod.rs': 'fn a() {}\n',
+            'utils/Cargo.toml': '[features]\nold = []\n', 'utils/src/lib.rs': 'fn a() {}\n'}
+    DIRECTORIES = ('.', 'tools', 'src')
 
     def reports(self, repo):
         """The report printed from each directory; every run must succeed."""
@@ -219,10 +219,10 @@ class DirectoryTests(unittest.TestCase):
                 self.assertEqual(report, reports['.'])
 
     def test_checks_two_and_three_see_changes_outside_the_directory_they_run_in(self):
-        cases = (('check 2', {'crates/oxpinyin-utils/src/lib.rs': gate('bdb') + '\n'},
-                  f'\n  crates/oxpinyin-utils/src/lib.rs:1: {gate("bdb")}\n'),
-                 ('check 3', {'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\ntkrzw = []\n'},
-                  '\n  crates/oxpinyin-utils/Cargo.toml: +tkrzw = []\n'))
+        cases = (('check 2', {'utils/src/lib.rs': gate('bdb') + '\n'},
+                  f'\n  utils/src/lib.rs:1: {gate("bdb")}\n'),
+                 ('check 3', {'utils/Cargo.toml': '[features]\nold = []\ntkrzw = []\n'},
+                  '\n  utils/Cargo.toml: +tkrzw = []\n'))
         for check, head, evidence in cases:
             with self.subTest(check=check):
                 reports = self.reports(Repo(self, self.BASE, head))
@@ -245,7 +245,7 @@ class DirectoryTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     def test_exit_status_reports_success_not_the_selection(self):
-        everything = Repo(self, {'a.txt': 'a\n'}, {'crates/oxpinyin/src/store/mod.rs': 'a\n'})
+        everything = Repo(self, {'a.txt': 'a\n'}, {'src/store/mod.rs': 'a\n'})
         nothing = Repo(self, {'a.txt': 'a\n'}, {'a.txt': 'b\n'})
         for repo, cells in ((everything, 'bdb,kc,tkrzw'), (nothing, 'tkrzw')):
             with self.subTest(cells=cells):
@@ -271,21 +271,21 @@ class CommandTests(unittest.TestCase):
                 self.assertIn(args[-1], result.stderr)
 
     def test_limit_caps_the_matches_shown_per_check(self):
-        repo = Repo(self, {'a.txt': 'a\n'}, {f'crates/oxpinyin/src/store/{name}.rs': 'a\n' for name in 'abc'})
+        repo = Repo(self, {'a.txt': 'a\n'}, {f'src/store/{name}.rs': 'a\n' for name in 'abc'})
         capped = repo.cli('--limit', '2', 'base').stdout
-        self.assertIn('  crates/oxpinyin/src/store/b.rs\n  ... and 1 more (--limit 0 lists all)\n', capped)
+        self.assertIn('  src/store/b.rs\n  ... and 1 more (--limit 0 lists all)\n', capped)
         self.assertNotIn('c.rs', capped)
         everything = repo.cli('--limit', '0', 'base').stdout
-        self.assertIn('  crates/oxpinyin/src/store/c.rs\n', everything)
+        self.assertIn('  src/store/c.rs\n', everything)
         self.assertNotIn('more', everything)
 
 
 class RunFlagTests(unittest.TestCase):
     """--run-flag, the line store-backends.yml's changes job appends to $GITHUB_OUTPUT."""
 
-    BASE = {'README.md': 'a\n', 'crates/oxpinyin/src/store/mod.rs': 'fn a() {}\n',
-            'crates/oxpinyin/src/engine/mod.rs': 'fn a() {}\n',
-            'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\n',
+    BASE = {'README.md': 'a\n', 'src/store/mod.rs': 'fn a() {}\n',
+            'src/engine/mod.rs': 'fn a() {}\n',
+            'utils/Cargo.toml': '[features]\nold = []\n',
             'tools/tkrzw/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
     ALSO = ('--also', 'tools/tkrzw', '--also', 'tools/dev/check.py')
 
@@ -295,13 +295,13 @@ class RunFlagTests(unittest.TestCase):
         return result.stdout
 
     def test_each_kind_of_change_sets_the_flag(self):
-        cases = (('store change', {'crates/oxpinyin/src/store/mod.rs': 'fn b() {}\n'}, 'true'),
-                 ('feature line', {'crates/oxpinyin/src/engine/mod.rs': gate('kyotocabinet') + '\n'}, 'true'),
-                 ('backend Cargo.toml line', {'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
+        cases = (('store change', {'src/store/mod.rs': 'fn b() {}\n'}, 'true'),
+                 ('feature line', {'src/engine/mod.rs': gate('kyotocabinet') + '\n'}, 'true'),
+                 ('backend Cargo.toml line', {'utils/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
                   'true'),
                  ('infrastructure change', {'tools/tkrzw/build.sh': 'b\n'}, 'true'),
                  ('infrastructure file', {'tools/dev/check.py': 'b\n'}, 'true'),
-                 ('engine-only change', {'crates/oxpinyin/src/engine/mod.rs': 'fn b() {}\n'}, 'false'),
+                 ('engine-only change', {'src/engine/mod.rs': 'fn b() {}\n'}, 'false'),
                  ('docs-only change', {'README.md': gate('tkrzw') + '\n'}, 'false'))
         for name, head, expected in cases:
             with self.subTest(name):

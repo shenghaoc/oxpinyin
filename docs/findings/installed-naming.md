@@ -106,7 +106,7 @@ name.
 **The mechanism.** The work splits in two:
 
 - **`tools/dev/packaging.py` owns the content.** It fills the build-time
-  fields of `crates/oxpinyin-capi/libpinyin.pc.in`. These fields are
+  fields of `capi/libpinyin.pc.in`. These fields are
   `@VERSION@`, `@LIBPINYIN_BINARY_VERSION@` (15.0) and
   `@DATABASE_FORMAT@`. It drops the template's `#` header. No build
   script writes the file, and nothing is read from Cargo's build

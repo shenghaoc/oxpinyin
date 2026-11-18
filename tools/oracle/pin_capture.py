@@ -26,7 +26,7 @@ There are three observation kinds:
 - A utility run: one pin utility in a private copy of fixtures/w3/<cell>/, with a given stdin.
   It stages the end, stdout, stderr and the resulting tree: every path with its kind, mode and
   size, a file's SHA-256 and whether it is unchanged, and the sorted rows of each new or changed
-  DBM file with their digest, as the frozen utility cases of crates/oxpinyin-utils record them.
+  DBM file with their digest, as the frozen utility cases of utils record them.
 
 The run writes DIR/RUN/observations.json and DIR/RUN/capture.json (DIR defaults to
 target/pin-observations). capture.json is provenance, not frozen values.
@@ -1228,7 +1228,7 @@ def tree(work, before, cell):
                 # A new or changed DBM file's container bytes are not the same on two runs: tkrzw keeps
                 # a clock in bytes 48-56 and Berkeley DB containers are not byte-stable (#358). Its rows
                 # are the observation, as the frozen cases' inventory() records a DBM file
-                # (crates/oxpinyin-utils/tests/it/support.rs:225-243). No frozen case this capture
+                # (utils/tests/it/support.rs:225-243). No frozen case this capture
                 # feeds records a DBM file by its bytes, so no file keeps a bytes hash.
                 entry['rows'] = dbm_rows(path, cell)
                 entry['rows_sha256'] = rows_digest(entry['rows'])

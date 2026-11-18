@@ -72,7 +72,7 @@ b c ch d f g h j k l m n p q r s sh t w x y z zh
 
 [parser-spec.md](parser-spec.md) states that there are 23 but does not list them.
 The rule above derives the list mechanically.
-`crates/oxpinyin/src/syllables.rs` asserts it against the complete inventory, so the transcription is checked, not trusted.
+`src/syllables.rs` asserts it against the complete inventory, so the transcription is checked, not trusted.
 
 Every `partial` segment in `fixtures/w4/oracle-paths.txt` is one of these keys.
 The fixture holds 1,283 `partial` segments, and all 23 keys occur.
@@ -104,7 +104,7 @@ This rule applies at every reachable node, including node 0.
 So the graph consumes a **leading** apostrophe (`'ni`) and a **doubled** apostrophe (`ni''hao`), as the pin does.
 An apostrophe run with no key after it has no edge.
 
-`OPEN_APOSTROPHE_CASES` in `crates/oxpinyin/src/graph/tests.rs` is empty, so the test permits no disagreement with the pin.
+`OPEN_APOSTROPHE_CASES` in `src/graph/tests.rs` is empty, so the test permits no disagreement with the pin.
 
 ## The recovered-path fixture
 
@@ -126,6 +126,6 @@ The junk stratum contains inputs such as `#nishaozhan`, and escaping never emits
 
 ## Acceptance
 
-`crates/oxpinyin/src/graph/tests.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
+`src/graph/tests.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
 `OPEN_APOSTROPHE_CASES` is empty.
-Synthetic goldens in `crates/oxpinyin/src/graph.rs` also cover the empty input, ordering, tie cases, apostrophes, junk, chained initials and over-length refusal.
+Synthetic goldens in `src/graph.rs` also cover the empty input, ordering, tie cases, apostrophes, junk, chained initials and over-length refusal.

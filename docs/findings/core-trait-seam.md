@@ -3,7 +3,7 @@
 Status: **reference**
 
 This page describes the internal `oxpinyin` trait seam
-(`crates/oxpinyin/src/model.rs`) and its behavioural rules: totality,
+(`src/model.rs`) and its behavioural rules: totality,
 determinism, ordering and growth.
 It is not a compatibility contract; the traits and their rules change with the code.
 Failure behaviour is set by the [compatibility policy](compatibility-policy.md#failure-behaviour), and candidate order by the C APIs' pin-derived behaviour.
@@ -45,7 +45,7 @@ The defaulted methods form these groups:
   `trellis_item_on_path(syllables, tones, token, memo: &Self::PathMemo)` answers exactly as `trellis_item`; the default ignores the memo.
   The n-best caller makes a fresh `PathMemo` per key path and drops it with the span search that found the path, so nothing in it outlives one guess.
   A dictionary with nothing to keep uses `()`.
-  `TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value; `RuntimeDict` keeps the path's user lookup and toned keys there (`PathPricing`, `crates/oxpinyin/src/facade/runtime/mod.rs`) instead of recomputing them per token.
+  `TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value; `RuntimeDict` keeps the path's user lookup and toned keys there (`PathPricing`, `src/facade/runtime/mod.rs`) instead of recomputing them per token.
   `trellis_item_with_facts` and `trellis_text_with_facts` are the sentence-only variants that also record sentence facts.
 - **Candidate lookup.**
   `lookup_into`, `lookup_into_flagged`, `candidate_search_into` and the addon variants (`lookup_addon`, `search_addon_into`) fill caller-owned buffers or read the addon facade. A lookup carries tokens and text only; a step reads one token's pronunciation possibility through `trellis_item`.
@@ -97,5 +97,5 @@ A model reports arithmetic or backend failure through `Result`.
 - Every fallible public method returns `Result`; no method panics on caller input.
 - The seam imposes no `Send`, `Sync`, `'static`, serialization or object-store requirement.
 - Associated types prevent `oxpinyin` from depending on the concrete data, user or platform implementations.
-  The concrete types the engine seam names are in `crates/oxpinyin/src/vocab.rs`.
+  The concrete types the engine seam names are in `src/vocab.rs`.
 - Implementations must be deterministic for the same explicit input and state.

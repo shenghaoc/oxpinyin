@@ -52,7 +52,7 @@ if _ROOT not in sys.path:
 from tools.dev import cell
 BACKENDS = cell.BACKENDS
 CELLS = cell.CELLS
-STORE_DIR = 'crates/oxpinyin/src/store/'
+STORE_DIR = 'src/store/'
 # Rule 2's grep -E pattern as written; git grep -E reads the same syntax.
 FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
 BACKEND_NAME = re.compile('|'.join(BACKENDS))
@@ -124,8 +124,8 @@ def literal(path):
 def store_paths(base, head, repo):
     """Check 1: the changed store sources, manifest, build script and native build code, and the
     lockfile, which pins the backends' build dependencies, such as bindgen's syn."""
-    return changed_paths(base, head, pathspec=(STORE_DIR, 'crates/oxpinyin/codegen/store.rs',
-                                              'crates/oxpinyin/build.rs', 'crates/oxpinyin/Cargo.toml',
+    return changed_paths(base, head, pathspec=(STORE_DIR, 'codegen/store.rs',
+                                              'build.rs', 'Cargo.toml',
                                               'Cargo.lock'), repo=repo)
 
 

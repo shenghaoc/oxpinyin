@@ -72,7 +72,7 @@ store (`oxpinyin`). Nibbles 6 and 7 live there, and `addon.bin`
 too:
 
 - `UserStore::promote_addon_phrase(token, item)`
-  (`crates/oxpinyin/src/user/store.rs`) takes the addon item's wire bytes
+  (`src/user/store.rs`) takes the addon item's wire bytes
   and copies them: the item is written to the token's sub-index as stored,
   the phrase table takes its stored words, and the pinyin index takes one
   record per stored reading with the packed keys as stored, tones included.
@@ -84,14 +84,14 @@ too:
   `check_add` keeps its refusals (an empty key, a malformed stored record,
   register row 101).
 - `SharedDict::addon_phrase_item(token)`
-  (`crates/oxpinyin/src/facade/runtime/mod.rs`) reads the item's stored bytes from
+  (`src/facade/runtime/mod.rs`) reads the item's stored bytes from
   the addon library (`PhraseItemView::as_bytes`). No spelling is rendered
   and parsed back, so no tone, reading or non-scalar word is lost.
-- `pinyin_choose_candidate` (`crates/oxpinyin-capi/src/candidates.rs`) runs
+- `pinyin_choose_candidate` (`capi/src/candidates.rs`) runs
   the promotion for an `ADDON` candidate before selecting, rewrites the
   snapshot candidate to `NORMAL_CANDIDATE` at the promoted token, and selects
   the row with that token through `Session::select_target`
-  (`crates/oxpinyin/src/engine/session/selection.rs`); a later choose of the
+  (`src/engine/session/selection.rs`); a later choose of the
   same handle forces it again.
 
 After promotion the phrase surfaces through `UserLookup` as a
@@ -166,7 +166,7 @@ is first in the list and the addon row still wins. With
 `SORT_BY_FREQUENCY` set, the sort puts the addon row first.
 
 The engine implements the rule in `dedup_ranked_by_text`
-(`crates/oxpinyin/src/engine/session/mod.rs`). It runs on the sorted phrase
+(`src/engine/session/mod.rs`). It runs on the sorted phrase
 rows, where the true `m_freq` of each row is known. It includes the LONGER
 row before this dedup. The sentence prepend then keeps an n-best row over
 any phrase row with its text (`src/pinyin.cpp:2116-2125`).

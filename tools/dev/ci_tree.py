@@ -100,7 +100,9 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 # pyproject.toml is the uv project that every `uv run` of repository Python enters.
 SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version", "pyproject.toml")
-RUST = (*SHARED, "crates", "Cargo.toml", "Cargo.lock", "fixtures", "tools")
+CRATE_DIRS = ("capi", "zhuyin-capi", "utils", "repl")
+CRATE_INPUTS = (*CRATE_DIRS, "src", "tests", "codegen", "build.rs", "benches", "examples")
+RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
 PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
@@ -109,10 +111,9 @@ PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
 RUST_READS = (
               "tools/oracle/build.py", "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
-# The shipping-size job's path gate. `crates` over-selects the three crates
-# outside the capi closure; the gate must not need a Cargo toolchain.
-SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
-        "crates/oxpinyin/codegen/string_tables.rs", "tools/dev/packaging.py",
+# The shipping-size gate selects workspace package inputs without a Cargo toolchain.
+SHIP = (*CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
+        "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "vcpkg-overlays", "triplets",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
@@ -120,19 +121,19 @@ SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
 # compares, so a change to one selects the harness. The same test holds this list to the generator's.
 GENERATED_TABLES = (
-    "crates/oxpinyin/src/chewing_key_tables.rs",
-    "crates/oxpinyin/src/content_table_source.rs",
-    "crates/oxpinyin/src/tone_symbols.rs",
-    "crates/oxpinyin/src/table_data/double_pinyin.rs",
-    "crates/oxpinyin/src/table_data/full_pinyin_counts.rs",
-    "crates/oxpinyin/src/table_data/full_pinyin_indexes.rs",
-    "crates/oxpinyin/src/table_data/full_pinyin_syllables.rs",
-    "crates/oxpinyin/src/table_data/syllable_inventory.rs",
-    "crates/oxpinyin/src/table_data/tone_symbols.rs",
-    "crates/oxpinyin/src/table_data/zhuyin_indexes.rs",
-    "crates/oxpinyin/src/table_data/zhuyin_keyboards.rs",
-    "crates/oxpinyin/src/table_data/zhuyin_tones.rs",
-    "crates/oxpinyin/src/engine/session/split_tables.rs",
+    "src/chewing_key_tables.rs",
+    "src/content_table_source.rs",
+    "src/tone_symbols.rs",
+    "src/table_data/double_pinyin.rs",
+    "src/table_data/full_pinyin_counts.rs",
+    "src/table_data/full_pinyin_indexes.rs",
+    "src/table_data/full_pinyin_syllables.rs",
+    "src/table_data/syllable_inventory.rs",
+    "src/table_data/tone_symbols.rs",
+    "src/table_data/zhuyin_indexes.rs",
+    "src/table_data/zhuyin_keyboards.rs",
+    "src/table_data/zhuyin_tones.rs",
+    "src/engine/session/split_tables.rs",
 )
 CI_INPUTS = {
     # cargo fmt and the compile-only fuzz check read the fuzz workspace. The
@@ -144,7 +145,7 @@ CI_INPUTS = {
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
     # cargo deny reads the manifests and lockfiles only.
     "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "rust-toolchain.toml",
-                    ".cargo", "Cargo.toml", "Cargo.lock", "crates/*/Cargo.toml", "deny.toml",
+                    ".cargo", "Cargo.toml", "Cargo.lock", *(f"{directory}/Cargo.toml" for directory in CRATE_DIRS), "deny.toml",
                     "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
     # tools/ and what its tests read outside it: the store-backends gate script,
     # the manifests and the lockfile, the files directly in each crate's
@@ -157,10 +158,11 @@ CI_INPUTS = {
     # of the `changes` job, not an input here.
     "harness": Inputs((*SHARED, "uv.lock",
                        ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
-                       "crates", "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
+                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "docs/findings/glib-libc-call-sites.tsv"),
-                      ("crates/*/src/*.rs", "crates/*/tests/*.rs", "crates/*/examples/*.rs",
-                       "crates/*/benches/*.rs"),
+                      tuple(f"{prefix}{section}/*.rs"
+                            for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
+                            for section in ("src", "tests", "examples", "benches")),
                       GENERATED_TABLES),
     # Every crate is a safe superset of the C API dependency closure: this job
     # runs without Cargo, and ship_sizes keys the base result on the same crates.

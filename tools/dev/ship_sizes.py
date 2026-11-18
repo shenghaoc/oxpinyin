@@ -12,7 +12,7 @@ recipe key: the tree ids of every input that can change the libraries plus the
 toolchain fingerprint. The key does not name a commit, so every main commit
 with the same inputs shares one result.
 
-The crate input is all of crates/, a conservative superset of the C API crates'
+The crate inputs are all workspace package directories and main library sources, a conservative superset of the C API crates'
 dependency closure: the key needs no Cargo and no closure read at the head, so a
 base revision is keyed by its own tree. A change in a crate outside the closure
 only misses the cache.
@@ -40,8 +40,7 @@ SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
 # Inputs that can change a library byte: they key the cached base result. The
 # same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
-INPUTS = ('crates', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
-          'crates/oxpinyin/codegen/string_tables.rs',
+INPUTS = ('src', 'tests', 'codegen', 'build.rs', 'benches', 'examples', 'capi', 'zhuyin-capi', 'utils', 'repl', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
           'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt',
           'vcpkg-overlays', 'triplets')
 
@@ -120,6 +119,10 @@ def environment(root: Path = ROOT) -> dict[str, str]:
 
 def tree_ids(revision: str, root: Path = ROOT) -> dict[str, str]:
     result = {}
+    if git('ls-tree', revision, 'src', root=root) == '' and git('ls-tree', revision, 'capi', root=root) == '':
+        # A historical comparison may use the old workspace layout. Include
+        # its full tree so source changes there still invalidate the key.
+        result['checkout'] = git('rev-parse', f'{revision}^{{tree}}', root=root)
     for path in INPUTS:
         try:
             result[path] = git('rev-parse', f'{revision}:{path}', root=root)
@@ -146,6 +149,16 @@ def exports(nm_text: str, prefix: str) -> set[str]:
 def version_globals(text: str) -> set[str]:
     from .abi import version_globals as parse
     return parse(text)
+
+
+def version_script(source: Path, library: str) -> Path:
+    """The version script in library's C crate directory, in either source layout.
+
+    Only the crate directory is read: a fixture elsewhere in the tree can carry the same name
+    (tools/audit/fixtures/small/libpinyin.ver).
+    """
+    from .packaging import crate_dir
+    return crate_dir(source, LIBRARIES[library][0]) / f'{library}.ver'
 
 
 def check_exports(library: str, nm_text: str, version_text: str) -> None:
@@ -252,7 +265,7 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
             '--release', '--locked', '--no-default-features', '--features', features,
             f'--target-dir={target}'], env)
     sizes = {}
-    for library, (crate, _) in LIBRARIES.items():
+    for library in LIBRARIES:
         installed = stage / 'usr/lib' / f'{library}.so.15.0.0'
         if not installed.is_file():
             raise Failure(f'{library}: {installed} was not installed')
@@ -260,7 +273,11 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
         shutil.copyfile(installed, stripped)
         run(['strip', '--strip-unneeded', '--', stripped])
         nm = run(['nm', '-D', '--defined-only', stripped])
-        check_exports(library, nm, (source / 'crates' / crate / f'{library}.ver').read_text())
+        # The base and PR can place the same crate in different directories.
+        script = version_script(source, library)
+        if not script.is_file():
+            raise Failure(f'{revision}: no {library}.ver at {script.relative_to(source).as_posix()}')
+        check_exports(library, nm, script.read_text())
         sizes[library] = stripped.stat().st_size
     return {'schema': SCHEMA, 'revision': git('rev-parse', revision, root=root), 'backend': cell.feature,
             'libraries': sizes}

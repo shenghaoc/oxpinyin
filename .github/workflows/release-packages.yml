@@ -62,10 +62,10 @@ on:
       - tools/dev/packaging_templates.py
       - tools/dev/cell.py
       - tools/tkrzw/runtime.py
-      - crates/oxpinyin-capi/Cargo.toml
-      - crates/oxpinyin-capi/*.ver
-      - crates/oxpinyin-zhuyin-capi/Cargo.toml
-      - crates/oxpinyin-zhuyin-capi/*.ver
+      - capi/Cargo.toml
+      - capi/*.ver
+      - zhuyin-capi/Cargo.toml
+      - zhuyin-capi/*.ver
 
 permissions:
   contents: read

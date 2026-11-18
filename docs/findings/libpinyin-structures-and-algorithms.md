@@ -542,7 +542,7 @@ wraps the merged u32 field.
 Product coefficients take the pin's values. The tables record those values,
 the pin's limits and their Rust counterparts, and limits introduced by
 oxpinyin. Pin paths are relative to `src/` unless stated. Rust paths are
-relative to `crates/`.
+relative to the repository root.
 
 ### The pin's values
 
@@ -801,13 +801,13 @@ its survival through the next guess and through a shorter parse that no
 guess sees, and its clearing by a guess on the shorter parse. oxpinyin gives
 the same value at every call; the test
 `a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does` in
-`crates/oxpinyin/src/facade/instance/tests.rs` holds each leg as a case. The
+`src/facade/instance/tests.rs` holds each leg as a case. The
 zhuyin leg parses `zhg` as full pinyin, because the
 chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
 
-A read never fails: `UserStore::phrase` (`crates/oxpinyin/src/user/store.rs`)
+A read never fails: `UserStore::phrase` (`src/user/store.rs`)
 always returns `Ok`, and so does the system source's phrase read,
-`phrase_item_pronunciations` (`crates/oxpinyin/src/user/data/dict.rs`).
+`phrase_item_pronunciations` (`src/user/data/dict.rs`).
 
 N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
 result supplies the tail; `changed` is set before each differing write;
@@ -1064,11 +1064,11 @@ pin's and replaced them as follows:
   `oxpinyin/src/user/data/phrase_libraries.rs`.
 - `test_phrase_table`, `test_chewing_table`, `test_matrix`,
   `test_pinyin_lookup` and `test_phrase_lookup` are modes of the
-  nonshipping `oxpinyin-repl` (`crates/oxpinyin-repl/src/tables.rs`,
+  nonshipping `oxpinyin-repl` (`repl/src/tables.rs`,
   `lookup.rs`). They take the data directory as an argument and run each
   operation once, with no timing loop.
 
-The verification suite in `crates/oxpinyin-repl/tests/it` checks their frozen
+The verification suite in `repl/tests/it` checks their frozen
 outputs. Its `table_guards.rs` checks the row 115 and 116 refusals after a
 successful query.
 

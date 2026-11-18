@@ -491,7 +491,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             executable = record.get('executable')
             if executable is not None:
                 executables.append(executable)
-    package = ROOT / 'crates/oxpinyin'
+    package = ROOT
     if check_object is None:
         def check_object(obj):
             return tools.tkrzw(obj, runner='run-sanitizers', side='subject',

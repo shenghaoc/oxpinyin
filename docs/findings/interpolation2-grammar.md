@@ -10,10 +10,10 @@ Pin lines are at libpinyin `074a2219c90feaf962d0d24f034514033ece5f99`
 `interpolation2.text` is the model's tagged text form. Upstream reads it
 with `taglib_read` (`src/storage/tag_utility.cpp`). oxpinyin has one port
 of that tagger, `oxpinyin_utils::taglib`
-(`crates/oxpinyin-utils/src/utils_helper/taglib.rs`). These readers use it:
+(`utils/src/utils_helper/taglib.rs`). These readers use it:
 
 - `oxpinyin-utils` `import_interpolation`
-  (`crates/oxpinyin-utils/src/storage/import_interpolation.rs`);
+  (`utils/src/storage/import_interpolation.rs`);
 - `oxpinyin-utils` `k_mixture_model_to_interpolation`;
 - the k-mixture-model tools in `oxpinyin-utils` `k_mixture_model`.
 
@@ -135,7 +135,7 @@ reads.
 ## The evaluation dump reader
 
 `parse_interpolation_dump`
-(`crates/oxpinyin-utils/src/training/eval/counts.rs`) is a separate, lenient
+(`utils/src/training/eval/counts.rs`) is a separate, lenient
 reader for `export_interpolation` dumps that feed the correction-rate
 evaluator. It skips any line it cannot parse, keeps the last count on a
 duplicate token, and reads the tokens from fixed field positions. Its

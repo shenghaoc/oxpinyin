@@ -69,8 +69,8 @@ These are pin behaviour, held by the register's notes:
 
 The gate is `just abi alloc-pairing` (`tools/dev/abi.py`). CI's `test` job
 runs it beside the export gates. It reads one checked-in register per ABI:
-`crates/oxpinyin-capi/libpinyin.alloc` and
-`crates/oxpinyin-zhuyin-capi/libzhuyin.alloc`. Each register sits beside
+`capi/libpinyin.alloc` and
+`zhuyin-capi/libzhuyin.alloc`. Each register sits beside
 the `.ver` files and has one line per pointer-shaped slot. The line holds:
 
 - the slot's class (`handle:<fn>`, `g_free`, `g_strfreev`, `borrowed`);

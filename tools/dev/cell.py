@@ -31,12 +31,25 @@ BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw':
 BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
 
 
+# The manifests that have declared the backend default, newest layout first: the library at the
+# root, then crates/oxpinyin, the store merged into crates/oxpinyin-core, and the separate store
+# crate. Performance comparisons and bisection also read revisions in the older layouts.
+DEFAULT_MANIFESTS = ('Cargo.toml', 'crates/oxpinyin/Cargo.toml', 'crates/oxpinyin-core/Cargo.toml',
+                     'crates/oxpinyin-store/Cargo.toml')
+
+
 @functools.cache
 def _declared_default(root: Path) -> str:
-    # [features] cannot be inherited from the workspace, so this file is the exact declaration.
-    manifest = root / 'crates/oxpinyin/Cargo.toml'
-    with manifest.open('rb') as file:
-        defaults = tomllib.load(file).get('features', {}).get('default')
+    # [features] cannot be inherited from the workspace, so the declaring manifest is exact. In a
+    # layout with several of these manifests, only one declares a default.
+    defaults = None
+    for name in DEFAULT_MANIFESTS:
+        manifest = root / name
+        if manifest.is_file():
+            features = tomllib.loads(manifest.read_text()).get('features', {})
+            if 'default' in features:
+                defaults = features['default']
+                break
     if not isinstance(defaults, list) or len(defaults) != 1 or defaults[0] not in BACKENDS:
         raise ValueError(f'oxpinyin needs one backend default: {defaults}')
     return defaults[0]

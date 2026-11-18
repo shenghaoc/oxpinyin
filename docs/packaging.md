@@ -102,7 +102,7 @@ The packaging commands supervise builds, relinks and package builders, with canc
 
 ## Metadata on `oxpinyin-capi`
 
-`crates/oxpinyin-capi/Cargo.toml` carries the full contract.
+`capi/Cargo.toml` carries the full contract.
 The installed tree takes libpinyin's own binary identity: SONAME `libpinyin.so.15`, `libpinyin.pc` and headers under `libpinyin-2.11.92/`.
 The source tree keeps the oxpinyin names.
 `docs/findings/installed-naming.md` holds the full rationale and the measured gates.
@@ -123,7 +123,7 @@ In short:
   The Rust `[lib] name` stays `pinyin_capi`, so in-tree gates keep finding `target/debug/libpinyin_capi.so`.
 
 No `"."` first-member entry is necessary: that cargo-c requirement applies only when the exported crate is the workspace **root**.
-Here the crate is a normal member (`crates/oxpinyin-capi`), selected by the `capi` feature and `-p oxpinyin-capi`.
+Here the crate is a normal member (`capi`), selected by the `capi` feature and `-p oxpinyin-capi`.
 
 ## Consumer detection
 
@@ -243,13 +243,13 @@ are already dependencies of libkyotocabinet.
 ## Kyoto Cabinet: build headers must match the installed library
 
 The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the facade, as libpinyin's Kyoto Cabinet build does.
-The adapter of the cxx bridge (`crates/oxpinyin/src/store/kyotocabinet/adapter.cc`) constructs `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers.
+The adapter of the cxx bridge (`src/store/kyotocabinet/adapter.cc`) constructs `TreeDB`, `HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers.
 That compiled code calls the out-of-line functions of the system libkyotocabinet and shares its object layouts.
 So the headers that a package builds against must be the same Kyoto Cabinet version as the libkyotocabinet it runs with.
 
 A package builds against the distribution's `libkyotocabinet-dev` or `kyotocabinet-devel` for the `libkyotocabinet` it ships.
 The facade must be rebuilt whenever the version of that library changes, as libpinyin's package must be.
-The backend checks only that the running library is 1.2.x (`check_runtime_version` in `crates/oxpinyin/src/store/kyotocabinet/ffi.rs`); it does not detect a header/library mismatch.
+The backend checks only that the running library is 1.2.x (`check_runtime_version` in `src/store/kyotocabinet/ffi.rs`); it does not detect a header/library mismatch.
 
 ## Locating the model data (`pkgdatadir`)
 
@@ -296,7 +296,7 @@ Three properties decide whether that works.
 
 **SONAME.** The pin's `configure.ac` sets `libpinyin_abi_current = 15` and `libpinyin_abi_revision = 0`.
 libtool's `-version-info 15:0` gives the SONAME `libpinyin.so.15`, and a consumer records that string in `DT_NEEDED`.
-`crates/oxpinyin-capi/build.rs` passes it as a `cdylib` link argument.
+`capi/build.rs` passes it as a `cdylib` link argument.
 `[package.metadata.capi.library]` `name = "pinyin"` / `version = "15.0.0"` names the installed file.
 `libzhuyin.so.15` follows the same rule.
 
@@ -325,7 +325,7 @@ Shipping recipes do not enable it; no build exports a test hook.
 
 `just abi exports` is the mechanical form of the drop-in promise for symbols (`check_exports` in `tools/dev/abi.py`).
 It proves that the set of exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version script, with nothing missing and nothing extra.
-The version scripts are `crates/oxpinyin-capi/libpinyin.ver` (79) and `crates/oxpinyin-zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
+The version scripts are `capi/libpinyin.ver` (79) and `zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
 It also proves that no other symbol leaks.
 
 The PR test job checks the development build when its path gate selects it.

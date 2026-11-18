@@ -575,7 +575,7 @@ class GateTests(unittest.TestCase):
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Shenghao Chen')
         self.git('config', 'user.email', 'shenghaoc@outlook.com')
-        self.base = self.commit({'README.md': 'r\n', 'crates/oxpinyin/lib': 'a\n'})
+        self.base = self.commit({'README.md': 'r\n', 'capi/lib': 'a\n'})
 
     def tearDown(self):
         self.directory.cleanup()
@@ -628,17 +628,17 @@ class GateTests(unittest.TestCase):
             'tools/oracle/oracle-pin.txt': {'lint', 'test', 'harness', 'ship'},
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
             # A Rust-only change does not select the harness.
-            'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin/src/lib.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin/tests/suite.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin/src/table_data/mod.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin/benches/new.rs': {'lint', 'test', 'ship'},
+            'repl/src/lib.rs': {'lint', 'test', 'ship'},
+            'src/lib.rs': {'lint', 'test', 'ship'},
+            'tests/suite.rs': {'lint', 'test', 'ship'},
+            'src/table_data/mod.rs': {'lint', 'test', 'ship'},
+            'benches/new.rs': {'lint', 'test', 'ship'},
             # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
-            'crates/oxpinyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-zhuyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-corpus/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
-            'crates/oxpinyin-capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
-            'crates/oxpinyin-zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},
+            'capi/build.rs': {'lint', 'test', 'harness', 'ship'},
+            'zhuyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
+            'repl/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
+            'capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
+            'zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},
             'fixtures/w3/tkt/bigram.db': {'lint', 'test', 'harness'},
             'data/table.conf.in': {'harness'},
             'fuzz/Cargo.lock': {'lint', 'deny'},
@@ -664,12 +664,12 @@ class GateTests(unittest.TestCase):
         for path, jobs in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(self.selected(path), jobs)
-        with self.subTest(rename='crates/oxpinyin/lib -> docs/lib'):
+        with self.subTest(rename='capi/lib -> docs/lib'):
             self.git('reset', '-q', '--hard', self.base)
-            self.git('rm', '-q', 'crates/oxpinyin/lib')
+            self.git('rm', '-q', 'capi/lib')
             self.commit({'docs/lib': 'a\n'})
             self.assertEqual(self.git('diff', '--name-status', self.base, 'HEAD'),
-                             'R100\tcrates/oxpinyin/lib\tdocs/lib')
+                             'R100\tcapi/lib\tdocs/lib')
             flags = ci_tree.gate(self.base, root=self.root)
             self.assertEqual({name for name, value in flags.items() if value}, {'lint', 'test', 'harness', 'ship'})
 

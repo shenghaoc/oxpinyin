@@ -19,6 +19,7 @@ import tempfile
 from .cell import CellError, Settings
 from .drivers import DriverServices
 from . import pool, slot
+from .packaging import crate_dir
 
 
 def driver_services(settings: Settings) -> DriverServices:
@@ -85,10 +86,10 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
         return 2
     extension = 'so' if facts.system == 'Linux' else 'dylib'
     libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
-                  settings.root / 'crates/oxpinyin-capi/libpinyin.ver', 'pinyin',
+                  settings.root / 'capi/libpinyin.ver', 'pinyin',
                   set()),
                  ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxpinyin-zhuyin-capi'),
-                  settings.root / 'crates/oxpinyin-zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
+                  settings.root / 'zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
     status = 0
     for name, library, version, prefix, hooks in libraries:
         print(f'--- {name}: {library} against {version.relative_to(settings.root)} ---')
@@ -258,7 +259,7 @@ def register_shape(text: str) -> list[str]:
 
 def check_static(settings: Settings, abi: str, crate: str, header: str) -> int:
     from collections import Counter
-    root = settings.root / 'crates' / crate
+    root = crate_dir(settings.root, crate)
     header_file = root / header
     text = (root / (abi + '.alloc')).read_text()
     slots = header_slots(header_file.read_text())
@@ -368,7 +369,7 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
         for abi, crate, _, library in gates:
             before = status
             source = settings.root / 'tools/abi' / ('alloc-pairing-' + abi.removeprefix('lib') + '.cc')
-            register = settings.root / 'crates' / crate / (abi + '.alloc')
+            register = crate_dir(settings.root, crate) / (abi + '.alloc')
             rows = sorted(' '.join(fields[:4]) for _, fields in register_rows(register.read_text()) if len(fields) >= 4)
             print(f'--- {abi}: {source.name} under AddressSanitizer/LeakSanitizer ---')
             user = work / (abi + '-user')
@@ -377,7 +378,7 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
             def compile_driver(output: Path, leak: bool) -> int:
                 return services.command(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
                                          '-fno-omit-frame-pointer', '-fsanitize=address', *shlex.split(flags),
-                                         '-I' + str(settings.root / 'crates' / crate), str(source),
+                                         '-I' + str(crate_dir(settings.root, crate)), str(source),
                                          '-L' + str(library_directory), '-Wl,-rpath,' + str(library_directory),
                                          '-l' + library, *shlex.split(libraries),
                                          *(['-DOXPINYIN_ALLOC_PAIRING_LEAK'] if leak else []),

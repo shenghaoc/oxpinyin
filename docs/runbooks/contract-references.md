@@ -3,7 +3,7 @@
 This page describes the frozen expectations of the C-boundary tests and the local cross-open check.
 
 The frozen expectations live beside the modules that implement them, in
-`crates/oxpinyin`. The C crates retain
+the root crate. The C crates retain
 conversion, dispatch and publication checks in their sibling `tests.rs` files
 and `tests/it` targets.
 

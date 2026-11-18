@@ -265,7 +265,7 @@ path and leaves the deliberate one open. Policy closes the rest.
 - **Stale-lock hangs** (5.1): no borrow checker deletes a leftover
   `__db.*` file. The default backend is tkrzw. Berkeley DB is a supported backend;
   `oxpinyin` opens it with no environment handle, as the pin does, and so without the locking subsystem
-  (`crates/oxpinyin/src/store/bdb/ffi.rs`). No hard-kill test is in the tree.
+  (`src/store/bdb/ffi.rs`). No hard-kill test is in the tree.
 - **Unbounded growth** (2.4): caches grow in any language. The guard is the bounded-cache
   policy and published memory figures. Ownership makes the accounting
   *legible*, not automatic.
