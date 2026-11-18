@@ -2068,7 +2068,7 @@ fn a_library_the_mask_does_not_select_reloads_without_its_log() {
 
 #[test]
 fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
-    use crate::{PhraseToken, model::UserModel};
+    use crate::model::UserModel;
     let dir = tempdir("trained-prons");
     let mut base = originals();
     let item = base
@@ -2084,7 +2084,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         (vec![key.with_tone(3).to_packed()], 200),
         (vec![other.to_packed()], 300),
     ];
-    let token = PhraseToken::new(0x0100_0001);
+    let token = 0x0100_0001;
     {
         let mut store = crate::user::test_session::open(
             &dir,
@@ -2107,7 +2107,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
             [169, 200, 300]
         );
         assert_eq!(
-            store.with_effective_system_item(token.value(), |item| item
+            store.with_effective_system_item(token, |item| item
                 .prons
                 .iter()
                 .map(|(_, count)| *count)
@@ -2138,7 +2138,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
             [445, 476, 300]
         );
         assert_eq!(
-            store.with_effective_system_item(token.value(), |item| item
+            store.with_effective_system_item(token, |item| item
                 .prons
                 .iter()
                 .map(|(_, count)| *count)
@@ -2152,7 +2152,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
 
 #[test]
 fn live_system_readings_train_import_and_replay_without_double_counting() {
-    use crate::{PhraseToken, model::UserModel};
+    use crate::model::UserModel;
     let dir = tempdir("live-system-readings");
     let mut base = originals();
     let ni = ChewingKey::from_pinyin("ni").expect("ni");
@@ -2162,11 +2162,11 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
         .get_mut(&1)
         .expect("item")
         .prons = vec![(vec![ni.with_tone(3).to_packed()], 100)];
-    let token = PhraseToken::new(0x0100_0001);
+    let token = 0x0100_0001;
     let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
     let counts = |store: &UserStore| {
         store
-            .with_effective_system_item(token.value(), |item| {
+            .with_effective_system_item(token, |item| {
                 item.prons
                     .iter()
                     .map(|(_, count)| *count)
@@ -2183,7 +2183,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
         )
         .expect("open");
         store
-            .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(20))
+            .add_system_phrase_in(1, Some(token), &"你".into(), &dense(2), Some(20))
             .expect("extra reading");
         UserModel::observe_with_keys(
             &mut store,
@@ -2194,7 +2194,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
         .expect("train extra");
         assert_eq!(counts(&store), [100, 89]);
         store
-            .add_system_phrase_in(1, Some(token.value()), &"你".into(), &dense(2), Some(7))
+            .add_system_phrase_in(1, Some(token), &"你".into(), &dense(2), Some(7))
             .expect("import after training");
         assert_eq!(counts(&store), [100, 96]);
         store.save_reporting().expect("save");
@@ -2479,7 +2479,7 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
         .add_phrase_in(crate::USER_DICTIONARY, &"鱺".into(), &dense(3), Some(20))
         .expect("another phrase takes the dropped token");
     let found = store.lookup().lookup(&[ni_key()]);
-    assert!(found.iter().any(|entry| entry.token().value() == reused));
+    assert!(found.iter().any(|entry| entry.token() == reused));
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
@@ -2846,7 +2846,7 @@ fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
 
 #[test]
 fn appended_system_readings_keep_absolute_training_counts() {
-    use crate::{PhraseToken, model::UserModel};
+    use crate::model::UserModel;
     let dir = tempdir("live-appended-readings");
     let ni = ChewingKey::from_pinyin("ni").expect("ni");
     let keys = packed_to_pinyin_keys(&[ni.to_packed()]).expect("dense");
@@ -2863,13 +2863,8 @@ fn appended_system_readings_keep_absolute_training_counts() {
         token = store
             .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
             .expect("append");
-        UserModel::observe_with_keys(
-            &mut store,
-            &[],
-            &PhraseToken::new(token),
-            &mut [vec![ni]].into_iter(),
-        )
-        .expect("train appended");
+        UserModel::observe_with_keys(&mut store, &[], &token, &mut [vec![ni]].into_iter())
+            .expect("train appended");
         assert_eq!(
             store.with_effective_system_item(token, |item| item.prons[0].1),
             Some(74)
@@ -3790,10 +3785,9 @@ fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
         .lookup(&[ni_key])
         .unwrap()
         .into_iter()
-        .find(|row| row.token().value() >> 24 == 2)
+        .find(|row| row.token() >> 24 == 2)
         .unwrap()
-        .token()
-        .value();
+        .token();
     let ni = dict.tokens_for_text("你").unwrap()[0];
     let mut store = crate::user::test_session::open_w3(user.path());
     store.set_bigram_count(ni, gbk, 10).unwrap();

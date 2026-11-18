@@ -537,11 +537,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
 
     // The huge engineered delta through the ABI write path.
     assert!(unsafe {
-        crate::dict::pinyin_token_add_unigram_frequency(
-            instance,
-            trailing_token.value(),
-            50_000_000,
-        )
+        crate::dict::pinyin_token_add_unigram_frequency(instance, trailing_token, 50_000_000)
     });
 
     assert!(unsafe {
@@ -893,9 +889,9 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
                 .core
                 .dict
                 .live_items()
-                .effective_unigram(token.value())
+                .effective_unigram(token)
                 .unwrap_or(0)
-                + inst.core.user.unigram_delta(token.value());
+                + inst.core.user.unigram_delta(token);
             let text = c.text_str().expect("candidate text is UTF-8").to_owned();
             // A predicted row shows the phrase after the prefix; the
             // phrase table keys the whole stored phrase.
@@ -905,7 +901,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
                 text,
                 length,
                 amplified(baked, total),
-                usize::from(phrase_index_library_index(token.value())),
+                usize::from(phrase_index_library_index(token)),
                 key,
             )
         })

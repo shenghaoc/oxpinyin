@@ -1270,7 +1270,6 @@ mod native {
         native_window(context, &mut instance, 0)
             .iter()
             .filter_map(|row| row.token())
-            .map(crate::PhraseToken::value)
             .find(|token| token >> 24 == 2)
             .unwrap()
     }
@@ -1357,9 +1356,8 @@ mod native {
         let token = window
             .iter()
             .filter_map(|row| row.token())
-            .find(|token| token.value() >> 24 == 7)
-            .unwrap()
-            .value();
+            .find(|token| token >> 24 == 7)
+            .unwrap();
         assert!(context.user_store_mut().remove_user_phrase(token).unwrap());
         assert!(export_native(&context, 7).is_empty());
         assert_eq!(context.save_user(), SaveOutcome::NotSaved);
@@ -1509,7 +1507,7 @@ mod native_files {
             assert!(
                 native_window(&context, &mut instance, 0)
                     .iter()
-                    .all(|row| row.token().map(crate::PhraseToken::value) != Some(0x0100_1225))
+                    .all(|row| row.token() != Some(0x0100_1225))
             );
         }
         let mut instance = native_instance(&context, law);

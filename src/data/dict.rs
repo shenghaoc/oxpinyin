@@ -110,7 +110,7 @@ fn resolve_item(
 ) -> Option<PhraseEntry> {
     let library = libraries.library(token)?;
     let item = library.item(token)?;
-    let mut entry = PhraseEntry::new(PhraseToken::new(token), item.phrase_text()?);
+    let mut entry = PhraseEntry::new(token, item.phrase_text()?);
     if let Some(keys) = pricing_keys
         && let Some((matched, total)) = libraries.pronunciation_possibility(token, keys)
     {
@@ -515,7 +515,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             if let Some(entry) = entry {
                 out.push(entry);
             } else if library_loaded(self.libraries(), self.user_nibbles, token) {
-                unreadable.push(PhraseToken::new(token));
+                unreadable.push(token);
             }
         })?;
         Ok((unreadable, present))
@@ -924,7 +924,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         syllables: &[SyllableKey],
     ) -> Result<Option<Vec<PhraseToken>>, DictError> {
         Ok(SystemDictionary::checked_extension_tokens(self, syllables)?
-            .map(|tokens| tokens.into_iter().map(PhraseToken::new).collect()))
+            .map(|tokens| tokens.into_iter().collect()))
     }
 
     /// Converts only an all-scalar span to text and answers
@@ -940,7 +940,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.tokens_for_text(&text)
             .unwrap_or_default()
             .into_iter()
-            .map(PhraseToken::new)
             .collect()
     }
 
@@ -967,7 +966,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     fn phrase_item_pronunciations(&self, token: PhraseToken) -> Result<PhraseItemRead, DictError> {
         Ok(self
             .libraries()
-            .pronunciation_rows(token.value())
+            .pronunciation_rows(token)
             .map_or(PhraseItemRead::NoItem, PhraseItemRead::Item))
     }
 }

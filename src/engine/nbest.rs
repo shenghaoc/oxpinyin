@@ -857,16 +857,9 @@ where
     // the virtual start; the free walk seeds the history's last token.
     let seed = match constraints {
         Some(_) => SENTENCE_START,
-        None => history.last().map_or(SENTENCE_START, |token| token.value()),
+        None => history.last().map_or(SENTENCE_START, |token| *token),
     };
-    nbest_sentences_with_seeds_generation(
-        input,
-        dictionary,
-        model,
-        &[PhraseToken::new(seed)],
-        constraints,
-        shape,
-    )
+    nbest_sentences_with_seeds_generation(input, dictionary, model, &[seed], constraints, shape)
 }
 
 /// The prefix-seeded variant: every seed token becomes a zero-cost
@@ -910,7 +903,7 @@ where
             zeros: &owned.zeros,
         }
     };
-    let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
+    let seed_values: Vec<u32> = seeds.to_vec();
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
     // One path scratch for every span search of the call.
     let mut scratch = GenerationPath::default();
@@ -997,16 +990,12 @@ where
     };
     if found.ranges.iter().next().is_some() {
         let mut forced = PhraseIndexRanges::new();
-        forced.convert(
-            pricing
-                .forced_slot(token.value())?
-                .map(|slot| (token.value(), Some(slot))),
-        );
+        forced.convert(pricing.forced_slot(token)?.map(|slot| (token, Some(slot))));
         let forced = Pricing {
             ranges: &forced,
             ..pricing
         };
-        expand_entries(&forced, beam, span, env.model, trellis, Some(token.value()))?;
+        expand_entries(&forced, beam, span, env.model, trellis, Some(token))?;
     }
     Ok(())
 }
@@ -1037,7 +1026,7 @@ where
                 let phrase = texts.get(token)?.as_ref()?;
                 Some(PhraseSpan {
                     start: *start,
-                    token: PhraseToken::new(*token),
+                    token: *token,
                     text: phrase.text.clone().unwrap_or_else(|| {
                         PhraseText::from_stored_parts(Vec::new(), phrase.phrase_length)
                     }),
@@ -1472,7 +1461,7 @@ where
         let mut loaded = crate::model::NbestStepRow::default();
         let row = &mut loaded;
         let traversal = match model
-            .nbest_successors_in_row(&PhraseToken::new(prev), row)
+            .nbest_successors_in_row(&prev, row)
             .map_err(|error| EngineError::row_read(model, prev, &error))?
         {
             None => false,
@@ -1691,8 +1680,8 @@ where
     let prev = predecessor.value.token;
     let step = model
         .nbest_item_costs_with_facts(
-            &PhraseToken::new(prev),
-            &PhraseToken::new(entry.token),
+            &prev,
+            &entry.token,
             match branch {
                 Branch::Bigram(item) => item,
                 Branch::Unigram => None,

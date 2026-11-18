@@ -125,9 +125,7 @@ fn sentence_keys<P: PhraseSource>(
     for &token in sentence {
         let token_keys = phrases
             .best_keys(token)
-            .ok_or_else(|| EvalError::NoPronunciation {
-                token: token.value(),
-            })?;
+            .ok_or(EvalError::NoPronunciation { token })?;
         keys.extend(token_keys);
     }
     Ok(keys)
@@ -142,9 +140,7 @@ fn sentence_text<P: PhraseSource>(
 ) -> Result<String, EvalError> {
     let mut text = String::new();
     for &token in sentence {
-        let phrase = phrases.text(token).ok_or_else(|| EvalError::NoText {
-            token: token.value(),
-        })?;
+        let phrase = phrases.text(token).ok_or(EvalError::NoText { token })?;
         text.push_str(&phrase);
     }
     Ok(text)
@@ -277,12 +273,12 @@ where
         })?;
     // Library-then-token order (`prepare_ranges` walk): token ascending, so
     // ties resolve as the pin's do.
-    entries.sort_by_key(|entry| entry.token().value());
+    entries.sort_by_key(|entry| entry.token());
     // The search carries tokens only; each step prices its item
     // (`compute_pronunciation_possibility`, `phonetic_lookup.h:646-656`).
     for entry in &mut entries {
         let item = dictionary
-            .trellis_item(span, &[], entry.token().value())
+            .trellis_item(span, &[], entry.token())
             .map_err(|error| EvalError::Backend {
                 detail: error.to_string(),
             })?;
@@ -322,7 +318,6 @@ fn extract_result(steps: &[Step], keys: usize) -> Result<Vec<PhraseToken>, EvalE
     Ok(result
         .into_iter()
         .filter(|&token| token != NULL_TOKEN)
-        .map(PhraseToken::new)
         .collect())
 }
 
@@ -358,8 +353,7 @@ fn search_bigram2(
             continue;
         }
         for entry in entries {
-            let Some(bigram_poss) = ctx.model.bigram_poss(value.token, entry.token().value())
-            else {
+            let Some(bigram_poss) = ctx.model.bigram_poss(value.token, entry.token()) else {
                 continue;
             };
             bigram_gen_next_step(steps, start, end, value, entry, bigram_poss, ctx);
@@ -388,7 +382,7 @@ fn unigram_gen_next_step(
     entry: &PhraseEntry,
     ctx: &ScoreCtx<'_>,
 ) {
-    let token = entry.token().value();
+    let token = entry.token();
     let elem_poss = ctx.model.unigram_poss(token);
     if elem_poss < f64::EPSILON {
         return;
@@ -424,7 +418,7 @@ fn bigram_gen_next_step(
     bigram_poss: f32,
     ctx: &ScoreCtx<'_>,
 ) {
-    let token = entry.token().value();
+    let token = entry.token();
     let unigram_poss = ctx.model.unigram_poss(token);
     if bigram_poss < f32::EPSILON && unigram_poss < f64::EPSILON {
         return;

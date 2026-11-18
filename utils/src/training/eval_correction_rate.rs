@@ -180,7 +180,7 @@ fn do_one_test(
     source: &LibraryPhraseSource<'_>,
     tokens: &[u32],
 ) -> bool {
-    let sentence: Vec<PhraseToken> = tokens.iter().copied().map(PhraseToken::new).collect();
+    let sentence: Vec<PhraseToken> = tokens.to_vec();
     let report = match correction_rate(dictionary, model, source, std::slice::from_ref(&sentence)) {
         Ok(report) => report,
         Err(_) => tool::abort(),
@@ -228,7 +228,7 @@ impl PhraseSource for LibraryPhraseSource<'_> {
         // highest frequency (`freq > max_freq`), then appends its keys.
         let best = self
             .libraries
-            .pronunciations(token.value())?
+            .pronunciations(token)?
             .into_iter()
             .reduce(|best, next| if next.freq > best.freq { next } else { best })?;
         best.spelling
@@ -239,7 +239,7 @@ impl PhraseSource for LibraryPhraseSource<'_> {
 
     fn text(&self, token: PhraseToken) -> Option<String> {
         self.libraries
-            .phrase_text(token.value())
+            .phrase_text(token)
             .and_then(|text| text.as_str().map(ToOwned::to_owned))
     }
 }
@@ -277,7 +277,7 @@ impl PhraseList for EvalDictionary<'_> {
             let Some(text) = item.phrase_text() else {
                 continue;
             };
-            let mut entry = PhraseEntry::new(PhraseToken::new(token), text);
+            let mut entry = PhraseEntry::new(token, text);
             if let Some((matched, total)) = self.libraries.pronunciation_possibility(token, &keys) {
                 entry = entry.with_pronunciation_possibility(matched, total);
             }

@@ -220,7 +220,7 @@ mod system_dictionary {
                 .iter()
                 .all(|entry| entry.pronunciation_possibility().is_none())
         );
-        let ni = entries[0].token().value();
+        let ni = entries[0].token();
         assert_eq!(
             dict.trellis_item(&syls("ni"), ni).unwrap().pronunciation,
             Some((8, 8))
@@ -228,7 +228,7 @@ mod system_dictionary {
         let entries = dict.lookup(&syls("ni,hao")).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text(), "你好");
-        let nihao = entries[0].token().value();
+        let nihao = entries[0].token();
         assert_eq!(
             dict.trellis_item(&syls("ni,hao"), nihao)
                 .unwrap()
@@ -345,7 +345,7 @@ mod system_dictionary {
         let dict = fix.dict();
         let mut entries = Vec::new();
         assert!(dict.lookup_into_flagged(&syls("ni"), &mut entries).unwrap());
-        let tokens: Vec<u32> = entries.iter().map(|entry| entry.token().value()).collect();
+        let tokens: Vec<u32> = entries.iter().map(|entry| entry.token()).collect();
         assert_eq!(tokens, [0x0100_0010, 0x0100_0011, 0x0100_0014, 0x0100_0012]);
         assert_eq!(dict.lookup(&syls("ni")).unwrap(), entries);
     }
@@ -366,7 +366,7 @@ mod system_dictionary {
             .trellis_records(&syls("ni"), &[3])
             .unwrap()
             .iter()
-            .map(|entry| entry.token().value())
+            .map(|entry| entry.token())
             .collect();
         assert_eq!(records, [0x0100_0010, 0x0100_0011, 0x0100_0012]);
     }

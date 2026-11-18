@@ -27,8 +27,8 @@ impl UserModel for UserStore {
     /// path (§2). The predecessor is the last token of `history`, or
     /// [`SENTENCE_START`] when `history` is empty.
     fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error> {
-        let last = history.last().map_or(SENTENCE_START, |t| t.value());
-        self.observe_selection(last, token.value())?;
+        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        self.observe_selection(last, *token)?;
         Ok(())
     }
 
@@ -38,9 +38,9 @@ impl UserModel for UserStore {
         token: &Self::Token,
         readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
     ) -> Result<(), Self::Error> {
-        let last = history.last().map_or(SENTENCE_START, |t| t.value());
-        let seed = self.observe_selection(last, token.value())?;
-        self.train_pronunciations(token.value(), readings, seed)
+        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        let seed = self.observe_selection(last, *token)?;
+        self.train_pronunciations(*token, readings, seed)
     }
 }
 

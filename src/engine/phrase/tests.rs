@@ -16,7 +16,7 @@ impl Dict {
         Self {
             entries: rows
                 .iter()
-                .map(|(text, token)| ((*text).to_owned(), PhraseToken::new(*token)))
+                .map(|(text, token)| ((*text).to_owned(), *token))
                 .collect(),
         }
     }
@@ -88,7 +88,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
     // converter produced. A stored `[0xd800]` row must reach its token
     // even though no `char` or `str` exists for that word.
     let dictionary = RawDict {
-        entries: vec![(vec![0xd800], PhraseToken::new(3))],
+        entries: vec![(vec![0xd800], 3)],
     };
     let gram = [1_u32, 3, 1]
         .into_iter()
@@ -100,7 +100,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
     let (matched, result) =
         phrase_segment_ucs4(&dictionary, &model, &[0xd800]).expect("infallible model");
     assert!(matched);
-    assert_eq!(result[0].value(), 3);
+    assert_eq!(result[0], 3);
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
             prev: &PhraseToken,
             _: &'a mut NbestStepRow,
         ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
-            self.0.borrow_mut().push(prev.value());
+            self.0.borrow_mut().push(*prev);
             Ok(Some(NbestSuccessors::Miss))
         }
 
@@ -139,12 +139,12 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
     }
 
     let dictionary = RawDict {
-        entries: vec![(vec![0x4f60], PhraseToken::new(3))],
+        entries: vec![(vec![0x4f60], 3)],
     };
     let model = Recording(std::cell::RefCell::default());
     let (matched, result) = phrase_segment_ucs4(&dictionary, &model, &[0x4f60, 0xd800]).unwrap();
     assert!(!matched);
-    assert_eq!(result, [PhraseToken::new(0), PhraseToken::new(0)]);
+    assert_eq!(result, [0, 0]);
     assert!(model.0.borrow().contains(&SENTENCE_START));
 }
 
@@ -196,7 +196,7 @@ fn prefix_faults_follow_spans_before_predecessors() {
             _: Option<(u32, u32)>,
             _: &mut crate::model::NbestStepRow,
         ) -> Result<NbestStepCosts, Self::Error> {
-            let pair = (prev.value(), token.value());
+            let pair = (*prev, *token);
             self.0.borrow_mut().push(pair);
             match pair {
                 (4, 5) => Err("first span's second predecessor"),
@@ -240,7 +240,7 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
             row: &'a mut NbestStepRow,
         ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
             row.get_or_try_init::<Self::Error>(|| {
-                self.0.borrow_mut().push(prev.value());
+                self.0.borrow_mut().push(*prev);
                 Ok(None)
             })?;
             Ok(Some(NbestSuccessors::Miss))
@@ -265,7 +265,7 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
     let model = Missing(std::cell::RefCell::default());
     let (matched, result) = phrase_segment(&dictionary, &model, "ab").unwrap();
     assert!(matched);
-    assert_eq!(result, [PhraseToken::new(3), PhraseToken::new(4)]);
+    assert_eq!(result, [3, 4]);
     // Sentence start once for "a" (two tokens), then one row per node
     // of the next step for "b".
     assert_eq!(*model.0.borrow(), [1, 3, 5]);
@@ -352,14 +352,14 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
     };
     let (matched, result) = phrase_segment(&dictionary, &whole, "你").unwrap();
     assert!(matched);
-    assert_eq!(result[0].value(), 3);
+    assert_eq!(result[0], 3);
 }
 #[test]
 fn ieee_relax_and_best_keep_first_on_ties_and_nan() {
     use super::{Node, Step};
     let node = |token, poss| Node {
-        token: PhraseToken::new(token),
-        prev: PhraseToken::new(1),
+        token,
+        prev: 1,
         last_step: 0,
         poss,
     };
@@ -371,9 +371,9 @@ fn ieee_relax_and_best_keep_first_on_ties_and_nan() {
     let mut step = Step::default();
     step.relax(node(3, f32::NEG_INFINITY));
     step.relax(node(4, f32::NEG_INFINITY));
-    assert_eq!(step.best().unwrap().token.value(), 3);
+    assert_eq!(step.best().unwrap().token, 3);
     step.relax(node(3, f32::NAN));
     assert_eq!(step.best().unwrap().poss, f32::NEG_INFINITY);
     step.relax(node(4, 1.0));
-    assert_eq!(step.best().unwrap().token.value(), 4);
+    assert_eq!(step.best().unwrap().token, 4);
 }

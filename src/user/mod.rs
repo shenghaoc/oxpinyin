@@ -83,7 +83,7 @@ pub use replay::{JournalFault, UnigramAdd};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use store::ExportedPhrase;
 pub use store::{
-    MaskCheck, Token, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
+    MaskCheck, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
 };
 
 #[cfg(feature = "tools")]

@@ -291,9 +291,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     pub fn phrase_tokens(&self, phrase: &PhraseText) -> Vec<u32> {
         self.dict
             .tokens_for_ucs4(&phrase.outward_words().collect::<Vec<_>>())
-            .iter()
-            .map(|token| token.value())
-            .collect()
+            .to_vec()
     }
 
     /// The stored length and text of `token`'s item, as the C token getters
@@ -345,7 +343,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
                 .sentence_phrases(index)?
                 .map(move |part| match part {
                     SentencePart::Token(token) => {
-                        if let Some(phrase) = self.dict.token_phrase(token.value()) {
+                        if let Some(phrase) = self.dict.token_phrase(token) {
                             last.clone_from(&phrase.text);
                             phrase.text
                         } else {
@@ -366,7 +364,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// The phrase-segment result's token at `index`, if the result has one.
     #[must_use]
     pub fn phrase_token(&self, index: usize) -> Option<u32> {
-        self.phrase_result.get(index).map(|token| token.value())
+        self.phrase_result.get(index).copied()
     }
 
     /// Whether training row `index` reaches one of the pin's own
@@ -627,14 +625,11 @@ impl<
     ) -> Result<bool, EngineError> {
         if !matrix_has_keys {
             self.session
-                .set_candidate_prefixes(prefixes.iter().copied().map(PhraseToken::new));
+                .set_candidate_prefixes(prefixes.iter().copied());
             self.session.discard_composition();
             return Ok(false);
         }
-        let prefix_tokens: Vec<PhraseToken> = prefixes
-            .iter()
-            .map(|&token| PhraseToken::new(token))
-            .collect();
+        let prefix_tokens: Vec<PhraseToken> = prefixes.to_vec();
         self.session.guess_sentence_with_prefix(&prefix_tokens)
     }
 

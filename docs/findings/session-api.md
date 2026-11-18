@@ -121,7 +121,7 @@ It implements `Display` and `std::error::Error`.
 
 ```rust
 pub struct SyllableKey(u16);       // dense id over the fixed key inventory
-pub struct PhraseToken(u32);
+pub type PhraseToken = u32;        // the pin's phrase_token_t (novel_types.h:33)
 pub struct PhraseEntry { /* token, text: PhraseText, pronunciation, unigram */ }
 ```
 

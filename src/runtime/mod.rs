@@ -359,10 +359,7 @@ impl<'a> RuntimeDict<'a> {
             |token| {
                 self.live_items()
                     .read(token, |item| {
-                        Some(PhraseEntry::new(
-                            PhraseToken::new(token),
-                            item.phrase_text()?,
-                        ))
+                        Some(PhraseEntry::new(token, item.phrase_text()?))
                     })
                     .found()
                     .flatten()
@@ -383,7 +380,7 @@ impl<'a> RuntimeDict<'a> {
                 }
                 let text = self.token_text(token);
                 if text.is_none() {
-                    unreadable.push(PhraseToken::new(token));
+                    unreadable.push(token);
                 }
                 text
             });
@@ -391,7 +388,7 @@ impl<'a> RuntimeDict<'a> {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
             // mask keeps the monolithic tables resident but invisible.
-            out.retain(|entry| self.library_visible_token(entry.token().value()));
+            out.retain(|entry| self.library_visible_token(entry.token()));
         }
         Ok((unreadable, system_present))
     }
@@ -513,11 +510,7 @@ impl<'a> RuntimeDict<'a> {
         token: u32,
         want_text: bool,
     ) -> Option<PricedToken> {
-        let user = path
-            .user
-            .iter()
-            .rev()
-            .find(|entry| entry.token().value() == token);
+        let user = path.user.iter().rev().find(|entry| entry.token() == token);
         let mut priced = if let Some(entry) = user {
             // The pin prices a user item from its own readings, as a system
             // one (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at
@@ -954,7 +947,7 @@ impl RuntimeDict<'_> {
                 let Some(text) = priced.text.and_then(|phrase| phrase.text) else {
                     continue;
                 };
-                let mut entry = PhraseEntry::new(PhraseToken::new(token), text);
+                let mut entry = PhraseEntry::new(token, text);
                 if let Some((matched, total)) = priced.item.pronunciation {
                     entry = entry.with_pronunciation_possibility(matched, total);
                 }
@@ -1085,6 +1078,7 @@ impl RuntimeDict<'_> {
     /// order — the merge order `Self::lookup_into` established. The
     /// phrase-segment span DP consumes this per character span.
     #[cfg(any(test, feature = "test-hooks"))]
+    #[must_use]
     pub fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
         let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
         // The pin probes the user phrase table directly (074a2219
@@ -1099,7 +1093,7 @@ impl RuntimeDict<'_> {
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
         // reduce_tokens groups the system and user table results by library.
         crate::model::sort_tokens_by_library(&mut tokens);
-        tokens.into_iter().map(PhraseToken::new).collect()
+        tokens.into_iter().collect()
     }
 
     /// The addon facade's entries for `syllables`.
@@ -1206,7 +1200,7 @@ impl Dictionary for RuntimeDict<'_> {
         );
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
         crate::model::sort_tokens_by_library(&mut tokens);
-        tokens.into_iter().map(PhraseToken::new).collect()
+        tokens.into_iter().collect()
     }
 
     fn phrase_span_searches_are_observable(&self) -> bool {
@@ -1246,7 +1240,7 @@ impl Dictionary for RuntimeDict<'_> {
             });
         }
         crate::model::sort_tokens_by_library(&mut tokens);
-        Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
+        Ok(Some(tokens.into_iter().collect()))
     }
 
     /// `_token_get_phrase` over the facade: the system libraries' item
@@ -1288,7 +1282,7 @@ impl Dictionary for RuntimeDict<'_> {
         &self,
         token: PhraseToken,
     ) -> Result<PhraseItemRead, Self::Error> {
-        let value = token.value();
+        let value = token;
         if !self.library_visible_token(value) {
             return Ok(PhraseItemRead::NoItem);
         }
@@ -1376,7 +1370,7 @@ impl LanguageModel for RuntimeLm<'_> {
     /// user gram loaded once each and merged, as ONE row the caller indexes
     /// per candidate. The n-best and phrase paths load the same row.
     fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
-        self.merged_row(prev.value())
+        self.merged_row(*prev)
     }
 
     fn is_read_after_check(&self, error: &Self::Error) -> bool {
@@ -1384,22 +1378,16 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let live = self.user.system_unigram(token.value());
-        let extra = if live.is_some()
-            && self
-                .inner
-                .is_visible(phrase_index_library_index(token.value()))
-        {
+        let live = self.user.system_unigram(*token);
+        let extra = if live.is_some() && self.inner.is_visible(phrase_index_library_index(*token)) {
             // The model uses only the live field on this branch.
             0
         } else {
-            self.user.unigram_delta(token.value())
+            self.user.unigram_delta(*token)
         };
-        Ok(Some(self.inner.unigram_freq_with_user_delta(
-            token.value(),
-            live,
-            extra,
-        )))
+        Ok(Some(
+            self.inner.unigram_freq_with_user_delta(*token, live, extra),
+        ))
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
@@ -1414,7 +1402,7 @@ impl LanguageModel for RuntimeLm<'_> {
         if addons.is_empty() {
             return Ok(None);
         }
-        Ok(Some(addons.unigram_freq(token.value()).unwrap_or(0)))
+        Ok(Some(addons.unigram_freq(*token).unwrap_or(0)))
     }
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
@@ -1428,7 +1416,7 @@ impl LanguageModel for RuntimeLm<'_> {
         prev: &Self::Token,
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
-        let extra = self.delta(Some(prev.value()), token.value())?;
+        let extra = self.delta(Some(*prev), *token)?;
         self.inner
             .nbest_step_costs_with_user_delta(prev, token, extra)
     }
@@ -1454,7 +1442,7 @@ impl LanguageModel for RuntimeLm<'_> {
         item: Option<(u32, u32)>,
         _row: &mut crate::model::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
-        let extra = self.delta(None, token.value())?;
+        let extra = self.delta(None, *token)?;
         self.inner.nbest_item_costs(token, extra, item)
     }
 
@@ -1464,11 +1452,10 @@ impl LanguageModel for RuntimeLm<'_> {
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
-            row.get_or_try_init(|| self.merged_row(prev.value()))?
-                .map_or(
-                    crate::model::NbestSuccessors::Miss,
-                    crate::model::NbestSuccessors::Row,
-                ),
+            row.get_or_try_init(|| self.merged_row(*prev))?.map_or(
+                crate::model::NbestSuccessors::Miss,
+                crate::model::NbestSuccessors::Row,
+            ),
         ))
     }
 }
@@ -1926,10 +1913,8 @@ impl Runtime {
                 .prepare_training(index, &mut |history, token| {
                     user.check_training_step_with(
                         &mut check,
-                        history
-                            .last()
-                            .map_or(crate::SENTENCE_START, |token| token.value()),
-                        token.value(),
+                        history.last().map_or(crate::SENTENCE_START, |token| *token),
+                        *token,
                     )
                     .map_err(|error| EngineError::UserModel(error.to_string()))
                 });

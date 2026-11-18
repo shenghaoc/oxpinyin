@@ -21,8 +21,8 @@ fn beats_longer_winner(
 ) -> bool {
     unigram > best
         || (unigram == best
-            && usize::from(phrase_index_library_index(token.value()))
-                < usize::from(phrase_index_library_index(best_token.value())))
+            && usize::from(phrase_index_library_index(token))
+                < usize::from(phrase_index_library_index(best_token)))
 }
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
@@ -38,13 +38,13 @@ where
     /// If none can be read, use sentence_start.
     #[must_use]
     pub fn prefix_predecessor(&self) -> PhraseToken {
-        let mut previous = PhraseToken::new(crate::SENTENCE_START);
+        let mut previous = crate::SENTENCE_START;
         let mut longest = 0;
         for &token in &self.candidate_prefixes {
-            if token.value() == crate::SENTENCE_START {
+            if token == crate::SENTENCE_START {
                 continue;
             }
-            if let Some(length) = self.dictionary.phrase_length_for_token(token.value())
+            if let Some(length) = self.dictionary.phrase_length_for_token(token)
                 && length > longest
             {
                 previous = token;
@@ -240,7 +240,7 @@ where
                 // `get_phrase_item` + the char-length cap: a phrase longer
                 // than `prefix_len * 2 + 1` characters is skipped
                 // (`pinyin.cpp:1899-1902`).
-                let Some(text) = self.dictionary.phrase_text_for_token(token.value()) else {
+                let Some(text) = self.dictionary.phrase_text_for_token(token) else {
                     continue;
                 };
                 let phrase_length = text.phrase_length();
@@ -419,14 +419,14 @@ where
         let gram = self
             .model
             .merged_successors(&prev)
-            .map_err(|error| EngineError::row_read(&self.model, prev.value(), &error))?;
+            .map_err(|error| EngineError::row_read(&self.model, prev, &error))?;
         if let Some(fault) = gram.as_ref().and_then(MergedGram::fault) {
             if !gate {
                 return Ok(None);
             }
-            return Err(EngineError::lookup_gram(prev.value(), fault));
+            return Err(EngineError::lookup_gram(prev, fault));
         }
-        Ok(gram.map(|gram| (prev.value(), gram)))
+        Ok(gram.map(|gram| (prev, gram)))
     }
 
     /// Per-candidate sort frequencies on the pin's amplified scale, or
@@ -502,7 +502,7 @@ where
                 let bigram = match dynamic_adjust_bigram_possibility(
                     self.settings.options,
                     gram.map(|(_, row)| row),
-                    token.value(),
+                    token,
                 ) {
                     Ok(bigram) => bigram,
                     Err(_) if !gate => 0.0,

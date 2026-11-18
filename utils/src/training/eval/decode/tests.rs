@@ -16,10 +16,10 @@ struct MapSource {
 }
 impl PhraseSource for MapSource {
     fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
-        self.keys.get(&token.value()).cloned()
+        self.keys.get(&token).cloned()
     }
     fn text(&self, token: PhraseToken) -> Option<String> {
-        self.text.get(&token.value()).cloned()
+        self.text.get(&token).cloned()
     }
 }
 
@@ -41,7 +41,7 @@ fn a_token_without_pronunciation_is_an_error() {
         keys: BTreeMap::new(),
         text: BTreeMap::new(),
     };
-    let sentences = vec![vec![PhraseToken::new(1)]];
+    let sentences = vec![vec![1]];
     let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
     assert!(matches!(err, EvalError::NoPronunciation { token: 1 }));
 }
@@ -55,7 +55,7 @@ fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
         keys,
         text: BTreeMap::new(),
     };
-    let sentences = vec![vec![PhraseToken::new(1)]];
+    let sentences = vec![vec![1]];
     let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
     assert!(matches!(err, EvalError::NoText { token: 1 }), "{err}");
 }
@@ -70,7 +70,7 @@ fn a_key_chain_without_a_phrase_cover_is_an_error_not_a_mismatch() {
     let mut text = BTreeMap::new();
     text.insert(1, "国".to_owned());
     let source = MapSource { keys, text };
-    let sentences = vec![vec![PhraseToken::new(1)]];
+    let sentences = vec![vec![1]];
     let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
     assert!(matches!(err, EvalError::Undecodable { keys: 1 }), "{err}");
 }

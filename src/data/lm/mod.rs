@@ -490,9 +490,7 @@ impl<
         token: &PhraseToken,
         user: UserCountDelta,
     ) -> Result<crate::model::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, || {
-            self.merged_transition(prev.value(), token.value(), user)
-        })
+        self.nbest_step_costs_using(token, user, || self.merged_transition(*prev, *token, user))
     }
 
     /// The unchanged n-best cost law for one item the caller read from the
@@ -530,11 +528,11 @@ impl<
         // (`ERROR_NO_ITEM`, a `USER_FILE` item the store lacks included).
         // Those keep the seam's default answer — no n-best cost data, no
         // rows — as does no installed unigram table at all.
-        let nibble = phrase_index_library_index(token.value());
+        let nibble = phrase_index_library_index(*token);
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {
-                let Some(count) = self.unigram_count(token.value()) else {
+                let Some(count) = self.unigram_count(*token) else {
                     return Ok(crate::model::NbestStepCosts::default());
                 };
                 merge_unigram_counts(count, user.unigram_delta)
@@ -588,7 +586,7 @@ impl<
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         // The chunk items are the phrase index's real frequency table.
-        Ok(Some(self.unigram_count(token.value()).unwrap_or(0)))
+        Ok(Some(self.unigram_count(*token).unwrap_or(0)))
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
@@ -620,7 +618,7 @@ impl<
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
-            row.get_or_try_init(|| self.load_merged_row(prev.value(), None))?
+            row.get_or_try_init(|| self.load_merged_row(*prev, None))?
                 .map_or(
                     crate::model::NbestSuccessors::Miss,
                     crate::model::NbestSuccessors::Row,

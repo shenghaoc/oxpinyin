@@ -173,7 +173,7 @@ where
         },
         dictionary,
         model,
-        &[crate::PhraseToken::new(1)],
+        &[1],
         None,
         crate::engine::NbestShape::PINYIN,
     )
@@ -185,7 +185,7 @@ where
                     tokens: row
                         .spans
                         .iter()
-                        .map(|span| (span.start, span.token.value()))
+                        .map(|span| (span.start, span.token))
                         .collect(),
                     span: row.span,
                 })

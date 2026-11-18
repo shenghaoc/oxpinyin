@@ -51,9 +51,9 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
     assert_eq!(lookup.search_toned(&keys), [token, token | 0x8000_0000]);
     let entries = lookup.lookup(&[key("ni")]);
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].token().value(), token);
+    assert_eq!(entries[0].token(), token);
     assert_eq!(entries[0].text(), "你");
-    assert_eq!(entries[1].token().value(), token | 0x8000_0000);
+    assert_eq!(entries[1].token(), token | 0x8000_0000);
     assert_eq!(entries[1].text(), "你");
     assert_eq!(
         lookup.phrase_text(token | 0x8000_0000).unwrap().as_str(),

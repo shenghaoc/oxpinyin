@@ -32,7 +32,7 @@ impl PhraseList for TextDictionary {
     type Error = TextError;
 
     fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
-        Ok(vec![PhraseEntry::new(PhraseToken::new(1), "你好")])
+        Ok(vec![PhraseEntry::new(1, "你好")])
     }
 }
 
@@ -111,8 +111,7 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
                 _ => return Ok(Vec::new()),
             };
             Ok(vec![
-                PhraseEntry::new(PhraseToken::new(1), text)
-                    .with_pronunciation_possibility(1, total),
+                PhraseEntry::new(1, text).with_pronunciation_possibility(1, total),
             ])
         }
     }
@@ -695,10 +694,7 @@ fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
 
         fn lookup(&self, keys: &[SyllableKey]) -> Result<Vec<PhraseEntry>, TextError> {
             Ok(if keys.len() == 1 {
-                vec![
-                    PhraseEntry::new(PhraseToken::new(1), "你")
-                        .with_pronunciation_possibility(1, 1 << 24),
-                ]
+                vec![PhraseEntry::new(1, "你").with_pronunciation_possibility(1, 1 << 24)]
             } else {
                 vec![]
             })
@@ -833,8 +829,8 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
             prev: &PhraseToken,
             token: &PhraseToken,
         ) -> Result<NbestStepCosts, EngineError> {
-            let records = records(prev.value(), self.0.get());
-            Ok(costs(freq_of(&records, token.value())))
+            let records = records(*prev, self.0.get());
+            Ok(costs(freq_of(&records, *token)))
         }
     }
     struct RowCached<'a>(&'a Cell<bool>);
@@ -849,13 +845,10 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
         ) -> Result<NbestStepCosts, EngineError> {
             let gram = row
                 .get_or_try_init::<EngineError>(|| {
-                    Ok(Some(MergedGram::new(
-                        4,
-                        records(prev.value(), self.0.get()),
-                    )))
+                    Ok(Some(MergedGram::new(4, records(*prev, self.0.get()))))
                 })?
                 .expect("loaded row");
-            let freq = gram.get_freq(token.value()).expect("whole gram");
+            let freq = gram.get_freq(*token).expect("whole gram");
             Ok(costs(u64::from(freq.unwrap_or(0))))
         }
     }
@@ -867,7 +860,7 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
                         .as_ref()
                         .and_then(PhraseText::as_str)
                         .map(str::to_owned),
-                    row.tokens.iter().map(|token| token.value()).collect(),
+                    row.tokens.to_vec(),
                 )
             })
             .collect()
@@ -881,7 +874,7 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     let mut seen = Vec::new();
     for flip in [false, true] {
         flipped.set(flip);
-        let history = [PhraseToken::new(1)];
+        let history = [1];
         let cached = nbest_sentences(
             &matrix,
             bound,
@@ -941,7 +934,7 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
             token: &PhraseToken,
             _: &mut NbestStepRow,
         ) -> Result<NbestStepCosts, EngineError> {
-            self.0.borrow_mut().push(token.value());
+            self.0.borrow_mut().push(*token);
             Ok(NbestStepCosts {
                 blended: Some(0.5),
                 unigram: Some(0.25),
@@ -1080,7 +1073,7 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
             _: &mut NbestStepRow,
         ) -> Result<NbestStepCosts, EngineError> {
             if item.is_some() {
-                self.0.borrow_mut().push((token.value(), item));
+                self.0.borrow_mut().push((*token, item));
             }
             Ok(NbestStepCosts {
                 blended: Some(0.5),

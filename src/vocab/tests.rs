@@ -1,4 +1,4 @@
-use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
+use super::{PhraseEntry, SYLLABLE_KEY_COUNT, SyllableKey};
 use crate::ChewingKey;
 use crate::{
     Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
@@ -144,8 +144,8 @@ fn option_text_resolves_correction_aliases_under_their_bits() {
 
 #[test]
 fn phrase_entries_carry_a_token_and_text() {
-    let entry = PhraseEntry::new(PhraseToken::new(7), "\u{4f60}\u{597d}".to_owned());
-    assert_eq!(entry.token().value(), 7);
+    let entry = PhraseEntry::new(7, "\u{4f60}\u{597d}".to_owned());
+    assert_eq!(entry.token(), 7);
     assert_eq!(entry.text(), "\u{4f60}\u{597d}");
     assert_eq!(entry.clone().into_text().as_str(), Some("\u{4f60}\u{597d}"));
     assert_eq!(entry.token().to_string(), "7");

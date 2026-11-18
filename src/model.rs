@@ -351,7 +351,7 @@ pub trait PhraseList {
             .trellis_records(syllables, tones)?
             .iter()
             .rev()
-            .find(|entry| entry.token().value() == token)
+            .find(|entry| entry.token() == token)
             .map(|entry| TrellisItem {
                 chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
                 pronunciation: entry.pronunciation_possibility(),
@@ -622,11 +622,7 @@ fn trellis_ranges<L: PhraseList>(
     ranges: &mut PhraseIndexRanges<()>,
 ) -> Result<(), L::Error> {
     let entries = list.trellis_records(syllables, tones)?;
-    ranges.convert(
-        entries
-            .iter()
-            .map(|entry| (entry.token().value(), Some(()))),
-    );
+    ranges.convert(entries.iter().map(|entry| (entry.token(), Some(()))));
     Ok(())
 }
 
@@ -654,7 +650,7 @@ fn trellis_text<L: PhraseList>(
         .trellis_records(syllables, tones)?
         .iter()
         .rev()
-        .find(|entry| entry.token().value() == token)
+        .find(|entry| entry.token() == token)
         .map(|entry| TokenPhrase::from(entry.text().clone())))
 }
 

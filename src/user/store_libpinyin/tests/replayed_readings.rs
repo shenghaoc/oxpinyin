@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions};
-use crate::{ChewingKey, PhraseToken, model::UserModel};
+use crate::{ChewingKey, model::UserModel};
 
 use super::super::{export_state, packed_to_pinyin_keys};
 use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
@@ -200,8 +200,7 @@ fn exported(store: &UserStore, base: &SystemOriginals, slot: u32) -> Vec<u32> {
 
 fn train(store: &mut UserStore, slot: u32, reading: ChewingKey, paths: usize) {
     let mut readings = (0..paths).map(|_| vec![reading]);
-    UserModel::observe_with_keys(store, &[], &PhraseToken::new(LIBRARY | slot), &mut readings)
-        .expect("train");
+    UserModel::observe_with_keys(store, &[], &(LIBRARY | slot), &mut readings).expect("train");
 }
 
 fn dense(syllable: &str, tone_: u8) -> Vec<crate::user::phrase::PinyinKey> {

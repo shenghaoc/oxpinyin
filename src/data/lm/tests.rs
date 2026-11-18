@@ -28,10 +28,7 @@ mod language_model {
 
     use std::rc::Rc;
 
-    use crate::{
-        PhraseToken,
-        model::{LanguageModel, UserCountDelta},
-    };
+    use crate::model::{LanguageModel, UserCountDelta};
 
     use crate::data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
 
@@ -123,10 +120,7 @@ mod language_model {
         assert_eq!(lm.unigram_count(0x0300_0001), None, "no such library");
         assert_eq!(lm.unigram_total(), 16 + 3, "Σ item over both chunks");
         assert!(lm.has_unigrams());
-        assert_eq!(
-            LanguageModel::unigram_freq(&lm, &PhraseToken::new(NI)).unwrap(),
-            Some(10)
-        );
+        assert_eq!(LanguageModel::unigram_freq(&lm, &NI).unwrap(), Some(10));
         assert_eq!(LanguageModel::unigram_total(&lm).unwrap(), Some(19));
     }
 
@@ -144,9 +138,9 @@ mod language_model {
     fn nbest_steps_blend_bigram_and_unigram_over_the_corpus_counts() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let ni = PhraseToken::new(NI);
-        let hao = PhraseToken::new(HAO);
-        let nihao = PhraseToken::new(NIHAO);
+        let ni = NI;
+        let hao = HAO;
+        let nihao = NIHAO;
         // 好 after 你: the seen transition adds the bigram term to the unigram
         // branch.
         let seen = lm.nbest_step_costs(&ni, &hao).unwrap();
@@ -165,8 +159,7 @@ mod language_model {
         );
         // A token with no item at all keeps the default answer.
         assert_eq!(
-            lm.nbest_step_costs(&hao, &PhraseToken::new(0x0300_0001))
-                .unwrap(),
+            lm.nbest_step_costs(&hao, &0x0300_0001).unwrap(),
             crate::model::NbestStepCosts::default()
         );
         // The user overlay raises the rare one.
@@ -188,8 +181,8 @@ mod language_model {
     fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let ni = PhraseToken::new(NI);
-        let hao = PhraseToken::new(HAO);
+        let ni = NI;
+        let hao = HAO;
         // Both stored system fields are 7: adding MAX - 6 wraps both to zero.
         let delta = UserCountDelta {
             bigram_count: u64::from(u32::MAX - 6),
@@ -223,7 +216,7 @@ mod language_model {
         assert_eq!(
             lm.nbest_step_costs_with_user_delta(
                 &ni,
-                &PhraseToken::new(NIHAO),
+                &NIHAO,
                 UserCountDelta {
                     bigram_total: u64::from(u32::MAX - 6),
                     ..absent
@@ -256,8 +249,7 @@ mod language_model {
             .get_freq(token)
             .unwrap()
             .map(|freq| (freq, gram.total().unwrap()));
-        lm.nbest_item_costs(&PhraseToken::new(token), user, item)
-            .unwrap()
+        lm.nbest_item_costs(&token, user, item).unwrap()
     }
 
     /// #791: the pin takes `log` of the blend with no cap
@@ -268,8 +260,8 @@ mod language_model {
     fn a_blend_above_one_from_a_wrapped_total_is_a_negative_cost() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let ni = PhraseToken::new(NI);
-        let hao = PhraseToken::new(HAO);
+        let ni = NI;
+        let hao = HAO;
         // System 你 → 好 is (7, 7). A user total of 2^32 - 6 wraps the merged
         // total to exactly 1 while the merged count is 7 + 3 = 10: the planted
         // sentence-start state of #791 in miniature.
@@ -310,8 +302,8 @@ mod language_model {
     fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let ni = PhraseToken::new(NI);
-        let hao = PhraseToken::new(HAO);
+        let ni = NI;
+        let hao = HAO;
         // Final counts: b=2134351507, bt=602365351, u=21950320,
         // ut=4294967295, with the default lambda. The unigram total is the
         // facade's guint32, so it stays at or under u32::MAX. Subtract the
@@ -352,8 +344,8 @@ mod language_model {
     fn the_nbest_denominator_wraps_as_the_facade_total() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let ni = PhraseToken::new(NI);
-        let hao = PhraseToken::new(HAO);
+        let ni = NI;
+        let hao = HAO;
         assert_eq!(lm.facade_total(0), 19);
         assert_eq!(lm.facade_total(u64::from(u32::MAX)), 18);
         let wrapped = UserCountDelta {
@@ -403,7 +395,7 @@ mod language_model {
     fn user_file_tokens_price_only_when_their_item_is_present() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
-        let start = PhraseToken::new(1);
+        let start = 1;
         let item = |unigram: u32| UserCountDelta {
             unigram_delta: u64::from(unigram),
             unigram_total_delta: u64::from(unigram),
@@ -421,7 +413,7 @@ mod language_model {
             },
         ] {
             let step = lm
-                .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), absent)
+                .nbest_step_costs_with_user_delta(&start, &0x0700_0002, absent)
                 .unwrap();
             assert_eq!(step, crate::model::NbestStepCosts::default());
         }
@@ -429,17 +421,17 @@ mod language_model {
         // A present item prices from its own field, and the three user-file
         // libraries price identically.
         let priced = lm
-            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(27))
+            .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(27))
             .unwrap();
         assert!(priced.unigram.is_some(), "a present item must price");
         assert!(priced.blended.is_none(), "no bigram row involves it");
         let bigger = lm
-            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(270))
+            .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(270))
             .unwrap();
         assert!(bigger.unigram.unwrap() > priced.unigram.unwrap());
         for token in [0x0500_0001_u32, 0x0600_0001, 0x0700_0002] {
             let step = lm
-                .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), item(27))
+                .nbest_step_costs_with_user_delta(&start, &token, item(27))
                 .unwrap();
             assert_eq!(step, priced, "nibble {} prices like nibble 7", token >> 24);
         }
@@ -447,8 +439,8 @@ mod language_model {
         // A readable item with a zero unigram still takes the bigram branch.
         let zero_with_bigram = lm
             .nbest_step_costs_with_user_delta(
-                &PhraseToken::new(NI),
-                &PhraseToken::new(0x0700_0002),
+                &NI,
+                &0x0700_0002,
                 UserCountDelta {
                     bigram_count: 5,
                     bigram_total: 5,
@@ -463,8 +455,8 @@ mod language_model {
         // The same bigram cannot admit a token whose item is absent.
         let stale_with_bigram = lm
             .nbest_step_costs_with_user_delta(
-                &PhraseToken::new(NI),
-                &PhraseToken::new(0x0700_0002),
+                &NI,
+                &0x0700_0002,
                 UserCountDelta {
                     bigram_count: 5,
                     bigram_total: 5,
@@ -480,7 +472,7 @@ mod language_model {
         let (lm2, mask) = fix.open();
         mask.set(1 << 7);
         let masked = lm2
-            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), item(27))
+            .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(27))
             .unwrap();
         assert_eq!(masked, crate::model::NbestStepCosts::default());
         let (lm3, _) = fix.open();
@@ -491,7 +483,7 @@ mod language_model {
         };
         for token in [0x0100_0050_u32, 0x0300_0001, 0x0400_0001, 0x0800_0001] {
             let step = lm3
-                .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
+                .nbest_step_costs_with_user_delta(&start, &token, delta)
                 .unwrap();
             assert_eq!(
                 step,
@@ -543,11 +535,7 @@ mod language_model {
                             unigram_live: None,
                         };
                         let expected = lm
-                            .nbest_step_costs_with_user_delta(
-                                &PhraseToken::new(prev),
-                                &PhraseToken::new(token),
-                                user,
-                            )
+                            .nbest_step_costs_with_user_delta(&prev, &token, user)
                             .unwrap();
                         let gram = row
                             .get_or_try_init(|| lm.load_merged_row(prev, Some(user_gram.clone())))
@@ -557,9 +545,7 @@ mod language_model {
                             .get_freq(token)
                             .unwrap()
                             .map(|freq| (freq, gram.total().unwrap()));
-                        let actual = lm
-                            .nbest_item_costs(&PhraseToken::new(token), user, item)
-                            .unwrap();
+                        let actual = lm.nbest_item_costs(&token, user, item).unwrap();
                         if token == NIHAO {
                             assert_eq!(
                                 item.map(|(freq, _)| freq),
@@ -601,10 +587,10 @@ mod language_model {
         drop(store);
         let (lm, mask) = fix.open();
         let mut row = NbestStepRow::default();
-        let prev = PhraseToken::new(NI);
+        let prev = NI;
         mask.set(1 << 2);
         assert_eq!(
-            lm.nbest_item_costs_in_row(&prev, &PhraseToken::new(GBK), Some((1, 1)), &mut row)
+            lm.nbest_item_costs_in_row(&prev, &GBK, Some((1, 1)), &mut row)
                 .unwrap(),
             crate::model::NbestStepCosts::default()
         );
@@ -616,9 +602,7 @@ mod language_model {
         );
         assert_eq!(
             error.to_string(),
-            lm.nbest_step_costs(&prev, &PhraseToken::new(HAO))
-                .unwrap_err()
-                .to_string()
+            lm.nbest_step_costs(&prev, &HAO).unwrap_err().to_string()
         );
     }
 
@@ -643,7 +627,7 @@ mod language_model {
         drop(store);
         let (lm, _) = fix.open();
         let mut row = crate::model::NbestStepRow::default();
-        let prev = PhraseToken::new(NI);
+        let prev = NI;
         for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
             let item = match lm.nbest_successors_in_row(&prev, &mut row).unwrap() {
                 Some(NbestSuccessors::Row(gram)) => {
@@ -655,7 +639,6 @@ mod language_model {
                 }
                 _ => panic!("the system row is present"),
             };
-            let token = PhraseToken::new(token);
             assert_eq!(
                 lm.nbest_item_costs_in_row(&prev, &token, item, &mut row)
                     .unwrap(),
@@ -674,7 +657,7 @@ mod language_model {
             let lambda = conf.lambda_f32();
             lm.set_lambda_from_conf(&conf);
             let branches = lm
-                .nbest_item_costs(&PhraseToken::new(HAO), UserCountDelta::ZERO, Some((7, 7)))
+                .nbest_item_costs(&HAO, UserCountDelta::ZERO, Some((7, 7)))
                 .unwrap();
             assert_eq!(branches.unigram, Some(5.0 / 19.0));
             let unilambda = (1.0_f64 - f64::from(lambda)) as f32;
@@ -696,7 +679,7 @@ mod language_model {
         }
         lm.set_lambda_from_conf(&conf_with_lambda("0.5"));
         // A readable user item whose unigram is zero.
-        let zero = PhraseToken::new(0x0700_0002);
+        let zero = 0x0700_0002;
         let zero_item = UserCountDelta {
             unigram_live: Some(0),
             ..UserCountDelta::ZERO

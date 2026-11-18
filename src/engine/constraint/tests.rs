@@ -1,7 +1,7 @@
 use super::{Cell, ConstraintStore, PhraseSpan};
 
 fn token(value: u32) -> crate::PhraseToken {
-    crate::PhraseToken::new(value)
+    value
 }
 
 fn span(start: usize, value: u32, text: &str) -> PhraseSpan {
@@ -131,7 +131,7 @@ fn validate_drops_a_run_that_overruns_or_stops_spelling() {
 
     // A token that no longer spells over its span drops.
     let dropped = store
-        .validate(6, |start, _, value| Ok(value.value() != 7 || start != 0))
+        .validate(6, |start, _, value| Ok(value != 7 || start != 0))
         .expect("probe cannot fail");
     assert!(dropped);
     assert!(!store.is_active());
@@ -205,8 +205,8 @@ fn runs_report_start_and_end_with_gaps_between() {
     // the runs' own coordinates.
     let runs = store.runs();
     assert_eq!(runs.len(), 2);
-    assert_eq!((runs[0].0, runs[0].1, runs[0].2.value()), (0, 2, 7));
-    assert_eq!((runs[1].0, runs[1].1, runs[1].2.value()), (4, 7, 9));
+    assert_eq!((runs[0].0, runs[0].1, runs[0].2), (0, 2, 7));
+    assert_eq!((runs[1].0, runs[1].1, runs[1].2), (4, 7, 9));
 
     store.clear_by_offset(4);
     let runs = store.runs();

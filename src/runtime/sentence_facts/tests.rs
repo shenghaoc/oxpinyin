@@ -31,21 +31,10 @@ fn score(runtime: &Runtime, token: u32, facts: &mut SentenceFacts) {
     let lm = runtime.lm();
     for item in [None, Some((0, 0)), Some((3, 7)), Some((5, 7))] {
         let old = lm
-            .nbest_item_costs_in_row(
-                &PhraseToken::new(1),
-                &PhraseToken::new(token),
-                item,
-                &mut Default::default(),
-            )
+            .nbest_item_costs_in_row(&1, &token, item, &mut Default::default())
             .unwrap();
         let new = lm
-            .nbest_item_costs_with_facts(
-                &PhraseToken::new(1),
-                &PhraseToken::new(token),
-                item,
-                &mut Default::default(),
-                facts,
-            )
+            .nbest_item_costs_with_facts(&1, &token, item, &mut Default::default(), facts)
             .unwrap();
         assert_eq!(
             (
