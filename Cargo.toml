@@ -175,7 +175,7 @@ glib-sys = "0.22"
 libc = "0.2.189"
 # Derives Display, source() and From for the error enums.
 thiserror = "2.0"
-# The phrase-library chunk mapping (oxpinyin, Unix only). No features:
+# The phrase-library chunk mapping (oxpinyin). No features:
 # `stable_deref_trait` stays off.
 memmap2 = { version = "0.9.11", default-features = false }
 # Test-only: collision-free, self-cleaning temp dirs for test harnesses.

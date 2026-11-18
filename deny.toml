@@ -2,8 +2,8 @@
 # RustSec DB with cargo-audit; running both in CI would be redundant.
 
 [graph]
-# Audit the default build. Feature-gated dependency subtrees (tkrzw)
-# are re-checked by the second, --all-features CI invocation.
+# Audit the default build. Feature-gated dependency subtrees (bdb,
+# kyotocabinet) are re-checked by the second, --all-features CI invocation.
 all-features = false
 
 [advisories]
@@ -30,8 +30,7 @@ deny = [
   { crate = "cxx", wrappers = ["oxpinyin"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
   { crate = "bindgen", wrappers = ["oxpinyin"] },
-  # The zhuyin capi crate's edge is dev-only: its contract tests export a saved profile through libpinyin.
-  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-zhuyin-capi", "oxpinyin-repl"] },
+  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-repl"] },
   { crate = "oxpinyin-zhuyin-capi", wrappers = ["oxpinyin-repl"] },
   # The REPL is the utilities' only dependent: it uses their table builders.
   { crate = "oxpinyin-utils", wrappers = ["oxpinyin-repl"] },
