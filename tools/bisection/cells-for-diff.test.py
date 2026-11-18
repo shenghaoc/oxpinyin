@@ -180,14 +180,16 @@ class FeatureGateTests(unittest.TestCase):
         result = repo.cli('base')
         self.assertIn(f'\n  merge base x/src/gone.rs:2: {gate("tkrzw")}\n', result.stdout, result.stderr)
 
-    def test_a_deleted_gated_file_with_a_newline_in_its_path_fires_check_2(self):
-        # git grep -z prints the path verbatim, so its newline is not a record separator.
-        name = 'x/src/gone\nfile.rs'
-        repo = Repo(self, {'x/src/keep.rs': 'fn a() {}\n', name: gate('bdb') + '\n'},
-                    {'x/src/keep.rs': 'fn b() {}\n', name: None})
-        self.assertEqual(repo.checks()[2], [f'merge base {name}:1: {gate("bdb")}'])
-        result = repo.cli('--run-flag', 'base')
-        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+    if sys.platform != 'win32':
+        # NTFS file names cannot contain a newline, so the fixture cannot exist on Windows.
+        def test_a_deleted_gated_file_with_a_newline_in_its_path_fires_check_2(self):
+            # git grep -z prints the path verbatim, so its newline is not a record separator.
+            name = 'x/src/gone\nfile.rs'
+            repo = Repo(self, {'x/src/keep.rs': 'fn a() {}\n', name: gate('bdb') + '\n'},
+                        {'x/src/keep.rs': 'fn b() {}\n', name: None})
+            self.assertEqual(repo.checks()[2], [f'merge base {name}:1: {gate("bdb")}'])
+            result = repo.cli('--run-flag', 'base')
+            self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
 
     def test_a_directory_replaced_by_a_file_does_not_match_its_markdown_through_the_prefix(self):
         # The new file's path names the old directory, and a pathspec matches a directory's files.
