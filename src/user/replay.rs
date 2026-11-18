@@ -116,6 +116,7 @@ pub enum JournalFault {
 
 impl JournalFault {
     /// The library (sub-index) whose log reached the assertion.
+    #[cfg(test)]
     #[must_use]
     pub fn library(self) -> u8 {
         match self {

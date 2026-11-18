@@ -500,6 +500,7 @@ impl<'a> RuntimeDict<'a> {
     /// token. Ranged user entries retain their query text; otherwise read
     /// the stored item. The effective-item overlay and library mask apply.
     /// The text is built only when `want_text`.
+    #[cfg(test)]
     fn priced_token(
         &self,
         syllables: &[SyllableKey],
@@ -930,6 +931,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.lookup_into(syllables, &mut entries)?;
@@ -943,6 +945,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn trellis_records(
         &self,
         syllables: &[SyllableKey],
@@ -972,6 +975,7 @@ impl RuntimeDict<'_> {
     /// the pin `074a2219`): the system table's ranges, then the user
     /// table's, each its own `convert` call. Tokens only, as the pin's
     /// `convert` files them; [`Self::trellis_item`] prices one on demand.
+    #[cfg(test)]
     pub fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
@@ -996,6 +1000,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn trellis_item(
         &self,
         syllables: &[SyllableKey],
@@ -1009,6 +1014,7 @@ impl RuntimeDict<'_> {
 
     /// [`Self::trellis_item`], reading the user lookup and the keys once
     /// per path.
+    #[cfg(test)]
     pub fn trellis_item_on_path(
         &self,
         syllables: &[SyllableKey],
@@ -1030,6 +1036,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup_into(
         &self,
         syllables: &[SyllableKey],
@@ -1044,6 +1051,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup_into_flagged(
         &self,
         syllables: &[SyllableKey],
@@ -1059,6 +1067,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
         // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
@@ -1080,7 +1089,7 @@ impl RuntimeDict<'_> {
     }
 
     /// Exact-text token lookup across the system and user seams, in that
-    /// order — the merge order [`Self::lookup_into`] established. The
+    /// order — the merge order `Self::lookup_into` established. The
     /// phrase-segment span DP consumes this per character span.
     pub fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
         let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
@@ -1104,6 +1113,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup_addon(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
@@ -1116,7 +1126,7 @@ impl Dictionary for RuntimeDict<'_> {
     type Error = DictError;
     type PathMemo = TrellisPathMemo<PathPricing>;
 
-    /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] with one
+    /// `Self::trellis_ranges` and `Self::phrase_prefix_exists` with one
     /// system DBM get.
     fn trellis_ranges_continued(
         &self,
@@ -1509,6 +1519,7 @@ impl Runtime {
     }
 
     /// Whether [`Self::finish`] has closed every native file attachment.
+    #[cfg(test)]
     #[must_use]
     pub fn attachments_finished(&self) -> bool {
         self.system.attachments_finished()
@@ -1518,6 +1529,7 @@ impl Runtime {
     }
 
     /// Whether the main pinyin index is a retained failed attachment.
+    #[cfg(test)]
     #[must_use]
     pub fn pinyin_attachment_failed(&self) -> bool {
         self.system.pinyin_attachment_failed()
@@ -1676,6 +1688,7 @@ impl Runtime {
     /// when a required file is missing or a DBM or chunk file cannot be
     /// opened, and [`OpenError::UserSession`] where the user session cannot
     /// be built after the libraries were handed to it.
+    #[cfg(test)]
     pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
         Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin)
     }
@@ -1692,6 +1705,7 @@ impl Runtime {
     /// # Errors
     ///
     /// As [`Runtime::open`].
+    #[cfg(test)]
     pub(crate) fn open_with_law(
         system_dir: &Path,
         user_dir: Option<&Path>,

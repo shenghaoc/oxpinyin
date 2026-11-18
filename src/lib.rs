@@ -86,22 +86,24 @@ mod zhuyin_map;
 
 pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey, KeyText};
 pub use full_pinyin_index::{
-    FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT,
-    SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index_with_options,
-    secondary_zhuyin_index,
+    FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, luoma_pinyin_index,
+    parse_full_pinyin_index_with_options, secondary_zhuyin_index,
 };
+#[cfg(test)]
+pub use full_pinyin_index::{LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT};
 pub use options::OptionBits;
 pub use parser::{Completeness, FullPinyinParser};
 pub use scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
 };
+#[cfg(test)]
+pub use syllables::full_pinyin_syllables;
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
     MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES,
-    canonical_complete_syllable, full_pinyin_syllable, full_pinyin_syllables,
-    option_alias_canonical,
+    canonical_complete_syllable, full_pinyin_syllable, option_alias_canonical,
 };
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
 pub use vocab::{PhraseEntry, PhraseToken, SyllableKey, fuzzy_chewing_alternatives};

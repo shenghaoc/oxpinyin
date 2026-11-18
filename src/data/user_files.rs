@@ -134,6 +134,7 @@ pub enum UserDbm {
 
 impl UserDbm {
     /// The file's base name without any extension.
+    #[cfg(test)]
     #[must_use]
     pub const fn stem(self) -> &'static str {
         match self {
@@ -167,6 +168,7 @@ impl UserDbm {
 
     /// Whether the file is a hash container (`user_bigram.db` is a KC
     /// `HashDB` / tkrzw `HashDBM`; the two index files are trees).
+    #[cfg(test)]
     #[must_use]
     pub const fn is_hash(self) -> bool {
         matches!(self, Self::Bigram)
@@ -587,6 +589,7 @@ pub enum LogRecord<P = Vec<u8>> {
 
 impl LogRecord<&[u8]> {
     /// Copy a borrowed record's payloads into an owned record.
+    #[cfg(test)]
     #[must_use]
     pub fn into_owned(self) -> LogRecord {
         match self {

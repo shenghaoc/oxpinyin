@@ -49,6 +49,7 @@ impl<const N: usize> StringTable<N> {
     }
 
     /// Resolves all rows in their stored order.
+    #[cfg(test)]
     pub fn entries(
         self,
     ) -> impl ExactSizeIterator<Item = [&'static str; N]> + DoubleEndedIterator + Clone {

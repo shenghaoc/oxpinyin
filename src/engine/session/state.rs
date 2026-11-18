@@ -149,6 +149,7 @@ where
 
     /// The decoded text of n-best row `index`, best-first. `None` when the
     /// row is absent or its string is NULL.
+    #[cfg(test)]
     #[must_use]
     pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
         self.sentence
@@ -473,7 +474,7 @@ where
     /// Under `Session::set_defer_list_builds` a change leaves the list
     /// stale instead, for [`Session::refresh_candidates`]: the pin takes the
     /// word as a `pinyin_guess_candidates` argument and builds once under it
-    /// (`pinyin.cpp:2184-2198` at 074a2219), as [`Session::candidates_at`]
+    /// (`pinyin.cpp:2184-2198` at 074a2219), as `Session::candidates_at`
     /// does.
     ///
     /// # Errors

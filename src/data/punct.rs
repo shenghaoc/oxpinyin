@@ -48,6 +48,7 @@ impl<D: ChewingDbm> PunctTable<D> {
     }
 
     /// Whether a table file is open behind this handle.
+    #[cfg(test)]
     #[must_use]
     pub fn is_open(&self) -> bool {
         self.dbm
@@ -65,6 +66,7 @@ impl<D: ChewingDbm> PunctTable<D> {
 
     /// Whether the native object is closed; `true` for an empty table,
     /// which holds none.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm

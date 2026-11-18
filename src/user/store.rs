@@ -1209,6 +1209,7 @@ impl UserStore {
     /// sub-index takes it only when it holds the item and its `guint32` total
     /// can. The caller checks library visibility. This does not mark the
     /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
+    #[cfg(test)]
     pub fn add_system_unigram_frequency(&mut self, token: Token, delta: u32) -> bool {
         self.add_unigram_outcome(token, delta).is_accepted()
     }
@@ -1979,6 +1980,7 @@ impl UserStore {
     ///
     /// # Errors
     /// The same journal fault as `Self::reload_system_libraries`.
+    #[cfg(test)]
     pub fn reload_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
@@ -2032,6 +2034,7 @@ impl UserStore {
     /// # Errors
     /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion (rows 91
     /// and 108), with nothing replaced.
+    #[cfg(test)]
     pub fn load_system_libraries(
         &mut self,
         mut originals: crate::user::persistence::SystemOriginals,
@@ -2065,6 +2068,7 @@ impl UserStore {
     /// `phrase_index.cpp:261-268`). The user index tables keep their
     /// entries. In memory, as the pin's: nothing is written to disk, and a
     /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
+    #[cfg(test)]
     pub fn unload_system_libraries(
         &mut self,
         originals: crate::user::persistence::SystemOriginals,
@@ -2544,6 +2548,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the cursor cannot be read, or
     /// `InvalidPhrase` for a system library.
+    #[cfg(test)]
     pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
         if self.is_system_library(library) {
             return Err(UserStoreError::InvalidPhrase);

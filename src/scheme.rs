@@ -986,6 +986,7 @@ impl ZhuyinParser {
     }
 
     /// The scheme in force.
+    #[cfg(test)]
     #[must_use]
     pub const fn scheme(self) -> ZhuyinScheme {
         self.scheme

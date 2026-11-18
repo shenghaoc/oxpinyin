@@ -347,7 +347,7 @@ pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 /// instances read their context through `m_context`.
 ///
 /// Both C-ABI facades carry the same fields; the seed word differs
-/// per facade and is the caller's choice at [`ContextCore::open`].
+/// per facade and is the caller's choice at `ContextCore::open`.
 #[derive(Clone)]
 pub struct LiveOptions(Rc<LiveOptionsInner>);
 
@@ -438,6 +438,7 @@ impl ContextCore {
     ///
     /// An empty system path resolves files in the working directory.
     /// `None` means the runtime cannot open. [`Self::try_open`] says why.
+    #[cfg(test)]
     #[must_use]
     pub fn open(
         system_dir: &Path,
@@ -448,7 +449,7 @@ impl ContextCore {
         Self::try_open(system_dir, user_dir, option_word, law).ok()
     }
 
-    /// [`Self::open`] with the failure kept: the C facades log it before
+    /// `Self::open` with the failure kept: the C facades log it before
     /// answering NULL, so a consumer can tell a missing directory from a
     /// corrupt table without string-matching the logged message.
     ///

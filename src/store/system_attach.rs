@@ -156,6 +156,7 @@ impl UnopenedSystemDbm {
 
     /// Whether [`Self::finish`] has run: the native object is gone and
     /// every later call is inert. For the facades' finalization tests.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn is_finished(&self) -> bool {
         self.db.borrow().is_none()

@@ -693,6 +693,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// reserved slot), refuse an empty column, then skip forward over
     /// columns holding one lone zero key — a consumed `'` separator —
     /// and the answer is that column's first item.
+    #[cfg(test)]
     #[must_use]
     pub fn key_at(&self, offset: usize) -> Option<KeyAt> {
         let (packed, begin, end) = self.abi_key_at(offset, false).ok()??;

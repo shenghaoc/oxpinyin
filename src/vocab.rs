@@ -45,7 +45,7 @@ const _: () = assert!(CHEWING_KEYS.len() == SYLLABLE_KEY_COUNT);
 /// One decoder-visible key: a table syllable, an initial-only key, or a
 /// packed matrix alternate without a syllable-table row.
 ///
-/// Ids are dense and frozen: `0..405` are [`crate::full_pinyin_syllables`] in their
+/// Ids are dense and frozen: `0..405` are `crate::full_pinyin_syllables` in their
 /// pinned upstream numeric-ID order, `405..428` are
 /// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, `428..430` are
 /// [`OPTION_ONLY_COMPLETE_SYLLABLES`], and `430..440` are
@@ -387,6 +387,7 @@ impl PhraseEntry {
 
     /// The outward text as `str`, when every stored word was a scalar
     /// value.
+    #[cfg(test)]
     #[must_use]
     pub fn text_str(&self) -> Option<&str> {
         self.text.as_str()

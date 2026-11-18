@@ -33,9 +33,13 @@ use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::phrase_library::LibraryError;
 use crate::data::phrase_library::RowFault;
 use crate::data::phrase_table::PhraseTable;
-use crate::data::system_files::{SYSTEM_LIBRARY_FILES, SystemDbm};
+#[cfg(test)]
+use crate::data::system_files::SYSTEM_LIBRARY_FILES;
+use crate::data::system_files::SystemDbm;
 use crate::data::table::TableError;
-use crate::data::table_info::{FileName, FileType, TableConf, TableRow};
+#[cfg(test)]
+use crate::data::table_info::FileName;
+use crate::data::table_info::{FileType, TableConf, TableRow};
 
 /// Error conditions for dictionary lookups.
 #[derive(Debug)]
@@ -288,6 +292,7 @@ impl SystemTables {
     }
 
     /// Whether the main pinyin-table attach failed.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn pinyin_attachment_failed(&self) -> bool {
         self.pinyin.attachment_failed()
@@ -307,6 +312,7 @@ impl SystemTables {
     }
 
     /// Whether both main indexes are closed.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn attachments_finished(&self) -> bool {
         self.pinyin.attachment_finished() && self.phrase.attachment_finished()
@@ -326,6 +332,7 @@ impl SystemTables {
 
 impl SystemDictionary {
     /// Separate unique phrase storage from the immutable table handles.
+    #[cfg(test)]
     pub fn into_parts(self) -> (SystemTables, PhraseLibraries) {
         (self.tables, self.libraries)
     }
@@ -341,6 +348,7 @@ impl SystemDictionary {
     /// Returns [`DictError`] when either DBM cannot be opened or a present
     /// chunk file does not verify. A missing chunk file leaves that
     /// library unloaded, as `FacadePhraseIndex::load` failing does.
+    #[cfg(test)]
     pub fn open(system_dir: &Path) -> Result<Self, DictError> {
         Self::open_files(
             &crate::input::path::build_path(
@@ -360,6 +368,7 @@ impl SystemDictionary {
     /// # Errors
     ///
     /// As [`Self::open`].
+    #[cfg(test)]
     pub fn open_files(
         pinyin_index: &Path,
         phrase_index: &Path,
@@ -378,6 +387,7 @@ impl SystemDictionary {
     /// # Errors
     ///
     /// As [`Self::open`].
+    #[cfg(test)]
     pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
         let stems: Vec<(u8, &FileName)> = conf
             .system_libraries()
@@ -429,6 +439,7 @@ impl SystemDictionary {
         })
     }
 
+    #[cfg(test)]
     fn open_files_with(
         pinyin_index: &Path,
         phrase_index: &Path,
@@ -540,6 +551,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
     /// `FacadePhraseIndex::get_phrase_index_total_freq` over the loaded
     /// libraries.
+    #[cfg(test)]
     #[must_use]
     pub fn unigram_total(&self) -> u64 {
         u64::from(self.libraries().unigram_total())
@@ -547,6 +559,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order.
+    #[cfg(test)]
     #[must_use]
     pub fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
         self.libraries()
@@ -642,6 +655,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or a value decode fails.
+    #[cfg(test)]
     pub(crate) fn trellis_ranges_with(
         &self,
         syllables: &[SyllableKey],
@@ -725,6 +739,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
 
     /// [`Self::lookup_into_flagged`]'s body: [`Self::lookup_with_live`]
     /// with every library visible and each item read from its own chunk.
+    #[cfg(test)]
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
@@ -750,6 +765,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.fill_lookup(syllables, &mut entries)?;
@@ -762,6 +778,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn trellis_records(
         &self,
         syllables: &[SyllableKey],
@@ -779,6 +796,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// `ChewingTableEntry::search` then `convert` over the system table:
     /// `SystemDictionary::trellis_ranges_with` with every loaded
     /// library visible.
+    #[cfg(test)]
     pub fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
@@ -808,6 +826,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    #[cfg(test)]
     pub fn lookup_into_flagged(
         &self,
         syllables: &[SyllableKey],
@@ -819,6 +838,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
     /// phrase or as a marker for longer phrases — one point read, no
     /// record decode (the bit is set whenever the key exists).
+    #[cfg(test)]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         if syllables.is_empty() {
             return Ok(true);
@@ -1041,6 +1061,7 @@ impl AddonDictionary {
     }
 
     /// Whether every addon index this facade holds is closed.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn attachments_finished(&self) -> bool {
         self.pinyin
@@ -1053,6 +1074,7 @@ impl AddonDictionary {
     }
 
     /// An addon facade with neither DBM nor libraries.
+    #[cfg(test)]
     #[must_use]
     pub fn empty() -> Self {
         Self::without_indexes(&TableConf::stock())
@@ -1073,6 +1095,7 @@ impl AddonDictionary {
     }
 
     /// The configured `addon` row of sub-index `index`.
+    #[cfg(test)]
     #[must_use]
     pub fn row(&self, index: u8) -> Option<&TableRow> {
         self.rows.get(usize::from(index))
@@ -1081,6 +1104,7 @@ impl AddonDictionary {
     /// Whether either addon index has an open DBM handle.
     ///
     /// Independent of whether any addon phrase library is loaded.
+    #[cfg(test)]
     #[must_use]
     pub const fn has_open_indexes(&self) -> bool {
         self.pinyin.is_some() || self.phrase.is_some()

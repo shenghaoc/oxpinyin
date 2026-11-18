@@ -116,6 +116,7 @@ pub(crate) fn key_chewing(key: PinyinKey) -> Option<crate::ChewingKey> {
 }
 
 /// The syllable index of `key`, tone stripped.
+#[cfg(test)]
 #[must_use]
 pub const fn key_syllable(key: PinyinKey) -> usize {
     (key & KEY_SYLLABLE_MASK) as usize

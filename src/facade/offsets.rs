@@ -10,27 +10,12 @@
 use crate::{DoublePinyinParse, ZhuyinParse};
 
 /// Maps a byte offset in the transformed `'`-joined full-pinyin string
-/// back to the original double-pinyin input offset.
+/// back to the original zhuyin input offset.
 ///
 /// Candidate consumption — and the session's post-select composition
 /// offset — always lands on a key boundary, so the mapping is exact
 /// there; an offset inside a transformed key is clamped to that key's
 /// original end (the same place a candidate would consume it).
-#[must_use]
-pub fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
-    let mut transformed = 0;
-    for item in parse.keys() {
-        let key_len = item.key().text().len();
-        let boundary = transformed + key_len;
-        if offset <= boundary {
-            return item.end();
-        }
-        transformed = boundary + 1; // apostrophe between keys
-    }
-    parse.consumed()
-}
-
-/// [`double_original_offset`]'s zhuyin sibling.
 #[must_use]
 pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     let mut transformed = 0;
@@ -79,7 +64,7 @@ pub fn double_offset_is_mid_key(parse: &DoublePinyinParse, offset: usize) -> boo
 }
 
 /// Maps an original-input offset to the transformed session offset — the
-/// inverse of [`double_original_offset`]: the matrix column of the first
+/// inverse of the original-offset map: the matrix column of the first
 /// key whose original span ends past `offset`.
 ///
 /// That column is the key's graph edge `from`: 0 for the first key, and

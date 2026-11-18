@@ -53,6 +53,7 @@ pub trait ChewingDbm {
     fn finish_attachment(&mut self) {}
 
     /// Whether [`Self::finish_attachment`] has closed the native object.
+    #[cfg(test)]
     fn attachment_finished(&self) -> bool {
         false
     }
@@ -234,6 +235,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
+    #[cfg(test)]
     fn attachment_finished(&self) -> bool {
         match &self.state {
             DbmState::Open(_) => false,
@@ -378,6 +380,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         Self { dbm }
     }
 
+    #[cfg(test)]
     pub(crate) fn attachment_failed(&self) -> bool {
         self.dbm.attachment_failed()
     }
@@ -386,6 +389,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         self.dbm.finish_attachment();
     }
 
+    #[cfg(test)]
     pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm.attachment_finished()
     }

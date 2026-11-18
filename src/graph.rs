@@ -88,6 +88,7 @@ impl ExactSegment {
     }
 
     /// The tone consumed with the key (`0` when toneless).
+    #[cfg(test)]
     #[must_use]
     pub const fn tone(&self) -> u8 {
         self.tone
@@ -378,6 +379,7 @@ impl SegmentGraph {
     }
 
     /// Number of nodes: one per input byte, plus the end node.
+    #[cfg(test)]
     #[must_use]
     pub const fn node_count(&self) -> usize {
         self.input_len + 1
@@ -385,6 +387,7 @@ impl SegmentGraph {
 
     /// Every edge, ordered by source node ascending then key length
     /// descending.
+    #[cfg(test)]
     #[must_use]
     pub fn edges(&self) -> &[Edge] {
         &self.edges

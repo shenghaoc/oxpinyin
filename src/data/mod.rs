@@ -55,9 +55,9 @@ pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram};
 pub use crate::store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
-pub use system_files::{
-    ADDON_LIBRARY_FILES, ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES, SYSTEM_LIBRARY_NAMES, SystemDbm,
-};
+#[cfg(test)]
+pub use system_files::{ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES};
+pub use system_files::{ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_NAMES, SystemDbm};
 pub use table::TableError;
 pub use table_conf::PINNED_LAMBDA;
 

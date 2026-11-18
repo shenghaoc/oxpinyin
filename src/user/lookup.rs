@@ -90,6 +90,7 @@ impl<'a> UserLookup<'a> {
     }
 
     /// Phrase text from the current item, without decoding its readings.
+    #[cfg(test)]
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         session_text(&self.phrases.borrow(), self.items, token)

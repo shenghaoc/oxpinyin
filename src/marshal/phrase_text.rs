@@ -40,18 +40,6 @@ pub fn phrase_text_len(text: &PhraseText) -> usize {
     }
 }
 
-/// Whether `text` stores exactly `phrase`'s code points: the pin's check of
-/// an existing item against an imported phrase, its stored length then a
-/// `memcmp` over every stored word, a zero and what follows it included
-/// (`pinyin.cpp:568-571`, `zhuyin.cpp:454-457` at 074a2219).
-#[must_use]
-pub fn stored_words_match(text: &PhraseText, phrase: &str) -> bool {
-    match text.stored_words() {
-        Some(words) => words.iter().copied().eq(phrase.chars().map(u32::from)),
-        None => text.as_str() == Some(phrase),
-    }
-}
-
 #[cold]
 fn encode_words(words: &[u32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(words.len().saturating_mul(3));
