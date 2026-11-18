@@ -286,6 +286,14 @@ class BuildSideTests(unittest.TestCase):
         self.assertEqual(outcome['libraries'], {'libpinyin': 60, 'libzhuyin': 60})
         self.assertEqual(outcome['backend'], CELL.feature)
 
+    def test_revision_recipe_does_not_inherit_the_active_environment(self):
+        with mock.patch.dict(os.environ, {'VIRTUAL_ENV': '/checkout/.venv'}):
+            _, calls = self.run_build()
+        installs = [call for call in calls if 'install' in call[0]]
+        self.assertEqual(len(installs), 2)
+        for _, _, env in installs:
+            self.assertNotIn('VIRTUAL_ENV', env)
+
     def test_export_mismatch_strip_failure_and_other_systems_fail(self):
         with self.assertRaises(ship_sizes.Failure):
             self.run_build(nm_text=NM + '1 T pinyin_leak@@LIBPINYIN\n')

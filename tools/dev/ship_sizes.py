@@ -209,6 +209,9 @@ def touch_tree(directory: Path) -> None:
 
 def build_env(source: Path, target: Path, cell: str) -> dict[str, str]:
     env = dict(os.environ)
+    # The outer `uv run` activates this checkout's environment. The revision in
+    # SOURCE is another uv project, and its own `uv run` selects its own.
+    env.pop('VIRTUAL_ENV', None)
     remap = f'--remap-path-prefix={source}=/oxpinyin --remap-path-prefix={target}=/oxpinyin-target'
     env['RUSTFLAGS'] = ((env.get('RUSTFLAGS') or '') + ' ' + remap).strip()
     env['PINYIN_ORACLE_DBM'] = cell

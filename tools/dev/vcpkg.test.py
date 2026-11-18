@@ -255,7 +255,7 @@ class InstallTests(unittest.TestCase):
             def run(command, **kwargs):
                 nonlocal interrupted
                 if command[:2] == ['git', 'init']:
-                    Path(command[2]).mkdir()
+                    Path(command[-1]).mkdir()
                 elif command[:2] == ['git', 'fetch'] and interrupted:
                     interrupted = False
                     raise KeyboardInterrupt('interrupted fetch')
@@ -328,7 +328,7 @@ class InstallTests(unittest.TestCase):
 
             def run(command, **kwargs):
                 if command[:2] == ['git', 'init']:
-                    Path(command[2]).mkdir()
+                    Path(command[-1]).mkdir()
                 elif command[0] == 'bash':
                     (kwargs['cwd'] / 'vcpkg').touch()
                     # Publish a populated destination immediately before our rename.

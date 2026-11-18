@@ -220,6 +220,9 @@ jobs:
           trap 'rm -rf -- "$scratch"' EXIT
           metadata=$(cargo metadata --format-version 1 --locked --no-deps)
           packages=$(jq -er '.packages[] | select(.publish != []) | [.name, .version] | @tsv' <<< "$metadata")
+          # Only a package that another published package depends on by path
+          # gets a patch entry; Cargo warns about a patch that no build uses.
+          patched=$(jq -r '[.packages[] | select(.publish != []) | .dependencies[] | select(.path != null) | .name] | unique | .[]' <<< "$metadata")
           target=$(jq -er '.target_directory' <<< "$metadata")
           toolchain=$(rustup show active-toolchain)
           toolchain=${toolchain%% *}
@@ -237,7 +240,9 @@ jobs:
           printf '[patch.crates-io]\n' > "$scratch/archives.toml"
           while read -r name version; do
             tar -xzf "$scratch/target/package/$name-$version.crate" -C "$scratch"
-            printf '%s = { path = "%s" }\n' "$name" "$scratch/$name-$version" >> "$scratch/archives.toml"
+            if grep -qxF -- "$name" <<< "$patched"; then
+              printf '%s = { path = "%s" }\n' "$name" "$scratch/$name-$version" >> "$scratch/archives.toml"
+            fi
           done <<< "$packages"
 
           cd "$scratch"

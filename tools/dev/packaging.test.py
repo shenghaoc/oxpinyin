@@ -39,6 +39,7 @@ import json, os, sys
 from pathlib import Path
 args=sys.argv[1:]
 Path(os.environ['CALLS']).write_text(json.dumps(args))
+Path(os.environ['CALLS']+'.deployment-target').write_text(os.environ.get('MACOSX_DEPLOYMENT_TARGET', ''))
 if os.environ.get('FAIL_CARGO'):
     print('cargo failed', file=sys.stderr)
     sys.exit(int(os.environ['FAIL_CARGO']))
@@ -557,6 +558,8 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
 
         def darwin_fakes(self):
             self.fake('uname', "print('Darwin')")
+            self.fake('sw_vers', "import sys; assert sys.argv[1:] == ['-productVersion']; print('26.4')")
+            self.env.pop('MACOSX_DEPLOYMENT_TARGET', None)
             self.env['CHECKOUT'] = str(self.root)
             self.env['LINK_CALLS'] = str(self.work / 'link-calls')
             self.env['DARWIN_EXPORTS'] = json.dumps({library: packaging.version_exports(
@@ -623,6 +626,37 @@ else:
                     self.assertNotIn('oxpinyin_', exports)
                     self.assertFalse((self.work / 'strip-calls').exists())
                     self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
+
+        def test_macos_build_targets_the_build_machine_unless_the_environment_names_one(self):
+            self.darwin_fakes()
+            target = self.work / 'calls.deployment-target'
+            for named, expected in ((None, '26.4'), ('15.0', '15.0')):
+                with self.subTest(named=named):
+                    env = {'CARGO_BUILD_TARGET': 'aarch64-apple-darwin', 'FIXTURE_HOST': 'aarch64-apple-darwin'}
+                    if named:
+                        env['MACOSX_DEPLOYMENT_TARGET'] = named
+                    result, stage = self.install(env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(target.read_text(), expected)
+                    shutil.rmtree(stage)
+
+        def test_macos_relink_names_the_cxx_runtime_once_for_kyoto_cabinet(self):
+            self.darwin_fakes()
+            self.fake('pkg-config', r"""import os,sys
+if sys.argv[-1]=='kyotocabinet':print(os.environ['KC_LIBS'])
+else:print('-lglib-2.0 -lgobject-2.0')
+""")
+            for libs in ('-L/opt/kc/lib -lkyotocabinet -lc++ -lz', '-L/opt/kc/lib -lkyotocabinet -lz'):
+                with self.subTest(libs=libs):
+                    result, stage = self.install(extra=('--', '--no-default-features', '--features', 'kyotocabinet'),
+                                                 env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'KC_LIBS': libs})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls, _ = json.loads((self.work / 'link-calls').read_text())
+                    self.assertEqual(calls.count('-lc++'), 1)
+                    others = [word for word in libs.split() if word != '-lc++']
+                    self.assertEqual([word for word in calls if word in others], others)
+                    shutil.rmtree(stage)
 
         def test_macos_dsym_consumes_retained_lto_object_before_cleanup(self):
             self.darwin_fakes()

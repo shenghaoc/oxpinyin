@@ -94,7 +94,9 @@ def pin_build_environment(env, backend):
 
 def fetch_checkout(destination, env, *, run, cwd):
     """Fetch vcpkg at REVISION into DESTINATION and bootstrap it there."""
-    run(['git', 'init', str(destination)], env=env, cwd=cwd)
+    # The checkout below detaches HEAD, so the branch name is never used; it is
+    # named so that git does not fall back to its default and print a hint.
+    run(['git', 'init', '--initial-branch=main', str(destination)], env=env, cwd=cwd)
     run(['git', 'fetch', '--depth=1', 'https://github.com/microsoft/vcpkg.git', REVISION], env=env, cwd=destination)
     run(['git', 'checkout', '--detach', 'FETCH_HEAD'], env=env, cwd=destination)
     run(['bash', str(destination / 'bootstrap-vcpkg.sh'), '-disableMetrics'],
