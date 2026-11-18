@@ -45,6 +45,6 @@ pub mod validate_k_mixture_model;
 pub use utils_helper::taglib;
 
 #[cfg(test)]
-#[path = "../../oxpinyin-user/src/test_child.rs"]
+#[path = "../../oxpinyin-core/src/user/test_child.rs"]
 mod test_child;
 mod utils_helper;

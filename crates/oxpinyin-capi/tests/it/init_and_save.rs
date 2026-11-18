@@ -120,7 +120,7 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
         |user| {
             let format = format!(
                 "database format:{}",
-                oxpinyin_user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin_core::user::data::DEFAULT_STORE_DB_FORMAT
             );
             let system = conf_system(
                 user.parent().expect("scratch"),
@@ -145,7 +145,7 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
             let text = std::fs::read_to_string(&path).expect("user.conf");
             let format = format!(
                 "database format:{}",
-                oxpinyin_user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin_core::user::data::DEFAULT_STORE_DB_FORMAT
             );
             std::fs::write(&path, text.replace(&format, "database format:LMDB"))
                 .expect("write user.conf");
@@ -206,7 +206,7 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     unsafe {
         pinyin_end_add_phrases(pinyin_begin_add_phrases(
             context,
-            oxpinyin_user::USER_DICTIONARY,
+            oxpinyin_core::user::USER_DICTIONARY,
         ))
     };
     assert!(unsafe { pinyin_save(context) });
@@ -246,7 +246,7 @@ fn directories_with_non_utf8_names_open() {
         scratch.join(OsStr::from_bytes(&name))
     };
     let system = named("oxpinyin-system-");
-    let user = named("oxpinyin-user-");
+    let user = named("oxpinyin-core-");
     let _ = std::fs::remove_file(&system);
     let _ = std::fs::remove_dir_all(&user);
     let _remove_fixture = RemoveFixture {

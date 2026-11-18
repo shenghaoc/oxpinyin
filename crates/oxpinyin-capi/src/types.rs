@@ -166,11 +166,11 @@ pub type GChar = c_char;
 pub const null_token: u32 = 0;
 
 // Header phrase-index literals must stay byte-identical to the canonical
-// `oxpinyin-user` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
+// `oxpinyin-core` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
 // typedefs in the checked-in `pinyin.h`, so they do not collide
-// with `oxpinyin_user::PinyinKey` (`u16`).
+// with `oxpinyin_core::user::PinyinKey` (`u16`).
 const _: () = {
-    assert!(oxpinyin_user::USER_DICTIONARY == 7);
-    assert!(oxpinyin_user::PHRASE_MASK == 0x00FF_FFFF);
-    assert!(oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
+    assert!(oxpinyin_core::user::USER_DICTIONARY == 7);
+    assert!(oxpinyin_core::user::PHRASE_MASK == 0x00FF_FFFF);
+    assert!(oxpinyin_core::user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
 };

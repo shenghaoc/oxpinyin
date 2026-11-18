@@ -20,7 +20,7 @@ use crate::types::PinyinInstance;
 
 use crate::user_data::pinyin_remember_user_input;
 
-use oxpinyin_user::{FIRST_USER_TOKEN, UserStore};
+use oxpinyin_core::user::{FIRST_USER_TOKEN, UserStore};
 
 /// Imports `phrase` into library 7 once per reading and returns its token.
 fn import_readings(
@@ -152,7 +152,7 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
         2
     );
 
-    for length in [0, oxpinyin_user::MAX_PHRASE_LENGTH, 65_536] {
+    for length in [0, oxpinyin_core::user::MAX_PHRASE_LENGTH, 65_536] {
         assert!(!unsafe {
             pinyin_remember_user_input(instance, cstr("你".repeat(length)).as_ptr(), 1)
         });

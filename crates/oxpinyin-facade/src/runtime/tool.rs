@@ -1,6 +1,6 @@
 //! Heap-loaded lookup data for the nonshipping REPL, assembled beside the runtime readers.
 use super::*;
-use oxpinyin_user::data::{PhraseLibraries, dict::SystemTables};
+use oxpinyin_core::user::data::{PhraseLibraries, dict::SystemTables};
 
 /// Failure of the test program's required chunk load.
 pub struct LoadError {
@@ -14,7 +14,7 @@ pub struct LoadError {
 pub struct Lookup {
     tables: SystemTables,
     libraries: PhraseLibraries,
-    model: Option<oxpinyin_user::data::lm::BigramTables>,
+    model: Option<oxpinyin_core::user::data::lm::BigramTables>,
 }
 impl Lookup {
     /// Attach the index, load each SYSTEM_FILE, then attach the system bigram.
@@ -48,8 +48,9 @@ impl Lookup {
                 .map_err(|cause| LoadError { name, cause })?;
         }
         let model = bigram.then(|| {
-            let mut model = oxpinyin_user::data::lm::BigramTables::attach(&data.join("bigram.db"))
-                .unwrap_or_else(|_| oxpinyin_core::input::tool::abort());
+            let mut model =
+                oxpinyin_core::user::data::lm::BigramTables::attach(&data.join("bigram.db"))
+                    .unwrap_or_else(|_| oxpinyin_core::input::tool::abort());
             model.set_lambda_from_conf(conf);
             model
         });

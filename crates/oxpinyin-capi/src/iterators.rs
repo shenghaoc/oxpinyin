@@ -9,8 +9,8 @@ use std::ptr;
 
 use oxpinyin_core::OptionBits;
 use oxpinyin_core::graph::SegmentGraph;
+use oxpinyin_core::user::{PinyinKey, toned_key};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
-use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};

@@ -16,7 +16,7 @@ use crate::input::native::{self, SavedNumeric, Stream, WORD_SIZE};
 
 /// What one `fscanf` call answered: `1`, `0` or `EOF`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Scanned<T> {
+pub(crate) enum Scanned<T> {
     /// The conversion was assigned.
     Assigned(T),
     /// A directive did not match before any conversion (`0`).
@@ -36,7 +36,7 @@ impl<T> Scanned<T> {
 
     /// The assigned value, if any.
     #[must_use]
-    pub fn assigned(self) -> Option<T> {
+    pub(crate) fn assigned(self) -> Option<T> {
         match self {
             Self::Assigned(value) => Some(value),
             Self::Unassigned | Self::Eof => None,
@@ -46,7 +46,7 @@ impl<T> Scanned<T> {
 
 /// `fopen` answered NULL. The pin's diagnostic for it has been written.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OpenFailed;
+pub(crate) struct OpenFailed;
 
 /// A `char str[256]` buffer as `strcmp` reads it: `None` until a `%255s`
 /// has written it, which is when the pin's buffer is still uninitialised.
@@ -73,7 +73,7 @@ impl Word {
 }
 
 /// `SystemTableInfo2::load`'s stream (`table_info.cpp:197-291`).
-pub struct SystemTableInfoReader {
+pub(crate) struct SystemTableInfoReader {
     stream: Stream,
     locale: SavedNumeric,
     /// `char str[256]` (`:227`), shared by the two format directives.
@@ -91,7 +91,9 @@ impl SystemTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.\n` line, with the
     /// locale left at `"C"`.
-    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, OpenFailed> {
+    pub(crate) fn open(
+        filename: &(impl crate::input::FileName + ?Sized),
+    ) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
             native::report_system_open_failed(&filename.as_c_name());
@@ -106,35 +108,35 @@ impl SystemTableInfoReader {
     }
 
     /// `fscanf(input, "binary format version:%d\n", &binver)` (`:208`).
-    pub fn binary_format_version(&mut self) -> Scanned<i32> {
+    pub(crate) fn binary_format_version(&mut self) -> Scanned<i32> {
         let mut binver: c_int = 0;
         let count = self.stream.scan_binary_format_version(&mut binver);
         Scanned::from_count(count, binver)
     }
 
     /// `fscanf(input, "model data version:%d\n", &modelver)` (`:214`).
-    pub fn model_data_version(&mut self) -> Scanned<i32> {
+    pub(crate) fn model_data_version(&mut self) -> Scanned<i32> {
         let mut modelver: c_int = 0;
         let count = self.stream.scan_model_data_version(&mut modelver);
         Scanned::from_count(count, modelver)
     }
 
     /// `fscanf(input, "lambda parameter:%f\n", &lambda)` (`:220`).
-    pub fn lambda_parameter(&mut self) -> Scanned<f32> {
+    pub(crate) fn lambda_parameter(&mut self) -> Scanned<f32> {
         let mut lambda: f32 = 0.0;
         let count = self.stream.scan_lambda_parameter(&mut lambda);
         Scanned::from_count(count, lambda)
     }
 
     /// `fscanf(input, "source table format:%255s\n", str)` (`:228`).
-    pub fn source_table_format(&mut self) -> Scanned<()> {
+    pub(crate) fn source_table_format(&mut self) -> Scanned<()> {
         let count = self.stream.scan_source_table_format(&mut self.str.bytes);
         self.str.written |= count == 1;
         Scanned::from_count(count, ())
     }
 
     /// `fscanf(input, "database format:%255s\n", str)` (`:232`).
-    pub fn database_format(&mut self) -> Scanned<()> {
+    pub(crate) fn database_format(&mut self) -> Scanned<()> {
         let count = self.stream.scan_database_format(&mut self.str.bytes);
         self.str.written |= count == 1;
         Scanned::from_count(count, ())
@@ -143,18 +145,18 @@ impl SystemTableInfoReader {
     /// `str` as the following `strcmp` reads it: the last token either
     /// format directive wrote, or `None` while it holds no value.
     #[must_use]
-    pub fn str(&self) -> Option<&CStr> {
+    pub(crate) fn str(&self) -> Option<&CStr> {
         self.str.as_c_str()
     }
 
     /// `feof(input)`, the row loop's condition (`:254`).
-    pub fn eof(&mut self) -> bool {
+    pub(crate) fn eof(&mut self) -> bool {
         self.stream.eof()
     }
 
     /// The six-word `fscanf` (`:255-257`): the six words when it assigned
     /// all six, `None` for any other count (`:259-260`'s `continue`).
-    pub fn table_row(&mut self) -> Option<[&CStr; 6]> {
+    pub(crate) fn table_row(&mut self) -> Option<[&CStr; 6]> {
         if self.stream.scan_table_row(&mut self.row) != 6 {
             return None;
         }
@@ -164,14 +166,14 @@ impl SystemTableInfoReader {
     }
 
     /// `fclose(input)` then `setlocale(LC_NUMERIC, locale)` (`:289-291`).
-    pub fn finish(self) {
+    pub(crate) fn finish(self) {
         self.stream.close();
         self.locale.restore();
     }
 }
 
 /// `UserTableInfo::load`'s stream (`table_info.cpp:328-372`).
-pub struct UserTableInfoReader {
+pub(crate) struct UserTableInfoReader {
     stream: Stream,
     locale: SavedNumeric,
     /// `char str[256]` (`:351`).
@@ -186,7 +188,9 @@ impl UserTableInfoReader {
     ///
     /// [`OpenFailed`] after the pin's `open %s failed.` line, which has no
     /// newline, with the locale left at `"C"`.
-    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, OpenFailed> {
+    pub(crate) fn open(
+        filename: &(impl crate::input::FileName + ?Sized),
+    ) -> Result<Self, OpenFailed> {
         let locale = SavedNumeric::install_c();
         let Some(stream) = Stream::open_read(filename) else {
             native::report_user_open_failed(&filename.as_c_name());
@@ -200,21 +204,21 @@ impl UserTableInfoReader {
     }
 
     /// `fscanf(input, "binary format version:%d\n", &binver)` (`:338`).
-    pub fn binary_format_version(&mut self) -> Scanned<i32> {
+    pub(crate) fn binary_format_version(&mut self) -> Scanned<i32> {
         let mut binver: c_int = 0;
         let count = self.stream.scan_binary_format_version(&mut binver);
         Scanned::from_count(count, binver)
     }
 
     /// `fscanf(input, "model data version:%d\n", &modelver)` (`:344`).
-    pub fn model_data_version(&mut self) -> Scanned<i32> {
+    pub(crate) fn model_data_version(&mut self) -> Scanned<i32> {
         let mut modelver: c_int = 0;
         let count = self.stream.scan_model_data_version(&mut modelver);
         Scanned::from_count(count, modelver)
     }
 
     /// `fscanf(input, "database format:%255s\n", str)` (`:352`).
-    pub fn database_format(&mut self) -> Scanned<()> {
+    pub(crate) fn database_format(&mut self) -> Scanned<()> {
         let count = self.stream.scan_database_format(&mut self.str.bytes);
         self.str.written |= count == 1;
         Scanned::from_count(count, ())
@@ -223,19 +227,19 @@ impl UserTableInfoReader {
     /// `str` as `to_table_database_format_type` reads it (`:353-354`), or
     /// `None` while the buffer holds no value.
     #[must_use]
-    pub fn str(&self) -> Option<&CStr> {
+    pub(crate) fn str(&self) -> Option<&CStr> {
         self.str.as_c_str()
     }
 
     /// `fscanf(input, "open counter:%d\n", &counter)` (`:357`).
-    pub fn open_counter(&mut self) -> Scanned<i32> {
+    pub(crate) fn open_counter(&mut self) -> Scanned<i32> {
         let mut counter: c_int = 0;
         let count = self.stream.scan_open_counter(&mut counter);
         Scanned::from_count(count, counter)
     }
 
     /// `fclose(input)` then `setlocale(LC_NUMERIC, locale)` (`:370-372`).
-    pub fn finish(self) {
+    pub(crate) fn finish(self) {
         self.stream.close();
         self.locale.restore();
     }
@@ -243,15 +247,15 @@ impl UserTableInfoReader {
 
 /// The four fields `UserTableInfo::save` writes.
 #[derive(Clone, Copy, Debug)]
-pub struct UserTableInfoFields<'a> {
+pub(crate) struct UserTableInfoFields<'a> {
     /// `m_binary_format_version`.
-    pub binary_format_version: i32,
+    pub(crate) binary_format_version: i32,
     /// `m_model_data_version`.
-    pub model_data_version: i32,
+    pub(crate) model_data_version: i32,
     /// `from_table_database_format_type(m_table_database_format_type)`.
-    pub database_format: &'a CStr,
+    pub(crate) database_format: &'a CStr,
     /// `m_open_counter`.
-    pub open_counter: i32,
+    pub(crate) open_counter: i32,
 }
 
 /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): the pin's
@@ -259,7 +263,7 @@ pub struct UserTableInfoFields<'a> {
 /// `write %s failed.\n` line. The writes and the close are not checked, as
 /// the pin does not check them.
 #[must_use]
-pub fn save_user_table_info(
+pub(crate) fn save_user_table_info(
     filename: &(impl crate::input::FileName + ?Sized),
     fields: &UserTableInfoFields<'_>,
 ) -> bool {
@@ -281,7 +285,7 @@ pub fn save_user_table_info(
 
 /// `atoi(str)` (`table_info.cpp:160`).
 #[must_use]
-pub fn atoi(str: &CStr) -> i32 {
+pub(crate) fn atoi(str: &CStr) -> i32 {
     native::atoi(str)
 }
 

@@ -4,8 +4,7 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables native I/O and the selected DBM backend. | deny, scoped input and backend exceptions | yes | yes |
-| oxpinyin-user | Native system-data readers and the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state. | forbid | yes | via engine |
+| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables, system-data readers, user persistence, native I/O and the selected DBM backend. | deny, scoped input and backend exceptions | yes | yes |
 | oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
@@ -91,7 +90,7 @@ Its `tools` feature adds GLib through `glib-sys` and reads the C++ streams' line
 - `zerocopy` is not used.
   Packed records are decoded as the [C struct parsing rule](rust-conventions.md#c-struct-parsing) states.
 - `arrayvec` is not used.
-  The bounded collections already stay inline, as the `SmallVec` `QueryKey` in `oxpinyin-user`'s `user_index.rs` does, or use plain arrays, as `oxpinyin-core`'s `nbest.rs` does.
+  The bounded collections already stay inline, as the `SmallVec` `QueryKey` in `oxpinyin-core`'s `user_index.rs` does, or use plain arrays, as `oxpinyin-core`'s `nbest.rs` does.
 
 ## External I/O
 
@@ -101,6 +100,8 @@ The [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-i
 All five stages are implemented.
 C facades retain ABI marshalling.
 `oxpinyin-core` retains DBM backends.
+
+The core user module owns the following data. Native system-data readers and the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over DefaultStore. No format-version row, matching unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state.
 
 ## Centralized assembly
 

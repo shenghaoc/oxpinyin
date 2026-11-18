@@ -58,6 +58,7 @@ pub mod store;
 pub mod tool;
 #[forbid(unsafe_code)]
 pub mod ucs4;
+pub mod user;
 #[forbid(unsafe_code)]
 mod string_tables {
     use crate::options::table_row::{
@@ -92,9 +93,7 @@ pub use syllables::{
     option_alias_canonical,
 };
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
-pub use vocab::{
-    PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey, fuzzy_chewing_alternatives,
-};
+pub use vocab::{PhraseEntry, PhraseToken, SyllableKey, fuzzy_chewing_alternatives};
 pub(crate) use vocab::{fuzzy_chewing_finals, fuzzy_chewing_initials};
 
 pub use single_gram::GramFault;

@@ -16,13 +16,13 @@ use std::path::PathBuf;
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::OptionValue;
 use oxpinyin_core::input::tool::storage::TableFile;
-use oxpinyin_user::data::chunk_write::{ChunkItem, PHRASE_MASK};
-use oxpinyin_user::data::row_format::phrase_index::encode_tokens;
-use oxpinyin_user::data::row_format::pinyin_index::{
+use oxpinyin_core::user::data::chunk_write::{ChunkItem, PHRASE_MASK};
+use oxpinyin_core::user::data::row_format::phrase_index::encode_tokens;
+use oxpinyin_core::user::data::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
 };
-use oxpinyin_user::data::table_entries::exact_compare2;
-use oxpinyin_user::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
+use oxpinyin_core::user::data::table_entries::exact_compare2;
+use oxpinyin_core::user::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
 
 use crate::storage::dbm::Tree;
 use crate::storage::libraries::items_of;
@@ -247,7 +247,7 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
         // `assert(NULL != m_db)`.
         tool::abort();
     };
-    let key = oxpinyin_user::data::row_format::phrase_index::encode_ucs4_key_scalars(phrase);
+    let key = oxpinyin_core::user::data::row_format::phrase_index::encode_ucs4_key_scalars(phrase);
     match table.get(&key) {
         None => {
             let _ = table.put(&key, &token.to_le_bytes());
@@ -260,8 +260,9 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
             }
         }
         Some(value) => {
-            let mut tokens = oxpinyin_user::data::row_format::phrase_index::decode_tokens(&value)
-                .unwrap_or_else(|_| tool::abort());
+            let mut tokens =
+                oxpinyin_core::user::data::row_format::phrase_index::decode_tokens(&value)
+                    .unwrap_or_else(|_| tool::abort());
             if let Err(position) = tokens.binary_search(&token) {
                 tokens.insert(position, token);
             }
@@ -352,7 +353,7 @@ fn add_pronunciation(
     // (`phrase_index.cpp:556`, `:524-583`): the narrowing is unsigned
     // modulo 2^32, not saturation. The stored-item update, including the
     // `guint8` pronunciation-count wrap, is the user store's.
-    oxpinyin_user::add_system_reading(item, &pinyin::packed(keys), freq as u32);
+    oxpinyin_core::user::add_system_reading(item, &pinyin::packed(keys), freq as u32);
 }
 
 /// `FacadePhraseIndex::compact` (`src/storage/phrase_index.cpp:648-675`):
@@ -391,7 +392,7 @@ fn save_chunks(
                     .iter()
                     .map(|(slot, item)| (*slot, item.clone()))
                     .collect();
-                oxpinyin_user::data::chunk_write::build_chunk(&items)
+                oxpinyin_core::user::data::chunk_write::build_chunk(&items)
                     .unwrap_or_else(|_| tool::abort())
             }
             // The pin stores an empty `MemoryChunk` when the library never

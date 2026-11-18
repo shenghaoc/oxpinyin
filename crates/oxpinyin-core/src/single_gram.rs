@@ -83,7 +83,7 @@ pub fn get_total_freq(gram: &[u8]) -> Option<u32> {
 
 /// `SingleGram::set_total_freq`: `MemoryChunk::set_content` at offset 0,
 /// which grows a shorter chunk to hold the total.
-pub fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
+pub(crate) fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
     if gram.len() < TOTAL_LEN {
         gram.resize(TOTAL_LEN, 0);
     }
@@ -142,7 +142,7 @@ pub enum GramFault {
 
 /// Whether a value with a whole total ends in a partial item.
 #[must_use]
-pub const fn has_partial_tail(gram: &[u8]) -> bool {
+pub(crate) const fn has_partial_tail(gram: &[u8]) -> bool {
     gram.len() >= TOTAL_LEN && !(gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
 }
 

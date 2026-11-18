@@ -3,8 +3,8 @@
 
 use std::os::raw::{c_char, c_int};
 
+use oxpinyin_core::user::{PinyinKey, toned_key};
 use oxpinyin_core::{OptionBits, parse_zhuyin_direct};
-use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::state::{ContextOwner, context_owner, owner_mut, owner_ref};
 use crate::types::{ImportIterator, ZhuyinContext};

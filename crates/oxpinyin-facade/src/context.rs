@@ -10,11 +10,11 @@ use crate::runtime::{
     directory_reads_as_a_chunk,
 };
 use oxpinyin_core::engine::SessionSettings;
-use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
-use oxpinyin_user::data::c_stderr;
-use oxpinyin_user::{
+use oxpinyin_core::user::data::c_stderr;
+use oxpinyin_core::user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
 };
+use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 
 /// Where `mask_out`'s remap walk ended before it finished.
 enum MaskStop {
@@ -396,7 +396,7 @@ impl LiveOptions {
 /// the user store it opened makes the
 /// fini-time `user.conf` write of the law it was opened under —
 /// libpinyin lowers the open counter its init raised, libzhuyin writes
-/// nothing (`oxpinyin_user::persistence::fini`). A context that is never
+/// nothing (`oxpinyin_core::user::persistence::fini`). A context that is never
 /// finalised, like a process that dies before its `pinyin_fini`, leaves the
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
@@ -547,16 +547,16 @@ impl ContextCore {
         // use. A library that is a directory the pin asserts on
         // (`memory_chunk.h:493`, register row 96) stops the save there.
         let baseline = |nibble: u8,
-                        originals: &oxpinyin_user::SystemOriginals|
-         -> oxpinyin_user::SaveBaseline {
+                        originals: &oxpinyin_core::user::SystemOriginals|
+         -> oxpinyin_core::user::SaveBaseline {
             match Runtime::read_save_baseline(originals, unloaded, nibble) {
                 Ok(baseline) => baseline,
                 Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
                     c_stderr::mmap_failed(&path);
-                    oxpinyin_user::SaveBaseline::Unmappable
+                    oxpinyin_core::user::SaveBaseline::Unmappable
                 }
                 Err(crate::runtime::SaveRemapFault::ChunkHeaderRead) => {
-                    oxpinyin_user::SaveBaseline::ChunkHeaderRead
+                    oxpinyin_core::user::SaveBaseline::ChunkHeaderRead
                 }
             }
         };

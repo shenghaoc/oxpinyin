@@ -904,7 +904,7 @@ mod user_bigram_db_tests {
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-user-bigram-db-{tag}-{}",
+            "oxpinyin-core-bigram-db-{tag}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

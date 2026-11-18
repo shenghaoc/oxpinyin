@@ -24,7 +24,7 @@ use std::path::Path;
 
 use std::ptr;
 
-use oxpinyin_user::SENTENCE_START;
+use oxpinyin_core::user::SENTENCE_START;
 
 /// The total of library 1 in the mini fixture's gb_char.bin.
 fn library_one_total() -> u32 {

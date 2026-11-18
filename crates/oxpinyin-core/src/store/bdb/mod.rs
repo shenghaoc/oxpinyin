@@ -299,7 +299,7 @@ impl RawReadStore for BdbStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -317,7 +317,7 @@ impl RawReadStore for BdbStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -330,7 +330,7 @@ impl RawReadStore for BdbStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         let visit = {
             crate::store::read_faults::scan_start(self.db.is_read_only(), lo)?;
             crate::store::read_faults::scan_visitor(self.db.is_read_only(), visit)
@@ -604,7 +604,7 @@ fn copy_bdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     crate::store::copy::faults::make_iterator()?;
     let mut cursor = src.cursor()?;
     crate::store::copy::copy(
@@ -633,7 +633,7 @@ impl BdbUserBigramDb {
     /// input makes the in-memory open fail short of memory. Test-only: it
     /// exists only with the `test-hooks` feature, which only a
     /// `[dev-dependencies]` entry enables.
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn failed_container() -> Self {
         Self::failed()

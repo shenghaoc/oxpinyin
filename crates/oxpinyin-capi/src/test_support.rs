@@ -24,7 +24,7 @@ use std::os::raw::c_uint;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::PathBuf;
 
-#[path = "../../oxpinyin-user/tests/support/native_fixture.rs"]
+#[path = "../../oxpinyin-core/tests/support/native_fixture.rs"]
 mod native_fixture;
 pub(crate) use native_fixture::*;
 
@@ -572,7 +572,7 @@ use crate::iterators::{
     pinyin_end_get_phrases, pinyin_iterator_add_phrase,
 };
 use crate::types::lookup_candidate_type_t;
-use oxpinyin_user::UserStore;
+use oxpinyin_core::user::UserStore;
 use std::ptr;
 
 /// Read the live store for one assertion; no storage reference escapes.

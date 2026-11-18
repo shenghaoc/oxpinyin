@@ -7,11 +7,11 @@ use oxpinyin_core::engine::{
     Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
     check_lookup_offset_range, normalize_lookup_offset,
 };
+use oxpinyin_core::user::UserStore;
 use oxpinyin_core::{
     DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken, ZhuyinParse,
     model::Dictionary,
 };
-use oxpinyin_user::UserStore;
 
 use crate::context::LiveOptions;
 
@@ -428,7 +428,8 @@ impl<
     /// answer `None` (074a2219 `phrase_index.h:646-652`, `pinyin.cpp:2821-2834`).
     #[must_use]
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
-        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
+        let token = token
+            & (oxpinyin_core::user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_core::user::PHRASE_MASK);
         let nibble = token >> 24;
         match nibble {
             _ if self.dict.is_system_library(nibble as u8) => {

@@ -37,7 +37,7 @@ An entry holds nothing else.
 ### Unterminated punctuation value over-read
 
 - **Pin:** `PunctTableEntry::unescape` reads the word after the value's last whole word to test for the terminator (`src/storage/punct_table.cpp:57-72`, from `get_all_punctuations`, `:74-94`, and `src/pinyin.cpp:2474`). Both outcomes of that read return the same run.
-- **oxpinyin:** `punct::decode_puncts` (`crates/oxpinyin-user/src/data/row_format.rs`) ends the run at the value's last whole word without the read. The visible punctuation is the pin's.
+- **oxpinyin:** `punct::decode_puncts` (`crates/oxpinyin-core/src/user/data/row_format.rs`) ends the run at the value's last whole word without the read. The visible punctuation is the pin's.
 - **Decision:** accepted, class (b): the out-of-bounds read and its possible fault are not reproduced.
 - **Tests:** `row_format` `punct_stream_ends_an_unterminated_run`.
 
@@ -131,7 +131,7 @@ An entry holds nothing else.
 - **Pin:** after an unload deletes a sub-index (`src/storage/phrase_index.cpp:261-269`), `train_result3` reads the item unchecked and raises the reading counts of `m_cached_phrase_item`, which the failed read left as the last successful read set it (`src/lookup/phonetic_lookup.h:924-927`; `phrase_index.h:649-650`, `phrase_index.cpp:204`). The write is a use after free when that item was in the unloaded library, and a defined write into a live item otherwise.
 - **oxpinyin:** trains no reading of a token whose library has no live buffer; the bigram trains, the unigram add moves no total and `*_train` answers `true`, as at the pin.
 - **Decision:** accepted: the freed-chunk write is class (b), and the live-item write is declined under the [unloaded-token pronunciation ruling](compatibility-policy.md#unloaded-token-pronunciation-cache).
-- **Tests:** `store_libpinyin::tests::unloaded_training_keeps_bigram_but_never_materializes_an_item` (`crates/oxpinyin-user/src/store_libpinyin/tests.rs`), `unloaded` (`crates/oxpinyin-user/src/store_libpinyin/tests/unloaded.rs`).
+- **Tests:** `store_libpinyin::tests::unloaded_training_keeps_bigram_but_never_materializes_an_item` (`crates/oxpinyin-core/src/user/store_libpinyin/tests.rs`), `unloaded` (`crates/oxpinyin-core/src/user/store_libpinyin/tests/unloaded.rs`).
 
 ### An addon row chosen on a context whose addon dictionary has no item for its token (class (b))
 
@@ -153,14 +153,14 @@ An entry holds nothing else.
 - **oxpinyin:** the getters return the available header fields, text and complete readings. The nth getter returns false for a reading past the content end.
 - **Decision:** accepted, class (b), for the out-of-bounds read. Reads within the content reproduce the pin.
 - **Rejected:** refusing the entire item in the getters also hides fields the pin reads within bounds.
-- **Tests:** `phrase_library::tests::a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` (`oxpinyin-user`) and `dict::tests::an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array` (`oxpinyin-capi`).
+- **Tests:** `phrase_library::tests::a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` (`oxpinyin-core`) and `dict::tests::an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array` (`oxpinyin-capi`).
 
 ## Accepted divergences — store and data files
 
 ### The pinyin index DBMs carry uninitialized struct padding
 
 - **Pin:** `ChewingTableEntry::add_index` copies a whole stack `PinyinIndexItem2<N>` into the DBM value (`src/storage/chewing_large_table2.h:208-232`, at `:229`), and its constructor sets only `m_token` and `m_keys` (`src/storage/pinyin_phrase3.h:181-196`). For an odd `N` the item's two bytes of tail padding are indeterminate; no reader reads them.
-- **oxpinyin:** `row_format::pinyin_index::encode_item` (`crates/oxpinyin-user/src/data/row_format.rs`) zeroes the padding, and `pinyin_index::decode_items` reads only the token and keys. The tool comparison masks only the two tail bytes of each odd-`N` item.
+- **oxpinyin:** `row_format::pinyin_index::encode_item` (`crates/oxpinyin-core/src/user/data/row_format.rs`) zeroes the padding, and `pinyin_index::decode_items` reads only the token and keys. The tool comparison masks only the two tail bytes of each odd-`N` item.
 - **Decision:** accepted, class (b) (policy row 18): the pin's bytes are an indeterminate read that no program can reproduce.
 - **Tests:** `gbf-toned-model`; controls `gbf-mini-fixture`, `kmm-estimate-good`; `pinyin_index_mask_clears_only_odd_item_padding`.
 
@@ -204,14 +204,14 @@ An entry holds nothing else.
 - **Pin:** `SingleGram::insert_freq`, `get_freq` and `set_freq` walk with `cur_item != end` (`src/storage/ngram.cpp:178`, `:190`, `:231`, `:241`, `:252`, `:261`), reached from `train_result3` (`src/lookup/phonetic_lookup.h:889`) and `pinyin_choose_predicted_candidate` (`src/pinyin.cpp:2630-2633`); a partial tail is read past.
 - **oxpinyin:** `*_train` and `pinyin_choose_predicted_candidate` answer `false` with one facade-domain warning when the step would load such a predecessor; the raw value survives save and reopen byte for byte.
 - **Decision:** accepted, class (b): the same out-of-bounds read as row 98, on the training path.
-- **Tests:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value`, `a_partial_tail_created_in_session_refuses_training` (`crates/oxpinyin-user/src/store_libpinyin.rs`).
+- **Tests:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value`, `a_partial_tail_created_in_session_refuses_training` (`crates/oxpinyin-core/src/user/store_libpinyin.rs`).
 
 ### A partial phrase-table token tail cannot terminate the entry walk (policy row 101, class (b))
 
 - **Pin:** `PhraseTableEntry` walks four-byte tokens with `iter != end` over the raw byte end (`src/storage/phrase_large_table3.cpp:32-39`, `:57-65`, `:74-81`, `:103-117`), so a value of `4k + r` bytes, `1 <= r <= 3`, is read past the record.
 - **oxpinyin:** The native tree keeps the raw record across load and save. `UserPhraseTable::tokens` reads it on demand, and `phrase_table::search_bytes` refuses it with `StoreError::InvalidInput`.
 - **Decision:** accepted, class (b): an out-of-bounds read.
-- **Tests:** `a_partial_phrase_table_record_is_refused_before_any_change` (`crates/oxpinyin-user/src/store_libpinyin.rs`).
+- **Tests:** `a_partial_phrase_table_record_is_refused_before_any_change` (`crates/oxpinyin-core/src/user/store_libpinyin.rs`).
 
 ### A reloaded library's dropped item stays in the user index tables, and a candidate walk dereferences it (policy row 102, class (b))
 
@@ -225,7 +225,7 @@ An entry holds nothing else.
 - **Pin:** `SubPhraseIndex::get_phrase_item` builds a header-derived view without checking its extent (`src/storage/phrase_index.cpp:180-206`); after the content offset wraps, a read can pass the content end (compaction at `:624-675`, `src/pinyin.cpp:655-659`).
 - **oxpinyin:** `UserLibrary::item` and the replay buffer answer a read inside the content with the following bytes and answer no item past the content end; `append_offset` reproduces the wrap modulo 2^32, and compaction runs at the pin's points only.
 - **Decision:** accepted, class (b): the read past the content is unsafe.
-- **Tests:** `a_read_crossing_the_item_end_returns_the_next_bytes_and_one_past_the_content_is_none` (`crates/oxpinyin-user/src/user_library.rs`).
+- **Tests:** `a_read_crossing_the_item_end_returns_the_next_bytes_and_one_past_the_content_is_none` (`crates/oxpinyin-core/src/user/user_library.rs`).
 
 ### An oversized user chunk or journal bulk save (policy row 112)
 
@@ -254,7 +254,7 @@ An entry holds nothing else.
 - **oxpinyin:** reads the whole records and drops the partial tail at every record size.
 - **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
 - **Rejected:** treating the whole row as a miss discards the complete records the pin can read.
-- **Tests:** `chewing_table::tests::a_misaligned_pinyin_table_row_keeps_its_whole_records` (`oxpinyin-user`) and `decode_items_drops_a_partial_record_and_rejects_zero_length` (`oxpinyin-user`).
+- **Tests:** `chewing_table::tests::a_misaligned_pinyin_table_row_keeps_its_whole_records` (`oxpinyin-core`) and `decode_items_drops_a_partial_record_and_rejects_zero_length` (`oxpinyin-core`).
 
 ### User pinyin-index row with a partial record (policy row 129, class (b))
 
@@ -262,7 +262,7 @@ An entry holds nothing else.
 - **oxpinyin:** search, suggestion and reading membership use the whole records at every size. Writes preserve the tail bytes.
 - **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
 - **Rejected:** reporting a miss for the entire row loses complete records.
-- **Tests:** `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin-user`).
+- **Tests:** `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin-core`).
 
 ## Accepted divergences — utilities
 
@@ -443,14 +443,14 @@ An entry holds nothing else.
 ### Oversized journal record payloads (policy row 123)
 
 - **Pin:** `PhraseIndexLogger::append_record` narrows lengths modulo 65536 and copies the full payload for ADD and REMOVE (`src/storage/phrase_index_logger.h:248-263`). For `LOG_MODIFY_RECORD`, it copies each full item and advances by the narrowed `oldlen` and `newlen` (`:269-278`). The bytes then extend past the boundaries a reader derives from the length fields (`:169-199`).
-- **oxpinyin:** the checked encoder refuses a payload above 65535 bytes (`crates/oxpinyin-user/src/data/user_files.rs:879-919`). `PersistenceError::Codec` becomes `UserStoreError::Persistence`, which the facade maps to `SaveOutcome::NotSaved` (`crates/oxpinyin-user/src/persistence.rs:2195-2200`, `crates/oxpinyin-user/src/store_libpinyin.rs:148-150`, `crates/oxpinyin-facade/src/context.rs:558-577`).
+- **oxpinyin:** the checked encoder refuses a payload above 65535 bytes (`crates/oxpinyin-core/src/user/data/user_files.rs:879-919`). `PersistenceError::Codec` becomes `UserStoreError::Persistence`, which the facade maps to `SaveOutcome::NotSaved` (`crates/oxpinyin-core/src/user/persistence.rs:2195-2200`, `crates/oxpinyin-core/src/user/store_libpinyin.rs:148-150`, `crates/oxpinyin-facade/src/context.rs:558-577`).
 - **Decision:** accepted under the [internal language artefact rule](compatibility-policy.md#internal-language-artefacts). The journal format prescribes a 16-bit length field and leaves oversized payload handling unspecified. oxpinyin keeps that width and writes records whose lengths fit it. A language-neutral journal requirement does not prescribe wrapping a length so that the payload crosses the reader's record boundary. The rule names unsigned wrap-around as a language artefact.
 - **Tests:** `oxpinyin_facade::context::tests::native::oversized_journal_record_payloads_refuse_save_and_keep_modified` and the `POLICY-ACCEPTED` capture case `oversized-journal-record-payloads` in [pin_capture.py](../../tools/oracle/pin_capture.py). Both use crafted system data because import accepts at most 15 keys (`src/pinyin.cpp:643`, `src/zhuyin.cpp:528`). An item with 128 characters and 255 readings occupies `6 + 128 * 4 + 255 * (128 * 2 + 4) = 66818` bytes (`src/storage/phrase_index.cpp:180-205`). Its stored length wraps to 1282.
 
 | `pinyin_save` effect | Pin | oxpinyin |
 | --- | --- | --- |
-| Journal on disk | `_write_files` stages the full payload under the wrapped length. `_rename_files` can publish a journal with broken record boundaries (`src/pinyin.cpp:963-971,1047-1062`). | The encoder refuses before writing any bytes for that record. The save stops before staging that journal, running the rename pass or writing the version marker (`crates/oxpinyin-user/src/persistence.rs:2065-2083,2303-2313`). |
-| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:189-193`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-user/src/store.rs:2054-2066`). |
+| Journal on disk | `_write_files` stages the full payload under the wrapped length. `_rename_files` can publish a journal with broken record boundaries (`src/pinyin.cpp:963-971,1047-1062`). | The encoder refuses before writing any bytes for that record. The save stops before staging that journal, running the rename pass or writing the version marker (`crates/oxpinyin-core/src/user/persistence.rs:2065-2083,2303-2313`). |
+| Return and modified state | The save can return `true`. It calls `mark_version` after the write and rename sequence, then clears `m_modified` (`src/pinyin.cpp:220-231,1141-1146`). | The C call returns `false` and the store stays modified (`crates/oxpinyin-capi/src/context.rs:189-193`, `crates/oxpinyin-facade/src/context.rs:90-95`, `crates/oxpinyin-core/src/user/store.rs:2054-2066`). |
 
 ### Key positions past byte 65535
 
@@ -531,7 +531,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | `table.conf` rows and library loads the pin refuses (row 79) | `storage/table_info.cpp:119`, `:132`, `:142`, `:156`, `:175`, `:276`; `pinyin.cpp:388`, `:457`, `:491`; `zhuyin.cpp:330`, `:372`; `include/memory_chunk.h:434`, `:493` | `init_and_save::init_aborts_on_an_unknown_table_conf_database_format`, `init_and_save::an_unknown_table_database_format_aborts_before_any_user_file` |
 | `pinyin_remove_user_candidate` on a removal the store refuses (row 81) | `pinyin.cpp:3743`, `:3750`, `:3759` | `choose::remove_user_candidate_aborts_without_the_phrase_table`; `a_removal_assert_comes_before_the_bigram_fault` |
 | `*_train` after a re-parse past the matrix (row 82) | `storage/phonetic_key_matrix.cpp:661`, `:663`, `:664` | `session::tests::train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length` |
-| `*_mask_out` on an over-long user index key (rows 84, 94) | `storage/chewing_large_table2_bdb.cpp:529` (kc `:499`, tkrzw `:466`) | `user_store::mask_out_aborts_on_an_overlong_index_key_before_the_reload`, `oxpinyin_user::store::tests::mask_out_aborts_on_an_empty_index_key` (owner error), `import_and_user_store::mask_out_over_an_overlong_user_index_key_aborts` |
+| `*_mask_out` on an over-long user index key (rows 84, 94) | `storage/chewing_large_table2_bdb.cpp:529` (kc `:499`, tkrzw `:466`) | `user_store::mask_out_aborts_on_an_overlong_index_key_before_the_reload`, `oxpinyin_core::user::store::tests::mask_out_aborts_on_an_empty_index_key` (owner error), `import_and_user_store::mask_out_over_an_overlong_user_index_key_aborts` |
 | `pinyin_guess_candidates` LONGER walk on an over-long index key (rows 84, 95) | `storage/chewing_large_table2_bdb.cpp:282` (kc `:269`, tkrzw `:252`) | `user_store::guess_candidates_aborts_on_an_overlong_index_key`; `import_and_user_store::cursor_guesses_ignore_an_overlong_user_index_key` |
 | A user-bigram key that is not a token (row 86) | `storage/ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`) | `user_store::mask_out_aborts_on_a_non_token_bigram_key`, `user_store::bigram_export_aborts_on_a_non_token_key`, `import_and_user_store::mask_out_over_a_non_token_bigram_key_aborts` |
 | A residual user-bigram gram at mask-out or removal (row 87) | `storage/ngram.cpp:70`, through `ngram_bdb.cpp:243` | `user_store::mask_out_aborts_on_a_residual_bigram_gram`, `choose::remove_user_candidate_aborts_on_a_residual_bigram_gram`, `import_and_user_store::mask_out_over_a_residual_bigram_gram_aborts` |
@@ -545,8 +545,8 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | A user-bigram value under four bytes, at mask-out, removal, prediction, training, lookup or export (row 85) | `include/memory_chunk.h:390`, through `storage/ngram.cpp:48-51`, `:80`, `:62-70`, `:133-141`, `:165`, `:303-304`; `lookup/phonetic_lookup.h:884`, `:903` | `import_export::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, `import_export::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one`; `mask_out_aborts_on_a_short_bigram_value`; `sentence::a_short_sentence_start_gram_aborts_the_guess_after_parsing` |
 | A system library that is a directory, from 8 bytes of reported size (row 96) | `include/memory_chunk.h:493`, through `pinyin.cpp:255`, `:289`, `:955`, `:1264`; `zhuyin.cpp:199`, `:588`, `:799` | `{init,save,mask_out,reload}_aborts_on_a_directory_library`, `addon_load_aborts_on_a_directory_library` |
 | A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `sentence::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
-| A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `oxpinyin_user::data::chewing_table::tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
-| A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `oxpinyin_user::data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts` |
+| A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `oxpinyin_core::user::data::chewing_table::tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
+| A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `oxpinyin_core::user::data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts` |
 
 ## Open
 
@@ -556,4 +556,4 @@ None.
 
 `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance and its context, as the pin does (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
 
-A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-core/src/input/{native,chunk}.rs`, `crates/oxpinyin-user/src/data/user_files.rs` and `crates/oxpinyin-user/src/persistence.rs`.
+A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `crates/oxpinyin-core/src/input/{native,chunk}.rs`, `crates/oxpinyin-core/src/user/data/user_files.rs` and `crates/oxpinyin-core/src/user/persistence.rs`.

@@ -9,7 +9,7 @@ use crate::iterators::{
 
 use crate::test_support::{TempUserDir, close, cstr, open_with_user, tokens_of, with_store};
 
-use oxpinyin_user::USER_DICTIONARY;
+use oxpinyin_core::user::USER_DICTIONARY;
 
 use std::ptr;
 

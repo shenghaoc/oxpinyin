@@ -17,13 +17,13 @@ use std::ffi::CString;
 
 use std::ptr;
 
-#[path = "../../../oxpinyin-user/tests/support/mod.rs"]
+#[path = "../../../oxpinyin-core/tests/support/mod.rs"]
 mod chunk_fixture;
 
 mod fixture {
     use oxpinyin_core::ChewingKey;
     use oxpinyin_core::store::{DefaultStore, WriteStore, WriteTxn};
-    use oxpinyin_user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+    use oxpinyin_core::user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
     use std::{fs, path::Path};
 
     #[derive(Clone, Copy)]
@@ -50,7 +50,7 @@ mod fixture {
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/w3")
-            .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
+            .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT);
         for name in [
             "table.conf",
             "phrase_index.bin",
@@ -100,11 +100,13 @@ mod fixture {
     /// `Fallback`, else the system index in `dir` with the case's rows.
     fn write_index(dir: &Path, user: &Path, case: Case, key: ChewingKey) {
         let index_path = if matches!(case, Case::Fallback) {
-            let conf = oxpinyin_user::data::table_info::TableConf::load_from_dir(dir).unwrap();
-            let versions = oxpinyin_user::data::user_files::SystemVersions::from_conf(&conf);
+            let conf =
+                oxpinyin_core::user::data::table_info::TableConf::load_from_dir(dir).unwrap();
+            let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
             fs::write(
                 user.join("user.conf"),
-                oxpinyin_user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+                oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions)
+                    .to_text(),
             )
             .unwrap();
             user.join("user_pinyin_index.bin")

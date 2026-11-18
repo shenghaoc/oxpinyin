@@ -1,7 +1,7 @@
 use super::*;
 use crate::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
 use oxpinyin_core::SyllableKey;
-use oxpinyin_user::{UserConfLaw, toned_key};
+use oxpinyin_core::user::{UserConfLaw, toned_key};
 
 /// 074a2219 pinyin.cpp:1413-1415 and :2389-2395 search the current
 /// phrase table on every prefix/prediction call, including after import.
@@ -10,7 +10,7 @@ fn prediction_reads_imports_after_its_first_query() {
     let user = tempfile::tempdir().unwrap();
     let system = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
-        .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT);
     let mut ctx = ContextCore::open(
         &system,
         Some(user.path()),
@@ -34,7 +34,7 @@ mod native {
     use crate::test_fixture::{native_fixture::*, *};
     use crate::{ContextCore, InstanceCore};
     use oxpinyin_core::OptionBits;
-    use oxpinyin_user::UserConfLaw;
+    use oxpinyin_core::user::UserConfLaw;
 
     fn prefix_guess(context: &ContextCore, instance: &mut InstanceCore, prefix: &str) -> bool {
         let prefixes = crate::compute_prefixes(
@@ -68,7 +68,7 @@ mod native {
         let [short, long, hao, number] =
             ["好", "你好", "好", "号"].map(|text| tokens(&context, text)[0]);
         for (previous, next) in [
-            (oxpinyin_user::SENTENCE_START, hao),
+            (oxpinyin_core::user::SENTENCE_START, hao),
             (short, hao),
             (long, number),
         ] {

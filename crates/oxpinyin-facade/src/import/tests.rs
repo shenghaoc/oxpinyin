@@ -3,8 +3,8 @@
 // Read faults need nextest's separate process for each test.
 use super::*;
 use crate::test_fixture::{native_fixture::*, *};
+use oxpinyin_core::user::{PinyinKey, USER_DICTIONARY, UserConfLaw, toned_key};
 use oxpinyin_core::{PhraseText, SyllableKey};
-use oxpinyin_user::{PinyinKey, USER_DICTIONARY, UserConfLaw, toned_key};
 
 /// The GBK system library of the committed mini tables.
 const GBK: u8 = 2;
@@ -49,7 +49,7 @@ fn a_committed_user_add_is_the_same_library_token_of_the_next_plan() {
     };
     let token = original.expect("the phrase table holds the committed add");
     assert_eq!(
-        oxpinyin_user::phrase_index_library_index(token),
+        oxpinyin_core::user::phrase_index_library_index(token),
         USER_DICTIONARY
     );
 }
@@ -204,7 +204,7 @@ fn an_import_into_a_slot_without_a_sub_index_is_refused() {
 
 #[test]
 fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
-    use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_core::user::data::chunk_write::{ChunkItem, build_chunk};
     let system = TempSystemDir::new("gb-user-file");
     let conf = std::fs::read_to_string(system.path.join("table.conf")).unwrap();
     let row = "default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE";

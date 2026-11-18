@@ -125,7 +125,7 @@ fn session() -> &'static Session {
             .join("..")
             .join("fixtures")
             .join("w3")
-            .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
+            .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT);
         let system = CString::new(system_dir.to_str().expect("static path")).expect("no NUL");
         let user =
             std::env::temp_dir().join(format!("oxpinyin-fuzz-capi-{}.d", std::process::id()));

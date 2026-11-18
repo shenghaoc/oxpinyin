@@ -93,7 +93,7 @@ The [architecture](architecture.md#backend-selection) owns backend selection and
 
 Packed upstream structures are parsed with explicit byte-offset reads, such as `u32::from_le_bytes`, into owned fields.
 No byte slice is cast to a packed struct, and no unaligned pointer read is used.
-The reference pattern is `oxpinyin-user/src/data/chunk_format.rs`.
+The reference pattern is `oxpinyin-core/src/user/data/chunk_format.rs`.
 Its 8-byte header contains a u32 LE length and a u32 XOR checksum over the data section.
 The checksum mirrors `memory_chunk.h::get_check_sum`.
 The payload follows the header.

@@ -2,7 +2,7 @@
 //! and cursor tests share.
 
 use crate::{ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, ZHUYIN_DEFAULT_OPTION_WORD};
-use oxpinyin_user::UserConfLaw;
+use oxpinyin_core::user::UserConfLaw;
 use std::path::PathBuf;
 
 /// The committed fixture directory the compiled backend opens.
@@ -31,7 +31,7 @@ pub(crate) fn zhuyin_instance() -> (ContextCore, InstanceCore) {
 #[cfg(feature = "tkrzw")]
 #[path = "../tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
-#[path = "../../oxpinyin-user/tests/support/native_fixture.rs"]
+#[path = "../../oxpinyin-core/tests/support/native_fixture.rs"]
 pub(crate) mod native_fixture;
 
 use oxpinyin_core::OptionBits;
@@ -49,11 +49,11 @@ pub(crate) fn native_context(
     ContextCore::open(system, Some(user), options, law).unwrap()
 }
 
-pub(crate) fn native_keys(reading: &str) -> Vec<oxpinyin_user::PinyinKey> {
+pub(crate) fn native_keys(reading: &str) -> Vec<oxpinyin_core::user::PinyinKey> {
     if !reading.is_ascii() {
         return oxpinyin_core::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
             .into_iter()
-            .map(|(key, tone)| oxpinyin_user::toned_key(key.index(), tone).unwrap())
+            .map(|(key, tone)| oxpinyin_core::user::toned_key(key.index(), tone).unwrap())
             .collect();
     }
     let graph = oxpinyin_core::graph::SegmentGraph::build_with_options(
@@ -65,7 +65,7 @@ pub(crate) fn native_keys(reading: &str) -> Vec<oxpinyin_user::PinyinKey> {
     graph
         .fewest_keys(false)
         .iter()
-        .map(|edge| oxpinyin_user::toned_key(edge.key().index(), edge.tone()).unwrap())
+        .map(|edge| oxpinyin_core::user::toned_key(edge.key().index(), edge.tone()).unwrap())
         .collect()
 }
 

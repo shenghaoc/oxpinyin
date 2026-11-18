@@ -1,0 +1,300 @@
+//! User phrase-index types and the token-layout constants pinned in
+//! `docs/findings/user-store.md` §3.
+//!
+//! New user-file phrases live in the `USER_DICTIONARY` or
+//! `NETWORK_DICTIONARY` sub-index. Token allocation is "max token in the
+//! sub-index + 1" (`range.m_range_end`, bumped past the reserved zero id).
+//! This module names those constants and the value types the store records;
+//! it does not talk to the store.
+
+use crate::SyllableKey;
+
+use crate::user::store::Token;
+
+/// Sub-index a chosen addon phrase is promoted into (`novel_types.h:159`).
+///
+/// A `USER_FILE` sub-index of the default facade (`addon.bin`,
+/// `docs/findings/phrase-union.md` §3.2). Choosing an `ADDON_CANDIDATE` copies
+/// it here from the separate addon facade (`docs/findings/addon-choose-promotion.md`).
+pub const ADDON_DICTIONARY: u8 = 5;
+
+/// Sub-index network phrases live in (`novel_types.h:160`).
+pub const NETWORK_DICTIONARY: u8 = 6;
+
+/// Sub-index user phrases live in (`novel_types.h:161`, §3).
+pub const USER_DICTIONARY: u8 = 7;
+
+/// Low 24 bits of a `phrase_token_t` — the phrase id inside a sub-index
+/// (`novel_types.h:41`).
+pub const PHRASE_MASK: Token = 0x00FF_FFFF;
+
+/// Bits 24–27 of a `phrase_token_t` — the sub-index nibble
+/// (`novel_types.h:42`).
+pub const PHRASE_INDEX_LIBRARY_MASK: Token = 0x0F00_0000;
+
+/// Exclusive upper bound on phrase length in Unicode scalar values
+/// (`novel_types.h:119`). libpinyin rejects `len == 0` and `len >=` this
+/// (`pinyin.cpp:3678`, `pinyin.cpp:643`).
+pub const MAX_PHRASE_LENGTH: usize = 16;
+
+/// `count` used when the caller passes "default" (`pinyin.cpp:521`; §3.2).
+pub const DEFAULT_PHRASE_COUNT: u64 = 5;
+
+/// Unigram seed factor on a *new* user phrase (`pinyin.cpp:522`; §3.2).
+/// Distinct from [`crate::user::seed::UNIGRAM_FACTOR`] (7), which is the *training*
+/// path.
+pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
+
+/// One pinyin key in a stored pronunciation.
+///
+/// The low [`KEY_TONE_SHIFT`] bits hold either a canonical syllable id
+/// ([`crate::SyllableKey`] index) or a tagged packed key with no
+/// syllable-table row. The high three bits hold the key's
+/// `ChewingKey::m_tone` (0 = zero tone, 1..=5).
+/// libpinyin stores the tone with the key (`PhraseItem::add_pronunciation`
+/// copies the parsed `ChewingKey`s, `phrase_index.cpp:56-91`); the import
+/// parser keeps it under `USE_TONE` (`pinyin.cpp:630`).
+pub type PinyinKey = u16;
+
+/// Bit position of the tone inside a [`PinyinKey`].
+pub const KEY_TONE_SHIFT: u32 = 13;
+
+/// The syllable-index bits of a [`PinyinKey`].
+pub const KEY_SYLLABLE_MASK: PinyinKey = (1 << KEY_TONE_SHIFT) - 1;
+
+/// `CHEWING_NUMBER_OF_TONES` less one: the highest tone a key carries
+/// (`chewing_enum.h`, tones 0..=5).
+pub const MAX_KEY_TONE: u8 = 5;
+
+/// Marks syllable bits that are a packed `ChewingKey`'s initial, middle and
+/// final fields, not a dense id: a key with no syllable-table row. The pin
+/// appends such a fuzzy final alternate to the matrix with no table check
+/// and stores it like any key (`phonetic_key_matrix.cpp:285-306`,
+/// `pinyin.cpp:3594-3606`, `:3647-3663` at 074a2219). The dense ids end far
+/// below the tag.
+const KEY_PACKED_TAG: PinyinKey = 1 << 12;
+
+/// The packed field bits under [`KEY_PACKED_TAG`].
+const KEY_PACKED_FIELDS: PinyinKey = KEY_PACKED_TAG - 1;
+
+/// `SyllableKey::index`'s tag for the same packed form.
+const SYLLABLE_PACKED_TAG: usize = 0x8000;
+
+/// A [`PinyinKey`] for syllable index `syllable` carrying `tone`; `None`
+/// when the index does not fit the syllable bits or the tone is not
+/// 0..=[`MAX_KEY_TONE`]. A [`SyllableKey`] index tagged as a packed key
+/// keeps its packed fields.
+#[must_use]
+pub fn toned_key(syllable: usize, tone: u8) -> Option<PinyinKey> {
+    let syllable = if syllable & SYLLABLE_PACKED_TAG == 0 {
+        PinyinKey::try_from(syllable).ok()?
+    } else {
+        KEY_PACKED_TAG | (PinyinKey::try_from(syllable).ok()? & KEY_PACKED_FIELDS)
+    };
+    if syllable > KEY_SYLLABLE_MASK || tone > MAX_KEY_TONE {
+        return None;
+    }
+    Some(syllable | (PinyinKey::from(tone) << KEY_TONE_SHIFT))
+}
+
+/// The `ChewingKey` that `key` names, tone included: a dense id's table
+/// row, or the packed fields of a key with no row. `None` when the id names
+/// no key, or the packed fields are zero or outside the table dimensions.
+#[must_use]
+pub(crate) fn key_chewing(key: PinyinKey) -> Option<crate::ChewingKey> {
+    let bits = key & KEY_SYLLABLE_MASK;
+    let fields = if bits & KEY_PACKED_TAG == 0 {
+        SyllableKey::from_index(usize::from(bits))?.chewing_key()
+    } else {
+        let packed = crate::ChewingKey::from_packed(bits & KEY_PACKED_FIELDS);
+        if bits & KEY_PACKED_FIELDS == 0 || !packed.elements_in_dims() {
+            return None;
+        }
+        packed
+    };
+    Some(fields.with_tone(key_tone(key)))
+}
+
+/// The syllable index of `key`, tone stripped.
+#[must_use]
+pub const fn key_syllable(key: PinyinKey) -> usize {
+    (key & KEY_SYLLABLE_MASK) as usize
+}
+
+/// The tone of `key` (0 = zero tone).
+#[must_use]
+pub const fn key_tone(key: PinyinKey) -> u8 {
+    (key >> KEY_TONE_SHIFT) as u8
+}
+
+/// `_ChewingKey::get_pinyin_string` (`chewing_key.cpp:47-58`) over a
+/// [`PinyinKey`]: the canonical spelling, the tone digit appended for a
+/// non-zero tone. `None` when the syllable bits name no key or the tone
+/// is out of range.
+#[must_use]
+pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
+    let text = key_chewing(key)?.pinyin_spelling();
+    match key_tone(key) {
+        0 => Some(text.to_owned()),
+        tone @ 1..=MAX_KEY_TONE => Some(format!("{text}{tone}")),
+        _ => None,
+    }
+}
+
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
+#[must_use]
+pub const fn phrase_index_library_index(token: Token) -> u8 {
+    ((token & PHRASE_INDEX_LIBRARY_MASK) >> 24) as u8
+}
+
+/// `PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)` (`novel_types.h:45-46`).
+#[must_use]
+pub const fn phrase_index_make_token(phrase_index: u8, token: Token) -> Token {
+    (((phrase_index as Token) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
+}
+
+/// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
+/// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`, §3.2).
+#[must_use]
+pub const fn is_user_token(token: Token) -> bool {
+    phrase_index_library_index(token) == USER_DICTIONARY
+}
+
+/// First token allocated in an empty user sub-index.
+///
+/// Empty `get_range` reports `m_range_end = 1` (`phrase_index.cpp:640-644`);
+/// `FacadePhraseIndex` then wraps it with `MAKE_TOKEN(7, 1)`. The reserved-id
+/// bump in `_add_phrase` (`pinyin.cpp:592-594`) is a no-op on that value
+/// because the low 24 bits are already non-zero. Starting `range_end` at 0
+/// would hit the bump and land on the same token.
+pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
+
+/// First token allocated in an empty network sub-index.
+pub const FIRST_NETWORK_TOKEN: Token = phrase_index_make_token(NETWORK_DICTIONARY, 1);
+
+/// The token `_add_phrase` allocates from a sub-index whose `get_range` end
+/// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`
+/// masks the sub-index end into the library nibble (`phrase_index.cpp:620`,
+/// `PHRASE_INDEX_MAKE_TOKEN`), and a zero low word is bumped past the
+/// reserved id. Nothing checks for overflow: a library whose last slot is
+/// live has the end `PHRASE_MASK + 1`, which wraps to slot 1 (register row
+/// 119). The addon promotion takes the masked end without the bump
+/// (`pinyin.cpp:2541-2545`), so it wraps to slot 0.
+#[must_use]
+pub(crate) fn add_phrase_token(library: u8, end: u32) -> Token {
+    let token = phrase_index_make_token(library, end);
+    if token & PHRASE_MASK == 0 {
+        token + 1
+    } else {
+        token
+    }
+}
+
+/// A user-phrase pronunciation: the pinyin key sequence, its stored count,
+/// and whether the user pinyin index carries it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserPronunciation {
+    keys: Vec<PinyinKey>,
+    count: u64,
+    indexed: bool,
+}
+
+impl UserPronunciation {
+    /// Key sequence for this reading.
+    #[must_use]
+    pub fn keys(&self) -> &[PinyinKey] {
+        &self.keys
+    }
+
+    /// Pronunciation count (`add_pronunciation`'s `delta`, §3.2).
+    #[must_use]
+    pub const fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Whether the user pinyin index carries this reading — the lookup
+    /// finds the phrase under it. `_add_phrase` indexes the reading a new
+    /// phrase is created with (`pinyin.cpp:597-600`) and never one added
+    /// to an existing phrase (`pinyin.cpp:569-582`, `add_pronunciation`
+    /// without `add_index`).
+    #[must_use]
+    pub const fn indexed(&self) -> bool {
+        self.indexed
+    }
+
+    /// This reading rendered as `'`-joined `_ChewingKey::get_pinyin_string`
+    /// spellings (e.g. `ni'hao`, `ce4'shi4`), or `None` when a stored key
+    /// is not a valid [`SyllableKey`] id.
+    ///
+    /// The single rendering path the §9 phrase and bigram exports share, so
+    /// an unrenderable key is skipped identically on both surfaces.
+    #[must_use]
+    pub fn render_pinyin(&self) -> Option<String> {
+        self.keys
+            .iter()
+            .map(|key| key_pinyin_string(*key))
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join("'"))
+    }
+
+    pub(crate) const fn new(keys: Vec<PinyinKey>, count: u64, indexed: bool) -> Self {
+        Self {
+            keys,
+            count,
+            indexed,
+        }
+    }
+}
+
+/// A user phrase: its token, text, and pronunciations.
+///
+/// This is the lookup surface T3 needs to resolve a user token. T2 does not
+/// wire it into Session or the C ABI.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserPhrase {
+    token: Token,
+    text: Vec<u32>,
+    pronunciations: Vec<UserPronunciation>,
+}
+
+impl UserPhrase {
+    /// Allocated user token (library nibble [`USER_DICTIONARY`]).
+    #[must_use]
+    pub const fn token(&self) -> Token {
+        self.token
+    }
+
+    /// Exact stored words, including zero words and non-scalars.
+    #[must_use]
+    pub fn words(&self) -> &[u32] {
+        &self.text
+    }
+
+    /// Text for lookup consumers, with the stored length and outward prefix.
+    #[must_use]
+    pub fn phrase_text(&self) -> Option<crate::PhraseText> {
+        crate::PhraseText::from_stored_words(self.text.iter().copied().map(Some))
+    }
+
+    /// Pronunciations in insertion order — `add_pronunciation` appends
+    /// (`phrase_index.cpp:86-91`).
+    #[must_use]
+    pub fn pronunciations(&self) -> &[UserPronunciation] {
+        &self.pronunciations
+    }
+
+    pub(crate) const fn new(
+        token: Token,
+        text: Vec<u32>,
+        pronunciations: Vec<UserPronunciation>,
+    ) -> Self {
+        Self {
+            token,
+            text,
+            pronunciations,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

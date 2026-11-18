@@ -21,7 +21,6 @@ kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin-facade/kyotocabinet", "
 oxpinyin-utils = { path = "../oxpinyin-utils", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-core = { workspace = true, features = ["tools"] }
 oxpinyin-facade = { workspace = true, features = ["tools"] }
-oxpinyin-user = { workspace = true, features = ["tools"] }
 oxpinyin-capi = { path = "../oxpinyin-capi", version = "=0.1.0-alpha.1", default-features = false, features = ["tools"] }
 oxpinyin-zhuyin-capi = { path = "../oxpinyin-zhuyin-capi", version = "=0.1.0-alpha.1", default-features = false, features = ["tools"] }
 

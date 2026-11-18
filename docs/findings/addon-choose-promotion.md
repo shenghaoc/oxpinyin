@@ -67,12 +67,12 @@ Facts fixed by this path:
 ## 2. oxpinyin mapping
 
 The writable, persisted phrase index of the default facade is the user
-store (`oxpinyin-user`). Nibbles 6 and 7 live there, and `addon.bin`
+store (`oxpinyin-core`). Nibbles 6 and 7 live there, and `addon.bin`
 (nibble 5) is a `USER_FILE` of the same facade, so promotion writes there
 too:
 
 - `UserStore::promote_addon_phrase(token, item)`
-  (`crates/oxpinyin-user/src/store.rs`) takes the addon item's wire bytes
+  (`crates/oxpinyin-core/src/user/store.rs`) takes the addon item's wire bytes
   and copies them: the item is written to the token's sub-index as stored,
   the phrase table takes its stored words, and the pinyin index takes one
   record per stored reading with the packed keys as stored, tones included.
@@ -127,7 +127,7 @@ list and replaces it (§5).
   `candidates::tests::a_promoted_addon_item_keeps_every_toned_reading`
   chooses a crafted toned item. It checks the candidate type, finds the
   token with `pinyin_lookup_tokens` and compares the packed readings.
-  `oxpinyin-user`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
+  `oxpinyin-core`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
   `promote_addon_phrase_copies_an_item_with_no_reading`,
   `promote_addon_phrase_copies_a_word_that_is_not_a_scalar` and
   `promote_addon_phrase_takes_length_16_and_refuses_17` compare the copied
@@ -139,7 +139,7 @@ list and replaces it (§5).
   nibble-5 token, that the phrase persists under that token in the user
   store, and that a freshly built `UserLookup` finds the promoted phrase as a
   default-facade candidate.
-- `oxpinyin-user`'s `promote_addon_phrase_allocates_nibble_5_and_copies_frequency`
+- `oxpinyin-core`'s `promote_addon_phrase_allocates_nibble_5_and_copies_frequency`
   promotes into a transient store, and a second promotion of the same
   phrase takes the next range end (§3).
 

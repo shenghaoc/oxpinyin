@@ -27,9 +27,9 @@ use std::sync::{Mutex, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
 use oxpinyin_core::SyllableKey;
-use oxpinyin_user::data::table_info::TableConf;
-use oxpinyin_user::data::user_files::{SystemVersions, UserFileLayout};
-use oxpinyin_user::{
+use oxpinyin_core::user::data::table_info::TableConf;
+use oxpinyin_core::user::data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin_core::user::{
     LibraryLoopRows, PinyinKey, SystemOriginals, USER_DICTIONARY, UserConfLaw, UserStore,
     UserStoreError, phrase_index_library_index,
 };
@@ -318,7 +318,7 @@ fuzz_target!(|data: &[u8]| {
                     // This generator draws only complete syllables
                     // (`SYLLABLES`, `key_for`), so it cannot build an
                     // initial-only reading, whose two index spaces name one
-                    // key. That shape is covered by the `oxpinyin-user` unit
+                    // key. That shape is covered by the `oxpinyin-core` unit
                     // test `an_initial_only_reading_answers_the_pins_reading_removal_assert`,
                     // not by this generator.
                     let mut refused = false;
@@ -359,9 +359,9 @@ fuzz_target!(|data: &[u8]| {
             // flavors (train-shaped)
             5 => {
                 let prev = u32::from(payload.first().copied().unwrap_or(0)) % 8
-                    + oxpinyin_user::FIRST_USER_TOKEN;
+                    + oxpinyin_core::user::FIRST_USER_TOKEN;
                 let cur = u32::from(payload.get(1).copied().unwrap_or(0)) % 8
-                    + oxpinyin_user::FIRST_USER_TOKEN
+                    + oxpinyin_core::user::FIRST_USER_TOKEN
                     + 1;
                 let count = u64::from(payload.get(2).copied().unwrap_or(0)) % 100;
                 store

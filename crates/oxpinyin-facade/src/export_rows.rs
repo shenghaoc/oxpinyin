@@ -6,8 +6,8 @@
 
 use crate::runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin_core::user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 use oxpinyin_core::{ChewingKey, PhraseText};
-use oxpinyin_user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 
 use std::collections::VecDeque;
 
@@ -493,7 +493,7 @@ type RenderedItem = (PhraseText, Vec<String>);
 /// context's user store and its system dictionary.
 #[derive(Clone)]
 struct ExportSource<'a> {
-    user: &'a oxpinyin_user::UserStore,
+    user: &'a oxpinyin_core::user::UserStore,
     dict: crate::runtime::RuntimeDict<'a>,
 }
 
@@ -527,7 +527,7 @@ impl ExportSource<'_> {
         // (074a2219 pinyin.cpp:812-815, phrase_index.h:647).
         let is_system = self
             .user
-            .is_system_library(oxpinyin_user::phrase_index_library_index(token));
+            .is_system_library(oxpinyin_core::user::phrase_index_library_index(token));
         if is_system {
             return self
                 .dict

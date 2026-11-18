@@ -30,7 +30,6 @@ deny = [
   { crate = "cxx", wrappers = ["oxpinyin-core"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin-core"] },
   { crate = "bindgen", wrappers = ["oxpinyin-core"] },
-  { crate = "oxpinyin-user", wrappers = ["oxpinyin-capi", "oxpinyin-facade", "oxpinyin-fuzz", "oxpinyin-utils", "oxpinyin-zhuyin-capi", "oxpinyin-repl"] },
   { crate = "oxpinyin-facade", wrappers = ["oxpinyin-repl", "oxpinyin-capi", "oxpinyin-zhuyin-capi"] },
   # The zhuyin capi crate's edge is dev-only: its contract tests export a saved profile through libpinyin.
   { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-zhuyin-capi", "oxpinyin-repl"] },

@@ -2,10 +2,10 @@
 use crate::{load_text_tables, present};
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::table_tests as output;
+use oxpinyin_core::user::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
+use oxpinyin_core::user::data::{chewing_index_key as index_key, search_chewing_row as search_row};
+use oxpinyin_core::user::tool::Index;
 use oxpinyin_core::{ChewingKey, OptionBits};
-use oxpinyin_user::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
-use oxpinyin_user::data::{chewing_index_key as index_key, search_chewing_row as search_row};
-use oxpinyin_user::tool::Index;
 use oxpinyin_utils::storage::dbm::Tree;
 use std::ops::Range;
 use std::{ffi::CString, path::Path};

@@ -12,7 +12,7 @@
 use std::io::Write;
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_user::data::phrase_library::PhraseLibrary;
+use oxpinyin_core::user::data::phrase_library::PhraseLibrary;
 
 fn scratch_path() -> std::path::PathBuf {
     std::env::temp_dir().join(format!("oxpinyin-fuzz-dict-loader-{}", std::process::id()))

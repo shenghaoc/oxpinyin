@@ -53,7 +53,6 @@ num_enum = { version = "0.7.6", default-features = false }
 # that is built on its own keeps its `default` and peer features.
 oxpinyin-facade = { path = "crates/oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin-core = { path = "crates/oxpinyin-core", version = "=0.1.0-alpha.1", default-features = false }
-oxpinyin-user = { path = "crates/oxpinyin-user", version = "=0.1.0-alpha.1", default-features = false }
 bindgen = { version = "0.73.2", default-features = false, features = ["logging", "runtime"] }
 # The parser option word (oxpinyin-core OptionBits); no dependencies of its own.
 bitflags = "2.13"
@@ -67,7 +66,7 @@ glib-sys = "0.22"
 libc = "0.2.189"
 # Derives Display, source() and From for the error enums.
 thiserror = "2.0"
-# The phrase-library chunk mapping (oxpinyin-user, Unix only). No features:
+# The phrase-library chunk mapping (oxpinyin-core, Unix only). No features:
 # `stable_deref_trait` stays off.
 memmap2 = { version = "0.9.11", default-features = false }
 # Test-only: collision-free, self-cleaning temp dirs for test harnesses.

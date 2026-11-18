@@ -12,7 +12,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use oxpinyin_core::input::tool;
-use oxpinyin_user::data::table_info::FileType;
+use oxpinyin_core::user::data::table_info::FileType;
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::Libraries;

@@ -28,15 +28,14 @@ pub const fn opens_directories() -> bool {
 }
 
 /// The header and bytes returned by the single payload read.
-pub struct LoadedChunk {
+pub(crate) struct LoadedChunk {
     /// The declared payload length, in the file's native header bytes.
-    pub length: [u8; 4],
+    #[cfg(test)]
+    length: [u8; 4],
     /// The stored checksum, in the file's native header bytes.
-    pub checksum: [u8; 4],
+    checksum: [u8; 4],
     /// The actual bytes returned by the one payload read.
-    pub payload: Vec<u8>,
-    /// The end-seek size before the header was read.
-    pub file_size: u64,
+    payload: Vec<u8>,
     source: MappingSource,
 }
 
@@ -44,7 +43,7 @@ impl LoadedChunk {
     /// Check the returned bytes, close the descriptor, and return the payload.
     /// A checksum mismatch rejects the chunk while its descriptor is still open.
     #[must_use]
-    pub fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
+    pub(crate) fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
         if checksum(&self.payload) != u32::from_le_bytes(self.checksum) {
             return None;
         }
@@ -58,13 +57,13 @@ impl LoadedChunk {
 
 /// A failure to obtain the bytes of a chunk.
 #[derive(Debug)]
-pub enum ChunkLoadError {
+pub(crate) enum ChunkLoadError {
     /// Open, seek, allocation or payload read failed.
     Io(io::Error),
     /// The file is shorter than its header.
     ShortHeader,
     /// One of the pin's two header read assertions failed.
-    Header(io::Error),
+    Header,
 }
 
 /// Read a chunk using the descriptor, seeks and single reads of
@@ -73,7 +72,7 @@ pub enum ChunkLoadError {
 ///
 /// # Errors
 /// Returns the failed operation, including a short header read.
-pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+pub(crate) fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
     load_with(path, |source, payload| source.read_payload(payload, None))
 }
 
@@ -98,10 +97,10 @@ fn load_with(
         .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
     read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
     Ok(LoadedChunk {
+        #[cfg(test)]
         length,
         checksum,
         payload,
-        file_size,
         source,
     })
 }
@@ -113,8 +112,8 @@ fn load_header(
     if file_size < 8 {
         return Err(ChunkLoadError::ShortHeader);
     }
-    let length = read_word().map_err(ChunkLoadError::Header)?;
-    let checksum = read_word().map_err(ChunkLoadError::Header)?;
+    let length = read_word().map_err(|_| ChunkLoadError::Header)?;
+    let checksum = read_word().map_err(|_| ChunkLoadError::Header)?;
     Ok((length, checksum))
 }
 
@@ -126,8 +125,8 @@ const fn available_payload_length(file_size: u64) -> u32 {
 
 /// A chunk's open descriptor, used only while preparing its mapping.
 /// Dropping this owner closes it. Header interpretation and checksum
-/// validation belong to the caller in `oxpinyin-user`.
-pub struct MappingSource {
+/// validation belong to the caller in `oxpinyin-core`.
+pub(crate) struct MappingSource {
     source: native::ReadChunk,
     file_size: u64,
 }
@@ -138,7 +137,7 @@ impl MappingSource {
     ///
     /// # Errors
     /// Returns the open or end-seek error.
-    pub fn open(path: &Path) -> io::Result<Self> {
+    pub(crate) fn open(path: &Path) -> io::Result<Self> {
         let source = native::ReadChunk::open(path)?;
         let file_size = source.size_and_rewind()?;
         Ok(Self { source, file_size })
@@ -146,7 +145,7 @@ impl MappingSource {
 
     /// The whole-file size answered by `lseek(SEEK_END)`.
     #[must_use]
-    pub const fn file_size(&self) -> u64 {
+    pub(crate) const fn file_size(&self) -> u64 {
         self.file_size
     }
 
@@ -155,7 +154,7 @@ impl MappingSource {
     ///
     /// # Errors
     /// Returns a failed or short read; the pin asserts at either header read.
-    pub fn read_word(&mut self) -> io::Result<[u8; 4]> {
+    pub(crate) fn read_word(&mut self) -> io::Result<[u8; 4]> {
         self.source.read_word()
     }
 
@@ -174,7 +173,7 @@ impl MappingSource {
     ///
     /// # Errors
     /// Returns a size-conversion or mapping error.
-    pub fn map(self) -> io::Result<PendingMapping> {
+    pub(crate) fn map(self) -> io::Result<PendingMapping> {
         let len = usize::try_from(self.file_size)
             .map_err(|_| io::Error::other("file too large for this platform"))?;
         let mapping = Mapping(self.source.map_copy(len)?);
@@ -188,7 +187,7 @@ impl MappingSource {
 /// A mapping awaiting the caller's domain validation. Fields drop in
 /// declaration order: a rejected mapping is unmapped before its descriptor
 /// closes (`memory_chunk.h:516-517`). No checksum logic lives here.
-pub struct PendingMapping {
+pub(crate) struct PendingMapping {
     mapping: Mapping,
     source: native::ReadChunk,
 }
@@ -196,14 +195,14 @@ pub struct PendingMapping {
 impl PendingMapping {
     /// Borrow the whole-file bytes for validation.
     #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         self.mapping.as_slice()
     }
 
     /// Close the descriptor and return the sole mapping owner. The caller
     /// has accepted its length, checksum and any required domain checks.
     #[must_use]
-    pub fn finish(self) -> Mapping {
+    pub(crate) fn finish(self) -> Mapping {
         let Self { mapping, source } = self;
         drop(source);
         mapping
@@ -223,17 +222,17 @@ impl PendingMapping {
 ///     assert_eq!(before[0], 1);
 /// }
 /// ```
-pub struct Mapping(memmap2::MmapMut);
+pub(crate) struct Mapping(memmap2::MmapMut);
 
 impl Mapping {
     /// Borrow the current mapped bytes.
     #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         &self.0
     }
 
     /// Borrow this mapping exclusively for an in-place write.
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
     }
 }
@@ -252,7 +251,7 @@ pub enum ChunkHeaderField {
 impl ChunkHeaderField {
     /// The pin's assert expression at this write, for the error text.
     #[must_use]
-    pub const fn assert_expression(self) -> &'static str {
+    pub(crate) const fn assert_expression(self) -> &'static str {
         match self {
             Self::Length => "ret_len == sizeof(length)",
             Self::Checksum => "ret_len == sizeof(checksum)",

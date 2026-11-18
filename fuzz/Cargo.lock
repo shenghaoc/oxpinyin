@@ -337,7 +337,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-user",
  "rustc-hash",
 ]
 
@@ -367,7 +366,6 @@ name = "oxpinyin-facade"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-user",
 ]
 
 [[package]]
@@ -377,18 +375,7 @@ dependencies = [
  "libfuzzer-sys",
  "oxpinyin-capi",
  "oxpinyin-core",
- "oxpinyin-user",
  "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-user"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "rustc-hash",
- "smallvec",
- "thiserror",
 ]
 
 [[package]]

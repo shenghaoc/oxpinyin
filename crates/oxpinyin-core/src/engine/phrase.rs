@@ -34,7 +34,7 @@ use crate::{
     model::{Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors},
 };
 
-/// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin-user`'s
+/// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin-core`'s
 /// ported value).
 use crate::engine::session::MAX_PHRASE_LENGTH;
 

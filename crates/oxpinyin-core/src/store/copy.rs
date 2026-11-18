@@ -27,11 +27,11 @@ pub(crate) fn copy(
     mut set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     walk(&mut |key, value| {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         faults::source_read()?;
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         let written = faults::destination_write().and_then(|()| set(key, value));
-        #[cfg(not(feature = "test-hooks"))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let written = set(key, value);
         written.map_err(|_| StoreError::FatalCopy)
     })
@@ -43,7 +43,7 @@ pub(crate) fn copy(
 /// at a page flush or a growth, not at a chosen record. Test-only: the
 /// module exists only with the `test-hooks` feature, which only a
 /// `[dev-dependencies]` entry enables.
-#[cfg(feature = "test-hooks")]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -75,7 +75,8 @@ pub mod faults {
     /// process be made, then fails each later one, as a `MakeIterator` or
     /// `DB->cursor` that gives no iterator does. The copy has not begun, so
     /// this failure is soft.
-    pub fn fail_iterator_creation_after(iterators: usize) {
+    #[cfg(test)]
+    pub(crate) fn fail_iterator_creation_after(iterators: usize) {
         ITERATORS.store(iterators, Ordering::SeqCst);
     }
 

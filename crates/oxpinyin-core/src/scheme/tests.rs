@@ -319,8 +319,8 @@ fn recovered_rows_parse_with_their_upstream_tone_masks() {
 #[test]
 fn valid_zhuyin_tones_carry_the_extracted_masks() {
     use super::VALID_ZHUYIN_TONES;
-    use crate::SYLLABLE_KEY_COUNT;
     use crate::SyllableKey;
+    use crate::vocab::SYLLABLE_KEY_COUNT;
     assert_eq!(VALID_ZHUYIN_TONES.len(), SYLLABLE_KEY_COUNT);
 
     let mask = |spelling: &str| {

@@ -28,7 +28,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
 5. **Unsafe code.** The target allowlist is:
    - The core library denies unsafe code. Its parser, model, engine, marshalling and table modules forbid it.
    - In `oxpinyin_core::input`, `native` owns the library's libc, GLib and mapping operations. The feature-gated `tool` module owns the utilities' native operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
-   - The user and facade libraries forbid unsafe code.
+   - The core user module and the facade library forbid unsafe code.
    - The core store exceptions are scoped to `store::bdb::ffi`, `store::kyotocabinet::bridge`, `store::kyotocabinet::ffi` and `store::tkrzw::bridge`.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
    - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.

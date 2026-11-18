@@ -930,7 +930,7 @@ pub trait RawReadStore {
 /// in-memory `DB_HASH` filled by cursor copy (`ngram_bdb.cpp:47-79`,
 /// `bdb_utils.h:43-74`). Keys are the 4-byte native-endian predecessor
 /// token; values the `SingleGram` chunk.
-pub trait UserBigramDb: Sized {
+pub(crate) trait UserBigramDb: Sized {
     /// A fresh, empty in-memory container — what `load_db` works on
     /// before the copy.
     ///
@@ -1082,13 +1082,13 @@ pub type DefaultStore = BdbStore;
 
 /// The compiled-in backend's [`UserBigramDb`].
 #[cfg(feature = "kyotocabinet")]
-pub type DefaultUserBigramDb = KcUserBigramDb;
+pub(crate) type DefaultUserBigramDb = KcUserBigramDb;
 /// The compiled-in backend's [`UserBigramDb`].
 #[cfg(feature = "tkrzw")]
-pub type DefaultUserBigramDb = TkrzwUserBigramDb;
+pub(crate) type DefaultUserBigramDb = TkrzwUserBigramDb;
 /// The compiled-in backend's [`UserBigramDb`].
 #[cfg(feature = "bdb")]
-pub type DefaultUserBigramDb = BdbUserBigramDb;
+pub(crate) type DefaultUserBigramDb = BdbUserBigramDb;
 
 /// File extension for [`DefaultStore`]'s native tables — one per peer;
 /// the store forces its database type through open parameters, so the
@@ -1127,12 +1127,15 @@ mod common;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 mod copy;
 /// The copy's fault points for other crates' death tests.
-#[cfg(all(feature = "test-hooks", any(feature = "tkrzw", feature = "bdb")))]
+#[cfg(all(
+    any(test, feature = "test-hooks"),
+    any(feature = "tkrzw", feature = "bdb")
+))]
 pub use copy::faults as copy_faults;
 #[cfg(test)]
 mod death_test;
 /// The read-only stores' point-read fault point for other crates' tests.
-#[cfg(feature = "test-hooks")]
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod read_faults;
 
 #[cfg(feature = "tkrzw")]
