@@ -7,10 +7,10 @@
 //! the pinyin eight at 3 and 4 (see [`crate::types::lookup_candidate_type_t`]),
 //! so tagging must use the zhuyin enum, never the pinyin one.
 
-use oxpinyin_core::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
+use oxpinyin::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_int;
 
-use oxpinyin_core::engine::CandidateKind;
+use oxpinyin::engine::CandidateKind;
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candidate_type_t};
@@ -256,11 +256,11 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
     };
     let outcome = match token {
         Some(token) => inst.core.select_published(
-            &oxpinyin_core::facade::PublishedRow {
+            &oxpinyin::facade::PublishedRow {
                 begin,
                 end,
                 token,
-                text: oxpinyin_core::engine::RowText::Resolve,
+                text: oxpinyin::engine::RowText::Resolve,
             },
             false,
         ),
@@ -323,9 +323,9 @@ pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
-fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
-    use oxpinyin_core::facade::TrainingRefusal;
-    match oxpinyin_core::facade::training_answer(result) {
+fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
+    use oxpinyin::facade::TrainingRefusal;
+    match oxpinyin::facade::training_answer(result) {
         Ok(trained) => trained,
         Err(TrainingRefusal::Abort) => std::process::abort(),
         Err(TrainingRefusal::PartialBigram) => {
@@ -343,14 +343,14 @@ fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> boo
 /// row, and the facade total is not zero.
 fn sole_unreadable_row(
     inst: &crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_core::engine::CandidateList,
+    window: &oxpinyin::engine::CandidateList,
     sentence_rows_only: bool,
-) -> Option<oxpinyin_core::engine::Candidate> {
+) -> Option<oxpinyin::engine::Candidate> {
     window.sole_unreadable_candidate().filter(|_| {
         !sentence_rows_only
             && window
                 .iter()
-                .all(|row| row.kind() == oxpinyin_core::engine::CandidateKind::Fallback)
+                .all(|row| row.kind() == oxpinyin::engine::CandidateKind::Fallback)
             && !crate::sentence::facade_total_is_zero(&inst.read())
     })
 }
@@ -363,13 +363,13 @@ fn sole_unreadable_row(
 /// law. `None` keeps every candidate (the after-cursor window). `anchor` is
 /// the session-coordinate origin the window's rows are measured from (the
 /// lookup offset, the composition offset, or
-/// [`oxpinyin_core::engine::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
+/// [`oxpinyin::engine::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
 /// start is `anchor + span_start()`. `sentence_rows_only` keeps the
 /// sentence rows and nothing else — the after-cursor window at a mid-key
 /// offset, where the pin's matrix column is empty (issue #577).
 pub fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_core::engine::CandidateList,
+    window: &oxpinyin::engine::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
     anchor: usize,
@@ -385,7 +385,7 @@ pub fn snapshot_candidates(
     let parse = inst.core.zhuyin_parse.as_ref();
     let original_end = |offset| {
         parse.map_or(offset, |parse| {
-            oxpinyin_core::facade::zhuyin_original_offset(parse, offset)
+            oxpinyin::facade::zhuyin_original_offset(parse, offset)
         })
     };
     // One row vector and one text buffer, each sized once for the window.
@@ -434,7 +434,7 @@ pub fn snapshot_candidates(
         };
         let span_end = original_end(anchor.saturating_add(cand.consumed_bytes()));
         let text = if missing {
-            oxpinyin_core::facade::TextSpan::NULL
+            oxpinyin::facade::TextSpan::NULL
         } else {
             let bytes = phrase_text_bytes(cand.text());
             let Some(text) = inst.state.candidates.intern(&bytes) else {

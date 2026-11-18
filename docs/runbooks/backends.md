@@ -1,7 +1,7 @@
 # Backends — building under each store backend
 
 This procedure builds and tests oxpinyin under each store backend.
-`oxpinyin-core` compiles exactly one peer backend into each binary.
+`oxpinyin` compiles exactly one peer backend into each binary.
 The store refuses zero backends, or more than one, with a `compile_error!`. tkrzw is
 the workspace default. The [architecture](../architecture.md#backend-selection)
 gives the reasons.
@@ -34,11 +34,11 @@ use is in [Linux setup](setup.md#linux) and [verification rule 9](verification.m
 - Berkeley DB is bound through its C header. No copy of it is compiled into any oxpinyin
   artifact.
 - tkrzw is bound through a cxx bridge over its C++ classes
-  (`crates/oxpinyin-core/src/store/tkrzw/bridge.rs`, with the adapter
+  (`crates/oxpinyin/src/store/tkrzw/bridge.rs`, with the adapter
   `adapter.cc`). The bridge is compiled against the installed tkrzw headers and linked
   to the system libtkrzw.
 - Kyoto Cabinet is bound through a cxx bridge
-  (`crates/oxpinyin-core/src/store/kyotocabinet/bridge.rs`, with the adapter
+  (`crates/oxpinyin/src/store/kyotocabinet/bridge.rs`, with the adapter
   `adapter.cc`) that compiles its header code into the facade, as the libpinyin
   build does ([packaging](../packaging.md#kyoto-cabinet-build-headers-must-match-the-installed-library)).
   The system libkyotocabinet supplies the rest.
@@ -62,7 +62,7 @@ The `glib-sys` build script asks `system-deps` for `glib-2.0` and
 library names.
 
 `system-deps` finds every backend from `[package.metadata.system-deps]` in
-`crates/oxpinyin-core/Cargo.toml`, as the `configure.ac` of libpinyin does.
+`crates/oxpinyin/Cargo.toml`, as the `configure.ac` of libpinyin does.
 
 - tkrzw and Kyoto Cabinet are found through `tkrzw.pc` and `kyotocabinet.pc`.
   A missing `.pc` file is a hard error.
@@ -104,11 +104,11 @@ regenerates the declarations, so no stale set stays behind.
 The generated bindings are deliberately not committed. They cross the
 ABI by layout, not as opaque handles. Generating them from
 the installed header keeps the declarations and the linked `.so` in
-step by construction. `crates/oxpinyin-core/codegen/store.rs` gives the
+step by construction. `crates/oxpinyin/codegen/store.rs` gives the
 full reasons.
 
 The Berkeley DB backend refuses at open any linked libdb other than 5.3
-(`check_runtime_version` in `crates/oxpinyin-core/src/store/bdb/ffi.rs`).
+(`check_runtime_version` in `crates/oxpinyin/src/store/bdb/ffi.rs`).
 The build defaults to `-ldb`, not a version-specific library name, and
 accepts the library overrides above. It does not enforce 5.3 at link time.
 Linux `libdb-dev` and Homebrew `berkeley-db@5` are the surveyed 5.3.

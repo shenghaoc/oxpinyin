@@ -183,7 +183,7 @@ fn an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array() {
 }
 
 /// The stored surrogate is converted to historical UTF-8, with phrase length 3.
-/// The journal bytes are held by oxpinyin-core's persistent journal witness.
+/// The journal bytes are held by oxpinyin's persistent journal witness.
 #[test]
 fn a_journal_surrogate_is_published_as_historical_utf8() {
     let scratch = tempfile::tempdir().unwrap();

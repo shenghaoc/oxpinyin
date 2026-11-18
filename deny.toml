@@ -27,9 +27,9 @@ highlight = "simplest-path"
 # Constitution §7 (no pinyin/IME crates as dependencies) stays a review
 # rule; a concrete ban lands here only when it needs mechanical teeth.
 deny = [
-  { crate = "cxx", wrappers = ["oxpinyin-core"] },
-  { crate = "cxx-build", wrappers = ["cxx", "oxpinyin-core"] },
-  { crate = "bindgen", wrappers = ["oxpinyin-core"] },
+  { crate = "cxx", wrappers = ["oxpinyin"] },
+  { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
+  { crate = "bindgen", wrappers = ["oxpinyin"] },
   # The zhuyin capi crate's edge is dev-only: its contract tests export a saved profile through libpinyin.
   { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-zhuyin-capi", "oxpinyin-repl"] },
   { crate = "oxpinyin-zhuyin-capi", wrappers = ["oxpinyin-repl"] },

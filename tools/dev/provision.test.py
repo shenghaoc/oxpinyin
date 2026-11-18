@@ -45,7 +45,7 @@ PROVISION_COMMAND = ('uv', 'run', '--managed-python', 'python', '-X', 'utf8', '-
 def copy_entrypoint_tree(root):
     """Copy the provisioning sources and their repository data dependencies."""
     shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
-    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin-core/Cargo.toml', 'justfile',
+    for name in ('.python-version', 'rust-toolchain.toml', 'crates/oxpinyin/Cargo.toml', 'justfile',
                  '.config/nextest.toml'):
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)

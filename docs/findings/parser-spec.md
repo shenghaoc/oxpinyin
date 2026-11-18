@@ -3,7 +3,7 @@
 Status: **reference**
 
 This SPEC states the full-pinyin behaviour at pin `074a2219`.
-The single-key parser is `FullPinyinParser::parse_one_key` in `crates/oxpinyin-core/src/parser.rs`.
+The single-key parser is `FullPinyinParser::parse_one_key` in `crates/oxpinyin/src/parser.rs`.
 The selected split is implemented by `SegmentGraph::fewest_keys` ([segment-graph.md](segment-graph.md)).
 
 ## Scope and inventory
@@ -60,10 +60,10 @@ Without `PINYIN_INCOMPLETE`, the pin admits no initial-only key.
 
 Each apostrophe propagates a parse step without adding a key (`:237-250`).
 This includes leading, repeated and trailing apostrophes.
-The C APIs' parsed length includes a trailing apostrophe run; `full_parsed_len` in `crates/oxpinyin-core/src/engine/session/offsets.rs` reproduces that rule.
+The C APIs' parsed length includes a trailing apostrophe run; `full_parsed_len` in `crates/oxpinyin/src/engine/session/offsets.rs` reproduces that rule.
 
 ## Verification
 
-`crates/oxpinyin-core/src/parser.rs` tests the single-key law.
-`crates/oxpinyin-core/src/graph/tests.rs` checks that the pin's selected paths and consumed lengths are admissible in the graph.
+`crates/oxpinyin/src/parser.rs` tests the single-key law.
+`crates/oxpinyin/src/graph/tests.rs` checks that the pin's selected paths and consumed lengths are admissible in the graph.
 The F-A fixture records selected splits, not every possible segmentation ([capture-fixtures.md](../testing/capture-fixtures.md)).

@@ -85,7 +85,7 @@ fn save_aborts_where_the_chunk_header_write_fails() {
     let staged = std::fs::metadata(run.user_dir.join("gb_char.dbin.tmp")).expect("staged log");
     assert_eq!(staged.len(), 4);
     let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    let newline = oxpinyin_core::input::TEXT_NEWLINE;
+    let newline = oxpinyin::input::TEXT_NEWLINE;
     assert!(
         conf.ends_with(&format!("open counter:1{newline}")),
         "{conf}"
@@ -120,7 +120,7 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
         |user| {
             let format = format!(
                 "database format:{}",
-                oxpinyin_core::user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::user::data::DEFAULT_STORE_DB_FORMAT
             );
             let system = conf_system(
                 user.parent().expect("scratch"),
@@ -145,7 +145,7 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
             let text = std::fs::read_to_string(&path).expect("user.conf");
             let format = format!(
                 "database format:{}",
-                oxpinyin_core::user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::user::data::DEFAULT_STORE_DB_FORMAT
             );
             std::fs::write(&path, text.replace(&format, "database format:LMDB"))
                 .expect("write user.conf");
@@ -206,7 +206,7 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     unsafe {
         pinyin_end_add_phrases(pinyin_begin_add_phrases(
             context,
-            oxpinyin_core::user::USER_DICTIONARY,
+            oxpinyin::user::USER_DICTIONARY,
         ))
     };
     assert!(unsafe { pinyin_save(context) });
@@ -246,7 +246,7 @@ fn directories_with_non_utf8_names_open() {
         scratch.join(OsStr::from_bytes(&name))
     };
     let system = named("oxpinyin-system-");
-    let user = named("oxpinyin-core-");
+    let user = named("oxpinyin-");
     let _ = std::fs::remove_file(&system);
     let _ = std::fs::remove_dir_all(&user);
     let _remove_fixture = RemoveFixture {

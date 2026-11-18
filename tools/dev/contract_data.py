@@ -149,7 +149,7 @@ def _fetch_locked(final, pin, entry):
 def default_cache(env=None):
     """The contract-data entry of the cache root.
 
-    crates/oxpinyin-core/tests/common/contract_data.rs reads the same directory."""
+    crates/oxpinyin/tests/common/contract_data.rs reads the same directory."""
     return cachedir.root(env) / 'contract-data'
 
 

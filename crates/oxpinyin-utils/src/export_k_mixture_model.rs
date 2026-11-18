@@ -8,7 +8,7 @@
 
 use std::ffi::{CString, OsString};
 
-use oxpinyin_core::input::tool::{self, OptionArg, OptionEntry, OptionValue, OutputStream};
+use oxpinyin::input::tool::{self, OptionArg, OptionEntry, OptionValue, OutputStream};
 
 /// `main` (`:112-155`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {

@@ -112,7 +112,7 @@ RUST_READS = (
 # The shipping-size job's path gate. `crates` over-selects the three crates
 # outside the capi closure; the gate must not need a Cargo toolchain.
 SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
-        "crates/oxpinyin-core/codegen/string_tables.rs", "tools/dev/packaging.py",
+        "crates/oxpinyin/codegen/string_tables.rs", "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "vcpkg-overlays", "triplets",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
@@ -120,19 +120,19 @@ SHIP = ("crates", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
 # compares, so a change to one selects the harness. The same test holds this list to the generator's.
 GENERATED_TABLES = (
-    "crates/oxpinyin-core/src/chewing_key_tables.rs",
-    "crates/oxpinyin-core/src/content_table_source.rs",
-    "crates/oxpinyin-core/src/tone_symbols.rs",
-    "crates/oxpinyin-core/src/table_data/double_pinyin.rs",
-    "crates/oxpinyin-core/src/table_data/full_pinyin_counts.rs",
-    "crates/oxpinyin-core/src/table_data/full_pinyin_indexes.rs",
-    "crates/oxpinyin-core/src/table_data/full_pinyin_syllables.rs",
-    "crates/oxpinyin-core/src/table_data/syllable_inventory.rs",
-    "crates/oxpinyin-core/src/table_data/tone_symbols.rs",
-    "crates/oxpinyin-core/src/table_data/zhuyin_indexes.rs",
-    "crates/oxpinyin-core/src/table_data/zhuyin_keyboards.rs",
-    "crates/oxpinyin-core/src/table_data/zhuyin_tones.rs",
-    "crates/oxpinyin-core/src/engine/session/split_tables.rs",
+    "crates/oxpinyin/src/chewing_key_tables.rs",
+    "crates/oxpinyin/src/content_table_source.rs",
+    "crates/oxpinyin/src/tone_symbols.rs",
+    "crates/oxpinyin/src/table_data/double_pinyin.rs",
+    "crates/oxpinyin/src/table_data/full_pinyin_counts.rs",
+    "crates/oxpinyin/src/table_data/full_pinyin_indexes.rs",
+    "crates/oxpinyin/src/table_data/full_pinyin_syllables.rs",
+    "crates/oxpinyin/src/table_data/syllable_inventory.rs",
+    "crates/oxpinyin/src/table_data/tone_symbols.rs",
+    "crates/oxpinyin/src/table_data/zhuyin_indexes.rs",
+    "crates/oxpinyin/src/table_data/zhuyin_keyboards.rs",
+    "crates/oxpinyin/src/table_data/zhuyin_tones.rs",
+    "crates/oxpinyin/src/engine/session/split_tables.rs",
 )
 CI_INPUTS = {
     # cargo fmt and the compile-only fuzz check read the fuzz workspace. The

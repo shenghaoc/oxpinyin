@@ -196,7 +196,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(build[:6], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}', 'test'])
         test = next(call[0] for call in tools.calls
                     if call[0][3:7] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run']
-                    and 'oxpinyin-core' in call[0])
+                    and 'oxpinyin' in call[0])
         self.assertEqual(test[7:], [*build[6:-2], '-E', 'test(/^store::/)'])
         self.assertEqual(tools.checks, [(Path('/fixture/test-binary'), 'subject')])
         self.assertIn('libtkrzw: 1 test binaries resolve it to ' + str(Path('/fixture/libtkrzw.so.1')), out)

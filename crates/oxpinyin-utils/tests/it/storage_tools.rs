@@ -186,7 +186,7 @@ mod frozen {
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
                  addon RESERVED NULL NULL NULL NOT_USED\n\
                  addon 1 source.table addon.bin NULL DICTIONARY\n",
-                    oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory
@@ -200,13 +200,13 @@ mod frozen {
                 .success()
                 .stdout("")
                 .stderr("");
-            let expected = oxpinyin_core::ChewingKey::from_pinyin("ni")
+            let expected = oxpinyin::ChewingKey::from_pinyin("ni")
                 .expect("ni")
                 .with_tone(3)
                 .to_packed()
                 .to_le_bytes();
             for name in ["gb_char.bin", "addon.bin"] {
-                let library = oxpinyin_core::user::data::phrase_library::PhraseLibrary::open(
+                let library = oxpinyin::user::data::phrase_library::PhraseLibrary::open(
                     &directory.path().join(name),
                 )
                 .expect("generated phrase library");
@@ -234,7 +234,7 @@ mod frozen {
                  source table format:pinyin\ndatabase format:{}\n\
                  default RESERVED NULL NULL NULL NOT_USED\n\
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n",
-                    oxpinyin_core::store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory
@@ -251,7 +251,7 @@ mod frozen {
                     "ChewingLargeTable2::load_text:den4\t扥\t16777217\t1\n\
                      FacadePhraseIndex::load_text:den4\t扥\n",
                 );
-            let library = oxpinyin_core::user::data::phrase_library::PhraseLibrary::open(
+            let library = oxpinyin::user::data::phrase_library::PhraseLibrary::open(
                 &directory.path().join("gb_char.bin"),
             )
             .expect("generated phrase library");

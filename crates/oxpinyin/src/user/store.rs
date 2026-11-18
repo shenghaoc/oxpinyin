@@ -1,0 +1,2706 @@
+//! The libpinyin session store: the user phrase index, the user bigram and
+//! the live system items of one `pinyin_init`.
+//!
+//! A user library's items live in an owned arena
+//! ([`crate::user::user_library::UserLibrary`], the pin's `SubPhraseIndex`), the
+//! user pinyin index and phrase table in their own tables, and a system
+//! library's changes in its live buffer ([`crate::user::system_items`]). The user
+//! bigram is held once, as the pin's own `SingleGram` values
+//! (`docs/findings/user-store.md` §5), in the pin's container
+//! ([`StoreInner::bigram_db`]), and every bigram operation runs the pin's
+//! `SingleGram` code over those bytes ([`crate::single_gram`]).
+//! The counts the decoder merges come back as a
+//! [`crate::model::UserCountDelta`]; the save cycle is the §4 `m_modified`
+//! gate and the persistence point behind `pinyin_save`.
+
+use rustc_hash::FxHashMap;
+use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::fmt;
+use std::rc::Rc;
+
+use crate::store::{DefaultUserBigramDb, StoreError, UserBigramDb};
+use crate::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single_gram};
+
+use crate::user::persistence::ChunkHeaderField;
+use crate::user::phrase::{
+    self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
+    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
+    phrase_index_library_index,
+};
+use crate::user::phrase_table;
+use crate::user::replay::UnigramAdd;
+use crate::user::seed;
+use crate::user::store_libpinyin::FiniGuard;
+
+#[path = "store_arena.rs"]
+mod arena;
+
+/// Token type — libpinyin's 32-bit `phrase_token_t`.
+pub type Token = u32;
+
+/// One §9 export row for a user phrase: the phrase text, one pronunciation's
+/// `'`-joined pinyin spelling, and that pronunciation's stored count.
+///
+/// This is the `(phrase, pinyin, count)` triple
+/// `pinyin_iterator_get_next_phrase` yields upstream
+/// (`docs/findings/user-store.md` §9).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportedPhrase {
+    /// Exact stored phrase words.
+    pub text: Vec<u32>,
+    /// One pronunciation, syllables joined by `'` (e.g. `ni'hao`).
+    pub pinyin: String,
+    /// The pronunciation's stored count.
+    pub count: u64,
+}
+
+/// `sentence_start` sentinel: the predecessor of the first phrase in a
+/// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
+pub const SENTENCE_START: Token = 1;
+
+/// Which seed rule an update applies.
+#[derive(Clone, Copy)]
+enum SeedPolicy {
+    /// Reselection-expansion rule (`pinyin_train`, §2).
+    Training,
+    /// Flat `INITIAL_SEED` (`pinyin_choose_predicted_candidate`, §2).
+    Predicted,
+}
+
+/// Errors from opening or updating the user store.
+#[derive(Debug, thiserror::Error)]
+pub enum UserStoreError {
+    /// The store file could not be opened (I/O error).
+    #[error("I/O error: {0}")]
+    Io(#[source] std::io::Error),
+    /// The storage backend reported an error.
+    #[error("store error: {0}")]
+    Store(#[source] StoreError),
+    /// A stored value could not be decoded (corrupt or incompatible).
+    #[error("stored value could not be decoded")]
+    Decode,
+    /// Phrase text is empty, too long, or its key count does not match its
+    /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
+    #[error("invalid phrase (empty, too long, or key count mismatch)")]
+    InvalidPhrase,
+    /// The libpinyin user-dir persistence failed (I/O, container, or a
+    /// byte stream that does not parse).
+    #[error("libpinyin user-dir persistence: {0}")]
+    Persistence(String),
+    /// `user.conf` names a database format upstream's mapper does not
+    /// know — the point `to_table_database_format_type` `abort()`s on
+    /// (`table_info.cpp:122-133`). Returned before anything is cleaned or
+    /// written; the C adapters abort.
+    #[error("user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)")]
+    UnknownDatabaseFormat,
+    /// A library chunk's `MemoryChunk::save` header write failed
+    /// (`memory_chunk.h:543`/`:547`) — the pin `assert`s and dies of
+    /// SIGABRT. The save stops there; the C adapters abort.
+    #[error(
+        "user chunk header write failed ({}; upstream asserts, \
+                 memory_chunk.h:543/547)",
+        .0.assert_expression()
+    )]
+    ChunkHeaderWrite(ChunkHeaderField),
+    /// A loaded system library's file, mapped again where the save's
+    /// library loop reaches it, is a directory whose header read the pin's
+    /// `MemoryChunk::mmap` asserts on (`pinyin.cpp:955`, `zhuyin.cpp:588`,
+    /// `memory_chunk.h:493`; register row 96). The save stopped there with
+    /// the earlier libraries' files written; the C adapters abort.
+    #[error(
+        "a system library is a directory whose chunk header cannot be read \
+                 (upstream asserts, memory_chunk.h:493)"
+    )]
+    LibraryChunkHeaderRead,
+    /// `MemoryChunk::mmap` refused a loaded system library's file where the
+    /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`;
+    /// register row 76). The save stopped at that library: the earlier
+    /// libraries' files stand as written, nothing later was written or
+    /// renamed, no marker was written, and the session stays dirty.
+    #[error("a system library's file cannot be mapped again for the save (upstream: mmap failed!)")]
+    SaveRemapFailed,
+    /// A bulk copy of the save reaches the pin's unsafe size
+    /// (`memory_chunk.h:95-98`; register row 112, #1514). The save stops at
+    /// that copy: the earlier files stay as written (libpinyin's staged
+    /// `.tmp` files, libzhuyin's completed renames), nothing later happens,
+    /// no marker is written, the session stays dirty and a later save retries.
+    #[error("a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)")]
+    SaveTooLarge,
+    /// A tkrzw or Berkeley DB record copy of a load or a save failed where
+    /// the pin's `copy_tkrzwdb` or `copy_bdb` asserts
+    /// (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`). The load or
+    /// save stopped there: no later rename and no marker. The C adapters
+    /// abort.
+    #[error("{}", StoreError::FatalCopy)]
+    FatalCopy,
+    /// The unigram add of an accepted predicted candidate overflowed its
+    /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
+    /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
+    /// returns `false` before it trains the bigram (`pinyin.cpp:2609-2612`).
+    #[error("unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)")]
+    UnigramTotalOverflow,
+    /// `pinyin_mask_out` / `zhuyin_mask_out` met a `user_pinyin_index.bin`
+    /// key past `MAX_PHRASE_LENGTH` syllables, or with no whole syllable
+    /// (an empty or one-byte key): the pin's user
+    /// `ChewingLargeTable2::mask_out` walks every record and its
+    /// `switch`'s `default: abort()` fires on the key
+    /// (`chewing_large_table2_bdb.cpp:529`). Returned before the mask
+    /// changes anything; the C adapters abort.
+    #[error(
+        "user pinyin index key past MAX_PHRASE_LENGTH syllables or without a whole \
+                 syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)"
+    )]
+    OverlongIndexKey,
+    /// A `user_bigram.db` key is not a four-byte `phrase_token_t`:
+    /// `Bigram::get_all_items` asserts `key.size == sizeof(phrase_token_t)`
+    /// (`ngram_bdb.cpp:199`), and the pin's `mask_out` and
+    /// `pinyin_begin_get_bigram_phrases` both drive that walk. Returned
+    /// where the pin's walk meets the key; the C adapters abort.
+    #[error("user bigram key is not a phrase_token_t (upstream aborts, ngram_bdb.cpp:199)")]
+    NonTokenUserBigramKey,
+    /// A `user_bigram.db` value is shorter than a `guint32` `total_freq`:
+    /// the pin's `get_total_freq` asserts on it (`memory_chunk.h:390`,
+    /// through `ngram.cpp:49`; register row 85). Returned where the pin's
+    /// walk reads that total; the C adapters abort on it.
+    #[error(
+        "user bigram value shorter than a guint32 total_freq (upstream asserts, \
+                 memory_chunk.h:390)"
+    )]
+    ShortUserBigramValue,
+    /// A `user_bigram.db` value has an incomplete eight-byte item after
+    /// its total: the pin's `cur != end` walks read past it
+    /// (`ngram.cpp:76-86`, `:190`, `:241`, `:261`; register rows 98 and
+    /// 100, class (b)). The mask, removal and predicted-training facades
+    /// refuse it with one warning.
+    #[error(
+        "user bigram value with a partial item tail (upstream reads past it, \
+                 ngram.cpp:76-86)"
+    )]
+    PartialUserBigramTail,
+    /// A `user_bigram.db` gram's `total_freq` is not covered by its items
+    /// and a mask removes every item, leaving a residual total:
+    /// `Bigram::mask_out` then asks `SingleGram::get_length`, whose assert
+    /// dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`). Returned before the
+    /// mask changes anything; the C adapters abort.
+    #[error("masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)")]
+    ResidualUserBigramGram,
+    /// A system library's user `.dbin` replay reached a pin assertion
+    /// ([`crate::user::JournalFault`]): at init's and a reload's `merge`, or at
+    /// `mask_out`'s `merge_with_mask`. The pin dies there; the C adapters
+    /// abort on it.
+    #[error("journal replay: {0}")]
+    Journal(#[source] crate::user::JournalFault),
+    /// Init's library loop died at a row ([`crate::user::LibraryLoopStop`]).
+    #[error("library loop: {0}")]
+    LibraryLoop(#[source] crate::user::LibraryLoopStop),
+    /// A training step's `set_freq` misses the item its `insert_freq` just
+    /// added: on an unsorted gram the second `lower_bound` can land past
+    /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
+    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`; register row
+    /// 85). Returned before anything is stored; the C adapters abort.
+    #[error(
+        "a training step's set_freq misses the item insert_freq added \
+                 (upstream asserts, phonetic_lookup.h:903)"
+    )]
+    TrainingSetFreqMiss,
+    /// A user reading cannot be removed from both pinyin index projections;
+    /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
+    #[error("user reading removal failed (upstream asserts, pinyin.cpp:3759)")]
+    UserReadingRemoval,
+    /// The open could not build the session once the system libraries
+    /// were handed to it: a loaded item's encoding or its placement, or
+    /// the user bigram's container. The
+    /// pin's counterparts die: an allocation that throws `std::bad_alloc`,
+    /// or the asserts of its in-memory loads (`ngram_bdb.cpp:51-52`,
+    /// `bdb_utils.h:61`, `tkrzwdb_utils.h:45`). The C adapters abort.
+    #[error(
+        "the session could not be built after the system libraries were handed \
+                 over (upstream dies): {0}"
+    )]
+    SessionSeed(String),
+    /// A training step would store its gram in the failed Berkeley DB user
+    /// bigram container (`crate::store::UserBigramDb::is_failed`): its
+    /// `store` answers false and the pin's
+    /// `check_result(m_user_bigram->store(last_token, user))` dies
+    /// (`phonetic_lookup.h:904`). Returned before anything is stored; the
+    /// C adapters abort.
+    #[error(
+        "a training step stores into the failed user bigram container \
+                 (upstream asserts, phonetic_lookup.h:904)"
+    )]
+    FailedUserBigramStore,
+}
+
+impl UserStoreError {
+    /// Whether this is the checked-read failure, the one read failure the
+    /// pin's `Bigram::load` does not answer with a NULL gram: Kyoto
+    /// Cabinet's body read after a good size check asserts
+    /// (`ngram_kyotodb.cpp:138` at 074a2219).
+    #[must_use]
+    pub(crate) const fn is_read_after_check(&self) -> bool {
+        matches!(self, Self::Store(StoreError::ReadAfterCheck))
+    }
+}
+
+impl From<StoreError> for UserStoreError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::Io(io) => Self::Io(io),
+            StoreError::FatalCopy => Self::FatalCopy,
+            other @ (StoreError::Backend(_)
+            | StoreError::ReadOnly
+            | StoreError::InvalidInput(_)
+            | StoreError::ReadAfterCheck
+            | StoreError::ShortArrayHeader) => Self::Store(other),
+        }
+    }
+}
+
+/// The user pinyin index projection of `syllables` — the DB key
+/// `add_index` would write for this reading: tone-zeroed complete keys, or
+/// initial-only keys when any syllable is incomplete
+/// (`compute_chewing_index` / `compute_incomplete_chewing_index`,
+/// `src/storage/pinyin_phrase3.h:160-178` at the pin).
+fn index_projection(syllables: &[SyllableKey]) -> Vec<u16> {
+    let incomplete = syllables
+        .iter()
+        .any(|key| key.completeness() == Completeness::Partial);
+    syllables
+        .iter()
+        .map(|key| {
+            let full = key.chewing_key();
+            if incomplete {
+                // `compute_incomplete_chewing_index` sets only
+                // `m_initial`, so a vowel-initial syllable and `ng`
+                // project to the zero initial
+                // (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
+                // key. Building the packed word directly keeps those
+                // zeros representable.
+                ChewingKey::new(full.initial, 0, 0, 0).to_packed()
+            } else {
+                full.with_tone(0).to_packed()
+            }
+        })
+        .collect()
+}
+
+/// [`ADD_PHRASE_UNIGRAM_FACTOR`] as `_add_phrase`'s `guint32`
+/// `unigram_factor` (`pinyin.cpp:522`).
+const ADD_PHRASE_UNIGRAM_FACTOR_U32: u32 = 3;
+const _: () = assert!(ADD_PHRASE_UNIGRAM_FACTOR_U32 as u64 == ADD_PHRASE_UNIGRAM_FACTOR);
+
+/// One imported reading: its dense keys, the same as packed `ChewingKey`
+/// words, and the count it adds.
+struct SystemReading<'a> {
+    packed: &'a [u16],
+    delta: u32,
+}
+
+/// `PhraseItem::add_pronunciation` (phrase_index.cpp:56-91) on a live system
+/// item: the overflow test uses the prefix total through the matching row, and
+/// `_add_phrase` ignores a refused increment and still returns true. An
+/// unmatched reading on an item holding 255 wraps the pin's `guint8` count to
+/// 0 (`:88`). Plan the change without touching the live item: a refused
+/// persistence write must leave it unchanged.
+#[derive(Clone, Copy)]
+enum SystemMerge {
+    Matched { position: usize, frequency: u32 },
+    Append,
+    Wrap,
+}
+
+fn plan_system_reading(
+    item: &crate::user::data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+) -> SystemMerge {
+    let mut total = 0_u32;
+    for (position, (stored, frequency)) in item.prons.iter().enumerate() {
+        total = total.wrapping_add(*frequency);
+        if stored.as_slice() == reading.packed {
+            let frequency = if reading.delta == 0 || total <= total.wrapping_add(reading.delta) {
+                frequency.wrapping_add(reading.delta)
+            } else {
+                *frequency
+            };
+            return SystemMerge::Matched {
+                position,
+                frequency,
+            };
+        }
+    }
+    if item.prons.len() == usize::from(u8::MAX) {
+        SystemMerge::Wrap
+    } else {
+        SystemMerge::Append
+    }
+}
+
+/// Applies one `PhraseItem::add_pronunciation` reading to a stored item,
+/// with the pin's `guint8` pronunciation-count wrap. The storage tools'
+/// text importer uses the same planning and application as the system
+/// import path; `true` means the count wrapped and the stored rows are the
+/// empty view.
+pub fn add_system_reading(
+    item: &mut crate::user::data::chunk_write::ChunkItem,
+    packed: &[u16],
+    delta: u32,
+) -> bool {
+    let reading = SystemReading { packed, delta };
+    let change = plan_system_reading(item, &reading);
+    apply_system_reading(item, &reading, change);
+    matches!(change, SystemMerge::Wrap)
+}
+
+fn apply_system_reading(
+    item: &mut crate::user::data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+    change: SystemMerge,
+) {
+    match change {
+        SystemMerge::Matched {
+            position,
+            frequency,
+        } => {
+            if let Some((_, current)) = item.prons.get_mut(position) {
+                *current = frequency;
+            }
+        }
+        SystemMerge::Append => item.prons.push((reading.packed.to_vec(), reading.delta)),
+        SystemMerge::Wrap => item.prons.clear(),
+    }
+}
+
+/// Check the encoder's shape conditions without allocating a serialized
+/// copy. Malformed internal items still take the encoder's original error
+/// path, including its error text. Wrapping deliberately discards old rows.
+fn validate_system_merge(
+    item: &crate::user::data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+    change: SystemMerge,
+) -> Result<(), StoreError> {
+    let length = item.phrase.len();
+    let wrapped = matches!(change, SystemMerge::Wrap);
+    let appended = matches!(change, SystemMerge::Append);
+    if length == 0
+        || length > usize::from(u8::MAX)
+        || (!wrapped
+            && (item.prons.len() + usize::from(appended) > usize::from(u8::MAX)
+                || item.prons.iter().any(|(keys, _)| keys.len() != length)
+                || (appended && reading.packed.len() != length)))
+    {
+        let mut candidate = item.clone();
+        apply_system_reading(&mut candidate, reading, change);
+        crate::user::data::chunk_write::encode_phrase_item(&candidate)
+            .map_err(|error| StoreError::Backend(error.to_string().into()))?;
+    }
+    Ok(())
+}
+
+// ── the user bigram's grams ───────────────────────────────────────
+
+/// The four operations `Bigram` runs on its container (`ngram_bdb.cpp`
+/// and its Kyoto Cabinet and tkrzw twins): `get_all_items`, `load`,
+/// `store`, `remove`, over the pin's own in-memory user bigram container,
+/// keyed by the four native-endian token bytes.
+pub(crate) struct ContainerGrams<'a>(pub(crate) &'a crate::store::DefaultUserBigramDb);
+
+impl ContainerGrams<'_> {
+    /// `Bigram::get_all_items`: every key in the container's walk order;
+    /// `None` for a key that is not a four-byte `phrase_token_t`.
+    fn keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
+        Ok(self
+            .0
+            .keys()?
+            .into_iter()
+            .map(|key| key.map(Token::from_le_bytes))
+            .collect())
+    }
+
+    /// `Bigram::load`: the raw gram under `prev`.
+    fn get(&self, prev: Token) -> Result<Option<Vec<u8>>, StoreError> {
+        container_gram(self.0, prev)
+    }
+
+    /// `Bigram::store`.
+    fn store(&self, prev: Token, gram: &[u8]) -> Result<(), StoreError> {
+        self.0.store(&prev.to_le_bytes(), gram)
+    }
+
+    /// `Bigram::remove`.
+    fn remove(&self, prev: Token) -> Result<(), StoreError> {
+        self.0.remove(&prev.to_le_bytes())
+    }
+}
+
+/// `Bigram::load` on the pin's container: the gram under `prev`, owned.
+fn container_gram(
+    container: &crate::store::DefaultUserBigramDb,
+    prev: Token,
+) -> Result<Option<Vec<u8>>, StoreError> {
+    let mut gram = Vec::new();
+    Ok(container
+        .get(&prev.to_le_bytes(), &mut gram)?
+        .then_some(gram))
+}
+
+/// `Bigram::mask_out(mask, value)` (`ngram_bdb.cpp:217-254`, synced with
+/// `ngram_kyotodb.cpp:198-235` and `ngram_tkrzwdb.cpp:174-211` at the pin
+/// `074a2219`): over the keys `get_all_items` already collected, so that a
+/// mask and its fault check share the pin's one container walk, a selected
+/// key is removed; any other gram is loaded and masked
+/// ([`single_gram::mask_out`]); one with nothing removed is left untouched,
+/// one left with no items is removed and any other is stored back.
+/// Answers whether a key remains. The faults the pin dies on are the
+/// caller's to refuse first ([`gram_mask_fault_over`]).
+fn mask_grams_over(
+    grams: &ContainerGrams<'_>,
+    keys: Vec<Option<Token>>,
+    mask: Token,
+    value: Token,
+) -> Result<bool, StoreError> {
+    let mut remaining = false;
+    for key in keys {
+        let Some(prev) = key else {
+            remaining = true;
+            continue;
+        };
+        if prev & mask == value {
+            grams.remove(prev)?;
+            continue;
+        }
+        let Some(mut gram) = grams.get(prev)? else {
+            continue;
+        };
+        if single_gram::mask_out(&mut gram, mask, value) == 0 {
+            remaining = true;
+            continue;
+        }
+        if single_gram::get_length(&gram) == 0 {
+            grams.remove(prev)?;
+        } else {
+            grams.store(prev, &gram)?;
+            remaining = true;
+        }
+    }
+    Ok(remaining)
+}
+
+/// The fault [`mask_grams_over`] would die on at the pin, in the pin's own
+/// order, or `None` when the walk completes, over keys `get_all_items`
+/// already collected: the faults are met in the same key order, after the
+/// same one walk, that the pin's `Bigram::mask_out` meets them.
+/// `get_all_items` asserts on a key that is not four bytes before any gram
+/// is loaded (`ngram_bdb.cpp:199`); then, per key the mask leaves to be
+/// loaded, `SingleGram::mask_out` asserts on a missing total
+/// (`memory_chunk.h:390`) and reads past a partial item (`ngram.cpp:86`),
+/// and a gram the mask empties with a total left over asserts in
+/// `get_length` (`ngram.cpp:70`, reached at `ngram_bdb.cpp:243`). The last
+/// is found by running the mask on a copy.
+fn gram_mask_fault_over(
+    grams: &ContainerGrams<'_>,
+    keys: &[Option<Token>],
+    mask: Token,
+    value: Token,
+) -> Result<Option<UserStoreError>, StoreError> {
+    if keys.iter().any(Option::is_none) {
+        return Ok(Some(UserStoreError::NonTokenUserBigramKey));
+    }
+    for &prev in keys.iter().flatten() {
+        if prev & mask == value {
+            continue;
+        }
+        let Some(mut gram) = grams.get(prev)? else {
+            continue;
+        };
+        if gram.len() < single_gram::TOTAL_LEN {
+            return Ok(Some(UserStoreError::ShortUserBigramValue));
+        }
+        if single_gram::has_partial_tail(&gram) {
+            return Ok(Some(UserStoreError::PartialUserBigramTail));
+        }
+        if single_gram::mask_out(&mut gram, mask, value) > 0
+            && single_gram::get_length(&gram) == 0
+            && single_gram::get_total_freq(&gram) != Some(0)
+        {
+            return Ok(Some(UserStoreError::ResidualUserBigramGram));
+        }
+    }
+    Ok(None)
+}
+
+/// A training step's gram (`phonetic_lookup.h:876-909` at the pin
+/// `074a2219`): `load`, or a fresh gram; `get_total_freq`; `get_freq`,
+/// with `insert_freq(token, 0)` and the initial seed on a miss and the
+/// expanded seed on a hit; then, unless the total would overflow,
+/// `set_total_freq` and `set_freq`. Answers the seed and the gram to
+/// store — `None` when the overflow guard skips the store.
+fn trained_gram(
+    row: Option<Vec<u8>>,
+    cur: Token,
+) -> Result<(u64, Option<Vec<u8>>), UserStoreError> {
+    let mut gram = row.unwrap_or_else(single_gram::new_gram);
+    let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
+    let (freq, seed) = match single_gram::get_freq(&gram, cur) {
+        Some(freq) => (freq, seed::training_seed(Some(u64::from(freq)))),
+        None => {
+            // A miss walks the same items `insert_freq` walks, so it never
+            // meets an equal token (`ngram.cpp:190-200`).
+            if !single_gram::insert_freq(&mut gram, cur, 0) {
+                return Err(UserStoreError::Decode);
+            }
+            (0, seed::INITIAL_SEED)
+        }
+    };
+    let seed32 = seed as u32;
+    if seed32 > 0 && total > total.wrapping_add(seed32) {
+        return Ok((seed, None));
+    }
+    single_gram::set_total_freq(&mut gram, total.wrapping_add(seed32));
+    if !single_gram::set_freq(&mut gram, cur, freq.wrapping_add(seed32)) {
+        // On an unsorted gram the second `lower_bound` can land past the
+        // item `insert_freq` just added; the pin's `check_result` dies
+        // (`phonetic_lookup.h:903`).
+        return Err(UserStoreError::TrainingSetFreqMiss);
+    }
+    Ok((seed, Some(gram)))
+}
+
+/// An accepted predicted candidate's gram (`pinyin.cpp:2622-2638` at the
+/// pin `074a2219`): `load`, or a fresh gram; `get_total_freq`; `get_freq`;
+/// `insert_freq(token, 69)` on a miss or `set_freq(freq + 69)` on a hit;
+/// `set_total_freq(total + 69)`. No overflow guard: both fields wrap.
+fn predicted_gram(row: Option<Vec<u8>>, cur: Token) -> Result<Vec<u8>, UserStoreError> {
+    let seed = seed::predicted_seed() as u32;
+    let mut gram = row.unwrap_or_else(single_gram::new_gram);
+    let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
+    let stored = match single_gram::get_freq(&gram, cur) {
+        None => single_gram::insert_freq(&mut gram, cur, seed),
+        Some(freq) => single_gram::set_freq(&mut gram, cur, freq.wrapping_add(seed)),
+    };
+    if !stored {
+        return Err(UserStoreError::Decode);
+    }
+    single_gram::set_total_freq(&mut gram, total.wrapping_add(seed));
+    Ok(gram)
+}
+
+/// The words a phrase writes: the stored form when the phrase carries one,
+/// else its outward words.
+fn phrase_words(phrase: &crate::PhraseText) -> Vec<u32> {
+    phrase
+        .stored_words()
+        .map_or_else(|| phrase.outward_words().collect(), <[u32]>::to_vec)
+}
+
+/// `_add_phrase`'s gate: a non-empty phrase shorter than the maximum with
+/// one key per word (074a2219 pinyin.cpp:620-627).
+fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
+    !words.is_empty() && words.len() < crate::user::MAX_PHRASE_LENGTH && words.len() == keys.len()
+}
+
+// ── UserStore ───────────────────────────────────────────────────
+
+/// Per library, how far the total the pin's sub-index holds lies from the
+/// one its items make, a wrapping `guint32` keyed by nibble: the
+/// difference a stored header or a `.dbin` replay left, until the next
+/// `compact` rebuilds the library's total from its items. An entry exists
+/// only for a non-zero difference.
+pub(crate) type Offsets = crate::user::LibraryTable<u32>;
+
+/// One session's state, owned by its [`UserStore`].
+pub struct StoreInner {
+    pub(crate) has_system_items: Cell<bool>,
+    pub(crate) system_items: RefCell<crate::user::system_items::SystemItems>,
+    /// Whether a journal REMOVE took out an item of a loaded system library:
+    /// `get_phrase_item` fails for it from then on (074a2219
+    /// `phrase_index.cpp:180-206`, `:219-236`), though the shipped chunk still
+    /// holds the item and the phrase table the token. The library's live
+    /// buffer is the record; this only gates the per-token check.
+    pub(crate) has_removed_system_items: Cell<bool>,
+    /// The user libraries' stored-total differences ([`Offsets`]).
+    pub(crate) offsets: RefCell<Offsets>,
+    pub(crate) dirty: Cell<bool>,
+    /// Revision observed by runtime sentence facts and n-best step rows.
+    pub(crate) write_generation: Cell<u64>,
+    /// First gate on the decode read path: `false` answers `count_delta` and
+    /// `unigram_delta` with zero from this one flag.
+    /// Recomputed at `open` and maintained only
+    /// by `UserStore::mark_committed_write`.
+    pub(crate) has_user_data: Cell<bool>,
+    /// The libpinyin session metadata (optional directory, system originals).
+    /// Transient sessions retain originals without a directory; others use the
+    /// pin's own file shapes (`open_libpinyin_checked`): `save()` exports the
+    /// session and writes the file set.
+    pub(crate) libpinyin: Rc<crate::user::store_libpinyin::Target>,
+    /// The pin's own in-memory user bigram container (`Bigram::m_db`
+    /// after `load_db`): the session's only copy of the user bigram, the
+    /// raw `SingleGram` values every bigram operation reads and writes, so
+    /// its walk order — the export's order and the saved file's layout —
+    /// is the pin's.
+    pub(crate) bigram_db: crate::store::DefaultUserBigramDb,
+    /// Whether [`Self::bigram_db`] is the failed Berkeley DB container
+    /// (`crate::store::UserBigramDb::is_failed`), recorded when it is
+    /// created: it never changes.
+    pub(crate) bigram_failed: bool,
+}
+
+/// The libpinyin session store: one per open, over the arena, the pin's
+/// user bigram container and the live system items. The user files are
+/// read and written with the compiled-in backend (tkrzw, Kyoto Cabinet or
+/// Berkeley DB, one per binary; see `oxpinyin`).
+///
+/// The context owns the store and lends it to each operation. System chunk
+/// originals belong to this owner; sessions and cursors cannot retain them.
+/// Public mutations require an exclusive borrow of this store.
+pub struct UserStore {
+    /// The facade fini's `user.conf` write: armed only on the handle a
+    /// libpinyin open returned ([`FiniGuard`]).
+    _fini: FiniGuard,
+    inner: StoreInner,
+    pub(crate) originals: crate::user::persistence::SystemOriginals,
+}
+
+/// Which pin abort or read-past a training step's store check met, with
+/// the predecessor whose gram the step loads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrainingFault {
+    /// The gram is too short for its total (`memory_chunk.h:390`).
+    ShortValue(Token),
+    /// The gram has a partial item tail (register row 100).
+    PartialTail(Token),
+    /// `set_freq` misses the item `insert_freq` added (`phonetic_lookup.h:903`).
+    SetFreqMiss(Token),
+    /// The step's `store` meets the failed user bigram container
+    /// (`phonetic_lookup.h:904`).
+    FailedUserBigramStore(Token),
+}
+
+/// One training call's replay: the grams its checked steps left, and the
+/// fault a failing check met.
+#[derive(Debug, Default)]
+pub struct TrainingCheck {
+    grams: FxHashMap<Token, Option<Vec<u8>>>,
+    fault: Option<TrainingFault>,
+}
+
+impl TrainingCheck {
+    /// The failure reached by this operation's checked steps.
+    #[must_use]
+    pub const fn fault(&self) -> Option<TrainingFault> {
+        self.fault
+    }
+}
+
+/// What `UserStore::check_mask_out` found fit to mask: the user bigram's
+/// keys from the one `get_all_items` walk, for `UserStore::apply_mask_out`.
+pub struct MaskCheck {
+    container_keys: Result<Vec<Option<Token>>, StoreError>,
+}
+
+impl UserStore {
+    /// Run the context's fini marker write once, while retaining its live data
+    /// for handles that outlive the public context (compatibility row 42).
+    pub fn finish(&mut self) {
+        self._fini.finish();
+    }
+
+    /// Crate-visible handle assembly for the libpinyin constructor
+    /// ([`crate::user::store_libpinyin`]), which runs in memory and arms
+    /// the fini guard of the open that raised the counter.
+    pub(crate) fn from_parts(
+        inner: StoreInner,
+        fini: FiniGuard,
+        originals: crate::user::persistence::SystemOriginals,
+    ) -> Self {
+        Self {
+            _fini: fini,
+            originals,
+            inner,
+        }
+    }
+}
+
+impl fmt::Debug for UserStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UserStore").finish_non_exhaustive()
+    }
+}
+
+impl UserStore {
+    /// Borrow the uniquely owned init baselines for a read operation.
+    pub const fn originals(&self) -> &crate::user::persistence::SystemOriginals {
+        &self.originals
+    }
+
+    /// Read system library `nibble`'s saved log once into `logs` and return
+    /// the header fault `mask_out`'s reload would reach in it (rows 91 and
+    /// 92), found without changing any state; `None` when it reaches none.
+    /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
+    pub(crate) fn read_mask_log(
+        &self,
+        logs: &mut crate::user::persistence::MaskLogs,
+        nibble: u8,
+        mask: Token,
+        value: Token,
+    ) -> Option<crate::user::JournalFault> {
+        let dir = self.inner.libpinyin.dir.as_deref()?;
+        crate::user::persistence::read_mask_log(
+            dir,
+            self.originals.layout(),
+            logs,
+            nibble,
+            mask,
+            value,
+        )
+    }
+
+    /// Borrow the init baselines exclusively for a library transition.
+    pub(crate) fn originals_mut(&mut self) -> &mut crate::user::persistence::SystemOriginals {
+        &mut self.originals
+    }
+
+    /// Borrows the session's offsets.
+    /// See the [double borrows convention](https://github.com/shenghaoc/oxpinyin/blob/main/docs/rust-conventions.md#double-borrows).
+    pub(crate) fn offsets(&self) -> Ref<'_, Offsets> {
+        self.inner.offsets.borrow()
+    }
+
+    /// Borrows the session's offsets for a change.
+    pub(crate) fn offsets_mut(&self) -> RefMut<'_, Offsets> {
+        self.inner.offsets.borrow_mut()
+    }
+
+    /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables,
+    /// as packed `ChewingKey` words — the pin's user `ChewingLargeTable2`
+    /// carries one DB key per reading, and any key past the table's
+    /// 16-syllable instantiation drives its `switch`'s `default: abort()`
+    /// sites.
+    #[must_use]
+    pub(crate) fn overlong_index_readings(&self) -> &[Vec<u16>] {
+        self.inner.libpinyin.overlong_index_keys.as_slice()
+    }
+
+    /// Whether `user_pinyin_index.bin` carried a key past
+    /// `MAX_PHRASE_LENGTH` syllables, or one with no whole syllable.
+    /// `pinyin_mask_out` / `zhuyin_mask_out` walk every record, so any such
+    /// key aborts the whole mask (`chewing_large_table2_bdb.cpp:529`).
+    #[must_use]
+    pub fn has_overlong_index_key(&self) -> bool {
+        !self.overlong_index_readings().is_empty()
+    }
+
+    /// The pin's in-memory user bigram container.
+    const fn container(&self) -> &DefaultUserBigramDb {
+        &self.inner.bigram_db
+    }
+
+    /// Whether the session's user bigram is the failed Berkeley DB container
+    /// (`crate::store::UserBigramDb::is_failed`), as recorded when it was
+    /// created. On a backend whose container cannot fail this is the
+    /// constant `false`.
+    #[inline]
+    fn user_bigram_failed(&self) -> bool {
+        <DefaultUserBigramDb as crate::store::UserBigramDb>::CAN_FAIL && self.inner.bigram_failed
+    }
+
+    /// `Bigram::load(prev)`: the raw gram stored under `prev` — one
+    /// point read of the pin's container. `None` when `prev` has
+    /// no gram.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the read fails.
+    pub fn bigram_row(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+        // Every gram write sets the flag and a mask recomputes it from the
+        // grams it leaves, so a store without user data holds no gram.
+        if !self.has_user_data() {
+            return Ok(None);
+        }
+        self.gram_in(prev)
+    }
+
+    /// [`Self::bigram_row`] without the user-data gate.
+    fn gram_in(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+        Ok(container_gram(self.container(), prev)?)
+    }
+
+    /// `Bigram::get_all_items`: every key in the container's walk order,
+    /// with `None` for a key that is not a four-byte `phrase_token_t`.
+    fn gram_keys(&self) -> Result<Vec<Option<Token>>, UserStoreError> {
+        Ok(ContainerGrams(self.container()).keys()?)
+    }
+
+    /// Store `value` raw under `token` in the session's container, as a
+    /// value the writer never produces, for the tests.
+    #[cfg(test)]
+    pub(crate) fn plant_raw_bigram(&self, token: Token, value: &[u8]) {
+        self.container()
+            .store(&token.to_le_bytes(), value)
+            .expect("plant raw value");
+        // A stored gram is user data, as after any gram write.
+        self.inner.has_user_data.set(true);
+    }
+
+    /// Whether the gram stored under `token` is shorter than a `guint32`
+    /// `total_freq` (`memory_chunk.h:390`). The predicted-candidate walk
+    /// loads only the resolved prefixes' own grams (`pinyin.cpp:2322-2330`),
+    /// training only its predecessors', while the export walk loads every
+    /// predecessor (`pinyin.cpp:889`); callers scope this live check to the
+    /// grams their pinned operation reaches.
+    #[must_use]
+    pub(crate) fn has_short_bigram_value_for(&self, token: Token) -> bool {
+        self.bigram_row(token)
+            .ok()
+            .flatten()
+            .is_some_and(|value| value.len() < single_gram::TOTAL_LEN)
+    }
+
+    /// Whether a `user_bigram.db` key is not a four-byte `phrase_token_t`.
+    /// The pin's `mask_out` and `pinyin_begin_get_bigram_phrases` both walk
+    /// the whole container through `get_all_items`, so any such key aborts
+    /// them (`ngram_bdb.cpp:199`). Read from the live container's keys.
+    #[must_use]
+    pub fn has_non_token_bigram_key(&self) -> bool {
+        self.gram_keys()
+            .is_ok_and(|keys| keys.iter().any(Option::is_none))
+    }
+
+    /// Whether `token`'s stored user-bigram value has a partial item
+    /// tail (register rows 98 and 100). The pin's `retrieve_all`
+    /// (`ngram.cpp:133-143`), `SingleGram::mask_out` (`ngram.cpp:86`) and
+    /// the training walks (`ngram.cpp:190`, `:241`, `:261`) all walk with
+    /// `cur != end` and read past that tail. Read from the live value, so
+    /// an in-session store or removal counts at once.
+    #[must_use]
+    pub(crate) fn has_oob_bigram_value_for(&self, token: Token) -> bool {
+        self.bigram_row(token)
+            .ok()
+            .flatten()
+            .is_some_and(|bytes| single_gram::has_partial_tail(&bytes))
+    }
+
+    /// The session container's `Bigram::get_all_items` walk
+    /// (`ngram_tkrzwdb.cpp:161-172` and its Kyoto Cabinet and Berkeley DB
+    /// twins at 074a2219). A mask takes it once and hands it to both its
+    /// fault check and its walk. The mask takes `&mut self`, so no other
+    /// handle's `set_bigram_count` adds a gram the walk missed.
+    fn container_keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
+        ContainerGrams(self.container()).keys()
+    }
+
+    /// [`Self::bigram_mask_fault`] over the container keys
+    /// [`Self::container_keys`] collected.
+    fn bigram_mask_fault_over(
+        &self,
+        keys: &Result<Vec<Option<Token>>, StoreError>,
+        mask: Token,
+        value: Token,
+    ) -> Option<UserStoreError> {
+        let Ok(keys) = keys else {
+            return None;
+        };
+        gram_mask_fault_over(&ContainerGrams(self.container()), keys, mask, value).unwrap_or(None)
+    }
+
+    /// Check a step using operation-owned bookkeeping while phrase storage is borrowed.
+    /// Replays earlier checked steps on copies of the grams without writing the store.
+    /// The check follows the pin's step order (`phonetic_lookup.h:876-909` at 074a2219).
+    ///
+    /// # Errors
+    /// Returns the store's read error or a short, partial, or malformed gram failure.
+    pub(crate) fn check_training_step_with(
+        &self,
+        check: &mut TrainingCheck,
+        prev: Token,
+        cur: Token,
+    ) -> Result<(), UserStoreError> {
+        // The failed container's `load` misses, so the step trains a fresh
+        // gram with no overflow, and its `store` answers false: the pin's
+        // `check_result` dies at this first trained step
+        // (`phonetic_lookup.h:876-904`).
+        if self.user_bigram_failed() {
+            check.fault = Some(TrainingFault::FailedUserBigramStore(prev));
+            return Err(UserStoreError::FailedUserBigramStore);
+        }
+        let row = match check.grams.get(&prev) {
+            Some(row) => row.clone(),
+            None => self.bigram_row(prev)?,
+        };
+        if let Some(gram) = row.as_deref() {
+            if gram.len() < single_gram::TOTAL_LEN {
+                check.fault = Some(TrainingFault::ShortValue(prev));
+                return Err(UserStoreError::ShortUserBigramValue);
+            }
+            if single_gram::has_partial_tail(gram) {
+                check.fault = Some(TrainingFault::PartialTail(prev));
+                return Err(UserStoreError::PartialUserBigramTail);
+            }
+        }
+        match trained_gram(row.clone(), cur) {
+            Ok((_, gram)) => {
+                check.grams.insert(prev, gram.or(row));
+                Ok(())
+            }
+            Err(UserStoreError::TrainingSetFreqMiss) => {
+                check.fault = Some(TrainingFault::SetFreqMiss(prev));
+                Err(UserStoreError::TrainingSetFreqMiss)
+            }
+            Err(
+                error @ (UserStoreError::Io(_)
+                | UserStoreError::Store(_)
+                | UserStoreError::Decode
+                | UserStoreError::InvalidPhrase
+                | UserStoreError::Persistence(_)
+                | UserStoreError::UnknownDatabaseFormat
+                | UserStoreError::ChunkHeaderWrite(_)
+                | UserStoreError::LibraryChunkHeaderRead
+                | UserStoreError::SaveRemapFailed
+                | UserStoreError::SaveTooLarge
+                | UserStoreError::UnigramTotalOverflow
+                | UserStoreError::OverlongIndexKey
+                | UserStoreError::NonTokenUserBigramKey
+                | UserStoreError::ShortUserBigramValue
+                | UserStoreError::PartialUserBigramTail
+                | UserStoreError::ResidualUserBigramGram
+                | UserStoreError::Journal(_)
+                | UserStoreError::LibraryLoop(_)
+                | UserStoreError::UserReadingRemoval
+                | UserStoreError::SessionSeed(_)
+                | UserStoreError::FailedUserBigramStore
+                | UserStoreError::FatalCopy),
+            ) => Err(error),
+        }
+    }
+
+    /// The pin's user-table `search_suggestion` gate
+    /// (`chewing_large_table2_bdb.cpp:282`): `true` when some reading past
+    /// `MAX_PHRASE_LENGTH` syllables strictly extends `syllables` in the
+    /// keyspace `add_index` writes. The pin's `DB_SET` probe first requires
+    /// the exact query key to exist (`:576-582`); only then does its
+    /// `DB_NEXT` walk reach an over-long extension and its `switch`'s
+    /// `default: abort()` die. A crafted index that carries the over-long
+    /// key but omits the exact prefix row walks nothing, so the gate must
+    /// consult the raw key set too. The engine surfaces the pin's abort as
+    /// an error instead.
+    #[must_use]
+    pub(crate) fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        let projection = index_projection(syllables);
+        let target = &self.inner.libpinyin;
+        let projection_bytes: Vec<u8> = projection
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        if !target.phrases().index.contains_raw_key(&projection_bytes) {
+            return false;
+        }
+        target
+            .overlong_index_keys
+            .iter()
+            .any(|reading| reading.len() > projection.len() && reading.starts_with(&projection))
+    }
+
+    fn write_generation(&self) -> u64 {
+        self.inner.write_generation.get()
+    }
+
+    fn has_user_data(&self) -> bool {
+        self.inner.has_user_data.get()
+    }
+
+    /// The gate in front of the count reads, as the session holds it.
+    #[cfg(test)]
+    pub(crate) fn gate_for_test(&self) -> bool {
+        self.has_user_data()
+    }
+
+    /// Sets the decode gate.
+    #[cfg(test)]
+    pub(crate) fn force_gate_for_test(&self, open: bool) {
+        self.inner.has_user_data.set(open);
+    }
+
+    /// Invalidate cached reads after a committed user-data write.
+    ///
+    /// Every caller's entry point takes `&mut self`, so no reader observes
+    /// post-commit rows against a pre-commit generation, or the reverse.
+    fn mark_committed_write(&self, has_user_data: bool) {
+        self.inner.has_user_data.set(has_user_data);
+        self.advance_write_generation();
+    }
+
+    fn advance_write_generation(&self) {
+        self.inner
+            .write_generation
+            .set(self.inner.write_generation.get().wrapping_add(1));
+    }
+
+    /// A search of the user pinyin table for the query `keys` makes
+    /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
+    /// into the length's table entry, which the next `mask_out` walk starts
+    /// from (#785). Read that record from the canonical table.
+    pub(crate) fn note_pinyin_search(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
+        if !crate::user::user_index::ENTRY_PER_LENGTH {
+            return;
+        }
+        let keys = keys();
+        self.note_pinyin_search_keys(&keys);
+    }
+
+    /// Record an exact search using keys already built for lookup.
+    pub(crate) fn note_pinyin_search_keys(&self, keys: &[ChewingKey]) {
+        if crate::user::user_index::ENTRY_PER_LENGTH {
+            self.inner.libpinyin.phrases_mut().index.note_search(keys);
+        }
+    }
+
+    /// A `search_suggestion` of the user pinyin table for the prefix `keys`
+    /// makes (#785): every longer key it visits empties its length's entry.
+    pub(crate) fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
+        if !crate::user::user_index::ENTRY_PER_LENGTH {
+            return;
+        }
+        let keys = keys();
+        self.inner
+            .libpinyin
+            .phrases_mut()
+            .index
+            .note_suggestion(&keys);
+    }
+
+    /// `SingleGram::get_freq(cur)` on `prev`'s raw gram — the first match
+    /// walking from `lower_bound` (`ngram.cpp:231-250`); `0` if absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
+        Ok(self
+            .bigram_row(prev)?
+            .and_then(|gram| single_gram::get_freq(&gram, cur))
+            .map_or(0, u64::from))
+    }
+
+    /// `SingleGram::get_total_freq` on `prev`'s raw gram; `0` if none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
+        Ok(self
+            .bigram_row(prev)?
+            .and_then(|gram| single_gram::get_total_freq(&gram))
+            .map_or(0, u64::from))
+    }
+
+    /// Overwrite the raw `(prev -> cur)` user-bigram count, a test hook
+    /// with no pin counterpart: the first match walking from `lower_bound`
+    /// is set, or the item inserted; the total moves by the difference,
+    /// `min(total − old + new, u32::MAX)`; the count saturates at
+    /// `u32::MAX`; a value too short for a total is replaced by a fresh
+    /// gram.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the gram cannot be written.
+    pub fn set_bigram_count(
+        &mut self,
+        prev: Token,
+        cur: Token,
+        count: u64,
+    ) -> Result<(), UserStoreError> {
+        let mut gram = self
+            .gram_in(prev)?
+            .filter(|gram| gram.len() >= single_gram::TOTAL_LEN)
+            .unwrap_or_else(single_gram::new_gram);
+        let count32 = u32::try_from(count).unwrap_or(u32::MAX);
+        let total = single_gram::get_total_freq(&gram).unwrap_or(0);
+        let old = single_gram::get_freq(&gram, cur);
+        let stored = match old {
+            Some(_) => single_gram::set_freq(&mut gram, cur, count32),
+            None => single_gram::insert_freq(&mut gram, cur, count32),
+        };
+        if !stored {
+            return Err(UserStoreError::Decode);
+        }
+        let new_total = u64::from(total)
+            .saturating_sub(u64::from(old.unwrap_or(0)))
+            .saturating_add(u64::from(count32))
+            .min(u64::from(u32::MAX));
+        single_gram::set_total_freq(&mut gram, new_total as u32);
+        self.store_gram(prev, &gram)?;
+        self.mark_committed_write(true);
+        Ok(())
+    }
+
+    /// `Bigram::store(prev, gram)` on the pin's container.
+    fn store_gram(&self, prev: Token, gram: &[u8]) -> Result<(), UserStoreError> {
+        self.container().store(&prev.to_le_bytes(), gram)?;
+        Ok(())
+    }
+
+    /// Accumulated phrase-index unigram delta for `token`; `0` if none: a
+    /// user library item's count, and `0` for a system item, whose count is
+    /// its live field ([`Self::system_unigram`]), which the model prices;
+    /// the session keeps no shipped count to take a difference from.
+    #[must_use]
+    pub fn unigram_delta(&self, token: Token) -> u64 {
+        self.with_user_item(token, |item| u64::from(item.unigram()))
+            .unwrap_or(0)
+    }
+
+    /// A user item's unigram frequency, or `None` when the item is absent. A
+    /// present zero count stays `Some(0)`. The existence check and the count
+    /// read happen under one arena borrow, as the pin reads one item
+    /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
+    /// applies library visibility.
+    #[must_use]
+    pub(crate) fn user_unigram_frequency(&self, token: Token) -> Option<u64> {
+        self.with_user_item(token, |item| u64::from(item.unigram()))
+    }
+
+    /// The live `guint32` unigram of the system item behind `token`
+    /// (`PhraseItem::get_unigram_frequency`), where the session holds the
+    /// library's state: an arena item's, a decoded item's, the library's live
+    /// buffer's, or the original's before any write. `None` for a removed item,
+    /// a library with no original or an item nothing holds.
+    #[must_use]
+    pub fn system_unigram(&self, token: Token) -> Option<u32> {
+        let original = self.originals.get(&phrase_index_library_index(token))?;
+        if self.system_item_removed(token) {
+            return None;
+        }
+        if let Some(count) = self.with_user_item(token, |item| item.unigram()) {
+            return Some(count);
+        }
+        self.inner
+            .system_items
+            .borrow()
+            .unigram(token, Some(original))
+    }
+
+    /// The unigram field of the item the pin's `get_phrase_item` reads for
+    /// `token`: the live system item's, or a `USER_FILE` library's own user
+    /// item (`Some(0)` for a readable zero), and `None` when the read fails
+    /// (`ERROR_NO_ITEM`).
+    fn item_unigram(&self, token: Token) -> Option<u32> {
+        self.system_unigram(token).or_else(|| {
+            (!self.is_system_library(phrase_index_library_index(token)))
+                .then(|| self.with_user_item(token, |item| item.unigram()))
+                .flatten()
+        })
+    }
+
+    /// Whether the session layout names a library as a system chunk.
+    #[must_use]
+    pub(crate) fn is_system_library(&self, library: u8) -> bool {
+        self.originals.get(&library).is_some()
+            || self
+                .originals
+                .layout()
+                .system_logs()
+                .iter()
+                .any(|(index, _)| *index == library)
+    }
+
+    /// Apply the exported unigram increment to a loaded system library, as
+    /// `FacadePhraseIndex::add_unigram_frequency` does (074a2219
+    /// `phrase_index.h:628-635`, `phrase_index.cpp:150-176`): the facade total
+    /// takes `delta` first, whatever the sub-index then answers, and the
+    /// sub-index takes it only when it holds the item and its `guint32` total
+    /// can. The caller checks library visibility. This does not mark the
+    /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
+    pub fn add_system_unigram_frequency(&mut self, token: Token, delta: u32) -> bool {
+        self.add_unigram_outcome(token, delta).is_accepted()
+    }
+
+    /// Apply a unigram increment to the default phrase index. A loaded
+    /// sub-index receives the update in its live item, and an absent
+    /// sub-index leaves the facade total alone (074a2219
+    /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
+    /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
+    #[must_use]
+    pub fn add_unigram_outcome(&mut self, token: Token, delta: u32) -> UnigramAdd {
+        let library = phrase_index_library_index(token);
+        if self.originals.get(&library).is_none() && !self.has_user_library(library) {
+            return UnigramAdd::Missing;
+        }
+        let (outcome, has_sub_index) = self.arena_add_unigram_outcome(token, delta);
+        // Even a missing item or refused increment can change the facade total.
+        if has_sub_index && delta != 0 {
+            self.advance_write_generation();
+        }
+        outcome
+    }
+
+    /// What the user side adds to the facade's unigram total: everything of
+    /// `FacadePhraseIndex::m_total_freq` beyond the system libraries'
+    /// sub-index totals (the user libraries' totals and every delta a
+    /// sub-index did not take). `0` for an empty store.
+    #[must_use]
+    pub fn unigram_total(&self) -> u64 {
+        self.inner.system_items.borrow().facade_extra()
+    }
+
+    /// What a session's facade total holds beyond the stored totals of the
+    /// visible system libraries: [`Self::unigram_total`] plus how far each
+    /// visible library's live sub-index total lies from its original's, as a
+    /// wrapping `guint32` the model adds to those stored totals.
+    #[must_use]
+    pub(crate) fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
+        let items = self.inner.system_items.borrow();
+        let mut extra = items.facade_extra();
+        for (&library, original) in self.originals.iter() {
+            if !visible(library) {
+                continue;
+            }
+            let live = items
+                .library_total(library, Some(original))
+                .unwrap_or(original.total);
+            extra = extra.wrapping_add(u64::from(live.wrapping_sub(original.total)));
+        }
+        extra
+    }
+
+    /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
+    /// every library's total is rebuilt from its items, so none carries a
+    /// stored total's difference any more. The facade's total keeps it.
+    /// The pin compacts in `pinyin_save` once it has something to write,
+    /// at the end of an import and at the end of a mask_out
+    /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
+    /// `:829`).
+    pub fn compact_libraries(&mut self) {
+        let target = Rc::clone(&self.inner.libpinyin);
+        // Each system library's total becomes the sum of its live readable
+        // items; the facade total keeps what the libraries held, so the
+        // difference moves to the facade's extra.
+        let mut rebased = Vec::new();
+        {
+            let mut items = self.inner.system_items.borrow_mut();
+            for (&library, original) in self.originals.iter() {
+                // An unloaded library has no sub-index to compact: the pin's
+                // loop skips it (`phrase_index.cpp:651-652`) and its total
+                // stays as the unload left it.
+                if items.lacks_sub_index(library, original) {
+                    continue;
+                }
+                // The library adds its live total less its original total
+                // to the facade. A library whose layout `SubPhraseIndex::load`
+                // refused has a local total the facade never took (074a2219
+                // `phrase_index.cpp:242-246`), and `compact_layout_failed`,
+                // which every caller runs first (`pinyin.cpp:657`, `:1139`,
+                // `:1294`), sets its mapped total to zero. Its original total
+                // follows that mapped total, so an unload takes out the
+                // compacted local total (`phrase_index.cpp:261-269`). The
+                // pin's compact leaves the facade total alone
+                // (`phrase_index.cpp:648-675`), so the extra takes the change
+                // of the library's share.
+                let current = original.mapped.map_or(
+                    original.total,
+                    crate::user::data::phrase_library::PhraseLibrary::total_freq,
+                );
+                let old = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                let new = items.compacted_total(library, original);
+                items.set_library_total(library, new);
+                let share = old.wrapping_sub(original.total);
+                items.add_facade_extra(u64::from(share.wrapping_sub(new.wrapping_sub(current))));
+                if current != original.total {
+                    rebased.push((library, current));
+                }
+                // The compacted sub-index holds one body per slot.
+                items.unshare_bodies(library, original);
+            }
+        }
+        for (library, total) in rebased {
+            self.originals.set_total(library, total);
+        }
+        let mut offsets = self.offsets_mut();
+        offsets.clear();
+        for library in target.phrases_mut().libraries.values_mut() {
+            library.compact();
+        }
+    }
+
+    /// The §5 overlay for scoring `token` after `prev`, read between two commits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub(crate) fn count_delta(
+        &self,
+        prev: Option<Token>,
+        token: Token,
+    ) -> Result<UserCountDelta, UserStoreError> {
+        // Load the user gram for this step (pinyin_lookup2.cpp:369).
+        // The pin merges the user gram whenever one is stored, item-less
+        // ones included (`merge_single_gram`, `ngram.cpp:298-306`).
+        let (bigram_count, bigram_total) = match prev {
+            Some(prev) => self.gram_in(prev)?.as_deref().map_or((0, 0), |gram| {
+                (
+                    single_gram::get_freq(gram, token).map_or(0, u64::from),
+                    single_gram::get_total_freq(gram).map_or(0, u64::from),
+                )
+            }),
+            _ => (0, 0),
+        };
+        // The session holds no unigram rows: a user item's count is its
+        // arena field, a system item's frequency its live field, and the
+        // facade total's user side one scalar.
+        Ok(UserCountDelta {
+            bigram_count,
+            bigram_total,
+            unigram_delta: self.unigram_delta(token),
+            unigram_total_delta: self.unigram_total(),
+            unigram_live: self.item_unigram(token),
+        })
+    }
+
+    /// Record a training selection of `cur` after `last` (the `pinyin_train`
+    /// path, §2). Returns the seed applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the observation cannot be committed,
+    /// [`UserStoreError::ShortUserBigramValue`] when `last`'s stored
+    /// value is too short for its total (register row 85, the pin's abort),
+    /// or [`UserStoreError::PartialUserBigramTail`] when it has a partial
+    /// item tail (register row 100); nothing changes then.
+    pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
+        let seed = self.update(last, cur, SeedPolicy::Training)?;
+        self.inner.dirty.set(true);
+        Ok(seed)
+    }
+
+    /// Pronunciation half of train_result3 (074a2219 phonetic_lookup.h:925-927).
+    pub(crate) fn train_pronunciations(
+        &mut self,
+        token: Token,
+        readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+        seed: u64,
+    ) -> Result<(), UserStoreError> {
+        self.arena_train(token, readings, seed as u32);
+        Ok(())
+    }
+
+    /// Record an accepted *predicted* candidate `cur` after `last` (the
+    /// `pinyin_choose_predicted_candidate` path, §2). Returns the seed
+    /// applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the observation cannot be committed.
+    pub fn observe_predicted(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
+        self.update(last, cur, SeedPolicy::Predicted)
+    }
+
+    /// Record an accepted predicted prefix candidate, training only its
+    /// unigram (`074a2219 pinyin.cpp:2607-2616`).
+    ///
+    /// Returns the flat predicted seed (69); the unigram increment is that
+    /// seed times seven (483). The C facade uses only whether this succeeds.
+    /// No bigram is written and the modified/save gate is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError::UnigramTotalOverflow`] if the library total
+    /// cannot accept 483. The facade-total increment is retained even on
+    /// refusal, as at the pin. Other store failures return [`UserStoreError`].
+    pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
+        let seed = seed::predicted_seed();
+        let delta = seed::unigram_delta(seed) as u32;
+        let accepted = self.arena_add_unigram(cur, delta);
+        self.mark_committed_write(true);
+        if !accepted {
+            return Err(UserStoreError::UnigramTotalOverflow);
+        }
+        Ok(seed)
+    }
+
+    /// One training or predicted-selection step on `last`'s gram and
+    /// `cur`'s unigram: the pin's sequences over the raw gram
+    /// ([`trained_gram`], [`predicted_gram`]), the unigram by `seed * 7`.
+    fn update(
+        &mut self,
+        last: Token,
+        cur: Token,
+        policy: SeedPolicy,
+    ) -> Result<u64, UserStoreError> {
+        // #lizard forgives(cyclomatic_complexity): the training and
+        // predicted-selection policies meet at four shared steps with a
+        // different failure sequence at each; a split by policy duplicates
+        // the steps, and a split by step hides which policy fails where.
+        let row = self.gram_in(last)?;
+        // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
+        // `set_freq` walks read past a partial item (`ngram.cpp:190`,
+        // `:241`, `:261`); refused before anything changes.
+        if row.as_deref().is_some_and(single_gram::has_partial_tail) {
+            return Err(UserStoreError::PartialUserBigramTail);
+        }
+        // Register row 85: the pin asserts on a total it cannot read
+        // (`memory_chunk.h:390`). Training reads it first
+        // (`phonetic_lookup.h:884`); an accepted predicted candidate reads it
+        // after its unigram add, whose overflow returns `false` before the
+        // bigram is loaded (`pinyin.cpp:2609-2630`). The add is in memory
+        // and dies with the pin.
+        if row
+            .as_deref()
+            .is_some_and(|gram| gram.len() < single_gram::TOTAL_LEN)
+        {
+            if matches!(policy, SeedPolicy::Predicted) {
+                let delta =
+                    u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
+                let accepted = self.arena_add_unigram(cur, delta);
+                self.mark_committed_write(true);
+                if !accepted {
+                    return Err(UserStoreError::UnigramTotalOverflow);
+                }
+            }
+            return Err(UserStoreError::ShortUserBigramValue);
+        }
+        let (seed, gram) = match policy {
+            SeedPolicy::Training => trained_gram(row, cur)?,
+            SeedPolicy::Predicted => (seed::predicted_seed(), Some(predicted_gram(row, cur)?)),
+        };
+        // `seed * unigram_factor` in `guint32`; the seeds are small.
+        let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
+        let accepted = match policy {
+            // The unigram add comes first and its overflow ends the call
+            // before any bigram is trained (`pinyin.cpp:2609-2612`); the
+            // facade total has already taken the delta.
+            SeedPolicy::Predicted => self.arena_add_unigram(cur, delta),
+            // `train_result3` ignores the sub-index's refusal
+            // (`phonetic_lookup.h:928-929`): the item stops growing once its
+            // library's `guint32` total would overflow.
+            SeedPolicy::Training => {
+                self.arena_add_unigram(cur, delta);
+                true
+            }
+        };
+        // `m_user_bigram->store(last_token, user)` (`phonetic_lookup.h:904`,
+        // `pinyin.cpp:2638`): one store of the predecessor's gram, skipped
+        // by training's overflow guard.
+        let stored = if accepted && let Some(gram) = &gram {
+            self.store_gram(last, gram)
+        } else {
+            Ok(())
+        };
+        self.mark_committed_write(true);
+        match stored {
+            Ok(()) => {}
+            // The failed container's `store` answers false.
+            // `pinyin_choose_predicted_candidate` ignores that answer
+            // (`pinyin.cpp:2638`); training's `check_result` dies on it
+            // (`phonetic_lookup.h:904`), which its step check reports first.
+            Err(_) if self.user_bigram_failed() => {
+                if matches!(policy, SeedPolicy::Training) {
+                    return Err(UserStoreError::FailedUserBigramStore);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        if !accepted {
+            return Err(UserStoreError::UnigramTotalOverflow);
+        }
+        Ok(seed)
+    }
+
+    /// Add a user phrase under [`crate::user::USER_DICTIONARY`] (`_add_phrase`, §3.2).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be added.
+    pub fn add_phrase(
+        &mut self,
+        phrase: &crate::PhraseText,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        self.add_phrase_in(USER_DICTIONARY, phrase, keys, count)
+    }
+
+    /// Whether `table.conf` gives sub-index `library` a `USER_FILE` row
+    /// with a file. Addon promotion can create a live sub-index without a
+    /// file. A store without a system `table.conf` keeps the stock layout.
+    #[must_use]
+    pub(crate) fn has_user_library(&self, library: u8) -> bool {
+        self.originals.layout().has_user_library(library)
+    }
+
+    /// Borrows the session's canonical tables.
+    #[must_use]
+    pub fn lookup(&self) -> crate::user::UserLookup<'_> {
+        crate::user::UserLookup::session(&self.inner.libpinyin.phrases, &self.inner.system_items)
+    }
+
+    /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be added.
+    pub fn add_phrase_in(
+        &mut self,
+        library: u8,
+        phrase: &crate::PhraseText,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        let words = phrase_words(phrase);
+        if !self.has_user_library(library) || !phrase_fits_keys(&words, keys) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        // `_add_phrase`'s `count` reaches the item as a `guint32` delta
+        // (`add_pronunciation(keys, count)`, `pinyin.cpp:579`, `:603`): the
+        // C ABI hands its `gint`'s bit pattern over; a wider caller value
+        // saturates.
+        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        self.arena_add_phrase(library, &words, keys, delta, None, 1)
+    }
+
+    /// `FacadePhraseIndex::get_range(ADDON_DICTIONARY, range)`'s
+    /// `m_range_end` (`pinyin.cpp:2541-2542`, `phrase_index.cpp:608-622` at
+    /// 074a2219): the end of sub-index 5's range, masked into the library.
+    /// `None` is `ERROR_NO_SUB_PHRASE_INDEX`: `table.conf` gives library 5
+    /// no row, so the pin has no sub-index there and writes nothing to the
+    /// range. An empty sub-index answers slot 1 (`phrase_index.cpp:628-633`).
+    #[must_use]
+    pub fn addon_promotion_range_end(&self) -> Option<Token> {
+        if let Some(original) = self.originals.get(&ADDON_DICTIONARY) {
+            let items = self.inner.system_items.borrow();
+            return Some(phrase::phrase_index_make_token(
+                ADDON_DICTIONARY,
+                items.range_end(ADDON_DICTIONARY, original),
+            ));
+        }
+        let phrases = self.inner.libpinyin.phrases();
+        let arena = phrases.libraries.get(&ADDON_DICTIONARY);
+        if arena.is_none()
+            && !self.has_user_library(ADDON_DICTIONARY)
+            && !self.is_system_library(ADDON_DICTIONARY)
+        {
+            return None;
+        }
+        let end = arena.map_or(1, crate::user::user_library::UserLibrary::token_end);
+        Some(phrase::phrase_index_make_token(ADDON_DICTIONARY, end))
+    }
+
+    /// Copy a chosen addon phrase item into the default facade under `token`
+    /// (`pinyin.cpp:2547-2558` at 074a2219): the pinyin index gets one record
+    /// per stored reading with its packed keys as stored, tones included, the
+    /// phrase table gets the stored words, and `add_phrase_item` puts the
+    /// item's bytes in the sub-index the token's own library bits name, which
+    /// it makes when it is missing (`phrase_index.h:663-671`). The caller
+    /// read `token` from the range, [`Self::addon_promotion_range_end`].
+    ///
+    /// `item` is the addon item's wire bytes (`phrase_index.cpp:33-43`). An
+    /// item with no reading skips the index loop and is still written.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError::InvalidPhrase`] when `item` is not a whole
+    /// item or its length is past `MAX_PHRASE_LENGTH`: the pin copies words
+    /// and readings into arrays of that size (`pinyin.cpp:2548`, `:2555`),
+    /// so a longer item is undefined there. Returns another
+    /// [`UserStoreError`] when the promotion cannot be written.
+    pub fn promote_addon_phrase(
+        &mut self,
+        token: Token,
+        item: &[u8],
+    ) -> Result<(), UserStoreError> {
+        let view = crate::user::data::phrase_library::PhraseItemView::from_bytes(item)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        if view.phrase_length() > crate::user::MAX_PHRASE_LENGTH {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        self.arena_promote(token, &view)
+    }
+
+    /// Read the stored count without decoding text or keys.
+    #[must_use]
+    pub(crate) fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
+        self.inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .get(&phrase_index_library_index(token))
+            .and_then(|library| library.pronunciation_count(token & PHRASE_MASK))
+            .or_else(|| self.with_appended_item(token, |item| item.n_pronunciations() as u32))
+    }
+
+    /// Whether this store owns the phrase, without materializing its fields.
+    #[must_use]
+    pub(crate) fn phrase_exists(&self, token: Token) -> bool {
+        self.with_user_item(token, |_| ()).is_some()
+    }
+
+    /// The stored word count without copying or decoding the phrase text.
+    #[must_use]
+    pub fn phrase_length(&self, token: Token) -> Option<usize> {
+        self.with_user_item(token, |item| item.phrase_length())
+    }
+
+    /// One reading's stored key bytes, borrowed from a session-arena item.
+    ///
+    /// `read` runs while the item view is live and receives the item's stored
+    /// length and the reading's packed little-endian words, or `None` when
+    /// the item has no such reading. `None` is returned when no session item
+    /// backs `token`. A session item hands out its packed words verbatim,
+    /// whether or not they name a syllable, and the token getters copy them
+    /// once into the caller's array, as the pin's `get_nth_pronunciation`
+    /// does (074a2219 `phrase_index.cpp:33-50`).
+    pub(crate) fn with_nth_pronunciation_words<R>(
+        &self,
+        token: Token,
+        nth: usize,
+        read: impl FnOnce(usize, Option<&[u8]>) -> R,
+    ) -> Option<R> {
+        self.with_user_item(token, |item| {
+            read(
+                item.phrase_length(),
+                item.pronunciation(nth).map(|reading| reading.keys),
+            )
+        })
+    }
+
+    /// Phrase text and pronunciations for `token`, if this store owns it.
+    #[must_use]
+    pub fn phrase(&self, token: Token) -> Option<UserPhrase> {
+        let phrases = self.inner.libpinyin.phrases();
+        match phrases.item(token) {
+            Some(item) => Some(phrases.phrase(token, item)),
+            None => self.with_appended_item(token, |item| phrases.phrase(token, item)),
+        }
+    }
+
+    /// Token already allocated for `phrase` in the user sub-index, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
+        self.token_for_phrase_in(USER_DICTIONARY, phrase)
+    }
+
+    /// Token already allocated for `phrase` in `library`, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn token_for_phrase_in(
+        &self,
+        library: u8,
+        phrase: &str,
+    ) -> Result<Option<Token>, UserStoreError> {
+        Ok(self
+            .phrase_table_tokens_for_text(phrase)?
+            .into_iter()
+            .find(|&token| phrase_index_library_index(token) == library))
+    }
+
+    /// The pin's user phrase-table search, preserving stored token multiplicity.
+    ///
+    /// # Errors
+    /// Returns an error when the record cannot be read.
+    pub fn phrase_table_tokens_for_text(&self, text: &str) -> Result<Vec<Token>, UserStoreError> {
+        self.inner
+            .libpinyin
+            .phrases()
+            .phrase_table
+            .tokens(&phrase_table::key(text))
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))
+    }
+
+    /// The pin's user phrase-table search over raw UCS-4 words, preserving
+    /// stored token multiplicity. No `char` or `str` is built from a
+    /// non-scalar word.
+    ///
+    /// # Errors
+    /// Returns an error when the record cannot be read.
+    pub(crate) fn phrase_table_tokens_for_ucs4(
+        &self,
+        words: &[u32],
+    ) -> Result<Vec<Token>, UserStoreError> {
+        self.inner
+            .libpinyin
+            .phrases()
+            .phrase_table
+            .tokens(&phrase_table::key_ucs4(words))
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))
+    }
+
+    /// Whether the user phrase table holds this exact key, including an
+    /// empty prefix marker (`SEARCH_CONTINUED` in the pin).
+    #[must_use]
+    pub(crate) fn phrase_table_contains_ucs4(&self, words: &[u32]) -> bool {
+        self.inner
+            .libpinyin
+            .phrases()
+            .phrase_table
+            .contains_key(&phrase_table::key_ucs4(words))
+    }
+
+    /// Current write generation: moves on every committed write, counts
+    /// included.
+    #[must_use]
+    pub(crate) fn generation(&self) -> u64 {
+        self.write_generation()
+    }
+
+    /// `m_modified` (§4).
+    #[must_use]
+    pub fn is_modified(&self) -> bool {
+        self.inner.dirty.get()
+    }
+
+    /// Arm `m_modified` without a data write.
+    pub fn mark_modified(&mut self) {
+        self.inner.dirty.set(true);
+    }
+
+    /// Export rows for one `USER_FILE` nibble.
+    #[must_use]
+    pub fn export_phrases_in(&self, library: u8) -> Vec<ExportedPhrase> {
+        let phrases = self.inner.libpinyin.phrases();
+        let mut out = Vec::new();
+        if let Some(items) = phrases.libraries.get(&library) {
+            for (_, item) in items.items() {
+                for reading in item.pronunciations() {
+                    let pinyin = reading.keys.as_chunks::<2>().0.iter().enumerate().try_fold(
+                        String::new(),
+                        |mut text, (position, bytes)| {
+                            let key = ChewingKey::from_packed(u16::from_le_bytes(*bytes));
+                            let syllable = crate::SyllableKey::from_chewing_key(key)?;
+                            crate::user::toned_key(syllable.index(), key.tone)?;
+                            if position != 0 {
+                                text.push('\'');
+                            }
+                            text.push_str(syllable.text());
+                            if key.tone != 0 {
+                                text.push(char::from(b'0' + key.tone));
+                            }
+                            Some(text)
+                        },
+                    );
+                    if let Some(pinyin) = pinyin {
+                        let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|b| u32::from_le_bytes(*b))
+                            .collect();
+                        out.push(ExportedPhrase {
+                            text,
+                            pinyin,
+                            count: u64::from(reading.freq),
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every stored phrase (user and network) with pronunciations.
+    #[must_use]
+    pub fn phrases(&self) -> Vec<UserPhrase> {
+        let phrases = self.inner.libpinyin.phrases();
+        phrases
+            .libraries
+            .iter()
+            .flat_map(|(&nibble, library)| {
+                let phrases = &*phrases;
+                library
+                    .items()
+                    .map(move |(slot, item)| phrases.phrase((u32::from(nibble) << 24) | slot, item))
+            })
+            .collect()
+    }
+
+    /// `SingleGram::retrieve_all` on `prev`'s raw gram: its whole items as
+    /// `(token, count)` pairs in stored order, duplicates included
+    /// (`ngram.cpp:133-151`). Empty when `prev` has no gram.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn bigram_successors(&self, prev: Token) -> Result<Vec<(Token, u64)>, UserStoreError> {
+        Ok(self.bigram_row(prev)?.map_or_else(Vec::new, |gram| {
+            single_gram::retrieve_all(&gram)
+                .map(|(token, count)| (token, u64::from(count)))
+                .collect()
+        }))
+    }
+
+    /// Whether this session has a user-directory argument, including "".
+    /// A transient NULL-user session has mutable state but no directory.
+    #[must_use]
+    pub(crate) fn has_user_directory(&self) -> bool {
+        self.inner.libpinyin.dir.is_some()
+    }
+
+    /// The save the C facades use: the file set is written and renamed and
+    /// the marker rewritten whatever fails on the way, and the failures come
+    /// on stderr instead of ending the save. A store with no
+    /// libpinyin target (no directory to write) reports nothing. A completed
+    /// save leaves the store clean; a guard return leaves its state
+    /// unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the session cannot be exported or
+    /// encoded — failures the pin has no counterpart for. A filesystem
+    /// failure is never one.
+    pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
+        self.save_reporting_compacted(&[])
+    }
+
+    /// [`Self::save_reporting`] with the nibbles whose live empty sub-index
+    /// the pin's `compact` rebuilt from no items: their saved log records a
+    /// new header total of zero even though the system chunk's old total is
+    /// the one the failed load read (`phrase_index.cpp:648-675`).
+    pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
+        self.save_reporting_inner(
+            compacted,
+            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::persistence::SaveBaseline>,
+        )
+    }
+
+    /// [`Self::save_reporting_compacted`] with the current-on-disk baseline
+    /// hook. The store calls it once per selected system library, in the
+    /// pin's `_write_files` order, immediately before that library's log is
+    /// staged; the hook maps the current chunk and emits any layout
+    /// critical at that point (`pinyin.cpp:956`, `zhuyin.cpp:589`).
+    pub(crate) fn save_reporting_with_baseline(
+        &mut self,
+        compacted: &[u8],
+        baseline: impl FnMut(
+            u8,
+            &crate::user::SystemOriginals,
+        ) -> crate::user::persistence::SaveBaseline,
+    ) -> Result<(), UserStoreError> {
+        self.save_reporting_inner(compacted, Some(baseline))
+    }
+
+    fn save_reporting_inner<
+        B: FnMut(u8, &crate::user::SystemOriginals) -> crate::user::persistence::SaveBaseline,
+    >(
+        &mut self,
+        compacted: &[u8],
+        mut baseline: Option<B>,
+    ) -> Result<(), UserStoreError> {
+        if !self.is_modified() {
+            return Ok(());
+        }
+        let target = Rc::clone(&self.inner.libpinyin);
+        let Some(dir) = target.dir.as_deref() else {
+            return Ok(());
+        };
+        self.compact_libraries();
+        let originals = &self.originals;
+        let bigram_db = self.container();
+        let phrases = target.phrases();
+        let live = self.inner.system_items.borrow();
+        {
+            let mut reporting = crate::user::persistence::SaveReporting {
+                versions: &target.versions,
+                open_counter: target.open_counter,
+                bigram_db,
+                interleaved: target.law == crate::user::persistence::UserConfLaw::Zhuyin,
+                baseline: baseline
+                    .as_mut()
+                    .map(|baseline| |nibble| baseline(nibble, originals)),
+            };
+            crate::user::persistence::save_reporting(
+                dir,
+                crate::user::persistence::SaveSource {
+                    libraries: &phrases,
+                    compacted,
+                    live: &live,
+                },
+                originals,
+                &mut reporting,
+            )?;
+        }
+        self.inner.dirty.set(false);
+        Ok(())
+    }
+
+    /// `Bigram::get_all_items` (`pinyin.cpp:779`): every predecessor with
+    /// a stored gram, in the walk order of the pin's own in-memory
+    /// container on a libpinyin session; ascending on a store without
+    /// one. A key that is not a four-byte token is left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store or the container cannot
+    /// be read.
+    pub(crate) fn bigram_predecessors(&self) -> Result<Vec<Token>, UserStoreError> {
+        Ok(self.gram_keys()?.into_iter().flatten().collect())
+    }
+
+    /// `Bigram::mask_out(mask, value)` on the pin's container over the keys
+    /// [`Self::container_keys`] collected before the mask's fault check
+    /// ([`mask_grams_over`]). Answers whether a gram remains.
+    fn mask_container_over(
+        &self,
+        keys: Result<Vec<Option<Token>>, StoreError>,
+        mask: Token,
+        value: Token,
+    ) -> Result<bool, UserStoreError> {
+        Ok(mask_grams_over(
+            &ContainerGrams(self.container()),
+            keys?,
+            mask,
+            value,
+        )?)
+    }
+
+    /// `mask_out`'s reload: each loaded system library in `originals`,
+    /// freshly mapped, takes its user `.dbin` read now and filtered by the
+    /// mask (`merge_with_mask`), library by library in the pin's order. Live
+    /// item and pronunciation rows are rebuilt; independent phrase-table
+    /// membership remains in place, separate from the sub-index
+    /// (`pinyin.cpp:1253-1285`, `zhuyin.cpp:788-820` at 074a2219).
+    ///
+    /// # Errors
+    /// The [`JournalFault`](crate::user::JournalFault) of the first library whose log reaches a pin
+    /// assertion, with nothing replaced.
+    #[cfg(test)]
+    pub(crate) fn reload_system_libraries(
+        &mut self,
+        mut originals: crate::user::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), crate::user::JournalFault> {
+        self.reload_system_libraries_retaining(&mut originals, mask, value)
+    }
+
+    /// Replay a remap without losing its mappings when the journal refuses it.
+    ///
+    /// # Errors
+    /// The same journal fault as `Self::reload_system_libraries`.
+    pub fn reload_system_libraries_retaining(
+        &mut self,
+        originals: &mut crate::user::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), crate::user::JournalFault> {
+        self.reload_system_libraries_prefetched(
+            originals,
+            mask,
+            value,
+            crate::user::persistence::MaskLogs::default(),
+        )
+    }
+
+    /// [`Self::reload_system_libraries_retaining`] merging the logs `logs`
+    /// already holds ([`Self::read_mask_log`]) instead of reading them again;
+    /// a library not in `logs` is read when the replay reaches it.
+    ///
+    /// # Errors
+    /// The same journal fault as `Self::reload_system_libraries`.
+    pub(crate) fn reload_system_libraries_prefetched(
+        &mut self,
+        originals: &mut crate::user::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+        mut logs: crate::user::persistence::MaskLogs,
+    ) -> Result<(), crate::user::JournalFault> {
+        let target = &self.inner.libpinyin;
+        let (replayed, library_totals) = match target.dir.clone() {
+            Some(dir) => crate::user::persistence::load_masked_logs_live(
+                &dir, originals, mask, value, &mut logs,
+            )?,
+            None => (originals.take_live_libraries(), Default::default()),
+        };
+        self.replace_system_libraries(originals.take(), replayed, &library_totals);
+        Ok(())
+    }
+
+    /// `_load_phrase_library`'s system branch for the libraries in
+    /// `originals` (074a2219 `pinyin.cpp:246-277`, `zhuyin.cpp:190-221`):
+    /// each is mapped again and only its saved `.dbin` is merged, so
+    /// everything the session changed since the last save (trained
+    /// unigrams, imported readings and items, removals) goes with the
+    /// sub-index `unload` freed (`phrase_index.cpp:261-268`). A `.dbin`
+    /// that cannot be read is an empty log (`MemoryChunk::load` fails and
+    /// leaves the chunk empty), so the library comes back as its system
+    /// chunk alone. The independent phrase-table membership stays in place,
+    /// separate from the sub-index. Like the pin's, the transition is in
+    /// memory and has no failure of its own: nothing is written to disk.
+    ///
+    /// # Errors
+    /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion (rows 91
+    /// and 108), with nothing replaced.
+    pub fn load_system_libraries(
+        &mut self,
+        mut originals: crate::user::persistence::SystemOriginals,
+    ) -> Result<(), crate::user::JournalFault> {
+        self.load_system_libraries_retaining(&mut originals)
+    }
+
+    /// Load a remap, retaining it for dictionary publication if replay reaches
+    /// a journal assertion. A transient session has no log to merge.
+    ///
+    /// # Errors
+    /// The same journal fault as [`Self::load_system_libraries`].
+    pub(crate) fn load_system_libraries_retaining(
+        &mut self,
+        originals: &mut crate::user::persistence::SystemOriginals,
+    ) -> Result<(), crate::user::JournalFault> {
+        let (replayed, library_totals) = match &self.inner.libpinyin.dir {
+            Some(dir) => crate::user::persistence::load_library_logs_live(dir, originals)?,
+            // No user directory means no journal; the freshly mapped system
+            // library still replaces the unloaded one (phrase_index.cpp:261,
+            // pinyin.cpp:246-276 at 074a2219).
+            None => (originals.take_live_libraries(), Default::default()),
+        };
+        self.replace_system_libraries(originals.take(), replayed, &library_totals);
+        Ok(())
+    }
+
+    /// `FacadePhraseIndex::unload` for the libraries in `originals`: the
+    /// sub-index goes with everything the session changed in it and with
+    /// its share of the facade total, whatever was saved (074a2219
+    /// `phrase_index.cpp:261-268`). The user index tables keep their
+    /// entries. In memory, as the pin's: nothing is written to disk, and a
+    /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
+    pub fn unload_system_libraries(
+        &mut self,
+        originals: crate::user::persistence::SystemOriginals,
+    ) {
+        let unloaded: Vec<_> = originals.keys().copied().collect();
+        self.replace_system_libraries(
+            originals,
+            crate::user::LibraryTable::new(),
+            &crate::user::LibraryTable::new(),
+        );
+        self.inner.libpinyin.phrases_mut().unloaded.extend(unloaded);
+    }
+
+    /// `_load_phrase_library`'s `USER_FILE` branch for `library`: its
+    /// sub-index comes back from the saved chunk, or empty when there is
+    /// none or it cannot be read (`create_sub_phrase`), so everything the
+    /// session changed since the last save goes (074a2219
+    /// `pinyin.cpp:303-321`, `zhuyin.cpp:247-265`). The phrase table and the
+    /// user pinyin index keep their entries, separate from the sub-index: a
+    /// reading the index carried stays indexed on the item the chunk brings
+    /// back. In memory, with no failure of its own.
+    pub(crate) fn load_user_library(&mut self, library: u8) {
+        let layout = self.originals.layout().clone();
+        if !layout.has_user_library(library) {
+            return;
+        }
+        // No user directory, no chunk, or one that does not load:
+        // `create_sub_phrase`, an empty sub-index.
+        let loaded = self
+            .inner
+            .libpinyin
+            .dir
+            .as_deref()
+            .and_then(|dir| crate::user::persistence::load_user_library(dir, &layout, library));
+        self.replace_user_arena(library, Some(loaded.unwrap_or_default()));
+    }
+
+    /// `FacadePhraseIndex::unload` for the `USER_FILE` `library`: the
+    /// sub-index goes with everything in it and with its share of the
+    /// facade total, saved or not (074a2219 `phrase_index.cpp:261-268`).
+    /// The phrase table and the user pinyin index keep their entries. In
+    /// memory, with no failure of its own; a save skips the library while
+    /// it is unloaded (`pinyin.cpp:928-933`).
+    pub(crate) fn unload_user_library(&mut self, library: u8) {
+        if !self.originals.layout().has_user_library(library) {
+            return;
+        }
+        self.replace_user_arena(library, None);
+    }
+
+    /// The session side of a system library transition: each reloaded
+    /// library's live buffer and total are replaced by the one its replay
+    /// left in `replayed` (none when its log left the chunk as it is). The
+    /// session's state is process memory, so this cannot fail, as
+    /// `FacadePhraseIndex::load`/`unload` cannot (policy row 103).
+    fn replace_system_libraries(
+        &mut self,
+        originals: crate::user::persistence::SystemOriginals,
+        replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
+        library_totals: &crate::user::LibraryTable<u32>,
+    ) {
+        self.apply_system_libraries(&originals, replayed, library_totals);
+        {
+            let mut phrases = self.inner.libpinyin.phrases_mut();
+            for nibble in originals.keys() {
+                phrases.unloaded.remove(nibble);
+            }
+        }
+        self.originals.append(originals);
+    }
+
+    /// Synchronize a system library's mutation guard with runtime visibility.
+    /// This does not replace its items or reset its training state. USER_FILE
+    /// markers belong exclusively to the store's own item load/unload.
+    pub(crate) fn set_library_loaded(&mut self, nibble: u8, loaded: bool) {
+        if nibble >= 16 || !self.is_system_library(nibble) {
+            return;
+        }
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        if loaded {
+            phrases.unloaded.remove(&nibble);
+        } else {
+            phrases.unloaded.insert(nibble);
+        }
+    }
+
+    /// Reset one loaded baseline's replay and training state at unload.
+    pub(crate) fn reset_system_library(&mut self, nibble: u8) {
+        if nibble >= 16 {
+            return;
+        }
+        self.apply_system_libraries(
+            &self.originals.selected(1 << nibble),
+            crate::user::LibraryTable::new(),
+            &Default::default(),
+        );
+        self.inner.libpinyin.phrases_mut().unloaded.insert(nibble);
+    }
+
+    fn apply_system_libraries(
+        &self,
+        originals: &impl crate::user::persistence::OriginalLibraries,
+        mut replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
+        library_totals: &crate::user::LibraryTable<u32>,
+    ) {
+        let target = Rc::clone(&self.inner.libpinyin);
+        let mut offsets = self.offsets_mut();
+        // A reloaded library has no stored total difference any more: its
+        // total is the one its replay left, held in the live scalar below.
+        for nibble in originals.keys() {
+            offsets.remove(nibble);
+        }
+        {
+            // A library with an original keeps its items in its live buffer;
+            // the arenas of the reloaded libraries hold nothing.
+            let mut phrases = target.phrases_mut();
+            phrases
+                .libraries
+                .retain(|nibble, _| !originals.contains_key(nibble));
+        }
+        let buffer_live;
+        {
+            let phrases = target.phrases();
+            let arena_has_system_items = phrases
+                .libraries
+                .iter()
+                .any(|(library, items)| (1..=4).contains(library) && !items.is_empty());
+            let mut items = self.inner.system_items.borrow_mut();
+            // `FacadePhraseIndex::load` and `merge_with_mask` swap the old
+            // sub-index for the new one (`phrase_index.cpp:237-248`,
+            // `:301-332`): the library's live buffer and total go, and the
+            // replay's buffer and total come in. The facade's total follows
+            // the sub-index totals, and keeps what no sub-index took.
+            for &nibble in originals.keys() {
+                items.forget_library(nibble);
+                match replayed.remove(&nibble) {
+                    Some(library) => items.insert_library(nibble, library),
+                    None => {
+                        if let Some(&total) = library_totals.get(&nibble) {
+                            items.set_library_total(nibble, total);
+                        }
+                    }
+                }
+            }
+            buffer_live = items.has_added();
+            self.inner
+                .has_system_items
+                .set(!items.is_empty() || arena_has_system_items);
+            self.inner.has_removed_system_items.set(items.has_removed());
+        }
+        let arena_live = {
+            let phrases = target.phrases();
+            phrases
+                .libraries
+                .values()
+                .any(|library| !library.is_empty())
+        } || buffer_live;
+        // A session's grams are user data too.
+        let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
+        self.mark_committed_write(has_grams || arena_live);
+    }
+
+    /// The faults [`Self::mask_out`] reaches before it changes anything, in
+    /// the pin's order (`pinyin.cpp:1228-1230`): an overlong user pinyin index
+    /// key (rows 84 and 94), a phrase-table record the mask would read past
+    /// (row 101), then the user bigram's non-token key, short value, partial
+    /// tail and residual gram (rows 86, 85, 98, 87). It changes no state, so a
+    /// caller can learn that the user tables fault before it opens any system
+    /// library or journal. The answer carries the one walk of the bigram
+    /// keys to [`Self::apply_mask_out`], which checks nothing again.
+    ///
+    /// # Errors
+    ///
+    /// The [`UserStoreError`] [`Self::mask_out`] would return.
+    pub(crate) fn check_mask_out(
+        &self,
+        mask: Token,
+        value: Token,
+    ) -> Result<MaskCheck, UserStoreError> {
+        if self.has_overlong_index_key() {
+            return Err(UserStoreError::OverlongIndexKey);
+        }
+        self.inner
+            .libpinyin
+            .phrases()
+            .phrase_table
+            .check_mask()
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        let container_keys = self.container_keys();
+        match self.bigram_mask_fault_over(&container_keys, mask, value) {
+            Some(error) => Err(error),
+            None => Ok(MaskCheck { container_keys }),
+        }
+    }
+
+    /// `pinyin_mask_out`'s store side.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError::OverlongIndexKey`] when the user pinyin
+    /// index carried a key past `MAX_PHRASE_LENGTH` syllables — the pin's
+    /// user `ChewingLargeTable2::mask_out` walks every record and aborts on
+    /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
+    /// the mask cannot otherwise be written.
+    pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        let checked = self.check_mask_out(mask, value)?;
+        self.apply_mask_out(checked, mask, value)
+    }
+
+    /// [`Self::mask_out`] after [`Self::check_mask_out`] passed for the same
+    /// `mask` and `value`, with no write to the user tables in between: the
+    /// index, the phrase table, the arenas and the bigram take the mask, and
+    /// nothing is checked again. The bigram mask walks the keys the check
+    /// collected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the mask cannot be written.
+    pub(crate) fn apply_mask_out(
+        &mut self,
+        checked: MaskCheck,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), UserStoreError> {
+        let MaskCheck { container_keys } = checked;
+        let target = Rc::clone(&self.inner.libpinyin);
+        // The pin's mask walk edits every record of the user pinyin index,
+        // in its native container.
+        {
+            let mut phrases = target.phrases_mut();
+            phrases.index.mask(mask, value);
+            phrases
+                .phrase_table
+                .mask(mask, value)
+                .map_err(UserStoreError::from)?;
+        }
+        // Commit succeeded: discard matched in-memory system payloads too.
+        // Dropping an original's override restores it; dropping an appended
+        // item removes its only payload. Do this before publishing the epoch.
+        self.mask_arena(mask, value);
+        // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
+        // `zhuyin.cpp:765`).
+        let grams_left = self.mask_container_over(container_keys, mask, value)?;
+        self.mark_committed_write(grams_left || self.arena_has_items());
+        Ok(())
+    }
+
+    /// `pinyin_remove_user_candidate`'s store side (§3.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be removed.
+    pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
+        self.arena_remove(token)
+    }
+}
+
+impl UserStore {
+    /// The system items the live buffers hold that differ from the originals.
+    #[cfg(test)]
+    pub(crate) fn live_system_changes(
+        &self,
+        originals: &impl crate::user::persistence::OriginalLibraries,
+    ) -> std::collections::BTreeMap<Token, Option<crate::user::data::chunk_write::ChunkItem>> {
+        self.inner.system_items.borrow().changed_items(originals)
+    }
+
+    /// Whether this session carries system-item payloads from imports or logs.
+    #[must_use]
+    pub(crate) fn has_system_items(&self) -> bool {
+        self.inner.has_system_items.get()
+    }
+
+    /// Whether a journal REMOVE took out a system item of this session
+    /// ([`Self::system_item_removed`]): the one flag that gates the
+    /// per-token check.
+    #[must_use]
+    pub(crate) fn has_removed_system_items(&self) -> bool {
+        self.inner.has_removed_system_items.get()
+    }
+
+    /// Whether a journal REMOVE took the item behind system `token` out of
+    /// its sub-index: `get_phrase_item` fails for it (074a2219
+    /// `phrase_index.cpp:219-236`), while the shipped chunk and the phrase
+    /// table still hold it. The library's live buffer answers no item where
+    /// the chunk holds one.
+    #[must_use]
+    pub(crate) fn system_item_removed(&self, token: Token) -> bool {
+        self.inner.system_items.borrow().is_removed(token)
+    }
+
+    #[cfg(test)]
+    /// The imported/replayed system item, with its current unigram field.
+    ///
+    /// # Errors
+    /// Returns an error if the scratch payload or count cannot be read.
+    pub(crate) fn system_item_override(
+        &self,
+        token: Token,
+    ) -> Result<Option<crate::user::data::chunk_write::ChunkItem>, UserStoreError> {
+        if !(1..=4).contains(&(token >> 24)) {
+            return Ok(None);
+        }
+        let Some(mut item) = self.with_effective_system_item(token, Clone::clone) else {
+            return Ok(None);
+        };
+        if let Some(unigram) = self.system_unigram(token) {
+            item.unigram = unigram;
+        }
+        Ok(Some(item))
+    }
+
+    /// The stored pronunciations of the item this store holds behind
+    /// `token`, as `(keys, frequency)` rows in stored order (074a2219
+    /// `phrase_index.h` `get_nth_pronunciation`): an imported or trained
+    /// system item, or a user-file library's phrase.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when a user phrase cannot be read.
+    pub fn item_pronunciations(
+        &self,
+        token: Token,
+    ) -> Result<Option<crate::model::PronunciationRows>, UserStoreError> {
+        use crate::user::store_libpinyin::pinyin_keys_to_packed;
+        if let Some(readings) = self.with_user_item(token, |item| {
+            item.pronunciations()
+                .map(|reading| {
+                    (
+                        reading
+                            .keys
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|b| ChewingKey::from_packed(u16::from_le_bytes(*b)))
+                            .collect(),
+                        reading.freq,
+                    )
+                })
+                .collect()
+        }) {
+            return Ok(Some(readings));
+        }
+        if self.is_system_library(phrase_index_library_index(token)) {
+            return Ok(self.with_effective_system_item(token, |item| {
+                item.prons
+                    .iter()
+                    .map(|(packed, frequency)| {
+                        let keys = packed
+                            .iter()
+                            .map(|&bits| crate::ChewingKey::from_packed(bits))
+                            .collect();
+                        (keys, *frequency)
+                    })
+                    .collect()
+            }));
+        }
+        Ok(self.phrase(token).map(|phrase| {
+            phrase
+                .pronunciations()
+                .iter()
+                .filter_map(|pronunciation| {
+                    let keys = pinyin_keys_to_packed(pronunciation.keys())?
+                        .into_iter()
+                        .map(crate::ChewingKey::from_packed)
+                        .collect();
+                    let frequency = u32::try_from(pronunciation.count()).unwrap_or(u32::MAX);
+                    Some((keys, frequency))
+                })
+                .collect()
+        }))
+    }
+
+    /// The live sub-index's range end for the export probe. A promotion can
+    /// create a sub-index with no original (074a2219 phrase_index.h:663-670).
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
+        let end = if let Some(original) = self.originals.get(&library) {
+            self.inner
+                .system_items
+                .borrow()
+                .range_end(library, original)
+        } else {
+            let phrases = self.inner.libpinyin.phrases();
+            phrases
+                .libraries
+                .get(&library)
+                .map(crate::user::user_library::UserLibrary::token_end)
+                .or_else(|| self.has_user_library(library).then_some(1))?
+        };
+        Some(crate::user::phrase_index_make_token(library, end))
+    }
+
+    /// The effective live system item shared by export, n-best and token
+    /// introspection (074a2219 pinyin.cpp:707-724; phonetic_lookup.h:643-693).
+    /// Original counts plus exact-reading deltas are resolved once when
+    /// training commits, with the pin's prefix-total overflow guard, rather
+    /// than rereading the store at every pronunciation probability. Imports
+    /// and replay publish their absolute payloads into the same view.
+    /// Untouched items stay mapped: `None` tells the caller to read the
+    /// original. A borrowed item is stable for this call and copied nowhere.
+    /// Only its unigram field is stale; [`Self::system_item_override`]
+    /// supplies the live unigram when a caller needs that field too.
+    pub(crate) fn with_effective_system_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&crate::user::data::chunk_write::ChunkItem) -> R,
+    ) -> Option<R> {
+        if !self.is_system_library(phrase_index_library_index(token)) {
+            return None;
+        }
+        if let Some(item) = self
+            .with_user_item(token, |view| {
+                crate::user::data::chunk_write::decode_phrase_item(view.as_bytes()).ok()
+            })
+            .flatten()
+        {
+            return Some(read(&item));
+        }
+        if !self.has_system_items() {
+            return None;
+        }
+        let items = self.inner.system_items.borrow();
+        items.get(&token).map(|item| read(&item))
+    }
+
+    /// Reads the item a system library's live buffer holds under `token`.
+    /// Nothing is decoded or kept.
+    pub(crate) fn with_live_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        if !self.has_system_items() {
+            return None;
+        }
+        self.inner.system_items.borrow().with_live(token, read)
+    }
+
+    pub(crate) fn with_live_item_fields<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<Option<R>> {
+        if !self.has_system_items() {
+            return None;
+        }
+        self.inner
+            .system_items
+            .borrow()
+            .with_live_fields(token, read)
+    }
+
+    pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
+        self.inner
+            .system_items
+            .borrow()
+            .live_pronunciation_count(token)
+    }
+
+    pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
+        self.inner
+            .system_items
+            .borrow()
+            .live_item_past_buffer(token)
+    }
+
+    /// One past the highest token a `USER_FILE` library holds: the pin's
+    /// `FacadePhraseIndex::get_range` end (`phrase_index.cpp:610-646` at
+    /// 074a2219, the offset array less its trailing zeros, masked into the
+    /// library nibble, so a library whose last slot is live ends at its
+    /// slot 0). It is the library's allocation cursor, which every add
+    /// moves past the token it took and every mask or removal re-derives
+    /// from the surviving items; an empty library ends at its first token,
+    /// the pin's `1..1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the cursor cannot be read, or
+    /// `InvalidPhrase` for a system library.
+    pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
+        if self.is_system_library(library) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        Ok(phrase::phrase_index_make_token(
+            library,
+            self.inner
+                .libpinyin
+                .phrases()
+                .libraries
+                .get(&library)
+                .map_or(1, crate::user::user_library::UserLibrary::token_end),
+        ))
+    }
+
+    /// `_add_phrase` for a system library (074a2219, pinyin.cpp:515-611).
+    /// `original_token` comes from the combined system/user phrase-table
+    /// search, restricted to this library, including prior imported items.
+    /// Packed original readings are retained verbatim, including their order.
+    ///
+    /// # Errors
+    /// Returns an error for invalid input, unavailable originals, or store failure.
+    pub(crate) fn add_system_phrase_in(
+        &mut self,
+        library: u8,
+        original_token: Option<Token>,
+        text: &crate::PhraseText,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        let words = phrase_words(text);
+        if !self.is_system_library(library) || !phrase_fits_keys(&words, keys) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        let originals = &self.originals;
+        let original = originals
+            .get(&library)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let range_end = original.range_end;
+        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        if original_token.is_none()
+            || original_token.is_some_and(|token| self.with_appended_item(token, |_| ()).is_some())
+        {
+            return self.arena_add_phrase(
+                library,
+                &words,
+                keys,
+                delta,
+                Some(original_token),
+                range_end,
+            );
+        }
+        let token = original_token.ok_or(UserStoreError::InvalidPhrase)?;
+        let packed = crate::user::store_libpinyin::pinyin_keys_to_packed(keys)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let reading = SystemReading {
+            packed: &packed,
+            delta,
+        };
+        let mut items = self.inner.system_items.borrow_mut();
+        let mut item = items
+            .get(&token)
+            .or_else(|| original.item(token & PHRASE_MASK))
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let change = plan_system_reading(&item, &reading);
+        validate_system_merge(&item, &reading, change)?;
+        apply_system_reading(&mut item, &reading, change);
+        // `remove_phrase_item`, `add_pronunciation`, `add_phrase_item` over
+        // the buffer (`pinyin.cpp:559-569`). A slot the journal removed has
+        // nothing to remove, so its total is left as the removal left it.
+        let bytes = crate::user::data::chunk_write::encode_phrase_item(&item)
+            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        let removed = items.remove_item(original, token).is_some();
+        let _ = items.add_item(original, token, &bytes);
+        if !removed {
+            let library = phrase_index_library_index(token);
+            let total = items
+                .library_total(library, Some(original))
+                .unwrap_or(original.total);
+            items.set_library_total(
+                library,
+                total.wrapping_sub(crate::user::replay::raw_unigram(&bytes)),
+            );
+        }
+        drop(items);
+        self.inner.has_system_items.set(true);
+        self.mark_committed_write(true);
+        Ok(token)
+    }
+}
+
+/// Test support: a session filled from a value state.
+#[cfg(test)]
+impl UserStore {
+    /// Puts `state`'s values into this session's own structures: the user
+    /// bigram container, the user library arenas, the two user tables and
+    /// the live system buffers.
+    pub(crate) fn seed_from_state(&mut self, state: &crate::user::persistence::UserState) {
+        use crate::store::UserBigramDb as _;
+        use crate::user::data::chunk_write::encode_phrase_item;
+        for (key, value) in &state.bigram {
+            self.container().store(key, value).expect("store a gram");
+        }
+        let target = Rc::clone(&self.inner.libpinyin);
+        let mut phrases = target.phrases_mut();
+        for (&nibble, items) in &state.libraries {
+            for (&slot, item) in items {
+                let bytes = encode_phrase_item(item).expect("item");
+                phrases
+                    .libraries
+                    .get_or_default(nibble)
+                    .expect("a library slot")
+                    .replace(slot, &bytes)
+                    .expect("place an item");
+            }
+        }
+        phrases.index = crate::user::user_index::UserIndex::from_entries(
+            crate::user::data::table_entries::pinyin_index_entries(
+                &crate::user::persistence::chewing_rows(state, &self.originals),
+            ),
+        );
+        for (key, value) in &state.phrase_table {
+            phrases.phrase_table.push_record(key, value).unwrap();
+        }
+        for (&nibble, overrides) in &state.system_overrides {
+            for (&slot, item) in overrides {
+                let token = (u32::from(nibble) << 24) | slot;
+                let bytes = item
+                    .as_ref()
+                    .map(|item| encode_phrase_item(item).expect("item"));
+                match self.originals.get(&nibble) {
+                    Some(original) => {
+                        let mut items = self.inner.system_items.borrow_mut();
+                        items.remove_item(original, token);
+                        if let Some(bytes) = &bytes {
+                            items.add_item(original, token, bytes);
+                        }
+                    }
+                    None => {
+                        if let Some(bytes) = &bytes {
+                            phrases
+                                .libraries
+                                .get_or_default(nibble)
+                                .expect("a library slot")
+                                .replace(slot, bytes)
+                                .expect("place an item");
+                        }
+                    }
+                }
+            }
+        }
+        drop(phrases);
+        self.inner.has_system_items.set(true);
+        self.inner.has_removed_system_items.set(true);
+        self.mark_committed_write(true);
+    }
+}
+
+#[cfg(test)]
+mod tests;

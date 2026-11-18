@@ -3,7 +3,7 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use oxpinyin_core::OptionBits;
+use oxpinyin::OptionBits;
 
 /// The rendered text, as the final `g_strconcat` joins its parts.
 fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
@@ -117,7 +117,7 @@ fn full_aux_text_matches_the_oracle_for_incomplete_tails() {
     assert_eq!(full_aux_text("n", 1, 1, options), "n |");
 }
 
-#[path = "../../../oxpinyin-core/tests/common/parser_rows.rs"]
+#[path = "../../../oxpinyin/tests/common/parser_rows.rs"]
 mod parser_rows;
 
 parser_rows::gated_parser_rows! {

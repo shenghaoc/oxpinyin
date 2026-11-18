@@ -110,13 +110,13 @@ These paths add no abort. The fuzz harnesses need no filter:
 
 Unit tests:
 
-- `library_transition_tests` in `crates/oxpinyin-core/src/facade/context.rs`:
+- `library_transition_tests` in `crates/oxpinyin/src/facade/context.rs`:
   `unload_then_reload_restores_the_saved_library`,
   `unload_then_save_leaves_the_unloaded_librarys_log_alone` and
   `reload_after_an_unreadable_log_loads_the_system_chunk_alone` (a missing
   and a short `.dbin`).
 - `a_save_skips_an_unloaded_user_library` and
-  `library_transitions_keep_the_independent_index` in `crates/oxpinyin-core/src/user/store_libpinyin.rs`.
+  `library_transitions_keep_the_independent_index` in `crates/oxpinyin/src/user/store_libpinyin.rs`.
 
 Contract cases:
 
@@ -132,7 +132,7 @@ The other cases of unload, reload and candidates are
 `reload-total-while-unloaded`, `unload-drops-accepted-bump`, the
 `library-*` and `stderr-library-control-*` loading cases (including
 `stderr-library-control-save-unloaded`) and `save-unloaded-replacement{,-zhuyin}`.
-`an_unloaded_library_leaves_the_model` (`crates/oxpinyin-core/src/user/data/lm/tests.rs`)
+`an_unloaded_library_leaves_the_model` (`crates/oxpinyin/src/user/data/lm/tests.rs`)
 holds `reload-total-while-unloaded`.
 The export iterator cases are those whose names contain `iterator`.
 

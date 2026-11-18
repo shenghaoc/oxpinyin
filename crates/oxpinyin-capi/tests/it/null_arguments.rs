@@ -15,7 +15,7 @@ use crate::support::{
     pinyin_train, system_dir,
 };
 
-use oxpinyin_core::user::USER_DICTIONARY;
+use oxpinyin::user::USER_DICTIONARY;
 
 use std::ptr;
 
@@ -72,13 +72,13 @@ fn null_addon_chunk_context(
 /// (`memory_chunk.h:493`) and the process aborts. Elsewhere (tmpfs), `mmap`
 /// refuses it (`memory_chunk.h:486-489`): the load answers `false` with one
 /// warning.
-// Unix only, for the reason `oxpinyin-core`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn null_addon_chunk_name_aborts_or_logs_once() {
     let scratch = tempfile::tempdir().expect("scratch");
     let (system, context) = null_addon_chunk_context(scratch.path());
-    if oxpinyin_core::facade::null_chunk_asserts(&system) {
+    if oxpinyin::facade::null_chunk_asserts(&system) {
         unsafe { crate::support::pinyin_fini(context) };
         crate::support::assert_aborts(
             "null_arguments::null_addon_chunk_name_aborts_or_logs_once",

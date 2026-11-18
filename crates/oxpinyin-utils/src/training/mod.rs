@@ -5,7 +5,7 @@
 //! Each utility reads the cwd-relative names the pin does
 //! (`src/pinyin_internal.h:55-60`) through the same boundary the storage
 //! utilities use; the chunk files, the `SingleGram` bigram rows and the
-//! phrase items are the bytes `oxpinyin-core`'s layouts describe, and the
+//! phrase items are the bytes `oxpinyin`'s layouts describe, and the
 //! correction-rate decode is `eval`'s port of
 //! `PhoneticLookup<1, 1>`.
 
@@ -16,12 +16,12 @@
 
 use std::ffi::{CStr, CString};
 
-use oxpinyin_core::user::data::row_format::encode_token_key;
-use oxpinyin_core::user::data::single_gram::{decode_single_gram, encode_single_gram};
-use oxpinyin_core::user::data::table_info::{FileType, TableConf, TableConfError};
+use oxpinyin::user::data::row_format::encode_token_key;
+use oxpinyin::user::data::single_gram::{decode_single_gram, encode_single_gram};
+use oxpinyin::user::data::table_info::{FileType, TableConf, TableConfError};
 
-use oxpinyin_core::input::tool;
-use oxpinyin_core::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin::input::tool;
+use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 
 use crate::storage::dbm::Hash;
 
@@ -257,5 +257,5 @@ pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CSt
 /// A C string's bytes as the path the store opens. On Unix the bytes are
 /// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
-    oxpinyin_core::input::path::path_from_bytes(name.to_bytes())
+    oxpinyin::input::path::path_from_bytes(name.to_bytes())
 }

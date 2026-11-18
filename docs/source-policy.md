@@ -132,14 +132,14 @@ The compatibility policy's [decision order](findings/compatibility-policy.md#dec
 ### Adapter placement
 
 The compatibility policy's [crate-placement rule](findings/compatibility-policy.md#crate-placement) decides which crate holds external I/O, DBM, C ABI and core code.
-`oxpinyin_core::input` exists from stage 1, for library configuration read/write and locale.
+`oxpinyin::input` exists from stage 1, for library configuration read/write and locale.
 All five stages of the [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) are implemented.
 The broader user-library audit stays in #1198.
 
 ### External I/O
 
 The compatibility policy's [external I/O rule](findings/compatibility-policy.md#external-io) decides every call across the program's edge, including the macro-check rule; the [Rust/C++ interoperability ruling](findings/compatibility-policy.md#rust-cpp-interoperability) governs external-library bindings.
-`oxpinyin_core::input` has no C shim.
+`oxpinyin::input` has no C shim.
 
 #### Platform scope of pinned behaviour
 

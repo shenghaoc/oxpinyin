@@ -2,9 +2,9 @@
 
 use std::os::raw::{c_char, c_int};
 
-use oxpinyin_core::engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
-use oxpinyin_core::model::Dictionary;
-use oxpinyin_core::user::{PinyinKey, toned_key};
+use oxpinyin::engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
+use oxpinyin::model::Dictionary;
+use oxpinyin::user::{PinyinKey, toned_key};
 
 use crate::iterators::ImportPlan;
 use crate::state::instance_ref;
@@ -56,7 +56,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
         return false;
     }
 
-    let phrase = oxpinyin_core::marshal::input::utf8_to_ucs4(
+    let phrase = oxpinyin::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
     // Stop counting at the refusal boundary: oversized known-character
     // strings must not reach the per-character dictionary lookups.
     let phrase_length = phrase.phrase_length();
-    if phrase_length == 0 || phrase_length >= oxpinyin_core::user::MAX_PHRASE_LENGTH {
+    if phrase_length == 0 || phrase_length >= oxpinyin::user::MAX_PHRASE_LENGTH {
         return false;
     }
     // SAFETY: `instance` is non-null and was produced by
@@ -139,11 +139,11 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
 /// runtime readers must have ended.
 unsafe fn add_remembered_path(
     instance: *mut PinyinInstance,
-    phrase: &oxpinyin_core::PhraseText,
+    phrase: &oxpinyin::PhraseText,
     path: &[MatrixKey],
     count: Option<u64>,
 ) -> bool {
-    if path.is_empty() || path.len() > oxpinyin_core::user::MAX_PHRASE_LENGTH {
+    if path.is_empty() || path.len() > oxpinyin::user::MAX_PHRASE_LENGTH {
         return false;
     }
     let Some(keys) = path
@@ -154,7 +154,7 @@ unsafe fn add_remembered_path(
             // `_add_phrase` stores it (`pinyin.cpp:3594-3606`, `:3647-3663`;
             // `phonetic_key_matrix.cpp:285-306` at 074a2219).
             toned_key(
-                oxpinyin_core::SyllableKey::from_matrix_key(key.key()).index(),
+                oxpinyin::SyllableKey::from_matrix_key(key.key()).index(),
                 key.tone(),
             )
         })
@@ -166,7 +166,7 @@ unsafe fn add_remembered_path(
     // every earlier reader, and Serial calls grants exclusive runtime access.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let phrase = match ctx.core.plan_add(
-        oxpinyin_core::user::USER_DICTIONARY,
+        oxpinyin::user::USER_DICTIONARY,
         phrase.clone(),
         keys.clone(),
     ) {

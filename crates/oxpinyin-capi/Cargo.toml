@@ -41,23 +41,23 @@ tools = []
 # the default build carries no Rust-visible facade (the supported external
 # interfaces are the C ABI alone).
 fuzz-api = []
-# Backend selection (one backend per binary; see oxpinyin-core's
+# Backend selection (one backend per binary; see oxpinyin's
 # [features] for the model and precedence). Each peer feature forwards to
-# oxpinyin-core. The peer features stay on this crate because build.rs reads
+# oxpinyin. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
 # because `cargo cinstall --features <peer>` names them. `just packaging
 # install` writes the matching `database_format` into libpinyin.pc.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-core/kyotocabinet"]
-bdb = ["oxpinyin-core/bdb"]
-tkrzw = ["oxpinyin-core/tkrzw"]
+kyotocabinet = ["oxpinyin/kyotocabinet"]
+bdb = ["oxpinyin/bdb"]
+tkrzw = ["oxpinyin/tkrzw"]
 [lints]
 workspace = true
 
 [dependencies]
 rustc-hash.workspace = true
 num_enum.workspace = true
-oxpinyin-core.workspace = true
+oxpinyin.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]
@@ -71,9 +71,9 @@ rstest.workspace = true
 # C ABI itself.
 tempfile.workspace = true
 # Dev-only: the copy fault points of the DBM-copy death tests
-# (`oxpinyin_core::store::copy_faults`), a test-only hook; a dev-dependency feature
+# (`oxpinyin::store::copy_faults`), a test-only hook; a dev-dependency feature
 # never reaches the normal build.
-oxpinyin-core = { workspace = true, features = ["test-hooks"] }
+oxpinyin = { workspace = true, features = ["test-hooks"] }
 
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the

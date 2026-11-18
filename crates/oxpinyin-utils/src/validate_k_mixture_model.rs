@@ -6,7 +6,7 @@
 //! exactly two, or `wrong arguments.` and `EINVAL` (`:146-155`).
 
 use crate::k_mixture_model::database::Database;
-use oxpinyin_core::input::tool;
+use oxpinyin::input::tool;
 
 /// `main` (`:141-173`).
 pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) {

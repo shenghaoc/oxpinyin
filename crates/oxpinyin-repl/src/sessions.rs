@@ -1,16 +1,16 @@
 //! The pin's C-API test programs (074a2219 tests/test_*.cpp).
 //! The caller supplies the isolated data path; product call order is retained.
 
-use oxpinyin_core::input::tool::{LineReader, pin_tests as output};
+use oxpinyin::input::tool::{LineReader, pin_tests as output};
 use pinyin_capi::tool::Driver;
 
 /// tests/test_pinyin.cpp:34-101.
 pub fn pinyin(data: &std::ffi::CStr) {
-    let options = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE
-        | oxpinyin_core::OptionBits::PINYIN_CORRECT_ALL
-        | oxpinyin_core::OptionBits::USE_DIVIDED_TABLE
-        | oxpinyin_core::OptionBits::USE_RESPLIT_TABLE
-        | oxpinyin_core::OptionBits::DYNAMIC_ADJUST;
+    let options = oxpinyin::OptionBits::PINYIN_INCOMPLETE
+        | oxpinyin::OptionBits::PINYIN_CORRECT_ALL
+        | oxpinyin::OptionBits::USE_DIVIDED_TABLE
+        | oxpinyin::OptionBits::USE_RESPLIT_TABLE
+        | oxpinyin::OptionBits::DYNAMIC_ADJUST;
     let mut driver = Driver::new(data, data, Some(options.bits()));
     let mut input = LineReader::stdin();
     loop {

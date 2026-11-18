@@ -66,10 +66,10 @@ fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset
 /// (`zhuyin.cpp:1453` via `:1898`, `:1920`) aborts the process (register row
 /// 66); a parse the facade cannot read, which the pin has no counterpart
 /// for, answers `false` with one warning.
-fn key_lookup_failed(error: &oxpinyin_core::engine::EngineError, name: &str) -> bool {
+fn key_lookup_failed(error: &oxpinyin::engine::EngineError, name: &str) -> bool {
     if matches!(
         error,
-        oxpinyin_core::engine::EngineError::ZeroKeyOffsetCheck { .. }
+        oxpinyin::engine::EngineError::ZeroKeyOffsetCheck { .. }
     ) {
         std::process::abort();
     }
@@ -365,17 +365,17 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
         Err(error) => {
-            match oxpinyin_core::facade::CursorFault::of(
+            match oxpinyin::facade::CursorFault::of(
                 &error,
-                oxpinyin_core::facade::CursorLaw::CheckOffset,
+                oxpinyin::facade::CursorLaw::CheckOffset,
             ) {
                 // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
                 // via `:1998` and `:2020`), and its `get_column_size` past the
                 // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
                 // A parse the facade cannot read, which the pin has no counterpart
                 // for.
-                oxpinyin_core::facade::CursorFault::Unreadable => {
+                oxpinyin::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
                     return false;
                 }
@@ -425,17 +425,17 @@ pub unsafe extern "C" fn zhuyin_get_right_zhuyin_offset(
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).
         Ok(None) => return false,
         Err(error) => {
-            match oxpinyin_core::facade::CursorFault::of(
+            match oxpinyin::facade::CursorFault::of(
                 &error,
-                oxpinyin_core::facade::CursorLaw::CheckOffset,
+                oxpinyin::facade::CursorLaw::CheckOffset,
             ) {
                 // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
                 // via `:2030` and `:2055`), and its `get_column_size` past the
                 // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
                 // A parse the facade cannot read, which the pin has no counterpart
                 // for.
-                oxpinyin_core::facade::CursorFault::Unreadable => {
+                oxpinyin::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
                     return false;
                 }

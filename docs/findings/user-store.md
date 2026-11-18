@@ -122,7 +122,7 @@ What gets incremented, by how much, against which tokens (**SHOWN**):
   2, 22080)`. The seed grows **geometrically** — and because it is added to the
   prior count (`new = prev + 2 * prev`), the stored count **triples** per
   reselection, not doubles: the seed sequence is `69, 138, 414, 1242, 3726,
-  11178, 22080` (clamped), as `oxpinyin_core::user::seed` reproduces. `last_token`
+  11178, 22080` (clamped), as `oxpinyin::user::seed` reproduces. `last_token`
   starts at `sentence_start` (1), so the first phrase of a sentence trains the
   `sentence_start → token` bigram.
 - **Phrase-index unigram** of `token`: raised by `seed * 7`
@@ -270,8 +270,8 @@ operations**. Both are **SHOWN**:
 There is no discrepancy. A phrase added by `pinyin_remember_user_input`
 seeds its unigram with `count * 3`, and later *selections* of it train
 with `seed * 7`. oxpinyin reproduces both as separate constants
-(`oxpinyin_core::user::seed::UNIGRAM_FACTOR` = 7,
-`oxpinyin_core::user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
+(`oxpinyin::user::seed::UNIGRAM_FACTOR` = 7,
+`oxpinyin::user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
 
@@ -343,7 +343,7 @@ no version. The drop-in contract is to match them, not to add guarantees
 that they lack. The backend's own file header stays the only stamp.
 
 - A hostile or truncated file degrades per file at the load, as
-  upstream's does, and never panics (`crates/oxpinyin-core/src/user/persistence.rs`).
+  upstream's does, and never panics (`crates/oxpinyin/src/user/persistence.rs`).
 - One exception: a `database format:` in `user.conf` that upstream's
   `to_table_database_format_type` does not know is the pin's abort
   (`table_info.cpp:122-133`, reached from `:353-354`). The load returns
@@ -389,7 +389,7 @@ that continuation's decode score. The magnitude of the nudge is exactly the
 
 **Storage.** The user half of the merge is the pin's own `SingleGram`
 value, held once, in the pin's own in-memory container (§11). Every read
-takes the bytes apart the pin's way (`oxpinyin_core::single_gram`, a port of
+takes the bytes apart the pin's way (`oxpinyin::single_gram`, a port of
 `ngram.cpp`): a count is `get_freq`'s first match walking from libstdc++'s
 `__lower_bound`, which answers deterministically on an unsorted array, and
 duplicated items are kept. An item-less user gram is still a gram:
@@ -475,19 +475,19 @@ export iterators (§9).
 
 ## 7. oxpinyin implementation map
 
-`oxpinyin-core` defines the `UserModel` seam (`crates/oxpinyin-core/src/model.rs`).
-`oxpinyin_core::user::UserStore` implements it (`crates/oxpinyin-core/src/user/model.rs`)
+`oxpinyin` defines the `UserModel` seam (`crates/oxpinyin/src/model.rs`).
+`oxpinyin::user::UserStore` implements it (`crates/oxpinyin/src/user/model.rs`)
 and exposes the stored counts as `UserCountDelta` for the §5 merge.
 
 | Behaviour | oxpinyin |
 |---|---|
-| §2.1 training seed arithmetic | `crates/oxpinyin-core/src/user/seed.rs` |
-| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-core/src/engine/session/selection.rs`, `crates/oxpinyin-core` |
-| §3 user phrase index and token allocation | `crates/oxpinyin-core/src/user/phrase.rs`, `store.rs` |
-| §4 save cycle and `m_modified` gate | `crates/oxpinyin-core/src/user/persistence.rs`, `UserStore::save_reporting` |
-| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin-core/src/user/data/lm/mod.rs`) |
-| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-core/src/facade/export_rows.rs` |
-| §11 user files | `crates/oxpinyin-core/src/user/data/user_files.rs`, `crates/oxpinyin-core/src/user/store_libpinyin.rs` |
+| §2.1 training seed arithmetic | `crates/oxpinyin/src/user/seed.rs` |
+| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin/src/engine/session/selection.rs`, `crates/oxpinyin` |
+| §3 user phrase index and token allocation | `crates/oxpinyin/src/user/phrase.rs`, `store.rs` |
+| §4 save cycle and `m_modified` gate | `crates/oxpinyin/src/user/persistence.rs`, `UserStore::save_reporting` |
+| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin/src/user/data/lm/mod.rs`) |
+| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin/src/facade/export_rows.rs` |
+| §11 user files | `crates/oxpinyin/src/user/data/user_files.rs`, `crates/oxpinyin/src/user/store_libpinyin.rs` |
 
 The C entry points `pinyin_save`, `pinyin_train`, `pinyin_choose_candidate`,
 `pinyin_choose_predicted_candidate`, `pinyin_remember_user_input`,
@@ -536,9 +536,9 @@ the files themselves are a second comparison surface (§11).
 
 **Dependencies.**
 
-- The `UserModel` seam (`crates/oxpinyin-core/src/model.rs`) and the engine
-  `Session` (`crates/oxpinyin-core/src/engine/session/`).
-- The backend store (`oxpinyin-core`), which reads and writes the user
+- The `UserModel` seam (`crates/oxpinyin/src/model.rs`) and the engine
+  `Session` (`crates/oxpinyin/src/engine/session/`).
+- The backend store (`oxpinyin`), which reads and writes the user
   files in the backend's own containers.
 - The export symbols (§9).
 - The training pipeline is **independent** — it builds the *system* model
@@ -568,12 +568,12 @@ wiped, exactly as upstream's `check_format` does.
 
 Architecture — the session state behind the value engine:
 
-* `oxpinyin_core::user::data::user_files` — the inventory (`UserDbm`: libpinyin's
+* `oxpinyin::user::data::user_files` — the inventory (`UserDbm`: libpinyin's
   file names on every backend), the `user.conf` codec (`UserTableInfo`,
   `OPEN_COUNTER_LIMIT` = 6, `get_open_counter`, conformance), and the
   `PhraseIndexLogger` record codec (add/remove/modify/header;
   MODIFY_HEADER carries the payload length once, then two runs).
-* `oxpinyin_core::user::persistence` — load, save and fini.
+* `oxpinyin::user::persistence` — load, save and fini.
   - Load runs `check_format` first and wipes a non-conforming profile.
     It then reads the user bigram's raw rows verbatim, the `USER_FILE`
     chunk stores, and the `.dbin` logs replayed onto the original system
@@ -601,7 +601,7 @@ Architecture — the session state behind the value engine:
   only copy.** A libpinyin session holds `Bigram::m_db` as the pin builds
   it — tkrzw `TinyDBM`, Kyoto Cabinet `StashDB` via `load_snapshot`,
   Berkeley DB an in-memory `DB_HASH` by cursor copy
-  (`oxpinyin_core::store::UserBigramDb`). The session reads `user_bigram.db`
+  (`oxpinyin::store::UserBigramDb`). The session reads `user_bigram.db`
   once, by `load_db`, after the profile check. Every bigram operation
   then runs the pin's own sequence on the raw grams:
   - training (`phonetic_lookup.h:876-909`);
@@ -634,7 +634,7 @@ Architecture — the session state behind the value engine:
   and Kyoto Cabinet overrides it with the stash-plus-snapshot form.
   Opening the user bigram through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
-* `oxpinyin_core::user::store_libpinyin` — `UserStore::open_libpinyin_checked` reads the
+* `oxpinyin::user::store_libpinyin` — `UserStore::open_libpinyin_checked` reads the
   profile into the **session's state in process memory**: the user
   library arenas, the pinyin index and phrase table, the pin's user
   bigram container, the live system items and the libraries'

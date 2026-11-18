@@ -340,7 +340,7 @@ def capture_rows(xml, *, pid, uuid, allocations):
                 binaries = [node for node in expand(frame) if node.tag == 'binary']
                 known = (name.lstrip('_') in {'pinyin_init', 'pinyin_guess_candidates',
                                              'pinyin_parse_more_full_pinyins'}
-                         or (name.startswith('_R') and '13oxpinyin_core' in name
+                         or (name.startswith('_R') and '8oxpinyin' in name
                              and name.endswith('11RuntimeDict11fill_lookup')))
                 if (known and any(
                         binary.get('UUID', binary.get('uuid', '')).replace('-', '').lower() == uuid for binary in binaries)):

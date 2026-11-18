@@ -6,18 +6,18 @@
 //!
 //! The orchestration half of both structs — the runtime assembly, the
 //! user store, the live option/scheme word, the parse-mode state machine,
-//! the re-anchored window — lives in [`oxpinyin_core::facade`]'s
+//! the re-anchored window — lives in [`oxpinyin::facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the pinyin facade; this file
 //! keeps only the zhuyin-facing shell: the ABI
 //! key slots, the `CString` candidate snapshot (with the zhuyin-local
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
-pub use oxpinyin_core::facade::InstanceCore;
+pub use oxpinyin::facade::InstanceCore;
 use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
 
-use oxpinyin_core::facade::{ContextCore, OpenFailure};
+use oxpinyin::facade::{ContextCore, OpenFailure};
 
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
@@ -41,8 +41,8 @@ impl CapiContext {
             core: ContextCore::try_open(
                 system_dir,
                 user_dir,
-                oxpinyin_core::facade::ZHUYIN_DEFAULT_OPTION_WORD,
-                oxpinyin_core::user::UserConfLaw::Zhuyin,
+                oxpinyin::facade::ZHUYIN_DEFAULT_OPTION_WORD,
+                oxpinyin::user::UserConfLaw::Zhuyin,
             )?,
         })
     }
@@ -59,15 +59,15 @@ impl CapiContext {
         // libzhuyin sorts its candidate lists with
         // `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`),
         // not the pinyin sort word.
-        session.set_candidate_ranking(oxpinyin_core::engine::CandidateRanking::LengthThenFrequency);
+        session.set_candidate_ranking(oxpinyin::engine::CandidateRanking::LengthThenFrequency);
         // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
         // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
-        session.set_nbest_shape(oxpinyin_core::engine::NbestShape::ZHUYIN);
+        session.set_nbest_shape(oxpinyin::engine::NbestShape::ZHUYIN);
         CapiInstance {
             owner,
             core,
             state: CapiInstanceState {
-                candidates: oxpinyin_core::facade::CandidateSnapshot::new(),
+                candidates: oxpinyin::facade::CandidateSnapshot::new(),
             },
         }
     }
@@ -79,14 +79,14 @@ impl CapiContext {
 /// `lookup_candidate_t *` can borrow into it across C calls.
 ///
 /// Sized to need, as the pinyin facade's row is: the text lives in the
-/// instance's [`CandidateSnapshot`](oxpinyin_core::facade::CandidateSnapshot)
+/// instance's [`CandidateSnapshot`](oxpinyin::facade::CandidateSnapshot)
 /// buffer and the counts are `u32`. It carries only what this facade's
 /// getters and its choose read: the pin's choose reads the row's own
 /// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219),
 /// on whichever instance a caller passes it to.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
-    pub(crate) text: oxpinyin_core::facade::TextSpan,
+    pub(crate) text: oxpinyin::facade::TextSpan,
     /// The pointer `zhuyin_get_candidate_string` answers — from the row
     /// alone, as the pin reads only the candidate there — kept current by
     /// the snapshot.
@@ -101,7 +101,7 @@ pub struct CapiCandidate {
     /// also returned when reparsing makes the span refuse.
     pub(crate) span_end: u16,
     /// The row's scoring token, `m_token`, which a choose forces.
-    pub(crate) token: Option<oxpinyin_core::PhraseToken>,
+    pub(crate) token: Option<oxpinyin::PhraseToken>,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
@@ -122,12 +122,12 @@ impl CapiCandidate {
     }
 }
 
-impl oxpinyin_core::facade::SnapshotRow for CapiCandidate {
-    fn text_span(&self) -> oxpinyin_core::facade::TextSpan {
+impl oxpinyin::facade::SnapshotRow for CapiCandidate {
+    fn text_span(&self) -> oxpinyin::facade::TextSpan {
         self.text
     }
 
-    fn set_text(&mut self, span: oxpinyin_core::facade::TextSpan, ptr: *const std::ffi::c_char) {
+    fn set_text(&mut self, span: oxpinyin::facade::TextSpan, ptr: *const std::ffi::c_char) {
         self.text = span;
         self.text_ptr = ptr;
     }
@@ -149,7 +149,7 @@ pub struct CapiInstanceState {
     /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`:
     /// the rows `lookup_candidate_t *` pointers address and the packed
     /// strings they read.
-    pub(crate) candidates: oxpinyin_core::facade::CandidateSnapshot<CapiCandidate>,
+    pub(crate) candidates: oxpinyin::facade::CandidateSnapshot<CapiCandidate>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────
@@ -176,19 +176,16 @@ impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
 }
 
 pub type CapiInstanceRead<'a> =
-    CapiInstance<oxpinyin_core::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
-pub type CapiInstanceMut<'a> = CapiInstance<
-    oxpinyin_core::facade::InstanceMut<'a>,
-    &'a mut CapiInstanceState,
-    &'a ContextOwner,
->;
+    CapiInstance<oxpinyin::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
+pub type CapiInstanceMut<'a> =
+    CapiInstance<oxpinyin::facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
 
 impl<
-    S: std::borrow::Borrow<oxpinyin_core::facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+    S: std::borrow::Borrow<oxpinyin::facade::InstanceState>,
+    E: std::borrow::Borrow<oxpinyin::engine::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
-> CapiInstance<oxpinyin_core::facade::InstanceView<'_, S, E>, V, O>
+> CapiInstance<oxpinyin::facade::InstanceView<'_, S, E>, V, O>
 {
     pub(crate) fn read(&self) -> CapiInstanceRead<'_> {
         CapiInstance {
@@ -203,13 +200,13 @@ impl<
 /// Handles retain ownership; every access still borrows only for one C call.
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
-oxpinyin_core::state_handle_helpers! {
-    context: ZhuyinContext, instance: ZhuyinInstance, instance_binding: instance, error: oxpinyin_core::engine::EngineError, context_field: {  }
+oxpinyin::state_handle_helpers! {
+    context: ZhuyinContext, instance: ZhuyinInstance, instance_binding: instance, error: oxpinyin::engine::EngineError, context_field: {  }
 }
 
 mod handles {
     use super::*;
-    oxpinyin_core::opaque_handle_casts! {
+    oxpinyin::opaque_handle_casts! {
         vis: pub(crate),
         context: ZhuyinContext => ContextOwner,
         instance: ZhuyinInstance => CapiInstance,

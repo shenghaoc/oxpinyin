@@ -4,8 +4,8 @@
 //!
 //! Each utility reads the cwd-relative names the pin does
 //! (`src/include/pinyin_internal.h:55-66`), through the pin's own calls in
-//! `oxpinyin_core::input::tool::storage`; the table text, the DBM records and the
-//! per-library chunks are the bytes `oxpinyin-core`'s layouts describe.
+//! `oxpinyin::input::tool::storage`; the table text, the DBM records and the
+//! per-library chunks are the bytes `oxpinyin`'s layouts describe.
 //!
 //! - [`gen_binary_files`] turns `table.conf`'s `.table` files into the
 //!   two index DBMs, the per-library chunk files and — with
@@ -29,9 +29,9 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin_core::input::tool;
-use oxpinyin_core::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
-use oxpinyin_core::user::data::table_info::{TableConf, TableConfError};
+use oxpinyin::input::tool;
+use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin::user::data::table_info::{TableConf, TableConfError};
 
 pub mod dbm;
 pub mod export_interpolation;
@@ -115,7 +115,7 @@ pub(crate) const fn make_token(library: u8, slot: u32) -> u32 {
 
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
-    oxpinyin_core::input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
+    oxpinyin::input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
 }
 
 /// The `CString` a `table.conf` name column names.

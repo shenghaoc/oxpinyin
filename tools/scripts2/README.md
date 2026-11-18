@@ -52,19 +52,19 @@ and handwritten consumers. The generated destinations are:
 
 | Destination (under `crates/`) | Data and identity against #1522 |
 | --- | --- |
-| `oxpinyin-core/src/chewing_key_tables.rs` | Three enum counts; 1,728 inverse content indexes; exact values/order |
-| `oxpinyin-core/src/content_table_source.rs` | 441 complete content rows; row initializer bytes unchanged |
-| `oxpinyin-core/src/tone_symbols.rs` | Zero-tone enum and tone-symbol match; exact values |
-| `oxpinyin-core/src/table_data/full_pinyin_syllables.rs` | 405 full syllables in `fullpinyin.PINYIN_DICT` numeric-ID order; exact values/order |
-| `oxpinyin-core/src/table_data/syllable_inventory.rs` | Counts, maximum length, 23 incomplete, 2 option-only, 10 Zhuyin-only keys; exact values/order |
-| `oxpinyin-core/src/table_data/full_pinyin_indexes.rs` | 406 Luoma and 406 secondary-Zhuyin rows and counts; exact values/order |
-| `oxpinyin-core/src/table_data/full_pinyin_counts.rs` | Existing duplicate public counts; exact values |
-| `oxpinyin-core/src/table_data/zhuyin_indexes.rs` | 1,493 standard, 500 Hsu, 482 Eten26 rows with consulted flags; exact values/order |
-| `oxpinyin-core/src/table_data/zhuyin_tones.rs` | Three counts and 440 valid-tone masks; exact values/order; fallback below |
-| `oxpinyin-core/src/table_data/double_pinyin.rs` | Six schemes' sheng/yun tables and three fallback lists; exact values/order |
-| `oxpinyin-core/src/table_data/zhuyin_keyboards.rs` | Eight keyboards' 24 symbol/component/tone lists; exact values/order |
-| `oxpinyin-core/src/table_data/tone_symbols.rs` | Existing public tone-symbol match; exact values |
-| `oxpinyin-core/src/engine/session/split_tables.rs` | 85 resplit and 20 divided rows; exact values/order |
+| `oxpinyin/src/chewing_key_tables.rs` | Three enum counts; 1,728 inverse content indexes; exact values/order |
+| `oxpinyin/src/content_table_source.rs` | 441 complete content rows; row initializer bytes unchanged |
+| `oxpinyin/src/tone_symbols.rs` | Zero-tone enum and tone-symbol match; exact values |
+| `oxpinyin/src/table_data/full_pinyin_syllables.rs` | 405 full syllables in `fullpinyin.PINYIN_DICT` numeric-ID order; exact values/order |
+| `oxpinyin/src/table_data/syllable_inventory.rs` | Counts, maximum length, 23 incomplete, 2 option-only, 10 Zhuyin-only keys; exact values/order |
+| `oxpinyin/src/table_data/full_pinyin_indexes.rs` | 406 Luoma and 406 secondary-Zhuyin rows and counts; exact values/order |
+| `oxpinyin/src/table_data/full_pinyin_counts.rs` | Existing duplicate public counts; exact values |
+| `oxpinyin/src/table_data/zhuyin_indexes.rs` | 1,493 standard, 500 Hsu, 482 Eten26 rows with consulted flags; exact values/order |
+| `oxpinyin/src/table_data/zhuyin_tones.rs` | Three counts and 440 valid-tone masks; exact values/order; fallback below |
+| `oxpinyin/src/table_data/double_pinyin.rs` | Six schemes' sheng/yun tables and three fallback lists; exact values/order |
+| `oxpinyin/src/table_data/zhuyin_keyboards.rs` | Eight keyboards' 24 symbol/component/tone lists; exact values/order |
+| `oxpinyin/src/table_data/tone_symbols.rs` | Existing public tone-symbol match; exact values |
+| `oxpinyin/src/engine/session/split_tables.rs` | 85 resplit and 20 divided rows; exact values/order |
 
 Whole-file identity cannot hold, because banners, formatting and locations
 change. Identity is therefore value identity. `acceptance.json` records 67 original Rust literal declarations from the

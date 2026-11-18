@@ -11,7 +11,7 @@
 use std::ffi::CString;
 use std::ffi::OsString;
 
-use oxpinyin_core::input::tool::{self, OptionValue, OutputStream};
+use oxpinyin::input::tool::{self, OptionValue, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;
@@ -33,7 +33,7 @@ fn print_phrase(output: &OutputStream, search: &PhraseSearch<'_>, token: u32) {
 /// `deal_with_segmentable` (`ngseg.cpp:70-94`).
 fn deal_with_segmentable(
     search: &PhraseSearch<'_>,
-    bigram: Option<&oxpinyin_core::user::data::BigramTable>,
+    bigram: Option<&oxpinyin::user::data::BigramTable>,
     lambda: f32,
     run: &[u32],
     output: &OutputStream,

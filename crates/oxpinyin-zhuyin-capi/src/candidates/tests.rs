@@ -29,7 +29,7 @@ use crate::test_support::{
 
 use crate::types::LookupCandidate;
 
-use oxpinyin_core::user::SENTENCE_START;
+use oxpinyin::user::SENTENCE_START;
 
 use rstest::rstest;
 
@@ -46,9 +46,9 @@ fn a_store_into_the_failed_user_bigram_aborts_training() {
     let stderr = crate::test_support::assert_aborts(
         "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
         || {
-            super::train_answer(Err(
-                oxpinyin_core::engine::EngineError::FailedUserBigramStore { token: 0x0100_0001 },
-            ));
+            super::train_answer(Err(oxpinyin::engine::EngineError::FailedUserBigramStore {
+                token: 0x0100_0001,
+            }));
         },
     );
     // No Rust panic text or other line: the pin writes none here but
@@ -166,7 +166,7 @@ fn reparse_keeps_the_reanchored_candidates_selection(
     use crate::sentence::{
         zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor,
     };
-    use oxpinyin_core::model::Dictionary;
+    use oxpinyin::model::Dictionary;
     use std::ptr;
 
     let (context, instance) = open();
@@ -326,7 +326,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         let record = [&4u32.to_le_bytes()[..], &[0; 4], &[4, 0], total, total].concat();
         assert_eq!(
             bytes,
-            oxpinyin_core::user::data::chunk_format::build_memory_chunk(&record).expect("frame"),
+            oxpinyin::user::data::chunk_format::build_memory_chunk(&record).expect("frame"),
             "{}",
             path.display()
         );
@@ -335,26 +335,24 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     assert!(
         user_dir
             .path
-            .join(oxpinyin_core::user::data::user_files::UserDbm::Bigram.file_name())
+            .join(oxpinyin::user::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
-    let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system_dir())
+    let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let marker = oxpinyin_core::user::data::user_files::UserTableInfo::load_path(
+    let marker = oxpinyin::user::data::user_files::UserTableInfo::load_path(
         &user_dir.path.join("user.conf"),
     )
     .expect("saved user.conf");
-    assert!(
-        marker.is_conform(&oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf))
-    );
+    assert!(marker.is_conform(&oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf)));
     // The saved user bigram holds no record.
     let mut bigram_rows = 0;
     {
-        use oxpinyin_core::store::RawReadStore as _;
-        oxpinyin_core::store::DefaultStore::open_user_bigram(
+        use oxpinyin::store::RawReadStore as _;
+        oxpinyin::store::DefaultStore::open_user_bigram(
             &user_dir
                 .path
-                .join(oxpinyin_core::user::data::user_files::UserDbm::Bigram.file_name()),
+                .join(oxpinyin::user::data::user_files::UserDbm::Bigram.file_name()),
         )
         .expect("the saved user bigram")
         .copy_raw(|_, _| bigram_rows += 1)

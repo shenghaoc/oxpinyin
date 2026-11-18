@@ -76,7 +76,7 @@ fn a_read_failure_after_the_size_check_aborts() {
     crate::test_support::assert_aborts(
         "sentence::tests::a_read_failure_after_the_size_check_aborts",
         || {
-            let error = oxpinyin_core::engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
+            let error = oxpinyin::engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
             crate::sentence::refuse_lookup_gram("zhuyin_phrase_segment", &error);
         },
     );

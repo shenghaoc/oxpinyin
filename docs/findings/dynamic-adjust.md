@@ -180,7 +180,7 @@ which leaves those branches with `continue` before reaching the expression
 
 ## Tests
 
-Two engine tests in `crates/oxpinyin-core/src/engine/session/tests.rs` hold the
+Two engine tests in `crates/oxpinyin/src/engine/session/tests.rs` hold the
 gates:
 
 - `dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram`:

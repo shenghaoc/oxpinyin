@@ -13,7 +13,7 @@
 use std::ffi::CStr;
 use std::io::BufRead;
 
-use oxpinyin_core::input::tool::{self, LineReader, k_mixture_model as edge};
+use oxpinyin::input::tool::{self, LineReader, k_mixture_model as edge};
 
 use super::database::{Database, Loaded, exit_on_short_single_gram};
 use super::phrase::PhraseIndex;

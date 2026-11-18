@@ -20,7 +20,7 @@ use crate::support::{
 
 use contract_data::contract_data_dir;
 
-#[path = "../../../oxpinyin-core/tests/common/contract_data.rs"]
+#[path = "../../../oxpinyin/tests/common/contract_data.rs"]
 mod contract_data;
 
 /// A context and instance on `system` with `user_dir`, which must open.
@@ -110,7 +110,7 @@ fn items_system(parent: &Path, items: &[(&[u32], &[u16], u32)], total: u32) -> P
     std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
     std::fs::write(
         &gb_char,
-        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("gb_char.bin");
     for (name, rows) in [

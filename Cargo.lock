@@ -590,20 +590,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "oxpinyin-capi"
-version = "0.1.0-alpha.1"
-dependencies = [
- "glib-sys",
- "libc",
- "num_enum",
- "oxpinyin-core",
- "rstest",
- "rustc-hash",
- "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-core"
+name = "oxpinyin"
 version = "0.1.0-alpha.1"
 dependencies = [
  "bindgen",
@@ -630,14 +617,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-capi"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "glib-sys",
+ "libc",
+ "num_enum",
+ "oxpinyin",
+ "rstest",
+ "rustc-hash",
+ "tempfile",
+]
+
+[[package]]
 name = "oxpinyin-repl"
 version = "0.1.0-alpha.1"
 dependencies = [
  "assert_cmd",
  "assert_fs",
  "libc",
+ "oxpinyin",
  "oxpinyin-capi",
- "oxpinyin-core",
  "oxpinyin-utils",
  "oxpinyin-zhuyin-capi",
  "regex",
@@ -653,7 +653,7 @@ dependencies = [
  "assert_cmd",
  "assert_fs",
  "libc",
- "oxpinyin-core",
+ "oxpinyin",
  "regex",
  "rstest",
  "rustc-hash",
@@ -667,7 +667,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "glib-sys",
  "libc",
- "oxpinyin-core",
+ "oxpinyin",
  "rstest",
  "tempfile",
 ]

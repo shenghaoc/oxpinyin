@@ -4,7 +4,7 @@
 //! fixture corpus `fixtures/w9/segmenter-spseg-w3.txt`; the native DBM walk
 //! order is never asserted, only the set of records it emits.
 
-use oxpinyin_core::input::tool;
+use oxpinyin::input::tool;
 
 /// Format independently with libc's `%f`, as the utility's printf family does.
 #[expect(unsafe_code, reason = "libc snprintf formats the expected text")]
@@ -85,7 +85,7 @@ fn repo_root() -> PathBuf {
 fn fixture_dir() -> PathBuf {
     let dir = repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::user::data::DEFAULT_STORE_EXT);
     assert!(
         dir.is_dir(),
         "missing W3 fixture directory {}",
@@ -152,7 +152,7 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin_core::input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin::input::TEXT_NEWLINE)
 }
 
 fn block(export: &str, header: &str, until: &str) -> Vec<String> {

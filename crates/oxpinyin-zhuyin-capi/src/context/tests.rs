@@ -91,7 +91,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             }
             train_once(context);
             // The first copy writes one record and fails the next.
-            oxpinyin_core::store::copy_faults::fail_destination_write_after(1);
+            oxpinyin::store::copy_faults::fail_destination_write_after(1);
             unsafe { zhuyin_save(context) };
         },
     );
@@ -115,9 +115,9 @@ fn a_user_session_fault_aborts_the_init() {
     let stderr = crate::test_support::assert_aborts(
         "context::tests::a_user_session_fault_aborts_the_init",
         || {
-            let error = oxpinyin_core::facade::OpenFailure::Runtime(
-                oxpinyin_core::facade::runtime::OpenError::UserSession(
-                    oxpinyin_core::user::UserStoreError::SessionSeed("injected".into()),
+            let error = oxpinyin::facade::OpenFailure::Runtime(
+                oxpinyin::facade::runtime::OpenError::UserSession(
+                    oxpinyin::user::UserStoreError::SessionSeed("injected".into()),
                 ),
             );
             super::refuse_init(&error, std::path::Path::new("system"));
@@ -135,7 +135,7 @@ fn a_user_session_fault_aborts_the_init() {
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
+    oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// One call over a private system directory whose library is a directory
@@ -180,7 +180,7 @@ fn map_a_directory_library(site: &str) -> bool {
 /// Register row 96 at save; row 76's completed save elsewhere.
 // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
 // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
-// without a word there (`oxpinyin-core`, `phrase_libraries.rs`), which no pin observation
+// without a word there (`oxpinyin`, `phrase_libraries.rs`), which no pin observation
 // covers.
 #[cfg(unix)]
 #[test]

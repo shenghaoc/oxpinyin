@@ -7,7 +7,7 @@
 //! (`utils/segment/*.cpp` at 074a2219) and its committed W9 goldens, not
 //! from a live run.
 
-use oxpinyin_core::input::tool;
+use oxpinyin::input::tool;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -22,7 +22,7 @@ fn repo_root() -> PathBuf {
 fn w3_dir() -> PathBuf {
     repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::user::data::DEFAULT_STORE_EXT)
 }
 
 fn copy_tree(source: &Path, destination: &Path) {

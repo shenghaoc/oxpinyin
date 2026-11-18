@@ -1,7 +1,7 @@
 //! Parsing symbols: full pinyin, double pinyin, chewing.
 //!
 //! C wrappers over the shared facade-orchestration seams
-//! (`oxpinyin_core::facade::InstanceCore`); the laws themselves — the
+//! (`oxpinyin::facade::InstanceCore`); the laws themselves — the
 //! continue-or-restart rule, the scheme dispatch, the exact-input drive,
 //! the LUOMA / `SECONDARY_ZHUYIN` index branch — live there once, shared
 //! with the zhuyin facade. This facade's chewing seam forwards
@@ -10,7 +10,7 @@
 
 use std::os::raw::c_char;
 
-use oxpinyin_core::facade::ToneForwarding;
+use oxpinyin::facade::ToneForwarding;
 
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
@@ -35,7 +35,7 @@ unsafe fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> 
 
     // The pin parses the raw bytes: what follows an invalid sequence is
     // never reached (`input::parser_prefix`).
-    let text = oxpinyin_core::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(text) },
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
 ///                                         const char * pinyins);
 /// ```
 ///
-/// Parses through [`oxpinyin_core::DoublePinyinParser`] and drives the
+/// Parses through [`oxpinyin::DoublePinyinParser`] and drives the
 /// session with the apostrophe-joined full-pinyin spelling.
 ///
 /// # Safety
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
         return 0;
     }
 
-    let text = oxpinyin_core::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
 ///                                    const char * chewings);
 /// ```
 ///
-/// Parses through [`oxpinyin_core::ZhuyinParser`] (STANDARD) and drives
+/// Parses through [`oxpinyin::ZhuyinParser`] (STANDARD) and drives
 /// the session with the apostrophe-joined full-pinyin spelling.
 ///
 /// # Safety
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn pinyin_parse_more_chewings(
         return 0;
     }
 
-    let text = oxpinyin_core::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },

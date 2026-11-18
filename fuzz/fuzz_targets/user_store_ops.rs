@@ -26,10 +26,10 @@
 use std::sync::{Mutex, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::SyllableKey;
-use oxpinyin_core::user::data::table_info::TableConf;
-use oxpinyin_core::user::data::user_files::{SystemVersions, UserFileLayout};
-use oxpinyin_core::user::{
+use oxpinyin::SyllableKey;
+use oxpinyin::user::data::table_info::TableConf;
+use oxpinyin::user::data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin::user::{
     LibraryLoopRows, PinyinKey, SystemOriginals, USER_DICTIONARY, UserConfLaw, UserStore,
     UserStoreError, phrase_index_library_index,
 };
@@ -260,7 +260,7 @@ fuzz_target!(|data: &[u8]| {
                     .collect();
                 if text.chars().count() == keys.len() && !text.is_empty() {
                     let refusable = holds_foreign_token(&store, &text);
-                    match store.add_phrase(&oxpinyin_core::PhraseText::from(&text), &keys, None) {
+                    match store.add_phrase(&oxpinyin::PhraseText::from(&text), &keys, None) {
                         Ok(token) => added.push(token),
                         Err(UserStoreError::InvalidPhrase) if refusable => {}
                         Err(err) => panic!("valid add: {err:?}"),
@@ -284,7 +284,7 @@ fuzz_target!(|data: &[u8]| {
                 let over_limit: String = std::iter::repeat('词').take(16).collect();
                 let keys16: Vec<PinyinKey> = (0..16).map(|index| key_for(index)).collect();
                 assert!(matches!(
-                    store.add_phrase(&oxpinyin_core::PhraseText::from(&over_limit), &keys16, None),
+                    store.add_phrase(&oxpinyin::PhraseText::from(&over_limit), &keys16, None),
                     Err(UserStoreError::InvalidPhrase)
                 ));
                 assert!(matches!(
@@ -318,7 +318,7 @@ fuzz_target!(|data: &[u8]| {
                     // This generator draws only complete syllables
                     // (`SYLLABLES`, `key_for`), so it cannot build an
                     // initial-only reading, whose two index spaces name one
-                    // key. That shape is covered by the `oxpinyin-core` unit
+                    // key. That shape is covered by the `oxpinyin` unit
                     // test `an_initial_only_reading_answers_the_pins_reading_removal_assert`,
                     // not by this generator.
                     let mut refused = false;
@@ -359,9 +359,9 @@ fuzz_target!(|data: &[u8]| {
             // flavors (train-shaped)
             5 => {
                 let prev = u32::from(payload.first().copied().unwrap_or(0)) % 8
-                    + oxpinyin_core::user::FIRST_USER_TOKEN;
+                    + oxpinyin::user::FIRST_USER_TOKEN;
                 let cur = u32::from(payload.get(1).copied().unwrap_or(0)) % 8
-                    + oxpinyin_core::user::FIRST_USER_TOKEN
+                    + oxpinyin::user::FIRST_USER_TOKEN
                     + 1;
                 let count = u64::from(payload.get(2).copied().unwrap_or(0)) % 100;
                 store

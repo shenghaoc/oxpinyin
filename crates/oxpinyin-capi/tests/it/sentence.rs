@@ -16,7 +16,7 @@ use crate::support::{
     system_dir, *,
 };
 
-use oxpinyin_core::user::SENTENCE_START;
+use oxpinyin::user::SENTENCE_START;
 
 use std::ffi::c_char;
 
@@ -194,7 +194,7 @@ fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
 #[test]
 fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let an = oxpinyin_core::ChewingKey::from_pinyin("an")
+    let an = oxpinyin::ChewingKey::from_pinyin("an")
         .expect("frozen syllable")
         .with_tone(1)
         .to_packed();
@@ -231,7 +231,7 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
     let instance = alloc(context);
-    assert!(unsafe { pinyin_set_options(context, oxpinyin_core::OptionBits::USE_TONE.bits()) });
+    assert!(unsafe { pinyin_set_options(context, oxpinyin::OptionBits::USE_TONE.bits()) });
     assert_eq!(parse(instance, "ba1"), 3);
     assert!(unsafe { pinyin_guess_sentence(instance) });
 
@@ -429,7 +429,7 @@ fn a_short_sentence_start_gram_aborts_the_guess_after_parsing() {
             let context = init_fixture_at(&user.path);
             assert!(!context.is_null());
             assert!(unsafe {
-                pinyin_set_options(context, oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits())
+                pinyin_set_options(context, oxpinyin::OptionBits::DYNAMIC_ADJUST.bits())
             });
             let instance = unsafe { pinyin_alloc_instance(context) };
             assert!(!instance.is_null());

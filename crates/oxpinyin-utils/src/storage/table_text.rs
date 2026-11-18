@@ -11,7 +11,7 @@
 
 use std::ffi::CString;
 
-use oxpinyin_core::input::tool::storage::{TableFile, ascii_strtoull, strlcpy_256};
+use oxpinyin::input::tool::storage::{TableFile, ascii_strtoull, strlcpy_256};
 
 /// One parsed `.table` record.
 pub(crate) struct Record {

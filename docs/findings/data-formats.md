@@ -11,7 +11,7 @@ An unmodified libpinyin data directory for the same backend opens as is
 Pin lines are at libpinyin `074a2219` (`tools/oracle/oracle-pin.txt`);
 the tkrzw backend file is
 cited where the three backends share the logic. The readers in
-`crates/oxpinyin-core` cite the exact upstream lines. §4-§7 give the
+`crates/oxpinyin` cite the exact upstream lines. §4-§7 give the
 DBM files: the pinyin index, the phrase index, the bigram and the
 punctuation table.
 
@@ -61,7 +61,7 @@ any backend   gb_char.bin:      {length u32}{checksum u32} then the payload
 Upstream: `src/include/memory_chunk.h` (`MemoryChunk::save`, `mmap`,
 `get_check_sum`) and `src/storage/phrase_index.cpp`
 (`SubPhraseIndex::load`, `store`, `get_phrase_item`, `get_range`).
-oxpinyin: `crates/oxpinyin-core/src/user/data/chunk_format.rs` holds the shared
+oxpinyin: `crates/oxpinyin/src/user/data/chunk_format.rs` holds the shared
 constants and checksum; `phrase_library.rs` reads and `chunk_write.rs`
 writes.
 
@@ -95,9 +95,9 @@ Facts the readers rely on:
 
 On the pinned model the four system libraries hold 138,096 items.
 的 (`0x010005DB`) carries two readings, `de 2213855` and `di 11000`.
-The `package_libraries` tests in `crates/oxpinyin-core/src/user/data/phrase_library/tests.rs` hold these
+The `package_libraries` tests in `crates/oxpinyin/src/user/data/phrase_library/tests.rs` hold these
 values on the pinned data package (`just fetch-contract-data`).
-The `pin_data` test in `crates/oxpinyin-core/src/facade/runtime/tests.rs` opens the same package through
+The `pin_data` test in `crates/oxpinyin/src/facade/runtime/tests.rs` opens the same package through
 `Runtime::open` and holds its facade unigram total, 51,051,831.
 
 ---
@@ -117,7 +117,7 @@ database format:Tkrzw
 ```
 
 The `database format:` token is the backend's: `BerkeleyDB`,
-`KyotoCabinet` or `Tkrzw`. `crates/oxpinyin-core/src/user/data/table_info.rs`
+`KyotoCabinet` or `Tkrzw`. `crates/oxpinyin/src/user/data/table_info.rs`
 scans the file with the pin's own `fscanf` sequence, and
 `table_conf.rs` holds λ.
 
@@ -196,7 +196,7 @@ the token decides its meaning.
 
 oxpinyin keeps the two spaces apart as upstream does: `SystemDictionary`
 is the default facade and `AddonDictionary` the addon facade
-(`crates/oxpinyin-core/src/user/data/dict.rs`). `system_files.rs` lists both
+(`crates/oxpinyin/src/user/data/dict.rs`). `system_files.rs` lists both
 library sets.
 
 ---
@@ -227,7 +227,7 @@ struct _ChewingKey {
 The packing uses the compiler's bitfield layout, and the packed `u16` is
 stored host-endian. `NUM_INITIALS = 24`, `NUM_MIDDLES = 4`,
 `NUM_FINALS = 18` (`chewing_enum.h`). oxpinyin:
-`crates/oxpinyin-core/src/chewing_key.rs` (`ChewingKey::to_packed`,
+`crates/oxpinyin/src/chewing_key.rs` (`ChewingKey::to_packed`,
 `ChewingKey::from_packed`).
 
 ### 4.2 Two key spaces in one DBM
@@ -317,15 +317,15 @@ All three agree with the store's key-ordering contract
 
 ### 4.6 oxpinyin
 
-- `crates/oxpinyin-core/src/user/data/row_format.rs` (`pinyin_index`): the key
+- `crates/oxpinyin/src/user/data/row_format.rs` (`pinyin_index`): the key
   encoders, the item decoder and the stride, shared with the
   `gen_binary_files` writer in `oxpinyin-utils`.
-- `crates/oxpinyin-core/src/user/data/chewing_table.rs`: `ChewingTable`, the
+- `crates/oxpinyin/src/user/data/chewing_table.rs`: `ChewingTable`, the
   counterpart of `ChewingLargeTable2`, with the search semantics and the
   prefix probe.
-- `crates/oxpinyin-core/src/user/data/dict.rs`: `SystemDictionary` and
+- `crates/oxpinyin/src/user/data/dict.rs`: `SystemDictionary` and
   `AddonDictionary` implement the `Dictionary` trait over `ChewingTable`.
-- `crates/oxpinyin-core/src/store/mod.rs`: `RawReadStore`, unframed key access
+- `crates/oxpinyin/src/store/mod.rs`: `RawReadStore`, unframed key access
   to libpinyin's DBM files.
 
 ---
@@ -371,13 +371,13 @@ of the store), so the predicted order is the pin's on the pin's data
 
 ### 5.2 oxpinyin
 
-- `crates/oxpinyin-core/src/user/data/row_format.rs` (`phrase_index`): the UCS-4 key
+- `crates/oxpinyin/src/user/data/row_format.rs` (`phrase_index`): the UCS-4 key
   encoder and the token decoder, shared with the `gen_binary_files` writer.
-- `crates/oxpinyin-core/src/user/data/phrase_table.rs`: `PhraseTable`, the
+- `crates/oxpinyin/src/user/data/phrase_table.rs`: `PhraseTable`, the
   counterpart of `PhraseLargeTable3`, with exact search, the prefix probe
   and `search_suggestion`. It uses the `ChewingDbm` trait and the
   `RawChewingDbm` wrapper from `chewing_table.rs`.
-- `crates/oxpinyin-core/src/user/data/dict.rs`: `SystemDictionary` answers
+- `crates/oxpinyin/src/user/data/dict.rs`: `SystemDictionary` answers
   `tokens_for_text` and the suggestion tokens through `PhraseTable`.
 
 ---
@@ -393,7 +393,7 @@ index and `punct.bin` are tree containers.
   (`const char * kbuf = (char *) &index;`, `ngram_kyotodb.cpp:130`).
 - **Value**: `total: u32` (the sum of the counts), then
   `{next_token: u32, count: u32}[]` items. This is `SingleGram`'s layout
-  (`crates/oxpinyin-core/src/user/data/single_gram.rs`).
+  (`crates/oxpinyin/src/user/data/single_gram.rs`).
 
 `RawReadStore::open_hash_read_only` opens the hash container class on each
 backend. `BigramTable` reads lazily: each load performs one point lookup
@@ -425,12 +425,12 @@ oxpinyin keeps the failed object as the pin does.
 
 oxpinyin (all under `crates/`):
 
-- `oxpinyin-core/src/user/data/row_format.rs` (`bigram`, `punct`,
+- `oxpinyin/src/user/data/row_format.rs` (`bigram`, `punct`,
   `encode_token_key`): the key and value layouts, shared with the
   `oxpinyin-utils` writers.
-- `oxpinyin-core/src/user/data/bigram_table.rs`: `BigramTable`, the lazy bigram
-  reader; `oxpinyin-core/src/user/data/lm/mod.rs` builds `BigramLanguageModel` on it.
-- `oxpinyin-core/src/user/data/punct.rs`: `PunctTable`, the lazy punctuation reader.
-- `oxpinyin-core`: `RawReadStore::open_hash_read_only` and
+- `oxpinyin/src/user/data/bigram_table.rs`: `BigramTable`, the lazy bigram
+  reader; `oxpinyin/src/user/data/lm/mod.rs` builds `BigramLanguageModel` on it.
+- `oxpinyin/src/user/data/punct.rs`: `PunctTable`, the lazy punctuation reader.
+- `oxpinyin`: `RawReadStore::open_hash_read_only` and
   `WriteStore::create_hash` on each backend (Kyoto Cabinet `DbType::Hash`,
   tkrzw `HashDBM`, Berkeley DB `DB_HASH`).

@@ -15,7 +15,7 @@ All three cells, tkrzw, bdb and kc, run only when a backend path check selects t
 This rule makes sure that the non-default bdb and kc cells gate every change that can reach them.
 The three checks are:
 
-1. The diff lists a file under `crates/oxpinyin-core/src/store/`, the core manifest, the core `build.rs`, `codegen/store.rs` or `Cargo.lock`.
+1. The diff lists a file under `crates/oxpinyin/src/store/`, the core manifest, the core `build.rs`, `codegen/store.rs` or `Cargo.lock`.
 2. A changed non-Markdown file contains `feature = "bdb"`, `feature = "tkrzw"` or `feature = "kyotocabinet"`.
 3. A changed line in a `Cargo.toml` names a backend.
 
@@ -246,7 +246,7 @@ Check the build of the library, not its version:
 
    ```sh
    PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib \
-     cargo nextest run -p oxpinyin-core -E 'test(tkrzw_library_honours_its_sentinel_protocol)'
+     cargo nextest run -p oxpinyin -E 'test(tkrzw_library_honours_its_sentinel_protocol)'
    ```
 
    `readelf -rW $P/lib/libtkrzw.so.1 | grep -c KeyComparator` prints 0 for defect 2.

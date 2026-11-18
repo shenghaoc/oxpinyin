@@ -35,7 +35,7 @@ struct CandidateBacking {
 }
 
 // Stamp the helpers.
-oxpinyin_core::opaque_handle_casts! {
+oxpinyin::opaque_handle_casts! {
     vis: pub,
     context: TestContext => ContextBacking,
     instance: TestInstance => InstanceBacking,
@@ -138,7 +138,7 @@ fn candidate_ptr_ref_round_trip() {
 
 // ── Fixture for `write_owned_sentence!` ────────────────────────────────
 
-use oxpinyin_core::PhraseText;
+use oxpinyin::PhraseText;
 
 /// Stands for a facade's sentence allocator: the phrases joined into a
 /// copy the test can reclaim, or NULL for no phrase, as a sentence whose
@@ -157,7 +157,7 @@ fn test_sentence_text(
     std::ffi::CString::new(joined).map_or(ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
-oxpinyin_core::write_owned_sentence!(test_sentence_text);
+oxpinyin::write_owned_sentence!(test_sentence_text);
 
 #[test]
 fn sentence_null_out_param_answers_true() {
@@ -202,7 +202,7 @@ mod ffi_output_expansion {
     use std::os::raw::{c_char, c_int, c_void};
     use std::ptr;
 
-    use oxpinyin_core::{KeyText, PhraseText};
+    use oxpinyin::{KeyText, PhraseText};
 
     #[allow(non_upper_case_globals)]
     mod glib {
@@ -231,7 +231,7 @@ mod ffi_output_expansion {
         fn malloc(size: usize) -> *mut c_void;
         fn free(ptr: *mut c_void);
     }
-    oxpinyin_core::ffi_output_helpers! {
+    oxpinyin::ffi_output_helpers! {
         glib: glib, key_text: KeyText, malloc: malloc, free: free, domain: c"libpinyin"
     }
 
@@ -285,7 +285,7 @@ mod ffi_output_expansion {
 }
 
 mod display_getter_expansion {
-    use oxpinyin_core::{ChewingKey as CoreKey, KeyText};
+    use oxpinyin::{ChewingKey as CoreKey, KeyText};
     use std::os::raw::c_char;
     use std::ptr;
     #[derive(Clone, Copy)]
@@ -299,7 +299,7 @@ mod display_getter_expansion {
     fn key_text(_: KeyText) -> *mut GChar {
         c"rendered".as_ptr().cast_mut()
     }
-    oxpinyin_core::display_string_getter! { key: ChewingKey, char: GChar }
+    oxpinyin::display_string_getter! { key: ChewingKey, char: GChar }
     #[test]
     fn display_getter_checks_zero_and_writes_rendering() {
         let mut zero = ChewingKey(CoreKey::ZERO);
@@ -342,7 +342,7 @@ mod append_words_expansion {
                 .map(u16::from_ne_bytes),
         );
     }
-    oxpinyin_core::append_stored_words! { array: GArray, append: append }
+    oxpinyin::append_stored_words! { array: GArray, append: append }
     #[test]
     fn append_words_copies_reading_or_zeroes() {
         let mut array = GArray(Vec::new());
@@ -396,14 +396,14 @@ mod state_handle_expansion {
     type CapiInstanceMut<'a> = CapiInstance<&'a mut InstanceCore, &'a mut u8, &'a ContextOwner>;
     mod handles {
         use super::*;
-        oxpinyin_core::opaque_handle_casts! {
+        oxpinyin::opaque_handle_casts! {
             vis: pub(super),
             context: ContextMarker => ContextOwner,
             instance: InstanceMarker => CapiInstance,
             candidate: CandidateMarker => Candidate,
         }
     }
-    oxpinyin_core::state_handle_helpers! {
+    oxpinyin::state_handle_helpers! {
         context: ContextMarker, instance: InstanceMarker, instance_binding: instance,
         error: (), context_field: {}
     }

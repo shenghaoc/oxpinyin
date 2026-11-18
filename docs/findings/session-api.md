@@ -2,16 +2,16 @@
 
 Status: **reference**.
 
-This page describes the design of the internal `oxpinyin-core` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
+This page describes the design of the internal `oxpinyin` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 What binds is the pin's behaviour as the C APIs show it — candidate order, preedit coverage, selection and commit, and errors — under the [compatibility policy](compatibility-policy.md).
 The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
-The code is the reference for the current surface: `crates/oxpinyin-core/src/engine/mod.rs` lists the public items, and `crates/oxpinyin-core/src/engine/session/` defines `Session`.
+The code is the reference for the current surface: `crates/oxpinyin/src/engine/mod.rs` lists the public items, and `crates/oxpinyin/src/engine/session/` defines `Session`.
 
 `docs/architecture.md` states the rules that this surface implements, under **Portability**.
 
 ## What this seam is for
 
-`oxpinyin-core` is the in-tree session layer under the C facades.
+`oxpinyin` is the in-tree session layer under the C facades.
 The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`).
 The parser, engine and concrete models have internal Rust interfaces.
 
@@ -29,7 +29,7 @@ Each item below is a place where a portable API usually leaks:
 - **No GSettings, no dconf, no registry.** Settings arrive as a `SessionSettings` value.
   A settings store is a shell concern outside the engine.
 - **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%` or `NSSearchPathForDirectoriesInDomains`.
-  `StoragePaths` carries the directories as data, and `oxpinyin-core` holds the value.
+  `StoragePaths` carries the directories as data, and `oxpinyin` holds the value.
 - **No `cfg(target_os)` and no platform types** anywhere in the portable crates.
 - **No threading contract.** `Session` is not required to be `Send` or `Sync`.
   Sessions are instance-per-context and main-thread-friendly, which is what the TSF, IMK and ArkTS models want.
@@ -82,7 +82,7 @@ The settings value does not change the session's default options, each C facade'
 
 `Selection` is `Refused`, `Continued` or `Completed`.
 
-The bounds name concrete `oxpinyin-core` types (`SyllableKey`, `PhraseToken`).
+The bounds name concrete `oxpinyin` types (`SyllableKey`, `PhraseToken`).
 The `Display` bounds exist because the [core-trait-seam.md](core-trait-seam.md) traits leave `Error` unbounded.
 The engine type-erases backend failures into `EngineError` and does not put an associated type into its public surface.
 
@@ -112,12 +112,12 @@ So in that mode, a sort-word change on a composing session (`set_sort_options`) 
 ## Errors
 
 `EngineError` is the one error type of the engine.
-`crates/oxpinyin-core/src/engine/error.rs` lists the variants.
+`crates/oxpinyin/src/engine/error.rs` lists the variants.
 It implements `Display` and `std::error::Error`.
 
 ## Decoder vocabulary types
 
-`oxpinyin-core` defines the types that the bounds above name:
+`oxpinyin` defines the types that the bounds above name:
 
 ```rust
 pub struct SyllableKey(u16);       // dense id over the fixed key inventory

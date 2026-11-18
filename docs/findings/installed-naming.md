@@ -128,7 +128,7 @@ variables. Any install that a consumer will configure against uses the
 wrapper. `Cargo.toml` carries `generate = false` to state intent. The
 current cargo-c ignores it, so the wrapper overwrites the file.
 
-**`database_format`.** `oxpinyin-core`'s build script selects the
+**`database_format`.** `oxpinyin`'s build script selects the
 library's token once from its backend feature, as the pin's
 `configure.ac:134-135` sets one `DATABASE_FORMAT`. Both `.pc` files take
 the token of the installed backend from `BACKEND_FORMATS` in

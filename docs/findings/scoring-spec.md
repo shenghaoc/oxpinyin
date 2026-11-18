@@ -16,11 +16,11 @@ P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 
 - **λ** comes from the model's `table.conf`. `TableConf::load` scans it with the pin's `fscanf("%f")` and keeps that `f32`, whatever its value; the pinned model gives `0.312699` ([data-formats.md §3](data-formats.md)).
 - **`P_unigram`** is the phrase item's stored unigram field over the facade total, as every upstream reader computes it (`PinyinLookup2`, `_compute_frequency_of_items`, `train_result3`). The stored field is the corpus count plus the 1 that `gen_unigram` adds to every item, so an item that the corpus never saw has probability `1/Σ`. On the pinned model, `Σ item == Σ \1-gram count + 138,096`.
-- `crates/oxpinyin-core/src/user/data/lm/mod.rs` implements the term through the `LanguageModel` seam ([core-trait-seam.md](core-trait-seam.md)).
+- `crates/oxpinyin/src/user/data/lm/mod.rs` implements the term through the `LanguageModel` seam ([core-trait-seam.md](core-trait-seam.md)).
 
 ## Sentence scores
 
-Sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin-core/src/engine/nbest.rs`), as the pin's `gfloat m_poss` does (`src/lookup/phonetic_lookup.h:41-52,663,692-693` at `074a2219`).
+Sentence scoring accumulates `f32` log probabilities (`crates/oxpinyin/src/engine/nbest.rs`), as the pin's `gfloat m_poss` does (`src/lookup/phonetic_lookup.h:41-52,663,692-693` at `074a2219`).
 Candidate order is the list order; candidates carry no separate integer score.
 
 ## Incomplete keys

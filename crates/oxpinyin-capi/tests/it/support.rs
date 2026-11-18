@@ -36,7 +36,7 @@ pub(crate) fn system_dir() -> PathBuf {
         .join("..")
         .join("fixtures")
         .join("w3")
-        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::user::data::DEFAULT_STORE_EXT)
 }
 
 /// A uniquely named scratch dir, removed when the owning guard drops.
@@ -396,17 +396,17 @@ pub(crate) fn assert_aborts_sharing(
 /// journal-replay test needs, since a non-conforming profile is wiped
 /// before any library loads.
 pub(crate) fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
-    let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system_dir())
+    let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
+    let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
     std::fs::write(
         user_dir.join("user.conf"),
-        oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+        oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
     )
     .expect("write user.conf");
     std::fs::write(
         user_dir.join(file),
-        oxpinyin_core::user::data::chunk_format::build_memory_chunk(payload).expect("frame"),
+        oxpinyin::user::data::chunk_format::build_memory_chunk(payload).expect("frame"),
     )
     .expect("write the log");
 }
@@ -415,15 +415,15 @@ pub(crate) fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) 
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total (register row 85).
 pub(crate) fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin_core::store::WriteStore as _;
-    let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system_dir())
+    use oxpinyin::store::WriteStore as _;
+    let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
-    let mut marker = oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions);
+    let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
+    let mut marker = oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
-    oxpinyin_core::store::DefaultStore::write_user_bigram(
-        &user_dir.join(oxpinyin_core::user::data::user_files::UserDbm::Bigram.file_name()),
+    oxpinyin::store::DefaultStore::write_user_bigram(
+        &user_dir.join(oxpinyin::user::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
     )
     .expect("write the user bigram");
@@ -436,21 +436,19 @@ pub(crate) fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u
 /// in the running backend's format. This is the crafted index of register
 /// row 93, whose tokens the library never wrote.
 pub(crate) fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
-    use oxpinyin_core::store::{RawReadStore as _, WriteStore as _};
+    use oxpinyin::store::{RawReadStore as _, WriteStore as _};
     if !user_dir.join("user.conf").exists() {
-        let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system_dir())
+        let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(&system_dir())
             .expect("fixture table.conf");
-        let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
-        let mut marker =
-            oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions);
+        let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
+        let mut marker = oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions);
         marker.open_counter = 1;
         std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
     }
-    let path =
-        user_dir.join(oxpinyin_core::user::data::user_files::UserDbm::PhraseIndex.file_name());
+    let path = user_dir.join(oxpinyin::user::data::user_files::UserDbm::PhraseIndex.file_name());
     let mut rows = std::collections::BTreeMap::new();
     if path.exists() {
-        oxpinyin_core::store::DefaultStore::open_user_index(&path)
+        oxpinyin::store::DefaultStore::open_user_index(&path)
             .expect("open the phrase table")
             .copy_raw(|key, value| {
                 rows.insert(key.to_vec(), value.to_vec());
@@ -463,7 +461,7 @@ pub(crate) fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tok
         .collect();
     let value = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
     rows.insert(key, value);
-    oxpinyin_core::store::DefaultStore::write_user_index(&path, |sink| {
+    oxpinyin::store::DefaultStore::write_user_index(&path, |sink| {
         rows.iter().try_for_each(|(key, value)| sink(key, value))
     })
     .expect("write the phrase table");
@@ -502,7 +500,7 @@ pub(crate) fn link_file(target: &std::path::Path, link: &std::path::Path) {
 
 /// Replaces the system library `file` with a non-empty directory whose entry
 /// name is 25 bytes long. Where a directory reads as a chunk
-/// ([`oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk`]) the
+/// ([`oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk`]) the
 /// pin's `MemoryChunk::mmap` asserts on its header read
 /// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
 /// unmappable library. Answers which.
@@ -512,7 +510,7 @@ pub(crate) fn directory_library(system: &std::path::Path, file: &str) -> bool {
     std::fs::remove_file(&path).expect("unlink the library");
     std::fs::create_dir(&path).expect("directory library");
     std::fs::write(path.join("e".repeat(25)), b"x").expect("fill the directory");
-    oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk(&path)
+    oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk(&path)
 }
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
@@ -544,12 +542,12 @@ pub mod logs {
 /// Writes a `user.conf` that conforms to the `table.conf` of `system`, with
 /// open counter 0, so the next init keeps the profile under `user_dir`.
 pub(crate) fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
-    let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(system)
+    let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(system)
         .expect("system table.conf");
-    let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
+    let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
     std::fs::write(
         user_dir.join("user.conf"),
-        oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+        oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
     )
     .expect("write user.conf");
 }
@@ -558,11 +556,11 @@ pub(crate) fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Pa
 /// in place of any file there: a system table with records the library
 /// never writes.
 pub(crate) fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_core::store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::{WriteStore as _, WriteTxn as _};
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
-    let store = oxpinyin_core::store::DefaultStore::create(path).expect("create the DBM");
+    let store = oxpinyin::store::DefaultStore::create(path).expect("create the DBM");
     store
         .write(|txn| {
             for (key, value) in rows {
@@ -577,11 +575,11 @@ pub(crate) fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// place of any file there: a system bigram with grams the library never
 /// writes.
 pub(crate) fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_core::store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::{WriteStore as _, WriteTxn as _};
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
-    let store = oxpinyin_core::store::DefaultStore::create_hash(path).expect("create the DBM");
+    let store = oxpinyin::store::DefaultStore::create_hash(path).expect("create the DBM");
     store
         .write(|txn| {
             for (key, value) in rows {
@@ -597,11 +595,11 @@ pub(crate) fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// the library's own save writes a user index: a snapshot on Kyoto
 /// Cabinet, a tree file on tkrzw and Berkeley DB.
 pub(crate) fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_core::store::WriteStore as _;
+    use oxpinyin::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the user index");
     }
-    oxpinyin_core::store::DefaultStore::write_user_index(path, |sink| {
+    oxpinyin::store::DefaultStore::write_user_index(path, |sink| {
         for (key, value) in rows {
             sink(key, value)?;
         }
@@ -615,11 +613,10 @@ pub(crate) fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>
 /// own save writes the user bigram: a snapshot on Kyoto Cabinet, a hash
 /// file on tkrzw and Berkeley DB.
 pub(crate) fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin_core::store::WriteStore as _;
+    use oxpinyin::store::WriteStore as _;
     let mut rows = rows.to_vec();
     rows.sort();
-    oxpinyin_core::store::DefaultStore::write_user_bigram(path, &rows)
-        .expect("write the user bigram");
+    oxpinyin::store::DefaultStore::write_user_bigram(path, &rows).expect("write the user bigram");
 }
 
 /// A stored `SingleGram`: the total, then `(token, count)` pairs
@@ -833,7 +830,7 @@ pub(crate) fn items_system(
     std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
     std::fs::write(
         &gb_char,
-        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("gb_char.bin");
     for (name, rows) in [
@@ -939,7 +936,7 @@ pub(crate) fn addon_system(
     std::fs::remove_file(&art).expect("unlink art.bin");
     std::fs::write(
         &art,
-        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("art.bin");
     for (name, rows) in [
@@ -1103,7 +1100,7 @@ pub(crate) const NL: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 pub(crate) fn write_log(user: &Path, name: &str, payload: &[u8]) {
     std::fs::write(
         user.join(name),
-        oxpinyin_core::user::data::chunk_format::build_memory_chunk(payload).expect("frame"),
+        oxpinyin::user::data::chunk_format::build_memory_chunk(payload).expect("frame"),
     )
     .expect("write the log");
 }
@@ -1345,7 +1342,7 @@ pub(crate) fn take_exported(ptr: *mut std::ffi::c_char) -> String {
 
 /// The packed key of `spelling` at `tone`, as an addon item stores it.
 pub(crate) fn packed_key(spelling: &str, tone: u8) -> u16 {
-    oxpinyin_core::ChewingKey::from_pinyin(spelling)
+    oxpinyin::ChewingKey::from_pinyin(spelling)
         .expect("frozen syllable")
         .with_tone(tone)
         .to_packed()
@@ -1378,7 +1375,7 @@ pub(crate) const PARITY: u32 = 0x18a;
 pub(crate) fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
+    oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// A gram with one item to `successor` at count 100: above the export

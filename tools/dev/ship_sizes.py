@@ -41,7 +41,7 @@ KEY_PREFIX = 'ship-sizes-v1-'
 # Inputs that can change a library byte: they key the cached base result. The
 # same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
 INPUTS = ('crates', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
-          'crates/oxpinyin-core/codegen/string_tables.rs',
+          'crates/oxpinyin/codegen/string_tables.rs',
           'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt',
           'vcpkg-overlays', 'triplets')
 

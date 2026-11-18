@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use super::counts::Counts;
 #[cfg(test)]
-use oxpinyin_core::PhraseToken;
+use oxpinyin::PhraseToken;
 
 /// An interpolated bigram model built from `interpolation2.text` counts or
 /// from the binary tables a data directory holds.

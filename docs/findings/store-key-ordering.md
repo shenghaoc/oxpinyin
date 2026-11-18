@@ -7,7 +7,7 @@ This contract states the one ordering rule that the store guarantees and
 the obligation that it puts on every backend. The key encodings that the
 layers above the store choose are not part of it.
 
-`oxpinyin_core::store` is an ordered byte key–value store. Each store file is one
+`oxpinyin::store` is an ordered byte key–value store. Each store file is one
 raw keyspace, as each pin DBM file is one database opened with no
 subdatabase name. The interface has two tiers:
 
@@ -27,7 +27,7 @@ its bytes any meaning they carry.
 Every backend satisfies exactly this rule.
 
 - **tkrzw** (`cxx` adapter over TreeDBM, feature `tkrzw`; the default
-  backend). The adapter (`crates/oxpinyin-core/src/store/tkrzw/adapter.cc`) calls
+  backend). The adapter (`crates/oxpinyin/src/store/tkrzw/adapter.cc`) calls
   `dbm.Open(path, writable, options)`. `options` is only
   `File::OPEN_DEFAULT` or `File::OPEN_NO_CREATE`. **The fourth argument,
   `TreeDBM::TuningParameters`, is omitted.** It is therefore
@@ -38,14 +38,14 @@ Every backend satisfies exactly this rule.
   it.
 - **Kyoto Cabinet** (feature `kyotocabinet`). `KcStore` opens a `TreeDB`
   with no `rcomp` tuning parameter
-  (`crates/oxpinyin-core/src/store/kyotocabinet/`). Kyoto Cabinet's default
+  (`crates/oxpinyin/src/store/kyotocabinet/`). Kyoto Cabinet's default
   record comparator therefore applies: **`LEXICALCOMP` — byte-wise, shorter
   key first on a shared prefix**. This is libpinyin's own configuration:
   `phrase_large_table3_kyotodb.cpp` and `chewing_large_table2_kyotodb.cpp`
   install no comparator either.
 - **Berkeley DB** (feature `bdb`; libpinyin's original DBM). `BdbStore`
   opens a `DB_BTREE` with **no `set_bt_compare`**
-  (`crates/oxpinyin-core/src/store/bdb/ffi.rs`). libdb's default B-tree
+  (`crates/oxpinyin/src/store/bdb/ffi.rs`). libdb's default B-tree
   comparator therefore applies: **byte-wise `memcmp`, shorter key first on a
   shared prefix**. This is the configuration that libpinyin uses:
   `phrase_large_table3_bdb.cpp` and `chewing_large_table2_bdb.cpp` install
@@ -62,7 +62,7 @@ contract.
 
 ## Tests that pin the rule
 
-- `crates/oxpinyin-core/src/store/mod.rs`, the `tests::key_ordering` module:
+- `crates/oxpinyin/src/store/mod.rs`, the `tests::key_ordering` module:
   each build proves that *its* `DefaultStore` walks and ranges equal the
   mathematically byte-ordered sequence on key sets that cross 256. A binary
   holds exactly one backend (the two `compile_error!` guards in `lib.rs`
@@ -85,7 +85,7 @@ defect pass unseen.
 
 ## FlexibleBigram: the pin's hash training container
 
-`crates/oxpinyin-core/src/store/flexible_ngram.rs` carries libpinyin's
+`crates/oxpinyin/src/store/flexible_ngram.rs` carries libpinyin's
 `FlexibleBigram` training container (`src/storage/flexible_ngram*.h`,
 `src/storage/flexible_single_gram.h` at 074a2219) on all three backends. It
 is **not** an ordered table, and the one rule above deliberately does not
@@ -173,7 +173,7 @@ Within one single gram the items ascend by **numeric token**, the pin's
 
 ### Tests that pin this
 
-The `flexible_bigram` tests in `crates/oxpinyin-core/src/store/flexible_ngram/tests.rs` round-trip every
+The `flexible_bigram` tests in `crates/oxpinyin/src/store/flexible_ngram/tests.rs` round-trip every
 operation on the backend that the build selects. Their last case,
 `a_pin_written_file_is_read_in_the_pins_native_order`, reads the committed
 `fixtures/w3/{db,kct,tkt}/k_mixture_model.db`. It compares every header, item

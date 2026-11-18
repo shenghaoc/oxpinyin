@@ -10,7 +10,7 @@ fn parse_chewing_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) 
     // The pin preserves candidate rows and strings across parsing; only a
     // candidate guess, reset or instance destruction invalidates them.
     inst.core
-        .parse_chewing_more(text, oxpinyin_core::facade::ToneForwarding::ZhuyinFacade)
+        .parse_chewing_more(text, oxpinyin::facade::ToneForwarding::ZhuyinFacade)
 }
 
 fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
         return 0;
     }
 
-    let text = oxpinyin_core::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
 ///                                   const char * chewings);
 /// ```
 ///
-/// Parses through [`oxpinyin_core::ZhuyinParser`] and drives the session
+/// Parses through [`oxpinyin::ZhuyinParser`] and drives the session
 /// with the apostrophe-joined full-pinyin spelling.
 ///
 /// # Safety
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
         return 0;
     }
 
-    let text = oxpinyin_core::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::input::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },

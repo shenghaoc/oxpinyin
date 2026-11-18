@@ -57,7 +57,7 @@ pub unsafe extern "C" fn pinyin_parse_full_pinyin(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn pinyin_parse_full_pinyin(
         *onekey = ChewingKey::ZERO;
     }
     inst.core
-        .parse_one_full_pinyin(&text, oxpinyin_core::facade::PinyinCorrections::FromOptions)
+        .parse_one_full_pinyin(&text, oxpinyin::facade::PinyinCorrections::FromOptions)
         .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn pinyin_parse_double_pinyin(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::luoma_pinyin_text) }
+    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::luoma_pinyin_text) }
 }
 
 /// Get the secondary zhuyin string of a chewing key.
@@ -232,16 +232,10 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe {
-        display_string_getter(
-            key,
-            utf8_str,
-            oxpinyin_core::ChewingKey::secondary_zhuyin_text,
-        )
-    }
+    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::secondary_zhuyin_text) }
 }
 
-oxpinyin_core::display_string_getter! {
+oxpinyin::display_string_getter! {
     key: ChewingKey, char: GChar
 }
 

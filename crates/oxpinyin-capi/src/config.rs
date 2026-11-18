@@ -40,7 +40,7 @@ pub unsafe extern "C" fn pinyin_set_options(
     // The shared set_options law (stored word and incomplete setting);
     // the zhuyin facade's setter runs the same body. Bits without a flag are kept.
     ctx.core
-        .set_options(oxpinyin_core::OptionBits::from_bits_retain(options));
+        .set_options(oxpinyin::OptionBits::from_bits_retain(options));
     true
 }
 
@@ -126,18 +126,18 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
-    let scheme = match oxpinyin_core::DoublePinyinScheme::try_from(scheme) {
+    let scheme = match oxpinyin::DoublePinyinScheme::try_from(scheme) {
         // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
         // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
         // in memory only.
-        Ok(oxpinyin_core::DoublePinyinScheme::Customized) => std::process::abort(),
+        Ok(oxpinyin::DoublePinyinScheme::Customized) => std::process::abort(),
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
         // (`pinyin.cpp:1155-1159`).  Set the packed fallback-cleared bit.
         Err(_) => {
             let live = &ctx.core.live.double_scheme;
-            live.set(live.get() | oxpinyin_core::facade::FALLBACK_CLEARED_BIT);
+            live.set(live.get() | oxpinyin::facade::FALLBACK_CLEARED_BIT);
             return true;
         }
         Ok(scheme) => scheme,
@@ -309,8 +309,8 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
     // The facade answers that before it maps or logs anything.
     let outcome = ctx.core.load_phrase_library(u32::from(index));
     if outcome
-        == Err(oxpinyin_core::facade::LibraryLoadFault::Row(
-            oxpinyin_core::facade::LibraryRowAssert::NotLoadable,
+        == Err(oxpinyin::facade::LibraryLoadFault::Row(
+            oxpinyin::facade::LibraryRowAssert::NotLoadable,
         ))
     {
         std::process::abort();
@@ -320,19 +320,19 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
         // Register row 96, `memory_chunk.h:493`: the library being loaded
         // again is a directory the pin maps and asserts on, before anything
         // changes.
-        Err(oxpinyin_core::facade::LibraryLoadFault::Row(
-            oxpinyin_core::facade::LibraryRowAssert::ChunkHeaderRead,
+        Err(oxpinyin::facade::LibraryLoadFault::Row(
+            oxpinyin::facade::LibraryRowAssert::ChunkHeaderRead,
         )) => std::process::abort(),
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`pinyin.cpp:276`, then
         // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
-        Err(oxpinyin_core::facade::LibraryLoadFault::Journal(_)) => std::process::abort(),
+        Err(oxpinyin::facade::LibraryLoadFault::Journal(_)) => std::process::abort(),
         // `NotLoadable` aborted above; the facade answers no other row
         // fault here.
-        Err(oxpinyin_core::facade::LibraryLoadFault::Row(
-            oxpinyin_core::facade::LibraryRowAssert::NotLoadable
-            | oxpinyin_core::facade::LibraryRowAssert::NotDictionary
-            | oxpinyin_core::facade::LibraryRowAssert::NullChunkName,
+        Err(oxpinyin::facade::LibraryLoadFault::Row(
+            oxpinyin::facade::LibraryRowAssert::NotLoadable
+            | oxpinyin::facade::LibraryRowAssert::NotDictionary
+            | oxpinyin::facade::LibraryRowAssert::NullChunkName,
         )) => false,
     }
 }
@@ -430,21 +430,21 @@ pub unsafe extern "C" fn pinyin_mask_out(
     let ctx = unsafe { context_mut(context) };
     let outcome = ctx.core.mask_out(mask, value);
     match outcome {
-        oxpinyin_core::facade::MaskOutOutcome::Done(answer) => answer,
+        oxpinyin::facade::MaskOutOutcome::Done(answer) => answer,
         // Register rows 84 and 94, `chewing_large_table2_bdb.cpp:529` (kc
         // `:499`, tkrzw `:466`): the user pinyin index carries a key past
         // MAX_PHRASE_LENGTH syllables, or one with no whole syllable, and
         // the pin's `mask_out` switch falls to `default: abort()`.
-        oxpinyin_core::facade::MaskOutOutcome::OverlongIndexKey => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::OverlongIndexKey => std::process::abort(),
         // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`):
         // the user bigram carries a key that is not a phrase_token_t and
         // the pin's `get_all_items` assert dies.
-        oxpinyin_core::facade::MaskOutOutcome::NonTokenUserBigramKey => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::NonTokenUserBigramKey => std::process::abort(),
         // Register row 85, `memory_chunk.h:390` through `ngram.cpp:80`:
         // the user bigram's mask loads a gram too short for its total and
         // the pin's `get_total_freq` assert dies.
-        oxpinyin_core::facade::MaskOutOutcome::ShortUserBigramValue => std::process::abort(),
-        oxpinyin_core::facade::MaskOutOutcome::PartialUserBigramTail => {
+        oxpinyin::facade::MaskOutOutcome::ShortUserBigramValue => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::PartialUserBigramTail => {
             // Class (b), register row 98: a partial item tail makes
             // `SingleGram::mask_out` over-read (`ngram.cpp:76-86`). One
             // warning, as before.
@@ -459,20 +459,20 @@ pub unsafe extern "C" fn pinyin_mask_out(
         // every item of a gram whose total its items did not cover, and the
         // pin's `get_length` assert dies (`Bigram::mask_out`,
         // `ngram_bdb.cpp:243`).
-        oxpinyin_core::facade::MaskOutOutcome::ResidualUserBigramGram => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::ResidualUserBigramGram => std::process::abort(),
         // Register rows 91, 92, 97 and 108: a reloaded system library's
         // `.dbin` reached an assertion in `merge_with_mask`
         // (`phrase_index_logger.h:202`, `phrase_index.cpp:745`,
         // `phrase_index_logger.h:245`/`:257`, `memory_chunk.h:390`), after
         // the user tables were masked; the pin dies there.
-        oxpinyin_core::facade::MaskOutOutcome::Journal(_) => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::Journal(_) => std::process::abort(),
         // Register row 96, `memory_chunk.h:493`: after the user tables, the
         // mask maps each loaded system library again and one is a directory.
-        oxpinyin_core::facade::MaskOutOutcome::ChunkHeaderRead => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::ChunkHeaderRead => std::process::abort(),
         // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
         // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
         // `:67`). The mask does not copy, so it never reaches here.
-        oxpinyin_core::facade::MaskOutOutcome::FatalCopy => std::process::abort(),
+        oxpinyin::facade::MaskOutOutcome::FatalCopy => std::process::abort(),
     }
 }
 

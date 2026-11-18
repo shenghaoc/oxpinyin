@@ -18,10 +18,10 @@
 //! (class (c) retired 2026-10-31 UTC): in any crate when all affected call
 //! paths require termination, or here on a typed error when the caller must
 //! determine the abort point. The library crates on this
-//! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
+//! facade's path (`oxpinyin`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn`/`unreachable` outside tests —
-//! the macro-only `oxpinyin-core` carries the same lints. Permitted
+//! the macro-only `oxpinyin` carries the same lints. Permitted
 //! sites require narrowly scoped, justified
 //! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
 //! saw a construct, not that its failure condition matches the pin.
@@ -136,7 +136,7 @@ pub mod tool;
 
 pub use context::{pinyin_fini, pinyin_init, pinyin_save};
 pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
-pub use oxpinyin_core::user::{DEFAULT_PHRASE_COUNT, NETWORK_DICTIONARY, USER_DICTIONARY};
+pub use oxpinyin::user::{DEFAULT_PHRASE_COUNT, NETWORK_DICTIONARY, USER_DICTIONARY};
 pub use state::ExportedBigramRow;
 pub use types::{ChewingKey, ChewingKeyRest, GChar, LookupCandidate, PinyinInstance};
 pub use types::{GArray, ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};

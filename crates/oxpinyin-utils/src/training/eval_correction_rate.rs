@@ -19,11 +19,11 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin_core::input::tool;
-use oxpinyin_core::input::tool::LineReader;
-use oxpinyin_core::user::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin_core::user::data::{DictError, PhraseLibraries, PinyinIndexTable};
-use oxpinyin_core::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
+use oxpinyin::input::tool;
+use oxpinyin::input::tool::LineReader;
+use oxpinyin::user::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin::user::data::{DictError, PhraseLibraries, PinyinIndexTable};
+use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};
@@ -60,7 +60,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
             | LibraryError::Unmappable { .. }
             | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
         )) => {
-            let c_name = oxpinyin_core::input::c_path(Path::new(name.as_ref()));
+            let c_name = oxpinyin::input::c_path(Path::new(name.as_ref()));
             tool::storage::report_load_failed(c_name.as_deref());
             tool::exit(tool::ENOENT);
         }
@@ -69,7 +69,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `system_bigram.attach(SYSTEM_BIGRAM, ATTACH_READONLY)`: ignored.
     let bigram = Some(
         crate::storage::dbm::Hash::open_read_only(Path::new("bigram.db"))
-            .unwrap_or_else(|error| oxpinyin_core::input::tool::exit_on_store_error(&error)),
+            .unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error)),
     );
 
     // `system_table_info.get_lambda()`, the `gfloat` the pin passes to
@@ -197,7 +197,7 @@ fn c_string(text: &str) -> std::ffi::CString {
 fn token_text(libraries: &PhraseLibraries, token: u32) -> Option<std::ffi::CString> {
     let text = tag_token_text(
         token,
-        oxpinyin_core::model::phrase_index_library(token) == 0,
+        oxpinyin::model::phrase_index_library(token) == 0,
         |token| libraries.library(token)?.item(token),
         |item| item.phrase_codes().collect::<Option<Vec<_>>>(),
         |token| tool::storage::report_unknown_token(token as core::ffi::c_int),

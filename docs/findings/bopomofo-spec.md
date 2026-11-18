@@ -138,7 +138,7 @@ So shuffled spellings such as `1,u` (ㄅㄝㄧ → `bie`) parse through the 1062
 The parser table is the pinned `zhuyin_index`: 1493 rows (`pinyin_parser_table.h:1492`).
 They are 417 plain + 1062 `ZHUYIN_CORRECT_SHUFFLE` + 14 `ZHUYIN_INCOMPLETE` rows.
 They join to canonical spellings through `content_table`, and `check_chewing_options` gates them (`zhuyin_parser2.cpp:43-100`).
-The oxpinyin port is in `oxpinyin-core/src/zhuyin_map.rs` and `scheme.rs`.
+The oxpinyin port is in `oxpinyin/src/zhuyin_map.rs` and `scheme.rs`.
 Unit tests pin these properties:
 
 - the rows are sorted and unique (the binary-search invariant);

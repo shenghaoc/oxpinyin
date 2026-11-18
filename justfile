@@ -205,7 +205,7 @@ ruff:
 complexity:
     @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w
 
-# Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin-core
+# Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin
 # Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.
 [unix]
 mutants *args:

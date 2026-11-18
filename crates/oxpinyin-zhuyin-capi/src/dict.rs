@@ -1,7 +1,7 @@
 //! The dictionary-introspection surface: token lookups, per-token reads,
 //! the unigram-frequency write.
 
-use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
@@ -34,7 +34,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::utf8_to_ucs4(
+    let text = oxpinyin::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -189,7 +189,7 @@ pub unsafe extern "C" fn zhuyin_token_get_n_pronunciation(
     true
 }
 
-oxpinyin_core::append_stored_words! {
+oxpinyin::append_stored_words! {
     array: GArray, append: g_array_append_vals
 }
 

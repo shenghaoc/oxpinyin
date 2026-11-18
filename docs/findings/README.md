@@ -26,7 +26,7 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`bopomofo-spec`](bopomofo-spec.md) | Bopomofo/Zhuyin scheme SPEC: the four chewing functions, keyboards, indexes and the exact seam | reference |
 | [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC: the window scan, the three-key order, the frequency key and the dedup | reference |
 | [`compatibility-policy`](compatibility-policy.md) | Compatibility policy: where oxpinyin may differ from the pin, and where it may not | policy |
-| [`core-trait-seam`](core-trait-seam.md) | Core trait seam: the `oxpinyin-core` traits and their behavioural rules | reference |
+| [`core-trait-seam`](core-trait-seam.md) | Core trait seam: the `oxpinyin` traits and their behavioural rules | reference |
 | [`data-formats`](data-formats.md) | libpinyin system data file formats, with the pinyin-index, phrase-index, bigram and punctuation DBM formats | reference |
 | [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC: the scheme ABI, parser laws, tone law and auxiliary text | reference |
 | [`dynamic-adjust`](dynamic-adjust.md) | The `DYNAMIC_ADJUST` option | reference |
@@ -45,7 +45,7 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, sentence scores and incomplete keys | reference |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC: the byte-position key graph and the incomplete-key inventory | reference |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface: the n-best sentence rows and the measured selection residuals | reference, machine-read |
-| [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin-core` session design under the C facades | reference |
+| [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin` session design under the C facades | reference |
 | [`session-replay`](session-replay.md) | Session replay: authored scenarios with the pin's expected candidates | reference |
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract for the whole stack | contract |
 | [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian ships libpinyin on tkrzw; Ubuntu's tkrzw corrupts records | reference, machine-read |

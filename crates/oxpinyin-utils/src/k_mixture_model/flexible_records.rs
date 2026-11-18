@@ -8,7 +8,7 @@ use super::database::Database;
 use super::records::{KMixtureModelMagicHeader, KmmGram};
 
 fn c_path(path: &Path) -> std::ffi::CString {
-    oxpinyin_core::input::c_path(path).expect("path has no NUL")
+    oxpinyin::input::c_path(path).expect("path has no NUL")
 }
 
 fn open(path: &Path) -> Database {

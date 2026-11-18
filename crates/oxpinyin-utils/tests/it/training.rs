@@ -11,9 +11,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use oxpinyin_core::store::{DefaultStore, RawReadStore};
-use oxpinyin_core::user::data::row_format::encode_token_key;
-use oxpinyin_core::user::data::single_gram::decode_single_gram;
+use oxpinyin::store::{DefaultStore, RawReadStore};
+use oxpinyin::user::data::row_format::encode_token_key;
+use oxpinyin::user::data::single_gram::decode_single_gram;
 
 /// The repository root.
 fn root() -> PathBuf {
@@ -24,7 +24,7 @@ fn root() -> PathBuf {
 fn fixture() -> PathBuf {
     root()
         .join("fixtures/w3")
-        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::user::data::DEFAULT_STORE_EXT)
 }
 
 /// A private copy of [`fixture`].
@@ -88,7 +88,7 @@ fn exit_word(outcome: &Output) -> i32 {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin_core::input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin::input::TEXT_NEWLINE)
 }
 /// One `SingleGram` row as `(total, records)`; the row must exist.
 fn bigram_row(path: &Path, token: u32) -> (u32, Vec<(u32, u32)>) {
