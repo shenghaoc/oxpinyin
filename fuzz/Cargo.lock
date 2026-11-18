@@ -216,9 +216,9 @@ dependencies = [
 
 [[package]]
 name = "glib-sys"
-version = "0.22.9"
+version = "0.22.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99b38907e67e40dec9b60f858bcada952598719cb512a13eb13d6cdcd16f8295"
+checksum = "8b01e8b94529c2698b98f765b887f1e001b76195c1e25d1139aa9336019e745d"
 dependencies = [
  "libc",
  "system-deps",
