@@ -690,8 +690,6 @@ fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
     assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
 }
 
-// Linux only: /proc/self/maps.
-#[cfg(target_os = "linux")]
 #[test]
 fn header_only_count_survives_session_transfer() {
     use crate::user::live_system::{LiveSystemItems, Lookup};
@@ -729,8 +727,8 @@ fn header_only_count_survives_session_transfer() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-// Linux only: /proc/self/maps, and a 4 GiB sparse mapping on a 64-bit host.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+// Unix only: a 4 GiB sparse mapping on a 64-bit host.
+#[cfg(all(unix, target_pointer_width = "64"))]
 #[test]
 fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
     let dir = tempdir("layout-failed-whole-map");
@@ -744,23 +742,30 @@ fn layout_failed_sparse_library_keeps_and_releases_whole_mapping() {
     let originals: SystemOriginals =
         crate::user::LibraryTable::from([(1, SystemLibrary::from_library(mapped))]).into();
     let store = UserStore::open_transient(originals, versions(), UserConfLaw::Pinyin).unwrap();
-    let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-    let rows: Vec<_> = maps
-        .lines()
-        .filter(|line| line.ends_with(path.to_str().unwrap()))
-        .collect();
-    assert_eq!(
-        rows.len(),
-        1,
-        "one mapping after the failed layout: {rows:?}"
-    );
-    let fields: Vec<_> = rows[0].split_whitespace().collect();
-    assert_eq!(fields[1], "rw-p");
-    let (start, end) = fields[0].split_once('-').unwrap();
-    let extent = u64::from_str_radix(end, 16).unwrap() - u64::from_str_radix(start, 16).unwrap();
-    assert!(extent >= file_len, "whole sparse file is mapped");
+    // Linux only: /proc/self/maps.
+    #[cfg(target_os = "linux")]
+    {
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let rows: Vec<_> = maps
+            .lines()
+            .filter(|line| line.ends_with(path.to_str().unwrap()))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one mapping after the failed layout: {rows:?}"
+        );
+        let fields: Vec<_> = rows[0].split_whitespace().collect();
+        assert_eq!(fields[1], "rw-p");
+        let (start, end) = fields[0].split_once('-').unwrap();
+        let extent =
+            u64::from_str_radix(end, 16).unwrap() - u64::from_str_radix(start, 16).unwrap();
+        assert!(extent >= file_len, "whole sparse file is mapped");
+    }
     assert_eq!(store.system_unigram(0x0100_0001), None);
     drop(store);
+    // Linux only: /proc/self/maps.
+    #[cfg(target_os = "linux")]
     assert!(
         !std::fs::read_to_string("/proc/self/maps")
             .unwrap()
