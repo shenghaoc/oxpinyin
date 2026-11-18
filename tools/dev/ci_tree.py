@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tomllib
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -100,7 +101,15 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 # pyproject.toml is the uv project that every `uv run` of repository Python enters.
 SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version", "pyproject.toml")
-CRATE_DIRS = ("capi", "zhuyin-capi", "utils", "repl")
+
+
+def workspace_members(root: Path = Path(__file__).resolve().parents[2]) -> tuple[str, ...]:
+    """The member directories in the `[workspace] members` list of the root Cargo.toml."""
+    with (root / "Cargo.toml").open("rb") as manifest:
+        return tuple(tomllib.load(manifest)["workspace"]["members"])
+
+
+CRATE_DIRS = workspace_members()
 CRATE_INPUTS = (*CRATE_DIRS, "src", "tests", "codegen", "build.rs", "benches", "examples")
 RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
