@@ -567,10 +567,7 @@ impl ScanKey {
     }
 }
 
-/// The keys the pin's matrix holds per byte position: the selected parse's
-/// keys, plus the resplit, divided and fuzzy additions. See
-/// `docs/findings/matrix-split-tables.md` for the pair lists it states and
-/// `docs/findings/option-bits.md` for the fuzzy step.
+/// [`build_scan_matrix_over`] over the graph's fewest-keys parse.
 #[cfg(test)]
 pub(crate) fn build_scan_matrix(
     graph: &SegmentGraph,
@@ -581,8 +578,13 @@ pub(crate) fn build_scan_matrix(
     build_scan_matrix_over(graph, &selected_edges, options, divided)
 }
 
-/// [`build_scan_matrix`] over the selected parse the caller already holds:
-/// `selected_edges` must be `graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE))`.
+/// The keys the pin's matrix holds per byte position: the selected parse's
+/// keys, plus the resplit, divided and fuzzy additions. See
+/// `docs/findings/matrix-split-tables.md` for the pair lists it states and
+/// `docs/findings/option-bits.md` for the fuzzy step.
+///
+/// `selected_edges` is the selected parse the caller already holds: it must be
+/// `graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE))`.
 pub(crate) fn build_scan_matrix_over(
     graph: &SegmentGraph,
     selected_edges: &[Edge],
@@ -610,7 +612,7 @@ pub(crate) fn build_scan_matrix_over(
     columns
 }
 
-/// Steps 2 to 4 of [`build_scan_matrix`] over a matrix whose selected keys
+/// Steps 2 to 4 of [`build_scan_matrix_over`] over a matrix whose selected keys
 /// are already placed: the resplit and divided passes when `divided`, then
 /// the fuzzy additions. Every append keeps its place and multiplicity.
 fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: bool) {

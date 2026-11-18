@@ -888,7 +888,7 @@ impl UserStore {
         ContainerGrams(self.container()).keys()
     }
 
-    /// [`Self::bigram_mask_fault`] over the container keys
+    /// The mask's bigram fault check over the container keys
     /// [`Self::container_keys`] collected.
     fn bigram_mask_fault_over(
         &self,
@@ -2465,8 +2465,8 @@ impl UserStore {
     /// and replay publish their absolute payloads into the same view.
     /// Untouched items stay mapped: `None` tells the caller to read the
     /// original. A borrowed item is stable for this call and copied nowhere.
-    /// Only its unigram field is stale; [`Self::system_item_override`]
-    /// supplies the live unigram when a caller needs that field too.
+    /// Only its unigram field is stale; the test-only
+    /// `Self::system_item_override` supplies the live unigram.
     pub(crate) fn with_effective_system_item<R>(
         &self,
         token: Token,

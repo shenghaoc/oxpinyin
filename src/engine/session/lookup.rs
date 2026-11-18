@@ -324,7 +324,7 @@ where
     /// (the matrix has `parsed_len + 1` columns, so `ni,'hao` offset 3 is an
     /// ordinary lookup of the empty window, and the C adapters abort from
     /// offset 4; register row 66). The scan's own key set
-    /// ([`build_scan_matrix`]) models the key columns, so a byte some key's
+    /// ([`super::build_scan_matrix_over`]) models the key columns, so a byte some key's
     /// syllable starts on, or an in-span apostrophe byte, answers; any other
     /// byte is an empty column. Exact mode has no pin counterpart, so its
     /// columns stay the exact segments, and its inputs' apostrophes are all
@@ -552,7 +552,7 @@ where
     ///
     /// Widening is prefix-driven: a window whose sequences cannot extend to
     /// any stored phrase stops the scan (the pin's continued-search probe,
-    /// [`crate::engine::Dictionary::phrase_prefix_exists`]). Consecutive apostrophe
+    /// [`crate::model::Dictionary::phrase_prefix_exists`]). Consecutive apostrophe
     /// bytes after a searched window are skipped so the next window does not
     /// repeat the same key sequence.
     pub(super) fn collect_window_scan(

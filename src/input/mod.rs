@@ -3,29 +3,25 @@
 //! pin's own calls (maintainer ruling 2026-10-28 UTC), through the `libc`
 //! crate and no C shim (ruling 2026-10-31 UTC).
 //!
-//! Stage 1 holds the `table.conf` and `user.conf` readers and writer and their
-//! `LC_NUMERIC` calls (`config`); stage 4 the library's other `stderr` lines
-//! (`diagnostic`), so every library line is written to the C library's
-//! stream. What the scanned values mean — the
-//! `strcmp` mappings, the slots, the refusals where the pin aborts — stays
-//! with the modules that own those records (`crate::data` and `crate::user`);
-//! this module answers only what each C call answered, and depends on no
-//! other module of the library.
+//! The module owns these calls:
 //!
-//! Stage 2 prepares the chunk open/seek/header-read calls and a single
-//! whole-file private mapping owner ([`chunk`]). Production still uses the
-//! data mapper until the live-library ownership transition; interpretation
-//! and checksums stay in data. Chunk loading into the heap remains pending.
+//! - `config`: the `table.conf` and `user.conf` readers and writer, and
+//!   their `LC_NUMERIC` calls.
+//! - `diagnostic`: the library's other `stderr` lines, so every library
+//!   line goes to the C library's stream.
+//! - [`chunk`]: the chunk open, seek, header read, write, sync and close
+//!   calls, and the whole-file private mapping that owns a chunk's bytes.
+//! - [`path`]: the pin's `g_build_filename`, `g_rename` and plain `unlink`.
+//! - `tool` (the `tools` feature): the pin utilities' locale, GLib option,
+//!   input-stream and text calls, through the `libc` crate, `glib-sys` and
+//!   `std::io`. The shipping libraries never enable it.
 //!
-//! Stage 3 holds the save path's file-system calls: the pin's
-//! `g_build_filename` ([`path`]), the chunk open/write/sync/close
-//! ([`chunk`]), and `g_rename` and plain `unlink` (also [`path`]).
-//!
-//! Stage 5's tool boundary (`tool`, the `tools` feature) holds the pin
-//! utilities' locale, GLib option, input-stream and text calls, through the
-//! `libc` crate, `glib-sys` and `std::io` without a C or C++ shim
-//! (maintainer ruling 2026-10-31 UTC); the shipping libraries never enable
-//! it.
+//! `crate::data`, `crate::user`, `crate::runtime` and `crate::facade` call
+//! this module. What the values mean — the `strcmp` mappings, the slots,
+//! the chunk interpretation and checksums, the refusals where the pin
+//! aborts — belongs to the modules that own those records. This module
+//! answers only what each C call answered, and depends on no other module
+//! of the library.
 //!
 //! Production unsafe code is confined to the native module and `tool`; every block
 //! carries a `// SAFETY:` comment and no raw pointer leaves them.

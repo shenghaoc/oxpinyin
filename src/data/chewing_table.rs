@@ -31,7 +31,7 @@ pub use crate::data::row_format::pinyin_index::{
 // ── ChewingTable ─────────────────────────────────────────────────
 
 /// The DBM access method behind the tables ([`ChewingTable`],
-/// [`crate::data::PhraseTable`], [`crate::data::BigramTable`], [`crate::data::PunctTable`]):
+/// [`crate::data::phrase_table::PhraseTable`], [`crate::data::BigramTable`], [`crate::data::PunctTable`]):
 /// each table is generic over it, so the one implementation of a table's
 /// logic runs over the production [`DefaultDbm`] and over the in-memory,
 /// counting and failing test doubles alike.
