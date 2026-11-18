@@ -63,10 +63,6 @@ impl<D: ChewingDbm> BigramTable<D> {
         Self { dbm }
     }
 
-    pub(crate) fn attachment_failed(&self) -> bool {
-        self.dbm.attachment_failed()
-    }
-
     pub(crate) fn finish_attachment(&mut self) {
         self.dbm.finish_attachment();
     }

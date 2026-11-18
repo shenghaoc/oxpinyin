@@ -218,12 +218,6 @@ impl BigramTables {
         }
     }
 
-    /// Whether the native system hash attach failed.
-    #[must_use]
-    pub fn attachment_failed(&self) -> bool {
-        self.bigram.attachment_failed()
-    }
-
     /// Runs the system bigram's reset at facade fini: close and delete
     /// (`pinyin.cpp:1208`; `ngram_tkrzwdb.cpp:40-46` and its BDB and KC
     /// peers at 074a2219).
@@ -289,13 +283,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
             libraries,
             library_mask,
         })
-    }
-}
-
-impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
-    /// Open a model with every library visible.
-    pub fn open(bigram_path: &Path, libraries: L) -> Result<Self, LmError> {
-        Self::open_with_mask(bigram_path, libraries, Cell::new(0))
     }
 }
 
@@ -374,21 +361,6 @@ impl<
     #[must_use]
     pub fn facade_total(&self, extra: u64) -> u64 {
         u64::from(self.unigram_total().wrapping_add(extra as u32))
-    }
-
-    /// Loads the system-bigram row for `prev` — one point read.
-    ///
-    /// `None` means `prev` has no entry: the same miss
-    /// `PhraseLookup::search_bigram2` treats as "skip this node" (no merged
-    /// single-gram). A next-token that is not in the row is a `get_freq`
-    /// miss, not a zero-count hit.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when the table cannot be read or a value does not
-    /// parse under the stored schema.
-    pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
-        Ok(self.bigram.load_successors(prev)?)
     }
 
     /// Returns `(count, total, successor_present)` for `prev → next`, or

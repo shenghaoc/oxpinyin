@@ -42,12 +42,6 @@ impl SelectionSpan {
         }
     }
 
-    /// Where the span starts.
-    #[must_use]
-    pub const fn begin(self) -> usize {
-        self.begin as usize
-    }
-
     /// Where the span ends.
     #[must_use]
     pub const fn end(self) -> usize {

@@ -593,36 +593,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.phrase.search_suggestion(prefix)
     }
 
-    /// `ChewingLargeTable2::search_suggestion` over the default facade's
-    /// pinyin DBM — [`Dictionary::checked_extension_tokens`]'s system seam:
-    /// every token of a stored pronunciation whose index key strictly
-    /// extends `syllables`' index key, in the pin's `reduce_tokens` order
-    /// (library nibble ascending, cursor order within — the stable sort
-    /// over the ascending-key walk is exactly that grouping).
-    ///
-    /// The query's own index key must exist (the pin's `m_db->Get` gate —
-    /// a query unknown to the DBM walks nothing); the walk then takes the
-    /// rows **after** it, so the query-length row itself never yields a
-    /// token, and each record is kept under the suggestion filter
-    /// `pinyin_compare_with_tones(query, stored, prefix_len) == 0`
-    /// (`prefix_keys_match`). A DBM key that starts with the query's
-    /// index-key bytes and is longer than it passes the pin's
-    /// `pinyin_exact_compare2` gate by construction — both projections
-    /// agree on the shared bytes — so the byte-prefix walk needs no
-    /// second comparison.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggest_extension_tokens(
-        &self,
-        syllables: &[SyllableKey],
-    ) -> Result<Vec<u32>, DictError> {
-        Ok(self
-            .checked_extension_tokens(syllables)?
-            .unwrap_or_default())
-    }
-
     /// The suggestion tokens and overlong-key classification from one
     /// system-index lookup and range walk. `None` is the pin's abort.
     ///
@@ -658,26 +628,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         // ascending, cursor order within a library.
         crate::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens))
-    }
-
-    /// The system table's half of the pin's `search_suggestion` gate
-    /// (`chewing_large_table2_bdb.cpp:282`): `true` when the query's own
-    /// index key exists (the pin's `DB_SET` probe) and a row extending it
-    /// is past 16 words, which drives the pin's `switch` into
-    /// `default: abort()`. The stock `pinyin_index.bin` has none, so this
-    /// answers `false` for every shipped model; it reads keys only, ahead
-    /// of the extension walk that would decode the rows. A failed read
-    /// answers `false` and leaves the error to that walk.
-    #[must_use]
-    pub(crate) fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
-        if self.pinyin.attachment_failed() {
-            // This is an auxiliary Rust probe. The later suggestion makes
-            // the one native call the pin makes, including its diagnostic.
-            return false;
-        }
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
-        self.pinyin.key_exists(&keys).unwrap_or(false)
-            && self.pinyin.has_overlong_extension(&keys).unwrap_or(false)
     }
 
     /// `ChewingTableEntry::search` then `convert`
@@ -852,21 +802,8 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         Ok(self.libraries().token_phrase(token))
     }
 
-    /// [`Self::lookup`] into a caller-owned buffer.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
-    pub fn lookup_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out).map(|_| ())
-    }
-
-    /// [`Self::lookup_into`], also answering whether the lookup met a token
-    /// of a loaded library whose item could not be read.
+    /// [`Self::lookup`] into a caller-owned buffer, also answering whether the
+    /// lookup met a token of a loaded library whose item could not be read.
     ///
     /// # Errors
     ///

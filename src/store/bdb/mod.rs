@@ -629,16 +629,6 @@ impl BdbUserBigramDb {
         }
     }
 
-    /// [`Self::failed`] for the user store's tests of a session over it: no
-    /// input makes the in-memory open fail short of memory. Test-only: it
-    /// exists only with the `test-hooks` feature, which only a
-    /// `[dev-dependencies]` entry enables.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub const fn failed_container() -> Self {
-        Self::failed()
-    }
-
     /// [`crate::store::UserBigramDb::load_db`] over `create`, the in-memory container's
     /// open: [`Db::open_in_memory_hash_attach`], or an injected failure.
     fn load_db_with(

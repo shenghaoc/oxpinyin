@@ -88,9 +88,9 @@ version = "0"
 default = ["tkrzw"]
 # Nonshipping tool calls; never enabled by the C libraries.
 tools = []
-# Test-only constructors and fault points for other crates' tests
-# (`BdbUserBigramDb::failed_container`, `copy_faults`, `read_faults`). Enabled only from a
-# [dev-dependencies] entry, so it is never part of a normal or shipped build.
+# Test-only fault points for other crates' tests (`copy_faults`,
+# `read_faults`). Enabled only from a [dev-dependencies] entry, so it is
+# never part of a normal or shipped build.
 test-hooks = []
 # tkrzw binds the pin's concrete classes through cxx; it needs a C++17
 # compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.

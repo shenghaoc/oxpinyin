@@ -471,6 +471,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
     /// word) and whose `switch` has no case for it: `default: abort()`
     /// (`chewing_large_table2_bdb.cpp:282`). Only the keys are read, never
     /// the values, and the scan stops at the first such key.
+    #[cfg(test)]
     pub(crate) fn has_overlong_extension(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
         if keys.is_empty() {
             return Ok(false);
