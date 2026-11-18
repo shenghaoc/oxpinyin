@@ -18,14 +18,8 @@ use std::{
     rc::Rc,
 };
 
-use oxpinyin::{OptionBits, PhraseToken};
+use oxpinyin::{OptionBits, PHRASE_INDEX_LIBRARY_COUNT, PhraseToken};
 
-/// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
-///
-/// The pin asserts an index below this in the addon load/unload path; the
-/// compatibility policy's availability class turns that abort into a
-/// `false`.
-pub(crate) const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 pub use oxpinyin::facade::ExportedBigramRow;
 pub use oxpinyin::facade::InstanceCore;
 use oxpinyin::facade::{CandidateSnapshot, SnapshotRow, TextSpan};

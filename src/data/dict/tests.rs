@@ -37,9 +37,10 @@ mod system_dictionary {
     //! a `gb_char.bin` chunk file through the shared `ChunkBuilder` — and
     //! exercises the `Dictionary` trait plus the runtime's extra surface.
 
+    use crate::PHRASE_INDEX_LIBRARY_COUNT;
     use crate::{
         ChewingKey, SyllableKey,
-        model::{Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges},
+        model::{Dictionary, PhraseIndexRanges},
     };
 
     // The fixtures are written with the crate's own row schema, not a copy of
@@ -316,7 +317,7 @@ mod system_dictionary {
         let mut ranges = PhraseIndexRanges::new();
         dict.trellis_ranges(&syls("ni"), tones, &mut ranges)
             .unwrap();
-        let spans = (0..PHRASE_INDEX_LIBRARY_COUNT)
+        let spans = (0..usize::from(PHRASE_INDEX_LIBRARY_COUNT))
             .map(|library| {
                 ranges
                     .ranges(library)

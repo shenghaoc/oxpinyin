@@ -3,8 +3,8 @@
 // Read faults need nextest's separate process for each test.
 use super::*;
 use crate::facade::test_fixture::{native_fixture::*, *};
-use crate::user::{PinyinKey, USER_DICTIONARY, UserConfLaw, toned_key};
-use crate::{PhraseText, SyllableKey};
+use crate::user::{PinyinKey, UserConfLaw, toned_key};
+use crate::{PhraseText, SyllableKey, USER_DICTIONARY};
 
 /// The GBK system library of the committed mini tables.
 const GBK: u8 = 2;
@@ -48,10 +48,7 @@ fn a_committed_user_add_is_the_same_library_token_of_the_next_plan() {
         panic!("the phrase adds again");
     };
     let token = original.expect("the phrase table holds the committed add");
-    assert_eq!(
-        crate::user::phrase_index_library_index(token),
-        USER_DICTIONARY
-    );
+    assert_eq!(crate::phrase_index_library_index(token), USER_DICTIONARY);
 }
 
 #[test]

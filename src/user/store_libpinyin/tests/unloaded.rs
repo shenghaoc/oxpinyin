@@ -11,10 +11,9 @@
 //! Each test unloads the library of a mapped chunk through the session's own
 //! `reset_system_library` and calls the store as the C ABI does.
 
-use crate::ChewingKey;
-
 use super::mapped_replay::{LIBRARY, Profile, header};
-use crate::user::store::{SENTENCE_START, UserStore, UserStoreError};
+use crate::user::store::{UserStore, UserStoreError};
+use crate::{ChewingKey, SENTENCE_START};
 
 /// A store whose library 1 holds the shipped chunk's four items, and which has
 /// unloaded it.

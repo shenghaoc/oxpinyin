@@ -28,11 +28,9 @@
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
 mod sentence_facts;
 
+use crate::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-
-/// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
-const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 
 pub(crate) use crate::data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
@@ -295,12 +293,6 @@ impl AddonSet {
     }
 }
 
-/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at the pin
-/// `074a2219`): the library a token names. The high four bits are masked.
-const fn library_of(token: u32) -> u8 {
-    crate::user::phrase_index_library_index(token)
-}
-
 pub(crate) use crate::model::TokenPhrase;
 
 /// One token reading, without the text or any other reading's keys.
@@ -363,7 +355,7 @@ impl<'a> RuntimeDict<'a> {
             tones,
             out,
             row,
-            |token| self.library_visible(u32::from(library_of(token))),
+            |token| self.library_visible(u32::from(phrase_index_library_index(token))),
             |token| {
                 self.live_items()
                     .read(token, |item| {
@@ -385,7 +377,7 @@ impl<'a> RuntimeDict<'a> {
         self.user_lookup()
             .lookup_resolving_missing(&query, out, |token| {
                 if !self.system.library_loaded(token)
-                    || !self.library_visible(u32::from(library_of(token)))
+                    || !self.library_visible(u32::from(phrase_index_library_index(token)))
                 {
                     return None;
                 }
@@ -656,7 +648,7 @@ impl<'a> RuntimeDict<'a> {
     /// everything but `TSI_DICTIONARY` (1).
     #[must_use]
     fn unload_library(&self, index: u32) -> bool {
-        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
             return false;
         }
         let mask = 1u32 << index;
@@ -675,7 +667,7 @@ impl<'a> RuntimeDict<'a> {
         // at init (the default-tables loop includes the USER_DICTIONARY row —
         // measured `load(7)` = false on the pin), so the already-loaded rule
         // answers `false` for every index an unload has not cleared.
-        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
             return false;
         }
         let bit = 1u32 << index;
@@ -729,7 +721,7 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn library_visible_token(&self, token: u32) -> bool {
         let live = self.live_items();
-        if live.is_system_library(library_of(token)) {
+        if live.is_system_library(phrase_index_library_index(token)) {
             return live.read(token, |_| ()).found().is_some();
         }
         live.is_visible(token)
@@ -748,7 +740,7 @@ impl<'a> RuntimeDict<'a> {
     pub fn phrase_table_token_enabled(&self, token: u32) -> bool {
         // `add_index` files a token under its masked library
         // (074a2219 phrase_large_table3.cpp:42, novel_types.h:44).
-        let library = library_of(token);
+        let library = phrase_index_library_index(token);
         self.library_visible(u32::from(library))
             && (self.system.library_loaded(token) || self.user.has_user_library(library))
     }
@@ -761,11 +753,11 @@ impl<'a> RuntimeDict<'a> {
     pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
-        let token = token & (crate::user::PHRASE_INDEX_LIBRARY_MASK | crate::user::PHRASE_MASK);
-        if self.is_system_library(library_of(token)) {
+        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
+        if self.is_system_library(phrase_index_library_index(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
-        if !self.library_visible(u32::from(library_of(token))) {
+        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
             return None;
         }
         self.user.user_pronunciation_count(token)
@@ -776,14 +768,14 @@ impl<'a> RuntimeDict<'a> {
     /// frequencies and the unigram do not participate in those checks.
     #[must_use]
     pub fn token_text(&self, token: u32) -> Option<PhraseText> {
-        if self.is_system_library(library_of(token)) {
+        if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
                 .read(token, |item| item.phrase_text())
                 .found()
                 .flatten();
         }
-        if !self.library_visible(u32::from(library_of(token))) {
+        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
             return None;
         }
         self.user
@@ -805,7 +797,7 @@ impl<'a> RuntimeDict<'a> {
                 text,
             })
         };
-        if self.is_system_library(library_of(token)) {
+        if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
                 .read_fields(token, |item| {
@@ -818,7 +810,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        if !self.library_visible(u32::from(library_of(token))) {
+        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
             return None;
         }
         self.user
@@ -838,14 +830,15 @@ impl<'a> RuntimeDict<'a> {
     /// No text or pronunciation payload is decoded.
     #[must_use]
     pub fn token_exists(&self, token: u32) -> bool {
-        if self.is_system_library(library_of(token)) {
+        if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
                 .pronunciation_count(token)
                 .found()
                 .is_some();
         }
-        self.library_visible(u32::from(library_of(token))) && self.user.phrase_exists(token)
+        self.library_visible(u32::from(phrase_index_library_index(token)))
+            && self.user.phrase_exists(token)
     }
 
     /// Read only the nth insertion-ordered key list and the stored length of
@@ -857,7 +850,7 @@ impl<'a> RuntimeDict<'a> {
     /// it.
     #[must_use]
     pub fn token_nth_pronunciation(&self, token: u32, nth: usize) -> Option<TokenPronunciation> {
-        if self.is_system_library(library_of(token)) {
+        if self.is_system_library(phrase_index_library_index(token)) {
             // A reading at or past the count is the zero-key result; one
             // below it whose bytes pass the content end answers no reading
             // (compatibility policy row 130).
@@ -892,8 +885,8 @@ impl<'a> RuntimeDict<'a> {
         nth: usize,
         read: impl FnOnce(usize, Option<&[u8]>) -> R,
     ) -> Option<R> {
-        if self.is_system_library(library_of(token))
-            || !self.library_visible(u32::from(library_of(token)))
+        if self.is_system_library(phrase_index_library_index(token))
+            || !self.library_visible(u32::from(phrase_index_library_index(token)))
         {
             return None;
         }
@@ -1248,7 +1241,9 @@ impl Dictionary for RuntimeDict<'_> {
             .note_pinyin_suggestion(|| chewing_query(syllables));
         tokens.extend(user.suggest_extensions(syllables));
         if self.library_mask.get() != 0 {
-            tokens.retain(|token| self.library_visible(u32::from(library_of(*token))));
+            tokens.retain(|token| {
+                self.library_visible(u32::from(phrase_index_library_index(*token)))
+            });
         }
         crate::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
@@ -1273,13 +1268,13 @@ impl Dictionary for RuntimeDict<'_> {
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
-        if self.is_system_library(library_of(token)) {
+        if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
                 .read(token, |item| item.phrase_length())
                 .found();
         }
-        if !self.library_visible(u32::from(library_of(token))) {
+        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
             return None;
         }
         self.user.phrase_length(token)
@@ -1390,7 +1385,11 @@ impl LanguageModel for RuntimeLm<'_> {
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         let live = self.user.system_unigram(token.value());
-        let extra = if live.is_some() && self.inner.is_visible(library_of(token.value())) {
+        let extra = if live.is_some()
+            && self
+                .inner
+                .is_visible(phrase_index_library_index(token.value()))
+        {
             // The model uses only the live field on this branch.
             0
         } else {
@@ -1929,7 +1928,7 @@ impl Runtime {
                         &mut check,
                         history
                             .last()
-                            .map_or(crate::user::SENTENCE_START, |token| token.value()),
+                            .map_or(crate::SENTENCE_START, |token| token.value()),
                         token.value(),
                     )
                     .map_err(|error| EngineError::UserModel(error.to_string()))
@@ -2008,8 +2007,11 @@ impl Runtime {
     pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
         // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
         // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
-        let token = token & (crate::user::PHRASE_INDEX_LIBRARY_MASK | crate::user::PHRASE_MASK);
-        if !self.dict().library_visible(u32::from(library_of(token))) {
+        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
+        if !self
+            .dict()
+            .library_visible(u32::from(phrase_index_library_index(token)))
+        {
             return UnigramAdd::Missing;
         }
         let Ok(delta) = u32::try_from(delta) else {
@@ -2247,7 +2249,7 @@ impl Runtime {
     #[must_use]
     pub(crate) fn load_library(&mut self, index: u32) -> bool {
         let changed = self.dict().load_library(index);
-        if index < PHRASE_INDEX_LIBRARY_COUNT {
+        if index < u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
             self.user.set_library_loaded(index as u8, true);
         }
         changed

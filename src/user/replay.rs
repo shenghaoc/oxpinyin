@@ -42,7 +42,8 @@ use crate::user::persistence::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::data::chunk_write::{ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item};
+use crate::PHRASE_MASK;
+use crate::data::chunk_write::{ChunkItem, decode_phrase_item, validate_phrase_item};
 use crate::data::phrase_library::PhraseLibrary;
 use crate::data::user_files::LogRecord;
 

@@ -105,7 +105,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
 
 #[test]
 fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
-    use crate::engine::nbest::SENTENCE_START;
+    use crate::SENTENCE_START;
     use crate::model::{NbestStepCosts, NbestStepRow, NbestSuccessors};
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
@@ -171,8 +171,8 @@ fn row_read_names_only_the_checked_read_failure() {
 
 #[test]
 fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
+    use crate::SENTENCE_START;
     use crate::engine::error::EngineError;
-    use crate::engine::nbest::SENTENCE_START;
     let dictionary = Dict::parse(&[("你", 3)]);
     assert_eq!(
         phrase_segment(&dictionary, &CheckedModel, "你").unwrap_err(),
@@ -317,8 +317,8 @@ impl LanguageModel for Rows {
 /// segments.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
+    use crate::SENTENCE_START;
     use crate::engine::error::EngineError;
-    use crate::engine::nbest::SENTENCE_START;
     use crate::model::MergedGram;
     let dictionary = Dict::parse(&[("你", 3)]);
     let system = || {

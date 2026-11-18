@@ -162,7 +162,7 @@ pub unsafe extern "C" fn pinyin_get_phrase_token(
     if !token.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *token = crate::types::null_token;
+            *token = oxpinyin::NULL_TOKEN;
         }
     }
     let Some(value) = inst.core.phrase_token(index as usize) else {

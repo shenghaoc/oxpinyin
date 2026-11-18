@@ -26,12 +26,7 @@ fn a_partial_phrase_table_record_is_refused_before_any_change() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .unwrap();
     store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"你".into(),
-            &keys("ni"),
-            Some(5),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
         .unwrap();
     {
         let target = store.session_target();
@@ -47,12 +42,7 @@ fn a_partial_phrase_table_record_is_refused_before_any_change() {
     }
     let snapshot = |store: &UserStore| format!("{:?}", store.session_target().phrases());
     let before = snapshot(&store);
-    let added = store.add_phrase_in(
-        crate::user::USER_DICTIONARY,
-        &"他".into(),
-        &keys("ta"),
-        Some(5),
-    );
+    let added = store.add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5));
     assert!(
         matches!(added, Err(UserStoreError::Persistence(_))),
         "{added:?}"
@@ -114,20 +104,10 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         let (dir, mut store) = open_law("save-limit-user", law);
         let first = store
-            .add_phrase_in(
-                crate::user::USER_DICTIONARY,
-                &"你".into(),
-                &keys("ni"),
-                Some(5),
-            )
+            .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
             .unwrap();
         store
-            .add_phrase_in(
-                crate::user::USER_DICTIONARY,
-                &"他".into(),
-                &keys("ta"),
-                Some(5),
-            )
+            .add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5))
             .unwrap();
         store.mark_modified();
         let content = 8 + 2 * 16;
@@ -325,7 +305,7 @@ fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
         packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
     };
     assert_eq!(
-        crate::user::test_session::library_total(&store, crate::user::USER_DICTIONARY),
+        crate::user::test_session::library_total(&store, crate::USER_DICTIONARY),
         u32::MAX - 20
     );
     let unigram = |store: &UserStore, token: u32| {
@@ -337,25 +317,15 @@ fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
             .unigram()
     };
     let first = store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"你".into(),
-            &keys("ni"),
-            Some(5),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys("ni"), Some(5))
         .unwrap();
     assert_eq!(unigram(&store, first), 15, "the first import is accepted");
     let second = store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"他".into(),
-            &keys("ta"),
-            Some(5),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5))
         .unwrap();
     assert_eq!(unigram(&store, second), 0, "the second overflows the total");
     assert_eq!(
-        crate::user::test_session::library_total(&store, crate::user::USER_DICTIONARY),
+        crate::user::test_session::library_total(&store, crate::USER_DICTIONARY),
         u32::MAX - 5
     );
     drop(store);
@@ -378,11 +348,11 @@ fn the_session_arena_compacts_only_at_the_pins_points() {
             .session_target()
             .phrases()
             .libraries
-            .get(&crate::user::USER_DICTIONARY)
+            .get(&crate::USER_DICTIONARY)
             .map_or(0, |library| library.content_len())
     };
     let token = store
-        .add_phrase_in(crate::user::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+        .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
         .unwrap();
     let other = |text: &str| {
         packed_to_pinyin_keys(&[ChewingKey::from_pinyin(text).unwrap().to_packed()]).unwrap()
@@ -391,7 +361,7 @@ fn the_session_arena_compacts_only_at_the_pins_points() {
     for reading in readings {
         store
             .add_phrase_in(
-                crate::user::USER_DICTIONARY,
+                crate::USER_DICTIONARY,
                 &"你".into(),
                 &other(reading),
                 Some(0),
@@ -408,7 +378,7 @@ fn the_session_arena_compacts_only_at_the_pins_points() {
     for reading in ["ga", "ge", "ha", "he", "ji", "ka", "ke", "la"] {
         store
             .add_phrase_in(
-                crate::user::USER_DICTIONARY,
+                crate::USER_DICTIONARY,
                 &"你".into(),
                 &other(reading),
                 Some(0),
@@ -433,7 +403,7 @@ fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let keys = packed_to_pinyin_keys(&[ni.to_packed()]).unwrap();
     let token = store
-        .add_phrase_in(crate::user::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+        .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
         .unwrap();
     store
         .train_pronunciations(token, std::iter::once(vec![ni]), 7)
@@ -441,9 +411,9 @@ fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
     store.mark_modified();
     store.save_reporting().unwrap();
-    store.unload_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
     assert!(store.phrase(token).is_none());
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     assert_eq!(store.user_pronunciation_count(token), Some(1));
     assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
     assert!(store.phrase_exists(token));
@@ -479,11 +449,11 @@ fn predicted_prefix_trains_an_arena_resident_user_item() {
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let keys = packed_to_pinyin_keys(&[ni.to_packed()]).unwrap();
     let token = store
-        .add_phrase_in(crate::user::USER_DICTIONARY, &"你".into(), &keys, Some(5))
+        .add_phrase_in(crate::USER_DICTIONARY, &"你".into(), &keys, Some(5))
         .unwrap();
     assert!(store.with_user_item(token, |_| ()).is_some());
     let delta = store.unigram_delta(token);
-    let library = crate::user::test_session::library_total(&store, crate::user::USER_DICTIONARY);
+    let library = crate::user::test_session::library_total(&store, crate::USER_DICTIONARY);
     let total = store.unigram_total();
     assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
     // 3a's token read reaches the same arena item the predicted-prefix
@@ -502,7 +472,7 @@ fn predicted_prefix_trains_an_arena_resident_user_item() {
     // take the same 483.
     assert_eq!(store.unigram_delta(token), delta + 483);
     assert_eq!(
-        crate::user::test_session::library_total(&store, crate::user::USER_DICTIONARY),
+        crate::user::test_session::library_total(&store, crate::USER_DICTIONARY),
         library + 483
     );
     assert_eq!(store.unigram_total(), total + 483);
@@ -530,11 +500,9 @@ fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
     let library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
     let target = store.session_target();
     let mut phrases = target.phrases_mut();
-    phrases
-        .libraries
-        .insert(crate::user::USER_DICTIONARY, library);
+    phrases.libraries.insert(crate::USER_DICTIONARY, library);
     drop(phrases);
-    let token = (u32::from(crate::user::USER_DICTIONARY) << 24) | 1;
+    let token = (u32::from(crate::USER_DICTIONARY) << 24) | 1;
     let mut borrowed = None;
     assert!(
         store
@@ -1723,7 +1691,7 @@ fn a_removal_assert_comes_before_the_bigram_fault() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     store.plant_raw_bigram(1, &[1, 0, 0]);
-    let absent = (u32::from(crate::user::USER_DICTIONARY) << 24) | 0x0000_0042;
+    let absent = (u32::from(crate::USER_DICTIONARY) << 24) | 0x0000_0042;
     assert!(matches!(store.remove_user_phrase(absent), Ok(false)));
     drop(store);
     std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -2481,54 +2449,34 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
             .expect("open");
     // Nothing saved: the library comes back empty.
     store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"龘".into(),
-            &dense(2),
-            Some(20),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
         .expect("unsaved item");
-    store.unload_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
     // A saved item returns with its reading still indexed; an unsaved
     // reading merged after the save does not.
     store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"鱻".into(),
-            &dense(2),
-            Some(20),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(2), Some(20))
         .expect("item");
     store.mark_modified();
     store.save_reporting().expect("save");
     store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"鱻".into(),
-            &dense(4),
-            Some(30),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(4), Some(30))
         .expect("unsaved reading");
     assert_eq!(readings(&store), [vec![true, false]]);
-    store.unload_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     assert_eq!(readings(&store), [vec![true]]);
     // A different phrase handed a dropped token is found under the
     // reading the index kept for it.
     let ni_key = || crate::SyllableKey::from_text("ni").expect("ni");
-    store.unload_user_library(crate::user::USER_DICTIONARY);
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     let reused = store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"鱺".into(),
-            &dense(3),
-            Some(20),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"鱺".into(), &dense(3), Some(20))
         .expect("another phrase takes the dropped token");
     let found = store.lookup().lookup(&[ni_key()]);
     assert!(found.iter().any(|entry| entry.token().value() == reused));
@@ -2564,17 +2512,12 @@ fn library_transitions_keep_the_independent_index() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"龘".into(),
-            &dense(2),
-            Some(20),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
         .expect("item");
     // `FacadePhraseIndex::unload` drops only the sub-index
     // (`phrase_index.cpp:261-268`): the item goes, the user pinyin index
     // keeps its entry.
-    store.unload_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
     // The unloaded library's chunk is skipped; the index table is not,
     // so the saved profile carries the reading with no item behind it.
@@ -2586,7 +2529,7 @@ fn library_transitions_keep_the_independent_index() {
     assert_eq!(indexed.len(), 1);
     // The load builds the empty sub-index (`create_sub_phrase`,
     // `pinyin.cpp:316`) and the index entry stays.
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
     drop(store);
     assert_eq!(kept(&dir), indexed);
@@ -2607,25 +2550,15 @@ fn a_save_skips_an_unloaded_user_library() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     let saved = store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"龘".into(),
-            &dense(2),
-            Some(20),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"龘".into(), &dense(2), Some(20))
         .expect("saved item");
     store.mark_modified();
     store.save_reporting().expect("save");
     let saved_chunk = std::fs::read(&chunk).expect("chunk");
     let unsaved = store
-        .add_phrase_in(
-            crate::user::USER_DICTIONARY,
-            &"鱻".into(),
-            &dense(4),
-            Some(30),
-        )
+        .add_phrase_in(crate::USER_DICTIONARY, &"鱻".into(), &dense(4), Some(30))
         .expect("unsaved item");
-    store.unload_user_library(crate::user::USER_DICTIONARY);
+    store.unload_user_library(crate::USER_DICTIONARY);
     store.mark_modified();
     store.save_reporting().expect("save while unloaded");
     assert_eq!(std::fs::read(&chunk).expect("chunk"), saved_chunk);
@@ -2633,7 +2566,7 @@ fn a_save_skips_an_unloaded_user_library() {
         !dir.join("user.bin.tmp").exists(),
         "nothing staged for the unloaded library"
     );
-    store.load_user_library(crate::user::USER_DICTIONARY);
+    store.load_user_library(crate::USER_DICTIONARY);
     assert!(store.phrase(saved).is_some());
     assert!(store.phrase(unsaved).is_none());
     // Loaded again, it is saved again.
@@ -2716,7 +2649,7 @@ fn option_and_zhuyin_only_readings_survive_save_and_reopen() {
             let keys = vec![phrase::toned_key(index, 0).expect("key")];
             tokens.push(
                 store
-                    .add_phrase_in(crate::user::USER_DICTIONARY, &text.into(), &keys, Some(5))
+                    .add_phrase_in(crate::USER_DICTIONARY, &text.into(), &keys, Some(5))
                     .expect("add"),
             );
         }
@@ -3247,7 +3180,7 @@ fn train_save_reopen_carries_the_learning() {
         let state = export_state(&store, &originals()).expect("export");
         let overrides = state.system_overrides.get(&1).expect("overrides");
         let modified = overrides
-            .get(&(0x0100_0001 & crate::user::phrase::PHRASE_MASK))
+            .get(&(0x0100_0001 & crate::PHRASE_MASK))
             .and_then(Option::as_ref)
             .expect("modified item");
         assert_eq!(modified.unigram, 100 + 69 * 7);

@@ -1,6 +1,7 @@
 //! Dictionary and language-model contracts used by the session engine.
 use crate::{
-    ChewingKey, GramFault, PhraseEntry, PhraseText, PhraseToken, sentence_facts, single_gram,
+    ChewingKey, GramFault, PHRASE_INDEX_LIBRARY_COUNT, PhraseEntry, PhraseText, PhraseToken,
+    phrase_index_library_index, sentence_facts, single_gram,
 };
 
 /// User-side count overlay for the decode-time additive merge
@@ -715,16 +716,6 @@ pub enum PhraseItemRead {
     Item(PronunciationRows),
 }
 
-/// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h` at the pin `074a2219`):
-/// one range array per library nibble.
-pub const PHRASE_INDEX_LIBRARY_COUNT: usize = 16;
-
-/// `PHRASE_INDEX_LIBRARY_INDEX`: the library nibble of a phrase token.
-#[must_use]
-pub const fn phrase_index_library(token: u32) -> usize {
-    ((token >> 24) & 0x0f) as usize
-}
-
 /// The order `reduce_tokens` gives a token list
 /// (`storage/phrase_large_table3.h:77-91` at the pin `074a2219`): it appends
 /// the per-library arrays in library order. `add_index` files a token under
@@ -736,7 +727,7 @@ pub const fn phrase_index_library(token: u32) -> usize {
 /// Every caller sorts through this function, so the libraries hold one
 /// instance of the sort.
 pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
-    tokens.sort_by_key(|token| phrase_index_library(*token));
+    tokens.sort_by_key(|token| crate::phrase_index_library_index(*token));
 }
 
 /// What one trellis step prices of a ranged token: the phrase's length in
@@ -811,7 +802,7 @@ impl PhraseIndexRange {
 /// range keeps it until `get_phrase_item` fails for it.
 #[derive(Clone, Debug)]
 pub struct PhraseIndexRanges<E> {
-    libraries: [Vec<PhraseIndexRange>; PHRASE_INDEX_LIBRARY_COUNT],
+    libraries: [Vec<PhraseIndexRange>; PHRASE_INDEX_LIBRARY_COUNT as usize],
     /// One entry slot per converted item, in item order; a range's tokens
     /// map to consecutive slots from its `slot`.
     slots: Vec<Option<E>>,
@@ -858,7 +849,8 @@ impl<E> PhraseIndexRanges<E> {
             match cursor.as_mut() {
                 Some(open)
                     if open.last.checked_add(1) == Some(token)
-                        && phrase_index_library(open.first) == phrase_index_library(token) =>
+                        && usize::from(phrase_index_library_index(open.first))
+                            == usize::from(phrase_index_library_index(token)) =>
                 {
                     open.last = token;
                 }
@@ -880,7 +872,10 @@ impl<E> PhraseIndexRanges<E> {
     }
 
     fn push(&mut self, range: PhraseIndexRange) {
-        if let Some(ranges) = self.libraries.get_mut(phrase_index_library(range.first)) {
+        if let Some(ranges) = self
+            .libraries
+            .get_mut(usize::from(phrase_index_library_index(range.first)))
+        {
             ranges.push(range);
         }
     }

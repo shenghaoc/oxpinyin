@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
 
-use oxpinyin::data::chunk_write::{ChunkItem, PHRASE_MASK};
+use oxpinyin::data::chunk_write::ChunkItem;
 use oxpinyin::data::row_format::phrase_index::encode_tokens;
 use oxpinyin::data::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
@@ -23,6 +23,7 @@ use oxpinyin::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OptionValue;
 use oxpinyin::input::tool::storage::TableFile;
+use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
 
 use crate::storage::dbm::Tree;
 use crate::storage::libraries::items_of;
@@ -170,7 +171,7 @@ fn add_index_space(table: Option<&Tree>, key: &[u8], keys: &[oxpinyin::ChewingKe
     };
     // `add_index_internal(phrase_length, ...)`'s switch has cases 1..=16
     // and `abort()` elsewhere.
-    if keys.is_empty() || keys.len() > crate::storage::MAX_PHRASE_LENGTH {
+    if keys.is_empty() || keys.len() > oxpinyin::MAX_PHRASE_LENGTH {
         tool::abort();
     }
     let phrase_length = key.len() / 2;
@@ -288,7 +289,7 @@ pub fn read_phrase_items(
     let mut item = fresh_item();
     while let Some(record) = read_pinyin_record(file) {
         // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) == phrase_index)`.
-        if oxpinyin::model::phrase_index_library(record.token) != usize::from(index) {
+        if usize::from(phrase_index_library_index(record.token)) != usize::from(index) {
             tool::abort();
         }
         let (phrase, written) = tool::utf8_to_ucs4(&record.phrase);

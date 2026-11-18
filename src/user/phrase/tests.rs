@@ -1,4 +1,5 @@
 use super::*;
+use crate::{ADDON_DICTIONARY, NETWORK_DICTIONARY};
 
 #[test]
 fn user_file_libraries_are_nibbles_5_to_7() {

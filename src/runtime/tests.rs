@@ -32,7 +32,7 @@ fn runtime_visibility_preserves_user_library_save_state() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::open_with_law(&system_dir(), Some(dir.path()), law).unwrap();
-        let library = crate::user::USER_DICTIONARY;
+        let library = crate::USER_DICTIONARY;
         let chunk = dir.path().join("user.bin");
         let ni = SyllableKey::from_text("ni").unwrap();
         let keys = [crate::user::toned_key(ni.index(), 3).unwrap()];
@@ -311,7 +311,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         .unwrap();
     let payload = crate::data::user_files::encode_log_records(&[
         crate::data::user_files::LogRecord::Remove {
-            token: token & crate::user::PHRASE_MASK,
+            token: token & crate::PHRASE_MASK,
             old_item,
         },
     ])
@@ -676,9 +676,10 @@ mod backend_files {
     //! which is integration territory (components together, real files, no
     //! private access).
 
+    use crate::SENTENCE_START;
     use crate::engine::{Selection, SelectionTarget, SessionSettings};
     use crate::runtime::{OpenError, Runtime, TableConfError};
-    use crate::user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
+    use crate::user::{FIRST_USER_TOKEN, PinyinKey};
     use crate::{
         PhraseToken, SyllableKey,
         model::{Dictionary, LanguageModel},
@@ -2294,7 +2295,7 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
             .tokens_for_text(text)
             .into_iter()
             .map(PhraseToken::value)
-            .find(|token| crate::user::phrase_index_library_index(*token) == library);
+            .find(|token| crate::phrase_index_library_index(*token) == library);
         let keys = native_keys(reading);
         let store = runtime.user_store_mut();
         if store.is_system_library(library) {
@@ -3632,7 +3633,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
         .map(|&token| {
             let text = dict.token_text(token).unwrap();
             (
-                crate::user::phrase_index_library_index(token),
+                crate::phrase_index_library_index(token),
                 ucs4_bytes(text.as_str().unwrap()),
                 text,
             )

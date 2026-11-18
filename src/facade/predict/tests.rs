@@ -67,11 +67,7 @@ mod native {
         let mut instance = native_instance(&context, UserConfLaw::Zhuyin);
         let [short, long, hao, number] =
             ["好", "你好", "好", "号"].map(|text| tokens(&context, text)[0]);
-        for (previous, next) in [
-            (crate::user::SENTENCE_START, hao),
-            (short, hao),
-            (long, number),
-        ] {
+        for (previous, next) in [(crate::SENTENCE_START, hao), (short, hao), (long, number)] {
             context
                 .user_store_mut()
                 .set_bigram_count(previous, next, 1_000_000)

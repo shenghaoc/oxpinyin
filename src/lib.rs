@@ -106,7 +106,12 @@ pub use syllables::{
     canonical_complete_syllable, full_pinyin_syllable, option_alias_canonical,
 };
 pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
-pub use vocab::{PhraseEntry, PhraseToken, SyllableKey, fuzzy_chewing_alternatives};
+pub use vocab::{
+    ADDON_DICTIONARY, GBK_DICTIONARY, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, NULL_TOKEN,
+    PHRASE_INDEX_LIBRARY_COUNT, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseEntry, PhraseToken,
+    SENTENCE_START, SyllableKey, TSI_DICTIONARY, USER_DICTIONARY, fuzzy_chewing_alternatives,
+    phrase_index_library_index, phrase_index_make_token,
+};
 pub(crate) use vocab::{fuzzy_chewing_finals, fuzzy_chewing_initials};
 
 pub use single_gram::GramFault;

@@ -42,10 +42,6 @@ pub mod pinyin;
 pub(crate) mod punctuation;
 pub mod table_text;
 
-/// `MAX_PHRASE_LENGTH` (`src/include/novel_types.h:119`), the largest
-/// index length `ChewingLargeTable2`'s switch accepts.
-pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
-
 /// `{"table-dir", 0, 0, G_OPTION_ARG_FILENAME, &table_dir, "table
 /// directory", NULL}` (`gen_binary_files.cpp:31`,
 /// `import_interpolation.cpp:38`).

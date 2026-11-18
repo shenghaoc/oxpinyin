@@ -156,7 +156,7 @@ where
         // `m_prefixes = [sentence_start] + _compute_prefixes(prefix)`:
         // every entry seeds a zero-cost initial node.
         let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
-        seeds.push(PhraseToken::new(crate::engine::nbest::SENTENCE_START));
+        seeds.push(PhraseToken::new(crate::SENTENCE_START));
         seeds.extend_from_slice(prefix_tokens);
         let retained = self.retained_parse();
         self.sentence.rows = crate::engine::nbest::nbest_sentences_with_seeds_generation(

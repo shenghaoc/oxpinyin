@@ -3,6 +3,7 @@
 //! One session per input context, with parse, candidate, selection and
 //! training operations shared by the in-tree consumers.
 
+use crate::phrase_index_library_index;
 use core::fmt::Display;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
@@ -18,10 +19,6 @@ use crate::{
 
 use crate::engine::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::engine::error::EngineError;
-
-/// Longest key sequence the window scan searches: the pin's phrase-length
-/// cap. Paths beyond it are not searched.
-pub const MAX_PHRASE_LENGTH: usize = 16;
 
 /// What choosing a candidate left behind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -386,8 +383,8 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
 /// `PHRASE_INDEX_LIBRARY_INDEX` names (`pinyin.cpp:1772-1788`,
 /// `chewing_large_table2.h:107`, `novel_types.h:44` at the pin
 /// `074a2219`). The token's high four bits are masked.
-const fn window_library(token: crate::PhraseToken) -> usize {
-    crate::model::phrase_index_library(token.value())
+fn window_library(token: crate::PhraseToken) -> usize {
+    usize::from(phrase_index_library_index(token.value()))
 }
 
 fn window_ascends_by_library_then_token(window: &[Candidate]) -> bool {

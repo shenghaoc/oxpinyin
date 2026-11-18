@@ -251,9 +251,8 @@ impl<'a> LiveSystemItems<'a> {
     /// probe's removed check.
     #[must_use]
     pub(crate) fn is_visible(&self, token: Token) -> bool {
-        self.library_loaded(u32::from(crate::user::phrase::phrase_index_library_index(
-            token,
-        ))) && !self.user.system_item_removed(token)
+        self.library_loaded(u32::from(crate::phrase_index_library_index(token)))
+            && !self.user.system_item_removed(token)
     }
 
     /// Reads the effective item behind `token` in a configured system
@@ -339,7 +338,7 @@ impl<'a> LiveSystemItems<'a> {
 
     /// The answer for a token outside a loaded system library, or `None`.
     fn gate<R>(&self, token: Token) -> Option<Lookup<R>> {
-        let library = crate::user::phrase::phrase_index_library_index(token);
+        let library = crate::phrase_index_library_index(token);
         if !self.is_system_library(library) {
             return Some(Lookup::Absent);
         }
@@ -355,12 +354,10 @@ impl<'a> LiveSystemItems<'a> {
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
     pub(crate) fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
-        if !self.is_system_library(crate::user::phrase::phrase_index_library_index(token)) {
+        if !self.is_system_library(crate::phrase_index_library_index(token)) {
             return Lookup::Absent;
         }
-        if !self.library_loaded(u32::from(crate::user::phrase::phrase_index_library_index(
-            token,
-        ))) {
+        if !self.library_loaded(u32::from(crate::phrase_index_library_index(token))) {
             return Lookup::Unloaded;
         }
         let store = self.user;

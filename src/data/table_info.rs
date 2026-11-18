@@ -29,6 +29,7 @@
 //! `source table format:` line leaves the pin comparing an uninitialised
 //! buffer (`:228-229`): [`TableConfError::UninitialisedSourceFormat`].
 
+use crate::PHRASE_INDEX_LIBRARY_COUNT;
 use std::ffi::{CStr, OsStr, OsString};
 use std::path::Path;
 
@@ -36,9 +37,6 @@ use crate::input::config::SystemTableInfoReader;
 
 use crate::data::phrase_library::directory_reads_as_a_chunk;
 use crate::data::table_conf::PINNED_LAMBDA;
-
-/// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h:43`).
-pub const PHRASE_INDEX_LIBRARY_COUNT: usize = 16;
 
 /// `PHRASE_FILE_TYPE` (`table_info.h:44-49`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -317,8 +315,8 @@ impl TableConf {
             phonetic: PhoneticType::Pinyin,
             database_format: DatabaseFormat::from_token(crate::store::DEFAULT_STORE_DB_FORMAT)
                 .unwrap_or(DatabaseFormat::BerkeleyDb),
-            default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
-            addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
+            default: vec![TableRow::unused(); usize::from(PHRASE_INDEX_LIBRARY_COUNT)],
+            addon: vec![TableRow::unused(); usize::from(PHRASE_INDEX_LIBRARY_COUNT)],
         };
         let system = |conf: &mut Self, index: usize, stem: &str| {
             if let Some(slot) = conf.default.get_mut(index) {
@@ -419,8 +417,8 @@ impl TableConf {
             lambda,
             phonetic,
             database_format,
-            default: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
-            addon: vec![TableRow::unused(); PHRASE_INDEX_LIBRARY_COUNT],
+            default: vec![TableRow::unused(); usize::from(PHRASE_INDEX_LIBRARY_COUNT)],
+            addon: vec![TableRow::unused(); usize::from(PHRASE_INDEX_LIBRARY_COUNT)],
         })
     }
 
@@ -443,7 +441,7 @@ impl TableConf {
             // `to_index_of_addon_tables` returns `atoi` as a `guint8`.
             usize::from(crate::input::config::atoi(index) as u8)
         };
-        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        if index >= usize::from(PHRASE_INDEX_LIBRARY_COUNT) {
             return Err(TableConfError::Abort(TableConfSite::AddonIndex));
         }
         let file_type = match file_type.to_bytes() {

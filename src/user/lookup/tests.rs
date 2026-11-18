@@ -1,7 +1,6 @@
 use super::*;
-use crate::Completeness;
-use crate::user::phrase::{NETWORK_DICTIONARY, USER_DICTIONARY};
 use crate::user::store::UserStore;
+use crate::{Completeness, NETWORK_DICTIONARY, USER_DICTIONARY};
 
 fn key(text: &str) -> SyllableKey {
     SyllableKey::from_text(text).expect("frozen syllable")
@@ -41,7 +40,7 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
         .libraries
         .get_or_default(USER_DICTIONARY)
         .unwrap()
-        .replace(token & crate::user::PHRASE_MASK, &bytes)
+        .replace(token & crate::PHRASE_MASK, &bytes)
         .unwrap();
     let keys = [crate::ChewingKey::from_pinyin("ni").unwrap()];
     phrases.index.add(&keys, token);

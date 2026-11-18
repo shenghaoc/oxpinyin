@@ -7,35 +7,11 @@
 //! This module names those constants and the value types the store records;
 //! it does not talk to the store.
 
-use crate::SyllableKey;
+use crate::{
+    PHRASE_MASK, SyllableKey, USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
+};
 
 use crate::user::store::Token;
-
-/// Sub-index a chosen addon phrase is promoted into (`novel_types.h:159`).
-///
-/// A `USER_FILE` sub-index of the default facade (`addon.bin`,
-/// `docs/findings/phrase-union.md` §3.2). Choosing an `ADDON_CANDIDATE` copies
-/// it here from the separate addon facade (`docs/findings/addon-choose-promotion.md`).
-pub const ADDON_DICTIONARY: u8 = 5;
-
-/// Sub-index network phrases live in (`novel_types.h:160`).
-pub const NETWORK_DICTIONARY: u8 = 6;
-
-/// Sub-index user phrases live in (`novel_types.h:161`, §3).
-pub const USER_DICTIONARY: u8 = 7;
-
-/// Low 24 bits of a `phrase_token_t` — the phrase id inside a sub-index
-/// (`novel_types.h:41`).
-pub const PHRASE_MASK: Token = 0x00FF_FFFF;
-
-/// Bits 24–27 of a `phrase_token_t` — the sub-index nibble
-/// (`novel_types.h:42`).
-pub const PHRASE_INDEX_LIBRARY_MASK: Token = 0x0F00_0000;
-
-/// Exclusive upper bound on phrase length in Unicode scalar values
-/// (`novel_types.h:119`). libpinyin rejects `len == 0` and `len >=` this
-/// (`pinyin.cpp:3678`, `pinyin.cpp:643`).
-pub const MAX_PHRASE_LENGTH: usize = 16;
 
 /// `count` used when the caller passes "default" (`pinyin.cpp:521`; §3.2).
 pub const DEFAULT_PHRASE_COUNT: u64 = 5;
@@ -140,18 +116,6 @@ pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
         tone @ 1..=MAX_KEY_TONE => Some(format!("{text}{tone}")),
         _ => None,
     }
-}
-
-/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
-#[must_use]
-pub const fn phrase_index_library_index(token: Token) -> u8 {
-    ((token & PHRASE_INDEX_LIBRARY_MASK) >> 24) as u8
-}
-
-/// `PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)` (`novel_types.h:45-46`).
-#[must_use]
-pub const fn phrase_index_make_token(phrase_index: u8, token: Token) -> Token {
-    (((phrase_index as Token) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as

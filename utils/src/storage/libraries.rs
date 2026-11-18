@@ -18,8 +18,8 @@ use oxpinyin::data::chunk_write::build_chunk;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
 use oxpinyin::data::table_info::{FileType, TableConf};
 
-use oxpinyin::data::chunk_write::PHRASE_MASK;
 use oxpinyin::input::tool;
+use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
 
 use crate::storage::name_c_string;
 use crate::utils_helper::{
@@ -141,8 +141,7 @@ impl Libraries {
     /// (`src/storage/phrase_index.h:617-625`,
     /// `phrase_index.cpp:150-178`).
     pub(crate) fn add_unigram(&mut self, token: u32, delta: u32) {
-        let Some(library) =
-            self.by_index[usize::from(oxpinyin::model::phrase_index_library(token) as u8)].as_mut()
+        let Some(library) = self.by_index[usize::from(phrase_index_library_index(token))].as_mut()
         else {
             return;
         };
@@ -189,7 +188,7 @@ impl Libraries {
     /// `FacadePhraseIndex::get_phrase_item`: `None` is
     /// `ERROR_NO_ITEM`/`ERROR_NO_SUB_PHRASE_INDEX`.
     pub(crate) fn item(&self, token: u32) -> Option<&oxpinyin::data::chunk_write::ChunkItem> {
-        self.by_index[usize::from(oxpinyin::model::phrase_index_library(token) as u8)]
+        self.by_index[usize::from(phrase_index_library_index(token))]
             .as_ref()?
             .items
             .get(&(token & PHRASE_MASK))
@@ -245,7 +244,7 @@ impl Libraries {
 pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CString> {
     let text = tag_token_text(
         token,
-        oxpinyin::model::phrase_index_library(token) == 0,
+        phrase_index_library_index(token) == 0,
         |token| libraries.item(token),
         |item| Some(item.phrase.as_slice()),
         |token| tool::storage::report_unknown_token(c_int::try_from(token).unwrap_or(c_int::MAX)),

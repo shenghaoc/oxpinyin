@@ -23,14 +23,16 @@ use crate::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single
 
 use crate::user::persistence::ChunkHeaderField;
 use crate::user::phrase::{
-    self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT,
-    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
-    phrase_index_library_index,
+    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, PinyinKey, UserPhrase,
 };
 use crate::user::phrase_table;
 use crate::user::replay::UnigramAdd;
 use crate::user::seed;
 use crate::user::store_libpinyin::FiniGuard;
+use crate::{
+    ADDON_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, USER_DICTIONARY,
+    phrase_index_library_index,
+};
 
 #[path = "store_arena.rs"]
 mod arena;
@@ -54,10 +56,6 @@ pub struct ExportedPhrase {
     /// The pronunciation's stored count.
     pub count: u64,
 }
-
-/// `sentence_start` sentinel: the predecessor of the first phrase in a
-/// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
-pub const SENTENCE_START: Token = 1;
 
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
@@ -596,7 +594,7 @@ fn phrase_words(phrase: &crate::PhraseText) -> Vec<u32> {
 /// `_add_phrase`'s gate: a non-empty phrase shorter than the maximum with
 /// one key per word (074a2219 pinyin.cpp:620-627).
 fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
-    !words.is_empty() && words.len() < crate::user::MAX_PHRASE_LENGTH && words.len() == keys.len()
+    !words.is_empty() && words.len() < crate::MAX_PHRASE_LENGTH && words.len() == keys.len()
 }
 
 // ── UserStore ───────────────────────────────────────────────────
@@ -1510,7 +1508,7 @@ impl UserStore {
         Ok(seed)
     }
 
-    /// Add a user phrase under [`crate::user::USER_DICTIONARY`] (`_add_phrase`, §3.2).
+    /// Add a user phrase under [`crate::USER_DICTIONARY`] (`_add_phrase`, §3.2).
     ///
     /// # Errors
     ///
@@ -1572,7 +1570,7 @@ impl UserStore {
     pub fn addon_promotion_range_end(&self) -> Option<Token> {
         if let Some(original) = self.originals.get(&ADDON_DICTIONARY) {
             let items = self.inner.system_items.borrow();
-            return Some(phrase::phrase_index_make_token(
+            return Some(crate::phrase_index_make_token(
                 ADDON_DICTIONARY,
                 items.range_end(ADDON_DICTIONARY, original),
             ));
@@ -1586,7 +1584,7 @@ impl UserStore {
             return None;
         }
         let end = arena.map_or(1, crate::user::user_library::UserLibrary::token_end);
-        Some(phrase::phrase_index_make_token(ADDON_DICTIONARY, end))
+        Some(crate::phrase_index_make_token(ADDON_DICTIONARY, end))
     }
 
     /// Copy a chosen addon phrase item into the default facade under `token`
@@ -1614,7 +1612,7 @@ impl UserStore {
     ) -> Result<(), UserStoreError> {
         let view = crate::data::phrase_library::PhraseItemView::from_bytes(item)
             .ok_or(UserStoreError::InvalidPhrase)?;
-        if view.phrase_length() > crate::user::MAX_PHRASE_LENGTH {
+        if view.phrase_length() > crate::MAX_PHRASE_LENGTH {
             return Err(UserStoreError::InvalidPhrase);
         }
         self.arena_promote(token, &view)
@@ -2470,7 +2468,7 @@ impl UserStore {
                 .map(crate::user::user_library::UserLibrary::token_end)
                 .or_else(|| self.has_user_library(library).then_some(1))?
         };
-        Some(crate::user::phrase_index_make_token(library, end))
+        Some(crate::phrase_index_make_token(library, end))
     }
 
     /// The effective live system item shared by export, n-best and token
@@ -2565,7 +2563,7 @@ impl UserStore {
         if self.is_system_library(library) {
             return Err(UserStoreError::InvalidPhrase);
         }
-        Ok(phrase::phrase_index_make_token(
+        Ok(crate::phrase_index_make_token(
             library,
             self.inner
                 .libpinyin

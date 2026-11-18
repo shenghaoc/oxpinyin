@@ -36,7 +36,7 @@ pub fn compute_prefixes(
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
     let user_lookup = user.lookup();
-    let max = prefix.len().min(crate::user::MAX_PHRASE_LENGTH);
+    let max = prefix.len().min(crate::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix = &prefix[prefix.len() - length..];

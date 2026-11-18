@@ -17,8 +17,9 @@ use oxpinyin::input::tool::{self, OutputStream};
 use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
-use crate::segment::{MAX_PHRASE_LENGTH, NULL_TOKEN, abort_on_pin_assert, c_string};
+use crate::segment::{abort_on_pin_assert, c_string};
 use crate::utils_helper::tag_token_text;
+use oxpinyin::{MAX_PHRASE_LENGTH, NULL_TOKEN, phrase_index_library_index};
 
 /// A queued token and its length in characters (`TokenInfo`).
 #[derive(Clone, Copy)]
@@ -54,7 +55,7 @@ impl Merger {
     fn validate(&self, search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
         let text = tag_token_text(
             token,
-            oxpinyin::model::phrase_index_library(token) == 0,
+            usize::from(phrase_index_library_index(token)) == 0,
             |token| search.item(token),
             |item| Some(item.words),
             |token| tool::segmentation::report_unknown_token(token as i32),

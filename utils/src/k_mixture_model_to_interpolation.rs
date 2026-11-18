@@ -13,6 +13,7 @@
 //! parser stopped on (`goto retry`, :86-107), and `std::getline` leaves
 //! `linebuf` unchanged once the stream is at its end.
 
+use oxpinyin::SENTENCE_START;
 use std::ffi::{CStr, CString, OsString, c_int, c_long};
 use std::fmt;
 use std::io::{BufRead, Write as _};
@@ -23,9 +24,6 @@ use oxpinyin::input::tool::{self, LineReader, OutputStream};
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
 };
-
-/// `sentence_start` (`src/include/novel_types.h:122`).
-const SENTENCE_START: u32 = 1;
 
 /// Where the pin stops before `\end`.
 #[derive(Clone, Debug, Eq, PartialEq)]

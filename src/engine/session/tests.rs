@@ -477,7 +477,7 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
     );
     assert_eq!(
         predecessor(2, &[2]),
-        crate::engine::nbest::SENTENCE_START,
+        crate::SENTENCE_START,
         "no readable prefix"
     );
 }
@@ -1539,7 +1539,7 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
     let no_row = dynamic_adjust_run(2, true, None);
     assert_eq!(
         no_row.asked_about,
-        crate::engine::nbest::SENTENCE_START,
+        crate::SENTENCE_START,
         "offset 0 asks about sentence_start, exactly as `_get_previous_token` answers"
     );
     assert_eq!(

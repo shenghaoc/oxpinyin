@@ -15,7 +15,7 @@ fn library_of<'a>(
     token: Token,
     original: SystemLibraryRef<'_>,
 ) -> Option<&'a mut ReplayedLibrary> {
-    let nibble = crate::user::phrase::phrase_index_library_index(token);
+    let nibble = crate::phrase_index_library_index(token);
     replayed.get_or_insert_with(nibble, || {
         let mut library = ReplayedLibrary::pristine(original);
         if let Some(total) = totals.remove(&nibble) {
@@ -199,10 +199,7 @@ impl SystemItems {
         original: Option<SystemLibraryRef<'_>>,
     ) -> Option<u32> {
         let slot = token & 0x00ff_ffff;
-        match self
-            .replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))
-        {
+        match self.replayed.get(&crate::phrase_index_library_index(token)) {
             Some(library) => library.unigram(slot),
             None => original?.unigram(slot),
         }
@@ -250,7 +247,7 @@ impl SystemItems {
     pub(crate) fn is_removed(&self, token: Token) -> bool {
         let slot = token & 0x00ff_ffff;
         self.replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))
+            .get(&crate::phrase_index_library_index(token))
             .is_some_and(|library| library.item_bytes(slot).is_none())
     }
 
@@ -274,7 +271,7 @@ impl SystemItems {
     /// kept.
     pub(crate) fn get(&self, token: &Token) -> Option<ChunkItem> {
         self.replayed
-            .get(&crate::user::phrase::phrase_index_library_index(*token))?
+            .get(&crate::phrase_index_library_index(*token))?
             .item(*token & 0x00ff_ffff)
     }
 
@@ -283,7 +280,7 @@ impl SystemItems {
     pub(crate) fn with_live<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let library = self
             .replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))?;
+            .get(&crate::phrase_index_library_index(token))?;
         let bytes = library.item_bytes(token & 0x00ff_ffff)?;
         Some(read(&bytes))
     }
@@ -298,7 +295,7 @@ impl SystemItems {
     ) -> Option<Option<R>> {
         let library = self
             .replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))?;
+            .get(&crate::phrase_index_library_index(token))?;
         Some(
             library
                 .item_field_bytes(token & 0x00ff_ffff)
@@ -308,13 +305,13 @@ impl SystemItems {
 
     pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))?
+            .get(&crate::phrase_index_library_index(token))?
             .pronunciation_count(token & 0x00ff_ffff)
     }
 
     pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
         self.replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))
+            .get(&crate::phrase_index_library_index(token))
             .is_some_and(|library| library.item_past_buffer(token & 0x00ff_ffff))
     }
 
@@ -329,7 +326,7 @@ impl SystemItems {
         delta: u32,
     ) -> bool {
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
-        let nibble = crate::user::phrase::phrase_index_library_index(token);
+        let nibble = crate::phrase_index_library_index(token);
         let slot = token & 0x00ff_ffff;
         if !self.replayed.contains_key(&nibble) {
             let Some(original) = original.filter(|library| library.contains_item(slot)) else {
@@ -351,7 +348,7 @@ impl SystemItems {
     /// replayed ADD's.
     pub(crate) fn is_added(&self, token: Token) -> bool {
         self.replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))
+            .get(&crate::phrase_index_library_index(token))
             .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
     }
 
@@ -360,7 +357,7 @@ impl SystemItems {
     pub(crate) fn with_added<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let library = self
             .replayed
-            .get(&crate::user::phrase::phrase_index_library_index(token))?;
+            .get(&crate::phrase_index_library_index(token))?;
         let slot = token & 0x00ff_ffff;
         if !library.is_added_slot(slot) {
             return None;

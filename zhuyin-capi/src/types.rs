@@ -129,9 +129,5 @@ pub type GUint = c_uint;
 /// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;
 
-/// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
-#[expect(non_upper_case_globals, reason = "upstream C identifier")]
-pub const null_token: u32 = 0;
-
 #[cfg(test)]
 mod tests;

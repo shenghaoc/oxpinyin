@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use oxpinyin::data::{BigramRow, BigramTable};
 
 use crate::segment::phrase::PhraseSearch;
-use crate::segment::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::{NULL_TOKEN, SENTENCE_START};
 
 /// One `lookup_value_t` (`lookup.h:36-53`).
 #[derive(Clone, Copy, Debug)]

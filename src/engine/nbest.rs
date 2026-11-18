@@ -46,7 +46,8 @@ use smallvec::SmallVec;
 use crate::engine::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::engine::error::EngineError;
 use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
-use crate::engine::session::{MAX_PHRASE_LENGTH, ScanKey, column_is_empty};
+use crate::engine::session::{ScanKey, column_is_empty};
+use crate::{MAX_PHRASE_LENGTH, SENTENCE_START};
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -102,9 +103,6 @@ impl Default for NbestShape {
 }
 /// Beam width per step (`nbeam`).
 const NBEAM: usize = 32;
-
-/// The sentence-start seed token (`novel_types.h`: `sentence_start = 1`).
-pub const SENTENCE_START: u32 = 1;
 
 /// One decoded sentence row, in tail order (index 0 is the 1-best).
 #[derive(Clone, Debug)]

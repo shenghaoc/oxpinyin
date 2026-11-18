@@ -12,6 +12,7 @@
 //! one the addon libraries (`m_addon_phrase_index`, indexes 4–15, loaded
 //! on demand by `pinyin_load_addon_phrase_library`).
 
+use crate::phrase_index_library_index;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -349,7 +350,7 @@ impl PhraseLibraries {
     #[must_use]
     pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble
-            .get(crate::model::phrase_index_library(token))?
+            .get(usize::from(phrase_index_library_index(token)))?
             .as_ref()
             .map(|loaded| &loaded.library)
     }

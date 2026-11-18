@@ -16,7 +16,8 @@ use oxpinyin::input::tool::{self, OptionValue, OutputStream};
 use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
-use crate::segment::{NULL_TOKEN, runs, text_of, trellis};
+use crate::segment::{runs, text_of, trellis};
+use oxpinyin::NULL_TOKEN;
 
 /// One phrase result line: `%d %s` with the phrase item's text
 /// (`convert_to_utf8`, `src/lookup/lookup.cpp:27-69`). A missing item is

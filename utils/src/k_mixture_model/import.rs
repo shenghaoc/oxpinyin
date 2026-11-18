@@ -10,6 +10,7 @@
 //! aborts (`:103-256`, `:307-312`). The header's three `atol` values are
 //! assigned to `guint32` fields, and an empty input is `ENODATA`.
 
+use oxpinyin::NULL_TOKEN;
 use std::ffi::CStr;
 use std::io::BufRead;
 
@@ -21,9 +22,6 @@ use super::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KmmGram};
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
 };
-
-/// `null_token` (`src/include/novel_types.h:121`).
-const NULL_TOKEN: u32 = 0;
 
 /// `main`'s body (`:258-317`): read `input`, write `bigram`.
 ///

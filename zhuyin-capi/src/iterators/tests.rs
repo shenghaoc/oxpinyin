@@ -9,7 +9,7 @@ use crate::iterators::{
 
 use crate::test_support::{TempUserDir, close, cstr, open_with_user, with_store};
 
-use oxpinyin::user::USER_DICTIONARY;
+use oxpinyin::USER_DICTIONARY;
 
 /// D16: libzhuyin's import parses the reading with `ZhuyinDirectParser2` under
 /// `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523` at 074a2219). The parser splits on `' '` and

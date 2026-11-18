@@ -683,9 +683,9 @@ pub fn export_state(
     for (token, item) in store.live_system_changes(originals) {
         if let Some(overrides) = state
             .system_overrides
-            .get_or_default(phrase::phrase_index_library_index(token))
+            .get_or_default(crate::phrase_index_library_index(token))
         {
-            overrides.insert(token & crate::user::phrase::PHRASE_MASK, item);
+            overrides.insert(token & crate::PHRASE_MASK, item);
         }
     }
     Ok(state)

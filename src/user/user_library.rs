@@ -114,13 +114,13 @@ impl SessionPhrases {
 
     pub(crate) fn item(&self, token: u32) -> Option<PhraseItemView<'_>> {
         self.libraries
-            .get(&crate::user::phrase_index_library_index(token))?
-            .item(token & crate::user::PHRASE_MASK)
+            .get(&crate::phrase_index_library_index(token))?
+            .item(token & crate::PHRASE_MASK)
     }
 
     pub(crate) fn item_mut(&mut self, token: u32) -> Option<&mut UserLibrary> {
         self.libraries
-            .get_mut(&crate::user::phrase_index_library_index(token))
+            .get_mut(&crate::phrase_index_library_index(token))
     }
 
     pub(crate) fn phrase(&self, token: u32, item: PhraseItemView<'_>) -> crate::user::UserPhrase {
@@ -227,7 +227,7 @@ impl UserLibrary {
     }
 
     fn replacement(&self, slot: u32, bytes: &[u8]) -> Result<Replacement, String> {
-        if slot > crate::data::chunk_write::PHRASE_MASK {
+        if slot > crate::PHRASE_MASK {
             return Err("user phrase slot exceeds PHRASE_MASK".into());
         }
         let view = PhraseItemView::from_bytes(bytes).ok_or("invalid user phrase body")?;
@@ -558,7 +558,7 @@ impl UserLibrary {
         // holds the wrapped sum of the items a compaction copied.
         let mut total = 0_u32;
         for (slot, view) in self.items() {
-            if slot > crate::data::chunk_write::PHRASE_MASK {
+            if slot > crate::PHRASE_MASK {
                 return Err(format!(
                     "chunk write error: chunk slot {slot:#010x} exceeds PHRASE_MASK"
                 ));

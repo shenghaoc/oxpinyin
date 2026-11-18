@@ -2,9 +2,9 @@
 //! iterator's length gate, the phrase-table search, the pin's assertions
 //! before a phrase is added, and the add calls.
 
-use crate::PhraseText;
 use crate::runtime::RuntimeDict;
-use crate::user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
+use crate::user::{PinyinKey, UserStore};
+use crate::{MAX_PHRASE_LENGTH, PhraseText};
 
 use crate::facade::ContextCore;
 
@@ -112,7 +112,7 @@ fn plan_add(
     // item text is read without its pronunciation view.
     let same_library: Vec<u32> = tokens
         .into_iter()
-        .filter(|token| crate::user::phrase_index_library_index(*token) == index)
+        .filter(|token| crate::phrase_index_library_index(*token) == index)
         .collect();
     if same_library.len() > 1 {
         return ImportPlan::Abort;

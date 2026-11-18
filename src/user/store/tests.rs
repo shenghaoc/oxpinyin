@@ -166,13 +166,15 @@ fn system_import_changes_the_first_match_and_guards_its_prefix() {
 mod session {
     use super::super::*;
     use super::next_user_token;
+    use crate::SENTENCE_START;
     use crate::SyllableKey;
     use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
     use crate::data::user_files::{SystemVersions, UserFileLayout};
+    use crate::user::FIRST_USER_TOKEN;
     use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
-    use crate::user::{
-        ADDON_DICTIONARY, FIRST_USER_TOKEN, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK,
-        PHRASE_MASK, USER_DICTIONARY, phrase_index_make_token,
+    use crate::{
+        ADDON_DICTIONARY, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK,
+        USER_DICTIONARY, phrase_index_make_token,
     };
     use std::collections::BTreeMap;
 
@@ -478,8 +480,8 @@ mod session {
             .add_phrase_in(NETWORK_DICTIONARY, &"词".into(), &[key("ci")], Some(5))
             .unwrap();
         assert_ne!(user, net);
-        assert_eq!(phrase::phrase_index_library_index(user), 7);
-        assert_eq!(phrase::phrase_index_library_index(net), 6);
+        assert_eq!(crate::phrase_index_library_index(user), 7);
+        assert_eq!(crate::phrase_index_library_index(net), 6);
         assert_eq!(store.export_phrases_in(USER_DICTIONARY).len(), 1);
         assert_eq!(store.export_phrases_in(6).len(), 1);
         assert_eq!(next_user_token(&store), user + 1);
@@ -1321,9 +1323,10 @@ mod backend_files {
 
     use crate::data::user_files::{SystemVersions, UserFileLayout};
 
+    use crate::SENTENCE_START;
     use crate::user::{
-        FIRST_USER_TOKEN, SENTENCE_START, SystemOriginals, Token, UserConfLaw, UserPhrase,
-        UserStore, UserStoreError, toned_key,
+        FIRST_USER_TOKEN, SystemOriginals, Token, UserConfLaw, UserPhrase, UserStore,
+        UserStoreError, toned_key,
     };
 
     fn versions() -> SystemVersions {

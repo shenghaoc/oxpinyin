@@ -26,8 +26,9 @@ use oxpinyin::input::tool::LineReader;
 use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
-use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};
+use crate::training::{all_tokens, load_gram, load_table_conf, parse_segmented_line};
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
+use oxpinyin::{NULL_TOKEN, phrase_index_library_index};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
 const EVALS_TEXT: &std::ffi::CStr = c"evals2.text";
@@ -197,7 +198,7 @@ fn c_string(text: &str) -> std::ffi::CString {
 fn token_text(libraries: &PhraseLibraries, token: u32) -> Option<std::ffi::CString> {
     let text = tag_token_text(
         token,
-        oxpinyin::model::phrase_index_library(token) == 0,
+        usize::from(phrase_index_library_index(token)) == 0,
         |token| libraries.library(token)?.item(token),
         |item| item.phrase_codes().collect::<Option<Vec<_>>>(),
         |token| tool::storage::report_unknown_token(token as core::ffi::c_int),

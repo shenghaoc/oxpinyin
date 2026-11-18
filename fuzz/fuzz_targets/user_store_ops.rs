@@ -26,13 +26,12 @@
 use std::sync::{Mutex, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin::SyllableKey;
 use oxpinyin::data::table_info::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
-    LibraryLoopRows, PinyinKey, SystemOriginals, USER_DICTIONARY, UserConfLaw, UserStore,
-    UserStoreError, phrase_index_library_index,
+    LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore, UserStoreError,
 };
+use oxpinyin::{SyllableKey, USER_DICTIONARY, phrase_index_library_index};
 use tempfile::TempDir;
 
 /// Real frozen syllables (a slice of the inventory the w4 fixtures

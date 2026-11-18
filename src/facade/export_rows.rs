@@ -6,8 +6,8 @@
 
 use crate::marshal::phrase_text::phrase_text_bytes;
 use crate::runtime::{PhraseItemView, RuntimeDict};
-use crate::user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
-use crate::{ChewingKey, PhraseText};
+use crate::user::{MAX_KEY_TONE, SystemItem, UserPronunciation, UserStore};
+use crate::{ChewingKey, NULL_TOKEN, PhraseText, SENTENCE_START};
 
 use std::collections::VecDeque;
 
@@ -527,7 +527,7 @@ impl ExportSource<'_> {
         // (074a2219 pinyin.cpp:812-815, phrase_index.h:647).
         let is_system = self
             .user
-            .is_system_library(crate::user::phrase_index_library_index(token));
+            .is_system_library(crate::phrase_index_library_index(token));
         if is_system {
             return self
                 .dict
@@ -574,9 +574,6 @@ pub struct ExportedBigramRow {
     /// The rendered bigram count (`stored × 2`).
     pub count: i64,
 }
-
-/// `null_token` (`novel_types.h:131`).
-const NULL_TOKEN: u32 = 0;
 
 /// A predecessor's stored user-bigram value the pin's `retrieve_all`
 /// cannot read, met where the bigram export walk loads it
