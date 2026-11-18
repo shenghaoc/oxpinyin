@@ -8,7 +8,6 @@ members = ["crates/*"]
 version = "0.1.0-alpha.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
-license-file = "LICENSE"
 repository = "https://github.com/shenghaoc/oxpinyin"
 # Exact on purpose (#1074): the MSRV is the pinned stable toolchain in rust-toolchain.toml.
 rust-version = "1.100.0"

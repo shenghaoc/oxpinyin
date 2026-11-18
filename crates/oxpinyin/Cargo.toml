@@ -3,15 +3,15 @@ name = "oxpinyin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 include = [
+    "/LICENSE",
     "/src/**",
     "/build.rs",
     "/codegen/**",
 ]
-description = "oxpinyin internal crate — no stability promise. The Rust interface is unstable."
+description = "Pinyin and Zhuyin parsing, decoding, and model storage. The Rust interface is unstable."
 
 [lib]
 doctest = false

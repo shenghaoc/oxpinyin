@@ -3,11 +3,10 @@ name = "oxpinyin-utils"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-include = ["/src/**"]
-description = "libpinyin's utilities under their own names and interfaces (external-I/O boundary stage 5). The installed C library packages do not include these utilities. The Rust interface is unstable."
+publish = false
+description = "Libpinyin-compatible utilities for building, training, and inspecting model data."
 
 [lib]
 doctest = false
