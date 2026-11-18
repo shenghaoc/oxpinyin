@@ -24,7 +24,7 @@ mod chewing_key_data;
 #[forbid(unsafe_code)]
 pub mod data;
 #[forbid(unsafe_code)]
-pub mod direct;
+mod direct;
 #[forbid(unsafe_code)]
 pub mod engine;
 #[forbid(unsafe_code)]
@@ -43,7 +43,7 @@ pub mod marshal;
 #[forbid(unsafe_code)]
 pub mod model;
 #[forbid(unsafe_code)]
-pub mod options;
+mod options;
 #[forbid(unsafe_code)]
 mod parser;
 #[cfg(test)]
@@ -55,9 +55,9 @@ pub mod runtime;
 #[forbid(unsafe_code)]
 mod scheme;
 #[forbid(unsafe_code)]
-pub mod scoring;
+mod scoring;
 #[forbid(unsafe_code)]
-pub mod sentence_facts;
+mod sentence_facts;
 #[forbid(unsafe_code)]
 pub mod single_gram;
 #[forbid(unsafe_code)]
@@ -67,7 +67,7 @@ pub mod store;
 #[forbid(unsafe_code)]
 pub mod tool;
 #[forbid(unsafe_code)]
-pub mod ucs4;
+mod ucs4;
 #[forbid(unsafe_code)]
 pub mod user;
 #[forbid(unsafe_code)]

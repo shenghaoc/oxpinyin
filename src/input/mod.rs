@@ -5,7 +5,7 @@
 //!
 //! Stage 1 holds the `table.conf` and `user.conf` readers and writer and their
 //! `LC_NUMERIC` calls (`config`); stage 4 the library's other `stderr` lines
-//! ([`diagnostic`]), so every library line is written to the C library's
+//! (`diagnostic`), so every library line is written to the C library's
 //! stream. What the scanned values mean — the
 //! `strcmp` mappings, the slots, the refusals where the pin aborts — stays
 //! with the modules that own those records (`crate::data` and `crate::user`);
@@ -32,7 +32,7 @@
 
 pub mod chunk;
 pub(crate) mod config;
-pub mod diagnostic;
+pub(crate) mod diagnostic;
 #[expect(
     unsafe_code,
     reason = "the library's libc and glib-sys calls behind owned handles; every block carries a SAFETY comment"
