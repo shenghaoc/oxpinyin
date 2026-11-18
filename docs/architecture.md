@@ -241,7 +241,7 @@ Engine weights and language-model order are never user configuration.
 ## Decoder
 
 The decoder uses a weighted SegmentGraph with index-based arenas, not references.
-Current EdgeKind variants are Exact and Segmentation.
+Current EdgeKind variants are Exact, Segmentation and Incomplete.
 Fuzzy, Typo and Abbrev change output and are Stage 3 candidates behind an opt-in compile flag.
 Its Rust API is internal and can change under the [interface ruling](constitution.md#external-interfaces).
 The graph and decoder follow the pin's parsing and lookup rules ([parser SPEC](findings/parser-spec.md)).

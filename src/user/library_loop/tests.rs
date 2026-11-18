@@ -182,7 +182,9 @@ fn a_bad_log_aborts_before_a_later_fatal_row() {
                             },
                         )
                     }
-                    other => (index, other),
+                    other @ (DefaultRowStep::Stop(_)
+                    | DefaultRowStep::System { .. }
+                    | DefaultRowStep::User) => (index, other),
                 })
                 .collect();
 

@@ -3052,7 +3052,9 @@ fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
             old_item,
             new_item,
         } => (*token, old_item.clone(), new_item.clone()),
-        other => panic!("{other:?}"),
+        other @ (LogRecord::Add { .. }
+        | LogRecord::Remove { .. }
+        | LogRecord::ModifyHeader { .. }) => panic!("{other:?}"),
     };
     let (token_a, old_a, new_a) = modify(&records[1]);
     let (token_b, old_b, new_b) = modify(&records[2]);

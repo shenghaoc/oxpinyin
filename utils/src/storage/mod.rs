@@ -71,9 +71,10 @@ pub(crate) fn gen_punct_entry() -> OptionEntry {
 
 /// The `--table-dir` value the entry started at (`.` when unset).
 pub(crate) fn table_dir(parsed: &ParsedOptions, index: usize) -> Option<CString> {
-    match parsed.values.get(index) {
-        Some(OptionValue::Filename(Some(bytes))) => CString::new(bytes.clone()).ok(),
-        _ => None,
+    if let Some(OptionValue::Filename(Some(bytes))) = parsed.values.get(index) {
+        CString::new(bytes.clone()).ok()
+    } else {
+        None
     }
 }
 
