@@ -633,6 +633,7 @@ class GateTests(unittest.TestCase):
             'tests/suite.rs': {'lint', 'test', 'ship'},
             'src/table_data/mod.rs': {'lint', 'test', 'ship'},
             'benches/new.rs': {'lint', 'test', 'ship'},
+            'examples/new.rs': {'lint', 'test', 'ship'},
             # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
             'capi/build.rs': {'lint', 'test', 'harness', 'ship'},
             'zhuyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
@@ -672,6 +673,19 @@ class GateTests(unittest.TestCase):
                              'R100\tcapi/lib\tdocs/lib')
             flags = ci_tree.gate(self.base, root=self.root)
             self.assertEqual({name for name, value in flags.items() if value}, {'lint', 'test', 'harness', 'ship'})
+
+    def test_crate_dirs_are_the_workspace_members(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'Cargo.toml').write_text('[package]\nname = "a"\n\n'
+                                             '[workspace]\nmembers = ["one", "nested/two"]\n')
+            self.assertEqual(ci_tree.workspace_members(root), ('one', 'nested/two'))
+        self.assertEqual(ci_tree.CRATE_DIRS, ci_tree.workspace_members(ROOT))
+        for directory in ci_tree.CRATE_DIRS:
+            with self.subTest(directory=directory):
+                self.assertTrue((ROOT / directory / 'Cargo.toml').is_file())
+                self.assertEqual(self.selected(f'{directory}/Cargo.toml'),
+                                 {'lint', 'test', 'deny', 'harness', 'ship'})
 
     def test_every_generated_table_selects_the_harness(self):
         from tools.dev import rust_tables
