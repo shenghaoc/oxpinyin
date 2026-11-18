@@ -124,9 +124,10 @@ jobs:
 
     steps:
       # Essentials + every backend's build-time C dependencies in one
-      # distro-native step. bindgen (libclang) reads tkrzw_langc.h /
-      # kclangc.h; glib2 is a Tier-C requirement (the shipped .so NEEDs
-      # libglib-2.0); the compression -dev packages satisfy Debian's
+      # distro-native step. The tkrzw and Kyoto Cabinet backends compile
+      # cxx bridges with the C++ compiler; only the bdb feature runs bindgen,
+      # and no matrix entry builds it, so no libclang; glib2 is a Tier-C
+      # requirement (the shipped .so NEEDs libglib-2.0); the compression -dev packages satisfy Debian's
       # libtkrzw link demands; cargo-c is the distro's own package, the
       # same one its libpinyin packaging would use (rustc/cargo still come
       # from rust-toolchain.toml via the bootstrap below). The case is a
@@ -142,20 +143,20 @@ jobs:
             apt-get update -qq
             apt-get install -y --no-install-recommends \
               bash tar gzip zstd git ca-certificates curl \
-              gcc g++ make pkg-config libclang-dev \
+              gcc g++ make pkg-config \
               libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
               libglib2.0-dev cargo-c
             ;;
           fedora)
             dnf -y --setopt=install_weak_deps=False install \
               bash tar gzip zstd git curl ca-certificates \
-              gcc gcc-c++ make pkgconf clang-devel \
+              gcc gcc-c++ make pkgconf \
               kyotocabinet-devel glib2-devel rpm-build cargo-c
             ;;
           arch)
             pacman -Sy --noconfirm \
               git curl tar gzip zstd diffutils \
-              gcc make pkgconf clang binutils fakeroot debugedit \
+              gcc make pkgconf binutils fakeroot debugedit \
               kyotocabinet glib2 cargo-c
             ;;
           *)

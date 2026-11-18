@@ -31,12 +31,13 @@ Linux setup needs:
 
 - Git, curl and CA certificates;
 - a C/C++ compiler and linker, Make and pkg-config;
-- libclang;
 - tkrzw development files (the [default store backend](backends.md));
 - GLib development files.
 
 Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
-non-default backends.
+non-default backends. libclang is needed only to build with the `bdb` feature:
+bindgen generates the Berkeley DB bindings with it. The tkrzw and Kyoto Cabinet
+bridges use cxx. [Building with Berkeley DB](#building-with-berkeley-db) installs both.
 A development package supplies the headers and libraries that you need to
 compile against a native library. Package names depend on your system.
 Repository Python does not use the system interpreter. Provision it with uv
@@ -49,12 +50,12 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev zip unzip cmake ninja-build libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config zip unzip cmake ninja-build libglib2.0-dev
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel zip unzip cmake ninja-build glib2-devel
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config zip unzip cmake ninja-build glib2-devel
 ```
 
 tkrzw comes from the repository's vcpkg overlay port on Linux, macOS and
@@ -84,6 +85,22 @@ Linux CI uses the same overlay and a vcpkg binary cache. Release packaging
 and oracle/reference images keep Debian's tkrzw.
 Ubuntu's packaged tkrzw is defective and is not used for development
 ([finding](../findings/tkrzw-distro-compat.md)).
+
+### Building with Berkeley DB
+
+Only a build with the `bdb` feature needs Berkeley DB 5.3 and libclang:
+
+```bash
+# Systems using apt:
+sudo apt-get install -y libdb-dev libclang-dev
+```
+
+```bash
+# Systems using dnf:
+sudo dnf install libdb-devel clang-devel
+```
+
+Then run `just check bdb` ([backends](backends.md)).
 
 ### Comparing against another revision
 
@@ -143,11 +160,13 @@ repository root, after `uv python install`:
 uv run --managed-python python -X utf8 -m tools.dev.provision --dev-tools
 ```
 
-`--dev-tools` keeps each of just, cargo-nextest, cargo-c and the rust-analyzer
+`--dev-tools` keeps each of just, cargo-nextest, cargo-c, cargo-deny and the rust-analyzer
 component that meets its requirement. It installs the others: just and cargo-c
-with `cargo install` at their pinned versions, cargo-nextest with
-`cargo install` at its newest release, and rust-analyzer with
-`rustup component add`. It does not run the oracle setup. It needs Cargo or
+with `cargo install` at their pinned versions, cargo-deny with `cargo install` at
+the version in `.github/actions/bootstrap/cargo-deny-version.txt` (also when the installed
+one is older), cargo-nextest with `cargo install` at its newest release, and rust-analyzer with
+`rustup component add`. It skips the Rust and Valgrind checks and the tkrzw install of
+`just provision`, which runs the same tool step. Neither starts a container. It needs Cargo or
 rustup only for a tool that it must install; without that program it exits 1 and
 names the tool. `--python-only` alone installs none of these tools and needs
 neither program. See [cloud setup](cloud.md#python-only-toolsdev-hosts).
@@ -335,8 +354,8 @@ just check
 The `cargo nextest run` command tests native Rust packages. `just check` (tkrzw by
 default; `just check bdb` or `just check kyotocabinet` for the others)
 also links and runs storage and C-library tests. Headers
-are the native library declarations that the compiler uses. libclang reads
-them, and pkg-config locates native library installations. The check prints
+are the native library declarations that the compiler uses. For `bdb`, bindgen
+also reads `db.h` with libclang. pkg-config locates native library installations. The check prints
 the selected toolchain, architecture and backend. It installs nothing.
 
 Success means that all test summaries have zero failures, and that the storage check ends
@@ -562,8 +581,8 @@ PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names a
 | Build and verify the oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image build-image` |
 | Verify an oracle image | `uv run --managed-python python -X utf8 -m tools.oracle.image verify-image --engine wslc IMAGE` |
 | Pin capture ([pin-captures.md](pin-captures.md)) | `just capture-pin RUN` |
-| Provision the oracle cells in the deps image | `just provision-oracle` |
-| Cloud provisioning ([cloud.md](cloud.md)) | `just provision` |
+| Provision the pin oracle in containers, and write its environment file | `just provision-oracle` |
+| Native provisioning, no container ([cloud.md](cloud.md)) | `just provision` |
 
 `tools/oracle/image.py` translates the docker commands for `wslc`
 ([container runtimes](#container-runtimes)). Docker and podman get the
@@ -648,8 +667,8 @@ there. It names Apple `container` only on macOS.
 
 `OXPINYIN_CONTAINER` names one runtime explicitly. For `build-image` and the captures
 (`just capture-pin`), `OXPINYIN_CAPTURE_RUNTIME` comes first. Each command
-prints the runtime that it chose on a `Runtime:` line. Provisioning (`just provision`,
-`just provision-oracle`), `verify-image` and `build-image` work through each
+prints the runtime that it chose on a `Runtime:` line. Oracle provisioning
+(`just provision-oracle`), `verify-image` and `build-image` work through each
 runtime. Every command is written in the docker grammar and passed through
 `runtime_command`. Docker and Podman take it as written. `wslc` drops
 `--platform` (see [native Windows](#native-windows-and-wsl-containers)).
@@ -681,13 +700,13 @@ On every runtime, the library and data runs mount the checkout read-only at
 `/opt/oracle-recipe` and run `tools/oracle/build.py` with Debian’s Python in the image
 in the `deps` image. No run binds a single file, and no host needs Bash for them.
 
-`just provision-oracle` builds the `deps` image when it is absent, and runs
-`provision oracle` in it with the provisioning cache mounted at
-`/provision`. On rootful Docker, the run is the invoking user, so the cache
-stays theirs. The home and cache of uv are then in `/tmp`. `just provision` and
-`just provision-oracle` use the `pin-<commit>` entry under
-`OXPINYIN_CACHE` ([cache directory](#cache-directory)). Some host steps of
-`just provision` run only on Linux ([cloud provisioning](cloud.md#what-it-does)).
+`just provision-oracle` copies the libraries out of the published image, or builds
+them in the `deps` image when no published image matches, and then regenerates the
+data in the `deps` image. On rootful Docker, these runs are the invoking user, so
+the cache stays theirs, and their home is `/tmp`. They use the `pin-<commit>` entry under
+`OXPINYIN_CACHE` ([cache directory](#cache-directory)). `just provision` starts no
+container. Some host steps of both recipes run only on Linux
+([cloud provisioning](cloud.md#what-it-does)).
 
 ## Development debug information
 

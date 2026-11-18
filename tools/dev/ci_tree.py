@@ -114,7 +114,7 @@ CRATE_INPUTS = (*CRATE_DIRS, "src", "tests", "codegen", "build.rs", "benches", "
 RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
-PYTHON_ONLY = ("tools/*.test.py", "tools/audit", "tools/bisection/*.py",
+PYTHON_ONLY = ("tools/*.test.py", "tools/bisection/*.py",
                "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
@@ -152,23 +152,22 @@ CI_INPUTS = {
     "lint": Inputs((*RUST, "fuzz", "uv.lock"), PYTHON_ONLY,
                    (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
     "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
-    # cargo deny reads the manifests and lockfiles only.
-    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "rust-toolchain.toml",
+    # `just deny` runs cargo deny, which reads the manifests and lockfiles only.
+    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "justfile", "rust-toolchain.toml",
                     ".cargo", "Cargo.toml", "Cargo.lock", *(f"{directory}/Cargo.toml" for directory in CRATE_DIRS), "deny.toml",
                     "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
     # tools/ and what its tests read outside it: the store-backends gate script,
     # the manifests and the lockfile, the files directly in each crate's
     # directory (version scripts, headers, allocator registers, build scripts),
     # the generated Rust tables, the fixtures, the table-conf template, the
-    # sanitizer nightly, the call-site TSV, and the lockfile of the dependency groups that
-    # hold Ruff and the clang bindings. No harness test reads any other Rust source, so the files
+    # sanitizer nightly, and the lockfile of the dependency group that holds Ruff. No harness
+    # test reads any other Rust source, so the files
     # under a crate's src, tests, examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
     "harness": Inputs((*SHARED, "uv.lock",
                        ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
-                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
-                       "docs/findings/glib-libc-call-sites.tsv"),
+                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml"),
                       tuple(f"{prefix}{section}/*.rs"
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
                             for section in ("src", "tests", "examples", "benches")),

@@ -46,10 +46,11 @@ INPUTS = ('src', 'tests', 'codegen', 'build.rs', 'benches', 'examples', 'capi', 
 
 PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev')
 # Distribution packages each backend's build needs, beside the common set above.
+# Only bdb runs bindgen, which needs libclang. kyotocabinet and tkrzw use cxx.
 # tkrzw comes from the repository's vcpkg overlay port, never from the
 # distribution: Ubuntu's libtkrzw is defective (docs/findings/tkrzw-distro-compat.md).
 BACKEND_PACKAGES = {
-    'bdb': ('libdb-dev',),
+    'bdb': ('libdb-dev', 'libclang-dev'),
     'kyotocabinet': ('libkyotocabinet-dev',),
     'tkrzw': (),
 }
@@ -155,7 +156,7 @@ def version_script(source: Path, library: str) -> Path:
     """The version script in library's C crate directory, in either source layout.
 
     Only the crate directory is read: a fixture elsewhere in the tree can carry the same name
-    (tools/audit/fixtures/small/libpinyin.ver).
+    (for example tests/fixtures/libpinyin.ver).
     """
     from .packaging import crate_dir
     return crate_dir(source, LIBRARIES[library][0]) / f'{library}.ver'

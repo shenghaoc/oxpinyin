@@ -93,14 +93,14 @@ asks for it.
 
 1. Provision the three cells with their build trees under a fresh cache root `ROOT` with
    [`just provision-oracle`](oracle.md#from-any-host). The cache root must be fresh because
-   `provision oracle` builds a tree only when it regenerates the data. `CACHE` below is the
+   `just provision-oracle` builds a tree only when it regenerates the data. `CACHE` below is the
    `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`:
 
    ```bash
    OXPINYIN_CACHE=ROOT just provision-oracle
    ```
 
-   The data sequence needs a model20 extraction. `provision oracle` fetches it into
+   The data sequence needs a model20 extraction. `just provision-oracle` fetches it into
    the `model20-<digest>` entry of `ROOT`, as `extracted/` beside the `verified` marker
    that records the pinned archive digest. The capture refuses an extraction without that marker
    (`w3_fixtures.model_dir`). The extraction and the subset text are not redistributable. They are

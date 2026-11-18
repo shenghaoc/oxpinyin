@@ -1,8 +1,10 @@
-"""Cloud provisioning and the shell-readable oracle environment.
+"""Native provisioning, the container oracle setup and the shell-readable oracle environment.
 
 Run from the repository root after `uv python install`:
-`uv run --managed-python python -X utf8 -m tools.dev.provision`.
-uv enforces its own floor (uv.toml required-version). Compatibility identity,
+`uv run --managed-python python -X utf8 -m tools.dev.provision` provisions the host natively
+and never starts a container. `just provision-oracle` runs that first, then `provision oracle`
+(the oracle cells, in containers), then `provision oracle-env`, the one writer of the
+environment file. uv enforces its own floor (uv.toml required-version). Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
 """
@@ -158,14 +160,13 @@ class Provision:
         self.tkrzw_host_library = ''
         self.ctr = ''
         self.ready = False
-        self.inside_image = False
         self.custom_ca = False
         self.net_flags, self.env_flags = ['--network', 'host'], []
         self.uv_dir = str(Path(shutil.which('uv', path=self.env.get('PATH')) or 'uv').parent)
 
     @property
-    def without_oracle(self):
-        """--python-only and --dev-tools both stop before the oracle setup."""
+    def minimal(self):
+        """--python-only and --dev-tools both skip the Rust and Valgrind checks and tkrzw."""
         return self.python_only or self.dev_tools
 
     @property
@@ -176,7 +177,7 @@ class Provision:
     def windows(self):
         """Host Python on Windows cannot read the symlinks a container makes on NTFS: every check
         inside a provisioned prefix runs in the deps image there."""
-        return self.host == 'Windows' and not self.inside_image
+        return self.host == 'Windows'
 
     @property
     def cache(self):
@@ -209,38 +210,37 @@ class Provision:
     def field(self, key):
         return images.platform_field(self.pin, self.platform, key)
 
-    def options(self, argv, in_image=False):
-        """Preserve setup's options, exclusions, platform and cell checks.
+    def options(self, argv, oracle=False):
+        """Read the native options, or with ORACLE the oracle options; check the platform and cells.
 
-        --cache-dir names the provisioning cache at its mount point IN_IMAGE; a host run takes
-        OXPINYIN_CACHE."""
-        args, oracle_options = list(argv), False
+        The oracle options belong to `provision oracle`, which `just provision-oracle` runs."""
+        args = list(argv)
         while args:
             option = args.pop(0)
             if option in ('-h', '--help'):
                 raise Finished(0)  # The retired shell setup printed nothing for --help.
-            if option == '--python-only':
+            if option == '--python-only' and not oracle:
                 self.python_only = True
-            elif option == '--dev-tools':
+            elif option == '--dev-tools' and not oracle:
                 self.dev_tools = True
-            elif option in ('--cells', '--jobs') or option == '--cache-dir' and in_image:
-                oracle_options = True
+            elif option in ('--cells', '--jobs', '--no-pull') and not oracle:
+                fail(f'{option} is an option of just provision-oracle; just provision runs natively', 2)
+            elif option in ('--cells', '--jobs'):
                 if not args:
                     fail(f'{option}: requires an argument', 1)
                 value = args.pop(0)
-                if option == '--cache-dir':
-                    self.cache = value
-                elif option == '--cells':
+                if option == '--cells':
                     self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
                 else:
                     self.jobs = value
             elif option == '--no-pull':
-                oracle_options = True
                 self.pull = False
             else:
                 fail(f'unknown option: {option}', 2)
-        if self.without_oracle and oracle_options:
-            fail('--python-only and --dev-tools cannot be combined with --cells, --jobs or --no-pull', 2)
+        if not oracle:
+            return
+        if not str(self.jobs).isdecimal() or int(self.jobs) < 1:
+            fail(f'--jobs needs a positive number, not {self.jobs}', 2)
         arch = platform.machine()
         self.platform = {'x86_64': 'linux/amd64', 'AMD64': 'linux/amd64', 'aarch64': 'linux/arm64',
                          'arm64': 'linux/arm64', 'ARM64': 'linux/arm64'}.get(arch, '')
@@ -266,7 +266,7 @@ class Provision:
 
     def prerequisites(self):
         """Require native tools only for full setup; share doctor's version formats."""
-        if self.without_oracle:
+        if self.minimal:
             return
         for name, diagnostic in (
                 ('cargo', 'cargo is missing; install the rustup-managed toolchain from rust-toolchain.toml (docs/runbooks/setup.md)'),
@@ -406,33 +406,6 @@ class Provision:
         else:
             print('ext4 paths: none accessible among mount targets, checkout, HOME, TMPDIR and cache; measurement gates cannot run without an ext4 path.')
         print('This report does not verify all measured files are on ext4; non-measurement setup may continue.')
-
-    def oracle(self, argv):
-        """Provision only oracle cells inside the native oracle deps image."""
-        self.refuse_overrides()
-        self.options(argv, in_image=True)
-        if self.without_oracle or not str(self.jobs).isdecimal() or int(self.jobs) < 1:
-            fail('provision oracle needs positive --jobs and does not accept --python-only or --dev-tools', 2)
-        if self.env.get('GITHUB_ACTIONS') == 'true' or not images.DEPS_MARKER.is_file():
-            self.die('provision oracle runs locally inside just provision-oracle')
-        self.cache = self.cache.resolve()
-        self.cache.mkdir(parents=True, exist_ok=True)
-        self.model_cache = images.model_cache(self.env)
-        self.inside_image, self.pull = True, False
-        self.oracle_root.mkdir(parents=True, exist_ok=True)
-        self.libraries()
-        for backend in self.cells:
-            prefix = self.oracle_root / backend
-            common = [sys.executable, self.root / 'tools/oracle/build.py', '--dbm', backend,
-                      '--prefix', prefix, '--enable-libzhuyin', '--jobs', self.jobs]
-            if not self.data_ok(backend):
-                extracted = model.fetch(self.model_cache, root=self.root, env=self.env)
-                run([*common, '--regen-data', '--model-dir', extracted,
-                     '--work-dir', self.cache / ('data-' + backend)], env=self.env, heavy=True)
-            if not self.data_ok(backend):
-                self.die(f'{backend}: generated data failed provenance validation')
-            self.log(f'{backend}: current pin/recipe, recorded library hashes and data manifests OK')
-        return 0
 
     def libs_ok(self, cell, prefix=None):
         prefix = Path(prefix) if prefix is not None else self.oracle_root / cell
@@ -709,8 +682,6 @@ class Provision:
             self.log('  ' + line) if logged else print(line, file=sys.stderr)
 
     def build_deps_image(self):
-        if self.inside_image:
-            return
         with open(os.devnull, 'wb') as null:
             if not run(runtime_command([self.ctr, 'image', 'inspect', self.deps_image]), env=self.env, stdout=null, stderr=null, check=False):
                 return
@@ -743,34 +714,20 @@ class Provision:
         The checkout is mounted over the image's /opt/oracle-recipe, so the builder, its pin
         record and the recipe hash are the checkout's; Debian's python3 runs it."""
         apple = images.is_apple(self.ctr)
+        # On rootful docker the build runs as the invoking user, so the cache it writes stays
+        # theirs; podman maps the user already and Apple's container keeps its verified run.
+        user = [] if Path(self.ctr).name.startswith('podman') or apple else images.run_user()
+        home = ['-e', 'HOME=/tmp'] if user else []
         return runtime_command([
             self.ctr, 'run', '--rm', '--platform', self.platform, *(['--memory', '6G'] if apple else []),
-            *self.net_flags, *self.env_flags, *flags,
+            *user, *home, *self.net_flags, *self.env_flags, *flags,
             '-v', f'{self.root}:/opt/oracle-recipe:ro,z',
             '-v', f'{self.oracle_root}:/opt/pinyin-oracle:z', '-v', f'{self.model_cache}:/model-cache:ro,z',
+            '-v', f'{self.cache}:/build:z',
             self.deps_image, 'python3', '/opt/oracle-recipe/tools/oracle/build.py', *args])
 
     def pool_phase(self, label, cells, log, args):
         """Reuse #1233's exact pool phase and owned-container cancellation."""
-        if self.inside_image:
-            mappings = {'/opt/pinyin-oracle': self.oracle_root, '/build': self.cache / 'build',
-                        '/model-cache': self.model_cache}
-            for backend in cells:
-                arguments = []
-                for value in args:
-                    value = str(value).format(item=backend, jobs=self.jobs)
-                    for original, replacement in mappings.items():
-                        if value == original or value.startswith(original + '/'):
-                            value = str(replacement) + value[len(original):]
-                            break
-                    arguments.append(value)
-                self.log(f'{backend}: {label} with current pin/recipe')
-                with Path(str(log).format(item=backend)).open('wb') as output:
-                    status = run([sys.executable, self.root / 'tools/oracle/build.py', *arguments],
-                                 env=self.env, stdout=output, heavy=True, check=False)
-                if status:
-                    return status
-            return 0
         flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
                  '--cidfile', '{cidfile}', '--cpus', '{jobs}']
         owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
@@ -823,7 +780,7 @@ class Provision:
             for cell in need:
                 self.remove_prefix(cell)
             if self.pool_phase('libraries', need, self.cache / 'build-{item}.log',
-                               ['--libs-only', '--enable-libzhuyin', '--dbm', '{item}', '--work-dir', '/build/{item}',
+                               ['--libs-only', '--enable-libzhuyin', '--dbm', '{item}', '--work-dir', '/build/build/{item}',
                                 '--prefix', '/opt/pinyin-oracle/{item}', '--jobs', '{jobs}']):
                 self.die(f'the library build failed or was cancelled (logs: {self.cache}/build-<cell>.log)')
         for cell in self.cells:
@@ -850,21 +807,30 @@ class Provision:
         finally:
             archive.unlink(missing_ok=True)
 
-    def sound_tkrzw(self):
-        if 'tkrzw' not in self.cells:
-            return
+    def install_tkrzw(self):
+        """Install tkrzw through the vcpkg overlay and certify its utility (native, Linux)."""
         try:
             vcpkg.install(self.env, self.root, jobs=self.jobs)
+            self.certify_tkrzw(('subject',))
+        except (ValueError, runtime.RuntimeRefused) as error:
+            self.die(str(error))
+        self.log(f'tkrzw: certified vcpkg install at {self.tkrzw_prefix}')
+
+    def certify_tkrzw(self, sides=('subject', 'pin')):
+        """Require each of SIDES' binaries to load the vcpkg install's libtkrzw."""
+        try:
             prefix = self.tkrzw_prefix
             child = vcpkg.environment(self.env)
-            utility = prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
-            for side, binary in (('subject', utility), ('pin', self.oracle_root / 'tkrzw/lib/libpinyin.so')):
-                if runtime.check('tkrzw', 'provision', side, binary, env=child, cwd=self.root) is None:
-                    raise ValueError(f'{side} binary does not load libtkrzw: {binary}')
+            binaries = {'subject': prefix / 'tools/tkrzw/bin/tkrzw_dbm_util',
+                        'pin': self.oracle_root / 'tkrzw/lib/libpinyin.so'}
+            if not binaries['subject'].is_file():
+                raise ValueError(f'missing vcpkg utility: {binaries["subject"]}; run just provision')
+            for side in sides:
+                if runtime.check('tkrzw', 'provision', side, binaries[side], env=child, cwd=self.root) is None:
+                    raise ValueError(f'{side} binary does not load libtkrzw: {binaries[side]}')
         except (ValueError, runtime.RuntimeRefused) as error:
             self.die(str(error))
         self.tkrzw_local = True
-        self.log(f'tkrzw: certified vcpkg install at {prefix}')
 
     def refuse_overrides(self):
         """Refuse interpreter-selection settings before any other work.
@@ -877,6 +843,7 @@ class Provision:
             self.die(str(error))
 
     def execute(self, argv):
+        """Provision the host natively: no step starts a container or reads the oracle."""
         self.refuse_overrides()
         self.options(argv)
         self.prerequisites()
@@ -889,11 +856,26 @@ class Provision:
         # keeps the successful verification line.
         identity = doctor.identity(self.env)
         print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
-        if self.without_oracle:
-            self.report_ext4()
+        if not self.minimal:
+            if self.linux:
+                self.install_tkrzw()
+            else:
+                self.log(f'tkrzw: no vcpkg overlay install on {self.host}; the oracle runs only in containers here')
+        self.report_ext4()
+        if self.minimal:
             self.log('stopping after the development tools (--dev-tools)' if self.dev_tools
                      else 'stopping after Python provisioning (--python-only)')
-            return 0
+        else:
+            print(f'Valgrind: {self.valgrind_version}')
+            self.log('native provisioning done; just provision-oracle provisions the pin oracle')
+        return 0
+
+    def oracle_setup(self, argv):
+        """Provision the oracle cells through the container runtime (`just provision-oracle`)."""
+        self.refuse_overrides()
+        self.options(argv, oracle=True)
+        if self.env.get('GITHUB_ACTIONS') == 'true':
+            fail('provision-oracle is local-only; never run it on GitHub Actions', 2)
         with ExitStack() as stack:
             self.proxy_ca(stack)
             self.cache.mkdir(parents=True, exist_ok=True)
@@ -920,10 +902,6 @@ class Provision:
                     break
             self.runtime_ready()
             self.libraries()
-            if self.linux:
-                self.sound_tkrzw()
-            else:
-                self.log(f'tkrzw: no host libtkrzw check on {self.host}; the oracle runs only in containers here')
             need = []
             for cell in self.cells:
                 if self.data_ok(cell):
@@ -936,27 +914,49 @@ class Provision:
                 self.build_deps_image()
                 if self.pool_phase('data', need, self.cache / 'data-{item}.log',
                                    ['--regen-data', '--dbm', '{item}', '--prefix', '/opt/pinyin-oracle/{item}',
-                                    '--model-dir', '/model-cache/extracted', '--work-dir', '/build/{item}-data', '--jobs', '{jobs}']):
+                                    '--model-dir', '/model-cache/extracted', '--work-dir', '/build/data-{item}', '--jobs', '{jobs}']):
                     self.die(f'--regen-data failed or was cancelled (logs: {self.cache}/data-<cell>.log)')
                 for cell in need:
                     if not self.data_ok(cell):
                         self.die(f'{cell}: the regenerated data does not match the recorded manifest')
-            self.report_ext4()
-            print(f'Valgrind: {self.valgrind_version}')
             for cell in self.cells:
                 prefix = self.oracle_root / cell
                 if self.windows:
                     if self.contained('summary', cell, prefix):
                         self.die(f'{cell}: the summary check in the deps image failed')
                     continue
-                if self.linux:
-                    for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
-                        pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
                 print(self.summary(cell, prefix), flush=True)
-            if self.linux:
-                self.write_oracle_env()
+        return 0
+
+    def oracle_env(self, argv):
+        """Write the environment file from the verified cells of the provisioning cache (Linux)."""
+        self.refuse_overrides()
+        if argv:
+            fail('usage: provision oracle-env', 2)
+        self.options([], oracle=True)
+        if not self.linux:
+            self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
+            return 0
+        self.model_cache = images.model_cache(self.env).resolve()
+        self.cells = []
+        for cell in CELLS:
+            prefix = self.oracle_root / cell
+            if not prefix.is_dir():
+                continue
+            if self.data_ok(cell):
+                self.cells.append(cell)
             else:
-                self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
+                self.log(f'{cell}: left out of the environment file; {prefix} failed validation')
+        if not self.cells:
+            self.die(f'no verified oracle cell in {self.oracle_root}; run just provision-oracle')
+        if 'tkrzw' in self.cells:
+            self.certify_tkrzw()
+            self.log(f'tkrzw: the pin library loads the vcpkg install at {self.tkrzw_prefix}')
+        for cell in self.cells:
+            prefix = self.oracle_root / cell
+            for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
+                pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
+        self.write_oracle_env()
         return 0
 
 
@@ -968,7 +968,10 @@ def main(argv=None):
         with slot.cancellation_handlers():
             if args[:1] == ['oracle']:
                 service = Provision()
-                return service.oracle(args[1:])
+                return service.oracle_setup(args[1:])
+            if args[:1] == ['oracle-env']:
+                service = Provision()
+                return service.oracle_env(args[1:])
             if args[:1] == ['probe-host']:
                 library = probe_host()
                 if not library:
@@ -977,7 +980,7 @@ def main(argv=None):
                 return 0
             if args[:1] == ['prefix-check'] and len(args) in (5, 6) and args[1] in ('libs', 'data', 'summary'):
                 service = Provision()
-                service.options(['--cells', args[2]])
+                service.options(['--cells', args[2]], oracle=True)
                 service.pin = Path(args[4])
                 prefix = Path(args[3])
                 if args[1] == 'libs':
@@ -988,7 +991,7 @@ def main(argv=None):
                 return 0
             if args[:1] == ['data-check'] and len(args) == 3:
                 service = Provision()
-                service.options(['--cells', args[1]])
+                service.options(['--cells', args[1]], oracle=True)
                 return 0 if service.data_ok(args[1], args[2]) else 1
             service = Provision()
             return service.execute(args)

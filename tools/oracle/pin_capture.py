@@ -11,8 +11,8 @@ refuses the run unless:
 - the data's digest is `content_sha256` in tools/oracle/libpinyin-data.json;
 - MODEL is a complete model20 extraction whose parent's `verified` marker records the pinned
   archive digest (tools/dev/w3_fixtures.py model_dir);
-- for each cell a utility run uses, `prefix_ok` accepts CACHE/oracle/CELL (a `python -m tools.dev.provision
-  oracle --cache-dir CACHE` prefix), its build tree CACHE/data-CELL/src/libpinyin-COMMIT holds the
+- for each cell a utility run uses, `prefix_ok` accepts CACHE/oracle/CELL (a `just provision-oracle`
+  prefix), its build tree CACHE/data-CELL/src/libpinyin-COMMIT holds the
   pin commit, the library that tree built has the prefix's recorded `shared_object_sha256`, and
   each utility it runs is a built executable there. The utilities link the pin's static archives,
   not the prefix's library, so the tree that built the verified library is what ties them to it.
@@ -1338,7 +1338,7 @@ def checked_utilities(cache, root=ROOT):
     if not needed:
         return {}
     if cache is None:
-        raise CaptureError('the utility runs need --provision-cache, a `python -m tools.dev.provision oracle` cache')
+        raise CaptureError('the utility runs need --provision-cache, a `just provision-oracle` cache')
     commit = image.fields(Path(root) / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
     cells = {}
     for cell, programs in sorted(needed.items()):
