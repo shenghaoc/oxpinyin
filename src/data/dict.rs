@@ -908,25 +908,17 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true, scratch)
     }
 
-    fn trellis_item(
+    /// [`Self::trellis_item`]; the tones, the memo and the facts are not
+    /// used.
+    fn trellis_item_with_facts(
         &self,
         syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
-    ) -> Result<Option<TrellisItem>, DictError> {
-        Ok(self.trellis_item(syllables, token))
-    }
-
-    /// [`Dictionary::trellis_item`]; the memo and the facts are not used.
-    fn trellis_item_with_facts(
-        &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
-        token: u32,
         _memo: &(),
         _facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, DictError> {
-        Dictionary::trellis_item(self, syllables, tones, token)
+        Ok(self.trellis_item(syllables, token))
     }
 
     /// [`Self::trellis_text`]; the facts are not used.

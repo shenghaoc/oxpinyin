@@ -38,7 +38,7 @@ use crate::{
     ChewingKey, PhraseText, PhraseToken, SyllableKey,
     model::{
         Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-        PronunciationRows, TokenPhrase,
+        PronunciationRows, TokenPhrase, TrellisItem,
     },
 };
 use smallvec::SmallVec;
@@ -669,6 +669,26 @@ where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
+    /// What the dictionary prices of `token` on path `id`, through the
+    /// path's memo. Every path id is one [`SpanRanges::push_path`]
+    /// returned or one below `memos.len()`, and `push_path` files a memo
+    /// with each path, so every id has a memo; an id without one reads no
+    /// item.
+    fn item_on_path(
+        &self,
+        id: u32,
+        keys: &[SyllableKey],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, EngineError> {
+        let Some(memo) = self.memos.get(id as usize) else {
+            return Ok(None);
+        };
+        self.dictionary
+            .trellis_item_with_facts(keys, tones, token, memo, &mut self.facts.borrow_mut())
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))
+    }
+
     /// `slot`'s entry for `token`; `None` when the dictionary reads no
     /// item for it. The answer is kept in the slot for the span's steps.
     fn price<'s>(
@@ -680,17 +700,7 @@ where
             return Ok(priced.as_ref());
         }
         let (keys, tones) = self.paths.path(slot.path);
-        let item = match self.memos.get(slot.path as usize) {
-            Some(memo) => self.dictionary.trellis_item_with_facts(
-                keys,
-                tones,
-                token,
-                memo,
-                &mut self.facts.borrow_mut(),
-            ),
-            None => self.dictionary.trellis_item(keys, tones, token),
-        }
-        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        let item = self.item_on_path(slot.path, keys, tones, token)?;
         let cached = item.and_then(|item| {
             self.sums
                 .borrow()
@@ -723,19 +733,7 @@ where
                     let priced = if id == slot.path {
                         Some(item)
                     } else {
-                        match self.memos.get(id as usize) {
-                            Some(memo) => self.dictionary.trellis_item_with_facts(
-                                keys,
-                                tones,
-                                token,
-                                memo,
-                                &mut self.facts.borrow_mut(),
-                            ),
-                            None => self.dictionary.trellis_item(keys, tones, token),
-                        }
-                        .map_err(|error| {
-                            EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                        })?
+                        self.item_on_path(id, keys, tones, token)?
                     };
                     Ok(priced.map_or(0.0, |priced| {
                         priced.pronunciation.map_or(1.0, |(matched, total)| {
