@@ -989,6 +989,24 @@ impl RuntimeDict<'_> {
         Ok(())
     }
 
+    /// What one trellis step prices of `token` over `syllables` and
+    /// `tones`, without a path memo; `None` when the token has no readable
+    /// item there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn trellis_item(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, DictError> {
+        Ok(self
+            .priced_token(syllables, tones, token, false)?
+            .map(|priced| priced.item))
+    }
+
     /// [`Self::trellis_item`], reading the user lookup and the keys once
     /// per path.
     pub fn trellis_item_on_path(
@@ -1007,7 +1025,7 @@ impl RuntimeDict<'_> {
             .map(|priced| priced.item))
     }
 
-    /// The phrase [`Dictionary::trellis_item`] priced: its stored length
+    /// The phrase [`Self::trellis_item`] priced: its stored length
     /// and its text.
     ///
     /// # Errors
@@ -1164,17 +1182,6 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(true);
         }
         Ok(user.phrase_prefix_exists(syllables))
-    }
-
-    fn trellis_item(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        Ok(self
-            .priced_token(syllables, tones, token, false)?
-            .map(|priced| priced.item))
     }
 
     fn trellis_item_with_facts(

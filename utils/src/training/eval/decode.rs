@@ -29,10 +29,7 @@
 
 use rustc_hash::FxHashMap;
 
-use oxpinyin::{
-    PhraseEntry, PhraseToken, SyllableKey,
-    model::{Dictionary, PhraseList},
-};
+use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 
 use super::error::EvalError;
 use super::model::EvalLanguageModel;

@@ -121,29 +121,15 @@ pub trait Dictionary {
     /// [`Self::trellis_ranges_continued`] or explicitly forced over
     /// `syllables` and `tones` (`get_phrase_item` and
     /// `compute_pronunciation_possibility`, `phonetic_lookup.h:646-684`);
-    /// `None` when the token has no readable item there.
+    /// `None` when the token has no readable item there. It also records
+    /// the sentence facts of the read in `facts`.
     ///
-    /// The n-best search calls this only for a path without a memo; it
-    /// otherwise prices through [`Self::trellis_item_with_facts`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_item(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TrellisItem>, Self::Error>;
-
-    /// [`Self::trellis_item`], given the `memo` the caller keeps for this
-    /// key path while one n-best call prices the tokens ranged on it, and
-    /// recording the sentence facts of the read in `facts`. A dictionary
-    /// may keep in the memo whatever it would otherwise work out again for
-    /// each token of the path; the item must be exactly
-    /// [`Self::trellis_item`]'s. The caller makes a fresh
-    /// [`Self::PathMemo`] per path and drops it with the span search that
-    /// found the path.
+    /// `memo` is what the caller keeps for this key path while one n-best
+    /// call prices the tokens ranged on it. A dictionary may keep there
+    /// whatever it would otherwise work out again for each token of the
+    /// path; the item must not depend on what the memo holds. The caller
+    /// makes a fresh [`Self::PathMemo`] per path and drops it with the span
+    /// search that found the path.
     ///
     /// # Errors
     ///
@@ -157,7 +143,7 @@ pub trait Dictionary {
         facts: &mut sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, Self::Error>;
 
-    /// The phrase [`Self::trellis_item`] priced, read when a result is
+    /// The phrase [`Self::trellis_item_with_facts`] priced, read when a result is
     /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`), recording the
     /// sentence facts of the read in `facts`: its stored length and its
     /// text, which is `None` where GLib's conversion answers NULL. `None`
@@ -346,6 +332,31 @@ pub trait PhraseList {
         self.lookup(syllables)
     }
 
+    /// What one trellis step prices of `token`
+    /// ([`Dictionary::trellis_item_with_facts`]): the last of
+    /// [`Self::trellis_records`]' entries for the token, `None` when there is
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        Ok(self
+            .trellis_records(syllables, tones)?
+            .iter()
+            .rev()
+            .find(|entry| entry.token().value() == token)
+            .map(|entry| TrellisItem {
+                chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
+                pronunciation: entry.pronunciation_possibility(),
+            }))
+    }
+
     /// [`Self::lookup`] into a caller-owned buffer, also answering whether
     /// the lookup met a token of a loaded library whose item could not be
     /// read ([`Dictionary::candidate_search_into`]).
@@ -512,25 +523,7 @@ impl<T: PhraseList> Dictionary for T {
         self.phrase_prefix_exists(syllables)
     }
 
-    /// The last of [`PhraseList::trellis_records`]' entries for the token.
-    fn trellis_item(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        Ok(self
-            .trellis_records(syllables, tones)?
-            .iter()
-            .rev()
-            .find(|entry| entry.token().value() == token)
-            .map(|entry| TrellisItem {
-                chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
-                pronunciation: entry.pronunciation_possibility(),
-            }))
-    }
-
-    /// [`Dictionary::trellis_item`]; the memo and the facts are not used.
+    /// [`PhraseList::trellis_item`]; the memo and the facts are not used.
     fn trellis_item_with_facts(
         &self,
         syllables: &[Self::Syllable],
@@ -636,7 +629,7 @@ fn trellis_ranges<L: PhraseList>(
     Ok(())
 }
 
-/// [`Dictionary::trellis_item`]; a listed dictionary keeps no path memo.
+/// [`PhraseList::trellis_item`]; a listed dictionary keeps no path memo.
 fn trellis_item_on_path<L: PhraseList>(
     list: &L,
     syllables: &[L::Syllable],
