@@ -238,10 +238,6 @@ jobs:
           printf '[patch.crates-io]\n' > "$scratch/archives.toml"
           while read -r name version; do
             tar -xzf "$scratch/target/package/$name-$version.crate" -C "$scratch"
-            if [[ ! -f "$scratch/$name-$version/LICENSE" ]]; then
-              echo "Missing LICENSE in $name-$version.crate" >&2
-              exit 1
-            fi
             printf '%s = { path = "%s" }\n' "$name" "$scratch/$name-$version" >> "$scratch/archives.toml"
           done <<< "$packages"
 

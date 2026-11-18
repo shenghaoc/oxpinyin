@@ -3,10 +3,10 @@ name = "oxpinyin-zhuyin-capi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 include = [
+    "/LICENSE",
     "/src/**",
     "/build.rs",
     "/libzhuyin.alloc",
@@ -17,7 +17,7 @@ include = [
     "/zhuyin.h",
     "/zhuyin_custom2.h",
 ]
-description = "C ABI of libpinyin's zhuyin facade (libzhuyin.so.15), the --enable-libzhuyin counterpart to libpinyin.so.15. Linux only. The Rust interface is unstable."
+description = "The libzhuyin C ABI implementation, with libzhuyin.so.15 release packages on Linux. The Rust interface is unstable."
 
 # The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
 # from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`

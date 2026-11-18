@@ -3,10 +3,10 @@ name = "oxpinyin-capi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 include = [
+    "/LICENSE",
     "/src/**",
     "/build.rs",
     "/libpinyin.alloc",
@@ -16,7 +16,7 @@ include = [
     "/pinyin.h",
     "/pinyin_custom2.h",
 ]
-description = "C ABI of libpinyin (libpinyin.so.15): all 79 pinyin_* exports of the pinned libpinyin.ver. Linux only. The Rust interface is unstable."
+description = "The libpinyin C ABI implementation, with libpinyin.so.15 release packages on Linux. The Rust interface is unstable."
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
 #
