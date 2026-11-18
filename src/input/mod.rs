@@ -1,4 +1,4 @@
-//! oxpinyin's external-I/O boundary (`docs/findings/external-io-boundary.md`):
+//! The library's external-I/O boundary (`docs/findings/external-io-boundary.md`):
 //! the library and tool calls that cross the program's edge, made with the
 //! pin's own calls (maintainer ruling 2026-10-28 UTC), through the `libc`
 //! crate and no C shim (ruling 2026-10-31 UTC).
@@ -8,8 +8,9 @@
 //! ([`diagnostic`]), so every library line is written to the C library's
 //! stream. What the scanned values mean — the
 //! `strcmp` mappings, the slots, the refusals where the pin aborts — stays
-//! with the crates that own those records; this module answers only what each
-//! C call answered.
+//! with the modules that own those records (`crate::data` and `crate::user`);
+//! this module answers only what each C call answered, and depends on no
+//! other module of the library.
 //!
 //! Stage 2 prepares the chunk open/seek/header-read calls and a single
 //! whole-file private mapping owner ([`chunk`]). Production still uses the

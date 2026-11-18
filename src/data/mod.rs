@@ -6,9 +6,14 @@
 //! records in the backend's own container.
 //!
 //! Every reader is lazy: opening a directory costs the DBM handles and
-//! the chunk-file mappings, and each lookup is a point read. Portable: no
-//! glib, no Linux-only deps. Internal crate — the supported external interfaces
-//! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
+//! the chunk-file mappings, and a lookup is a point read. The exception is
+//! `SystemDictionary::checked_extension_tokens`, which walks the key range
+//! after the query's key. Portable: no
+//! Linux-only dependency. The module reads the DBMs through `crate::store`
+//! and makes its C-library calls through `crate::input`; it depends on no
+//! module above it (`user`, `runtime`, `facade`). Internal module — the
+//! supported external interfaces are the libpinyin-compatible and
+//! libzhuyin-compatible C APIs and ABIs.
 //!
 //! The format notes live under `docs/findings/`:
 //! `data-formats.md` (the overview and, in §4-§7, the pinyin index, the
@@ -43,10 +48,10 @@ pub use bigram_table::BigramTable;
 pub use dict::{AddonDictionary, DictError, PhraseIndexTable, PinyinIndexTable, SystemDictionary};
 pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram};
 // The compiled-in backend's native-table extension and `database format:`
-// token, re-exported so consumers above this crate (runtime, capi, tests,
-// fuzz) name fixture directories and check `table.conf` consistently with
-// the backend the build selected — oxpinyin has no direct store
-// edge.
+// token. This module reads the DBMs through `crate::store` directly; the
+// re-export lets the consumers above it (`runtime`, the C crates, tests and
+// fuzz targets) name fixture directories and check `table.conf` against the
+// backend the build selected without naming `store` themselves.
 pub use crate::store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;

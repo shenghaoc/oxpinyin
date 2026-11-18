@@ -1,7 +1,8 @@
 //! Decoder vocabulary: the concrete types the engine seam names.
 //!
 //! `docs/findings/core-trait-seam.md` leaves `Dictionary` and `LanguageModel`
-//! generic over associated types so `oxpinyin` depends on nothing. The
+//! generic over associated types so the model contracts name no storage
+//! module. The
 //! session API in `docs/findings/session-api.md` has to pin those
 //! associated types to something concrete, or every later task would widen its
 //! own bounds. These are those types.

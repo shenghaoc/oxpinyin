@@ -2,25 +2,26 @@
 //! facades.
 //!
 //! Both `oxpinyin-capi` and `oxpinyin-zhuyin-capi` drive the same
-//! `oxpinyin` session assembly through the same laws — the
+//! `crate::runtime` session assembly through the same laws — the
 //! parse-mode state machine (`begin_parse`'s continuation rule, the three
 //! batch-parse seams, the stored-parse originals), the candidate-snapshot
 //! machinery's shared halves, the cursor/offset matrix laws, and the
-//! prefix/sentence seam — which existed twice, once per crate, each copy
-//! cited against the same upstream pin. This crate holds those laws once:
+//! prefix/sentence seam — which existed twice, once per C crate, each copy
+//! cited against the same upstream pin. This module holds those laws once:
 //! each facade keeps only its C marshalling and the laws that genuinely
 //! differ (the candidate-type enums, the guess re-anchor policies, the
 //! choose end-offset chains, the sentence-row display law).
 //!
-//! What this crate does **not** do is unify per-facade parity decisions.
+//! What this module does **not** do is unify per-facade parity decisions.
 //! Where the two facades' pins diverge — `FORCE_TONE` forwarding on the
 //! chewing seam, the `PINYIN_CORRECT_ALL` mask on the one-key full-pinyin
 //! probe, the `user.conf` open-counter lifecycle — the shared law is
 //! parameterized and each facade passes its own arm, so a divergence
 //! stays greppable instead of buried.
 //!
-//! No C types cross this boundary: the crates above this one own the
+//! No C types cross this boundary: the two C crates own the
 //! `#[repr(C)]` shapes, the pointer casts, and the `CString` snapshots.
+//! No module of the library depends on this one.
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
