@@ -169,9 +169,10 @@ A static link against `libpinyin.a` must pass the platform libraries itself (`-l
 
 The four streams are independent and change for different reasons:
 
-1. **Crate version:** `0.1.0`, pre-1.0.
-   The C surface is free to evolve after the first release, so the crate stays `0.x` and makes no semver-compatibility promise at the C-ABI level.
-   It makes none for Rust either: native Rust interfaces are not supported externally ([interface ruling](constitution.md#external-interfaces)).
+1. **Crate version:** `0.1.0-alpha.1`, with no stable Rust interface.
+   Native Rust interfaces are not supported externally ([interface ruling](constitution.md#external-interfaces)).
+   The C API and ABI follow the pin instead: libpinyin and libzhuyin `2.11.92`, SONAME major `15`.
+   A change of the crate version does not change the C ABI.
 2. **`.so` SONAME:** `libpinyin.so.15` (`libzhuyin.so.15`), from `[package.metadata.capi.library] version = "15.0.0"`.
    This is upstream's own ABI number (`libpinyin_abi_current=15` in its configure.ac).
    It makes the drop-in a drop-in, because every consumer already records `libpinyin.so.15` in `DT_NEEDED`.

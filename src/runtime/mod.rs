@@ -1,6 +1,6 @@
-//! The concrete engine assembly shared by every oxpinyin consumer.
+//! The concrete engine assembly that `facade` and the C crates share.
 //!
-//! Wiring only: this crate opens a system data directory the way
+//! Wiring only: this module opens a system data directory the way
 //! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
 //! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
 //! `table.conf` — or as `zhuyin_init` does, without addon or punctuation
@@ -9,16 +9,21 @@
 //! directory is the backend's native data directory — the one a
 //! libpinyin build on the same backend uses, or what the pin's
 //! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
-//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin`
-//! is a handle plus a point read. The algorithms stay where they
-//! belong — decoding/composition in `oxpinyin`, tables and model math
-//! in `oxpinyin`, user state in `oxpinyin` — and the user-count
-//! overlay arithmetic lives in `oxpinyin`'s `*_with_user_delta` methods
-//! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
+//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: each reader in
+//! `crate::data` opens a handle, and a lookup is a point read. The exception is
+//! `SystemDictionary::checked_extension_tokens`, which walks the key range after the
+//! query's key. The algorithms stay where they
+//! belong — decoding and composition in `crate::engine`, the system tables
+//! and the model math in `crate::data` and `crate::model`, user state in
+//! `crate::user` — and the user-count overlay arithmetic lives in
+//! `crate::data`'s `*_with_user_delta` methods and `load_merged_row`, which
+//! [`RuntimeLm`] merely feeds. The one
 //! ordering law held here is `merge_suggestion_rows`, the pinned
 //! suggestion row order the facades rank predicted candidates in.
 //! Centralizing the assembly here is what keeps every C-ABI consumer
-//! on one construction and one set of semantics.
+//! on one construction and one set of semantics. The module depends on
+//! `engine`, `user`, `data` and `input`, and no module below it depends on
+//! it.
 //!
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
 mod sentence_facts;

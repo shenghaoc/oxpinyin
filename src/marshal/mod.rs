@@ -12,7 +12,7 @@
 //! remain unsafe edges in the adapters.
 //!
 //! No exported C symbol is generated here: the `#[unsafe(no_mangle)]`
-//! entry points keep their hand-written bodies in each crate, so the
+//! entry points keep their hand-written bodies in each C crate, so the
 //! `libpinyin.ver` (79) / `libzhuyin.ver` (52) export gates and the C++
 //! header smoke test see an unchanged surface. These macros stamp only the
 //! crate-internal Rust helpers those entry points call.
