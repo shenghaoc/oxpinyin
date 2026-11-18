@@ -83,15 +83,47 @@ class StoreCrateTests(unittest.TestCase):
                 repo.git('config', 'diff.renames', setting)
                 self.assertEqual(repo.checks()[1], ['src/store/moved.rs'])
 
+    def test_a_change_to_the_store_build_module_alone_selects_the_backend_jobs(self):
+        repo = Repo(self, {'codegen/store.rs': 'pub fn build() {}\n'},
+                    {'codegen/store.rs': 'pub fn build() {\n    probe();\n}\n'})
+        got = repo.checks()
+        self.assertEqual(got[1], ['codegen/store.rs'])
+        self.assertEqual(fired(got), {1})
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
     def test_a_change_to_the_build_script_alone_selects_the_backend_jobs(self):
-        # build.rs calls store::build(), the native backend build.
-        repo = Repo(self, {'build.rs': 'fn main() {}\n'},
-                    {'build.rs': 'fn main() {\n    store::build();\n}\n'})
+        # build.rs calls store::build() with each cell's features; the default test job runs
+        # it for one backend only.
+        repo = Repo(self, {'build.rs': 'fn main() {\n    store::build();\n}\n', 'capi/build.rs': '// a\n'},
+                    {'build.rs': 'fn main() {}\n', 'capi/build.rs': '// b\n'})
         got = repo.checks()
         self.assertEqual(got[1], ['build.rs'])
         self.assertEqual(fired(got), {1})
         result = repo.cli('--run-flag', 'base')
         self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
+    def test_a_manifest_that_holds_a_gate_line_still_selects_through_check_2(self):
+        # The root manifest's system-deps tables hold such lines, and check 2 reads the whole file.
+        line = 'feature = ' + '"bdb"'
+        text = f'[package]\nname = "a"\n\n[package.metadata.system-deps.x]\n{line}\n'
+        repo = Repo(self, {'Cargo.toml': text}, {'Cargo.toml': text.replace('"a"', '"b"')})
+        got = repo.checks()
+        self.assertEqual(got[2], [f'Cargo.toml:5: {line}'])
+        self.assertEqual(fired(got), {2})
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
+    def test_a_manifest_without_a_gate_line_selects_no_backend_job(self):
+        # The manifest belongs to the whole library: check 1 does not list it, and checks 2 and 3
+        # read its lines. The other build module and a C API crate's build script are not store inputs.
+        base = {'Cargo.toml': '[package]\nname = "a"\n', 'codegen/string_tables.rs': '// a\n',
+                'capi/build.rs': '// a\n'}
+        repo = Repo(self, base, {'Cargo.toml': '[package]\nname = "a"\nedition = "2024"\n',
+                                 'codegen/string_tables.rs': '// b\n', 'capi/build.rs': '// b\n'})
+        self.assertEqual(fired(repo.checks()), set())
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=false\n'), result.stderr)
 
     def test_a_change_to_the_lockfile_alone_selects_the_backend_jobs(self):
         # The lockfile pins the backends' build dependencies, such as bindgen's syn.

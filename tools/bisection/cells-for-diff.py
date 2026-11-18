@@ -4,7 +4,8 @@ Runs rule 2's three checks on BASE...HEAD and prints the cells to run, which che
 fired and the matching paths and lines, as plain text for a PR body. A check that
 fires selects all three cells; no check selects the reference cell alone.
 
-  1. The diff lists a file in the core store module, its build inputs, or Cargo.lock.
+  1. The diff lists a file under src/store/, codegen/store.rs, the root build.rs or
+     Cargo.lock.
   2. A changed non-Markdown file contains feature = "<backend>", for bdb, tkrzw or
      kyotocabinet, with optional spaces around the =.
   3. The diff adds or removes a line that names a backend in any Cargo.toml.
@@ -53,6 +54,9 @@ from tools.dev import cell
 BACKENDS = cell.BACKENDS
 CELLS = cell.CELLS
 STORE_DIR = 'src/store/'
+# The build script module that probes, generates and compiles the native backends, and the
+# root build script that runs it with each cell's features.
+STORE_BUILD = ('codegen/store.rs', 'build.rs')
 # Rule 2's grep -E pattern as written; git grep -E reads the same syntax.
 FEATURE_GATE = 'feature *= *"(' + '|'.join(BACKENDS) + ')"'
 BACKEND_NAME = re.compile('|'.join(BACKENDS))
@@ -122,11 +126,11 @@ def literal(path):
 
 
 def store_paths(base, head, repo):
-    """Check 1: the changed store sources, manifest, build script and native build code, and the
-    lockfile, which pins the backends' build dependencies, such as bindgen's syn."""
-    return changed_paths(base, head, pathspec=(STORE_DIR, 'codegen/store.rs',
-                                              'build.rs', 'Cargo.toml',
-                                              'Cargo.lock'), repo=repo)
+    """Check 1: the changed store sources, the native build code and the root build script that
+    runs it, and the lockfile, which pins the backends' build dependencies, such as bindgen's syn.
+
+    The root Cargo.toml is not here: checks 2 and 3 read it."""
+    return changed_paths(base, head, pathspec=(STORE_DIR, *STORE_BUILD, 'Cargo.lock'), repo=repo)
 
 
 def feature_gates(base, head, repo):
@@ -167,7 +171,7 @@ def backend_lines(base, head, repo):
 
 
 CHECKS = (
-    (1, 'a changed store source, build input or Cargo.lock', store_paths),
+    (1, f'a changed path under {STORE_DIR}, {STORE_BUILD[0]}, the root build.rs or Cargo.lock', store_paths),
     (2, 'a feature = "<backend>" line in a changed non-Markdown file', feature_gates),
     (3, 'a changed Cargo.toml line that names a backend', backend_lines),
 )

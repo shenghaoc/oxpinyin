@@ -74,13 +74,17 @@ class KeyTests(unittest.TestCase):
         self.repo.commit({'src/lib.rs': 'a\n', 'Cargo.lock': 'l\n'})
         key = self.key()
         self.assertNotEqual(self.key(facts={**self.facts, 'rustc': '1.98.0'}), key)
-        # Any workspace package moves the key, not only the C API closure.
-        for path in ('src/lib.rs', 'repl/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
+        for path in ('src/lib.rs', 'capi/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
             with self.subTest(path=path):
                 before = self.repo.commit({path: 'new ' + path + '\n'})
                 self.assertNotEqual(self.key(), key)
                 self.repo.git('reset', '-q', '--hard', 'HEAD~1')
                 self.assertEqual(self.key(), key, before)
+        # A workspace member that does not ship, and the root tests, leave the key alone.
+        for path in ('repl/lib', 'utils/lib', 'tests/suite.rs'):
+            with self.subTest(path=path):
+                self.repo.commit({path: 'new ' + path + '\n'})
+                self.assertEqual(self.key(), key)
 
     def test_tkrzw_abi_record_changes_the_key_at_the_same_version(self):
         revision = self.repo.commit({'src/lib.rs': 'a\n'})
