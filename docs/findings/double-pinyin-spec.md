@@ -41,7 +41,7 @@ So instances that already exist observe a setter call on their next parse.
 - Any other value outside the enum returns `false` (`:614`) with the shengmu and yunmu tables unchanged and the fallback table cleared.
   The wrapper ignores that `false`, so `pinyin_set_double_pinyin_scheme` returns `true`.
 
-oxpinyin does the same: `pinyin_set_double_pinyin_scheme` (`crates/oxpinyin-capi/src/config.rs`) aborts on 30, and for an out-of-enum value it clears the live scheme's fallback table and returns `true`.
+oxpinyin does the same: `pinyin_set_double_pinyin_scheme` (`capi/src/config.rs`) aborts on 30, and for an out-of-enum value it clears the live scheme's fallback table and returns `true`.
 
 ## Parser class
 
@@ -125,7 +125,7 @@ So a two-key double-pinyin spelling is one atomic decoder key, and nothing re-se
 The oxpinyin analogue is the `SegmentGraph`, k-best and scoring code.
 Full-pinyin `SegmentGraph::build_with_options` emits segmentation edges inside a spelling on purpose, so the scheme path uses the exact seam:
 
-- `exact_input` joins the parser-produced keys as `'`-separated full-pinyin text, with one `ExactSegment` per key (`crates/oxpinyin-capi/src/parse.rs`).
+- `exact_input` joins the parser-produced keys as `'`-separated full-pinyin text, with one `ExactSegment` per key (`capi/src/parse.rs`).
 - `Session::replace_raw_exact` drives the session with that text and those segments.
 - The graph is then one `EdgeKind::Exact` chain.
   The pinyin inventory never re-segments the joined spelling.

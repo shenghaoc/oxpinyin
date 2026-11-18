@@ -5,7 +5,7 @@ Status: **reference**.
 This page describes the design of the internal `oxpinyin` session surface. It is not a compatibility contract ([approval conditions](../../CONTRIBUTING.md#approval-conditions)).
 What binds is the pin's behaviour as the C APIs show it — candidate order, preedit coverage, selection and commit, and errors — under the [compatibility policy](compatibility-policy.md).
 The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
-The code is the reference for the current surface: `crates/oxpinyin/src/engine/mod.rs` lists the public items, and `crates/oxpinyin/src/engine/session/` defines `Session`.
+The code is the reference for the current surface: `src/engine/mod.rs` lists the public items, and `src/engine/session/` defines `Session`.
 
 `docs/architecture.md` states the rules that this surface implements, under **Portability**.
 
@@ -112,7 +112,7 @@ So in that mode, a sort-word change on a composing session (`set_sort_options`) 
 ## Errors
 
 `EngineError` is the one error type of the engine.
-`crates/oxpinyin/src/engine/error.rs` lists the variants.
+`src/engine/error.rs` lists the variants.
 It implements `Display` and `std::error::Error`.
 
 ## Decoder vocabulary types

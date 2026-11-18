@@ -34,7 +34,7 @@ it has two facades (§3.2).
 - libpinyin: the pin (`074a2219`; `tools/oracle/oracle-pin.txt`). Upstream
   paths below beginning `src/` are relative to its root, and the line
   citations are at the pin.
-- oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
+- oxpinyin: this repo. Paths are relative to the repository root.
 - Related records: [`user-store.md`](user-store.md) (the user store and the
   additive merge), [`data-formats.md`](data-formats.md) (the system and
   addon data files), [`candidate-construction.md`](candidate-construction.md)
@@ -247,32 +247,32 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin/src/user/data/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
-| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin/src/user/data/dict.rs`), held by the runtime's `AddonSet` |
+| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`src/user/data/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
+| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`src/user/data/dict.rs`), held by the runtime's `AddonSet` |
 | Default facade total (system + user) and addon facade total | `BigramLanguageModel` unigram total; `addon_unigram_total` |
 
 ### 4.2 Engine
 
 | Upstream | oxpinyin |
 |---|---|
-| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`crates/oxpinyin/src/engine/session/lookup.rs`) |
-| `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`crates/oxpinyin/src/engine/candidate.rs`) |
+| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`src/engine/session/lookup.rs`) |
+| `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`src/engine/candidate.rs`) |
 | Addon frequency: addon total, no bigram | `Session::candidate_frequencies` addon branch |
 
 ### 4.3 C ABI
 
 | Upstream | oxpinyin |
 |---|---|
-| `lookup_candidate_type_t` per candidate | `CapiCandidate::candidate_type` (`crates/oxpinyin-capi/src/state.rs`) |
-| `pinyin_load_addon_phrase_library` | `crates/oxpinyin-capi/src/config.rs`, `RuntimeDict::load_addon_reporting` |
-| Prediction and punctuation prepend | `crates/oxpinyin-capi/src/predict.rs`, `crates/oxpinyin/src/facade/predict.rs` |
+| `lookup_candidate_type_t` per candidate | `CapiCandidate::candidate_type` (`capi/src/state.rs`) |
+| `pinyin_load_addon_phrase_library` | `capi/src/config.rs`, `RuntimeDict::load_addon_reporting` |
+| Prediction and punctuation prepend | `capi/src/predict.rs`, `src/facade/predict.rs` |
 
 ### 4.4 User store
 
 | Upstream | oxpinyin |
 |---|---|
 | User, network and addon `USER_FILE` sub-indexes 7, 6 and 5 in the default facade | `oxpinyin::user` (`USER_DICTIONARY`, `NETWORK_DICTIONARY`, `ADDON_DICTIONARY` in `phrase.rs`) |
-| User pinyin and phrase tables | `UserLookup` (`crates/oxpinyin/src/user/lookup.rs`) |
+| User pinyin and phrase tables | `UserLookup` (`src/user/lookup.rs`) |
 | Choose-promotion into nibble 5 | [`addon-choose-promotion.md`](addon-choose-promotion.md) |
 
 ## 5. Addon data
@@ -292,7 +292,7 @@ from the model's `.table` text.
 oxpinyin mirrors upstream's two-facade split:
 
 - **Default union** = `SystemDictionary` + `UserLookup`, exposed as one
-  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin`). Its
+  `Dictionary` implementation (`RuntimeDict`, the root crate). Its
   `lookup` returns tokens in ascending library-nibble order — system, then
   default `USER_FILE` entries 5, 6 and 7 — as upstream's append does. Its
   `phrase_prefix_exists` ORs the system probe and the user-file probe. At
@@ -303,7 +303,7 @@ oxpinyin mirrors upstream's two-facade split:
 
 ### 6.2 Data structures
 
-- `UserLookup` (`crates/oxpinyin/src/user/lookup.rs`) borrows the user
+- `UserLookup` (`src/user/lookup.rs`) borrows the user
   store's session tables: the user pinyin index (complete and incomplete
   key spaces) and the user phrase table. It holds no second copy.
 - `AddonDictionary` holds the addon DBM pair and the loaded addon
@@ -341,10 +341,10 @@ tags the entries `CandidateKind::Addon` and ORs the continuation bits
 Prediction lives at the facade and C ABI boundary rather than inside the
 generic `Session`, because it needs the phrase table and the user bigram:
 
-- `compute_prefixes` (`crates/oxpinyin/src/facade/predict.rs`) reproduces
+- `compute_prefixes` (`src/facade/predict.rs`) reproduces
   `_compute_prefixes`: a suffix search over the system and user phrase
   tables.
-- `crates/oxpinyin-capi/src/predict.rs` reproduces
+- `capi/src/predict.rs` reproduces
   `_compute_predicted_bigram_candidates` (with the copied `filter = 10`,
   `pinyin.cpp:2313`, `:2351-2352`) and
   `_compute_predicted_prefix_candidates` (`merged_suggestions`, over

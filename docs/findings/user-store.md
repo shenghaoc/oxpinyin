@@ -19,7 +19,7 @@ cited line).
   authoritative). Paths below beginning `src/` are relative to its root.
 - Frontend: ibus-libpinyin pinned tag `1.16.5` (commit `2d2cdac0…`). Paths
   beginning `src/PY…` are relative to its root.
-- oxpinyin: this repo. Paths beginning `crates/` are repo-relative.
+- oxpinyin: this repo. Paths are relative to the repository root.
 - Provenance of the pinned commits: `tools/oracle/oracle-pin.txt`.
 
 Constants used throughout (all **SHOWN**):
@@ -343,7 +343,7 @@ no version. The drop-in contract is to match them, not to add guarantees
 that they lack. The backend's own file header stays the only stamp.
 
 - A hostile or truncated file degrades per file at the load, as
-  upstream's does, and never panics (`crates/oxpinyin/src/user/persistence.rs`).
+  upstream's does, and never panics (`src/user/persistence.rs`).
 - One exception: a `database format:` in `user.conf` that upstream's
   `to_table_database_format_type` does not know is the pin's abort
   (`table_info.cpp:122-133`, reached from `:353-354`). The load returns
@@ -475,19 +475,19 @@ export iterators (§9).
 
 ## 7. oxpinyin implementation map
 
-`oxpinyin` defines the `UserModel` seam (`crates/oxpinyin/src/model.rs`).
-`oxpinyin::user::UserStore` implements it (`crates/oxpinyin/src/user/model.rs`)
+`oxpinyin` defines the `UserModel` seam (`src/model.rs`).
+`oxpinyin::user::UserStore` implements it (`src/user/model.rs`)
 and exposes the stored counts as `UserCountDelta` for the §5 merge.
 
 | Behaviour | oxpinyin |
 |---|---|
-| §2.1 training seed arithmetic | `crates/oxpinyin/src/user/seed.rs` |
-| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin/src/engine/session/selection.rs`, `crates/oxpinyin` |
-| §3 user phrase index and token allocation | `crates/oxpinyin/src/user/phrase.rs`, `store.rs` |
-| §4 save cycle and `m_modified` gate | `crates/oxpinyin/src/user/persistence.rs`, `UserStore::save_reporting` |
-| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin/src/user/data/lm/mod.rs`) |
-| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin/src/facade/export_rows.rs` |
-| §11 user files | `crates/oxpinyin/src/user/data/user_files.rs`, `crates/oxpinyin/src/user/store_libpinyin.rs` |
+| §2.1 training seed arithmetic | `src/user/seed.rs` |
+| §2.2 per-candidate side effects, §2.3 prediction | `src/engine/session/selection.rs`, the root crate |
+| §3 user phrase index and token allocation | `src/user/phrase.rs`, `store.rs` |
+| §4 save cycle and `m_modified` gate | `src/user/persistence.rs`, `UserStore::save_reporting` |
+| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`src/user/data/lm/mod.rs`) |
+| §9 export iterators | `capi/src/iterators.rs`, `src/facade/export_rows.rs` |
+| §11 user files | `src/user/data/user_files.rs`, `src/user/store_libpinyin.rs` |
 
 The C entry points `pinyin_save`, `pinyin_train`, `pinyin_choose_candidate`,
 `pinyin_choose_predicted_candidate`, `pinyin_remember_user_input`,
@@ -536,8 +536,8 @@ the files themselves are a second comparison surface (§11).
 
 **Dependencies.**
 
-- The `UserModel` seam (`crates/oxpinyin/src/model.rs`) and the engine
-  `Session` (`crates/oxpinyin/src/engine/session/`).
+- The `UserModel` seam (`src/model.rs`) and the engine
+  `Session` (`src/engine/session/`).
 - The backend store (`oxpinyin`), which reads and writes the user
   files in the backend's own containers.
 - The export symbols (§9).

@@ -40,7 +40,7 @@ The source citations hold at the current pin, libpinyin `2.11.92`, commit `074a2
 The setter deletes the old parser first (`src/pinyin.cpp:1163-1164`).
 A value outside the enum reaches `default:` and aborts (`:1188-1189`).
 STANDARD_DVORAK (7) also aborts: its `ZhuyinSimpleParser2::set_scheme` arm sets the tables, has no `return`, and falls through to `default: abort()` (`src/storage/zhuyin_parser2.cpp:291-295`).
-oxpinyin aborts on the same values (`pinyin_set_zhuyin_scheme` in `crates/oxpinyin-capi/src/config.rs`; [Keyboard scope](#keyboard-scope)).
+oxpinyin aborts on the same values (`pinyin_set_zhuyin_scheme` in `capi/src/config.rs`; [Keyboard scope](#keyboard-scope)).
 The parser is context-owned, so live instances observe the change on the next parse.
 
 ## Parser classes

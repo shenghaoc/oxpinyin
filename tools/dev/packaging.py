@@ -215,9 +215,20 @@ def version(root=ROOT):
     return value
 
 
+def crate_dir(root, crate):
+    """The directory of the C crate named crate in the source tree at root.
+
+    The flat layout keeps each C crate at the root (capi/, zhuyin-capi/); older revisions keep it
+    under crates/ (crates/oxpinyin-capi/). The older directory counts only when it holds the crate's
+    manifest, so a tree with neither resolves to the flat layout.
+    """
+    older = root / 'crates' / crate
+    return older if (older / 'Cargo.toml').is_file() else root / crate.removeprefix('oxpinyin-')
+
+
 def companion_headers(*, stage=False, root=ROOT):
     for name in HEADERS:
-        paths = [root / 'crates' / crate / name for crate in LIBRARIES.values()]
+        paths = [crate_dir(root, crate) / name for crate in LIBRARIES.values()]
         try:
             same = paths[0].read_bytes() == paths[1].read_bytes()
         except OSError:
@@ -347,7 +358,7 @@ def pc_text(library, backend, root=ROOT):
     the backend's database format. The header documents the source file, so no `#` line
     reaches the installed file. No build script and no Cargo build directory takes part.
     """
-    path = root / 'crates' / LIBRARIES[library] / (library + '.pc.in')
+    path = crate_dir(root, LIBRARIES[library]) / (library + '.pc.in')
     text = path.read_bytes().decode()
     for name, value in [('VERSION', version(root)), ('LIBPINYIN_BINARY_VERSION', BINARY_VERSION),
                         ('DATABASE_FORMAT', cell.BACKEND_FORMATS[backend])]:
@@ -372,7 +383,7 @@ def install_library(argv, tools):
     selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
                     None) or cell.declared_default(tools.root)
     tools.run(['mkdir', '-p', layout.pcdir])
-    crate = tools.root / 'crates' / LIBRARIES[layout.library]
+    crate = crate_dir(tools.root, LIBRARIES[layout.library])
     command = ['cargo', 'cinstall', f'--prefix={layout.prefix}', f'--libdir={layout.libdir}',
                f'--includedir={layout.includedir}', f'--target-dir={layout.target}']
     if layout.destdir:
@@ -449,7 +460,7 @@ def relink_darwin(layout, destination, tools, backend):
     from .abi import HostFacts, darwin_export_trie, exported_symbols, version_globals
 
     archive = layout.qualified / (layout.library + '.a')
-    ver = tools.root / 'crates' / LIBRARIES[layout.library] / (layout.library + '.ver')
+    ver = crate_dir(tools.root, LIBRARIES[layout.library]) / (layout.library + '.ver')
     expected = version_globals(ver.read_text())
     if not expected or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) for name in expected):
         fail(f'error: {ver}: expected explicit global symbol names')
@@ -611,7 +622,7 @@ def version_problems(root=ROOT):
     """Each drop-in version declaration that differs from the pin record, as an error line."""
     want, problems = version(root), []
     for crate in LIBRARIES.values():
-        path = root / 'crates' / crate / 'Cargo.toml'
+        path = crate_dir(root, crate) / 'Cargo.toml'
         text = '\n'.join(line for line in path.read_text().splitlines() if not re.match(r'^\s*#', line))
         for value in re.findall(r'"(libpinyin-[^"]*)"', text):
             if value != 'libpinyin-' + want:
@@ -629,7 +640,7 @@ def version_problems(root=ROOT):
         if got != want:
             problems.append(f'error: {path} [package.metadata.capi.pkg_config] version is "{got}", want "{want}"')
     for library, crate in LIBRARIES.items():
-        path = root / 'crates' / crate / (library + '.pc.in')
+        path = crate_dir(root, crate) / (library + '.pc.in')
         text = '\n'.join(line for line in path.read_text().splitlines() if not line.startswith('#'))
         if re.search(r'[0-9]+\.[0-9]+\.[0-9]+', text):
             problems.append(f'error: {path} carries a literal version; it must use @VERSION@')

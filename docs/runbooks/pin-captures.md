@@ -8,7 +8,7 @@ takes every observation in its `OBSERVATIONS`. The first segment of an observati
 | --- | --- | --- |
 | `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | C-API tests in the two capi crates |
 | `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import`, `zhuyin-separator`, `constraint-revalidation` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
-| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; `utility/tkrzw/pinyin-phrase-index-131` and `utility/tkrzw/zhuyin-phrase-index-131`, the generators at `-t 131`; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131` in `gen_pinyin_table.rs` and `gen_zhuyin_table.rs`; for C1, the two pin-written Berkeley DB tests in the `pin_data` module of `crates/oxpinyin/src/store/bdb/tests.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
+| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; `utility/tkrzw/pinyin-phrase-index-131` and `utility/tkrzw/zhuyin-phrase-index-131`, the generators at `-t 131`; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131` in `gen_pinyin_table.rs` and `gen_zhuyin_table.rs`; for C1, the two pin-written Berkeley DB tests in the `pin_data` module of `src/store/bdb/tests.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
 
 The `zhuyin-separator` observations parse `ni'hao` through libzhuyin's full-pinyin export.
 They record the default tone refusal, the guess-at-3 abort, and the guess-at-2 choose and clears.
@@ -18,7 +18,7 @@ and through libzhuyin's full-pinyin parse. They record the keys of the columns, 
 that keep it and the guess on `zh` that clears it. `instance/tests.rs` of `oxpinyin` holds both.
 
 The crates that own the behaviour test the apostrophe inputs natively.
-`crates/oxpinyin-capi/src/parse.rs` and `crates/oxpinyin-zhuyin-capi/src/parse.rs` hold the
+`capi/src/parse.rs` and `zhuyin-capi/src/parse.rs` hold the
 parse and parsed length of `'`, `''` and `'''`:
 
 - the values are Rust literals;
@@ -53,7 +53,7 @@ few named steps record what is not one call:
 An observation that ends in the abort of the pin keeps the results of the calls before it.
 
 A **utility run** (`Utility`) runs one pin utility in a private copy of `fixtures/w3/<cell>/`
-with a given stdin. It stages what the frozen utility cases in `crates/oxpinyin-utils/tests/`
+with a given stdin. It stages what the frozen utility cases in `utils/tests/`
 record:
 
 - the end (exit status or signal), stdout and stderr: text when they are UTF-8, else hex;

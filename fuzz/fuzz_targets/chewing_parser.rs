@@ -7,7 +7,7 @@
 //!
 //! The law per `(layout, use_tone, allow_incomplete)` is the
 //! `test_parser2` hard invariant lifted to the scheme seam (the same
-//! one `crates/oxpinyin/src/scheme/tests.rs` pins for curated
+//! one `src/scheme/tests.rs` pins for curated
 //! inputs): the parse is total, deterministic, and every key carries an
 //! ordered, non-overlapping span inside the input with `consumed`
 //! reaching at least past the last span. A finding is any abort, panic,

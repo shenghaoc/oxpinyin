@@ -156,7 +156,7 @@ Current scoring and selection:
 
 - `LanguageModel::nbest_step_costs` gives the two pre-log branches of §2
   for one step. It is a defaulted method of the `LanguageModel` trait in
-  `crates/oxpinyin/src/model.rs`. The default returns no cost data, so a model that
+  `src/model.rs`. The default returns no cost data, so a model that
   keeps the default produces no rows. The blended branch answers only
   when the previous token's bigram row carries the successor (count > 0),
   as `search_bigram2` walks merged-gram successors.
@@ -335,7 +335,7 @@ phrase slice that shifts because a different number of NBEST rows survive
 is an intact phrase order seen through a shifted 6-row window.
 
 The fixture holds the pin's answer. The gate is the test module
-`sentence_surface_parity` (`crates/oxpinyin/src/facade/runtime/tests.rs`), which calls
+`sentence_surface_parity` (`src/facade/runtime/tests.rs`), which calls
 `sentence_tail::measure` over the pinned libpinyin-data package and asserts
 the current numbers. A move is a deliberate change of this section, not a
 silent drift.
@@ -361,7 +361,7 @@ tiebreak too — heap-pop order is seeded by the exact-float comparator — so
 no fixed-point transform recovers the order either.
 
 This is **not** the Class A species. Class A's `amplified_frequency`
-(`crates/oxpinyin/src/engine/session/mod.rs`) is `(1−λ)·unigram/total·2²⁴`
+(`src/engine/session/mod.rs`) is `(1−λ)·unigram/total·2²⁴`
 — multiply, divide, cast: IEEE-754 basic ops, correctly rounded and
 bit-identical on every platform. The `gfloat` cost adds a transcendental,
 and the surfaces do not share the arithmetic (§11), so this divergence is
@@ -394,7 +394,7 @@ truncation (`:174–178`). `g_ptr_array_sort` calls GLib's stable
 The Rust port uses hand-written libstdc++ push/pop/make-heap assignments
 and that merge; no Rust sort takes the cyclic trellis comparator. The
 remaining generation sort orders integer library identifiers only. See
-`crates/oxpinyin/src/engine/nbest.rs` (`loses_to`, `heap_push`,
+`src/engine/nbest.rs` (`loses_to`, `heap_push`,
 `heap_adjust`, `heap_pop`, `heap_make`, `tail_compare`, `tail_merge`,
 `GenerationView`) and `session/guess.rs` (private separator provenance).
 Canonical formatting carries its separator provenance through
@@ -653,7 +653,7 @@ sides and of `rongkan…` on the subject is therefore not read here.
 
 The unchanged `fixtures/w4/oracle-sentence-surface.txt` holds each complete
 pin observation, including the six candidate rows.
-`crates/oxpinyin/tests/fixtures/sentence-surface/residuals.txt` uses the same four-column TSV
+`tests/fixtures/sentence-surface/residuals.txt` uses the same four-column TSV
 format to bind all nine complete subject observations. `sentence_tail::measure`
 compares every comparable input to that binding, or to the pin where no
 residual is declared. The gate checks guessed status, the entire indexed
@@ -746,7 +746,7 @@ observations differ. Each is the third n-best sentence, the
 Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
 disposition as `fupie` above. They exist only on the `phrases` profile,
 so the fresh-profile fixtures do not hold them and
-`crates/oxpinyin/tests/fixtures/sentence-surface/residuals.txt`
+`tests/fixtures/sentence-surface/residuals.txt`
 does not bind them.
 
 **Profile.** The profile imports 10,000 library-1 rows at count 20000.
@@ -800,7 +800,7 @@ third pop is position 12 (䏻) for `neng` and position 11 (鐞) for `nou`:
 libstdc++'s order among equal heap elements.
 
 **Oxpinyin.** `Trellis::candidates` builds the same batch
-(`crates/oxpinyin/src/engine/nbest.rs:427–445`) and `selection_compare`
+(`src/engine/nbest.rs:427–445`) and `selection_compare`
 orders equal adjusted scores by earlier batch position (`:223–234`),
 selecting position 8 (㴰) and position 3 (鎒). S3 cannot change the
 selected set.

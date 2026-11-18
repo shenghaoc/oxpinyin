@@ -20,7 +20,7 @@ The data generators in `oxpinyin-utils` use `MemoryChunk`/`SubPhraseIndex` const
 They use the four DBM row schemas and library-name tables from `row_format` and `system_files`.
 Readers and writers therefore share one layout definition.
 
-The fixture `Dictionary`/`LanguageModel` doubles are one source file, `crates/oxpinyin/tests/common/fixture_doubles.rs`.
+The fixture `Dictionary`/`LanguageModel` doubles are one source file, `tests/common/fixture_doubles.rs`.
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through core.
 The production build graph carries no test doubles.
 
@@ -58,12 +58,12 @@ The tree has no pure-Rust database backend.
 `glib-sys` binds a C library.
 Kyoto Cabinet, tkrzw and Berkeley DB link to the distribution's libraries.
 Berkeley DB is used through its official C API, `db.h`, with bindgen over system headers.
-tkrzw binds with CXX over the concrete classes the pin uses (`crates/oxpinyin/src/store/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
+tkrzw binds with CXX over the concrete classes the pin uses (`src/store/tkrzw/bridge.rs`, with the semantic adapter `adapter.cc`).
 `oxpinyin` finds the backends with `system-deps`: tkrzw and Kyoto Cabinet through their `.pc` files, and Berkeley DB without pkg-config, because the distributions and Homebrew install no `.pc` file for it.
 The `SYSTEM_DEPS_BDB_*` overrides reach a Berkeley DB outside the defaults ([discovery and overrides](runbooks/backends.md#discovery-and-overrides)).
 
 Kyoto Cabinet is used as libpinyin uses it.
-Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`crates/oxpinyin/src/store/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
+Kyoto Cabinet binds with CXX over the concrete classes the pin uses (`src/store/kyotocabinet/bridge.rs`, with the semantic adapter `adapter.cc`), under the `kyotocabinet` feature.
 It constructs `TreeDB`, `HashDB`, `StashDB` and `ProtoTreeDB` from build-time headers.
 No bridge function returns `Result`, so a C++ exception terminates the process, as it ends the pin's.
 Like libpinyin, it depends on the system library's C++ ABI.

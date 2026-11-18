@@ -8,7 +8,8 @@
 
 ## 平台
 
-可移植的 crate 支持 x86_64 和 arm64 上的 Linux、macOS 与 Windows。对每个改动代码的 PR，CI 会测试 Linux x86_64；macOS arm64 和 Windows x64 则每晚测试，也可手动触发。
+仓库开发支持 x86_64 和 arm64 上的 Linux、macOS 与 Windows。
+对每个改动代码的 PR，CI 会测试 Linux x86_64；macOS arm64 和 Windows x64 则每晚测试，也可手动触发。
 
 ## 快速开始
 
@@ -18,7 +19,7 @@
 
 | 路径 | 内容 |
 |---|---|
-| `crates/*` | 工作区包；见 [crate 映射](docs/architecture.md#crates) |
+| `src/`、`capi/`、`zhuyin-capi/`、`utils/`、`repl/` | 工作区包；见 [crate 映射](docs/architecture.md#crates) |
 | `ROADMAP.md` | 当前阶段、pin 与待完成的工作 |
 | [docs/constitution.md](docs/constitution.md) | 项目规则与受支持的外部接口 |
 | [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |

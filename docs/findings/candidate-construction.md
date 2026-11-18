@@ -53,13 +53,13 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
 3. **Sentence and longer candidates come from the C facade, not the scan.**
    - `pinyin_guess_candidates` prepends the n-best sentence rows (`NBEST_MATCH_CANDIDATE`) unless `SORT_WITHOUT_SENTENCE_CANDIDATE` is set.
      The LONGER winner is the maximum-unigram eligible token. Ties keep the earlier library, then the earlier matrix path and cursor token within that library (`phrase_large_table3.h:77-97`; `pinyin.cpp:1870-1928`).
-     It prepends a `LONGER_CANDIDATE` row unless `SORT_WITHOUT_LONGER_CANDIDATE` is set (`pinyin.cpp:2290-2300`; `crates/oxpinyin-capi/src/sentence.rs`; [sentence-surface.md](sentence-surface.md)).
+     It prepends a `LONGER_CANDIDATE` row unless `SORT_WITHOUT_LONGER_CANDIDATE` is set (`pinyin.cpp:2290-2300`; `capi/src/sentence.rs`; [sentence-surface.md](sentence-surface.md)).
    - The W4 capture (`fixtures/w4/oracle-candidate-structure.txt`, sort word `0x1e`, options `0x18a`) holds only `NORMAL_CANDIDATE` rows.
      That observation applies to the capture only.
 
 ### 8.2 The gate and the frequency key
 
-The gate is the `candidate_surface` test, in `crates/oxpinyin/src/facade/runtime/tests.rs`.
+The gate is the `candidate_surface` test, in `src/facade/runtime/tests.rs`.
 
 - It reads `fixtures/w4/oracle-candidate-structure.txt`: the pin's first ten candidates per input, with candidate type and n-best index.
 - It runs a fresh session over every input that the capture holds, on the pinned libpinyin-data package.
@@ -86,7 +86,7 @@ These invariants hold in the current code:
    The scan enumerates exactly the keys that the pinned matrix admits: the selected parse plus the split tables.
    A doubled (`ni''hao`) or leading (`'ni`) apostrophe run is not an exception: the parser and graph consume it as the pin does ([parser spec, Apostrophes](parser-spec.md#apostrophes)).
    Apostrophe-only input (`'`, `''`, `'''`) places no key.
-   The capture holds no candidates for it, and a key query on it aborts as the pin's does (`a_key_query_on_an_apostrophe_only_parse_aborts` in `crates/oxpinyin-capi/tests/it/parse_keys.rs`).
+   The capture holds no candidates for it, and a key query on it aborts as the pin's does (`a_key_query_on_an_apostrophe_only_parse_aborts` in `capi/tests/it/parse_keys.rs`).
 2. **One `f32` frequency key.**
    The amplified key of §8.2 is the one `f32` computation in the construction.
    `amplified_frequency` evaluates the C `float` chain in C order, and the unit test `amplified_frequency_pins_the_class_a_probe_values` holds its values.
@@ -98,7 +98,7 @@ These invariants hold in the current code:
    No clock, locale or environment read enters.
 4. **No candidate cap.**
    The list is returned in full.
-   The scan bound is `MAX_PHRASE_LENGTH` (16 keys per phrase) in `crates/oxpinyin/src/engine/session/mod.rs`.
+   The scan bound is `MAX_PHRASE_LENGTH` (16 keys per phrase) in `src/engine/session/mod.rs`.
 
 ### 8.4 Tie classes
 
@@ -108,7 +108,7 @@ Equal keys then keep the pin's array order.
 Per window, `_append_items` lays the rows down library by library (system facade before addon).
 In each library, the rows follow the order in which the index chunk stores them: stored key first, then token (`chewing_large_table2.h:91-133`, `:208-230`).
 The first row of each token is kept.
-`flush_window_batch` in `crates/oxpinyin/src/engine/session/mod.rs` reproduces this order.
+`flush_window_batch` in `src/engine/session/mod.rs` reproduces this order.
 Recorded cases include `liangbi` (两笔 before 量比) and `goug` (沟谷 before 狗狗, which also tie on raw counts).
 
 **Class B — doubled apostrophe.**

@@ -95,7 +95,7 @@ exports **no** `zhuyin_*` symbol; its three "zhuyin" entries
 `pinyin_get_secondary_zhuyin_string`) are `pinyin_*` functions. libzhuyin
 is a separate drop-in with a separate consumer (ibus-libzhuyin); the
 zhuyin C crate reproduces its own sites
-(`crates/oxpinyin-zhuyin-capi/src/sentence.rs`).
+(`zhuyin-capi/src/sentence.rs`).
 
 ## (e) Consumers
 
@@ -180,7 +180,7 @@ which leaves those branches with `continue` before reaching the expression
 
 ## Tests
 
-Two engine tests in `crates/oxpinyin/src/engine/session/tests.rs` hold the
+Two engine tests in `src/engine/session/tests.rs` hold the
 gates:
 
 - `dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram`:

@@ -3,7 +3,7 @@ name: Store backends
 # Backend coverage for the peer store backends. The peers (Kyoto Cabinet, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface.
 # Exactly one peer is compiled per build — the exactly-one-backend invariant is enforced at compile
-# time by two `compile_error!` guards in `crates/oxpinyin/src/store/mod.rs`
+# time by two `compile_error!` guards in `src/store/mod.rs`
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through separate builds, one per peer.
 #
@@ -124,11 +124,11 @@ jobs:
         run: |
           # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
-          # a path under crates/oxpinyin/src/store/ or Cargo.lock, a feature = "<backend>" line
+          # a path under src/store/ or Cargo.lock, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the utilities' per-cell tests and their data under
-          # crates/oxpinyin-utils, the backend provisioning under tools/tkrzw and
+          # utils, the backend provisioning under tools/tkrzw and
           # .github/actions/tkrzw,
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
@@ -139,7 +139,7 @@ jobs:
           uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py --run-flag --run-without-base \
             --also .github/workflows/store-backends.yml \
             --also .github/workflows/ci.yml \
-            --also crates/oxpinyin-utils/ \
+            --also utils/ \
             --also fixtures/w3/kct/ \
             --also fixtures/w3/db/ \
             --also tools/dev/ci_tree.py \
@@ -349,7 +349,7 @@ jobs:
     # The tkrzw backend crosses into C++ through a cxx bridge: borrowed byte
     # slices become std::string_view for one call, iterator reads land in
     # std::string out-parameters, and a RecordProcessor subclass in the
-    # adapter (crates/oxpinyin/src/store/tkrzw/adapter.cc) walks keys. The
+    # adapter (src/store/tkrzw/adapter.cc) walks keys. The
     # live hazards are a borrow outliving its call and a C++ exception
     # crossing the noexcept shim, so the feature's own test surface runs
     # under ASan and any finding kills the job. The adapter and cxx's
@@ -488,7 +488,7 @@ jobs:
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
     # sanitizer service used by `just sanitize kc`. The backend crosses into C++ through a
-    # cxx bridge (crates/oxpinyin/src/store/kyotocabinet/adapter.cc): visitor
+    # cxx bridge (src/store/kyotocabinet/adapter.cc): visitor
     # regions are borrowed for one callback, cursors borrow their database, and
     # an empty region must not reach Kyoto Cabinet as address 1. The store's
     # build script instruments the adapter and cxx's generated glue under

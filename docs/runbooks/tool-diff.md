@@ -24,7 +24,7 @@ Their nextest names are `frozen::<utility>::captured_cases::case_<number>_<name>
 The numeric prefixes of rstest, including zero padding for larger groups, are accepted.
 The four unique save-refusal scenarios stay plain `#[test]` functions,
 named `frozen::<utility>::<name>`.
-Each test is in its suite's module of the `it` test target (`crates/oxpinyin-utils/tests/it/`):
+Each test is in its suite's module of the `it` test target (`utils/tests/it/`):
 
 | Suite | Utilities |
 |---|---|

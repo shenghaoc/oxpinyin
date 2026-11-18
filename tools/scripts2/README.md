@@ -50,7 +50,7 @@ are packed into the existing masks in `SyllableKey` ID order.
 to header markers and upstream functions, including downstream build artifacts
 and handwritten consumers. The generated destinations are:
 
-| Destination (under `crates/`) | Data and identity against #1522 |
+| Destination (repository-relative path) | Data and identity against #1522 |
 | --- | --- |
 | `oxpinyin/src/chewing_key_tables.rs` | Three enum counts; 1,728 inverse content indexes; exact values/order |
 | `oxpinyin/src/content_table_source.rs` | 441 complete content rows; row initializer bytes unchanged |

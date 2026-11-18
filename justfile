@@ -203,7 +203,7 @@ ruff:
 # the one exception (docs/runbooks/verification.md#complexity-limit).
 # One definition serves every shell: the command takes no arguments.
 complexity:
-    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard crates/ -l rust -C 15 -w
+    @uv run --locked --only-group complexity --managed-python python -X utf8 -m lizard src/ tests/ codegen/ build.rs capi/ zhuyin-capi/ utils/ repl/ -l rust -C 15 -w
 
 # Local and opt-in: no workflow runs it. Example: just mutants --package oxpinyin
 # Run cargo-mutants (.cargo/mutants.toml); the arguments pass through unchanged.

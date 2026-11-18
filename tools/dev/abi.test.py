@@ -57,7 +57,7 @@ class DarwinExportGateTests(unittest.TestCase):
                                               OXPINYIN_ZHUYIN_SO=str(paths[1])))
             def inspect(argv, **options):
                 crate, name = ('oxpinyin-capi', 'libpinyin') if argv[-1] == str(paths[0]) else ('oxpinyin-zhuyin-capi', 'libzhuyin')
-                names = version_globals((settings.root / 'crates' / crate / (name + '.ver')).read_text())
+                names = version_globals((settings.root / crate.removeprefix('oxpinyin-') / (name + '.ver')).read_text())
                 if argv[0] == 'nm':
                     output = ''.join('10 T _' + symbol + '\n' for symbol in names) + nm_extra
                 else:

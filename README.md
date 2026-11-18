@@ -13,7 +13,7 @@ The [source policy](docs/source-policy.md#stages) defines the stages.
 
 ## Platforms
 
-The portable crates support Linux, macOS and Windows on x86_64 and arm64.
+Repository development supports Linux, macOS and Windows on x86_64 and arm64.
 CI tests Linux x86_64 on each PR that changes code, and macOS arm64 and Windows x64 nightly and on dispatch.
 
 ## Quickstart
@@ -25,7 +25,7 @@ The [setup guide](docs/runbooks/setup.md) builds and tests oxpinyin natively on 
 
 | Path | What |
 |---|---|
-| `crates/*` | Workspace packages; see the [crate map](docs/architecture.md#crates) |
+| `src/`, `capi/`, `zhuyin-capi/`, `utils/`, `repl/` | Workspace packages; see the [crate map](docs/architecture.md#crates) |
 | `ROADMAP.md` | Current stage, pin and open work |
 | [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
 | [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |

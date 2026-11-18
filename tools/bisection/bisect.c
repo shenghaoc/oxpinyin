@@ -299,7 +299,7 @@ static void resolve_g_free(void) {
 }
 
 /* ── Performance-baseline inputs (the 20-input keystroke-cycle corpus;
- * crates/oxpinyin/src/engine/session/tests.rs::CYCLE_INPUTS holds the same) ─── */
+ * src/engine/session/tests.rs::CYCLE_INPUTS holds the same) ─── */
 
 #endif
 

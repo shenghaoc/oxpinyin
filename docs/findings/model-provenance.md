@@ -16,7 +16,7 @@ this scope.
 - Model-derived records in `fixtures/w3/{db,kct,tkt}/`: the chunk files,
   the index files, `bigram.db` and `punct.bin`.
 - Expected-output files that reproduce those records:
-  `crates/oxpinyin-utils/tests/fixtures/export_interpolation/w3-model-*.txt`.
+  `utils/tests/fixtures/export_interpolation/w3-model-*.txt`.
 
 All other files are outside this ruling. The full model20 archive remains
 subject to the build-time fetch policy.

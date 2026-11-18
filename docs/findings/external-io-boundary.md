@@ -362,7 +362,7 @@ domain models, checksums, profile orchestration and record interpretation
 stay in their existing crates.
 
 ```text
-crates/oxpinyin/src/input/
+src/input/
   mod.rs          safe types and facade
   config.rs       scan_system_config, scan_user_config, write_user_config
   chunk.rs        open/read/map/save chunk operations

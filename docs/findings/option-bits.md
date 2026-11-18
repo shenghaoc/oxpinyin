@@ -15,7 +15,7 @@ line numbers are at these trees (`tools/oracle/oracle-pin.txt`):
 ## Bit values
 
 From `src/storage/pinyin_custom2.h:31-92` (mirrored in
-`crates/oxpinyin-capi/pinyin.h`):
+`capi/pinyin.h`):
 
 | Class | Bits |
 |---|---|
@@ -75,7 +75,7 @@ unchanged.
 
 Bare `gn`, `mg` and `on` are not in `pinyin_index`; their rows are 80, 80
 and 17 stemmed aliases. `checked_canonical`
-(`crates/oxpinyin/src/syllables.rs`) rejects an empty stem, so those
+(`src/syllables.rs`) rejects an empty stem, so those
 bits do not invent `ng` or `ong`. `agn` stays gated by
 `PINYIN_CORRECT_GN_NG`.
 
@@ -173,7 +173,7 @@ are set; the divided and resplit steps are the
 
 `FULL_PINYIN_SYLLABLES` is 405 complete syllables and
 `INCOMPLETE_PINYIN_KEYS` is 23 initial-only keys, matching the pinned
-untuned inventory (`crates/oxpinyin/src/table_data/`). It excludes:
+untuned inventory (`src/table_data/`). It excludes:
 
 - all 232 correction aliases;
 - the two parser-table ambiguity aliases (`sua`, `zua`);

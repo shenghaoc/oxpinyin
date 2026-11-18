@@ -1,7 +1,7 @@
 // alloc-pairing-pinyin.cc — the C consumer half of the allocator-pairing
 // gate for libpinyin.so.15.
 //
-// `crates/oxpinyin-capi/libpinyin.alloc` declares, for every pointer-shaped
+// `capi/libpinyin.alloc` declares, for every pointer-shaped
 // slot `pinyin.h` hands across the boundary, which deallocator releases it.
 // This translation unit is the proof that the declaration is true: it drives
 // the ABI the way a consumer does, releases each slot with exactly the
@@ -43,7 +43,7 @@
 
 namespace {
 
-// One entry per line of crates/oxpinyin-capi/libpinyin.alloc, carrying the
+// One entry per line of capi/libpinyin.alloc, carrying the
 // register's first four fields. The script compares all four, so a
 // register change the driver does not follow — a class flipped from
 // `handle:pinyin_fini` to `borrowed`, a destructor renamed, a false-note

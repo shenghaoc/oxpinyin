@@ -63,7 +63,7 @@ class KeyTests(unittest.TestCase):
         return ship_sizes.recipe_key(revision, facts or self.facts, self.repo.root)
 
     def test_key_follows_inputs_not_commits(self):
-        first = self.repo.commit({'crates/oxpinyin/lib': 'a\n'})
+        first = self.repo.commit({'src/lib.rs': 'a\n'})
         key = self.key()
         self.repo.commit({'docs/note': 'x\n'})
         self.assertEqual(self.key(), key)
@@ -71,11 +71,11 @@ class KeyTests(unittest.TestCase):
         self.assertRegex(key, r'^ship-sizes-v1-[0-9a-f]{32}$')
 
     def test_input_or_environment_change_moves_the_key(self):
-        self.repo.commit({'crates/oxpinyin/lib': 'a\n', 'Cargo.lock': 'l\n'})
+        self.repo.commit({'src/lib.rs': 'a\n', 'Cargo.lock': 'l\n'})
         key = self.key()
         self.assertNotEqual(self.key(facts={**self.facts, 'rustc': '1.98.0'}), key)
-        # Any crate under crates/ moves the key, not only the C API closure.
-        for path in ('crates/oxpinyin/lib', 'crates/oxpinyin-corpus/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
+        # Any workspace package moves the key, not only the C API closure.
+        for path in ('src/lib.rs', 'repl/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
             with self.subTest(path=path):
                 before = self.repo.commit({path: 'new ' + path + '\n'})
                 self.assertNotEqual(self.key(), key)
@@ -83,7 +83,7 @@ class KeyTests(unittest.TestCase):
                 self.assertEqual(self.key(), key, before)
 
     def test_tkrzw_abi_record_changes_the_key_at_the_same_version(self):
-        revision = self.repo.commit({'crates/oxpinyin/lib': 'a\n'})
+        revision = self.repo.commit({'src/lib.rs': 'a\n'})
         prefix = self.repo.root / 'installed tkrzw'
         record = prefix / 'share/tkrzw/vcpkg_abi_info.txt'
         record.parent.mkdir(parents=True)
@@ -195,6 +195,29 @@ class RunTests(unittest.TestCase):
                     self.assertNotIn('| library |', out)
 
 
+class VersionScriptTests(unittest.TestCase):
+    """Each library's version script comes from its C crate's directory, in either layout."""
+
+    def test_a_fixture_with_the_same_name_does_not_hide_the_crate_script(self):
+        layouts = {'flat': lambda crate: crate.removeprefix('oxpinyin-'),
+                   'older': lambda crate: f'crates/{crate}'}
+        for name, directory in layouts.items():
+            with self.subTest(layout=name), tempfile.TemporaryDirectory() as scratch:
+                source = Path(scratch)
+                fixtures = source / 'tools/audit/fixtures/small'
+                fixtures.mkdir(parents=True)
+                for library, (crate, _) in ship_sizes.LIBRARIES.items():
+                    (fixtures / f'{library}.ver').write_text('fixture\n')
+                    crate_root = source / directory(crate)
+                    crate_root.mkdir(parents=True)
+                    (crate_root / 'Cargo.toml').write_text('[package]\n')
+                    (crate_root / f'{library}.ver').write_text(f'{library} crate\n')
+                for library, (crate, _) in ship_sizes.LIBRARIES.items():
+                    script = ship_sizes.version_script(source, library)
+                    self.assertEqual(script, source / directory(crate) / f'{library}.ver')
+                    self.assertEqual(script.read_text(), f'{library} crate\n')
+
+
 class BuildSideTests(unittest.TestCase):
     """The install recipe, strip, export check and size read, with a fake process boundary."""
 
@@ -205,7 +228,7 @@ class BuildSideTests(unittest.TestCase):
 
             def fake_extract(revision, destination, root=ship_sizes.ROOT):
                 for library, (crate, prefix) in ship_sizes.LIBRARIES.items():
-                    ver = destination / 'crates' / crate / (library + '.ver')
+                    ver = destination / crate.removeprefix('oxpinyin-') / (library + '.ver')
                     ver.parent.mkdir(parents=True, exist_ok=True)
                     ver.write_text(VER.replace('pinyin', prefix))
 
@@ -319,7 +342,7 @@ class RevisionRecipeTests(unittest.TestCase):
                          f'    @"{interpreter}" {flags} record.py "$@"\n')
         files = {'.python-version': python + '\n', 'justfile': justfile, 'record.py': RECORDER}
         for library, (crate, prefix) in ship_sizes.LIBRARIES.items():
-            files[f'crates/{crate}/{library}.ver'] = VER.replace('pinyin', prefix)
+            files[str(Path(crate.removeprefix('oxpinyin-')) / f'{library}.ver')] = VER.replace('pinyin', prefix)
         return self.repo.commit(files)
 
     def build(self, revision):

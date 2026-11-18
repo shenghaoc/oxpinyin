@@ -15,7 +15,7 @@ A bare `./configure` of the pin selects Berkeley DB; oxpinyin selects it with
 The `bdb` cargo feature selects the backend. A binary has exactly one
 backend, as with the other peers.
 
-- `crates/oxpinyin/src/store/bdb/{mod.rs,ffi.rs,wrapper.h}` hold
+- `src/store/bdb/{mod.rs,ffi.rs,wrapper.h}` hold
   `BdbStore`. Every file is one raw keyspace, opened with no subdatabase
   name. `RawReadStore` reads it, and `put_raw`/`remove_raw` write it.
   `create_hash`/`open_hash_read_only` are the `DB_HASH` form of
@@ -25,14 +25,14 @@ backend, as with the other peers.
   On this backend the system and user bigrams are the same container
   class. The trait's default `open_user_bigram` therefore applies, and
   neither Kyoto Cabinet override applies.
-- The `bdb` module of `crates/oxpinyin/codegen/store.rs` runs bindgen over
+- The `bdb` module of `codegen/store.rs` runs bindgen over
   the system `db.h`. The allowlist is `db_create`, `db_strerror`,
   `db_version`, `DB`/`DBT`/`DBC`/`DBTYPE` and `DB_*`. The pin finds libdb
   without pkg-config, so the build defaults `SYSTEM_DEPS_BDB_NO_PKG_CONFIG`
   and `SYSTEM_DEPS_BDB_LIB=db`. No copy of libdb is vendored.
 - Every consumer crate forwards the `bdb` feature.
 - Tests: the shared store read and write suites,
-  the `pin_data` tests in `crates/oxpinyin/src/store/bdb/tests.rs` (files the pin's
+  the `pin_data` tests in `src/store/bdb/tests.rs` (files the pin's
   libdb wrote, from `fixtures/w3/db/`; their `table.conf` differs from the
   other backends' sets only in `database format:BerkeleyDB`).
   `just sanitize bdb` runs the Rust suite under ASan. The `bdb-sanitizers` job in

@@ -20,16 +20,16 @@ evidence for specific behaviours. The [E2E I/O compatibility rule](compatibility
   `074a2219c90feaf962d0d24f034514033ece5f99` (the pin;
   `tools/oracle/oracle-pin.txt`).
 - Header: `libpinyin/src/pinyin.h` — mirrored at
-  `crates/oxpinyin-capi/pinyin.h`; the export lists are
-  `crates/oxpinyin-capi/libpinyin.ver` and
-  `crates/oxpinyin-zhuyin-capi/libzhuyin.ver`.
+  `capi/pinyin.h`; the export lists are
+  `capi/libpinyin.ver` and
+  `zhuyin-capi/libzhuyin.ver`.
 
 ## 1. Per-symbol signatures and ownership/lifetime semantics
 
 The signatures come from `libpinyin/src/pinyin.h`. This section is the
 prose form. The machine-readable form is
-`crates/oxpinyin-capi/libpinyin.alloc` (and
-`crates/oxpinyin-zhuyin-capi/libzhuyin.alloc`). `just abi alloc-pairing`
+`capi/libpinyin.alloc` (and
+`zhuyin-capi/libzhuyin.alloc`). `just abi alloc-pairing`
 checks it against the pinned header and against the library's actual
 behaviour under LeakSanitizer (see `abi-allocator-pairing.md`). The
 vocabulary below is the register's, one class per line there. The

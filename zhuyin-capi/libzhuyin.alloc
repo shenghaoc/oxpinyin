@@ -1,0 +1,73 @@
+# libzhuyin.alloc — the allocator-pairing register for the zhuyin C ABI.
+#
+# Sibling of `libzhuyin.ver` and of `capi/libpinyin.alloc`,
+# which carries the full format description and the rationale for each
+# class. `just abi alloc-pairing` reads both registers the same
+# way: it proves the register covers exactly the pointer-shaped slots
+# `zhuyin.h` declares, that each class agrees with the C type, and — by
+# running a C++ consumer under LeakSanitizer — that the declared
+# deallocator is the one that actually releases the allocation.
+#
+# Format: <symbol>  <slot>  <class>  <notes>  <verified>; `#` comments,
+# blanks ignored.
+# Classes: handle:<fn> | g_free | g_strfreev | borrowed.
+# Notes: false-allocates | false-nulls | false-untouched | false-unreachable
+# | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
+# failure path a conforming consumer can reach.
+# Verified: pin-probe:<case> | source:<file>:<lines> |
+# unverified | unexecuted | n/a — how <notes> was established. The gate checks its form
+# only; libpinyin.alloc defines each value.
+#
+# The zhuyin facade allocates through its own `ffi.rs` — the GLib-call
+# helpers (`strdup`, `key_text`, `symbol_vector`, `sentence_text`; before
+# 2026-10-31 UTC `owned_cstr` and `owned_cstr_list`) and the fallible
+# `malloc_cstr_with` are duplicated from the pinyin one by design, because
+# each is itself the unsafe edge and the constitution's unsafe allowlist
+# reaches only the two C-ABI crates. (The doc-light boilerplate above the
+# allocator — the handle casts and the `char **`-out sentence writer — is
+# macro-stamped from `oxpinyin`; the
+# allocator boundary these registers describe is not.) The two registers
+# are therefore checked separately rather than shared.
+#
+# Corrected 2026-10-14 (#681): the eight key-string getter slots (two
+# here, six in libpinyin.alloc) said `false-unreachable`. The relabel to
+# `false-nulls` / `false-untouched` (both here are `false-nulls`) landed
+# 2026-10-09 (#708), and a pin probe on bdb confirms each line's <notes>.
+#
+# Corrected 2026-10-31 UTC (class (c) retired): oxpinyin now aborts where
+# the pin aborts, so no `pin-aborts` path is probed here any more. The key
+# getters' reachable `false` is an offset past the last column of a matrix
+# that holds keys, where the pin NULLs the out-param first
+# (zhuyin.cpp:1890-1893, :1912-1915); an empty matrix is row 66's abort.
+
+# ── Handles: allocated by Box::into_raw, released by their destructor ──
+zhuyin_init                              return      handle:zhuyin_fini            n/a                n/a
+zhuyin_alloc_instance                    return      handle:zhuyin_free_instance   n/a                n/a
+zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phrases n/a                n/a
+
+# ── Borrowed pointers: never freed by the caller ──────────────────────
+# The key getters NULL their out-param on the reachable refusal (no key at
+# the offset). The string getters (below) refuse on the zero key a
+# separator column holds (`xi1'` at offset 3), so they are reachable too
+# (zhuyin.cpp:1736, :1750; the key getter does not skip separators,
+# :1886-1906).
+zhuyin_get_candidate                     candidate   borrowed                      false-nulls        source:zhuyin.cpp:1843-1851
+# The candidate string has no `false` at the pin: it stores the pointer and
+# answers `true` (zhuyin.cpp:1865-1870).
+zhuyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:zhuyin.cpp:1865-1870
+zhuyin_get_zhuyin_key                    key         borrowed                      false-nulls        source:zhuyin.cpp:1890-1893
+zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-nulls        source:zhuyin.cpp:1912-1915
+
+# ── Caller-owned strings (g_free) ─────────────────────────────────────
+zhuyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:zhuyin-sentence-before-guess
+zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-zhuyin_get_zhuyin-zero-key
+zhuyin_get_pinyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-zhuyin_get_pinyin-zero-key
+zhuyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:zhuyin-token-get-phrase-out
+
+# ── Caller-owned string vectors (g_strfreev) ──────────────────────────
+# The facade passes `*symbols` by reference to `in_chewing_scheme`
+# (zhuyin.cpp:1092-1093). Each of the three parsers NULLs it first
+# (storage/zhuyin_parser2.cpp:304, :499, :801) and writes it again only
+# before `return true`, so an unmapped key answers `false` with NULL
+# (:320, :332, :544, :851).
+zhuyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        source:zhuyin.cpp:1087-1094

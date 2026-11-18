@@ -7,7 +7,7 @@ GLib and glibc citations are to **GLib 2.84.4-3~deb13u5** and **glibc 2.41-12+de
 (Debian testing, linux/amd64).
 Scope: the 79 `pinyin_*` and 52 `zhuyin_*` exports in
 `src/libpinyin.ver` and `src/libzhuyin.ver`, their reachable helpers,
-and the oxpinyin `crates/` counterparts. Test, oracle and tool-only code
+and the oxpinyin workspace counterparts. Test, oracle and tool-only code
 is listed separately.
 
 ## Abstract
@@ -64,7 +64,7 @@ membership does not prove coverage of every input.
 ## Verdict terms and citations
 
 Pin citations are `file:line` at `074a2219`. Relative pin paths start at
-`src/` unless prefixed `utils/`. Rust paths start at `crates/oxpinyin-` and
+`src/` unless prefixed `utils/`. Rust paths start at the repository root and
 cite items, not line numbers. "Both" means pinyin and zhuyin. A
 backend-independent source argument covers bdb, kc and tkrzw only to the
 stated extent.
@@ -655,7 +655,7 @@ The C-facing path is `pinyin_save` / `zhuyin_save` →
 | Same-backend content | `pinyin.cpp:963-1018`; `zhuyin.cpp:596-685` | Encoded chunk/diff content, indexed records, bigram values and reload results. Logical records, not physical bytes (below). |
 
 Held by the `save_semantics_929` and `save_boundaries_929` modules of
-`crates/oxpinyin/src/user/persistence/tests.rs` (both facade laws:
+`src/user/persistence/tests.rs` (both facade laws:
 `failed_renames_report_exact_order_and_preserve_destinations`,
 `interrupted_save_preserves_the_facade_specific_committed_prefix`,
 `sync_rejecting_chunk_target_does_not_stop_later_files`,
@@ -958,7 +958,7 @@ invalid, non-scalar and NULL outcomes per parameter.
 
 This section follows the ruling "No ported external-library internals"
 ([compatibility policy](compatibility-policy.md#no-ported-external-library-internals)).
-It covers `crates/` and `tools/`. All five items are replaced; the
+It covers the workspace packages and `tools/`. All five items are replaced; the
 [classification on main](#classification-on-main) gives the current code.
 No other transcription of GLib, libstdc++, libc++ or glibc comparison or
 probe order exists. `tools/audit/glib_call_sites.py` lists call sites; it
@@ -1078,7 +1078,7 @@ compatibility policy: [no ported external-library internals](compatibility-polic
 and no hand-written C or C++ shims, under which macros such as
 `g_return_val_if_fail` and `G_STRFUNC` are not reproduced
 ([external I/O](compatibility-policy.md#external-io)). It covers every
-crate under `crates/`: GLib, glibc and libstdc++ names, and sorts,
+workspace crate: GLib, glibc and libstdc++ names, and sorts,
 searches, joins, scanners and diagnostics shaped like them.
 
 Buckets:
@@ -1090,7 +1090,7 @@ Buckets:
 - **Imitation**: Rust that reproduces a GLib, libc or libstdc++
   implementation detail, or a macro that the shim ruling names.
 
-| # | oxpinyin item (`crates/`) | Pin cite (`074a2219`) | Bucket | Reason |
+| # | oxpinyin item (repository-relative path) | Pin cite (`074a2219`) | Bucket | Reason |
 | --- | --- | --- | --- | --- |
 | 1 | `oxpinyin-capi/src/dict.rs`, `oxpinyin-zhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size` / `g_array_append_vals` on the caller's array | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | Boundary | The caller owns a real `GArray`. |
 | 2 | `ffi.rs` (both facades) `strdup`, `key_text`, `strconcat_aux`, `strjoinv`, `symbol_vector`, `sentence_text` (the pin's GLib calls), `malloc_cstr_with`, `take_owned_cstr`; the hand-declared `malloc` / `free` | `g_free` / `g_strfreev` ownership of returned strings (`pinyin.cpp:715-716,733`) | Boundary | Ownership and lifetime of returned C strings; `extern "C"` declarations are permitted. |

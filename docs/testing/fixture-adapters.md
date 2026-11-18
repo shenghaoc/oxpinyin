@@ -9,7 +9,7 @@ This page records the fixture doubles' data, provenance and limits.
 ## Location
 
 The fixture doubles are one source file,
-`crates/oxpinyin/tests/common/fixture_doubles.rs`. Each test target that
+`tests/common/fixture_doubles.rs`. Each test target that
 needs them includes the file with `#[path]`. The production build graph therefore carries no
 test doubles, and no shared test crate can close a dependency cycle through
 core. For the wider test organization, see the
@@ -63,7 +63,7 @@ weight and keeps that order exactly, across the whole fixture and not
 per input. The committed captures reproduce it. A phrase
 observed at several ranks takes its best rank.
 
-The fixture-provenance tests in `crates/oxpinyin/src/model/tests.rs` enforce these rules:
+The fixture-provenance tests in `src/model/tests.rs` enforce these rules:
 
 - every phrase must appear in a committed capture;
 - every weight must equal the output of the rule;

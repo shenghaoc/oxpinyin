@@ -30,7 +30,7 @@ def cpp_smoke(ctx: Context, args: Sequence[str]) -> int:
     flags = shlex.split(ctx.env['GLIB_CFLAGS']) if ctx.env.get('GLIB_CFLAGS') else ctx.flags('--cflags')
     driver = work / 'cpp-smoke'
     ctx.checked(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O2', *flags,
-                 '-I' + str(ctx.settings.root / 'crates/oxpinyin-capi'), 'cpp-smoke.cc',
+                 '-I' + str(ctx.settings.root / 'capi'), 'cpp-smoke.cc',
                  '-L' + str(libraries), '-Wl,-rpath,' + str(libraries), '-lpinyin_capi', '-o', driver])
     needed = pinyin_needed(ctx.checked(['readelf', '-d', driver], capture=True).stdout.decode())
     if needed != 'libpinyin.so.15':
