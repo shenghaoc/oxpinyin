@@ -59,9 +59,9 @@ use super::SaveOutcome;
 #[cfg(unix)]
 use crate::ChewingKey;
 #[cfg(unix)]
-use crate::user::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::chunk_write::{ChunkItem, build_chunk};
 #[cfg(unix)]
-use crate::user::data::phrase_library::PhraseLibrary;
+use crate::data::phrase_library::PhraseLibrary;
 use crate::user::toned_key;
 use crate::{PhraseText, SyllableKey};
 
@@ -72,7 +72,7 @@ const GBK: u8 = 2;
 /// with a user directory of its own.
 fn open(user: &Path) -> ContextCore {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let extension = crate::user::data::DEFAULT_STORE_EXT;
+    let extension = crate::data::DEFAULT_STORE_EXT;
     ContextCore::open(&root.join(extension), Some(user), WORD, UserConfLaw::Pinyin)
         .expect("committed backend fixtures")
 }
@@ -143,7 +143,7 @@ fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: boo
         payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         std::fs::write(
             user.join("gb_char.dbin"),
-            crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+            crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
         )
         .unwrap();
     }
@@ -265,7 +265,7 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
 /// SYSTEM_FILE`.
 fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let committed = root.join(crate::user::data::DEFAULT_STORE_EXT);
+    let committed = root.join(crate::data::DEFAULT_STORE_EXT);
     let system = scratch.join("system");
     std::fs::create_dir_all(&system).expect("system dir");
     for entry in std::fs::read_dir(committed).expect("committed fixtures") {
@@ -362,7 +362,7 @@ mod failed_attachment_fini {
     use crate::user::UserConfLaw;
 
     fn fixture_dir() -> PathBuf {
-        let extension = crate::user::data::DEFAULT_STORE_EXT;
+        let extension = crate::data::DEFAULT_STORE_EXT;
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures")
             .join("w3")
@@ -428,12 +428,12 @@ mod library_directory {
         ContextCore, InitRefusal, MaskOutOutcome, OpenFailure, PINYIN_DEFAULT_OPTION_WORD,
     };
 
-    use crate::user::{UserConfLaw, data::user_files::SystemVersions};
+    use crate::{data::user_files::SystemVersions, user::UserConfLaw};
 
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        let extension = crate::user::data::DEFAULT_STORE_EXT;
+        let extension = crate::data::DEFAULT_STORE_EXT;
         root.join(extension)
     }
 
@@ -538,9 +538,8 @@ mod library_directory {
     fn conforming_profile(system: &Path, user: &Path) {
         let conf =
             crate::facade::runtime::TableConf::load_from_dir(system).expect("fixture table.conf");
-        let mut marker = crate::user::data::user_files::UserTableInfo::conform_to(
-            &SystemVersions::from_conf(&conf),
-        );
+        let mut marker =
+            crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
         marker.open_counter = 1;
         std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
     }
@@ -757,7 +756,7 @@ mod library_totals {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        root.join(crate::user::data::DEFAULT_STORE_EXT)
+        root.join(crate::data::DEFAULT_STORE_EXT)
     }
 
     /// A private system directory under `parent`: every fixture file copied in,
@@ -804,8 +803,7 @@ mod library_totals {
             }
             payload[16] = b'#';
             payload[19] = b'!';
-            let chunk =
-                crate::user::data::chunk_format::build_memory_chunk(&payload).expect("frame");
+            let chunk = crate::data::chunk_format::build_memory_chunk(&payload).expect("frame");
             std::fs::write(&library, chunk).expect("write gbk_char.bin");
         };
         write(0);
@@ -1032,7 +1030,7 @@ mod native {
             std::fs::remove_file(&library).unwrap();
             std::fs::write(
                 &library,
-                crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+                crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
             )
             .unwrap();
         };
@@ -1125,7 +1123,7 @@ mod native {
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
         std::fs::write(
             user.path.join("gbk_char.dbin"),
-            crate::user::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
+            crate::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
         )
         .unwrap();
         assert!(context.unload_phrase_library(2));
@@ -1404,7 +1402,7 @@ mod native {
 
     #[test]
     fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
-        use crate::user::data::chunk_write::{ChunkItem, build_chunk};
+        use crate::data::chunk_write::{ChunkItem, build_chunk};
         let system = TempSystemDir::new("oversized-journal-record");
         let user = TempUserDir::new("oversized-journal-record");
         let ni = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();

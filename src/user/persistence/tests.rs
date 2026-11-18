@@ -1,6 +1,6 @@
 // Nextest isolates the process-wide copy-fault hooks by running each test in its own process.
 use super::*;
-use crate::user::data::user_files::OPEN_COUNTER_LIMIT;
+use crate::data::user_files::OPEN_COUNTER_LIMIT;
 use crate::user::test_session::tempdir;
 use crate::user::test_session::{
     load, load_checked, load_profile, save_state as save_state_reporting,
@@ -75,7 +75,7 @@ fn originals() -> SystemOriginals {
 fn state() -> UserState {
     let bigram = vec![(
         1_u32.to_le_bytes().to_vec(),
-        crate::user::data::single_gram::encode_single_gram(
+        crate::data::single_gram::encode_single_gram(
             207,
             &[(1, 69), (0x0100_0001, 138), (0x0700_0001, 69)],
         ),
@@ -542,7 +542,7 @@ fn cleanup_walks_default_rows_then_libpinyins_addons_then_the_fixed_names() {
              addon 4 art.table art.bin addon-user.bin DICTIONARY\n",
     )
     .expect("table.conf");
-    let conf = crate::user::data::table_info::TableConf::load_path(&conf_path).expect("parse");
+    let conf = crate::data::table_info::TableConf::load_path(&conf_path).expect("parse");
     let layout = UserFileLayout::from_conf(&conf);
 
     let names = [
@@ -605,7 +605,7 @@ fn check_format_then_the_profile_read_is_load() {
 /// both load and save byte-for-byte.
 #[test]
 fn phrase_index_records_round_trip_verbatim() {
-    use crate::user::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+    use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
 
     let dir = tempdir("phrase-index-records");
     let originals = originals();
@@ -975,7 +975,7 @@ fn the_marker_is_written_before_the_wipe() {
     )
     .expect("table.conf");
     let layout = UserFileLayout::from_conf(
-        &crate::user::data::table_info::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
+        &crate::data::table_info::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
     );
     let check =
         check_format(&dir, &versions(), &layout, UserConfLaw::Pinyin).expect("check_format");
@@ -1247,10 +1247,10 @@ fn library_for_equivalence(dir: &Path) -> SystemLibrary {
         (3, item(&[0xd800], 4, &[(vec![1], 2)])),
         (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
     ];
-    let chunk = crate::user::data::chunk_write::build_chunk(&items).expect("chunk");
+    let chunk = crate::data::chunk_write::build_chunk(&items).expect("chunk");
     let path = dir.join("equiv.bin");
     std::fs::write(&path, chunk).expect("write");
-    let mapped = crate::user::data::phrase_library::PhraseLibrary::open(&path).expect("open");
+    let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("open");
     SystemLibrary {
         total: 0,
         range_end: 0,
@@ -1340,9 +1340,8 @@ fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
             } else {
                 BTreeMap::new()
             },
-            mapped: (!inline).then(|| {
-                crate::user::data::phrase_library::PhraseLibrary::open(&path).expect("open")
-            }),
+            mapped: (!inline)
+                .then(|| crate::data::phrase_library::PhraseLibrary::open(&path).expect("open")),
         };
         crate::user::LibraryTable::from([(1_u8, library)]).into()
     };
@@ -2060,7 +2059,7 @@ fn cross_backend_state() -> (UserState, SystemOriginals) {
             },
         )]),
     );
-    let gram = crate::user::data::single_gram::encode_single_gram;
+    let gram = crate::data::single_gram::encode_single_gram;
     let bigram = vec![
         (
             1_u32.to_le_bytes().to_vec(),
@@ -2174,11 +2173,11 @@ mod save_semantics_929 {
 
     use std::path::Path;
 
-    use crate::user::data::chunk_write::ChunkItem;
+    use crate::data::chunk_write::ChunkItem;
 
-    use crate::user::data::table_info::TableConf;
+    use crate::data::table_info::TableConf;
 
-    use crate::user::data::user_files::UserFileLayout;
+    use crate::data::user_files::UserFileLayout;
 
     use crate::user::UserStore;
 
@@ -2602,11 +2601,11 @@ mod save_boundaries_929 {
 
     use crate::SyllableKey;
 
-    use crate::user::data::chunk_write::ChunkItem;
+    use crate::data::chunk_write::ChunkItem;
 
-    use crate::user::data::table_info::TableConf;
+    use crate::data::table_info::TableConf;
 
-    use crate::user::data::user_files::UserTableInfo;
+    use crate::data::user_files::UserTableInfo;
 
     use crate::user::persistence::UserConfLaw;
 
@@ -3138,7 +3137,7 @@ fn a_journal_word_no_import_writes_is_kept() {
     payload.splice(at..at + original.len(), replacement);
     std::fs::write(
         &path,
-        crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
 
@@ -3146,7 +3145,7 @@ fn a_journal_word_no_import_writes_is_kept() {
         crate::user::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
     let words = store
         .with_live_item_fields(token, |item| {
-            crate::user::data::chunk_write::decode_phrase_item(item)
+            crate::data::chunk_write::decode_phrase_item(item)
                 .unwrap()
                 .phrase
         })

@@ -1,5 +1,5 @@
 use crate::ChewingKey;
-use crate::user::data::chunk_write::ChunkItem;
+use crate::data::chunk_write::ChunkItem;
 
 use crate::user::persistence::{SystemLibrary, SystemOriginals};
 use crate::user::replay::UnigramAdd;

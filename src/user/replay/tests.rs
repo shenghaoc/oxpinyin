@@ -790,12 +790,12 @@ fn rollback_restores_a_mapped_buffer() {
         (1, item(&[0x4f60], 100, &[(vec![1], 100)])),
         (2, item(&[0x597d], 50, &[(vec![2], 30), (vec![3], 20)])),
     ];
-    let chunk = crate::user::data::chunk_write::build_chunk(&items).expect("chunk");
+    let chunk = crate::data::chunk_write::build_chunk(&items).expect("chunk");
     let dir = crate::user::test_session::tempdir("rollback");
     let path = dir.join("rollback.bin");
     std::fs::write(&path, chunk).expect("write");
     for records in rollback_cases() {
-        let mapped = crate::user::data::phrase_library::PhraseLibrary::open(&path).expect("open");
+        let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("open");
         let mut library = SystemLibrary {
             total: mapped.total_freq(),
             range_end: mapped.token_range().end,
@@ -849,7 +849,7 @@ fn valid_records_before_and_after_an_over_read_item_stay() {
 /// unigram add per slot of the range, then diff, merge and the total.
 #[test]
 fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() {
-    use crate::user::data::user_files::{encode_log_records, log_records};
+    use crate::data::user_files::{encode_log_records, log_records};
     use crate::user::persistence::{LiveSubIndex, diff_live_records};
 
     for total in [7, u32::MAX] {
@@ -883,12 +883,11 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
         let records = diff_live_records(LiveSubIndex::Buffer(&live), old.view(), live.total());
         assert_eq!(records, expected);
         let payload = encode_log_records(&records).unwrap();
-        let file = crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap();
-        let decoded =
-            log_records(crate::user::data::user_files::read_chunk_payload(&file).unwrap())
-                .map(|record| record.map(LogRecord::into_owned))
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap();
+        let file = crate::data::chunk_format::build_memory_chunk(&payload).unwrap();
+        let decoded = log_records(crate::data::user_files::read_chunk_payload(&file).unwrap())
+            .map(|record| record.map(LogRecord::into_owned))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(decoded, expected);
         let (result, new_total, changed) = merge_of(&old, decoded);
         assert!(result.is_ok());
@@ -908,10 +907,10 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
 /// the increase, on the item (`:62`) and on a fresh read (`:70`).
 #[test]
 fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
-    use crate::user::data::PhraseLibraries;
+    use crate::data::PhraseLibraries;
 
     fn possibility(item: &ChunkItem, key: crate::ChewingKey) -> (u64, u64) {
-        let frame = crate::user::data::chunk_write::build_chunk(&[(1, item.clone())]).unwrap();
+        let frame = crate::data::chunk_write::build_chunk(&[(1, item.clone())]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gb_char.bin");
         crate::input::chunk::save(&path, &frame).unwrap();
@@ -927,7 +926,7 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     crate::user::add_system_reading(&mut stored, &[shang.to_packed()], 300);
     // `:54`: 300 of 400 is the pin's 0.75.
     assert_eq!(possibility(&stored, shang), (300, 400));
-    let frame = crate::user::data::chunk_write::build_chunk(&[(1, stored.clone())]).unwrap();
+    let frame = crate::data::chunk_write::build_chunk(&[(1, stored.clone())]).unwrap();
     let library = PhraseLibrary::from_payload(frame[8..].to_vec()).unwrap();
     let baseline = SystemLibrary::from_library(library);
     let mut live = ReplayedLibrary::pristine(baseline.view());

@@ -1,12 +1,12 @@
 use super::*;
-use crate::user::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::chunk_write::{ChunkItem, build_chunk};
 
 /// Policy row 107: phrase_index.cpp:180-206 at 074a2219 can hand out
 /// an item extending past its buffer. The approved safe outcome is no
 /// item, never resurrection of the valid original in a separate mapping.
 #[test]
 fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
-    use crate::user::data::{
+    use crate::data::{
         phrase_library::PhraseLibrary,
         user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records},
     };
@@ -32,7 +32,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
             items: BTreeMap::new(),
         },
     )]));
-    let old = crate::user::data::chunk_write::encode_phrase_item(&item).unwrap();
+    let old = crate::data::chunk_write::encode_phrase_item(&item).unwrap();
     let mut over = old.clone();
     over[0] = 255;
     over[1] = 255;
@@ -52,7 +52,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     .unwrap();
     std::fs::write(
         user.join("gb_char.dbin"),
-        crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
     let store =
@@ -74,7 +74,7 @@ fn session_over_system_library(
     nibble: u8,
     row: &str,
 ) -> (PhraseLibraries, UserStore) {
-    use crate::user::data::{
+    use crate::data::{
         phrase_library::PhraseLibrary,
         user_files::{SystemVersions, UserTableInfo},
     };
@@ -102,7 +102,7 @@ fn session_over_system_library(
         ),
     )
     .unwrap();
-    let conf = crate::user::data::table_info::TableConf::load_path(&conf_path).unwrap();
+    let conf = crate::data::table_info::TableConf::load_path(&conf_path).unwrap();
     let originals = SystemOriginals::new(
         crate::user::LibraryTable::from([(
             nibble,
@@ -113,7 +113,7 @@ fn session_over_system_library(
                 items: BTreeMap::new(),
             },
         )]),
-        crate::user::data::user_files::UserFileLayout::from_conf(&conf),
+        crate::data::user_files::UserFileLayout::from_conf(&conf),
     );
     let versions = SystemVersions::for_this_build(7, 14);
     let user = dir.join("user");
@@ -179,11 +179,9 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
 #[test]
 fn live_items_distinguish_found_absent_and_unloaded() {
     use crate::ChewingKey;
-    use crate::user::data::chunk_write::encode_phrase_item;
-    use crate::user::data::phrase_library::PhraseLibrary;
-    use crate::user::data::user_files::{
-        LogRecord, SystemVersions, UserTableInfo, encode_log_records,
-    };
+    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::PhraseLibrary;
+    use crate::data::user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records};
     use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
     use crate::user::{ItemOrigin, SystemItem};
     use std::collections::BTreeMap;
@@ -238,7 +236,7 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     std::fs::create_dir(&user).expect("user dir");
     std::fs::write(
         user.join("gb_char.dbin"),
-        crate::user::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+        crate::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write log");
     std::fs::write(

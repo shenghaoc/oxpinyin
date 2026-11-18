@@ -16,9 +16,9 @@
 
 use std::ffi::{CStr, CString};
 
-use oxpinyin::user::data::row_format::encode_token_key;
-use oxpinyin::user::data::single_gram::{decode_single_gram, encode_single_gram};
-use oxpinyin::user::data::table_info::{FileType, TableConf, TableConfError};
+use oxpinyin::data::row_format::encode_token_key;
+use oxpinyin::data::single_gram::{decode_single_gram, encode_single_gram};
+use oxpinyin::data::table_info::{FileType, TableConf, TableConfError};
 
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};

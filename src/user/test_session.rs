@@ -9,9 +9,9 @@
 
 use std::path::Path;
 
-use crate::user::data::chunk_write::{ChunkItem, build_chunk};
-use crate::user::data::table_info::{DefaultRowStep, FileName, TableConf};
-use crate::user::data::user_files::{SystemVersions, UserFileLayout};
+use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::table_info::{DefaultRowStep, FileName, TableConf};
+use crate::data::user_files::{SystemVersions, UserFileLayout};
 
 use crate::user::LibraryLoopRows;
 use crate::user::persistence::{SystemOriginals, UserConfLaw};
@@ -54,13 +54,13 @@ fn place_chunk(library: crate::user::persistence::SystemLibraryRef<'_>, target: 
         .iter()
         .map(|(&slot, item)| (slot, item.clone()))
         .collect();
-    let file = crate::user::data::chunk_write::build_chunk(&items).expect("fixture chunk");
+    let file = crate::data::chunk_write::build_chunk(&items).expect("fixture chunk");
     // The chunk header is the length and the checksum; the payload opens
     // with the sub-index total.
     let mut payload = file[8..].to_vec();
     payload[..4].copy_from_slice(&library.total.to_le_bytes());
     let file =
-        crate::user::data::chunk_format::build_memory_chunk(&payload).expect("fixture chunk frame");
+        crate::data::chunk_format::build_memory_chunk(&payload).expect("fixture chunk frame");
     std::fs::write(target, file).expect("write the fixture's chunk");
 }
 
@@ -199,7 +199,7 @@ pub(crate) fn load_checked(
     let state = &mut loaded.state;
     let bigram = crate::input::path::build_path(
         dir,
-        std::ffi::OsStr::new(&crate::user::data::user_files::UserDbm::Bigram.file_name()),
+        std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
     );
     if check.conform && bigram.exists() {
         match crate::store::DefaultStore::open_user_bigram(&bigram) {
@@ -221,7 +221,7 @@ pub(crate) fn load_checked(
             .map(|(slot, item)| {
                 (
                     slot,
-                    crate::user::data::chunk_write::decode_phrase_item(item.as_bytes())
+                    crate::data::chunk_write::decode_phrase_item(item.as_bytes())
                         .expect("a stored item"),
                 )
             })
@@ -254,7 +254,7 @@ pub(crate) fn seeded(
     originals: &SystemOriginals,
     versions: &SystemVersions,
 ) -> Result<UserStore, UserStoreError> {
-    use crate::user::data::user_files::{UserDbm, UserTableInfo};
+    use crate::data::user_files::{UserDbm, UserTableInfo};
     // The session starts from a conforming, empty profile. The marker is
     // rewritten in place, as every marker write is.
     let marker = dir.join("user.conf");
@@ -286,7 +286,7 @@ pub(crate) fn save_state(
     versions: &SystemVersions,
     open_counter: i32,
 ) -> Result<(), UserStoreError> {
-    use crate::user::data::user_files::UserTableInfo;
+    use crate::data::user_files::UserTableInfo;
     let marker = dir.join("user.conf");
     let mut store = seeded(dir, state, originals, versions)?;
     let saved = store.save_reporting();
@@ -312,7 +312,7 @@ pub(crate) fn addon_item(
     readings: &[(Vec<crate::user::PinyinKey>, u64)],
     unigram: u64,
 ) -> Vec<u8> {
-    crate::user::data::chunk_write::encode_phrase_item(&crate::user::data::chunk_write::ChunkItem {
+    crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
         phrase: phrase.chars().map(u32::from).collect(),
         unigram: unigram as u32,
         prons: readings
@@ -418,7 +418,7 @@ pub(crate) fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
 }
 
 pub(crate) fn native_tokens(system: &Path, text: &str) -> Vec<u32> {
-    crate::user::data::SystemDictionary::open(system)
+    crate::data::SystemDictionary::open(system)
         .unwrap()
         .tokens_for_text(text)
         .unwrap()

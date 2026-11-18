@@ -5,12 +5,12 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::data::c_stderr;
 use crate::engine::SessionSettings;
 use crate::facade::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
     directory_reads_as_a_chunk,
 };
-use crate::user::data::c_stderr;
 use crate::user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
 };

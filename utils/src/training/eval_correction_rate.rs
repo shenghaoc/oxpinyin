@@ -19,10 +19,10 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
+use oxpinyin::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin::data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::LineReader;
-use oxpinyin::user::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::user::data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};

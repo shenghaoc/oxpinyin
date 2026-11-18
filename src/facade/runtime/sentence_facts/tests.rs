@@ -3,7 +3,7 @@ use super::*;
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::user::data::DEFAULT_STORE_EXT)
+        .join(crate::data::DEFAULT_STORE_EXT)
 }
 fn opened() -> Runtime {
     Runtime::open(&fixture(), None).unwrap()
@@ -179,9 +179,9 @@ fn user_imported_masked_missing_and_detached_keep_old_readers() {
     runtime.user = UserStore::open_transient(
         crate::user::SystemOriginals::new(
             Default::default(),
-            crate::user::data::user_files::UserFileLayout::stock(),
+            crate::data::user_files::UserFileLayout::stock(),
         ),
-        crate::user::data::user_files::SystemVersions::for_this_build(7, 14),
+        crate::data::user_files::SystemVersions::for_this_build(7, 14),
         crate::user::UserConfLaw::Pinyin,
     )
     .unwrap();
@@ -204,7 +204,7 @@ fn user_imported_masked_missing_and_detached_keep_old_readers() {
     fallback(&runtime, ordinary);
 }
 fn replayed(
-    change: impl FnOnce(u32, Vec<u8>) -> crate::user::data::user_files::LogRecord,
+    change: impl FnOnce(u32, Vec<u8>) -> crate::data::user_files::LogRecord,
 ) -> (tempfile::TempDir, Runtime, u32) {
     let runtime = opened();
     let token = token(&runtime);
@@ -215,19 +215,19 @@ fn replayed(
         .found()
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let payload = crate::user::data::user_files::encode_log_records(&[change(
+    let payload = crate::data::user_files::encode_log_records(&[change(
         token & crate::user::PHRASE_MASK,
         old,
     )])
     .unwrap();
     std::fs::write(
         dir.path().join("gb_char.dbin"),
-        crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
     std::fs::write(
         dir.path().join("user.conf"),
-        crate::user::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
+        crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
             runtime.table_conf(),
         ))
         .to_text(),
@@ -242,7 +242,7 @@ fn present_zero_unigram_is_a_live_fact() {
     let (_dir, runtime, token) = replayed(|token, old_item| {
         let mut new_item = old_item.clone();
         new_item[2..6].copy_from_slice(&0u32.to_le_bytes());
-        crate::user::data::user_files::LogRecord::Modify {
+        crate::data::user_files::LogRecord::Modify {
             token,
             old_item,
             new_item,
@@ -256,9 +256,7 @@ fn present_zero_unigram_is_a_live_fact() {
 #[test]
 fn removed_and_unreadable_items_keep_old_resolution() {
     let (_dir, runtime, token) =
-        replayed(
-            |token, old_item| crate::user::data::user_files::LogRecord::Remove { token, old_item },
-        );
+        replayed(|token, old_item| crate::data::user_files::LogRecord::Remove { token, old_item });
     fallback(&runtime, token);
     let (_dir, runtime, token) = replayed(|token, old_item| {
         let mut new_item = old_item.clone();
@@ -266,7 +264,7 @@ fn removed_and_unreadable_items_keep_old_resolution() {
         // Force remove-and-append, so the declared readings run past
         // the live buffer rather than into the next ordinary item.
         new_item.push(0);
-        crate::user::data::user_files::LogRecord::Modify {
+        crate::data::user_files::LogRecord::Modify {
             token,
             old_item,
             new_item,

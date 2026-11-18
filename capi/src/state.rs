@@ -124,7 +124,7 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
-                Err(oxpinyin::user::data::table_info::TableConfSite::NullSystemFile.warning())
+                Err(oxpinyin::data::table_info::TableConfSite::NullSystemFile.warning())
             }
             // Register row 96: `pinyin.cpp:290` maps the addon through the same
             // `MemoryChunk::mmap`, and a directory of header size or more fails

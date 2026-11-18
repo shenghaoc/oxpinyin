@@ -966,7 +966,7 @@ does not port them.
 
 **Compliant, not ports:**
 
-- `oxpinyin/src/user/data/table_entries.rs` calls `Vec::binary_search` on a
+- `oxpinyin/src/data/table_entries.rs` calls `Vec::binary_search` on a
   token list that its own `insert` keeps sorted. That is the standard
   API with its documented semantics.
 - The `oxpinyin` UTF-8 codecs are ABI-prescribed boundary

@@ -90,7 +90,7 @@ fn lc_numeric_follows_the_pins_table_info_sites() {
     };
     let system = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures/w3")
-        .join(oxpinyin::user::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::data::DEFAULT_STORE_EXT);
     let system = CString::new(system.to_str().expect("UTF-8 path")).expect("no NUL");
     let user = tempfile::tempdir().expect("user directory");
     let user = CString::new(user.path().to_str().expect("UTF-8 path")).expect("no NUL");

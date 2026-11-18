@@ -3,7 +3,7 @@
 //!
 //! The store's durable representation is the pin's file set
 //! (`docs/findings/user-store.md` §4 for the save cycle's semantics,
-//! `crate::user::data::user_files` for the inventory and codecs):
+//! `crate::data::user_files` for the inventory and codecs):
 //!
 //! * load — `check_format` (user.conf conformance, the open counter,
 //!   `_clean_user_files` on a non-conform profile), then the bigram
@@ -38,10 +38,10 @@
 #[cfg(test)]
 use crate::ChewingKey;
 #[cfg(test)]
-use crate::user::data::chunk_write::build_chunk;
-use crate::user::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
+use crate::data::chunk_write::build_chunk;
+use crate::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
 #[cfg(test)]
-use crate::user::data::row_format::pinyin_index::PinyinIndexItem;
+use crate::data::row_format::pinyin_index::PinyinIndexItem;
 
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -49,18 +49,18 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::input::path::{build_path, rename, unlink};
-use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
-use crate::user::data::chunk_format::build_memory_chunk;
-use crate::user::data::chunk_write::{ChunkItem, ChunkWriteError, PHRASE_MASK, encode_phrase_item};
-use crate::user::data::phrase_libraries::PhraseLibraries;
-use crate::user::data::table_info::FileName;
+use crate::data::chunk_format::build_memory_chunk;
+use crate::data::chunk_write::{ChunkItem, ChunkWriteError, PHRASE_MASK, encode_phrase_item};
+use crate::data::phrase_libraries::PhraseLibraries;
+use crate::data::table_info::FileName;
 #[cfg(test)]
-use crate::user::data::user_files::read_chunk_payload;
-use crate::user::data::user_files::{
+use crate::data::user_files::read_chunk_payload;
+use crate::data::user_files::{
     LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
 };
+use crate::input::path::{build_path, rename, unlink};
+use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::user::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::user::user_index::UserIndex;
@@ -119,7 +119,7 @@ pub enum UserConfLaw {
 /// the diff base of its `.dbin` log.
 #[derive(Clone, Copy, Debug)]
 pub struct SystemLibrary<
-    M = crate::user::data::phrase_library::PhraseLibrary,
+    M = crate::data::phrase_library::PhraseLibrary,
     I = BTreeMap<u32, ChunkItem>,
 > {
     /// The chunk's `total_freq`.
@@ -192,7 +192,7 @@ impl SystemLibrary {
     /// A current on-disk chunk as a diff baseline, with items read through
     /// the uniquely owned immutable mapping.
     #[must_use]
-    pub(crate) fn from_library(library: crate::user::data::phrase_library::PhraseLibrary) -> Self {
+    pub(crate) fn from_library(library: crate::data::phrase_library::PhraseLibrary) -> Self {
         Self {
             total: library.total_freq(),
             range_end: library.token_range().end,
@@ -225,13 +225,11 @@ impl SystemLibrary {
 }
 
 /// One operation's borrowed baseline metadata and bytes.
-pub type SystemLibraryRef<'a> = SystemLibrary<
-    &'a crate::user::data::phrase_library::PhraseLibrary,
-    &'a BTreeMap<u32, ChunkItem>,
->;
+pub type SystemLibraryRef<'a> =
+    SystemLibrary<&'a crate::data::phrase_library::PhraseLibrary, &'a BTreeMap<u32, ChunkItem>>;
 
 impl<
-    M: std::borrow::Borrow<crate::user::data::phrase_library::PhraseLibrary>,
+    M: std::borrow::Borrow<crate::data::phrase_library::PhraseLibrary>,
     I: std::borrow::Borrow<BTreeMap<u32, ChunkItem>>,
 > SystemLibrary<M, I>
 {
@@ -527,7 +525,7 @@ impl SystemOriginals {
         &mut self,
         nibble: u8,
         path: PathBuf,
-        library: crate::user::data::phrase_library::PhraseLibrary,
+        library: crate::data::phrase_library::PhraseLibrary,
     ) {
         self.libraries.insert(
             nibble,
@@ -685,7 +683,7 @@ impl UserState {
                 }
             }
         }
-        self.phrase_table = crate::user::data::table_entries::phrase_index_entries(&phrases)
+        self.phrase_table = crate::data::table_entries::phrase_index_entries(&phrases)
             .into_iter()
             .collect();
         self
@@ -819,14 +817,14 @@ impl From<StoreError> for PersistenceError {
     }
 }
 
-impl From<crate::user::data::chunk_format::ChunkFrameError> for PersistenceError {
-    fn from(error: crate::user::data::chunk_format::ChunkFrameError) -> Self {
+impl From<crate::data::chunk_format::ChunkFrameError> for PersistenceError {
+    fn from(error: crate::data::chunk_format::ChunkFrameError) -> Self {
         PersistenceError::Codec(error.to_string())
     }
 }
 
-impl From<crate::user::data::chunk_write::ChunkWriteError> for PersistenceError {
-    fn from(error: crate::user::data::chunk_write::ChunkWriteError) -> Self {
+impl From<crate::data::chunk_write::ChunkWriteError> for PersistenceError {
+    fn from(error: crate::data::chunk_write::ChunkWriteError) -> Self {
         Self::Codec(error.to_string())
     }
 }
@@ -2200,7 +2198,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
 /// `fprintf` on the stream `mark_version`'s own `write %s failed.` line
 /// follows it on.
 fn report_rename_failed(tmp: &Path, final_path: &Path) {
-    crate::user::data::c_stderr::rename_failed(tmp, final_path);
+    crate::data::c_stderr::rename_failed(tmp, final_path);
 }
 
 /// The files a save has written to `.tmp` siblings. libpinyin writes them

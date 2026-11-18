@@ -37,7 +37,7 @@ An entry holds nothing else.
 ### Unterminated punctuation value over-read
 
 - **Pin:** `PunctTableEntry::unescape` reads the word after the value's last whole word to test for the terminator (`src/storage/punct_table.cpp:57-72`, from `get_all_punctuations`, `:74-94`, and `src/pinyin.cpp:2474`). Both outcomes of that read return the same run.
-- **oxpinyin:** `punct::decode_puncts` (`src/user/data/row_format.rs`) ends the run at the value's last whole word without the read. The visible punctuation is the pin's.
+- **oxpinyin:** `punct::decode_puncts` (`src/data/row_format.rs`) ends the run at the value's last whole word without the read. The visible punctuation is the pin's.
 - **Decision:** accepted, class (b): the out-of-bounds read and its possible fault are not reproduced.
 - **Tests:** `row_format` `punct_stream_ends_an_unterminated_run`.
 
@@ -160,7 +160,7 @@ An entry holds nothing else.
 ### The pinyin index DBMs carry uninitialized struct padding
 
 - **Pin:** `ChewingTableEntry::add_index` copies a whole stack `PinyinIndexItem2<N>` into the DBM value (`src/storage/chewing_large_table2.h:208-232`, at `:229`), and its constructor sets only `m_token` and `m_keys` (`src/storage/pinyin_phrase3.h:181-196`). For an odd `N` the item's two bytes of tail padding are indeterminate; no reader reads them.
-- **oxpinyin:** `row_format::pinyin_index::encode_item` (`src/user/data/row_format.rs`) zeroes the padding, and `pinyin_index::decode_items` reads only the token and keys. The tool comparison masks only the two tail bytes of each odd-`N` item.
+- **oxpinyin:** `row_format::pinyin_index::encode_item` (`src/data/row_format.rs`) zeroes the padding, and `pinyin_index::decode_items` reads only the token and keys. The tool comparison masks only the two tail bytes of each odd-`N` item.
 - **Decision:** accepted, class (b) (policy row 18): the pin's bytes are an indeterminate read that no program can reproduce.
 - **Tests:** `gbf-toned-model`; controls `gbf-mini-fixture`, `kmm-estimate-good`; `pinyin_index_mask_clears_only_odd_item_padding`.
 
@@ -443,7 +443,7 @@ An entry holds nothing else.
 ### Oversized journal record payloads (policy row 123)
 
 - **Pin:** `PhraseIndexLogger::append_record` narrows lengths modulo 65536 and copies the full payload for ADD and REMOVE (`src/storage/phrase_index_logger.h:248-263`). For `LOG_MODIFY_RECORD`, it copies each full item and advances by the narrowed `oldlen` and `newlen` (`:269-278`). The bytes then extend past the boundaries a reader derives from the length fields (`:169-199`).
-- **oxpinyin:** the checked encoder refuses a payload above 65535 bytes (`src/user/data/user_files.rs:879-919`). `PersistenceError::Codec` becomes `UserStoreError::Persistence`, which the facade maps to `SaveOutcome::NotSaved` (`src/user/persistence.rs:2195-2200`, `src/user/store_libpinyin.rs:148-150`, `src/facade/context.rs:558-577`).
+- **oxpinyin:** the checked encoder refuses a payload above 65535 bytes (`src/data/user_files.rs:879-919`). `PersistenceError::Codec` becomes `UserStoreError::Persistence`, which the facade maps to `SaveOutcome::NotSaved` (`src/user/persistence.rs:2195-2200`, `src/user/store_libpinyin.rs:148-150`, `src/facade/context.rs:558-577`).
 - **Decision:** accepted under the [internal language artefact rule](compatibility-policy.md#internal-language-artefacts). The journal format prescribes a 16-bit length field and leaves oversized payload handling unspecified. oxpinyin keeps that width and writes records whose lengths fit it. A language-neutral journal requirement does not prescribe wrapping a length so that the payload crosses the reader's record boundary. The rule names unsigned wrap-around as a language artefact.
 - **Tests:** `oxpinyin::facade::context::tests::native::oversized_journal_record_payloads_refuse_save_and_keep_modified` and the `POLICY-ACCEPTED` capture case `oversized-journal-record-payloads` in [pin_capture.py](../../tools/oracle/pin_capture.py). Both use crafted system data because import accepts at most 15 keys (`src/pinyin.cpp:643`, `src/zhuyin.cpp:528`). An item with 128 characters and 255 readings occupies `6 + 128 * 4 + 255 * (128 * 2 + 4) = 66818` bytes (`src/storage/phrase_index.cpp:180-205`). Its stored length wraps to 1282.
 
@@ -545,8 +545,8 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | A user-bigram value under four bytes, at mask-out, removal, prediction, training, lookup or export (row 85) | `include/memory_chunk.h:390`, through `storage/ngram.cpp:48-51`, `:80`, `:62-70`, `:133-141`, `:165`, `:303-304`; `lookup/phonetic_lookup.h:884`, `:903` | `import_export::bigram_get_next_writes_its_row_before_the_short_predecessor_aborts`, `import_export::bigram_export_aborts_at_a_short_predecessor_before_a_partial_one`; `mask_out_aborts_on_a_short_bigram_value`; `sentence::a_short_sentence_start_gram_aborts_the_guess_after_parsing` |
 | A system library that is a directory, from 8 bytes of reported size (row 96) | `include/memory_chunk.h:493`, through `pinyin.cpp:255`, `:289`, `:955`, `:1264`; `zhuyin.cpp:199`, `:588`, `:799` | `{init,save,mask_out,reload}_aborts_on_a_directory_library`, `addon_load_aborts_on_a_directory_library` |
 | A Kyoto Cabinet system bigram read that fails after its size check (row 110) | `storage/ngram_kyotodb.cpp:136-137` | `sentence::tests::a_read_failure_after_the_size_check_aborts` (both facades), `row_read_names_only_the_checked_read_failure` |
-| A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `oxpinyin::user::data::chewing_table::tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
-| A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `oxpinyin::user::data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts` |
+| A Kyoto Cabinet pinyin-table body read that fails after its size check (row 110) | `storage/chewing_large_table2_kyotodb.cpp:170-174` | `oxpinyin::data::chewing_table::tests::a_pinyin_table_body_read_failure_after_the_check_aborts` |
+| A Kyoto Cabinet phrase-table body read that fails after its size check (row 110) | `storage/phrase_large_table3_kyotodb.cpp:174-187` | `oxpinyin::data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts` |
 
 ## Open
 
@@ -556,4 +556,4 @@ None.
 
 `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` with a candidate from another live instance read the row's scalars and act on the receiving instance and its context, as the pin does (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`); a pointer that is no published row is the [caller precondition](#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list).
 
-A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `src/input/{native,chunk}.rs`, `src/user/data/user_files.rs` and `src/user/persistence.rs`.
+A system library’s user `.dbin` that is a directory matches on the traced Unix path. Failed open, failed end seek or a reported size below eight leaves an empty journal. If the descriptor reports at least eight bytes and a header read fails, both abort. The pin’s callers continue to merge an empty log on ordinary load failure (`memory_chunk.h:417-438`, `pinyin.cpp:264-277`, `zhuyin.cpp:208-221`). oxpinyin takes the same paths through `src/input/{native,chunk}.rs`, `src/data/user_files.rs` and `src/user/persistence.rs`.

@@ -2,9 +2,9 @@
 //! Pin 074a2219 phonetic_lookup.h:643-697 reads one PhraseItem for length,
 //! unigram and pronunciation. Keep exceptional resolution on the old path.
 use super::*;
+use crate::data::phrase_library::PhraseItemView;
 use crate::model::TokenPhrase;
 use crate::sentence_facts::{SentenceFacts, TokenFacts};
-use crate::user::data::phrase_library::PhraseItemView;
 
 impl RuntimeDict<'_> {
     fn sentence_token(&self, token: u32, facts: &mut SentenceFacts) -> Option<TokenFacts> {

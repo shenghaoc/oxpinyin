@@ -342,7 +342,7 @@ impl Open {
             .system()
             .libraries()
             .library(u32::from(library) << 24)
-            .map(oxpinyin::user::data::phrase_library::PhraseLibrary::total_freq)
+            .map(oxpinyin::data::phrase_library::PhraseLibrary::total_freq)
             .expect("the library is mapped")
     }
 
@@ -1110,7 +1110,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .dict
             .addon_phrase_item(token.value())
             .expect("addon item");
-        let view = oxpinyin::user::data::phrase_library::PhraseItemView::from_bytes(&item)
+        let view = oxpinyin::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
             .pronunciation(0)

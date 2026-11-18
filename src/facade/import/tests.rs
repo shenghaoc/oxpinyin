@@ -204,7 +204,7 @@ fn an_import_into_a_slot_without_a_sub_index_is_refused() {
 
 #[test]
 fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
-    use crate::user::data::chunk_write::{ChunkItem, build_chunk};
+    use crate::data::chunk_write::{ChunkItem, build_chunk};
     let system = TempSystemDir::new("gb-user-file");
     let conf = std::fs::read_to_string(system.path.join("table.conf")).unwrap();
     let row = "default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE";

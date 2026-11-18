@@ -309,8 +309,8 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         })
         .found()
         .unwrap();
-    let payload = crate::user::data::user_files::encode_log_records(&[
-        crate::user::data::user_files::LogRecord::Remove {
+    let payload = crate::data::user_files::encode_log_records(&[
+        crate::data::user_files::LogRecord::Remove {
             token: token & crate::user::PHRASE_MASK,
             old_item,
         },
@@ -318,12 +318,12 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
     .unwrap();
     std::fs::write(
         dir.path().join("gb_char.dbin"),
-        crate::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
     std::fs::write(
         dir.path().join("user.conf"),
-        crate::user::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
+        crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
             runtime.table_conf(),
         ))
         .to_text(),
@@ -427,7 +427,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let row = addons.dict.row(4).expect("sub-index 4 is in range");
         assert_eq!(
             row.system,
-            Some(crate::user::data::table_info::FileName::from_bytes(
+            Some(crate::data::table_info::FileName::from_bytes(
                 b"art-local.bin"
             )),
             "the configured addon row is kept, not the stock one"
@@ -553,11 +553,11 @@ fn suggestion_rows_group_by_library_then_walk_the_ucs4_keys() {
     let user_rows = vec![
         (
             0x0700_0001,
-            crate::user::data::row_format::phrase_index::encode_ucs4_key("中乐"),
+            crate::data::row_format::phrase_index::encode_ucs4_key("中乐"),
         ), // U+4E50
         (
             0x0700_0002,
-            crate::user::data::row_format::phrase_index::encode_ucs4_key("中伭"),
+            crate::data::row_format::phrase_index::encode_ucs4_key("中伭"),
         ), // U+4F2D
     ];
     let merged = merge_suggestion_rows(&system, &user_rows);
@@ -955,7 +955,7 @@ mod backend_files {
         }
         assert!(
             tmp.path()
-                .join(crate::user::data::SystemDbm::PinyinIndex.file_name())
+                .join(crate::data::SystemDbm::PinyinIndex.file_name())
                 .exists()
         );
         match Runtime::open(tmp.path(), None) {
@@ -974,7 +974,7 @@ mod backend_files {
         for entry in std::fs::read_dir(system_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
             if entry.file_name().as_os_str()
-                != std::ffi::OsStr::new(&crate::user::data::SystemDbm::PinyinIndex.file_name())
+                != std::ffi::OsStr::new(&crate::data::SystemDbm::PinyinIndex.file_name())
             {
                 std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
             }
@@ -1183,7 +1183,7 @@ mod backend_files {
     /// (`pinyin.cpp:2836-2843`, `phrase_index.h:628-635` at 074a2219).
     #[test]
     fn unigram_add_rejects_a_token_found_only_in_the_addon_index() {
-        use crate::user::data::phrase_library::PhraseLibrary;
+        use crate::data::phrase_library::PhraseLibrary;
 
         let system = scratch_dir("oxpinyin-addon-only-");
         for entry in std::fs::read_dir(system_dir()).unwrap() {
@@ -1680,11 +1680,11 @@ mod backend_files {
         }
         let user_tmp = scratch_dir("oxpinyin-runtime-journal-user-");
         let user = user_tmp.path().to_path_buf();
-        let conf = crate::user::data::table_info::TableConf::load_from_dir(&system).expect("conf");
-        let versions = crate::user::data::user_files::SystemVersions::from_conf(&conf);
+        let conf = crate::data::table_info::TableConf::load_from_dir(&system).expect("conf");
+        let versions = crate::data::user_files::SystemVersions::from_conf(&conf);
         std::fs::write(
             user.join("user.conf"),
-            crate::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+            crate::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
         )
         .expect("user.conf");
         // A MODIFY_HEADER whose token is not `null_token` (`phrase_index_logger.h:202`).
@@ -1694,7 +1694,7 @@ mod backend_files {
         header.extend_from_slice(&[0; 8]);
         std::fs::write(
             user.join("opengram.dbin"),
-            crate::user::data::chunk_format::build_memory_chunk(&header).expect("frame"),
+            crate::data::chunk_format::build_memory_chunk(&header).expect("frame"),
         )
         .expect("opengram.dbin");
         let mut reported = Vec::new();
@@ -1869,10 +1869,7 @@ mod pin_data {
         // install was built with, which must be this build's, and every file
         // keeps libpinyin's name.
         let conf = std::fs::read_to_string(dir.join("table.conf")).expect("table.conf");
-        let format = format!(
-            "database format:{}",
-            crate::user::data::DEFAULT_STORE_DB_FORMAT
-        );
+        let format = format!("database format:{}", crate::data::DEFAULT_STORE_DB_FORMAT);
         assert!(
             conf.contains(&format),
             "not a libpinyin data dir for this build's backend ({format}): {conf}"
@@ -3006,7 +3003,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
     let file = user.path.join("user.bin");
     let original = std::fs::read(&file).unwrap();
     let gram = gram_bytes(100, &[(token, 100)]);
-    let empty = crate::user::data::chunk_write::build_chunk(&[]).unwrap();
+    let empty = crate::data::chunk_write::build_chunk(&[]).unwrap();
     for present in [false, true] {
         std::fs::write(&file, if present { &original } else { &empty }).unwrap();
         native_fixture::plant_bigram(
@@ -3246,7 +3243,7 @@ fn a_journal_removed_item_adds_no_candidate() {
     let log = [native_fixture::modify_header(0, total, total), remove].concat();
     std::fs::write(
         user.path.join("merged.dbin"),
-        crate::user::data::chunk_format::build_memory_chunk(&log).expect("frame"),
+        crate::data::chunk_format::build_memory_chunk(&log).expect("frame"),
     )
     .expect("write the journal");
 
@@ -3468,7 +3465,7 @@ fn ordinary_training_reorders_the_nbest_rows() {
     );
 }
 
-use crate::user::data::support as chunk_fixture;
+use crate::data::support as chunk_fixture;
 #[path = "../../../tests/support/unreadable_fixture.rs"]
 mod unreadable_fixture;
 

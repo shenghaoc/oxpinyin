@@ -485,9 +485,9 @@ and exposes the stored counts as `UserCountDelta` for the §5 merge.
 | §2.2 per-candidate side effects, §2.3 prediction | `src/engine/session/selection.rs`, the root crate |
 | §3 user phrase index and token allocation | `src/user/phrase.rs`, `store.rs` |
 | §4 save cycle and `m_modified` gate | `src/user/persistence.rs`, `UserStore::save_reporting` |
-| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`src/user/data/lm/mod.rs`) |
+| §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`src/data/lm/mod.rs`) |
 | §9 export iterators | `capi/src/iterators.rs`, `src/facade/export_rows.rs` |
-| §11 user files | `src/user/data/user_files.rs`, `src/user/store_libpinyin.rs` |
+| §11 user files | `src/data/user_files.rs`, `src/user/store_libpinyin.rs` |
 
 The C entry points `pinyin_save`, `pinyin_train`, `pinyin_choose_candidate`,
 `pinyin_choose_predicted_candidate`, `pinyin_remember_user_input`,
@@ -568,7 +568,7 @@ wiped, exactly as upstream's `check_format` does.
 
 Architecture — the session state behind the value engine:
 
-* `oxpinyin::user::data::user_files` — the inventory (`UserDbm`: libpinyin's
+* `oxpinyin::data::user_files` — the inventory (`UserDbm`: libpinyin's
   file names on every backend), the `user.conf` codec (`UserTableInfo`,
   `OPEN_COUNTER_LIMIT` = 6, `get_open_counter`, conformance), and the
   `PhraseIndexLogger` record codec (add/remove/modify/header;

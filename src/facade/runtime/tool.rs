@@ -1,6 +1,6 @@
 //! Heap-loaded lookup data for the nonshipping REPL, assembled beside the runtime readers.
 use super::*;
-use crate::user::data::{PhraseLibraries, dict::SystemTables};
+use crate::data::{PhraseLibraries, dict::SystemTables};
 
 /// Failure of the test program's required chunk load.
 pub struct LoadError {
@@ -14,7 +14,7 @@ pub struct LoadError {
 pub struct Lookup {
     tables: SystemTables,
     libraries: PhraseLibraries,
-    model: Option<crate::user::data::lm::BigramTables>,
+    model: Option<crate::data::lm::BigramTables>,
 }
 impl Lookup {
     /// Attach the index, load each SYSTEM_FILE, then attach the system bigram.
@@ -48,7 +48,7 @@ impl Lookup {
                 .map_err(|cause| LoadError { name, cause })?;
         }
         let model = bigram.then(|| {
-            let mut model = crate::user::data::lm::BigramTables::attach(&data.join("bigram.db"))
+            let mut model = crate::data::lm::BigramTables::attach(&data.join("bigram.db"))
                 .unwrap_or_else(|_| crate::input::tool::abort());
             model.set_lambda_from_conf(conf);
             model

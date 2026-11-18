@@ -1,7 +1,7 @@
 use super::super::counts::Counts;
 use super::super::fixture_doubles::FixtureDictionary;
 use super::{EvalError, EvalLanguageModel, PhraseSource, correction_rate};
-use oxpinyin::user::data::PINNED_LAMBDA;
+use oxpinyin::data::PINNED_LAMBDA;
 use oxpinyin::{PhraseToken, SyllableKey};
 use std::collections::BTreeMap;
 
