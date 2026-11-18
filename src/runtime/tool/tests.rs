@@ -7,7 +7,7 @@ use crate::data::table_info::TableConf;
 
 use crate::engine::tool::prepare_lookup;
 
-use crate::facade::runtime::tool::Lookup;
+use crate::runtime::tool::Lookup;
 
 use std::path::PathBuf;
 

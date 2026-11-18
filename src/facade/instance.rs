@@ -6,7 +6,7 @@ use crate::engine::{
     Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
     check_lookup_offset_range, normalize_lookup_offset,
 };
-use crate::facade::runtime::{Runtime, RuntimeDict, RuntimeLm};
+use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
 use crate::user::UserStore;
 use crate::{
     DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken, ZhuyinParse,
@@ -303,9 +303,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     }
 
     /// The stored length and text of `token`'s item, as the C token getters
-    /// read them ([`crate::facade::runtime::RuntimeDict::token_phrase`]).
+    /// read them ([`crate::runtime::RuntimeDict::token_phrase`]).
     #[must_use]
-    pub fn token_phrase(&self, token: u32) -> Option<crate::facade::runtime::TokenPhrase> {
+    pub fn token_phrase(&self, token: u32) -> Option<crate::runtime::TokenPhrase> {
         self.dict.token_phrase(token)
     }
 

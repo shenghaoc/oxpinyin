@@ -593,15 +593,15 @@ fn a_failed_user_read_is_no_gram() {
     assert_eq!(user_gram_or_none(Ok(None)).unwrap(), None);
 }
 
-#[path = "../../../tests/common/candidate_fixture.rs"]
+#[path = "../../tests/common/candidate_fixture.rs"]
 mod candidate_fixture;
 #[cfg(feature = "tkrzw")]
-use crate::facade::test_fixture::contract_data;
+use crate::user::contract_data;
 #[cfg(feature = "tkrzw")]
-#[path = "../../../tests/common/sentence_fixture.rs"]
+#[path = "../../tests/common/sentence_fixture.rs"]
 mod sentence_fixture;
 #[cfg(feature = "tkrzw")]
-#[path = "../../../tests/common/sentence_tail.rs"]
+#[path = "../../tests/common/sentence_tail.rs"]
 mod sentence_tail;
 
 // The format of the committed candidate structure capture.
@@ -677,7 +677,7 @@ mod backend_files {
     //! private access).
 
     use crate::engine::{Selection, SelectionTarget, SessionSettings};
-    use crate::facade::runtime::{OpenError, Runtime, TableConfError};
+    use crate::runtime::{OpenError, Runtime, TableConfError};
     use crate::user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
     use crate::{
         PhraseToken, SyllableKey,
@@ -1604,7 +1604,7 @@ mod backend_files {
         let tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
         assert!(!tokens.is_empty(), "vacuity guard: nihao ranges tokens");
 
-        let own = <crate::facade::runtime::RuntimeDict as Dictionary>::PathMemo::default();
+        let own = <crate::runtime::RuntimeDict as Dictionary>::PathMemo::default();
         for token in tokens.iter().copied().chain([0, u32::MAX]) {
             let expected = runtime
                 .dict()
@@ -1655,7 +1655,7 @@ mod backend_files {
         assert!(matches!(
             opened,
             Err(OpenError::TableConf(TableConfError::Abort(
-                crate::facade::runtime::TableConfSite::DefaultDictionary
+                crate::runtime::TableConfSite::DefaultDictionary
             )))
         ));
         assert_eq!(
@@ -1854,7 +1854,7 @@ mod pin_data {
 
     use crate::engine::SessionSettings;
 
-    use crate::facade::runtime::Runtime;
+    use crate::runtime::Runtime;
 
     fn syllables(text: &str) -> Vec<SyllableKey> {
         text.split('\'')
@@ -2016,7 +2016,7 @@ mod candidate_surface {
 
     use crate::engine::{Candidate, CandidateKind, Session, SessionSettings};
 
-    use crate::facade::runtime::Runtime;
+    use crate::runtime::Runtime;
 
     use candidate_fixture::{CandidateFixture, OracleCandidateType, STRUCTURE_FIXTURE};
 
@@ -2258,7 +2258,7 @@ mod sentence_surface_parity {
 
 // Nextest isolates the process-wide read-fault key by running each test in its own process.
 use crate::OptionBits;
-use crate::facade::test_fixture::native_fixture;
+use crate::user::native_fixture;
 use native_fixture::{
     TempUserDir, craft_hash, craft_tree, gram_bytes, set_phrase_table_row, system_dir,
 };
@@ -3466,7 +3466,7 @@ fn ordinary_training_reorders_the_nbest_rows() {
 }
 
 use crate::data::support as chunk_fixture;
-#[path = "../../../tests/support/unreadable_fixture.rs"]
+#[path = "../../tests/support/unreadable_fixture.rs"]
 mod unreadable_fixture;
 
 /// The sole unreadable user-index row survives the system miss and keeps its token.

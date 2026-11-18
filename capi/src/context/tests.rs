@@ -141,11 +141,10 @@ fn a_user_session_fault_aborts_the_init() {
     let stderr = crate::test_support::assert_aborts(
         "context::tests::a_user_session_fault_aborts_the_init",
         || {
-            let error = oxpinyin::facade::OpenFailure::Runtime(
-                oxpinyin::facade::runtime::OpenError::UserSession(
+            let error =
+                oxpinyin::facade::OpenFailure::Runtime(oxpinyin::runtime::OpenError::UserSession(
                     oxpinyin::user::UserStoreError::SessionSeed("injected".into()),
-                ),
-            );
+                ));
             super::refuse_init(&error, std::path::Path::new("system"));
         },
     );

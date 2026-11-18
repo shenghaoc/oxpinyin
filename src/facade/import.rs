@@ -3,7 +3,7 @@
 //! before a phrase is added, and the add calls.
 
 use crate::PhraseText;
-use crate::facade::runtime::RuntimeDict;
+use crate::runtime::RuntimeDict;
 use crate::user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
 
 use crate::facade::ContextCore;
