@@ -126,30 +126,10 @@ impl<R> CandidateSnapshot<R> {
     /// (`crate::marshal::phrase_text::phrase_text_bytes`), while the selection
     /// record and the constraint store keep every stored word
     /// ([`crate::engine::SelectionTarget::text`]). Call it only for such
-    /// a text; [`Self::phrase_text`] rebuilds every other one exactly from
-    /// its packed bytes.
+    /// a text; the packed bytes of every other text are exact.
     pub fn keep_stored_text(&mut self, text: PhraseText) {
         let row = u32::try_from(self.rows.len()).unwrap_or(u32::MAX);
         self.stored_texts.push((row, text));
-    }
-
-    /// The text of row `row`, whose packed string is at `span`: the kept
-    /// stored-words text, else the packed bytes as an ordinary text.
-    ///
-    /// An ordinary text is `NUL`-free UTF-8 and is packed byte for byte
-    /// (`PhraseText::outward_bytes`), and `PhraseText::from` gives back the
-    /// same ordinary text for those bytes, so the rebuilt text equals the
-    /// one the row was published from.
-    #[must_use]
-    pub fn phrase_text(&self, row: usize, span: TextSpan) -> PhraseText {
-        if let Some((_, text)) = self
-            .stored_texts
-            .iter()
-            .find(|(kept, _)| *kept as usize == row)
-        {
-            return text.clone();
-        }
-        PhraseText::from(String::from_utf8_lossy(self.text_bytes(span)).as_ref())
     }
 
     /// `span`'s bytes without the terminator. A span that is not of this

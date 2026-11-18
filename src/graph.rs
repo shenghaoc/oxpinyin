@@ -87,12 +87,6 @@ impl ExactSegment {
         self.end
     }
 
-    /// The pre-parsed key.
-    #[must_use]
-    pub const fn key(&self) -> SyllableKey {
-        self.key
-    }
-
     /// The tone consumed with the key (`0` when toneless).
     #[must_use]
     pub const fn tone(&self) -> u8 {

@@ -1025,23 +1025,6 @@ impl RuntimeDict<'_> {
             .map(|priced| priced.item))
     }
 
-    /// The phrase [`Self::trellis_item`] priced: its stored length
-    /// and its text.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
-    pub fn trellis_text(
-        &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TokenPhrase>, DictError> {
-        Ok(self
-            .priced_token(syllables, tones, token, true)?
-            .and_then(|priced| priced.text))
-    }
-
     /// [`Self::lookup`] into a caller-owned buffer.
     ///
     /// # Errors
@@ -1125,34 +1108,6 @@ impl RuntimeDict<'_> {
         let mut entries = Vec::new();
         self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
         Ok(entries)
-    }
-
-    /// `FacadeChewingTable2::search_suggestion`'s composition: the system
-    /// table's walk, then the user table's, `reduce_tokens` order over
-    /// the union (nibble ascending — system libraries 1–4 before the
-    /// user library 7 — cursor order within a group). The library mask
-    /// drops an unloaded library's tokens, as every other read here
-    /// does; the addon facade is absent because the pin's suggestion
-    /// facade does not consult it.
-    pub fn suggest_extension_tokens(
-        &self,
-        syllables: &[SyllableKey],
-    ) -> Result<Vec<PhraseToken>, DictError> {
-        Ok(self
-            .checked_extension_tokens(syllables)?
-            .unwrap_or_default())
-    }
-
-    /// The pin's `search_suggestion` gate (`chewing_large_table2_bdb.cpp:282`):
-    /// the facade consults both the system and the user `ChewingLargeTable2`
-    /// (`facade_chewing_table2.h` `search_suggestion`), so an over-long key in
-    /// either `pinyin_index.bin` drives the abort. The system half is the
-    /// walk's key range (`SystemDictionary::overlong_extension_gate`), the
-    /// user half the keys `user_pinyin_index.bin` carried at open.
-    #[must_use]
-    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
-        self.system.overlong_extension_gate(syllables)
-            || self.user.overlong_extension_gate(syllables)
     }
 }
 

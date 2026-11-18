@@ -2059,33 +2059,6 @@ pub(crate) fn encode_persisted_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWr
     encode_phrase_item(item)
 }
 
-/// The compacted library's wrapping item sum, with live overrides applied
-/// (`phrase_index.cpp:648-675` at 074a2219). The original header may differ
-/// from its items; compact does not preserve that difference.
-#[must_use]
-pub fn system_new_total(
-    original: SystemLibraryRef<'_>,
-    overrides: &BTreeMap<u32, Option<ChunkItem>>,
-) -> u32 {
-    let mut total = original.item_total();
-    for (slot, override_item) in overrides {
-        match (original.item(*slot), override_item) {
-            (Some(old), Some(new)) => {
-                total = total.wrapping_sub(old.unigram);
-                total = total.wrapping_add(new.unigram);
-            }
-            (Some(old), None) => {
-                total = total.wrapping_sub(old.unigram);
-            }
-            (None, Some(new)) => {
-                total = total.wrapping_add(new.unigram);
-            }
-            (None, None) => {}
-        }
-    }
-    total
-}
-
 /// What a save writes: the session's user libraries and its two user
 /// tables, and its loaded system libraries.
 #[derive(Clone, Copy)]
