@@ -598,7 +598,6 @@ dependencies = [
  "num_enum",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-user",
  "rstest",
  "rustc-hash",
  "tempfile",
@@ -636,7 +635,6 @@ name = "oxpinyin-facade"
 version = "0.1.0-alpha.1"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-user",
  "rstest",
  "sha2",
  "tempfile",
@@ -652,26 +650,12 @@ dependencies = [
  "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-user",
  "oxpinyin-utils",
  "oxpinyin-zhuyin-capi",
  "regex",
  "rstest",
  "sha2",
  "tempfile",
-]
-
-[[package]]
-name = "oxpinyin-user"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "proptest",
- "rustc-hash",
- "sha2",
- "smallvec",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -682,7 +666,6 @@ dependencies = [
  "assert_fs",
  "libc",
  "oxpinyin-core",
- "oxpinyin-user",
  "regex",
  "rstest",
  "rustc-hash",
@@ -698,7 +681,6 @@ dependencies = [
  "libc",
  "oxpinyin-core",
  "oxpinyin-facade",
- "oxpinyin-user",
  "rstest",
  "tempfile",
 ]

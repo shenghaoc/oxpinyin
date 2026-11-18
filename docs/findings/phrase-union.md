@@ -247,8 +247,8 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin-user/src/data/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
-| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin-user/src/data/dict.rs`), held by the runtime's `AddonSet` |
+| Default facade: system pinyin and phrase DBMs, system chunk files | `SystemDictionary` (`crates/oxpinyin-core/src/user/data/dict.rs`) over `pinyin_index.bin`, `phrase_index.bin` and the system chunks |
+| Addon facade: `addon_pinyin_index.bin`, `addon_phrase_index.bin`, addon chunks loaded per call | `AddonDictionary` (`crates/oxpinyin-core/src/user/data/dict.rs`), held by the runtime's `AddonSet` |
 | Default facade total (system + user) and addon facade total | `BigramLanguageModel` unigram total; `addon_unigram_total` |
 
 ### 4.2 Engine
@@ -271,8 +271,8 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| User, network and addon `USER_FILE` sub-indexes 7, 6 and 5 in the default facade | `oxpinyin_user` (`USER_DICTIONARY`, `NETWORK_DICTIONARY`, `ADDON_DICTIONARY` in `phrase.rs`) |
-| User pinyin and phrase tables | `UserLookup` (`crates/oxpinyin-user/src/lookup.rs`) |
+| User, network and addon `USER_FILE` sub-indexes 7, 6 and 5 in the default facade | `oxpinyin_core::user` (`USER_DICTIONARY`, `NETWORK_DICTIONARY`, `ADDON_DICTIONARY` in `phrase.rs`) |
+| User pinyin and phrase tables | `UserLookup` (`crates/oxpinyin-core/src/user/lookup.rs`) |
 | Choose-promotion into nibble 5 | [`addon-choose-promotion.md`](addon-choose-promotion.md) |
 
 ## 5. Addon data
@@ -303,7 +303,7 @@ oxpinyin mirrors upstream's two-facade split:
 
 ### 6.2 Data structures
 
-- `UserLookup` (`crates/oxpinyin-user/src/lookup.rs`) borrows the user
+- `UserLookup` (`crates/oxpinyin-core/src/user/lookup.rs`) borrows the user
   store's session tables: the user pinyin index (complete and incomplete
   key spaces) and the user phrase table. It holds no second copy.
 - `AddonDictionary` holds the addon DBM pair and the loaded addon

@@ -4,7 +4,7 @@
 
 use crate::runtime::RuntimeDict;
 use oxpinyin_core::PhraseText;
-use oxpinyin_user::UserStore;
+use oxpinyin_core::user::UserStore;
 
 /// Resolves a prefix to the phrase tokens its tail substrings name, in the
 /// order `guess_sentence_with_prefix` consumes them (upstream's
@@ -36,7 +36,7 @@ pub fn compute_prefixes(
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
     let user_lookup = user.lookup();
-    let max = prefix.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
+    let max = prefix.len().min(oxpinyin_core::user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix = &prefix[prefix.len() - length..];

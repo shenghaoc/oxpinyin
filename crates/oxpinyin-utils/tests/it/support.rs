@@ -12,7 +12,7 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 pub type Failure = Box<dyn Error>;
-pub const CELL: &str = match oxpinyin_user::data::DEFAULT_STORE_EXT.as_bytes() {
+pub const CELL: &str = match oxpinyin_core::user::data::DEFAULT_STORE_EXT.as_bytes() {
     b"db" => "bdb",
     b"kct" => "kc",
     _ => "tkrzw",

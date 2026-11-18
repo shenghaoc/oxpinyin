@@ -120,8 +120,8 @@ mod native {
     use crate::test_fixture::{native_fixture::*, *};
     use crate::{ContextCore, InstanceCore, ToneForwarding};
     use oxpinyin_core::engine::{CandidateKind, Selection};
+    use oxpinyin_core::user::UserConfLaw;
     use oxpinyin_core::{OptionBits, PhraseToken};
-    use oxpinyin_user::UserConfLaw;
 
     #[rstest::rstest]
     #[case::pinyin_luoma(UserConfLaw::Pinyin, 2)]
@@ -481,7 +481,7 @@ mod native {
         assert_eq!(
             context
                 .user_store()
-                .bigram_count(oxpinyin_user::SENTENCE_START, t2)
+                .bigram_count(oxpinyin_core::user::SENTENCE_START, t2)
                 .unwrap(),
             69
         );
@@ -495,7 +495,7 @@ mod native_full_data {
     use crate::{ContextCore, InstanceCore};
     use oxpinyin_core::OptionBits;
     use oxpinyin_core::engine::{CandidateKind, Selection};
-    use oxpinyin_user::UserConfLaw;
+    use oxpinyin_core::user::UserConfLaw;
     const NORMAL: CandidateKind = CandidateKind::Phrase;
     const NBEST: CandidateKind = CandidateKind::Sentence;
     fn row(

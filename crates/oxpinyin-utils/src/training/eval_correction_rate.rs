@@ -21,9 +21,9 @@ use std::path::Path;
 
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::LineReader;
+use oxpinyin_core::user::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin_core::user::data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin_core::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
-use oxpinyin_user::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin_user::data::{DictError, PhraseLibraries, PinyinIndexTable};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};

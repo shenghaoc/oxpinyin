@@ -62,8 +62,8 @@ fn pronunciation_count_without_a_sub_index_writes_zero() {
 /// answer true with the whole stored item.
 #[test]
 fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
-    use oxpinyin_user::data::chunk_format::build_memory_chunk;
-    use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_core::user::data::chunk_format::build_memory_chunk;
+    use oxpinyin_core::user::data::chunk_write::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-long-phrase");
     write_user_conf(&user.path, &system_dir());
@@ -98,7 +98,7 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
 /// (`zhuyin.cpp:1104-1113`).
 #[test]
 fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
-    use oxpinyin_user::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin_core::user::data::chunk_write::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-null-text");
     write_user_conf(&user.path, &system_dir());
@@ -147,7 +147,7 @@ fn a_stored_key_word_reads_back_verbatim() {
     payload[at..at + 2].copy_from_slice(&0x8000_u16.to_le_bytes());
     std::fs::write(
         &path,
-        oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("write user.bin");
     let (context, instance) = open_with_user(&user_dir.path);

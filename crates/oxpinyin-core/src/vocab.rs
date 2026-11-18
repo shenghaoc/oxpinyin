@@ -32,7 +32,7 @@ use crate::{
 /// while this count grows. Anything that persists a key id must record the
 /// inventory it was written against; anything that sizes an array by this
 /// value must recompute it rather than hard-code 440.
-pub const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
+pub(crate) const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
     + INCOMPLETE_PINYIN_KEY_COUNT
     + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT
     + ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT;
@@ -109,7 +109,7 @@ impl SyllableKey {
     /// `None` for the zero key and for fields the table marks invalid,
     /// including final alternates the pin appends to the matrix.
     #[must_use]
-    pub fn from_chewing_key(key: ChewingKey) -> Option<Self> {
+    pub(crate) fn from_chewing_key(key: ChewingKey) -> Option<Self> {
         if key.table_index() == 0 {
             return None;
         }

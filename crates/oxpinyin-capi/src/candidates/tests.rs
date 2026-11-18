@@ -44,7 +44,7 @@ use oxpinyin_core::{PhraseToken, model::Dictionary as _};
 
 use oxpinyin_facade::TextSpan;
 
-use oxpinyin_user::SENTENCE_START;
+use oxpinyin_core::user::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -342,7 +342,7 @@ impl Open {
             .system()
             .libraries()
             .library(u32::from(library) << 24)
-            .map(oxpinyin_user::data::phrase_library::PhraseLibrary::total_freq)
+            .map(oxpinyin_core::user::data::phrase_library::PhraseLibrary::total_freq)
             .expect("the library is mapped")
     }
 
@@ -906,8 +906,8 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin_user::phrase_index_library_index(token.value()),
-            oxpinyin_user::ADDON_DICTIONARY,
+            oxpinyin_core::user::phrase_index_library_index(token.value()),
+            oxpinyin_core::user::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
         token.value()
@@ -919,7 +919,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     let store = inst.core.user;
     assert_eq!(
         store
-            .token_for_phrase_in(oxpinyin_user::ADDON_DICTIONARY, &text)
+            .token_for_phrase_in(oxpinyin_core::user::ADDON_DICTIONARY, &text)
             .expect("store read"),
         Some(promoted),
         "the promoted phrase resolves under nibble 5"
@@ -1110,7 +1110,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .dict
             .addon_phrase_item(token.value())
             .expect("addon item");
-        let view = oxpinyin_user::data::phrase_library::PhraseItemView::from_bytes(&item)
+        let view = oxpinyin_core::user::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
             .pronunciation(0)
@@ -1403,8 +1403,8 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     let user = TempUserDir::new("addon-promote-toned");
     let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
     assert_eq!(
-        oxpinyin_user::phrase_index_library_index(promoted),
-        oxpinyin_user::ADDON_DICTIONARY
+        oxpinyin_core::user::phrase_index_library_index(promoted),
+        oxpinyin_core::user::ADDON_DICTIONARY
     );
     assert_eq!(looked_up_tokens(instance, "二簧"), [promoted]);
 

@@ -265,7 +265,7 @@ jobs:
           # bare passthrough (`--features oxpinyin-core/<peer>`) does
           # NOT — cargo features do not back-propagate — and would
           # leave each consumer's own `#[cfg(feature = "<peer>")]`
-          # code (e.g. the per-backend mask walks in oxpinyin-user's
+          # code (e.g. the per-backend mask walks in oxpinyin-core's
           # `user_index.rs` and `user_phrase_table.rs`) skipped even
           # while `DefaultStore` resolves to the peer. The bare-name form here is the
           # documented public interface. The

@@ -4,7 +4,7 @@
 use super::*;
 use oxpinyin_core::model::TokenPhrase;
 use oxpinyin_core::sentence_facts::{SentenceFacts, TokenFacts};
-use oxpinyin_user::data::phrase_library::PhraseItemView;
+use oxpinyin_core::user::data::phrase_library::PhraseItemView;
 
 impl RuntimeDict<'_> {
     fn sentence_token(&self, token: u32, facts: &mut SentenceFacts) -> Option<TokenFacts> {
@@ -20,7 +20,7 @@ impl RuntimeDict<'_> {
         // the ordinary body read; an imported item retains its old error reads.
         let found = if self
             .live_items()
-            .is_system_library(oxpinyin_user::phrase_index_library_index(token))
+            .is_system_library(oxpinyin_core::user::phrase_index_library_index(token))
             && user.with_user_item(token, |_| ()).is_none()
         {
             self.live_items()
@@ -83,7 +83,7 @@ impl RuntimeDict<'_> {
             text: view.phrase_text(),
         });
         let (matched, total) =
-            Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+            Self::item_possibility(oxpinyin_core::user::SystemItem::Replayed(view), &path.keys);
         let pronunciation = Some((u64::from(matched), u64::from(total)));
         let result = PricedToken {
             item: TrellisItem {

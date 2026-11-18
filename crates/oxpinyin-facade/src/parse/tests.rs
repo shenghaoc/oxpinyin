@@ -135,7 +135,7 @@ mod native {
     use crate::{PINYIN_DEFAULT_OPTION_WORD, ToneForwarding};
     use oxpinyin_core::OptionBits;
     #[cfg(feature = "tkrzw")]
-    use oxpinyin_user::UserConfLaw;
+    use oxpinyin_core::user::UserConfLaw;
 
     #[rstest::rstest]
     #[case::one("'", 1, 1)]

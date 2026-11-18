@@ -855,7 +855,9 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
     // The user rows survived the prefix slice and reached the list.
     let user_position = |text: &str| {
         rows.iter()
-            .position(|row| row.0 == text && row.3 == usize::from(oxpinyin_user::USER_DICTIONARY))
+            .position(|row| {
+                row.0 == text && row.3 == usize::from(oxpinyin_core::user::USER_DICTIONARY)
+            })
             .unwrap_or_else(|| panic!("user row {text:?} missing from {rows:?}"))
     };
     let hua = user_position("\u{534e}");

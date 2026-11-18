@@ -15,7 +15,7 @@ use crate::support::{
     pinyin_train, system_dir,
 };
 
-use oxpinyin_user::USER_DICTIONARY;
+use oxpinyin_core::user::USER_DICTIONARY;
 
 use std::ptr;
 

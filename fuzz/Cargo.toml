@@ -21,9 +21,6 @@ oxpinyin-core = { path = "../crates/oxpinyin-core" }
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
 oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
-# user-store-ops: arbitrary mutation interleavings over UserStore, each
-# input over its own user directory (the root workspace's version).
-oxpinyin-user = { path = "../crates/oxpinyin-user" }
 tempfile = "3.27"
 
 [[bin]]

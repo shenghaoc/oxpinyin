@@ -128,7 +128,7 @@ pub fn build_chunk_path(dir: &Path, name: &OsStr) -> PathBuf {
 /// `g_build_filename(dir, name, NULL)` as the bytes `fprintf("%s")`
 /// writes. `None` is the pin's `NULL` element.
 #[must_use]
-pub fn build_bytes(dir: Option<&Path>, name: Option<&str>) -> Vec<u8> {
+pub(crate) fn build_bytes(dir: Option<&Path>, name: Option<&str>) -> Vec<u8> {
     let dir = dir.map(|dir| c_string(dir.as_os_str()));
     let name = name.map(|name| c_string(OsStr::new(name)));
     build_filename(dir.as_deref(), name.as_deref()).into_bytes()

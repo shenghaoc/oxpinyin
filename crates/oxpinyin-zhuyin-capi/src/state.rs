@@ -42,7 +42,7 @@ impl CapiContext {
                 system_dir,
                 user_dir,
                 oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD,
-                oxpinyin_user::UserConfLaw::Zhuyin,
+                oxpinyin_core::user::UserConfLaw::Zhuyin,
             )?,
         })
     }

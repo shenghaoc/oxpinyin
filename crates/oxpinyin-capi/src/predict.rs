@@ -10,8 +10,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
 
+use oxpinyin_core::user::UserStore;
 use oxpinyin_core::{PhraseText, PhraseToken, single_gram};
-use oxpinyin_user::UserStore;
 
 use crate::state::{CapiCandidate, SharedDict, SharedLm, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};

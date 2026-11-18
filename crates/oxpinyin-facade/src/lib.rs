@@ -47,7 +47,7 @@ mod predict;
 pub mod runtime;
 mod snapshot;
 #[cfg(test)]
-#[path = "../../oxpinyin-user/src/test_child.rs"]
+#[path = "../../oxpinyin-core/src/user/test_child.rs"]
 mod test_child;
 #[cfg(test)]
 mod test_fixture;

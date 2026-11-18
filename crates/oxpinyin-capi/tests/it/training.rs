@@ -78,7 +78,7 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     assert!(unsafe { crate::support::pinyin_remember_user_input(instance, phrase.as_ptr(), 5) });
     let token = lookup(instance, "甲")
         .into_iter()
-        .find(|&token| oxpinyin_user::is_user_token(token))
+        .find(|&token| oxpinyin_core::user::is_user_token(token))
         .expect("the remembered library-7 token");
     assert_eq!(reading_bytes(instance, token, 0), alternate.to_le_bytes());
     assert_eq!(export_rows_of(context, 7, "甲"), [("3".to_owned(), 5)]);

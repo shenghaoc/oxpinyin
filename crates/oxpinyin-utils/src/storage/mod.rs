@@ -5,7 +5,7 @@
 //! Each utility reads the cwd-relative names the pin does
 //! (`src/include/pinyin_internal.h:55-66`), through the pin's own calls in
 //! `oxpinyin_core::input::tool::storage`; the table text, the DBM records and the
-//! per-library chunks are the bytes `oxpinyin-user`'s layouts describe.
+//! per-library chunks are the bytes `oxpinyin-core`'s layouts describe.
 //!
 //! - [`gen_binary_files`] turns `table.conf`'s `.table` files into the
 //!   two index DBMs, the per-library chunk files and — with
@@ -31,7 +31,7 @@ use std::ffi::{CStr, CString, OsString};
 
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
-use oxpinyin_user::data::table_info::{TableConf, TableConfError};
+use oxpinyin_core::user::data::table_info::{TableConf, TableConfError};
 
 pub mod dbm;
 pub mod export_interpolation;

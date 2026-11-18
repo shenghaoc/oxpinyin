@@ -820,7 +820,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.read_only {
             crate::store::read_faults::point_read(key)?;
         }
@@ -828,7 +828,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.read_only {
             crate::store::read_faults::point_read(key)?;
         }
@@ -841,7 +841,7 @@ impl crate::store::RawReadStore for TkrzwStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        #[cfg(feature = "test-hooks")]
+        #[cfg(any(test, feature = "test-hooks"))]
         let visit = {
             crate::store::read_faults::scan_start(self.read_only, lo)?;
             crate::store::read_faults::scan_visitor(self.read_only, visit)
@@ -1106,7 +1106,7 @@ fn copy_tkrzwdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    #[cfg(feature = "test-hooks")]
+    #[cfg(any(test, feature = "test-hooks"))]
     crate::store::copy::faults::make_iterator()?;
     let cursor = src.cursor()?;
     crate::store::copy::copy(

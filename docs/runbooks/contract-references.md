@@ -4,7 +4,7 @@ This page describes the frozen expectations of the C-boundary tests and the loca
 
 The frozen expectations live beside the modules that implement them, in
 `crates/oxpinyin-core`,
-`oxpinyin-user`, `oxpinyin-facade`. The C crates retain
+`oxpinyin-core`, `oxpinyin-facade`. The C crates retain
 conversion, dispatch and publication checks in their sibling `tests.rs` files
 and `tests/it` targets.
 
@@ -13,7 +13,7 @@ The expected values are inline in each test. The tests never run the pin.
 `just test --locked` runs the workspace tests through nextest. The read-fault
 and locale tests require its separate process for each test.
 The two C crates' `testdata/pin-profiles.txt` files hold the pin-written profiles
-that `oxpinyin-user/src/persistence/tests/pinned_profiles.rs` reads.
+that `oxpinyin-core/src/user/persistence/tests/pinned_profiles.rs` reads.
 
 An expectation changes at a pin bump under [the oracle pin](goldens-and-pins.md#3-the-oracle-pin).
 

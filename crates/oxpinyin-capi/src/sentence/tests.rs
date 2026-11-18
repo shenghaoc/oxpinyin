@@ -205,7 +205,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         let store = ctx.core.user_store_mut();
         for (previous, next) in [
-            (oxpinyin_user::SENTENCE_START, hao),
+            (oxpinyin_core::user::SENTENCE_START, hao),
             (short, hao),
             (long, number),
         ] {

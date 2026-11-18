@@ -10,7 +10,7 @@ use std::path::Path;
 
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::OutputStream;
-use oxpinyin_user::data::single_gram::decode_single_gram;
+use oxpinyin_core::user::data::single_gram::decode_single_gram;
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::{Libraries, token_to_string};

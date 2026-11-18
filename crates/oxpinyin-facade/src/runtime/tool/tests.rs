@@ -3,7 +3,7 @@
 
 use oxpinyin_core::OptionBits;
 
-use oxpinyin_user::data::table_info::TableConf;
+use oxpinyin_core::user::data::table_info::TableConf;
 
 use oxpinyin_core::engine::tool::prepare_lookup;
 
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 fn embedded_nul_lookup_keeps_the_original_terminal_column() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
-        .join(oxpinyin_user::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT);
     let conf_path = oxpinyin_core::input::c_path(&data.join("table.conf")).unwrap();
     let conf = TableConf::load(&conf_path).unwrap();
     let lookup = Lookup::open(&data, &conf, true, true).unwrap_or_else(|_| panic!("W3 lookup"));

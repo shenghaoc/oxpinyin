@@ -11,7 +11,7 @@ use std::ffi::{CStr, CString, OsString};
 
 use oxpinyin_core::input::tool;
 use oxpinyin_core::input::tool::LineReader;
-use oxpinyin_user::data::single_gram::{decode_single_gram, encode_single_gram};
+use oxpinyin_core::user::data::single_gram::{decode_single_gram, encode_single_gram};
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::Libraries;

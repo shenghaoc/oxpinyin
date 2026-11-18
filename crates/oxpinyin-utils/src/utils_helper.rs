@@ -4,9 +4,9 @@ use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 
 use oxpinyin_core::input::tool;
-use oxpinyin_user::data::PhraseLibraries;
-use oxpinyin_user::data::phrase_library::{LibraryError, PhraseLibrary};
-use oxpinyin_user::data::table_info::{FileName, FileType, TableConf};
+use oxpinyin_core::user::data::PhraseLibraries;
+use oxpinyin_core::user::data::phrase_library::{LibraryError, PhraseLibrary};
+use oxpinyin_core::user::data::table_info::{FileName, FileType, TableConf};
 
 pub mod taglib;
 

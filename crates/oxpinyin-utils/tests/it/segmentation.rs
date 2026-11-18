@@ -22,7 +22,7 @@ fn repo_root() -> PathBuf {
 fn w3_dir() -> PathBuf {
     repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin_user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
 }
 
 fn copy_tree(source: &Path, destination: &Path) {

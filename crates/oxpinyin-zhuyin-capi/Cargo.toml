@@ -41,8 +41,7 @@ capi = []
 tools = []
 # Backend selection (one backend per binary; see oxpinyin-core's
 # [features] for the model and precedence). Each peer feature forwards to
-# oxpinyin-facade, which carries it down facade -> user ->
-# store. The peer features stay on this crate because build.rs reads
+# oxpinyin-facade, which selects the backend in core. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
 # because `cargo cinstall --features <peer>` names them. `just packaging
 # install` writes the matching `database_format` into libzhuyin.pc.
@@ -58,7 +57,6 @@ workspace = true
 oxpinyin-core.workspace = true
 # The shared facade-orchestration layer this crate's C wrappers translate.
 oxpinyin-facade = { path = "../oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
-oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]

@@ -13,10 +13,7 @@ fn header_size_and_read_failure_follow_pin_load() {
         Err(ChunkLoadError::ShortHeader)
     ));
     assert_eq!(calls.get(), 0);
-    assert!(matches!(
-        load_header(8, read),
-        Err(ChunkLoadError::Header(_))
-    ));
+    assert!(matches!(load_header(8, read), Err(ChunkLoadError::Header)));
     assert_eq!(calls.get(), 1);
     let mut reads = 0;
     assert!(matches!(
@@ -28,7 +25,7 @@ fn header_size_and_read_failure_follow_pin_load() {
                 Err(io::ErrorKind::Other.into())
             }
         }),
-        Err(ChunkLoadError::Header(_))
+        Err(ChunkLoadError::Header)
     ));
     assert_eq!(reads, 2);
     assert!(load_header(8, || Ok([0; 4])).is_ok());

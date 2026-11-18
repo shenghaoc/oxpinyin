@@ -4,7 +4,7 @@
 //! crate and no C shim (ruling 2026-10-31 UTC).
 //!
 //! Stage 1 holds the `table.conf` and `user.conf` readers and writer and their
-//! `LC_NUMERIC` calls ([`config`]); stage 4 the library's other `stderr` lines
+//! `LC_NUMERIC` calls (`config`); stage 4 the library's other `stderr` lines
 //! ([`diagnostic`]), so every library line is written to the C library's
 //! stream. What the scanned values mean — the
 //! `strcmp` mappings, the slots, the refusals where the pin aborts — stays
@@ -30,7 +30,7 @@
 //! carries a `// SAFETY:` comment and no raw pointer leaves them.
 
 pub mod chunk;
-pub mod config;
+pub(crate) mod config;
 pub mod diagnostic;
 #[expect(
     unsafe_code,

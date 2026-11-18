@@ -16,18 +16,9 @@ doctest = false
 # The data layer's backend selection, forwarded to every backend-sensitive
 # edge the utilities use.
 default = ["tkrzw"]
-kyotocabinet = [
-    "oxpinyin-core/kyotocabinet",
-    "oxpinyin-user/kyotocabinet",
-]
-bdb = [
-    "oxpinyin-core/bdb",
-    "oxpinyin-user/bdb",
-]
-tkrzw = [
-    "oxpinyin-core/tkrzw",
-    "oxpinyin-user/tkrzw",
-]
+kyotocabinet = ["oxpinyin-core/kyotocabinet"]
+bdb = ["oxpinyin-core/bdb"]
+tkrzw = ["oxpinyin-core/tkrzw"]
 
 [lints]
 workspace = true
@@ -35,11 +26,6 @@ workspace = true
 [dependencies]
 rustc-hash.workspace = true
 oxpinyin-core = { workspace = true, features = ["tools"] }
-# The pin's DBM files, written and read through the backend seam the data
-# layer and datagen share.
-# The storage text importer reuses the user store's pin-exact pronunciation
-# count handling.
-oxpinyin-user = { workspace = true, features = ["tools"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

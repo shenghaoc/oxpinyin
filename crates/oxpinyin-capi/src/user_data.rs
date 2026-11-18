@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int};
 
 use oxpinyin_core::engine::{EngineError, MatrixKey, key_pronounced_by, remember_walk};
 use oxpinyin_core::model::Dictionary;
-use oxpinyin_user::{PinyinKey, toned_key};
+use oxpinyin_core::user::{PinyinKey, toned_key};
 
 use crate::iterators::ImportPlan;
 use crate::state::instance_ref;
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
     // Stop counting at the refusal boundary: oversized known-character
     // strings must not reach the per-character dictionary lookups.
     let phrase_length = phrase.phrase_length();
-    if phrase_length == 0 || phrase_length >= oxpinyin_user::MAX_PHRASE_LENGTH {
+    if phrase_length == 0 || phrase_length >= oxpinyin_core::user::MAX_PHRASE_LENGTH {
         return false;
     }
     // SAFETY: `instance` is non-null and was produced by
@@ -143,7 +143,7 @@ unsafe fn add_remembered_path(
     path: &[MatrixKey],
     count: Option<u64>,
 ) -> bool {
-    if path.is_empty() || path.len() > oxpinyin_user::MAX_PHRASE_LENGTH {
+    if path.is_empty() || path.len() > oxpinyin_core::user::MAX_PHRASE_LENGTH {
         return false;
     }
     let Some(keys) = path
@@ -165,15 +165,15 @@ unsafe fn add_remembered_path(
     // SAFETY: Handles guarantees a live instance; the helper contract ends
     // every earlier reader, and Serial calls grants exclusive runtime access.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let phrase =
-        match ctx
-            .core
-            .plan_add(oxpinyin_user::USER_DICTIONARY, phrase.clone(), keys.clone())
-        {
-            ImportPlan::Abort => std::process::abort(),
-            ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
-            ImportPlan::Add { phrase, .. } => phrase,
-        };
+    let phrase = match ctx.core.plan_add(
+        oxpinyin_core::user::USER_DICTIONARY,
+        phrase.clone(),
+        keys.clone(),
+    ) {
+        ImportPlan::Abort => std::process::abort(),
+        ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
+        ImportPlan::Add { phrase, .. } => phrase,
+    };
     let user = ctx.core.user_store_mut();
     // `if (-1 == count) count = default_count;` otherwise the `gint` is
     // used as the `guint32` it becomes (`pinyin.cpp:520-524`, the same

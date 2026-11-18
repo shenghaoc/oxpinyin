@@ -44,7 +44,7 @@ impl PhraseText {
     /// or above 0x80000000 before the first zero. This preserves the pin's
     /// per-item cut (`src/lookup/lookup.cpp:39-68` at 074a2219).
     #[must_use]
-    pub fn from_stored_words(words: impl IntoIterator<Item = Option<u32>>) -> Option<Self> {
+    pub(crate) fn from_stored_words(words: impl IntoIterator<Item = Option<u32>>) -> Option<Self> {
         let mut text = CompactString::new("");
         let mut raw: Option<Vec<u32>> = None;
         let mut past_zero = false;

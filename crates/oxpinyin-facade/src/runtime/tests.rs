@@ -2,7 +2,7 @@
 //! seam is covered by the `backend_files` module below.
 
 use super::*;
-use oxpinyin_user::PinyinKey;
+use oxpinyin_core::user::PinyinKey;
 
 #[test]
 fn direct_library_visibility_also_guards_session_mutations() {
@@ -32,10 +32,10 @@ fn runtime_visibility_preserves_user_library_save_state() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::open_with_law(&system_dir(), Some(dir.path()), law).unwrap();
-        let library = oxpinyin_user::USER_DICTIONARY;
+        let library = oxpinyin_core::user::USER_DICTIONARY;
         let chunk = dir.path().join("user.bin");
         let ni = SyllableKey::from_text("ni").unwrap();
-        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+        let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).unwrap()];
         let store = runtime.user_store_mut();
         assert!(!store.is_system_library(library));
         let saved = store
@@ -201,7 +201,7 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
     let shipped = runtime.dict().system().tokens_for_text("你").unwrap()[0];
-    let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+    let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).unwrap()];
     let appended = runtime
         .user_store_mut()
         .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(5))
@@ -231,7 +231,7 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
 fn unigram_freq_reads_increments_from_the_user_item() {
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
-    let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+    let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).unwrap()];
     for (text, count, expected) in [("鎄", 5, 15), ("龘", 0, 0)] {
         let token = runtime
             .user_store_mut()
@@ -254,13 +254,13 @@ fn unigram_freq_reads_increments_from_the_user_item() {
 #[test]
 fn unigram_freq_reads_a_user_items_count_live() {
     let mut store = UserStore::open_transient(
-        oxpinyin_user::SystemOriginals::new(Default::default(), UserFileLayout::stock()),
+        oxpinyin_core::user::SystemOriginals::new(Default::default(), UserFileLayout::stock()),
         SystemVersions::for_this_build(7, 14),
         UserConfLaw::Pinyin,
     )
     .unwrap();
     let ci = SyllableKey::from_text("ci").unwrap();
-    let keys = [oxpinyin_user::toned_key(ci.index(), 0).unwrap()];
+    let keys = [oxpinyin_core::user::toned_key(ci.index(), 0).unwrap()];
     let token = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
     assert_eq!(store.system_unigram(token), None);
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
@@ -286,7 +286,7 @@ fn unigram_freq_reads_a_user_items_count_live() {
 fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
-    let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+    let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).unwrap()];
     let token = runtime
         .user_store_mut()
         .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
@@ -303,28 +303,28 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         .dict()
         .live_items()
         .read(token, |item| match item {
-            oxpinyin_user::SystemItem::Shipped(view)
-            | oxpinyin_user::SystemItem::Replayed(view) => view.as_bytes().to_vec(),
+            oxpinyin_core::user::SystemItem::Shipped(view)
+            | oxpinyin_core::user::SystemItem::Replayed(view) => view.as_bytes().to_vec(),
         })
         .found()
         .unwrap();
-    let payload = oxpinyin_user::data::user_files::encode_log_records(&[
-        oxpinyin_user::data::user_files::LogRecord::Remove {
-            token: token & oxpinyin_user::PHRASE_MASK,
+    let payload = oxpinyin_core::user::data::user_files::encode_log_records(&[
+        oxpinyin_core::user::data::user_files::LogRecord::Remove {
+            token: token & oxpinyin_core::user::PHRASE_MASK,
             old_item,
         },
     ])
     .unwrap();
     std::fs::write(
         dir.path().join("gb_char.dbin"),
-        oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
     std::fs::write(
         dir.path().join("user.conf"),
-        oxpinyin_user::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
-            runtime.table_conf(),
-        ))
+        oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(
+            &SystemVersions::from_conf(runtime.table_conf()),
+        )
         .to_text(),
     )
     .unwrap();
@@ -333,7 +333,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
     assert_eq!(runtime.user_store().system_unigram(token), None);
     assert_eq!(
         runtime.dict().live_items().read(token, |_| ()),
-        oxpinyin_user::Lookup::Absent
+        oxpinyin_core::user::Lookup::Absent
     );
     // The removed item leaves no entry.
     let entries = runtime
@@ -382,8 +382,8 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let ni = SyllableKey::from_text("ni").unwrap();
         let hao = SyllableKey::from_text("hao").unwrap();
         let keys = [
-            oxpinyin_user::toned_key(ni.index(), 3).unwrap(),
-            oxpinyin_user::toned_key(hao.index(), 3).unwrap(),
+            oxpinyin_core::user::toned_key(ni.index(), 3).unwrap(),
+            oxpinyin_core::user::toned_key(hao.index(), 3).unwrap(),
         ];
         let token = zhuyin
             .user_store_mut()
@@ -426,7 +426,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let row = addons.dict.row(4).expect("sub-index 4 is in range");
         assert_eq!(
             row.system,
-            Some(oxpinyin_user::data::table_info::FileName::from_bytes(
+            Some(oxpinyin_core::user::data::table_info::FileName::from_bytes(
                 b"art-local.bin"
             )),
             "the configured addon row is kept, not the stock one"
@@ -552,11 +552,11 @@ fn suggestion_rows_group_by_library_then_walk_the_ucs4_keys() {
     let user_rows = vec![
         (
             0x0700_0001,
-            oxpinyin_user::data::row_format::phrase_index::encode_ucs4_key("中乐"),
+            oxpinyin_core::user::data::row_format::phrase_index::encode_ucs4_key("中乐"),
         ), // U+4E50
         (
             0x0700_0002,
-            oxpinyin_user::data::row_format::phrase_index::encode_ucs4_key("中伭"),
+            oxpinyin_core::user::data::row_format::phrase_index::encode_ucs4_key("中伭"),
         ), // U+4F2D
     ];
     let merged = merge_suggestion_rows(&system, &user_rows);
@@ -677,11 +677,11 @@ mod backend_files {
 
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use oxpinyin_core::engine::{Selection, SelectionTarget, SessionSettings};
+    use oxpinyin_core::user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
     use oxpinyin_core::{
         PhraseToken, SyllableKey,
         model::{Dictionary, LanguageModel},
     };
-    use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
     use std::path::Path;
 
     /// A fresh, uniquely named scratch dir, removed on drop (including unwind).
@@ -705,7 +705,7 @@ mod backend_files {
             .tokens_for_text("你")
             .expect("lookup")[0];
         let ni = SyllableKey::from_text("ni").expect("ni");
-        let keys = [oxpinyin_user::toned_key(ni.index(), 3).expect("toned key")];
+        let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).expect("toned key")];
         assert_eq!(
             runtime
                 .dict()
@@ -792,7 +792,7 @@ mod backend_files {
         assert!(runtime.dict().token_exists(system));
         assert_eq!(packed(&runtime, system, usize::MAX), None);
         let ni = SyllableKey::from_text("ni").unwrap();
-        let keys = [oxpinyin_user::toned_key(ni.index(), 3).unwrap()];
+        let keys = [oxpinyin_core::user::toned_key(ni.index(), 3).unwrap()];
         runtime
             .user_store_mut()
             .add_system_phrase_in(1, Some(system), &"你".into(), &keys, Some(5))
@@ -803,7 +803,7 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"词".into(), &keys, Some(5))
             .unwrap();
-        let second = [oxpinyin_user::toned_key(ni.index(), 1).unwrap()];
+        let second = [oxpinyin_core::user::toned_key(ni.index(), 1).unwrap()];
         runtime
             .user_store_mut()
             .add_phrase(&"词".into(), &second, Some(9))
@@ -877,7 +877,7 @@ mod backend_files {
         );
         let keys: Vec<_> = syllables
             .iter()
-            .map(|key| oxpinyin_user::toned_key(key.index(), 3).unwrap())
+            .map(|key| oxpinyin_core::user::toned_key(key.index(), 3).unwrap())
             .collect();
         let token = runtime
             .user_store_mut()
@@ -954,7 +954,7 @@ mod backend_files {
         }
         assert!(
             tmp.path()
-                .join(oxpinyin_user::data::SystemDbm::PinyinIndex.file_name())
+                .join(oxpinyin_core::user::data::SystemDbm::PinyinIndex.file_name())
                 .exists()
         );
         match Runtime::open(tmp.path(), None) {
@@ -973,7 +973,9 @@ mod backend_files {
         for entry in std::fs::read_dir(system_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
             if entry.file_name().as_os_str()
-                != std::ffi::OsStr::new(&oxpinyin_user::data::SystemDbm::PinyinIndex.file_name())
+                != std::ffi::OsStr::new(
+                    &oxpinyin_core::user::data::SystemDbm::PinyinIndex.file_name(),
+                )
             {
                 std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
             }
@@ -1182,7 +1184,7 @@ mod backend_files {
     /// (`pinyin.cpp:2836-2843`, `phrase_index.h:628-635` at 074a2219).
     #[test]
     fn unigram_add_rejects_a_token_found_only_in_the_addon_index() {
-        use oxpinyin_user::data::phrase_library::PhraseLibrary;
+        use oxpinyin_core::user::data::phrase_library::PhraseLibrary;
 
         let system = scratch_dir("oxpinyin-addon-only-");
         for entry in std::fs::read_dir(system_dir()).unwrap() {
@@ -1330,7 +1332,7 @@ mod backend_files {
     #[test]
     fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
         use oxpinyin_core::model::LanguageModel;
-        let tmp = scratch_dir("oxpinyin-user-gram-alone-");
+        let tmp = scratch_dir("oxpinyin-core-gram-alone-");
         let dir = tmp.path().to_path_buf();
         let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
         let keys: Vec<_> = ["ni", "hao"]
@@ -1514,7 +1516,7 @@ mod backend_files {
             texts
                 .iter()
                 .map(|text| {
-                    oxpinyin_user::toned_key(SyllableKey::from_text(text).unwrap().index(), 3)
+                    oxpinyin_core::user::toned_key(SyllableKey::from_text(text).unwrap().index(), 3)
                         .unwrap()
                 })
                 .collect()
@@ -1648,7 +1650,7 @@ mod backend_files {
         let opened = Runtime::open_with_law_reporting(
             &dir,
             None,
-            oxpinyin_user::UserConfLaw::Pinyin,
+            oxpinyin_core::user::UserConfLaw::Pinyin,
             &mut |path| reported.push(path.to_path_buf()),
         );
         assert!(matches!(
@@ -1680,11 +1682,11 @@ mod backend_files {
         let user_tmp = scratch_dir("oxpinyin-runtime-journal-user-");
         let user = user_tmp.path().to_path_buf();
         let conf =
-            oxpinyin_user::data::table_info::TableConf::load_from_dir(&system).expect("conf");
-        let versions = oxpinyin_user::data::user_files::SystemVersions::from_conf(&conf);
+            oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system).expect("conf");
+        let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
         std::fs::write(
             user.join("user.conf"),
-            oxpinyin_user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+            oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
         )
         .expect("user.conf");
         // A MODIFY_HEADER whose token is not `null_token` (`phrase_index_logger.h:202`).
@@ -1694,14 +1696,14 @@ mod backend_files {
         header.extend_from_slice(&[0; 8]);
         std::fs::write(
             user.join("opengram.dbin"),
-            oxpinyin_user::data::chunk_format::build_memory_chunk(&header).expect("frame"),
+            oxpinyin_core::user::data::chunk_format::build_memory_chunk(&header).expect("frame"),
         )
         .expect("opengram.dbin");
         let mut reported = Vec::new();
         let opened = Runtime::open_with_law_reporting(
             &system,
             Some(&user),
-            oxpinyin_user::UserConfLaw::Pinyin,
+            oxpinyin_core::user::UserConfLaw::Pinyin,
             &mut |path| reported.push(path.to_path_buf()),
         );
         assert!(matches!(opened, Err(OpenError::Journal(fault)) if fault.library() == 3));
@@ -1871,7 +1873,7 @@ mod pin_data {
         let conf = std::fs::read_to_string(dir.join("table.conf")).expect("table.conf");
         let format = format!(
             "database format:{}",
-            oxpinyin_user::data::DEFAULT_STORE_DB_FORMAT
+            oxpinyin_core::user::data::DEFAULT_STORE_DB_FORMAT
         );
         assert!(
             conf.contains(&format),
@@ -2275,11 +2277,11 @@ fn native_session(runtime: &Runtime, options: OptionBits) -> oxpinyin_core::engi
     session.set_options(options).unwrap();
     state
 }
-fn native_keys(reading: &str) -> Vec<oxpinyin_user::PinyinKey> {
+fn native_keys(reading: &str) -> Vec<oxpinyin_core::user::PinyinKey> {
     if !reading.is_ascii() {
         return oxpinyin_core::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
             .into_iter()
-            .map(|(key, tone)| oxpinyin_user::toned_key(key.index(), tone).unwrap())
+            .map(|(key, tone)| oxpinyin_core::user::toned_key(key.index(), tone).unwrap())
             .collect();
     }
     let graph = oxpinyin_core::graph::SegmentGraph::build_with_options(
@@ -2291,7 +2293,7 @@ fn native_keys(reading: &str) -> Vec<oxpinyin_user::PinyinKey> {
     graph
         .fewest_keys(false)
         .iter()
-        .map(|edge| oxpinyin_user::toned_key(edge.key().index(), edge.tone()).unwrap())
+        .map(|edge| oxpinyin_core::user::toned_key(edge.key().index(), edge.tone()).unwrap())
         .collect()
 }
 fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
@@ -2301,7 +2303,7 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
             .tokens_for_text(text)
             .into_iter()
             .map(PhraseToken::value)
-            .find(|token| oxpinyin_user::phrase_index_library_index(*token) == library);
+            .find(|token| oxpinyin_core::user::phrase_index_library_index(*token) == library);
         let keys = native_keys(reading);
         let store = runtime.user_store_mut();
         if store.is_system_library(library) {
@@ -3013,7 +3015,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
     let file = user.path.join("user.bin");
     let original = std::fs::read(&file).unwrap();
     let gram = gram_bytes(100, &[(token, 100)]);
-    let empty = oxpinyin_user::data::chunk_write::build_chunk(&[]).unwrap();
+    let empty = oxpinyin_core::user::data::chunk_write::build_chunk(&[]).unwrap();
     for present in [false, true] {
         std::fs::write(&file, if present { &original } else { &empty }).unwrap();
         native_fixture::plant_bigram(
@@ -3255,7 +3257,7 @@ fn a_journal_removed_item_adds_no_candidate() {
     let log = [native_fixture::modify_header(0, total, total), remove].concat();
     std::fs::write(
         user.path.join("merged.dbin"),
-        oxpinyin_user::data::chunk_format::build_memory_chunk(&log).expect("frame"),
+        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&log).expect("frame"),
     )
     .expect("write the journal");
 
@@ -3477,9 +3479,9 @@ fn ordinary_training_reorders_the_nbest_rows() {
     );
 }
 
-#[path = "../../../oxpinyin-user/tests/support/mod.rs"]
+#[path = "../../../oxpinyin-core/tests/support/mod.rs"]
 mod chunk_fixture;
-#[path = "../../../oxpinyin-user/tests/support/unreadable_fixture.rs"]
+#[path = "../../../oxpinyin-core/tests/support/unreadable_fixture.rs"]
 mod unreadable_fixture;
 
 /// The sole unreadable user-index row survives the system miss and keeps its token.
@@ -3645,7 +3647,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
         .map(|&token| {
             let text = dict.token_text(token).unwrap();
             (
-                oxpinyin_user::phrase_index_library_index(token),
+                oxpinyin_core::user::phrase_index_library_index(token),
                 ucs4_bytes(text.as_str().unwrap()),
                 text,
             )

@@ -11,7 +11,7 @@ pub fn w3() -> TempDir {
         .copy_from(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/w3")
-                .join(oxpinyin_user::data::DEFAULT_STORE_EXT),
+                .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT),
             &["**"],
         )
         .expect("backend w3 fixture");

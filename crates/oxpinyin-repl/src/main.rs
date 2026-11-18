@@ -12,8 +12,8 @@
 )]
 
 use oxpinyin_core::input::tool::{self, storage::TableFile};
-use oxpinyin_user::data::table_info::{FileType, TableConf};
-use oxpinyin_user::tool::Index;
+use oxpinyin_core::user::data::table_info::{FileType, TableConf};
+use oxpinyin_core::user::tool::Index;
 use std::path::{Path, PathBuf};
 
 mod lookup;

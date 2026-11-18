@@ -3,7 +3,7 @@ use super::*;
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
-        .join(oxpinyin_user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
 }
 fn opened() -> Runtime {
     Runtime::open(&fixture(), None).unwrap()
@@ -135,7 +135,7 @@ fn direct_unigram_updates_retire_held_sentence_facts() {
     let missing = (token & 0x0f00_0000) | 0x00ff_ffff;
     assert_eq!(
         runtime.add_unigram_outcome(missing, 11),
-        oxpinyin_user::UnigramAdd::Missing
+        oxpinyin_core::user::UnigramAdd::Missing
     );
     score(&runtime, token, &mut facts);
     assert!(facts.tokens.is_empty());
@@ -159,7 +159,7 @@ fn fallback(runtime: &Runtime, token: u32) {
 fn user_imported_masked_missing_and_detached_keep_old_readers() {
     let mut runtime = opened();
     let ni = SyllableKey::from_text("ni").unwrap();
-    let keys = [oxpinyin_user::toned_key(ni.index(), 0).unwrap()];
+    let keys = [oxpinyin_core::user::toned_key(ni.index(), 0).unwrap()];
     let user = runtime
         .user_store_mut()
         .add_phrase_in(7, &"词".into(), &keys, Some(5))
@@ -177,19 +177,19 @@ fn user_imported_masked_missing_and_detached_keep_old_readers() {
     runtime.library_mask.set(0);
     // A session detached from this runtime's system libraries.
     runtime.user = UserStore::open_transient(
-        oxpinyin_user::SystemOriginals::new(
+        oxpinyin_core::user::SystemOriginals::new(
             Default::default(),
-            oxpinyin_user::data::user_files::UserFileLayout::stock(),
+            oxpinyin_core::user::data::user_files::UserFileLayout::stock(),
         ),
-        oxpinyin_user::data::user_files::SystemVersions::for_this_build(7, 14),
-        oxpinyin_user::UserConfLaw::Pinyin,
+        oxpinyin_core::user::data::user_files::SystemVersions::for_this_build(7, 14),
+        oxpinyin_core::user::UserConfLaw::Pinyin,
     )
     .unwrap();
     fallback(&runtime, ordinary);
     let (_, libraries) = SystemDictionary::open_with(&fixture(), runtime.table_conf())
         .unwrap()
         .into_parts();
-    runtime.install_baselines(oxpinyin_user::system_originals(
+    runtime.install_baselines(oxpinyin_core::user::system_originals(
         libraries,
         UserFileLayout::from_conf(runtime.table_conf()),
     ));
@@ -204,7 +204,7 @@ fn user_imported_masked_missing_and_detached_keep_old_readers() {
     fallback(&runtime, ordinary);
 }
 fn replayed(
-    change: impl FnOnce(u32, Vec<u8>) -> oxpinyin_user::data::user_files::LogRecord,
+    change: impl FnOnce(u32, Vec<u8>) -> oxpinyin_core::user::data::user_files::LogRecord,
 ) -> (tempfile::TempDir, Runtime, u32) {
     let runtime = opened();
     let token = token(&runtime);
@@ -215,21 +215,21 @@ fn replayed(
         .found()
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let payload = oxpinyin_user::data::user_files::encode_log_records(&[change(
-        token & oxpinyin_user::PHRASE_MASK,
+    let payload = oxpinyin_core::user::data::user_files::encode_log_records(&[change(
+        token & oxpinyin_core::user::PHRASE_MASK,
         old,
     )])
     .unwrap();
     std::fs::write(
         dir.path().join("gb_char.dbin"),
-        oxpinyin_user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+        oxpinyin_core::user::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
     std::fs::write(
         dir.path().join("user.conf"),
-        oxpinyin_user::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
-            runtime.table_conf(),
-        ))
+        oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(
+            &SystemVersions::from_conf(runtime.table_conf()),
+        )
         .to_text(),
     )
     .unwrap();
@@ -242,7 +242,7 @@ fn present_zero_unigram_is_a_live_fact() {
     let (_dir, runtime, token) = replayed(|token, old_item| {
         let mut new_item = old_item.clone();
         new_item[2..6].copy_from_slice(&0u32.to_le_bytes());
-        oxpinyin_user::data::user_files::LogRecord::Modify {
+        oxpinyin_core::user::data::user_files::LogRecord::Modify {
             token,
             old_item,
             new_item,
@@ -257,7 +257,7 @@ fn present_zero_unigram_is_a_live_fact() {
 fn removed_and_unreadable_items_keep_old_resolution() {
     let (_dir, runtime, token) =
         replayed(
-            |token, old_item| oxpinyin_user::data::user_files::LogRecord::Remove {
+            |token, old_item| oxpinyin_core::user::data::user_files::LogRecord::Remove {
                 token,
                 old_item,
             },
@@ -269,7 +269,7 @@ fn removed_and_unreadable_items_keep_old_resolution() {
         // Force remove-and-append, so the declared readings run past
         // the live buffer rather than into the next ordinary item.
         new_item.push(0);
-        oxpinyin_user::data::user_files::LogRecord::Modify {
+        oxpinyin_core::user::data::user_files::LogRecord::Modify {
             token,
             old_item,
             new_item,

@@ -9,11 +9,11 @@
 //! directory is the backend's native data directory — the one a
 //! libpinyin build on the same backend uses, or what the pin's
 //! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
-//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-user`
+//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: every reader in `oxpinyin-core`
 //! is a handle plus a point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-core`, tables and model math
-//! in `oxpinyin-user`, user state in `oxpinyin-user` — and the user-count
-//! overlay arithmetic lives in `oxpinyin-user`'s `*_with_user_delta` methods
+//! in `oxpinyin-core`, user state in `oxpinyin-core` — and the user-count
+//! overlay arithmetic lives in `oxpinyin-core`'s `*_with_user_delta` methods
 //! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
 //! ordering law held here is `merge_suggestion_rows`, the pinned
 //! suggestion row order the facades rank predicted candidates in.
@@ -30,26 +30,26 @@ use std::path::{Path, PathBuf};
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 
 use oxpinyin_core::engine::{EngineError, Session, SessionSettings, StoragePaths};
+pub(crate) use oxpinyin_core::user::data::phrase_library::{
+    LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
+};
+pub(crate) use oxpinyin_core::user::data::table_info::{FileType, TableConfSite};
+pub(crate) use oxpinyin_core::user::data::table_info::{TableConf, TableConfError};
+use oxpinyin_core::user::data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin_core::user::data::{
+    AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
+    SystemDictionary,
+};
+use oxpinyin_core::user::{
+    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
+    UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
+};
 use oxpinyin_core::{
     PhraseEntry, PhraseText, PhraseToken, SyllableKey,
     model::{
         Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseIndexRanges, PhraseItemRead,
         TrellisItem, TrellisPathMemo, UserCountDelta,
     },
-};
-pub(crate) use oxpinyin_user::data::phrase_library::{
-    LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
-};
-pub(crate) use oxpinyin_user::data::table_info::{FileType, TableConfSite};
-pub(crate) use oxpinyin_user::data::table_info::{TableConf, TableConfError};
-use oxpinyin_user::data::user_files::{SystemVersions, UserFileLayout};
-use oxpinyin_user::data::{
-    AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary,
-};
-use oxpinyin_user::{
-    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
-    UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -120,14 +120,14 @@ pub enum OpenError {
     TableConf(TableConfError),
     /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
     /// assertion while the library loop merged it
-    /// ([`oxpinyin_user::JournalFault`], rows 91 and 108): the open stops at
+    /// ([`oxpinyin_core::user::JournalFault`], rows 91 and 108): the open stops at
     /// that library, after `check_format`'s writes, and the C adapters abort.
-    Journal(oxpinyin_user::JournalFault),
+    Journal(oxpinyin_core::user::JournalFault),
     /// The user session could not be built after the library loop handed
-    /// it the system libraries ([`oxpinyin_user::UserStoreError::SessionSeed`],
+    /// it the system libraries ([`oxpinyin_core::user::UserStoreError::SessionSeed`],
     /// or another failure of the open past `check_format`). The pin's
     /// counterparts die, and the C adapters abort.
-    UserSession(oxpinyin_user::UserStoreError),
+    UserSession(oxpinyin_core::user::UserStoreError),
 }
 
 /// A mask loop's remap, advanced one library at a time by
@@ -135,7 +135,7 @@ pub enum OpenError {
 /// still to visit. Nothing past a stop is opened.
 #[derive(Debug)]
 pub(crate) struct RemapWalk {
-    originals: oxpinyin_user::SystemOriginals,
+    originals: oxpinyin_core::user::SystemOriginals,
     indices: std::ops::Range<u8>,
     /// One library's `_load_phrase_library`, not the mask loop: it maps an
     /// unloaded library, and a row whether or not the row names a user file.
@@ -293,7 +293,7 @@ impl AddonSet {
 /// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at the pin
 /// `074a2219`): the library a token names. The high four bits are masked.
 const fn library_of(token: u32) -> u8 {
-    oxpinyin_user::phrase_index_library_index(token)
+    oxpinyin_core::user::phrase_index_library_index(token)
 }
 
 pub(crate) use oxpinyin_core::model::TokenPhrase;
@@ -322,8 +322,8 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<oxpinyin_core::ChewingKey> {
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
     system: SystemDictionary<
-        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_user::data::dict::SystemTables,
+        &'a oxpinyin_core::user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_core::user::data::dict::SystemTables,
     >,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
@@ -459,7 +459,7 @@ impl<'a> RuntimeDict<'a> {
     }
 
     fn item_possibility(
-        item: oxpinyin_user::SystemItem<'_>,
+        item: oxpinyin_core::user::SystemItem<'_>,
         query: &[oxpinyin_core::ChewingKey],
     ) -> (u32, u32) {
         let mut total = 0_u32;
@@ -534,8 +534,10 @@ impl<'a> RuntimeDict<'a> {
             // 074a2219). The user lookup lists only tokens with a session
             // item, which `with_user_item` reads.
             let pronunciation = self.user.with_user_item(token, |view| {
-                let (matched, total) =
-                    Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+                let (matched, total) = Self::item_possibility(
+                    oxpinyin_core::user::SystemItem::Replayed(view),
+                    &path.keys,
+                );
                 (u64::from(matched), u64::from(total))
             });
             PricedToken {
@@ -549,7 +551,7 @@ impl<'a> RuntimeDict<'a> {
             // A second imported reading need not have an index entry
             // (074a2219 pinyin.cpp:563-582). ONESTEP still reads its item.
             let (matched, total) =
-                Self::item_possibility(oxpinyin_user::SystemItem::Replayed(view), &path.keys);
+                Self::item_possibility(oxpinyin_core::user::SystemItem::Replayed(view), &path.keys);
             let pronunciation = Some((u64::from(matched), u64::from(total)));
             PricedToken {
                 item: TrellisItem {
@@ -609,8 +611,8 @@ impl<'a> RuntimeDict<'a> {
     pub fn system(
         &self,
     ) -> &SystemDictionary<
-        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_user::data::dict::SystemTables,
+        &'a oxpinyin_core::user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_core::user::data::dict::SystemTables,
     > {
         &self.system
     }
@@ -763,7 +765,8 @@ impl<'a> RuntimeDict<'a> {
     pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
-        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
+        let token = token
+            & (oxpinyin_core::user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_core::user::PHRASE_MASK);
         if self.is_system_library(library_of(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
@@ -1298,8 +1301,8 @@ impl Dictionary for RuntimeDict<'_> {
 #[derive(Clone, Copy)]
 pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<
-        &'a oxpinyin_user::data::phrase_libraries::PhraseLibraries,
-        &'a oxpinyin_user::data::lm::BigramTables,
+        &'a oxpinyin_core::user::data::phrase_libraries::PhraseLibraries,
+        &'a oxpinyin_core::user::data::lm::BigramTables,
         &'a Cell<u32>,
     >,
     user: &'a UserStore,
@@ -1478,8 +1481,8 @@ pub type RuntimeSession<'a> =
 /// training and saving.
 pub struct Runtime {
     paths: StoragePaths,
-    system: oxpinyin_user::data::dict::SystemTables,
-    model: oxpinyin_user::data::lm::BigramTables,
+    system: oxpinyin_core::user::data::dict::SystemTables,
+    model: oxpinyin_core::user::data::lm::BigramTables,
     user: UserStore,
     conf: TableConf,
     addons: RefCell<AddonSet>,
@@ -1541,7 +1544,7 @@ fn check_profile_early(
     conf: &TableConf,
     user_dir: Option<&Path>,
     law: UserConfLaw,
-) -> Result<Option<oxpinyin_user::ProfileCheck>, OpenError> {
+) -> Result<Option<oxpinyin_core::user::ProfileCheck>, OpenError> {
     let versions = SystemVersions::from_conf(conf);
     let Some(user_dir) = user_dir else {
         UserStore::check_profile_unnamed(&versions, law);
@@ -1597,10 +1600,10 @@ fn check_profile_early(
 fn open_user_store(
     conf: &TableConf,
     user_dir: &Path,
-    originals: &mut oxpinyin_user::SystemOriginals,
+    originals: &mut oxpinyin_core::user::SystemOriginals,
     rows: &LibraryLoopRows<'_>,
     law: UserConfLaw,
-    check: oxpinyin_user::ProfileCheck,
+    check: oxpinyin_core::user::ProfileCheck,
 ) -> Result<UserStore, OpenError> {
     let versions = SystemVersions::from_conf(conf);
     UserStore::open_libpinyin_checked(user_dir, originals, rows, versions, law, check).map_err(
@@ -1681,7 +1684,7 @@ impl Runtime {
     /// pinyin facade's init passes [`UserConfLaw::Pinyin`], the zhuyin
     /// facade's [`UserConfLaw::Zhuyin`] — the two pins share the data
     /// directory and the user file set but not the open counter's
-    /// lifecycle (`oxpinyin_user::persistence::UserConfLaw`). The law also
+    /// lifecycle (`oxpinyin_core::user::persistence::UserConfLaw`). The law also
     /// selects the facade's system tables: only pinyin opens the addon
     /// indexes and punctuation table (074a2219 `pinyin.cpp:416-440`;
     /// `zhuyin.cpp:270-358`).
@@ -1725,8 +1728,8 @@ impl Runtime {
         // library's items leave both the lookups and the unigram denominator,
         // as freeing the sub-index does upstream.
         let library_mask = Cell::new(0);
-        let mut originals = oxpinyin_user::system_originals(
-            oxpinyin_user::data::phrase_libraries::PhraseLibraries::empty(),
+        let mut originals = oxpinyin_core::user::system_originals(
+            oxpinyin_core::user::data::phrase_libraries::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
         );
         // The library loop: each default row is judged, mapped and merged
@@ -1760,7 +1763,7 @@ impl Runtime {
                     UserStore::open_transient(
                         std::mem::replace(
                             &mut originals,
-                            oxpinyin_user::SystemOriginals::new(
+                            oxpinyin_core::user::SystemOriginals::new(
                                 Default::default(),
                                 UserFileLayout::from_conf(&conf),
                             ),
@@ -1795,7 +1798,7 @@ impl Runtime {
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
         let mut lm =
-            oxpinyin_user::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+            oxpinyin_core::user::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
@@ -1827,11 +1830,11 @@ impl Runtime {
         })
     }
 
-    fn libraries(&self) -> &oxpinyin_user::data::phrase_libraries::PhraseLibraries {
+    fn libraries(&self) -> &oxpinyin_core::user::data::phrase_libraries::PhraseLibraries {
         self.user.originals().phrase_libraries()
     }
 
-    fn originals_mut(&mut self) -> &mut oxpinyin_user::SystemOriginals {
+    fn originals_mut(&mut self) -> &mut oxpinyin_core::user::SystemOriginals {
         self.user.originals_mut()
     }
 
@@ -1909,7 +1912,7 @@ impl Runtime {
         if !user.has_user_directory() {
             return Ok(false);
         }
-        let mut check = oxpinyin_user::TrainingCheck::default();
+        let mut check = oxpinyin_core::user::TrainingCheck::default();
         let prepared =
             state
                 .read(self.dict(), self.lm())
@@ -1918,7 +1921,7 @@ impl Runtime {
                         &mut check,
                         history
                             .last()
-                            .map_or(oxpinyin_user::SENTENCE_START, |token| token.value()),
+                            .map_or(oxpinyin_core::user::SENTENCE_START, |token| token.value()),
                         token.value(),
                     )
                     .map_err(|error| EngineError::UserModel(error.to_string()))
@@ -1928,16 +1931,16 @@ impl Runtime {
             Ok(Some(plan)) => plan.observe(user),
             Ok(None) => Ok(false),
             Err(EngineError::UserModel(error)) => match check.fault() {
-                Some(oxpinyin_user::TrainingFault::ShortValue(token)) => {
+                Some(oxpinyin_core::user::TrainingFault::ShortValue(token)) => {
                     Err(EngineError::ShortTrainingPredecessor { token })
                 }
-                Some(oxpinyin_user::TrainingFault::PartialTail(token)) => {
+                Some(oxpinyin_core::user::TrainingFault::PartialTail(token)) => {
                     Err(EngineError::UnsafeTrainingPredecessor { token })
                 }
-                Some(oxpinyin_user::TrainingFault::SetFreqMiss(token)) => {
+                Some(oxpinyin_core::user::TrainingFault::SetFreqMiss(token)) => {
                     Err(EngineError::TrainingSetFreqMiss { token })
                 }
-                Some(oxpinyin_user::TrainingFault::FailedUserBigramStore(token)) => {
+                Some(oxpinyin_core::user::TrainingFault::FailedUserBigramStore(token)) => {
                     Err(EngineError::FailedUserBigramStore { token })
                 }
                 None => Err(EngineError::UserModel(error)),
@@ -1997,7 +2000,8 @@ impl Runtime {
     pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
         // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
         // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
-        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
+        let token = token
+            & (oxpinyin_core::user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_core::user::PHRASE_MASK);
         if !self.dict().library_visible(u32::from(library_of(token))) {
             return UnigramAdd::Missing;
         }
@@ -2008,7 +2012,7 @@ impl Runtime {
     }
 
     /// Publish dictionary remaps while retaining any unreplaced journal originals.
-    pub(crate) fn install_baselines(&mut self, originals: oxpinyin_user::SystemOriginals) {
+    pub(crate) fn install_baselines(&mut self, originals: oxpinyin_core::user::SystemOriginals) {
         self.originals_mut().publish_current(originals);
     }
 
@@ -2045,7 +2049,7 @@ impl Runtime {
     pub(crate) fn check_system_libraries(
         &self,
         only: Option<u8>,
-    ) -> oxpinyin_user::data::phrase_libraries::LibraryCheck {
+    ) -> oxpinyin_core::user::data::phrase_libraries::LibraryCheck {
         self.libraries().check_now(
             |nibble| {
                 only.is_some()
@@ -2084,7 +2088,7 @@ impl Runtime {
     /// # Errors
     /// The remap faults reported by `save_disk_baseline`.
     pub(crate) fn read_save_baseline(
-        originals: &oxpinyin_user::SystemOriginals,
+        originals: &oxpinyin_core::user::SystemOriginals,
         unloaded: u32,
         nibble: u8,
     ) -> Result<SaveBaseline, SaveRemapFault> {
@@ -2102,7 +2106,8 @@ impl Runtime {
         let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
             return Ok(SaveBaseline::Keep);
         };
-        match oxpinyin_user::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
+        match oxpinyin_core::user::data::phrase_library::PhraseLibrary::open_retaining_layout(path)
+        {
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                 Err(SaveRemapFault::ChunkHeaderRead)
@@ -2131,7 +2136,10 @@ impl Runtime {
     /// Call it before [`Runtime::load_library`] makes the library visible,
     /// so no reader sees the session's state of the freed sub-index.
     #[must_use]
-    pub(crate) fn reload_system_library(&mut self, index: u8) -> oxpinyin_user::SystemOriginals {
+    pub(crate) fn reload_system_library(
+        &mut self,
+        index: u8,
+    ) -> oxpinyin_core::user::SystemOriginals {
         let mut walk = self.begin_remap(index..index.saturating_add(1), true);
         self.remap_next(&mut walk);
         self.finish_system_remap(walk)
@@ -2154,7 +2162,7 @@ impl Runtime {
             indices
         };
         RemapWalk {
-            originals: oxpinyin_user::SystemOriginals::new(Default::default(), layout),
+            originals: oxpinyin_core::user::SystemOriginals::new(Default::default(), layout),
             indices,
             reload,
         }
@@ -2191,7 +2199,9 @@ impl Runtime {
             if !libraries.is_loaded(index) {
                 continue;
             }
-            match oxpinyin_user::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
+            match oxpinyin_core::user::data::phrase_library::PhraseLibrary::open_retaining_layout(
+                &path,
+            ) {
                 Ok(library) => {
                     walk.originals.insert_mapping(index, path, library);
                     return Some(RemapStep::Mapped(index));
@@ -2221,7 +2231,7 @@ impl Runtime {
     pub(crate) fn finish_system_remap(
         &mut self,
         walk: RemapWalk,
-    ) -> oxpinyin_user::SystemOriginals {
+    ) -> oxpinyin_core::user::SystemOriginals {
         walk.originals
     }
 

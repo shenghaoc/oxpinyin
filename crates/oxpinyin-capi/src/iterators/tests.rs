@@ -18,7 +18,7 @@ use crate::iterators::{
 use crate::test_support::{TempUserDir, cstr, open};
 
 #[cfg(unix)]
-use oxpinyin_user::USER_DICTIONARY;
+use oxpinyin_core::user::USER_DICTIONARY;
 
 use std::ptr;
 
@@ -40,14 +40,15 @@ fn export_an_unspellable_reading(page: *mut u8) {
                 .expect("syllable")
                 .index()
         };
-        let ni = oxpinyin_user::toned_key(syllable("ni"), 0).expect("key");
+        let ni = oxpinyin_core::user::toned_key(syllable("ni"), 0).expect("key");
         store
             .add_phrase_in(USER_DICTIONARY, &"你".into(), &[ni], Some(5))
             .expect("a reading the engine spells");
         // One past `MAX_KEY_TONE`: the add checks lengths only.
-        let past_the_tones = oxpinyin_user::toned_key(syllable("hao"), oxpinyin_user::MAX_KEY_TONE)
-            .expect("key")
-            + (1 << oxpinyin_user::KEY_TONE_SHIFT);
+        let past_the_tones =
+            oxpinyin_core::user::toned_key(syllable("hao"), oxpinyin_core::user::MAX_KEY_TONE)
+                .expect("key")
+                + (1 << oxpinyin_core::user::KEY_TONE_SHIFT);
         store
             .add_phrase_in(USER_DICTIONARY, &"好".into(), &[past_the_tones], Some(3))
             .expect("stored unchecked");

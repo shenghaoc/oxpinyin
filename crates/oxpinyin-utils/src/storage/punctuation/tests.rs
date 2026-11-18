@@ -1,6 +1,6 @@
 use super::*;
 use oxpinyin_core::store::{DefaultStore, RawReadStore, WriteStore};
-use oxpinyin_user::data::{
+use oxpinyin_core::user::data::{
     PunctTable,
     row_format::punct::{decode_puncts, encode_puncts},
 };

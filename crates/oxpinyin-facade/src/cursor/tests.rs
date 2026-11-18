@@ -178,7 +178,7 @@ mod native {
     use crate::{ContextCore, InstanceCore, ToneForwarding};
     use oxpinyin_core::OptionBits;
     use oxpinyin_core::engine::CandidateKind;
-    use oxpinyin_user::UserConfLaw;
+    use oxpinyin_core::user::UserConfLaw;
 
     fn luoma_xian() -> (ContextCore, InstanceCore) {
         let mut context = open_context(crate::PINYIN_DEFAULT_OPTION_WORD);

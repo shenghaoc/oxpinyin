@@ -15,9 +15,9 @@ use std::ffi::CString;
 use std::path::Path;
 
 use oxpinyin_core::input::tool;
-use oxpinyin_user::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin_user::data::table_info::{TableConf, TableConfError};
-use oxpinyin_user::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
+use oxpinyin_core::user::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin_core::user::data::table_info::{TableConf, TableConfError};
+use oxpinyin_core::user::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
 
 /// The loaded system data.
 pub(crate) struct Tables {

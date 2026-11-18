@@ -4,7 +4,7 @@
 
 use crate::runtime::RuntimeDict;
 use oxpinyin_core::PhraseText;
-use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
+use oxpinyin_core::user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore};
 
 use crate::ContextCore;
 
@@ -112,7 +112,7 @@ fn plan_add(
     // item text is read without its pronunciation view.
     let same_library: Vec<u32> = tokens
         .into_iter()
-        .filter(|token| oxpinyin_user::phrase_index_library_index(*token) == index)
+        .filter(|token| oxpinyin_core::user::phrase_index_library_index(*token) == index)
         .collect();
     if same_library.len() > 1 {
         return ImportPlan::Abort;
