@@ -346,6 +346,8 @@ A second list on rustc's cdylib link would therefore add exports, not restrict t
 The relink uses one `-exported_symbols_list`, derived from the `.ver` globals with a `_` prefix on each name.
 The restriction therefore holds for every archive symbol, including the transitive `#[export_name]` symbols.
 The replacement keeps cargo-c's install name, compatibility and current versions, architecture and deployment target.
+The macOS build targets the macOS version of the machine that builds it.
+`just packaging install` sets `MACOSX_DEPLOYMENT_TARGET` from `sw_vers -productVersion` for cargo-c, unless the environment already sets it, and the relink keeps the deployment target that cargo-c's dylib records.
 
 Before the atomic replacement, both `nm -gU` and the export trie (`dyld_info -exports`) must equal the `.ver` set.
 `nm -gU` covers all external defined types, including data, absolute and weak symbols.

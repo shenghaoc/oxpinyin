@@ -327,10 +327,9 @@ jobs:
           cargo-nextest: 'true'
           cargo-c: 'true'
       - run: rustup show active-toolchain
-      # GLib and pkg-config from Homebrew; tkrzw from the vcpkg overlay port,
-      # first on PKG_CONFIG_PATH.
-      - name: Install GLib and pkg-config (Homebrew)
-        run: brew install glib pkgconf
+      # The macOS runner image already provides GLib and pkgconf from Homebrew,
+      # and installing them again only costs time, so the job installs neither.
+      # tkrzw comes from the vcpkg overlay port, first on PKG_CONFIG_PATH.
       # vcpkg's binary cache, as in the Windows job above. The key also names
       # the vcpkg root: the installed libtkrzw records its own path there as
       # its install name, so an archive built under another root is not reused.

@@ -389,7 +389,12 @@ def install_library(argv, tools):
     if layout.destdir:
         command.append(f'--destdir={layout.destdir}')
     system = tools.text(['uname', '-s'])
-    tools.heavy([*command, *layout.passthru], cwd=crate)
+    env = None
+    if system == 'Darwin':
+        # rustc, cc and cargo-c read the target from the environment; the relink
+        # below keeps the value that cargo-c's dylib records.
+        env = {**tools.env, 'MACOSX_DEPLOYMENT_TARGET': deployment_target(tools)}
+    tools.heavy([*command, *layout.passthru], cwd=crate, env=env)
     data = pc_text(layout.library, selected, tools.root)
     for name, value in [('prefix', layout.prefix), ('exec_prefix', '${prefix}'),
                         ('libdir', layout.pc_libdir), ('includedir', layout.pc_includedir)]:
@@ -455,6 +460,11 @@ class DarwinIdentity:
                    field(identity, 'current version'), architecture[0], minimum)
 
 
+def deployment_target(tools):
+    """The macOS version of the build machine, unless MACOSX_DEPLOYMENT_TARGET names one."""
+    return tools.env.get('MACOSX_DEPLOYMENT_TARGET') or tools.text(['sw_vers', '-productVersion']).strip()
+
+
 def relink_darwin(layout, destination, tools, backend):
     """Link once under our allowlist, outside rustc's additive export lists."""
     from .abi import HostFacts, darwin_export_trie, exported_symbols, version_globals
@@ -470,6 +480,10 @@ def relink_darwin(layout, destination, tools, backend):
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lc++')
+    # The link always takes libc++. tkrzw's pkg-config flags and the Kyoto
+    # Cabinet flags can already name it; ld warns about a repeated library.
+    if '-lc++' not in flags:
+        flags.append('-lc++')
     with tempfile.TemporaryDirectory(prefix=destination.name + '.relink.', dir=destination.parent) as scratch:
         exports, temporary = Path(scratch) / 'exports', Path(scratch) / destination.name
         exports.write_text(''.join('_' + name + '\n' for name in sorted(expected)))
@@ -483,7 +497,7 @@ def relink_darwin(layout, destination, tools, backend):
                      '-Wl,-current_version,' + identity.current_version,
                      '-Xlinker', '-exported_symbols_list', '-Xlinker', exports,
                      '-Xlinker', '-force_load', '-Xlinker', archive, '-Wl,-dead_strip',
-                     *flags, *lto, '-lc++', '-liconv', '-lresolv'])
+                     *flags, *lto, '-liconv', '-lresolv'])
         actual = exported_symbols(tools.text(['nm', '-gU', temporary]), HostFacts('Darwin'))
         try:
             trie = darwin_export_trie(tools.text(['dyld_info', '-exports', temporary]))
@@ -514,7 +528,8 @@ def backend_flags(backend, tools, cxx):
         return ['-ldb']
     done = optional_pkg_config(['--libs', backend], tools)
     flags = done.stdout.decode().split() if not done.status else ['-l' + backend]
-    return [*flags, *([cxx] if backend == 'kyotocabinet' else [])]
+    # Kyoto Cabinet's pkg-config output can already name the C++ runtime.
+    return [*flags, *([cxx] if backend == 'kyotocabinet' and cxx not in flags else [])]
 
 
 def relink(argv, tools):
