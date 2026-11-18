@@ -30,6 +30,7 @@ import time
 from . import doctor, model, slot
 from .process import ROOT, capture, fail, run, text
 from .runners import Finished
+from tools import cachedir
 from tools.oracle import image as images
 from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime
@@ -199,7 +200,9 @@ class Provision:
 
     @property
     def env_file(self):
-        return Path(self.env.get('OXPINYIN_ORACLE_ENV') or str(Path.home() / '.oxpinyin-oracle.env'))
+        """OXPINYIN_ORACLE_ENV, else oracle.env in the cache root (tools/cachedir.py)."""
+        override = self.env.get('OXPINYIN_ORACLE_ENV')
+        return Path(override) if override else cachedir.root(self.env) / 'oracle.env'
 
     def log(self, message):
         print(f'[{int(time.monotonic() - self.started):4d}s] {message}', file=sys.stderr, flush=True)
@@ -731,11 +734,15 @@ class Provision:
         flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
                  '--cidfile', '{cidfile}', '--cpus', '{jobs}']
         owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
+        # wslc 3.0.5.0 fails a run ("Catastrophic failure", E_UNEXPECTED) when containers that
+        # bind the same host directories start at the same moment, and every cell binds the
+        # checkout and the caches. One cell runs at a time there, with the whole CPU budget.
+        serial = ['--workers', '1'] if images.is_wslc(self.ctr) else []
         # A subprocess preserves the invocation's environment without mutating
         # Python's process-global environ during pool scheduling.
         return run([sys.executable, '-X', 'utf8', '-m', 'tools.dev.pool', 'run',
                     '--label', label, '--items', ','.join(cells), '--cpus', str(self.jobs),
-                    '--log', str(log), *owner, '--', *self.in_image_command(args, flags)],
+                    '--log', str(log), *serial, *owner, '--', *self.in_image_command(args, flags)],
                    cwd=self.root, env=self.env, check=False)
 
     def libraries(self):

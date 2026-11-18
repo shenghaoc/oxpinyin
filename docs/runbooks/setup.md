@@ -604,6 +604,10 @@ commands unchanged. These `wslc` limits apply:
   networking is not supported". The adapter drops `--network host` and prints
   a one-line notice that the default network of the runtime is used. `--network
   none` is kept.
+- **One cell at a time.** `wslc` 3.0.5.0 fails a run with "Catastrophic failure"
+  (`E_UNEXPECTED`) when containers that bind the same host directories start at
+  the same moment. Provisioning therefore runs the library and data builds one
+  cell at a time on `wslc`, each with the whole CPU budget.
 - **Mounts need Windows paths.** `wslc` reads an MSYS path such as
   `/c/...` as a path inside its VM and mounts an empty directory. The capture
   launcher therefore passes the checkout and data as native Windows paths. `:ro` and a
@@ -634,6 +638,9 @@ The name of each entry carries its pin, so a new pin gets a new entry:
 - `model20-<digest>`: the model20 archive and its extraction.
 - `vcpkg/` and `vcpkg-binary-cache/`: the overlay checkout and binary cache of `just provision`, unless `VCPKG_ROOT` selects an existing checkout.
 - `pin-<commit>`: the provisioning cache, with the pin prefixes and their build trees.
+
+`oracle.env`, the [environment file](cloud.md#the-environment-file) of `just provision-oracle`,
+is also in the root. It carries no pin in its name: every run rewrites it.
 
 The model and contract-data fetchers allow one active fetch per pinned entry on a
 shared filesystem that supports file locking and atomic rename. An overlapping

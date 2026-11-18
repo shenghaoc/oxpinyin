@@ -11,15 +11,16 @@ The host may be a root container, may supply its own container runtime, and
 may reach the network only through an HTTPS proxy. The provisioner handles
 each case. It limits custom trust to an existing proxy certificate or an
 explicit CA path. It verifies the current pin/recipe provenance and the recorded build/data bytes.
-When several worktrees share a host, each worktree has its own
-`OXPINYIN_ORACLE_ENV` file. Worktrees share `OXPINYIN_CACHE` by default.
+Worktrees share `OXPINYIN_CACHE` by default, and with it the environment file.
+A worktree that needs its own file sets `OXPINYIN_ORACLE_ENV`.
 
 ## Host requirements
 
 `just provision` runs natively and never starts a container.
 `just provision-oracle` runs it first, then provisions the pin oracle in containers.
-The oracle setup requires Linux on a supported native platform:
-linux/amd64 or linux/arm64. `tools.dev.provision` selects the platform from
+The oracle setup runs on Linux, macOS and Windows, through the
+[container runtime](setup.md#container-runtimes) of the host. The containers are
+linux/amd64 or linux/arm64: `tools.dev.provision` selects the platform from
 the machine architecture and refuses any other.
 The two recipes together require:
 
@@ -32,7 +33,8 @@ The two recipes together require:
   downloads. The environment owner then installs it, or the work moves to a
   host that already has a suitable Valgrind.
 - uv on `PATH` meeting the requirement in `uv.toml`, plus writable managed-Python and cache locations. See [native setup](setup.md) for installing uv.
-- For `just provision-oracle` only: a usable Podman or Docker runtime and the backend
+- For `just provision-oracle` only: a usable [container runtime](setup.md#container-runtimes)
+  (Apple `container` on macOS, `wslc` on Windows, then Podman, then Docker) and, on Linux, the backend
   dump utilities described below. Both recipes need the native build prerequisites in
   [native setup](setup.md).
   Non-root accounts must arrange missing backend utilities with the owner.
@@ -147,15 +149,17 @@ use `--dev-tools` in place of `--python-only`.
 
 ### The environment file
 
-`just provision-oracle` writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
-overrides the path) after its container steps succeed. Its private step
+On Linux, `just provision-oracle` writes `oracle.env` in the
+[cache directory](setup.md#cache-directory) (`OXPINYIN_ORACLE_ENV`
+overrides the path) after its container steps succeed. `just cache-root` prints that directory.
+An earlier `~/.oxpinyin-oracle.env` is not read, moved or removed. Its private step
 `provision oracle-env` is the one writer; `just provision` never writes the file.
 The file names every cell of the provisioning cache that passes the checks below.
 Every run rewrites the file. A runner sources it first:
 
 ```sh
-. ~/.oxpinyin-oracle.env                       # reference cell, tkrzw
-PINYIN_ORACLE_DBM=kc . ~/.oxpinyin-oracle.env  # another cell
+. "$(just cache-root)/oracle.env"                       # reference cell, tkrzw
+PINYIN_ORACLE_DBM=kc . "$(just cache-root)/oracle.env"  # another cell
 ```
 
 The file also keeps the cells of other caches that the
