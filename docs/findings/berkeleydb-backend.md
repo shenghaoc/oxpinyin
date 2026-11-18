@@ -34,14 +34,16 @@ backend, as with the other peers.
 - Tests: the shared store read and write suites,
   the `pin_data` tests in `crates/oxpinyin-store/src/bdb/tests.rs` (files the pin's
   libdb wrote, from `fixtures/w3/db/`; their `table.conf` differs from the
-  other backends' sets only in `database format:BerkeleyDB`), and the C harnesses
-  `tools/bdb/hash-walk.c` and `tools/bdb/btree-order.c`.
-  `just sanitize bdb` runs the Rust suite under ASan, then the C harnesses
-  under ASan and UBSan. The harness walks a `user_bigram.db` that the
-  backend wrote (`--example bdb_write_profile`). It checks every
-  `SingleGram` invariant with no Rust in the reader. The `bdb-sanitizers`
-  job in `.github/workflows/store-backends.yml` runs the same gate.
+  other backends' sets only in `database format:BerkeleyDB`).
+  `just sanitize bdb` runs the Rust suite under ASan. The `bdb-sanitizers` job in
+  `.github/workflows/store-backends.yml` runs the same gate.
   libdb's own internals are not instrumented.
+- Files this backend wrote: `an_attached_bigram_saves_as_a_replaced_mode_0600_hash_copy`
+  checks that a saved `user_bigram.db` is a `DB_HASH` file with mode 0600 and that
+  every record is copied. The `save-929` cases of
+  `tools/bisection/reverse_cross_open.py` check that the pin reads a profile that
+  oxpinyin wrote and saves it again. They run by hand, on the bdb, kc and tkrzw
+  cells. No workflow runs them.
 
 ## Decisions
 
@@ -71,5 +73,5 @@ That is the [store key-ordering contract](store-key-ordering.md), so the
 backend sets no comparator. Setting one would reorder files libpinyin
 wrote. Little-endian `u32` array keys therefore walk in raw-byte order, not
 integer order, and a 1-element key precedes the 2-element key that extends it.
-`tools/bdb/btree-order.c` and the shared key-ordering suite hold this; the
-suite asserts that this backend walks the same keys as tkrzw and Kyoto Cabinet.
+The shared key-ordering suite holds this: it asserts that this backend walks
+the same keys as tkrzw and Kyoto Cabinet.

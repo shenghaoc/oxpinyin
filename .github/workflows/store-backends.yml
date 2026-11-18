@@ -35,8 +35,7 @@ name: Store backends
 #     backend through the sanitizer service in tools/dev/test_runner.py, which
 #     `just sanitize` also uses, on the date-pinned nightly that
 #     tools/dev/test_runner.py names: the tkrzw suite under ASan, the
-#     Berkeley DB suite under ASan plus the C call-pattern harnesses under
-#     ASan+UBSan, and the Kyoto Cabinet suite under ASan + LeakSanitizer.
+#     Berkeley DB suite under ASan, and the Kyoto Cabinet suite under ASan + LeakSanitizer.
 #     Each feeds
 #     store-backends-gate, so a finding turns that check red. On a
 #     BerkeleyDB distro the system bigram.db is BDB and every session
@@ -129,7 +128,7 @@ jobs:
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the utilities' per-cell tests and their data under
-          # crates/oxpinyin-utils, the backend provisioning under tools/bdb, tools/tkrzw and
+          # crates/oxpinyin-utils, the backend provisioning under tools/tkrzw and
           # .github/actions/tkrzw,
           # service (tools/dev/test_runner.py), the toolchain pins (the
           # sanitizer nightly is in fuzz/rust-toolchain.toml) and this gate's
@@ -146,7 +145,6 @@ jobs:
             --also tools/dev/ci_tree.py \
             --also tools/dev/ci_tree.test.py \
             --also tools/bisection/cells-for-diff.py \
-            --also tools/bdb \
             --also tools/tkrzw \
             --also .github/actions/tkrzw \
             --also vcpkg-overlays \
@@ -426,18 +424,14 @@ jobs:
   bdb-sanitizers:
     needs: changes
     if: needs.changes.outputs.run == 'true' && needs.changes.outputs.reuse != 'true'
-    # The Berkeley DB feature's own suite under ASan, plus the C
-    # call-pattern harnesses under ASan+UBSan, via the same
+    # The Berkeley DB feature's own suite under ASan, via the same
     # sanitizer service used by `just sanitize bdb`. The hazards
-    # are the DBT plumbing and cursor buffers (Rust, ASan) and the
-    # SingleGram chunk arithmetic the C harness mirrors (ASan+UBSan —
-    # rustc has no `undefined` sanitizer, so the C half is where UBSan
-    # has something to instrument). On a BerkeleyDB distro the system
+    # are the DBT plumbing and cursor buffers (Rust, ASan). libdb's own
+    # internals are not instrumented. On a BerkeleyDB distro the system
     # bigram.db is BDB and every session opens it through this FFI, so
     # the lane feeds store-backends-gate like tkrzw-sanitizers does.
     #
-    # The harness half needs libdb-dev (the system libdb the backend links
-    # and the -ldb it compiles against) and gcc for the C probes.
+    # The job needs libdb-dev, the system libdb the backend links.
     name: bdb backend sanitizers
     runs-on: *ubuntu
     timeout-minutes: 45
@@ -460,7 +454,7 @@ jobs:
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
         # backend binds (and whose db.h bindgen reads); libclang-dev is
-        # bindgen's runtime dependency; gcc builds the C harnesses.
+        # bindgen's runtime dependency.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
@@ -486,7 +480,7 @@ jobs:
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| instrumented suite + C harnesses | ${ELAPSED:-—}s |"
+            echo "| instrumented suite | ${ELAPSED:-—}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   kc-sanitizers:

@@ -35,7 +35,7 @@ Usage, with CMD = uv run --managed-python python -X utf8 tools/bisection/cells-f
     CMD                                          # origin/main...HEAD
     CMD BASE                                     # BASE...HEAD
     CMD --limit 0 BASE                           # list every match, not the first 10 per check
-    CMD --run-flag --also tools/bdb BASE         # run=true or run=false
+    CMD --run-flag --also tools/tkrzw BASE       # run=true or run=false
     CMD --run-flag --run-without-base BASE       # run=true when BASE gives no diff
 """
 import argparse
