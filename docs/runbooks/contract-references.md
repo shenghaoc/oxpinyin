@@ -25,7 +25,7 @@ needs the pin, so it is a local command:
 uv run --managed-python python -X utf8 \
   tools/bisection/reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX \
   --data "$(just fetch-contract-data)" \
-  target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
+  target/debug/liboxpinyin_capi.so target/debug/liboxzhuyin_capi.so
 ```
 
 The command runs four handoff cases: `issue1114-collision-load-save` and

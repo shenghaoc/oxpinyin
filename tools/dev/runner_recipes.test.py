@@ -13,7 +13,7 @@ class ElfObservationTests(unittest.TestCase):
     def test_elf_observations_are_parsed_without_a_linux_host(self):
         self.assertEqual(pinyin_needed(' (NEEDED) Shared library: [libpinyin.so.15]\n Shared library: [libc.so.6]'), 'libpinyin.so.15')
         self.assertEqual(pinyin_resolved('libpinyin.so.15 => /build/lib/libpinyin.so.15 (0x1)'), '/build/lib/libpinyin.so.15')
-        self.assertEqual(pinyin_needed('Shared library: [libpinyin_capi.so]'), 'libpinyin_capi.so')
+        self.assertEqual(pinyin_needed('Shared library: [liboxpinyin_capi.so]'), 'liboxpinyin_capi.so')
 
 
 if __name__ == '__main__':

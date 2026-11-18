@@ -396,7 +396,7 @@ if sys.platform == 'win32':
             cls.env['PATH'] = str(installed/'bin') + os.pathsep + cls.env['PATH']
             cls.env['TEMP'] = cls.env['TMP'] = str(cls.root)
             cl = shutil.which('cl', path=cls.env['PATH'])
-            cls.lib = cls.root/'pinyin_capi.dll'
+            cls.lib = cls.root/'oxpinyin_capi.dll'
             source = cls.root/'stub.c'
             source.write_text('''#include <windows.h>
 #include <stdbool.h>
@@ -416,7 +416,7 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
 ''')
             done = subprocess.run([cl,'/nologo','/LD','/MD','/std:c11',source,
                 '/Fe:'+str(cls.lib),'/Fo:'+str(cls.root/'stub.obj'),str(installed/'lib/glib-2.0.lib'),
-                '/link','/IMPLIB:'+str(cls.root/'pinyin_capi.dll.lib')], env=cls.env,capture_output=True)
+                '/link','/IMPLIB:'+str(cls.root/'oxpinyin_capi.dll.lib')], env=cls.env,capture_output=True)
             if done.returncode:
                 raise AssertionError(done.stdout.decode(errors='replace')+done.stderr.decode(errors='replace'))
             # A late product dependency: beside the driver, outside the system directory.
@@ -426,7 +426,7 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
             if done.returncode:
                 raise AssertionError(done.stdout.decode(errors='replace')+done.stderr.decode(errors='replace'))
             cls.driver = cls.root/'bisect.exe'
-            prepare.native_driver(dict(windows=True, import_library=cls.root/'pinyin_capi.dll.lib'),cls.driver,cls.env)
+            prepare.native_driver(dict(windows=True, import_library=cls.root/'oxpinyin_capi.dll.lib'),cls.driver,cls.env)
             cls.env['MEASURE_PREFLIGHT'] = '1'
             done = cls.invoke()
             if done.returncode:

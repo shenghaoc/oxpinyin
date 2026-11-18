@@ -168,7 +168,7 @@ pub use types::lookup_candidate_type_t;
 // The shared test helpers name the exported functions through the library's
 // own name, as the verification tests do.
 #[cfg(test)]
-extern crate self as zhuyin_capi;
+extern crate self as oxzhuyin_capi;
 
 #[cfg(test)]
 mod test_support;

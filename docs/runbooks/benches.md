@@ -527,7 +527,7 @@ main-against-main validation is not a performance claim.
 set as in setup.md. Both arms use that checkout's `installed/x64-windows`
 pkg-config metadata and runtime DLLs. Each distinct SHA builds once with
 `cargo build --locked --release -p oxpinyin-capi`, default features and no
-added linker or debug flags. The artifact is `pinyin_capi.dll`, not a packaged
+added linker or debug flags. The artifact is `oxpinyin_capi.dll`, not a packaged
 libpinyin DLL. A′ is staged as on macOS. A run fails unless the imported ABI function's owning
 module is the arm's DLL and both arms load the same dependency files: every module outside the
 Windows system directory, such as tkrzw and GLib, plus the C runtime.

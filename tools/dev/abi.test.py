@@ -105,7 +105,7 @@ class AllocationFailureGateTests(unittest.TestCase):
              patch.object(abi.subprocess, 'run', return_value=SimpleNamespace(stdout='-I/glib -lglib-2.0')), \
              contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             status = abi.check_alloc_failure(SimpleNamespace(environment={}),
-                                             ['/pin', 'libpinyin_capi.so', 'libzhuyin_capi.so'])
+                                             ['/pin', 'liboxpinyin_capi.so', 'liboxzhuyin_capi.so'])
         return status, calls, output.getvalue(), errors.getvalue()
 
     def test_each_facade_is_probed_on_both_sides_with_a_user_directory_only(self):
@@ -115,9 +115,9 @@ class AllocationFailureGateTests(unittest.TestCase):
         data, pin_pinyin, pin_zhuyin = (str(Path(path)) for path in (
             '/pin/lib/libpinyin/data', '/pin/lib/libpinyin.so', '/pin/lib/libzhuyin.so'))
         self.assertEqual([argv[:4] for argv in probes], [
-            ['libpinyin_capi.so', data, 'pinyin', 'subject'],
+            ['liboxpinyin_capi.so', data, 'pinyin', 'subject'],
             [pin_pinyin, data, 'pinyin', 'pin'],
-            ['libzhuyin_capi.so', data, 'zhuyin', 'subject'],
+            ['liboxzhuyin_capi.so', data, 'zhuyin', 'subject'],
             [pin_zhuyin, data, 'zhuyin', 'pin']])
         self.assertEqual([len(argv) for argv in probes], [5, 5, 5, 5])
         self.assertEqual([Path(probes[0][4]).name, probes[1][4], Path(probes[2][4]).name, probes[3][4]],

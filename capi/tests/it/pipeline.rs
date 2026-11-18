@@ -24,7 +24,7 @@
 
 use crate::support::{TempUserDir, cstr, system_dir};
 
-use pinyin_capi::{
+use oxpinyin_capi::{
     LookupCandidate, PinyinInstance, pinyin_alloc_instance, pinyin_choose_candidate,
     pinyin_free_instance, pinyin_get_candidate, pinyin_guess_candidates, pinyin_guess_sentence,
     pinyin_init, pinyin_mask_out, pinyin_parse_more_chewings, pinyin_parse_more_full_pinyins,
@@ -33,7 +33,7 @@ use pinyin_capi::{
 
 use std::os::raw::c_char;
 
-fn open_fixture(user_dir: &str) -> (*mut pinyin_capi::PinyinContext, *mut PinyinInstance) {
+fn open_fixture(user_dir: &str) -> (*mut oxpinyin_capi::PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
     // SAFETY: the returned handles are live until `pinyin_free_instance`/
@@ -61,7 +61,7 @@ fn auxiliary_text_answers_at_every_offset_of_the_parsed_input() {
         let mut aux: *mut c_char = std::ptr::null_mut();
         assert!(
             unsafe {
-                pinyin_capi::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, &raw mut aux)
+                oxpinyin_capi::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, &raw mut aux)
             },
             "aux text must answer at offset {cursor}"
         );
@@ -69,7 +69,7 @@ fn auxiliary_text_answers_at_every_offset_of_the_parsed_input() {
     }
 
     unsafe { pinyin_free_instance(instance) };
-    unsafe { pinyin_capi::pinyin_fini(context) };
+    unsafe { oxpinyin_capi::pinyin_fini(context) };
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn the_chewing_pipeline_produces_auxiliary_text_too() {
         let mut aux: *mut c_char = std::ptr::null_mut();
         assert!(
             unsafe {
-                pinyin_capi::pinyin_get_chewing_auxiliary_text(instance, cursor, &raw mut aux)
+                oxpinyin_capi::pinyin_get_chewing_auxiliary_text(instance, cursor, &raw mut aux)
             },
             "chewing aux text must answer at offset {cursor}"
         );
@@ -95,7 +95,7 @@ fn the_chewing_pipeline_produces_auxiliary_text_too() {
     }
 
     unsafe { pinyin_free_instance(instance) };
-    unsafe { pinyin_capi::pinyin_fini(context) };
+    unsafe { oxpinyin_capi::pinyin_fini(context) };
 }
 
 #[test]
@@ -130,5 +130,5 @@ fn the_train_reset_save_cycle_runs_and_masks_out_clean() {
     let _ = unsafe { pinyin_save(context) };
 
     unsafe { pinyin_free_instance(instance) };
-    unsafe { pinyin_capi::pinyin_fini(context) };
+    unsafe { oxpinyin_capi::pinyin_fini(context) };
 }

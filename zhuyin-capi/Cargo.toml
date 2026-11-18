@@ -22,12 +22,9 @@ description = "The libzhuyin C ABI implementation, with libzhuyin.so.15 release 
 # The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
 # from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`
 # with its own version script, src/Makefile.am:108-125 at the pin
-# 0c5e80e1). The Cargo package name is project identity; the built artifact
-# is deliberately `zhuyin_capi` (the checked-in header stays `zhuyin.h` with
-# the exported `zhuyin_*` symbols), and the INSTALLED file is
-# `libzhuyin.so.15` via [package.metadata.capi.library].
+# 0c5e80e1). The INSTALLED file is `libzhuyin.so.15` via
+# [package.metadata.capi.library].
 [lib]
-name = "zhuyin_capi"
 # cdylib is the ABI; rlib lets in-tree tools call the same symbols
 # in-process; staticlib is required by cargo-c and shipped alongside.
 crate-type = ["cdylib", "staticlib", "rlib"]

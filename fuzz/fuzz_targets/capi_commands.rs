@@ -38,7 +38,7 @@ use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use pinyin_capi::fuzz_api::{
+use oxpinyin_capi::fuzz_api::{
     ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
     lookup_candidate_type_t, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_choose_candidate,

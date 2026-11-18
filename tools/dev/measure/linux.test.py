@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 from tools.dev import pool
 from tools.dev.measure import bench, identity, prepare, recipes
 from tools.dev.runners import Finished
-from tools.dev.test_support import PERF_LIBRARY as LIBRARY, perf_row
+from tools.dev.test_support import PERF_LIBRARY as LIBRARY, capi_metadata, perf_row
 
 
 class CampaignFixture:
@@ -182,9 +182,10 @@ class LinuxPreparation(PreparationFixture, unittest.TestCase):
 
     def test_the_build_is_the_packaged_default_backend_from_the_overlay(self):
         from tools.dev import cell, vcpkg
-        metadata = {'packages': [{'name': 'oxpinyin-capi', 'features': {'default': ['declared']}}]}
+        def metadata(root, env=None):
+            return capi_metadata(root, features={'default': ['declared']})
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(bench, 'run'), \
-             mock.patch.object(bench, 'capture', return_value=types.SimpleNamespace(status=0, stdout=json.dumps(metadata).encode())), \
+             mock.patch('tools.dev.packaging.cargo_metadata', side_effect=metadata), \
              mock.patch('tools.dev.packaging.install_library') as install, \
              mock.patch.object(identity, 'sha256', return_value='digest'), \
              mock.patch.object(cell, 'declared_default', return_value='tkrzw'), \

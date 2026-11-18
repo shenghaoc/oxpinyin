@@ -85,10 +85,10 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
         print(f'fatal: unsupported host {facts.system}', file=sys.stderr)
         return 2
     extension = 'so' if facts.system == 'Linux' else 'dylib'
-    libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
+    libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'liboxpinyin_capi.{extension}', 'oxpinyin-capi'),
                   settings.root / 'capi/libpinyin.ver', 'pinyin',
                   set()),
-                 ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxzhuyin-capi'),
+                 ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'liboxzhuyin_capi.{extension}', 'oxzhuyin-capi'),
                   settings.root / 'zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
     status = 0
     for name, library, version, prefix, hooks in libraries:
@@ -339,8 +339,8 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
     if facts.system != 'Linux' and not static_only:
         print('fatal: the dynamic half needs Linux (LeakSanitizer); re-run with --static-only', file=sys.stderr)
         return 2
-    gates = [('libpinyin', 'oxpinyin-capi', 'pinyin.h', 'pinyin_capi'),
-             ('libzhuyin', 'oxzhuyin-capi', 'zhuyin.h', 'zhuyin_capi')]
+    gates = [('libpinyin', 'oxpinyin-capi', 'pinyin.h', 'oxpinyin_capi'),
+             ('libzhuyin', 'oxzhuyin-capi', 'zhuyin.h', 'oxzhuyin_capi')]
     status = 0
     for abi, _, header, _ in gates:
         status |= check_static(settings, abi, header)

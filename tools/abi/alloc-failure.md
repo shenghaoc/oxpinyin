@@ -16,8 +16,8 @@ library also works:
 ```sh
 cargo build --locked -p oxpinyin-capi -p oxzhuyin-capi
 just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
-  "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
-  "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
+  "$CARGO_TARGET_DIR/debug/liboxpinyin_capi.so" \
+  "$CARGO_TARGET_DIR/debug/liboxzhuyin_capi.so"
 ```
 
 Both sides allocate the returned strings and the keyboard vector with the GLib calls of the pin

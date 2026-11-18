@@ -299,6 +299,6 @@ expects `gprintf.c:351: failed to allocate memory` on stderr then SIGABRT, with 
 ```sh
 cargo build --locked -p oxpinyin-capi -p oxzhuyin-capi
 just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
-  "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
-  "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
+  "$CARGO_TARGET_DIR/debug/liboxpinyin_capi.so" \
+  "$CARGO_TARGET_DIR/debug/liboxzhuyin_capi.so"
 ```

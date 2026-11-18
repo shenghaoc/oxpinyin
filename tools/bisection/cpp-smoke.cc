@@ -3,7 +3,7 @@
 // The fork consumes pinyin.h from C++ `.cc` files; this TU is the minimal
 // regression for that class of build breakage. It includes the generated
 // header, compiles as C++ (so the `extern "C"` guard and the fork-referenced
-// typedefs/constants must be valid C++), links `libpinyin_capi.so`, and
+// typedefs/constants must be valid C++), links `liboxpinyin_capi.so`, and
 // exercises the W8 gap symbol with its pinned semantics.
 //
 // Build/run: just cpp-smoke.

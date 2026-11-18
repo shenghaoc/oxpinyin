@@ -9,7 +9,7 @@ use std::ffi::CString;
 
 use std::ptr;
 
-use zhuyin_capi::{
+use oxzhuyin_capi::{
     zhuyin_choose_candidate, zhuyin_fini, zhuyin_get_candidate, zhuyin_get_candidate_string,
     zhuyin_get_n_candidate, zhuyin_guess_candidates_after_cursor,
     zhuyin_guess_candidates_before_cursor, zhuyin_init,
@@ -49,7 +49,7 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
         assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
         assert!(unsafe {
-            zhuyin_capi::zhuyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+            oxzhuyin_capi::zhuyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
         });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };
