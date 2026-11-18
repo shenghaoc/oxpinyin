@@ -846,9 +846,7 @@ impl ContextCore {
             Err(crate::runtime::LibraryError::Row(fault)) => Err(match fault {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
-                    if let Some(dir) = runtime.system_dir() {
-                        null_chunk_refused(dir);
-                    }
+                    null_chunk_refused(runtime.system_dir());
                     LibraryRowAssert::NullChunkName
                 }
                 RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,

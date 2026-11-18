@@ -109,11 +109,7 @@ impl CapiContext {
             // the pin dies of SIGSEGV on the empty chunk (class (b)), so
             // the call fails with one warning.
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName)
-                if self
-                    .core
-                    .runtime
-                    .system_dir()
-                    .is_none_or(oxpinyin::facade::null_chunk_asserts) =>
+                if oxpinyin::facade::null_chunk_asserts(self.core.runtime.system_dir()) =>
             {
                 std::process::abort()
             }

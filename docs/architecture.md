@@ -212,7 +212,7 @@ Its rows determine which libraries exist, their filenames and which calls accept
 Its header supplies λ and the versions used to check the user profile.
 `runtime` opens the same system directory as `pinyin_init` for that backend.
 libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets came from that sequence over the mini subset of the model (recorded evidence).
-The caller supplies directories to `Runtime`, which retains `StoragePaths`.
+The caller supplies the system directory to `Runtime`, which retains it.
 A distribution layout is not auto-detected.
 
 ## Portability

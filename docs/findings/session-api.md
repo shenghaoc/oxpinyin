@@ -29,7 +29,7 @@ Each item below is a place where a portable API usually leaks:
 - **No GSettings, no dconf, no registry.** Settings arrive as a `SessionSettings` value.
   A settings store is a shell concern outside the engine.
 - **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%` or `NSSearchPathForDirectoriesInDomains`.
-  `StoragePaths` carries the directories as data, and `oxpinyin` holds the value.
+  The caller supplies the system directory to `Runtime` as data, and `Runtime` holds it.
 - **No `cfg(target_os)` and no platform types** anywhere in the portable crates.
 - **No threading contract.** `Session` is not required to be `Send` or `Sync`.
   Sessions are instance-per-context and main-thread-friendly, which is what the TSF, IMK and ArkTS models want.
@@ -53,8 +53,6 @@ A shell can then render partial acceptance without re-deriving it.
 ## Storage and configuration
 
 ```rust
-pub struct StoragePaths { system_data_dirs: Vec<PathBuf> }
-
 pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
 ```
 

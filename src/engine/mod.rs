@@ -11,7 +11,6 @@ mod error;
 mod nbest;
 mod phrase;
 mod session;
-mod storage;
 #[cfg(feature = "tools")]
 pub use session::tool;
 
@@ -31,6 +30,5 @@ pub use session::{
     SelectionTarget, SentencePart, Session, SessionSettings, SessionState, TrainingPlan,
     amplified_frequency,
 };
-pub use storage::StoragePaths;
 
 pub(crate) use session::{check_lookup_offset_range, normalize_lookup_offset, parse_time_keys};

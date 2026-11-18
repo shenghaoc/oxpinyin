@@ -42,7 +42,7 @@ use crate::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary,
 };
-use crate::engine::{EngineError, Session, SessionSettings, StoragePaths};
+use crate::engine::{EngineError, Session, SessionSettings};
 use crate::user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
     UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
@@ -1476,7 +1476,7 @@ pub type RuntimeSession<'a> =
 /// is absent: that store is transient, and its directory flag controls
 /// training and saving.
 pub struct Runtime {
-    paths: StoragePaths,
+    system_dir: PathBuf,
     system: crate::data::dict::SystemTables,
     model: crate::data::lm::BigramTables,
     user: UserStore,
@@ -1818,7 +1818,7 @@ impl Runtime {
         };
 
         Ok(Self {
-            paths: StoragePaths::new(vec![system_dir.to_path_buf()]),
+            system_dir: system_dir.to_path_buf(),
             system: dict,
             model: lm,
             user,
@@ -2015,23 +2015,19 @@ impl Runtime {
     }
 
     /// Loads addon library `index` from the system directory; `Ok(false)`
-    /// when the runtime has no system directory or the library is already
-    /// loaded.
+    /// when the library is already loaded.
     ///
     /// # Errors
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
     pub(crate) fn load_system_addon_reporting(&mut self, index: u8) -> Result<bool, LibraryError> {
-        let Some(system_dir) = self.paths.system_data_dirs().first() else {
-            return Ok(false);
-        };
-        self.dict().load_addon_reporting(index, system_dir)
+        self.dict().load_addon_reporting(index, &self.system_dir)
     }
 
-    /// The system directory the libraries load from, when there is one.
+    /// The system directory the libraries load from.
     #[must_use]
-    pub fn system_dir(&self) -> Option<&Path> {
-        self.paths.system_data_dirs().first().map(PathBuf::as_path)
+    pub fn system_dir(&self) -> &Path {
+        &self.system_dir
     }
 
     /// One validation pass over the system files this operation remaps.
@@ -2145,11 +2141,6 @@ impl Runtime {
 
     fn begin_remap(&self, indices: std::ops::Range<u8>, reload: bool) -> RemapWalk {
         let layout = UserFileLayout::from_conf(&self.conf);
-        let indices = if self.paths.system_data_dirs().is_empty() {
-            0..0
-        } else {
-            indices
-        };
         RemapWalk {
             originals: crate::user::SystemOriginals::new(Default::default(), layout),
             indices,
@@ -2162,7 +2153,7 @@ impl Runtime {
     /// returned is opened until the next call, so a caller that stops there
     /// leaves every later library untouched.
     pub(crate) fn remap_next(&self, walk: &mut RemapWalk) -> Option<RemapStep> {
-        let dir = self.paths.system_data_dirs().first()?;
+        let dir = &self.system_dir;
         let libraries = self.libraries();
         while let Some(index) = walk.indices.next() {
             if !(1..16).contains(&index) {
