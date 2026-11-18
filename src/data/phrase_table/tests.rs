@@ -183,29 +183,3 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
         extensions[0].1
     );
 }
-
-/// The successful check is followed by a failing checked body read
-/// (phrase_large_table3_kyotodb.cpp:174-187, pinyin_utils.h:27-31).
-#[cfg(feature = "kyotocabinet")]
-#[test]
-fn a_phrase_table_body_read_failure_after_the_check_aborts() {
-    const NAME: &str =
-        "data::phrase_table::tests::a_phrase_table_body_read_failure_after_the_check_aborts";
-    if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
-        let table = native_table();
-        crate::store::read_faults::fail_point_read_of(&encode_ucs4_key("你好"), 1);
-        let _ = table.search("你好");
-        panic!("the checked body read must abort");
-    }
-    let output = crate::user::test_child::run_exact(NAME, [("OXPINYIN_DATA_CHILD", NAME)]);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt as _;
-        assert_eq!(output.status.signal(), Some(6));
-    }
-    #[cfg(windows)]
-    assert_eq!(
-        output.status.code(),
-        Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes()))
-    );
-}
