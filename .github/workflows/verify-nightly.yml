@@ -116,6 +116,7 @@ jobs:
             fuzz/seeds/capi-commands/double-pinyin
             fuzz/seeds/capi-commands/first-run
             fuzz/seeds/capi-commands/import-export
+            fuzz/seeds/capi-commands/stale-sentence
           )
           status=0
           for seed in "${seeds[@]}" "${capi_seeds[@]}"; do

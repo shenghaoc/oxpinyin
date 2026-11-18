@@ -89,7 +89,7 @@ mod ffi;
 #[cfg(feature = "fuzz-api")]
 #[allow(missing_docs)]
 pub mod fuzz_api {
-    pub use crate::candidates::oxpinyin_train_aborts;
+    pub use crate::candidates::{oxpinyin_choose_aborts, oxpinyin_train_aborts};
     pub use crate::candidates::{
         pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
         pinyin_get_candidate_string, pinyin_get_candidate_type, pinyin_get_n_candidate,

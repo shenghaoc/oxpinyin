@@ -386,6 +386,15 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         )
     }
 
+    /// Whether the pin's NBEST choose of row `rank` asserts: a missing
+    /// result, or a differing phrase whose constraint write answers zero
+    /// (`crate::engine::Session::nbest_choose_aborts`). Reads only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[must_use]
+    pub fn nbest_choose_aborts(&self, rank: u8) -> bool {
+        self.session.nbest_choose_aborts(rank)
+    }
+
     /// The default facade item's live unigram. Missing sub-indices and slots
     /// answer `None` (074a2219 `phrase_index.h:646-652`, `pinyin.cpp:2821-2834`).
     #[must_use]

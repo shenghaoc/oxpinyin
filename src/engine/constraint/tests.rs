@@ -196,6 +196,37 @@ fn diff_result_tail_phrase_spans_to_the_tail() {
     }
 }
 
+/// The n-best choose writes without validation (`pinyin.cpp:2515-2520`), so
+/// the array can be shorter than the results. The predicate answers the
+/// abort of `diff_result` (`phonetic_lookup.cpp:203`) and no other case.
+#[test]
+fn diff_result_refuses_only_a_differing_phrase_past_the_array() {
+    // The results of "nihao": the tail is 5 and the array had 6 cells.
+    let best = [span(0, 7, "你"), span(2, 8, "好")];
+    let other = [span(0, 7, "你"), span(2, 9, "浩")];
+    let earlier = [span(0, 6, "尼"), span(2, 8, "好")];
+
+    // `capi/tests/it/sentence.rs`: a guess on an empty matrix shrinks the
+    // array to 0 and keeps the results. The write of [2, 5) answers zero.
+    let empty = ConstraintStore::default();
+    assert!(empty.diff_result_refuses(&best, &other, 5));
+    // Rank 0 differs nowhere, so it writes nothing.
+    assert!(!empty.diff_result_refuses(&best, &best, 5));
+
+    // A normal choose after the shorter parse "ni" sizes the array to 3.
+    // The stale row that differs over [0, 2) fits, and the pin accepts it.
+    let mut shorter = ConstraintStore::default();
+    shorter.resize(3);
+    assert!(!shorter.diff_result_refuses(&best, &earlier, 5));
+    assert!(shorter.diff_result(&best, &earlier, 5));
+    assert!(matches!(
+        shorter.cell(0),
+        Some(Cell::OneStep { end: 2, .. })
+    ));
+    // The row that differs over [2, 5) ends past the same array.
+    assert!(shorter.diff_result_refuses(&best, &other, 5));
+}
+
 #[test]
 fn runs_report_start_and_end_with_gaps_between() {
     let mut store = ConstraintStore::default();
