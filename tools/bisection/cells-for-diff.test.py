@@ -83,6 +83,16 @@ class StoreCrateTests(unittest.TestCase):
                 repo.git('config', 'diff.renames', setting)
                 self.assertEqual(repo.checks()[1], ['crates/oxpinyin-store/src/moved.rs'])
 
+    def test_a_change_to_the_lockfile_alone_selects_the_backend_jobs(self):
+        # The lockfile pins the backends' build dependencies, such as bindgen's syn.
+        lock = 'version = 4\n\n[[package]]\nname = "bindgen"\ndependencies = [\n "{}",\n]\n'
+        repo = Repo(self, {'Cargo.lock': lock.format('syn 2.0.119')}, {'Cargo.lock': lock.format('syn 3.0.3')})
+        got = repo.checks()
+        self.assertEqual(got[1], ['Cargo.lock'])
+        self.assertEqual(fired(got), {1})
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
 
 class FeatureGateTests(unittest.TestCase):
     def test_a_gate_in_a_changed_file_fires_check_2_for_each_backend(self):
@@ -153,9 +163,9 @@ class CargoTomlTests(unittest.TestCase):
 
 class SelectionTests(unittest.TestCase):
     def test_a_diff_touching_none_fires_nothing(self):
-        base = {'README.md': 'a\n', 'crates/oxpinyin-core/src/lib.rs': 'a\n', 'settings.toml': 'a = 1\n', 'Cargo.lock': 'a\n'}
+        base = {'README.md': 'a\n', 'crates/oxpinyin-core/src/lib.rs': 'a\n', 'settings.toml': 'a = 1\n', 'fuzz/Cargo.lock': 'a\n'}
         head = {'README.md': 'bdb and tkrzw notes\n', 'crates/oxpinyin-core/src/lib.rs': '// bdb, kyotocabinet\n',
-                'settings.toml': 'tkrzw = 1\n', 'Cargo.lock': 'name = "kyotocabinet-sys"\n'}
+                'settings.toml': 'tkrzw = 1\n', 'fuzz/Cargo.lock': 'name = "kyotocabinet-sys"\n'}
         self.assertEqual(Repo(self, base, head).checks(), {1: [], 2: [], 3: []})
 
     def test_uncommitted_changes_are_not_part_of_the_diff(self):

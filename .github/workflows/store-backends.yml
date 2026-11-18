@@ -124,7 +124,7 @@ jobs:
         run: |
           # The backend rule is docs/runbooks/verification.md, rule 2, as
           # tools/bisection/cells-for-diff.py implements it for local runs:
-          # a path under crates/oxpinyin-store/, a feature = "<backend>" line
+          # a path under crates/oxpinyin-store/ or Cargo.lock, a feature = "<backend>" line
           # in a changed non-Markdown file, or a Cargo.toml line naming a
           # backend. --also adds this workflow's own infrastructure: the
           # workflow, the utilities' per-cell tests and their data under
