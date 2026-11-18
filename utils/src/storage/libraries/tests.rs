@@ -29,6 +29,7 @@ fn unigram_generation_counts_holes_and_refused_adds_in_the_facade_only() {
                     },
                 ),
             ]),
+            range_end: 4,
             total,
         });
         let mut libraries = Libraries { by_index, total };

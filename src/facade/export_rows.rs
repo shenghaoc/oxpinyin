@@ -462,8 +462,11 @@ impl ContextCore {
             next_pronunciation: 0,
             memo: Memo::default(),
         };
-        // `range.m_range_begin`: tokens start at 1 (`phrase_index.cpp:642`).
-        cursor.read(self).probe_from((u32::from(index) << 24) | 1);
+        // `range.m_range_begin`: tokens start at 1 (`phrase_index.cpp:642`),
+        // made a token with `PHRASE_INDEX_MAKE_TOKEN` (`:619`).
+        cursor
+            .read(self)
+            .probe_from(crate::phrase_index_make_token(index, 1));
         cursor
     }
 

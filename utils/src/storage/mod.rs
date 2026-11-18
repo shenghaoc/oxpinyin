@@ -104,11 +104,6 @@ pub(crate) fn load_table_conf() -> TableConf {
     }
 }
 
-/// `PHRASE_INDEX_MAKE_TOKEN(index, token)`.
-pub(crate) const fn make_token(library: u8, slot: u32) -> u32 {
-    ((library as u32) << 24) | slot
-}
-
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
     oxpinyin::input::path::path_to_bytes(std::path::Path::new(name)).to_vec()

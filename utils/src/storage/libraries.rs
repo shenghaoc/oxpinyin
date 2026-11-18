@@ -33,6 +33,9 @@ pub(crate) struct Library {
     pub name: CString,
     /// Slot → item, `compact()` order.
     pub items: BTreeMap<u32, oxpinyin::data::chunk_write::ChunkItem>,
+    /// `SubPhraseIndex::get_range`'s end (`src/storage/phrase_index.cpp:624-645`):
+    /// the offset count with trailing zeros trimmed, at least 1.
+    pub range_end: u32,
     /// `SubPhraseIndex::m_total_freq`, the stored header value the pin
     /// keeps and adjusts.
     pub total: u32,
@@ -104,6 +107,7 @@ impl Libraries {
             by_index[usize::from(index)] = Some(Library {
                 name: c_name.unwrap_or_default(),
                 items,
+                range_end: library.token_range().end,
                 total: library.total_freq(),
             });
             Ok(())
@@ -232,6 +236,7 @@ impl Libraries {
             self.by_index[usize::from(index)] = Some(Library {
                 name,
                 items,
+                range_end: reloaded.token_range().end,
                 total: reloaded.total_freq(),
             });
         }

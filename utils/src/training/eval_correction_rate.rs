@@ -28,7 +28,10 @@ use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::PhraseL
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{all_tokens, load_gram, load_table_conf, parse_segmented_line};
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
-use oxpinyin::{NULL_TOKEN, phrase_index_library_index};
+use oxpinyin::{
+    NULL_TOKEN, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_library_index,
+    phrase_index_make_token,
+};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
 const EVALS_TEXT: &std::ffi::CStr = c"evals2.text";
@@ -131,13 +134,20 @@ fn build_model(
     lambda: f32,
 ) -> EvalLanguageModel {
     let mut unigrams = BTreeMap::new();
-    for nibble in 0..16_u32 {
-        let base = nibble << 24;
-        let Some(library) = libraries.library(base) else {
+    for nibble in 0..PHRASE_INDEX_LIBRARY_COUNT {
+        let Some(library) = libraries.library(phrase_index_make_token(nibble, 0)) else {
             continue;
         };
-        for (slot, item) in library.items() {
-            unigrams.insert(base | slot, u64::from(item.unigram()));
+        // The pin reads a unigram with `get_phrase_item(token)`
+        // (`src/lookup/phonetic_lookup.h:646`, `:674`), which reads the slot
+        // `token & PHRASE_MASK` (`src/storage/phrase_index.h:646-652`,
+        // `phrase_index.cpp:180-187`). No token names a wider slot, and
+        // `items` walks slots in ascending order.
+        for (slot, item) in library.items().take_while(|(slot, _)| *slot <= PHRASE_MASK) {
+            unigrams.insert(
+                phrase_index_make_token(nibble, slot),
+                u64::from(item.unigram()),
+            );
         }
     }
     let unigram_total = u64::from(libraries.unigram_total());
