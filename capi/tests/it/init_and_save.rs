@@ -5,14 +5,11 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use crate::support::{drain_phrases, init_fixture_at};
+use crate::support::fresh_user_conf_line;
+#[cfg(unix)]
+use crate::support::train_once;
 
-#[cfg(unix)]
-use crate::support::PinyinContext;
-#[cfg(unix)]
-use crate::support::pinyin_free_instance;
-#[cfg(unix)]
-use crate::support::pinyin_guess_sentence;
+use crate::support::{drain_phrases, init_fixture_at};
 
 use crate::support::TempUserDir;
 use crate::support::cstr;
@@ -34,16 +31,6 @@ use crate::support::*;
 use std::path::Path;
 
 use std::ptr;
-
-#[cfg(unix)]
-/// Trains the top sentence of `nihao` once on a new instance.
-fn train_once(context: *mut PinyinContext) {
-    let instance = alloc(context);
-    assert_eq!(parse(instance, "nihao"), 5);
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert!(unsafe { crate::support::pinyin_train(instance, 0) });
-    unsafe { pinyin_free_instance(instance) };
-}
 
 /// A private system whose table.conf has `from` replaced by `to`.
 fn conf_system(parent: &Path, from: &str, to: &str) -> std::path::PathBuf {
@@ -164,19 +151,6 @@ fn recorded_open_counter(user_dir: &std::path::Path) -> Option<u32> {
         .lines()
         .find_map(|line| line.strip_prefix("open counter:"))
         .and_then(|value| value.trim().parse().ok())
-}
-
-/// The `open <user dir>/user.conf failed.` line a fresh user directory
-/// makes `pinyin_init` write: `UserTableInfo::load` prints it when the
-/// marker is missing, with no trailing newline (`table_info.cpp:332` at
-/// 074a2219).
-fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
-    // `g_build_filename` joins with the host's separator.
-    format!(
-        "open {}{}user.conf failed.",
-        user_dir.display(),
-        std::path::MAIN_SEPARATOR
-    )
 }
 
 // Windows only: the C API's UTF-8 paths reach the wide-character (UTF-16) file API.

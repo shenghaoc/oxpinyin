@@ -4,6 +4,8 @@
 )]
 
 // Nextest isolates the process-wide read-fault key by running each test in its own process.
+use crate::test_support::{PREDICTED_BIGRAM, PREDICTED_PREFIX, predicted_texts};
+
 use crate::test_support::{close, open_at, wrap_facade_total_to_zero};
 
 use super::select_prefix_rows;
@@ -28,7 +30,7 @@ use crate::test_support::{
     DEFAULT_SORT, TempUserDir, assert_aborts, cstr, gram_bytes, lookup, open, plant_bigram,
 };
 
-use crate::types::{PinyinInstance, lookup_candidate_type_t};
+use crate::types::lookup_candidate_type_t;
 
 use oxpinyin::PhraseText;
 
@@ -66,16 +68,6 @@ const OPTIONS: u32 = 0x18a;
 
 /// `DYNAMIC_ADJUST`.
 const DYNAMIC_ADJUST: u32 = 1 << 9;
-
-/// The texts of the rows `pinyin_guess_predicted_candidates` lists
-/// after `prefix`.
-fn predicted_texts(instance: *mut PinyinInstance, prefix: &std::ffi::CStr) -> Vec<String> {
-    assert!(unsafe { super::pinyin_guess_predicted_candidates(instance, prefix.as_ptr()) });
-    capture_rows(instance)
-        .into_iter()
-        .map(|(_, text, _)| text)
-        .collect()
-}
 
 /// `_compute_predicted_bigram_candidates` keeps one `PhraseItem` for
 /// the whole walk (`pinyin.cpp:2342` at the pin `074a2219`). It skips a
@@ -609,10 +601,6 @@ use crate::test_support::{
     replace_user_bigram, row_with, saved_user_phrase, set_phrase_table_row, unigram,
 };
 const TAG: u32 = 0x8000_0000;
-const PREDICTED_PREFIX: lookup_candidate_type_t =
-    lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
-const PREDICTED_BIGRAM: lookup_candidate_type_t =
-    lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE;
 
 /// A prefix row keeps the token the phrase table holds
 /// (`pinyin.cpp:2384-2404`; `phrase_large_table3.cpp:42-48`). Choosing it

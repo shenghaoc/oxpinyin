@@ -735,8 +735,6 @@ fn a_trailing_apostrophe_walks_as_the_pin_does(#[case] input: &str) {
 mod chewing_batch_force_tone {
     use super::*;
 
-    const PARITY: u32 = 0x18a;
-
     fn chewing_len(
         context: *mut crate::support::PinyinContext,
         instance: *mut crate::support::PinyinInstance,

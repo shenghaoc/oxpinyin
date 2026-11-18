@@ -3,9 +3,11 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::{IBUS_DEFAULT_SORT, Pair};
+
 use crate::support::{
     DEFAULT_SORT, LookupCandidate, PinyinContext, PinyinInstance, TempUserDir, assert_aborts, cstr,
-    lookup, lookup_candidate_type_t, open, pinyin_alloc_instance, pinyin_choose_candidate,
+    lookup, lookup_candidate_type_t, pinyin_alloc_instance, pinyin_choose_candidate,
     pinyin_clear_constraint, pinyin_fini, pinyin_free_instance, pinyin_get_candidate,
     pinyin_get_candidate_string, pinyin_get_candidate_type, pinyin_get_n_candidate,
     pinyin_guess_candidates, pinyin_guess_sentence, pinyin_init, pinyin_parse_more_full_pinyins,
@@ -14,59 +16,8 @@ use crate::support::{
 
 use std::ffi::c_uint;
 
-/// ibus preset 1 (the GSettings default): LONGER rows on (bit 0x2 clear).
-const IBUS_DEFAULT_SORT: c_uint = 0x1c;
-
 /// `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.h:56`).
 const SORT_WITHOUT_SENTENCE: c_uint = 0x1;
-
-/// A producing and a receiving instance, on one context or on two.
-struct Pair {
-    contexts: Vec<*mut PinyinContext>,
-    producer: *mut PinyinInstance,
-    receiver: *mut PinyinInstance,
-    _dirs: Vec<TempUserDir>,
-}
-
-impl Pair {
-    fn open(same_context: bool) -> Self {
-        let first = TempUserDir::new("foreign-producer");
-        let (context, producer) = open(first.path.to_str().expect("UTF-8 path"));
-        if same_context {
-            let receiver = unsafe { pinyin_alloc_instance(context) };
-            assert!(!receiver.is_null());
-            return Self {
-                contexts: vec![context],
-                producer,
-                receiver,
-                _dirs: vec![first],
-            };
-        }
-        let second = TempUserDir::new("foreign-receiver");
-        let (other, receiver) = open(second.path.to_str().expect("UTF-8 path"));
-        Self {
-            contexts: vec![context, other],
-            producer,
-            receiver,
-            _dirs: vec![first, second],
-        }
-    }
-
-    /// The receiving instance's context.
-    fn receiver_context(&self) -> *mut PinyinContext {
-        *self.contexts.last().expect("a context")
-    }
-}
-
-impl Drop for Pair {
-    fn drop(&mut self) {
-        unsafe { pinyin_free_instance(self.producer) };
-        unsafe { pinyin_free_instance(self.receiver) };
-        for context in &self.contexts {
-            unsafe { pinyin_fini(*context) };
-        }
-    }
-}
 
 fn parse_whole(instance: *mut PinyinInstance, input: &str) {
     assert_eq!(
@@ -167,15 +118,18 @@ fn a_normal_row_from_another_instance_forces_its_span_on_the_receiver(
     #[values(true, false)] same_context: bool,
 ) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "nihao");
-    parse_whole(pair.receiver, "nihao");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, text| {
+    parse_whole(pair.producer(), "nihao");
+    parse_whole(pair.receiver(), "nihao");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 5);
-    assert!(unsafe { pinyin_clear_constraint(pair.receiver, 0) });
-    assert!(!unsafe { pinyin_clear_constraint(pair.producer, 0) });
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        5
+    );
+    assert!(unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
+    assert!(!unsafe { pinyin_clear_constraint(pair.producer(), 0) });
 }
 
 /// The receiver's matrix decides: a span past it is refused, `offset + 0`,
@@ -183,14 +137,17 @@ fn a_normal_row_from_another_instance_forces_its_span_on_the_receiver(
 #[rstest::rstest]
 fn a_span_past_the_receivers_matrix_is_refused(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "nihao");
-    parse_whole(pair.receiver, "ni");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, text| {
+    parse_whole(pair.producer(), "nihao");
+    parse_whole(pair.receiver(), "ni");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 0);
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        0
+    );
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// A LONGER row trains the receiver's unigram by 483 and answers 1
@@ -198,29 +155,32 @@ fn a_span_past_the_receivers_matrix_is_refused(#[values(true, false)] same_conte
 #[rstest::rstest]
 fn a_longer_row_trains_the_receivers_unigram(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "ni");
-    assert!(unsafe { pinyin_guess_sentence(pair.producer) });
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, IBUS_DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, _| {
+    parse_whole(pair.producer(), "ni");
+    assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, IBUS_DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, _| {
         kind == lookup_candidate_type_t::LONGER_CANDIDATE
     });
-    let text = row_text(pair.producer, row);
-    let token = *lookup(pair.receiver, &text)
+    let text = row_text(pair.producer(), row);
+    let token = *lookup(pair.receiver(), &text)
         .first()
         .expect("the LONGER phrase");
     let (receiver_before, producer_before) = (
-        unigram_frequency(pair.receiver, token),
-        unigram_frequency(pair.producer, token),
+        unigram_frequency(pair.receiver(), token),
+        unigram_frequency(pair.producer(), token),
     );
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 1);
     assert_eq!(
-        unigram_frequency(pair.receiver, token),
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        1
+    );
+    assert_eq!(
+        unigram_frequency(pair.receiver(), token),
         receiver_before + 483
     );
     if !same_context {
-        assert_eq!(unigram_frequency(pair.producer, token), producer_before);
+        assert_eq!(unigram_frequency(pair.producer(), token), producer_before);
     }
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// The receiver's own sort option decides the
@@ -228,17 +188,20 @@ fn a_longer_row_trains_the_receivers_unigram(#[values(true, false)] same_context
 #[rstest::rstest]
 fn the_receivers_sort_option_selects_the_unigram_leg(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "nihao");
-    parse_whole(pair.receiver, "nihao");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
+    parse_whole(pair.producer(), "nihao");
+    parse_whole(pair.receiver(), "nihao");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
     assert!(unsafe {
-        pinyin_guess_candidates(pair.receiver, 0, DEFAULT_SORT | SORT_WITHOUT_SENTENCE)
+        pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT | SORT_WITHOUT_SENTENCE)
     });
-    let row = find_row(pair.producer, |kind, text| {
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 1);
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        1
+    );
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// An NBEST row reads only its rank; the results and the answer, the
@@ -255,34 +218,34 @@ fn an_nbest_row_selects_from_the_receivers_results(#[values(true, false)] same_c
     };
     for rank in [0_usize, 1] {
         let pair = Pair::open(same_context);
-        parse_whole(pair.producer, "nihao");
-        assert!(unsafe { pinyin_guess_sentence(pair.producer) });
-        assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
+        parse_whole(pair.producer(), "nihao");
+        assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
+        assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
         let mut count = 0;
-        assert!(unsafe { pinyin_get_n_candidate(pair.producer, &raw mut count) });
+        assert!(unsafe { pinyin_get_n_candidate(pair.producer(), &raw mut count) });
         let rows: Vec<_> = (0..count)
             .map(|index| {
                 let mut row = std::ptr::null_mut();
-                assert!(unsafe { pinyin_get_candidate(pair.producer, index, &raw mut row) });
+                assert!(unsafe { pinyin_get_candidate(pair.producer(), index, &raw mut row) });
                 row
             })
             .filter(|&row| {
-                row_type(pair.producer, row) == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                row_type(pair.producer(), row) == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
             })
             .collect();
         assert!(rows.len() > 1, "two sentence rows for nihao");
-        parse_whole(pair.receiver, "nihao");
-        assert!(unsafe { pinyin_guess_sentence(pair.receiver) });
+        parse_whole(pair.receiver(), "nihao");
+        assert!(unsafe { pinyin_guess_sentence(pair.receiver()) });
         assert_eq!(
-            unsafe { pinyin_choose_candidate(pair.receiver, 0, rows[rank]) },
+            unsafe { pinyin_choose_candidate(pair.receiver(), 0, rows[rank]) },
             5
         );
-        assert!(!unsafe { pinyin_clear_constraint(pair.producer, 0) });
+        assert!(!unsafe { pinyin_clear_constraint(pair.producer(), 0) });
         if rank == 0 {
-            assert_eq!(forced(pair.receiver), 0, "result 0 differs from nothing");
+            assert_eq!(forced(pair.receiver()), 0, "result 0 differs from nothing");
         } else {
             assert!(
-                forced(pair.receiver) > 0,
+                forced(pair.receiver()) > 0,
                 "result 1 forces where it differs"
             );
         }
@@ -297,14 +260,14 @@ fn an_nbest_row_on_a_receiver_without_results_aborts() {
         "foreign_candidates::an_nbest_row_on_a_receiver_without_results_aborts",
         || {
             let pair = Pair::open(true);
-            parse_whole(pair.producer, "ni");
-            assert!(unsafe { pinyin_guess_sentence(pair.producer) });
-            assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-            let row = find_row(pair.producer, |kind, _| {
+            parse_whole(pair.producer(), "ni");
+            assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
+            assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+            let row = find_row(pair.producer(), |kind, _| {
                 kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
             });
-            parse_whole(pair.receiver, "nihao");
-            unsafe { pinyin_choose_candidate(pair.receiver, 0, row) };
+            parse_whole(pair.receiver(), "nihao");
+            unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) };
         },
     );
 }
@@ -391,23 +354,29 @@ fn a_span_to_the_receivers_reserved_column_clears_and_forces_nothing() {
     assert!(unsafe { crate::support::pinyin_set_double_pinyin_scheme(pair.receiver_context(), 2) });
     assert_eq!(
         unsafe {
-            crate::support::pinyin_parse_more_double_pinyins(pair.receiver, cstr("nihk").as_ptr())
+            crate::support::pinyin_parse_more_double_pinyins(pair.receiver(), cstr("nihk").as_ptr())
         },
         4
     );
-    assert!(unsafe { pinyin_guess_candidates(pair.receiver, 0, DEFAULT_SORT) });
-    let own = find_row(pair.receiver, |kind, text| {
+    assert!(unsafe { pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT) });
+    let own = find_row(pair.receiver(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, own) }, 2);
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, own) },
+        2
+    );
 
-    parse_whole(pair.producer, "nihao");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, text| {
+    parse_whole(pair.producer(), "nihao");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 5);
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        5
+    );
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// The pin's second `validate_constraint` after `add_constraint`
@@ -417,14 +386,17 @@ fn a_span_to_the_receivers_reserved_column_clears_and_forces_nothing() {
 #[rstest::rstest]
 fn a_forcing_the_receiver_cannot_spell_is_dropped(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "ni");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, text| {
+    parse_whole(pair.producer(), "ni");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
     });
-    parse_whole(pair.receiver, "ma");
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 2);
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    parse_whole(pair.receiver(), "ma");
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        2
+    );
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// An end strictly inside a receiver key: a double-pinyin 你好 row
@@ -436,26 +408,32 @@ fn a_forcing_the_receiver_cannot_spell_is_dropped(#[values(true, false)] same_co
 #[test]
 fn a_span_ending_inside_a_receiver_key_clears_and_forces_nothing() {
     let pair = Pair::open(false);
-    assert!(unsafe { crate::support::pinyin_set_double_pinyin_scheme(pair.contexts[0], 2) });
+    assert!(unsafe { crate::support::pinyin_set_double_pinyin_scheme(pair.contexts()[0], 2) });
     assert_eq!(
         unsafe {
-            crate::support::pinyin_parse_more_double_pinyins(pair.producer, cstr("nihk").as_ptr())
+            crate::support::pinyin_parse_more_double_pinyins(pair.producer(), cstr("nihk").as_ptr())
         },
         4
     );
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer, |kind, text| {
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = find_row(pair.producer(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
     });
 
-    parse_whole(pair.receiver, "nihao");
-    assert!(unsafe { pinyin_guess_candidates(pair.receiver, 0, DEFAULT_SORT) });
-    let own = find_row(pair.receiver, |kind, text| {
+    parse_whole(pair.receiver(), "nihao");
+    assert!(unsafe { pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT) });
+    let own = find_row(pair.receiver(), |kind, text| {
         kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
     });
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, own) }, 2);
-    assert_eq!(unsafe { pinyin_choose_candidate(pair.receiver, 0, row) }, 4);
-    assert!(!unsafe { pinyin_clear_constraint(pair.receiver, 0) });
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, own) },
+        2
+    );
+    assert_eq!(
+        unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
+        4
+    );
+    assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
 
 /// The divided table gives Luoma `sian` (xian `[0, 4)`) the columns of
@@ -516,14 +494,14 @@ fn a_user_row_from_another_instance_is_removed_from_the_receivers_context(
 ) {
     use crate::support::{export_of, import_batch};
     let pair = Pair::open(same_context);
-    for context in &pair.contexts {
+    for context in pair.contexts() {
         assert_eq!(import_batch(*context, 7, &[("测侧", "ce'ce", 7)]), [true]);
     }
-    parse_whole(pair.producer, "cece");
-    assert!(unsafe { pinyin_guess_candidates(pair.producer, 0, DEFAULT_SORT) });
-    let row = user_row(pair.producer);
+    parse_whole(pair.producer(), "cece");
+    assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
+    let row = user_row(pair.producer());
 
-    assert!(unsafe { crate::support::pinyin_remove_user_candidate(pair.receiver, row) });
+    assert!(unsafe { crate::support::pinyin_remove_user_candidate(pair.receiver(), row) });
     assert!(export_of(pair.receiver_context(), 7).is_empty());
-    assert_eq!(export_of(pair.contexts[0], 7).is_empty(), same_context);
+    assert_eq!(export_of(pair.contexts()[0], 7).is_empty(), same_context);
 }

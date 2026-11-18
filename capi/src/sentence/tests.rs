@@ -3,17 +3,15 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::{Fixture, n_candidate};
+
 use crate::test_support::{alloc, open_at, parse, wrap_facade_total_to_zero};
 
 use super::*;
 
-use crate::candidates::pinyin_get_n_candidate;
-
 use crate::context::pinyin_fini;
 
 use crate::instance::pinyin_free_instance;
-
-use crate::parse::pinyin_parse_more_full_pinyins;
 
 use crate::sentence::{
     pinyin_get_character_offset, pinyin_guess_candidates, pinyin_guess_sentence,
@@ -21,18 +19,9 @@ use crate::sentence::{
 
 use crate::test_support::{TempUserDir, assert_aborts, cstr, open};
 
-use crate::types::{PinyinContext, PinyinInstance};
+use crate::types::PinyinInstance;
 
 use oxpinyin::{OptionBits, PhraseText};
-
-/// The value a test seeds an out-parameter with, to see it left alone.
-const UNTOUCHED: u32 = 0x00AB_CDEF;
-
-fn n_candidate(instance: *mut PinyinInstance) -> u32 {
-    let mut count = UNTOUCHED;
-    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
-    count
-}
 
 /// With the facade total wrapped to zero, the candidate guess aborts in
 /// the scorer (register row 61).
@@ -74,45 +63,6 @@ fn a_guess_with_no_word_row_ranks_nothing_on_a_zero_total() {
     unsafe { pinyin_fini(context) };
 }
 
-/// A context, its instance and the user directory they sit in, released in
-/// that order when the fixture drops. A death-test child aborts without
-/// dropping it; its scratch root removes the directory.
-struct Fixture {
-    context: *mut PinyinContext,
-    instance: *mut PinyinInstance,
-    _user_dir: TempUserDir,
-}
-
-impl Fixture {
-    /// A fresh instance with nothing parsed.
-    fn new(tag: &str) -> Self {
-        let user_dir = TempUserDir::new(tag);
-        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        Self {
-            context,
-            instance,
-            _user_dir: user_dir,
-        }
-    }
-
-    /// An instance over `text`, which parses to `parsed` bytes.
-    fn parsed(tag: &str, text: &str, parsed: usize) -> Self {
-        let fixture = Self::new(tag);
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(fixture.instance, cstr(text).as_ptr()) },
-            parsed
-        );
-        fixture
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        unsafe { pinyin_free_instance(self.instance) };
-        unsafe { pinyin_fini(self.context) };
-    }
-}
-
 #[test]
 fn the_character_offset_after_a_separator_aborts() {
     // The pin's _check_offset rejects a cursor immediately after a lone
@@ -128,7 +78,7 @@ fn the_character_offset_after_a_separator_aborts() {
             let fixture = Fixture::parsed("char-after-separator", "ni'hao", 6);
             // SAFETY: the fixture's instance is live and this thread alone
             // uses it.
-            let walk = unsafe { crate::state::instance_ref(fixture.instance) }
+            let walk = unsafe { crate::state::instance_ref(fixture.instance()) }
                 .core
                 .character_offset(&"你好".into(), 3);
             // Not `eprintln!`: libtest captures it and the abort drops it.
@@ -136,7 +86,7 @@ fn the_character_offset_after_a_separator_aborts() {
             let mut length = 0;
             unsafe {
                 pinyin_get_character_offset(
-                    fixture.instance,
+                    fixture.instance(),
                     cstr("你好").as_ptr(),
                     3,
                     &raw mut length,

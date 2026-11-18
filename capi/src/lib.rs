@@ -236,5 +236,10 @@ pub use types::PinyinOptionT;
 pub use user_data::pinyin_remember_user_input;
 
 // C publication and conversion tests live in sibling tests.rs files and tests/it.
+// The shared test helpers name the exported functions through the library's
+// own name, as the verification tests do.
+#[cfg(test)]
+extern crate self as pinyin_capi;
+
 #[cfg(test)]
 mod test_support;

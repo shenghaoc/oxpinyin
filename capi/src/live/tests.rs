@@ -3,23 +3,12 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+#[cfg(target_os = "linux")]
+use crate::test_support::open_descriptors;
+
 use super::{insert, is_live, register, remove, unregister};
 
 use crate::test_support::{TempUserDir, open};
-
-/// The descriptors this process holds on files under `dir`.
-// Linux only: /proc/self/fd.
-#[cfg(target_os = "linux")]
-fn open_descriptors(dir: &std::path::Path) -> usize {
-    let dir = dir.canonicalize().expect("system dir");
-    std::fs::read_dir("/proc/self/fd")
-        .expect("descriptor table")
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            std::fs::read_link(entry.path()).is_ok_and(|target| target.starts_with(&dir))
-        })
-        .count()
-}
 
 #[test]
 fn poisoned_mutex_aborts() {

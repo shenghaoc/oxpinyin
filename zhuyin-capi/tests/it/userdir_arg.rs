@@ -17,24 +17,14 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use std::ffi::CString;
+use crate::support::{names, system_dir_cstr};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use std::ptr;
 
 /// `USER_DICTIONARY` (`novel_types.h:161`).
 const USER_DICTIONARY: u8 = 7;
-
-/// The committed mini fixture (`fixtures/w3/<backend ext>`).
-fn system_dir_cstr() -> CString {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("w3")
-        .join(oxpinyin::data::DEFAULT_STORE_EXT);
-    CString::new(dir.to_str().expect("UTF-8 path")).expect("no interior NUL")
-}
 
 /// A fresh scratch directory. The thread keeps its `TempDir`, which
 /// removes the directory when the test's thread ends.
@@ -50,21 +40,6 @@ fn scratch(tag: &str) -> PathBuf {
     let path = dir.path().to_path_buf();
     SCRATCH.with_borrow_mut(|dirs| dirs.push(dir));
     path
-}
-
-fn names(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .expect("readable dir")
-        .map(|entry| {
-            entry
-                .expect("dir entry")
-                .file_name()
-                .into_string()
-                .expect("UTF-8 file name")
-        })
-        .collect();
-    names.sort();
-    names
 }
 
 #[test]

@@ -6,6 +6,8 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::predicted_texts;
+
 use crate::support::{close, export_order_fixture, init_fixture_at, partial_gram};
 
 use crate::support::{
@@ -526,18 +528,6 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
     }
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
-}
-
-/// The texts of the rows `pinyin_guess_predicted_candidates` lists
-/// after `prefix`.
-fn predicted_texts(instance: *mut PinyinInstance, prefix: &std::ffi::CStr) -> Vec<String> {
-    assert!(unsafe {
-        crate::support::pinyin_guess_predicted_candidates(instance, prefix.as_ptr())
-    });
-    capture_rows(instance)
-        .into_iter()
-        .map(|(_, text, _)| text)
-        .collect()
 }
 
 /// The predicted ranking uses the table.conf lambda: at λ = 1 every

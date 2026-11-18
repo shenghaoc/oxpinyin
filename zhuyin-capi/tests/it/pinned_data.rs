@@ -3,6 +3,8 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::open_on;
+
 use std::os::raw::c_char;
 
 use std::path::{Path, PathBuf};
@@ -11,7 +13,7 @@ use std::ptr;
 
 use crate::support::{
     TempUserDir, ZhuyinContext, ZhuyinInstance, assert_aborts, bytes_at, candidate_rows, close,
-    craft_tree, cstr, import, init_on, link_file, lookup_candidate_type_t, write_user_conf,
+    craft_tree, cstr, import, link_file, lookup_candidate_type_t, write_user_conf,
     zhuyin_alloc_instance, zhuyin_choose_candidate, zhuyin_get_sentence,
     zhuyin_guess_candidates_after_cursor, zhuyin_guess_sentence, zhuyin_guess_sentence_with_prefix,
     zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins, zhuyin_token_get_unigram_frequency,
@@ -22,15 +24,6 @@ use contract_data::contract_data_dir;
 
 #[path = "../../../tests/common/contract_data.rs"]
 mod contract_data;
-
-/// A context and instance on `system` with `user_dir`, which must open.
-fn open_on(system: &Path, user_dir: &Path) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
-    let context = init_on(system, Some(user_dir));
-    assert!(!context.is_null(), "zhuyin_init opens the pinned data");
-    let instance = unsafe { zhuyin_alloc_instance(context) };
-    assert!(!instance.is_null());
-    (context, instance)
-}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

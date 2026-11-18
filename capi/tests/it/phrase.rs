@@ -8,6 +8,8 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::{LOGS, capture_segment_log};
+
 use crate::support::take;
 
 use crate::support::{PinyinInstance, TempUserDir, cstr, open};
@@ -23,11 +25,7 @@ use pinyin_capi::{
     pinyin_token_get_unigram_frequency, pinyin_train, pinyin_unload_phrase_library,
 };
 
-use std::cell::RefCell;
-
-use std::ffi::{CStr, CString};
-
-use std::os::raw::{c_char, c_void};
+use std::ffi::CString;
 
 struct Fixture {
     context: *mut PinyinContext,
@@ -448,44 +446,6 @@ fn phrase_library_load_unload_contract() {
         pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
     });
     assert_eq!(array.elements().len(), 1);
-}
-
-type Log = (Option<String>, glib_sys::GLogLevelFlags, String);
-
-thread_local! {
-    static LOGS: RefCell<Option<Vec<Log>>> = const { RefCell::new(None) };
-}
-
-unsafe extern "C" fn capture_segment_log(
-    domain: *const c_char,
-    level: glib_sys::GLogLevelFlags,
-    message: *const c_char,
-    data: *mut c_void,
-) {
-    let captured = LOGS.with(|logs| {
-        let mut logs = logs.borrow_mut();
-        let Some(logs) = logs.as_mut() else {
-            return false;
-        };
-        let domain = (!domain.is_null()).then(|| {
-            // SAFETY: GLib supplies a live NUL-terminated domain;
-            // the default domain was excluded by the NULL check.
-            unsafe { CStr::from_ptr(domain) }
-                .to_string_lossy()
-                .into_owned()
-        });
-        // SAFETY: GLib's log message is live and NUL-terminated.
-        let message = unsafe { CStr::from_ptr(message) }
-            .to_string_lossy()
-            .into_owned();
-        logs.push((domain, level, message));
-        true
-    });
-    if !captured {
-        // SAFETY: Forward GLib's unchanged arguments for other test
-        // threads, whose thread-local capture is inactive.
-        unsafe { glib_sys::g_log_default_handler(domain, level, message, data) };
-    }
 }
 
 struct LogHandler {

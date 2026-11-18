@@ -3,12 +3,13 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+#[cfg(unix)]
+use crate::test_support::{directory_reads_as_a_chunk_here, init_private};
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::alloc;
+use crate::test_support::{files_of, train_once};
+
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use crate::test_support::init_at;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::parse;
 
 use crate::test_support::token_of;
 
@@ -17,17 +18,11 @@ use crate::candidates::{pinyin_choose_candidate, pinyin_train};
 #[cfg(unix)]
 use crate::config::pinyin_mask_out;
 
-#[cfg(unix)]
-use crate::context::pinyin_init;
-
 use crate::context::pinyin_save;
 
 use crate::test_support::with_store;
 
 use crate::instance::pinyin_reset;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::instance::pinyin_free_instance;
 
 use crate::sentence::pinyin_guess_sentence;
 
@@ -37,9 +32,6 @@ use crate::test_support::TempUserDir;
 use crate::test_support::candidate;
 use crate::test_support::open;
 
-#[cfg(unix)]
-use crate::test_support::cstr;
-
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use crate::test_support::plant_bigram;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
@@ -47,36 +39,10 @@ use crate::test_support::system_dir;
 
 use crate::types::PinyinInstance;
 
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::types::PinyinContext;
-
 use oxpinyin::user::SENTENCE_START;
 
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::Path;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-/// Every file of `dir` by name, with its bytes.
-fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
-    std::fs::read_dir(dir)
-        .expect("read the directory")
-        .map(|entry| {
-            let entry = entry.expect("an entry");
-            let name = entry.file_name().to_string_lossy().into_owned();
-            (name, std::fs::read(entry.path()).expect("read a file"))
-        })
-        .collect()
-}
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-/// Trains the top sentence of `nihao` once on a new instance.
-fn train_once(context: *mut PinyinContext) {
-    let instance = alloc(context);
-    assert_eq!(parse(instance, "nihao"), 5);
-    assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
-    unsafe { pinyin_free_instance(instance) };
-}
 
 /// Copies the regular files of `user` to `before`, next to it.
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
@@ -151,31 +117,6 @@ fn a_user_session_fault_aborts_the_init() {
     // No Rust panic text or other line: the pin writes none here but
     // glibc's assert line, the register's policy-accepted missing line.
     assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-}
-
-/// Whether a directory reads as a chunk on this host's temporary file
-/// system (register row 96); where it does not, a directory library is row
-/// 76's unmappable one (class (b)).
-#[cfg(unix)]
-fn directory_reads_as_a_chunk_here() -> bool {
-    let probe = tempfile::tempdir().expect("probe dir");
-    std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin::data::phrase_library::directory_reads_as_a_chunk(probe.path())
-}
-
-/// A context over a private system directory, with its user dir.
-#[cfg(unix)]
-fn init_private(
-    scratch: &std::path::Path,
-) -> (std::path::PathBuf, *mut crate::types::PinyinContext) {
-    let system = crate::test_support::private_system(scratch);
-    let user = scratch.join("user");
-    std::fs::create_dir_all(&user).expect("user dir");
-    let system_c = cstr(system.to_str().expect("UTF-8 path"));
-    let user_c = cstr(user.to_str().expect("UTF-8 path"));
-    (system, unsafe {
-        pinyin_init(system_c.as_ptr(), user_c.as_ptr())
-    })
 }
 
 /// One call that maps a system library again over a private system

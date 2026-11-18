@@ -3,6 +3,11 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+#[cfg(unix)]
+use crate::test_support::directory_reads_as_a_chunk_here;
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use crate::test_support::files_of;
+
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use crate::candidates::zhuyin_train;
 
@@ -35,22 +40,6 @@ use crate::test_support::cstr;
 
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use crate::types::ZhuyinContext;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use std::path::Path;
-
-/// The regular files of `dir` by name, with their bytes.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
-    std::fs::read_dir(dir)
-        .expect("read the directory")
-        .map(|entry| {
-            let entry = entry.expect("an entry");
-            let name = entry.file_name().to_string_lossy().into_owned();
-            (name, std::fs::read(entry.path()).expect("read a file"))
-        })
-        .collect()
-}
 
 /// Trains one sentence on `context`, so that the next save writes.
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
@@ -125,16 +114,6 @@ fn a_user_session_fault_aborts_the_init() {
     // No Rust panic text or other line: the pin writes none here but
     // glibc's assert line, the register's policy-accepted missing line.
     assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-}
-
-/// Whether a directory reads as a chunk on this host's temporary file
-/// system (register row 96); where it does not, a directory library is row
-/// 76's unmappable one (class (b)).
-#[cfg(unix)]
-fn directory_reads_as_a_chunk_here() -> bool {
-    let probe = tempfile::tempdir().expect("probe dir");
-    std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// One call over a private system directory whose library is a directory

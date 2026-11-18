@@ -165,5 +165,10 @@ pub use types::ZhuyinInstance;
 pub use types::lookup_candidate_type_t;
 
 // C publication and conversion tests live in sibling tests.rs files and tests/it.
+// The shared test helpers name the exported functions through the library's
+// own name, as the verification tests do.
+#[cfg(test)]
+extern crate self as zhuyin_capi;
+
 #[cfg(test)]
 mod test_support;

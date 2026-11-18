@@ -3,25 +3,29 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::{
+    IBUS_DEFAULT_SORT, NORMAL, PREDICTED_PUNCTUATION, Pair, user_row_of_dada,
+};
+
 use crate::test_support::packed_key;
 use crate::test_support::{alloc, close, init_at, open_at, parse, token_of};
 use crate::test_support::{candidate_at, saved_user_phrase};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_get_candidate_string, pinyin_get_candidate_type, pinyin_is_user_candidate,
-    pinyin_remove_user_candidate, pinyin_train,
+    pinyin_get_candidate_string, pinyin_get_candidate_type, pinyin_remove_user_candidate,
+    pinyin_train,
 };
 
 use crate::config::{pinyin_load_addon_phrase_library, pinyin_unload_phrase_library};
 
-use crate::context::{pinyin_fini, pinyin_init};
+use crate::context::pinyin_init;
 
 use crate::dict::{pinyin_token_add_unigram_frequency, pinyin_token_get_unigram_frequency};
 
 use crate::test_support::{capture_rows, predicted_row, with_store};
 
-use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 
 use crate::parse::pinyin_parse_more_full_pinyins;
 
@@ -56,11 +60,6 @@ use std::path::Path;
 
 use std::ptr;
 
-const NORMAL: lookup_candidate_type_t = lookup_candidate_type_t::NORMAL_CANDIDATE;
-
-const PREDICTED_PUNCTUATION: lookup_candidate_type_t =
-    lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE;
-
 /// The first row of `kind` in the current list.
 fn row_of(instance: *mut PinyinInstance, kind: lookup_candidate_type_t) -> *mut LookupCandidate {
     let index = capture_rows(instance)
@@ -68,21 +67,6 @@ fn row_of(instance: *mut PinyinInstance, kind: lookup_candidate_type_t) -> *mut 
         .position(|(found, _, _)| *found == kind)
         .unwrap_or_else(|| panic!("a {kind:?} row is listed"));
     candidate_at(instance, index)
-}
-
-/// The first NORMAL user row of `dada` on a new context over `user`.
-fn user_row_of_dada(user: &Path) -> (*mut PinyinInstance, *mut LookupCandidate) {
-    let (_context, instance) = open_at(user);
-    assert_eq!(parse(instance, "dada"), 4);
-    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
-    let rows = capture_rows(instance);
-    let index = (0..rows.len())
-        .find(|&index| {
-            let cand = candidate_at(instance, index);
-            rows[index].0 == NORMAL && unsafe { pinyin_is_user_candidate(instance, cand) }
-        })
-        .expect("a NORMAL user row");
-    (instance, candidate_at(instance, index))
 }
 
 /// The sentence of row 0 after a fresh `pinyin_guess_sentence`, or `None`
@@ -253,9 +237,6 @@ fn a_stored_words_row_is_chosen_through_its_handle_with_its_stored_text(
 
 /// `SORT_WITHOUT_SENTENCE_CANDIDATE`: the choose leg that only trains.
 const WITHOUT_SENTENCE: c_uint = 0x1;
-
-/// The ibus preset that leaves `SORT_WITHOUT_LONGER_CANDIDATE` clear.
-const IBUS_DEFAULT_SORT: c_uint = 0x1c;
 
 /// The open fixture, with `ni` parsed.
 struct Open {
@@ -707,49 +688,6 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
     unsafe { crate::context::pinyin_fini(context) };
 }
 
-/// A producing and a receiving instance, on one context or on two.
-struct Pair {
-    contexts: Vec<*mut PinyinContext>,
-    producer: *mut PinyinInstance,
-    receiver: *mut PinyinInstance,
-    _dirs: Vec<TempUserDir>,
-}
-
-impl Pair {
-    fn open(same_context: bool) -> Self {
-        let first = TempUserDir::new("foreign-producer");
-        let (context, producer) = open(first.path.to_str().expect("UTF-8 path"));
-        if same_context {
-            let receiver = unsafe { pinyin_alloc_instance(context) };
-            assert!(!receiver.is_null());
-            return Self {
-                contexts: vec![context],
-                producer,
-                receiver,
-                _dirs: vec![first],
-            };
-        }
-        let second = TempUserDir::new("foreign-receiver");
-        let (other, receiver) = open(second.path.to_str().expect("UTF-8 path"));
-        Self {
-            contexts: vec![context, other],
-            producer,
-            receiver,
-            _dirs: vec![first, second],
-        }
-    }
-}
-
-impl Drop for Pair {
-    fn drop(&mut self) {
-        unsafe { pinyin_free_instance(self.producer) };
-        unsafe { pinyin_free_instance(self.receiver) };
-        for context in &self.contexts {
-            unsafe { pinyin_fini(*context) };
-        }
-    }
-}
-
 fn unigram_or_zero(instance: *mut PinyinInstance, token: u32) -> u32 {
     let mut freq = 0;
     unsafe { pinyin_token_get_unigram_frequency(instance, token, &raw mut freq) };
@@ -770,56 +708,59 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
     use crate::test_support::{predicted_row, with_store};
 
     let pair = Pair::open(same_context);
-    let ni = *lookup(pair.receiver, "你").first().expect("你");
-    let hao = *lookup(pair.receiver, "好").first().expect("好");
-    assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer, cstr("你").as_ptr()) });
+    let ni = *lookup(pair.receiver(), "你").first().expect("你");
+    let hao = *lookup(pair.receiver(), "好").first().expect("好");
+    assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer(), cstr("你").as_ptr()) });
     let (prefix_row, word) = predicted_row(
-        pair.producer,
+        pair.producer(),
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
     let (receiver_before, producer_before) = (
-        unigram_or_zero(pair.receiver, word),
-        unigram_or_zero(pair.producer, word),
+        unigram_or_zero(pair.receiver(), word),
+        unigram_or_zero(pair.producer(), word),
     );
-    assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver, prefix_row) });
-    assert_eq!(unigram_or_zero(pair.receiver, word), receiver_before + 483);
+    assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver(), prefix_row) });
+    assert_eq!(
+        unigram_or_zero(pair.receiver(), word),
+        receiver_before + 483
+    );
     if !same_context {
-        assert_eq!(unigram_or_zero(pair.producer, word), producer_before);
+        assert_eq!(unigram_or_zero(pair.producer(), word), producer_before);
     }
 
     // Seed both predecessor buckets. The producer holds 你 and the
     // receiver holds 好, including when they share one context.
-    for &instance in &[pair.producer, pair.receiver] {
+    for &instance in &[pair.producer(), pair.receiver()] {
         // SAFETY: the live context has no reader retained across this write.
         let context = unsafe { crate::state::instance_context_mut(instance) };
         let store = context.core.user_store_mut();
         store.set_bigram_count(ni, word, 10).unwrap();
         store.set_bigram_count(hao, word, 20).unwrap();
     }
-    assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer, cstr("你").as_ptr()) });
+    assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer(), cstr("你").as_ptr()) });
     let (bigram_row, bigram_word) = predicted_row(
-        pair.producer,
+        pair.producer(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
     );
     assert_eq!(bigram_word, word);
-    assert!(unsafe { pinyin_guess_predicted_candidates(pair.receiver, cstr("好").as_ptr()) });
-    let before = with_store(pair.receiver, |store| store.bigram_count(hao, word)).unwrap();
-    assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver, bigram_row) });
+    assert!(unsafe { pinyin_guess_predicted_candidates(pair.receiver(), cstr("好").as_ptr()) });
+    let before = with_store(pair.receiver(), |store| store.bigram_count(hao, word)).unwrap();
+    assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver(), bigram_row) });
     assert_eq!(
-        with_store(pair.receiver, |store| store.bigram_count(hao, word)).unwrap(),
+        with_store(pair.receiver(), |store| store.bigram_count(hao, word)).unwrap(),
         before + 69
     );
     assert_eq!(
-        with_store(pair.receiver, |store| store.bigram_count(ni, word)).unwrap(),
+        with_store(pair.receiver(), |store| store.bigram_count(ni, word)).unwrap(),
         10
     );
     if !same_context {
         assert_eq!(
-            with_store(pair.producer, |store| store.bigram_count(ni, word)).unwrap(),
+            with_store(pair.producer(), |store| store.bigram_count(ni, word)).unwrap(),
             10
         );
         assert_eq!(
-            with_store(pair.producer, |store| store.bigram_count(hao, word)).unwrap(),
+            with_store(pair.producer(), |store| store.bigram_count(hao, word)).unwrap(),
             20
         );
     }

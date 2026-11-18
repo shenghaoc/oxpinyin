@@ -6,27 +6,21 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::n_candidate;
+
 use crate::support::{
-    LogCapture, LookupCandidate, TempUserDir, ZhuyinInstance, assert_aborts, candidate, close,
-    cstr, import, init_on, open, open_with_user, private_system, take_sentence, tokens_of,
-    zhuyin_alloc_instance, zhuyin_choose_candidate, zhuyin_fini, zhuyin_free_instance,
-    zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_character_offset,
-    zhuyin_get_n_candidate, zhuyin_get_parsed_input_length, zhuyin_get_sentence,
-    zhuyin_guess_candidates_after_cursor, zhuyin_guess_sentence, zhuyin_load_phrase_library,
-    zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins, zhuyin_set_options,
-    zhuyin_unload_phrase_library, *,
+    LogCapture, LookupCandidate, TempUserDir, assert_aborts, candidate, close, cstr, import,
+    init_on, open, open_with_user, private_system, take_sentence, tokens_of, zhuyin_alloc_instance,
+    zhuyin_choose_candidate, zhuyin_fini, zhuyin_free_instance, zhuyin_get_candidate,
+    zhuyin_get_candidate_string, zhuyin_get_character_offset, zhuyin_get_n_candidate,
+    zhuyin_get_parsed_input_length, zhuyin_get_sentence, zhuyin_guess_candidates_after_cursor,
+    zhuyin_guess_sentence, zhuyin_load_phrase_library, zhuyin_parse_more_chewings,
+    zhuyin_parse_more_full_pinyins, zhuyin_set_options, zhuyin_unload_phrase_library, *,
 };
 
 use std::os::raw::c_char;
 
 use std::ptr;
-
-/// The candidate count of the current list.
-fn n_candidate(instance: *mut ZhuyinInstance) -> (bool, u32) {
-    let mut count = UNTOUCHED;
-    let ret = unsafe { zhuyin_get_n_candidate(instance, &raw mut count) };
-    (ret, count)
-}
 
 /// The sentence getter resolves each kept token through the phrase index
 /// when the caller reads it (`convert_to_utf8`, `lookup/lookup.cpp:37-48`

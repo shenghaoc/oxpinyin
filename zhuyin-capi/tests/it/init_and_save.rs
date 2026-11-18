@@ -5,6 +5,8 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::support::fresh_user_conf_line;
+
 #[cfg(unix)]
 use crate::support::directory_reads_as_a_chunk_here;
 #[cfg(unix)]
@@ -211,19 +213,6 @@ fn an_unknown_user_database_format_aborts_and_keeps_user_conf() {
 // the expectations come from the pin's source at 074a2219 and the
 // project's rulings, not from running the pin.
 // ---------------------------------------------------------------------
-
-/// The `open <user dir>/user.conf failed.` line a fresh user directory
-/// makes `zhuyin_init` write: `UserTableInfo::load` prints it when the
-/// marker is missing, with no trailing newline (`table_info.cpp:332` at
-/// 074a2219).
-fn fresh_user_conf_line(user_dir: &std::path::Path) -> String {
-    // `g_build_filename` joins with the host's separator.
-    format!(
-        "open {}{}user.conf failed.",
-        user_dir.display(),
-        std::path::MAIN_SEPARATOR
-    )
-}
 
 // Windows only: the C API's UTF-8 paths reach the wide-character (UTF-16) file API.
 #[cfg(windows)]

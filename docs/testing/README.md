@@ -26,6 +26,14 @@ It lives in the crate's one test target, `tests/it/main.rs`, with one module for
 each topic, and uses nothing else. A helper that more than one topic uses lives
 in `tests/it/support.rs`. An abort test names itself by its full path.
 
+A test helper has one definition. In each C crate, `src/test_support.rs` and
+`tests/it/support.rs` include the same shared files by `#[path]`:
+`src/test_support/abi.rs` for that crate's C-function helpers, and
+`tests/support/c_harness.rs` and `tests/support/native_fixture.rs` for the
+helpers that both C crates use. A test build binds the crate's own name with
+`extern crate self`, so a shared file names the exported functions the same
+way in both targets.
+
 A behaviour is tested where it is implemented. A higher crate tests only the
 decisions and connections that it adds. A test exists for a failure mechanism
 that no other test protects; failure ordering and persisted file state are

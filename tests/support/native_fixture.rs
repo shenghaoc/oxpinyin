@@ -26,6 +26,16 @@ fn scratch_dir(prefix: &str, what: &str) -> (PathBuf, tempfile::TempDir) {
     (dir.path().to_path_buf(), dir)
 }
 
+/// The name that starts a [`TempUserDir`]: the zhuyin C crate's own, and
+/// the pinyin C crate's for every other includer.
+fn user_dir_prefix() -> &'static str {
+    if env!("CARGO_PKG_NAME") == "oxpinyin-zhuyin-capi" {
+        "oxpinyin-zhuyin-capi"
+    } else {
+        "oxpinyin-capi"
+    }
+}
+
 pub struct TempUserDir {
     pub(crate) path: PathBuf,
     _dir: tempfile::TempDir,
@@ -33,7 +43,7 @@ pub struct TempUserDir {
 
 impl TempUserDir {
     pub(crate) fn new(tag: &str) -> Self {
-        let (path, dir) = scratch_dir(&format!("oxpinyin-capi-{tag}-"), "temp user dir");
+        let (path, dir) = scratch_dir(&format!("{}-{tag}-", user_dir_prefix()), "temp user dir");
         Self { path, _dir: dir }
     }
 }
@@ -74,6 +84,18 @@ pub mod logs {
     #[must_use]
     pub fn header_token() -> Vec<u8> {
         record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// A null-token `MODIFY_HEADER`.
+    #[must_use]
+    pub fn header() -> Vec<u8> {
+        record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// An ADD of a six-byte item at slot `0x99`.
+    #[must_use]
+    pub fn add() -> Vec<u8> {
+        record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
     }
 
     /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
