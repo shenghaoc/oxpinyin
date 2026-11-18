@@ -52,8 +52,8 @@ jobs:
     # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
     # move (26.04: actions/runner-images#14748) happens here under review.
     runs-on: &ubuntu ubuntu-26.04
-    # Two limits. The "Soak each target" step has 30: 8 targets at 180 s
-    # each soak for 24 min, and their builds add 1 to 3 min. The job has
+    # Two limits. The "Soak each target" step has 30: 7 targets at 180 s
+    # each soak for 21 min, and their builds add 1 to 3 min. The job has
     # 10 more, for the steps before the soak (up to 4 min) and the upload
     # after it. Add 3 to both numbers for each new target.
     timeout-minutes: 40
@@ -99,9 +99,10 @@ jobs:
           restore-keys: |
             fuzz-corpus-
       - name: Seed corpora
-        # The five MemoryChunk files of the tkrzw cell, named one by one:
-        # a seed that goes missing fails the step rather than silently
-        # shrinking the corpus.
+        # The five MemoryChunk files of the tkrzw cell and the committed
+        # capi-commands command streams, named one by one: a seed that
+        # goes missing fails the step rather than silently shrinking the
+        # corpus.
         run: |
           seeds=(
             fixtures/w3/tkt/gb_char.bin
@@ -110,16 +111,44 @@ jobs:
             fixtures/w3/tkt/merged.bin
             fixtures/w3/tkt/art.bin
           )
+          capi_seeds=(
+            fuzz/seeds/capi-commands/choose
+            fuzz/seeds/capi-commands/double-pinyin
+            fuzz/seeds/capi-commands/first-run
+            fuzz/seeds/capi-commands/import-export
+          )
           status=0
-          for seed in "${seeds[@]}"; do
+          for seed in "${seeds[@]}" "${capi_seeds[@]}"; do
             if [ ! -f "$seed" ]; then
-              echo "::error::missing dict-loader seed $seed"
+              echo "::error::missing seed $seed"
               status=1
             fi
           done
           [ "$status" -eq 0 ] || exit "$status"
           mkdir -p fuzz/corpus/dict-loader
           cp "${seeds[@]}" fuzz/corpus/dict-loader/
+          # dict-loader reads whole files. libFuzzer cuts a seed longer than
+          # -max_len, and the chunk length check then refuses the file before
+          # any decoding. The soak step gives this target alone a limit that
+          # admits its largest seed.
+          largest=0
+          for seed in "${seeds[@]}"; do
+            size=$(($(wc -c < "$seed")))
+            if [ "$size" -gt "$largest" ]; then
+              largest=$size
+            fi
+          done
+          echo "DICT_LOADER_MAX_LEN=$largest" >> "$GITHUB_ENV"
+          # phrase-library writes its own chunk header in front of the input,
+          # so its seed is a payload: art.bin, which holds four items, without
+          # its 8-byte header.
+          mkdir -p fuzz/corpus/phrase-library
+          tail -c +9 fixtures/w3/tkt/art.bin > fuzz/corpus/phrase-library/art.payload
+          # capi-commands: one stream per operation that no mutation of an
+          # empty corpus reaches soon (fuzz/fuzz_targets/capi_commands.rs
+          # gives the byte layout).
+          mkdir -p fuzz/corpus/capi-commands
+          cp "${capi_seeds[@]}" fuzz/corpus/capi-commands/
           # table-conf: libc scans the header, so no coverage feedback leads a
           # mutation to a valid one. A real file starts the target past it.
           mkdir -p fuzz/corpus/table-conf
@@ -143,10 +172,15 @@ jobs:
           status=0
           for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
+            # The Seed step computed dict-loader's limit from its seeds.
+            max_len=4096
+            if [ "$target" = dict-loader ]; then
+              max_len=$DICT_LOADER_MAX_LEN
+            fi
             # setarch -R disables ASLR for the process tree: runner
             # kernels' mmap entropy exceeds ASan's shadow mapping
             # (tools/dev/test_runner.py's sanitizer service does the same).
-            if ! setarch "$(uname -m)" -R cargo fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096 -print_final_stats=1; then
+            if ! setarch "$(uname -m)" -R cargo fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len="$max_len" -print_final_stats=1; then
               status=1
               echo "::error::fuzz target $target failed"
             fi

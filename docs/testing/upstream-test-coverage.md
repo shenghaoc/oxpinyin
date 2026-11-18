@@ -163,8 +163,8 @@ workspace (`fuzz/Cargo.toml` lists the targets):
 - **Hostile data-file fuzzer** (libchewing `trieloader.rs`): `dict-loader`,
   `phrase-library` and `table-conf`.
 
-The other targets feed hostile bytes to the parsers below the ABI: `parser`
-(full pinyin), `double-pinyin` and `chewing-parser` (the eight parseable Zhuyin
+The other targets feed hostile bytes to the parsers below the ABI:
+`double-pinyin` and `chewing-parser` (the eight parseable Zhuyin
 keyboards). `user-store-ops` drives arbitrary add, remove, train and mask-out
 interleavings over a fresh user directory.
 
