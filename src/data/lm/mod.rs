@@ -38,6 +38,7 @@
 //! through the shared library mask: its items answer no unigram and its
 //! total leaves the denominator, as freeing the sub-index does upstream.
 
+use crate::phrase_index_library_index;
 use std::cell::Cell;
 use std::fmt;
 use std::path::Path;
@@ -342,7 +343,7 @@ impl<
     /// (upstream's `get_phrase_item` failing), or owns no such item.
     #[must_use]
     pub(crate) fn unigram_count(&self, token: u32) -> Option<u64> {
-        if !self.visible(crate::model::phrase_index_library(token) as u8) {
+        if !self.visible(phrase_index_library_index(token)) {
             return None;
         }
         self.libraries().unigram_count(token)
@@ -428,7 +429,7 @@ impl<
     fn live_unigram_count(&self, token: u32, user: &UserCountDelta) -> u64 {
         match user
             .unigram_live
-            .filter(|_| self.visible(crate::model::phrase_index_library(token) as u8))
+            .filter(|_| self.visible(phrase_index_library_index(token)))
         {
             Some(live) => u64::from(live),
             None => {
@@ -529,7 +530,7 @@ impl<
         // (`ERROR_NO_ITEM`, a `USER_FILE` item the store lacks included).
         // Those keep the seam's default answer — no n-best cost data, no
         // rows — as does no installed unigram table at all.
-        let nibble = crate::model::phrase_index_library(token.value()) as u8;
+        let nibble = phrase_index_library_index(token.value());
         let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
             Some(live) => u64::from(live),
             None => {

@@ -14,6 +14,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
+use oxpinyin::NULL_TOKEN;
 use std::ffi::{CStr, CString};
 
 use oxpinyin::data::row_format::encode_token_key;
@@ -31,11 +32,6 @@ pub mod eval_correction_rate;
 pub mod gen_deleted_ngram;
 pub mod gen_ngram;
 pub mod gen_unigram;
-
-/// `null_token` (`src/include/novel_types.h:121`).
-pub(crate) const NULL_TOKEN: u32 = 0;
-/// `sentence_start` (`src/include/novel_types.h:122`).
-pub(crate) const SENTENCE_START: u32 = 1;
 
 /// One `SingleGram` row: the stored `total_freq` and its
 /// `{next_token, count}` records in stored (token-ascending) order

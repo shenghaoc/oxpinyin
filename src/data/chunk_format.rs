@@ -22,10 +22,6 @@ compile_error!(
      are not supported."
 );
 
-/// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
-/// phrase-index slot is addressed by.
-pub const PHRASE_MASK: u32 = 0x00FF_FFFF;
-
 /// `c_separate` (`novel_types.h:126`).
 pub const SEPARATOR: u8 = b'#';
 

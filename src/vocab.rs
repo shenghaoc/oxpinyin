@@ -312,6 +312,71 @@ impl fmt::Display for SyllableKey {
     }
 }
 
+/// `PHRASE_MASK` (`novel_types.h:41` at the pin `074a2219`): the low 24
+/// bits of a `phrase_token_t`, the phrase slot inside one library.
+pub const PHRASE_MASK: u32 = 0x00FF_FFFF;
+
+/// `PHRASE_INDEX_LIBRARY_MASK` (`novel_types.h:42`): bits 24 to 27 of a
+/// `phrase_token_t`, the library index.
+pub const PHRASE_INDEX_LIBRARY_MASK: u32 = 0x0F00_0000;
+
+/// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h:43`, `1<<4`): the number
+/// of phrase-index libraries.
+pub const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
+
+/// `MAX_PHRASE_LENGTH` (`novel_types.h:119`): the pin's phrase-length cap.
+///
+/// It is an exclusive upper bound on a user phrase's length in Unicode
+/// scalar values: libpinyin rejects `len == 0` and `len >=` this
+/// (`pinyin.cpp:3678`, `pinyin.cpp:643`). The window scan searches no key
+/// sequence longer than it.
+pub const MAX_PHRASE_LENGTH: usize = 16;
+
+/// `null_token` (`novel_types.h:121`): the token of no phrase.
+pub const NULL_TOKEN: u32 = 0;
+
+/// `sentence_start` (`novel_types.h:122`): the predecessor of the first
+/// phrase in a sentence.
+pub const SENTENCE_START: u32 = 1;
+
+/// `TSI_DICTIONARY` (`novel_types.h:155`): the zhuyin default library.
+pub const TSI_DICTIONARY: u8 = 1;
+
+/// `GBK_DICTIONARY` (`novel_types.h:156`).
+pub const GBK_DICTIONARY: u8 = 2;
+
+/// `ADDON_DICTIONARY` (`novel_types.h:159`): the library a chosen addon
+/// phrase is promoted into.
+///
+/// A `USER_FILE` library of the default facade (`addon.bin`,
+/// `docs/findings/phrase-union.md` §3.2). Choosing an `ADDON_CANDIDATE`
+/// copies the phrase here from the separate addon facade
+/// (`docs/findings/addon-choose-promotion.md`).
+pub const ADDON_DICTIONARY: u8 = 5;
+
+/// `NETWORK_DICTIONARY` (`novel_types.h:160`): the library network
+/// phrases live in.
+pub const NETWORK_DICTIONARY: u8 = 6;
+
+/// `USER_DICTIONARY` (`novel_types.h:161`): the library user phrases live
+/// in (`docs/findings/user-store.md` §3).
+pub const USER_DICTIONARY: u8 = 7;
+
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`): the library
+/// index of a token.
+#[must_use]
+pub const fn phrase_index_library_index(token: u32) -> u8 {
+    ((token & PHRASE_INDEX_LIBRARY_MASK) >> 24) as u8
+}
+
+/// `PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)` (`novel_types.h:45-46`):
+/// the token of slot `token` in library `phrase_index`. Both parts are
+/// masked, as in the pin's macro.
+#[must_use]
+pub const fn phrase_index_make_token(phrase_index: u8, token: u32) -> u32 {
+    (((phrase_index as u32) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
+}
+
 /// Opaque identifier of a phrase in a dictionary and language model.
 ///
 /// The engine never interprets the number; it only compares tokens and hands

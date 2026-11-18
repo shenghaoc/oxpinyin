@@ -21,15 +21,7 @@ use oxpinyin::input::tool::gen_pinyin_table::{self as edge, TableInput};
 use oxpinyin::input::tool::{
     self, OptionArg, OptionEntry, OptionValue, OutputStream, ucs4_to_utf8, utf8_to_ucs4,
 };
-use oxpinyin::{ChewingKey, OptionBits};
-
-/// `MAX_PHRASE_LENGTH` (`src/include/novel_types.h:119`).
-pub const MAX_PHRASE_LENGTH: usize = 16;
-
-/// `PHRASE_INDEX_LIBRARY_MASK` and `PHRASE_MASK`
-/// (`src/include/novel_types.h:40-41`).
-const LIBRARY_MASK: u32 = 0x0F00_0000;
-const PHRASE_MASK: u32 = 0x00FF_FFFF;
+use oxpinyin::{ChewingKey, MAX_PHRASE_LENGTH, OptionBits, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK};
 
 /// The pin's `static GOptionEntry entries[]` (`:38-43`): `phrase_index`
 /// starts at 0 and `outputfile` at `"temp.out"`.
@@ -252,7 +244,7 @@ impl Sorted<'_> {
         render: fn(ChewingKey) -> String,
         refuse: fn(&CStr),
     ) {
-        let library = phrase_index.cast_unsigned().wrapping_shl(24) & LIBRARY_MASK;
+        let library = phrase_index.cast_unsigned().wrapping_shl(24) & PHRASE_INDEX_LIBRARY_MASK;
         let mut token: u32 = 1;
         for array in self.0.iter().skip(1) {
             for (item, readings) in array {

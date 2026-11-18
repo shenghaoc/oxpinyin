@@ -167,8 +167,8 @@ fn session_text(
 ) -> Option<PhraseText> {
     if let Some(item) = phrases
         .libraries
-        .get(&crate::user::phrase::phrase_index_library_index(token))
-        .and_then(|library| library.item(token & crate::user::PHRASE_MASK))
+        .get(&crate::phrase_index_library_index(token))
+        .and_then(|library| library.item(token & crate::PHRASE_MASK))
     {
         return item.phrase_text();
     }

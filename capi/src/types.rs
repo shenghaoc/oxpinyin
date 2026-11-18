@@ -161,16 +161,12 @@ pub type GUint = c_uint;
 /// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;
 
-/// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
-#[expect(non_upper_case_globals, reason = "upstream C identifier")]
-pub const null_token: u32 = 0;
-
 // Header phrase-index literals must stay byte-identical to the canonical
 // `oxpinyin` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
 // typedefs in the checked-in `pinyin.h`, so they do not collide
 // with `oxpinyin::user::PinyinKey` (`u16`).
 const _: () = {
-    assert!(oxpinyin::user::USER_DICTIONARY == 7);
-    assert!(oxpinyin::user::PHRASE_MASK == 0x00FF_FFFF);
-    assert!(oxpinyin::user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
+    assert!(oxpinyin::USER_DICTIONARY == 7);
+    assert!(oxpinyin::PHRASE_MASK == 0x00FF_FFFF);
+    assert!(oxpinyin::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
 };

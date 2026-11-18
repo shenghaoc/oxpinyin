@@ -21,6 +21,7 @@
 //! `can't open file: %s.\n` and `error:%s.\n` and exits with the saved
 //! `errno` (`:352-358`).
 
+use oxpinyin::{NULL_TOKEN, SENTENCE_START};
 use std::ffi::{CStr, CString};
 
 use oxpinyin::input::tool::{self, DirectHashTable, LineReader, k_mixture_model as edge};
@@ -33,11 +34,6 @@ use crate::k_mixture_model::records::{KMixtureModelArrayItem, KmmGram};
 pub const DEFAULT_MAX_OCCURS: i32 = 20;
 /// Default `--maximum-increase-rates-allowed` (`:51`).
 pub const DEFAULT_MAX_INCREASE_RATE: f64 = 3.0;
-
-/// `null_token` (`src/include/novel_types.h:121`).
-const NULL_TOKEN: u32 = 0;
-/// `sentence_start` (`:122`).
-const SENTENCE_START: u32 = 1;
 
 /// The two command-line knobs and `--skip-pi-gram-training`
 /// (`:50-62`).

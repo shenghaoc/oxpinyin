@@ -52,11 +52,10 @@ compile_error!(
 );
 
 use crate::data::chunk_format::{
-    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, INDEX_ONE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR,
-    chunk_checksum,
+    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR, chunk_checksum,
 };
 
-use crate::PhraseText;
+use crate::{PHRASE_MASK, PhraseText};
 
 /// A `SubPhraseIndex::load` check the pin reaches through a read inside the
 /// chunk (`phrase_index.cpp:354-356`): the load answers `false`, which every

@@ -1,6 +1,7 @@
+use crate::phrase_index_library_index;
 use std::collections::BTreeMap;
 
-use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library, sort_tokens_by_library};
+use super::{PhraseIndexRanges, TrellisPathMemo, sort_tokens_by_library};
 use crate::fixture_doubles::{FixtureDictionary, FixtureError, FixtureLanguageModel};
 use crate::{SyllableKey, model::PhraseList};
 
@@ -76,7 +77,7 @@ fn convert_splits_runs_at_library_boundaries() {
     let top = 0x00ff_ffff;
     let mut ranges = PhraseIndexRanges::new();
     ranges.convert(call(&[0x0200_0001, top, top + 1, 0x0200_0002]));
-    assert_eq!(phrase_index_library(top + 1), 1);
+    assert_eq!(usize::from(phrase_index_library_index(top + 1)), 1);
     assert_eq!(spans(&ranges, 0), [(top, top)]);
     assert_eq!(spans(&ranges, 1), [(top + 1, top + 1)]);
     assert_eq!(

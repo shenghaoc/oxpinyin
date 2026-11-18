@@ -215,11 +215,9 @@ fn replayed(
         .found()
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let payload = crate::data::user_files::encode_log_records(&[change(
-        token & crate::user::PHRASE_MASK,
-        old,
-    )])
-    .unwrap();
+    let payload =
+        crate::data::user_files::encode_log_records(&[change(token & crate::PHRASE_MASK, old)])
+            .unwrap();
     std::fs::write(
         dir.path().join("gb_char.dbin"),
         crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),

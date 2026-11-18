@@ -18,14 +18,13 @@ use crate::store::StoreError;
 
 use std::collections::BTreeSet;
 
-use crate::ChewingKey;
 use crate::data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };
 use smallvec::SmallVec;
 
-use crate::user::phrase::MAX_PHRASE_LENGTH;
 use crate::user::records::NativeTable;
+use crate::{ChewingKey, MAX_PHRASE_LENGTH};
 
 /// Whether the table keeps one entry per key length between operations,
 /// as the Kyoto Cabinet and tkrzw `ChewingLargeTable2` do: `search` loads

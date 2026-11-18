@@ -6,7 +6,7 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
-use crate::model::phrase_index_library;
+use crate::{MAX_PHRASE_LENGTH, phrase_index_library_index};
 
 use super::*;
 
@@ -21,7 +21,8 @@ fn beats_longer_winner(
 ) -> bool {
     unigram > best
         || (unigram == best
-            && phrase_index_library(token.value()) < phrase_index_library(best_token.value()))
+            && usize::from(phrase_index_library_index(token.value()))
+                < usize::from(phrase_index_library_index(best_token.value())))
 }
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
@@ -37,10 +38,10 @@ where
     /// If none can be read, use sentence_start.
     #[must_use]
     pub fn prefix_predecessor(&self) -> PhraseToken {
-        let mut previous = PhraseToken::new(crate::engine::nbest::SENTENCE_START);
+        let mut previous = PhraseToken::new(crate::SENTENCE_START);
         let mut longest = 0;
         for &token in &self.candidate_prefixes {
-            if token.value() == crate::engine::nbest::SENTENCE_START {
+            if token.value() == crate::SENTENCE_START {
                 continue;
             }
             if let Some(length) = self.dictionary.phrase_length_for_token(token.value())

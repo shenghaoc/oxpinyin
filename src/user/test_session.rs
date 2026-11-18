@@ -239,9 +239,9 @@ pub(crate) fn load_checked(
     for (token, item) in live.changed_items(originals) {
         state
             .system_overrides
-            .get_or_default(crate::user::phrase::phrase_index_library_index(token))
+            .get_or_default(crate::phrase_index_library_index(token))
             .expect("a library slot")
-            .insert(token & crate::user::phrase::PHRASE_MASK, item);
+            .insert(token & crate::PHRASE_MASK, item);
     }
     Ok(loaded)
 }
@@ -425,7 +425,7 @@ pub(crate) fn native_tokens(system: &Path, text: &str) -> Vec<u32> {
 }
 
 pub(crate) fn native_unigram(store: &UserStore, token: u32) -> Option<u32> {
-    if store.is_system_library(crate::user::phrase::phrase_index_library_index(token)) {
+    if store.is_system_library(crate::phrase_index_library_index(token)) {
         store.system_unigram(token)
     } else {
         store

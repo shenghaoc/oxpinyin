@@ -44,11 +44,9 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candid
 
 use crate::test_support::promotion_system;
 
-use oxpinyin::PhraseToken;
-
 use oxpinyin::facade::TextSpan;
 
-use oxpinyin::user::SENTENCE_START;
+use oxpinyin::{PhraseToken, SENTENCE_START};
 
 use std::cell::Cell;
 
@@ -995,8 +993,8 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin::user::phrase_index_library_index(token.value()),
-            oxpinyin::user::ADDON_DICTIONARY,
+            oxpinyin::phrase_index_library_index(token.value()),
+            oxpinyin::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
         token.value()
@@ -1008,7 +1006,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     let store = inst.core.user;
     assert_eq!(
         store
-            .token_for_phrase_in(oxpinyin::user::ADDON_DICTIONARY, &text)
+            .token_for_phrase_in(oxpinyin::ADDON_DICTIONARY, &text)
             .expect("store read"),
         Some(promoted),
         "the promoted phrase resolves under nibble 5"
@@ -1527,8 +1525,8 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     let user = TempUserDir::new("addon-promote-toned");
     let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
     assert_eq!(
-        oxpinyin::user::phrase_index_library_index(promoted),
-        oxpinyin::user::ADDON_DICTIONARY
+        oxpinyin::phrase_index_library_index(promoted),
+        oxpinyin::ADDON_DICTIONARY
     );
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { looked_up_tokens(instance, "二簧") }, [promoted]);

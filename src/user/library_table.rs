@@ -10,16 +10,16 @@
 //! (`novel_types.h:44`), which is below 16. An index of 16 or more names no
 //! slot: a read of one finds nothing and a write of one stores nothing.
 
-use crate::data::table_info::PHRASE_INDEX_LIBRARY_COUNT;
+use crate::PHRASE_INDEX_LIBRARY_COUNT;
 
 /// The library indexes that have a slot, so that a walk can lend each one.
-static LIBRARIES: [u8; PHRASE_INDEX_LIBRARY_COUNT] =
+static LIBRARIES: [u8; PHRASE_INDEX_LIBRARY_COUNT as usize] =
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// One optional `T` per phrase library, walked in ascending library order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LibraryTable<T> {
-    slots: [Option<T>; PHRASE_INDEX_LIBRARY_COUNT],
+    slots: [Option<T>; PHRASE_INDEX_LIBRARY_COUNT as usize],
 }
 
 impl<T> Default for LibraryTable<T> {
@@ -33,7 +33,7 @@ impl<T> LibraryTable<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            slots: [const { None }; PHRASE_INDEX_LIBRARY_COUNT],
+            slots: [const { None }; PHRASE_INDEX_LIBRARY_COUNT as usize],
         }
     }
 
@@ -236,8 +236,8 @@ impl<'a, T> IntoIterator for &'a mut LibraryTable<T> {
 /// The owned walk of a [`LibraryTable`], in ascending library order.
 pub struct IntoIter<T>(
     std::iter::Zip<
-        std::array::IntoIter<u8, PHRASE_INDEX_LIBRARY_COUNT>,
-        std::array::IntoIter<Option<T>, PHRASE_INDEX_LIBRARY_COUNT>,
+        std::array::IntoIter<u8, { PHRASE_INDEX_LIBRARY_COUNT as usize }>,
+        std::array::IntoIter<Option<T>, { PHRASE_INDEX_LIBRARY_COUNT as usize }>,
     >,
 );
 
@@ -273,7 +273,7 @@ impl LibrarySet {
     }
 
     const fn bit(library: u8) -> u16 {
-        if (library as usize) < PHRASE_INDEX_LIBRARY_COUNT {
+        if library < PHRASE_INDEX_LIBRARY_COUNT {
             1 << library
         } else {
             0

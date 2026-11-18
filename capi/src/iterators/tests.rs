@@ -18,7 +18,7 @@ use crate::iterators::{
 use crate::test_support::{TempUserDir, cstr, open};
 
 #[cfg(unix)]
-use oxpinyin::user::USER_DICTIONARY;
+use oxpinyin::USER_DICTIONARY;
 
 use std::ptr;
 

@@ -458,7 +458,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     let user_session = |store: &mut UserStore| {
         let kept = store
             .add_phrase_in(
-                crate::user::USER_DICTIONARY,
+                crate::USER_DICTIONARY,
                 &"龘".into(),
                 &dense("ni", 2),
                 Some(20),
@@ -466,7 +466,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
             .expect("kept");
         let removed = store
             .add_phrase_in(
-                crate::user::USER_DICTIONARY,
+                crate::USER_DICTIONARY,
                 &"鱻".into(),
                 &dense("hao", 4),
                 Some(9),
@@ -502,7 +502,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     // Both the user arena and the replayed item own their reading counts.
     assert_eq!(counts(&store, 1), [130]);
     assert_eq!(view, user_view(&dir));
-    let phrases = store.export_phrases_in(crate::user::USER_DICTIONARY);
+    let phrases = store.export_phrases_in(crate::USER_DICTIONARY);
     assert_eq!(phrases.len(), 1);
     assert_eq!(
         (phrases[0].text.as_slice(), phrases[0].count),
@@ -518,7 +518,7 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     assert_eq!(view, user_view(&dir));
     assert_eq!(
         store
-            .token_for_phrase_in(crate::user::USER_DICTIONARY, "龘")
+            .token_for_phrase_in(crate::USER_DICTIONARY, "龘")
             .expect("lookup"),
         Some(kept)
     );
@@ -655,7 +655,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     // training and imports onto the shipped and the appended item.
     let kept = store
         .add_phrase_in(
-            crate::user::USER_DICTIONARY,
+            crate::USER_DICTIONARY,
             &"龘".into(),
             &dense("ni", 2),
             Some(20),
@@ -663,7 +663,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         .expect("kept");
     let gone = store
         .add_phrase_in(
-            crate::user::USER_DICTIONARY,
+            crate::USER_DICTIONARY,
             &"鱻".into(),
             &dense("hao", 4),
             Some(9),
@@ -723,14 +723,11 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     );
     assert_eq!(
         store
-            .token_for_phrase_in(crate::user::USER_DICTIONARY, "龘")
+            .token_for_phrase_in(crate::USER_DICTIONARY, "龘")
             .expect("lookup"),
         Some(kept)
     );
-    assert_eq!(
-        store.export_phrases_in(crate::user::USER_DICTIONARY).len(),
-        1
-    );
+    assert_eq!(store.export_phrases_in(crate::USER_DICTIONARY).len(), 1);
     assert!(store.bigram_row(LIBRARY | 1).expect("gram").is_some());
     // Again, from the reopened profile.
     train(&mut store, 1, key("ni", 3), 1);
@@ -810,7 +807,7 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     assert_the_gate_suppresses_nothing(&store, &tokens, "an import");
     let user = store
         .add_phrase_in(
-            crate::user::USER_DICTIONARY,
+            crate::USER_DICTIONARY,
             &"龘".into(),
             &dense("ni", 2),
             Some(20),

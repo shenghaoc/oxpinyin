@@ -179,12 +179,7 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     let user_name = cstr(user.to_str().unwrap());
     let context = unsafe { crate::support::pinyin_init(system.as_ptr(), user_name.as_ptr()) };
     assert!(!context.is_null());
-    unsafe {
-        pinyin_end_add_phrases(pinyin_begin_add_phrases(
-            context,
-            oxpinyin::user::USER_DICTIONARY,
-        ))
-    };
+    unsafe { pinyin_end_add_phrases(pinyin_begin_add_phrases(context, oxpinyin::USER_DICTIONARY)) };
     assert!(unsafe { pinyin_save(context) });
     unsafe { crate::support::pinyin_fini(context) };
     assert!(user.join("user.conf").is_file());

@@ -2,12 +2,9 @@
 
 use std::os::raw::c_int;
 
-use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut};
+use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT};
-
-/// `GBK_DICTIONARY` (`novel_types.h`): the one default library that can be
-/// unloaded.
-const GBK_DICTIONARY: u8 = 2;
+use oxpinyin::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
 
 /// Set pinyin options on the context.
 ///

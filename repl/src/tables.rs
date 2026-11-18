@@ -5,7 +5,7 @@ use oxpinyin::data::{chewing_index_key as index_key, search_chewing_row as searc
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::table_tests as output;
 use oxpinyin::user::tool::Index;
-use oxpinyin::{ChewingKey, OptionBits};
+use oxpinyin::{ChewingKey, OptionBits, phrase_index_library_index};
 use oxpinyin_utils::storage::dbm::Tree;
 use std::ops::Range;
 use std::{ffi::CString, path::Path};
@@ -32,7 +32,7 @@ impl Tables {
     }
 
     pub(crate) fn enabled(&self, token: u32) -> bool {
-        self.indices[oxpinyin::model::phrase_index_library(token)].is_some()
+        self.indices[usize::from(phrase_index_library_index(token))].is_some()
     }
 
     pub(crate) fn phrase_search(&self, words: &[u32]) -> (bool, [Vec<u32>; 16]) {
@@ -42,7 +42,7 @@ impl Tables {
         };
         for token in decode_tokens(&value).unwrap_or_else(|_| tool::abort()) {
             if self.enabled(token) {
-                tokens[oxpinyin::model::phrase_index_library(token)].push(token);
+                tokens[usize::from(phrase_index_library_index(token))].push(token);
             }
         }
         (true, tokens)
@@ -69,7 +69,7 @@ impl Tables {
             if !self.enabled(token) {
                 continue;
             }
-            let library = oxpinyin::model::phrase_index_library(token);
+            let library = usize::from(phrase_index_library_index(token));
             // null_token marks an empty cursor even after consuming token 0.
             if cursor.as_ref().is_none_or(|(_, range)| range.start == 0) {
                 cursor = Some((library, token..token.wrapping_add(1)));

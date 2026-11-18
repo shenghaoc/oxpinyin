@@ -49,8 +49,9 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use crate::PHRASE_MASK;
 use crate::data::chunk_format::build_memory_chunk;
-use crate::data::chunk_write::{ChunkItem, ChunkWriteError, PHRASE_MASK, encode_phrase_item};
+use crate::data::chunk_write::{ChunkItem, ChunkWriteError, encode_phrase_item};
 use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::table_info::FileName;
 #[cfg(test)]
@@ -997,7 +998,7 @@ fn chewing_rows_inner(
         })
         .collect();
     for (token, packed) in state.indexed.difference(&written) {
-        if packed.is_empty() || packed.len() > crate::user::phrase::MAX_PHRASE_LENGTH {
+        if packed.is_empty() || packed.len() > crate::MAX_PHRASE_LENGTH {
             continue;
         }
         chewing_rows.push(PinyinIndexItem {
@@ -1315,7 +1316,7 @@ fn load_user_pinyin_index(
     let mut set_failed = false;
     match store.copy_raw(|key, value| {
         set_failed |= index.push_record(key, value).is_err();
-        if key.len() < 2 || key.len() / 2 > crate::user::phrase::MAX_PHRASE_LENGTH {
+        if key.len() < 2 || key.len() / 2 > crate::MAX_PHRASE_LENGTH {
             exceptional.push(key.to_vec());
         }
     }) {
@@ -1581,8 +1582,8 @@ pub(crate) fn read_mask_log(
 ) -> Option<JournalFault> {
     let (_, file) = layout.system_logs().iter().find(|(n, _)| *n == nibble)?;
     let read = load_chunk_payload(&build_path(dir, file.as_ref()));
-    let selected = (nibble & crate::user::phrase::phrase_index_library_index(mask))
-        == crate::user::phrase::phrase_index_library_index(value);
+    let selected = (nibble & crate::phrase_index_library_index(mask))
+        == crate::phrase_index_library_index(value);
     let fault = if selected {
         read.as_ref()
             .ok()
@@ -1703,8 +1704,8 @@ fn replay_log(
         return Ok(());
     };
     if mask.is_some_and(|(mask, value)| {
-        (nibble & crate::user::phrase::phrase_index_library_index(mask))
-            != crate::user::phrase::phrase_index_library_index(value)
+        (nibble & crate::phrase_index_library_index(mask))
+            != crate::phrase_index_library_index(value)
     }) {
         return Ok(());
     }

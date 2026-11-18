@@ -1741,9 +1741,9 @@ fn init_and_reload_with_over_read(
         {
             state
                 .system_overrides
-                .get_or_default(crate::user::phrase::phrase_index_library_index(token))
+                .get_or_default(crate::phrase_index_library_index(token))
                 .unwrap()
-                .insert(token & crate::user::phrase::PHRASE_MASK, item);
+                .insert(token & crate::PHRASE_MASK, item);
         }
         Loaded {
             state,

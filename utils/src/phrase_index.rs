@@ -12,6 +12,7 @@
 //! every other token through the loaded chunk, encoding its UCS-4 words
 //! with `g_ucs4_to_utf8`.
 
+use oxpinyin::phrase_index_library_index;
 use std::ffi::{CString, OsStr};
 
 use crate::k_mixture_model::phrase::PhraseIndex;
@@ -31,7 +32,7 @@ impl PhraseIndex for SystemPhraseIndex {
         tag_token_text(
             token,
             // 074a2219 tag_utility.cpp:391.
-            oxpinyin::model::phrase_index_library(token) == 0,
+            usize::from(phrase_index_library_index(token)) == 0,
             |token| self.libraries.phrase_text(token),
             |text| Some(text.outward_words().collect::<Vec<_>>()),
             |token| edge::report_unknown_token(token as i32),

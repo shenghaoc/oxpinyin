@@ -16,7 +16,7 @@ use crate::support::{
     system_dir, *,
 };
 
-use oxpinyin::user::SENTENCE_START;
+use oxpinyin::SENTENCE_START;
 
 use std::ffi::c_char;
 

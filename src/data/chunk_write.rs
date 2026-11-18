@@ -38,14 +38,10 @@
 //! little-endian `u32` words with tail bytes folded in shifted by
 //! position (`chunk_format` — the one written copy both halves take).
 
+use crate::PHRASE_MASK;
 use crate::data::chunk_format::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
-
-/// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
-/// phrase-index slot is addressed by. Re-exported from the shared format
-/// module for the writers above this crate.
-pub use crate::data::chunk_format::PHRASE_MASK;
 
 /// A malformed [`ChunkItem`] or slot sequence.
 #[derive(Debug)]

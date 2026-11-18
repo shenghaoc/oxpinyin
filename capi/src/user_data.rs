@@ -67,7 +67,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
     // Stop counting at the refusal boundary: oversized known-character
     // strings must not reach the per-character dictionary lookups.
     let phrase_length = phrase.phrase_length();
-    if phrase_length == 0 || phrase_length >= oxpinyin::user::MAX_PHRASE_LENGTH {
+    if phrase_length == 0 || phrase_length >= oxpinyin::MAX_PHRASE_LENGTH {
         return false;
     }
     // SAFETY: `instance` is non-null and was produced by
@@ -143,7 +143,7 @@ unsafe fn add_remembered_path(
     path: &[MatrixKey],
     count: Option<u64>,
 ) -> bool {
-    if path.is_empty() || path.len() > oxpinyin::user::MAX_PHRASE_LENGTH {
+    if path.is_empty() || path.len() > oxpinyin::MAX_PHRASE_LENGTH {
         return false;
     }
     let Some(keys) = path
@@ -165,11 +165,10 @@ unsafe fn add_remembered_path(
     // SAFETY: Handles guarantees a live instance; the helper contract ends
     // every earlier reader, and Serial calls grants exclusive runtime access.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let phrase = match ctx.core.plan_add(
-        oxpinyin::user::USER_DICTIONARY,
-        phrase.clone(),
-        keys.clone(),
-    ) {
+    let phrase = match ctx
+        .core
+        .plan_add(oxpinyin::USER_DICTIONARY, phrase.clone(), keys.clone())
+    {
         ImportPlan::Abort => std::process::abort(),
         ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
         ImportPlan::Add { phrase, .. } => phrase,

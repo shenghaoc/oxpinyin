@@ -392,7 +392,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// answer `None` (074a2219 `phrase_index.h:646-652`, `pinyin.cpp:2821-2834`).
     #[must_use]
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
-        let token = token & (crate::user::PHRASE_INDEX_LIBRARY_MASK | crate::user::PHRASE_MASK);
+        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
         let nibble = token >> 24;
         match nibble {
             _ if self.dict.is_system_library(nibble as u8) => {

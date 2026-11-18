@@ -481,7 +481,7 @@ mod native {
         assert_eq!(
             context
                 .user_store()
-                .bigram_count(crate::user::SENTENCE_START, t2)
+                .bigram_count(crate::SENTENCE_START, t2)
                 .unwrap(),
             69
         );

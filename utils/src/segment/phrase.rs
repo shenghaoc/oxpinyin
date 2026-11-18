@@ -33,10 +33,7 @@ impl Found {
             // `reduce_tokens`'s reachable assertion.
             crate::segment::abort_on_pin_assert();
         }
-        self.tokens
-            .first()
-            .copied()
-            .unwrap_or(crate::segment::NULL_TOKEN)
+        self.tokens.first().copied().unwrap_or(oxpinyin::NULL_TOKEN)
     }
 }
 

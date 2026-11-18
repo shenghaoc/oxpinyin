@@ -19,6 +19,7 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
+use crate::phrase_index_library_index;
 use std::fmt;
 use std::path::Path;
 
@@ -123,7 +124,7 @@ fn resolve_item(
 fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) -> bool {
     libraries.library(token).is_some()
         || 1_u32
-            .checked_shl(crate::model::phrase_index_library(token) as u32)
+            .checked_shl(u32::from(phrase_index_library_index(token)))
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
@@ -991,7 +992,7 @@ pub struct AddonDictionary {
 
 fn addon_rows(conf: &TableConf) -> Vec<TableRow> {
     (0..=u8::MAX)
-        .take(crate::data::table_info::PHRASE_INDEX_LIBRARY_COUNT)
+        .take(usize::from(crate::PHRASE_INDEX_LIBRARY_COUNT))
         .map(|index| {
             conf.addon_row(index)
                 .cloned()

@@ -1,15 +1,10 @@
 //! Configuration symbols: options, schemes, phrase library loading.
 
+use oxpinyin::{PHRASE_INDEX_LIBRARY_COUNT, TSI_DICTIONARY};
 use std::os::raw::c_int;
 
 use crate::state::context_mut;
 use crate::types::{PinyinOptionT, ZhuyinContext};
-
-/// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
-const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
-
-/// `TSI_DICTIONARY` (`novel_types.h`): the one default library that stays.
-const TSI_DICTIONARY: u8 = 1;
 
 /// Set the zhuyin scheme.
 ///

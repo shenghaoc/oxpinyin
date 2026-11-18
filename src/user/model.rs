@@ -16,7 +16,8 @@
 
 use crate::{PhraseToken, model::UserModel};
 
-use crate::user::store::{SENTENCE_START, UserStore, UserStoreError};
+use crate::SENTENCE_START;
+use crate::user::store::{UserStore, UserStoreError};
 
 impl UserModel for UserStore {
     type Token = PhraseToken;

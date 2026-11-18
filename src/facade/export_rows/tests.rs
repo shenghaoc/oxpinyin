@@ -235,8 +235,8 @@ fn a_short_predecessor_faults_where_the_walk_loads_it() {
 }
 
 use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor};
-use crate::user::{KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw, toned_key};
-use crate::{ChewingKey, SyllableKey};
+use crate::user::{KEY_TONE_SHIFT, MAX_KEY_TONE, UserConfLaw, toned_key};
+use crate::{ChewingKey, SyllableKey, USER_DICTIONARY};
 
 /// A transient context over the committed mini tables of whichever
 /// backend this build carries (a NULL user directory: imports work, the

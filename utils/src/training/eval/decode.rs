@@ -27,6 +27,7 @@
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
+use oxpinyin::{NULL_TOKEN, SENTENCE_START};
 use rustc_hash::FxHashMap;
 
 use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
@@ -34,10 +35,6 @@ use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 use super::error::EvalError;
 use super::model::EvalLanguageModel;
 
-/// `sentence_start` (`novel_types.h:122`).
-const SENTENCE_START: u32 = 1;
-/// `null_token` (`novel_types.h:121`).
-const NULL_TOKEN: u32 = 0;
 /// Longest phrase the decoder considers, in keys (`MAX_PHRASE_LENGTH`).
 const MAX_PHRASE_KEYS: usize = 16;
 /// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
