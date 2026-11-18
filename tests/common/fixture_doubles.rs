@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use oxpinyin::{
     ChewingKey, Completeness, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
-    model::{Dictionary, LanguageModel},
+    model::{LanguageModel, PhraseList},
 };
 
 /// Why a fixture could not be read.
@@ -256,9 +256,8 @@ impl FixtureDictionary {
     }
 }
 
-impl Dictionary for FixtureDictionary {
+impl PhraseList for FixtureDictionary {
     type Error = FixtureError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     /// A query of complete keys is exact. A query with an initial-only key

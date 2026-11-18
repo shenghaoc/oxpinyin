@@ -166,7 +166,6 @@ fn reparse_keeps_the_reanchored_candidates_selection(
     use crate::sentence::{
         zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor,
     };
-    use oxpinyin::model::Dictionary;
     use std::ptr;
 
     let (context, instance) = open();

@@ -61,7 +61,13 @@ impl UnreadableRows {
     }
 }
 
-/// Read-only lookup seam for dictionaries.
+/// Read-only seam the engine reads dictionaries through
+/// (`docs/findings/core-trait-seam.md`).
+///
+/// Every method is one the engine calls, and every method is required: a
+/// dictionary answers each one itself. A dictionary that only lists
+/// entries implements [`PhraseList`] instead, and the blanket
+/// implementation derives these methods from its lookup.
 ///
 /// Implementations return entries in stable order, use an empty vector for a
 /// successful lookup with no entries, and do not panic on caller input.
@@ -74,9 +80,238 @@ pub trait Dictionary {
 
     /// What this dictionary keeps about one trellis key path while one
     /// n-best call prices the tokens ranged on it
-    /// ([`Self::trellis_item_on_path`]). A dictionary with nothing to keep
-    /// uses `()`.
+    /// ([`Self::trellis_item_with_facts`]). A dictionary with nothing to
+    /// keep uses `()`.
     type PathMemo: Default;
+
+    /// One `FacadeChewingTable2::search` call of the sentence trellis,
+    /// with the same search's `SEARCH_CONTINUED` probe: appends this
+    /// lookup's `PhraseIndexRange`s to `ranges`
+    /// (`chewing_large_table2.h:91-133` at the pin `074a2219`), the system
+    /// table's call before the user table's
+    /// (`facade_chewing_table2.h:109-129`), and returns whether a stored
+    /// phrase's pinyin extends `syllables`. The pin's one
+    /// `ChewingLargeTable2::search` call gives the ranges and
+    /// `SEARCH_CONTINUED` from a single DBM get
+    /// (`chewing_large_table2_bdb.cpp:165-192`). `tones` supplies the query
+    /// tones; missing tones are zero.
+    ///
+    /// The ranges carry tokens only, as the pin's `convert` does: a step
+    /// prices the tokens it meets through [`Self::trellis_item_with_facts`],
+    /// and the text of a result is read through
+    /// [`Self::trellis_text_with_facts`] when it is emitted. Every ranged
+    /// token holds a `Some(())` slot.
+    ///
+    /// `scratch` is the caller's buffer for the read's value bytes, which
+    /// the decode loop passes to every search of a guess, as the pin's
+    /// table reuses its own chunk. Its contents on return are unspecified.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+        scratch: &mut Vec<u8>,
+    ) -> Result<bool, Self::Error>;
+
+    /// What one trellis step prices of `token`, either ranged by
+    /// [`Self::trellis_ranges_continued`] or explicitly forced over
+    /// `syllables` and `tones` (`get_phrase_item` and
+    /// `compute_pronunciation_possibility`, `phonetic_lookup.h:646-684`);
+    /// `None` when the token has no readable item there.
+    ///
+    /// The n-best search calls this only for a path without a memo; it
+    /// otherwise prices through [`Self::trellis_item_with_facts`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error>;
+
+    /// [`Self::trellis_item`], given the `memo` the caller keeps for this
+    /// key path while one n-best call prices the tokens ranged on it, and
+    /// recording the sentence facts of the read in `facts`. A dictionary
+    /// may keep in the memo whatever it would otherwise work out again for
+    /// each token of the path; the item must be exactly
+    /// [`Self::trellis_item`]'s. The caller makes a fresh
+    /// [`Self::PathMemo`] per path and drops it with the span search that
+    /// found the path.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the dictionary's pricing errors.
+    fn trellis_item_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &Self::PathMemo,
+        facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, Self::Error>;
+
+    /// The phrase [`Self::trellis_item`] priced, read when a result is
+    /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`), recording the
+    /// sentence facts of the read in `facts`: its stored length and its
+    /// text, which is `None` where GLib's conversion answers NULL. `None`
+    /// where that item is `None`. It takes no path memo.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the dictionary's text errors.
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TokenPhrase>, Self::Error>;
+
+    /// The candidate search of one key path: the entries, the first
+    /// unreadable token with the unreadable row count, and the
+    /// `SEARCH_CONTINUED` bit. The pin answers all three from one
+    /// `search_internal` read per table (`chewing_large_table2_bdb.cpp:
+    /// 180-189`, `facade_chewing_table2.h:109-129` at 074a2219), and a
+    /// nonzero query tone keeps only stored readings with an equal or zero
+    /// tone (`pinyin_phrase3.h:97-105`). `row` is the caller's buffer for
+    /// that read.
+    ///
+    /// A token of a loaded library whose item cannot be read is counted as
+    /// unreadable and its entry is dropped. The pin's candidate listing
+    /// dies on such a token (`pinyin.cpp:1635-1637`, `:2053`); the answer
+    /// rides the call that met it, not shared state, so the caller can fail
+    /// exactly the listing it was building.
+    ///
+    /// # Errors
+    /// Returns a dictionary read or decoding error.
+    fn candidate_search_into(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+        row: &mut Vec<u8>,
+    ) -> Result<(UnreadableRows, bool), Self::Error>;
+
+    /// Reads addon candidates into a caller-owned buffer and returns the
+    /// same search's `SEARCH_CONTINUED` bit.
+    ///
+    /// W11: the default facade stays on [`Self::candidate_search_into`];
+    /// the addon facade is a second pass so an addon token never has to be
+    /// distinguished from `MERGED_DICTIONARY` by nibble alone
+    /// (`docs/findings/phrase-union.md` §6.3).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
+    fn search_addon_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<PhraseEntry>,
+        row: &mut Vec<u8>,
+    ) -> Result<bool, Self::Error>;
+
+    /// Tokens of phrases whose stored pinyin **strictly extends**
+    /// `syllables`, with the overlong-index gate checked in the same walk —
+    /// `ChewingLargeTable2::search_suggestion`
+    /// (`chewing_large_table2_tkrzwdb.cpp:493-535` at the pin `074a2219`),
+    /// the row source of the LONGER candidate
+    /// (`_prepend_longer_candidates`, `pinyin.cpp:1870-1933`). `None` names
+    /// the pin's `search_suggestion` abort; `Some` holds the tokens,
+    /// including an empty list when the query has no extensions.
+    ///
+    /// The pin's walk: the query's index key (tone-zeroed complete, or the
+    /// initial-only incomplete projection when any query syllable is
+    /// partial) must itself exist in the DBM; the cursor then walks the
+    /// rows **after** it, keeping a row when its key is strictly longer
+    /// and its first `prefix_len` keys equal the query under
+    /// `pinyin_compare_with_tones` (an incomplete query syllable accepts
+    /// every final; a zero tone accepts every tone), and each surviving
+    /// record's token is appended in cursor order. Rows at the query's
+    /// own length are the phrase itself and are never returned.
+    ///
+    /// Tokens come out in the pin's `reduce_tokens` order: grouped by
+    /// library nibble ascending, cursor order within a group — the
+    /// winner-selection loop over them keeps the first token on unigram
+    /// ties, so the order is observable.
+    ///
+    /// The gate is the pin's user-chewing-table over-long-key gate
+    /// (`src/storage/chewing_large_table2_bdb.cpp:282`): it closes when the
+    /// dictionary's user index holds a reading past `MAX_PHRASE_LENGTH`
+    /// syllables that extends `syllables`, so the pin's longer-candidate
+    /// walk reaches the key and dies at `switch`'s `default: abort()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot serve the walk.
+    fn checked_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Option<Vec<PhraseToken>>, Self::Error>;
+
+    /// The phrase tokens stored for an exact raw UCS-4 span, the probe
+    /// `pinyin_phrase_segment`'s span DP looks up per character span
+    /// (`PhraseLookup::get_best_match` searches the phrase table per
+    /// span; `phrase_lookup.cpp:135-157` at the pin). The span may contain
+    /// surrogate code points or values above U+10FFFF. A table-backed
+    /// dictionary answers from its reverse text maps in stored order
+    /// (system seam first, then the user seam).
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken>;
+
+    /// Whether phrase segmentation must retain native search calls even
+    /// at unreachable steps. Failed native handles can emit diagnostics.
+    fn phrase_span_searches_are_observable(&self) -> bool;
+
+    /// Continuation after the preceding exact phrase-span search. This
+    /// auxiliary query must not repeat that search on a failed handle.
+    fn phrase_span_continues(&self, ucs4: &[u32]) -> bool;
+
+    /// The phrase text a token owns, for rows the candidate surface must
+    /// render from the token alone — `_token_get_phrase`
+    /// (`pinyin.cpp:1994-2050` at the pin), which fills a LONGER
+    /// candidate's string from the phrase index item. `None` when the
+    /// dictionary cannot back the row's text (the row is then not built).
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText>;
+
+    /// The current phrase item's stored length, or `None` for a missing or
+    /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
+    /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize>;
+
+    /// The stored pronunciations of the phrase item behind `token` —
+    /// `FacadePhraseIndex::get_phrase_item` then `get_nth_pronunciation`
+    /// (`phrase_index.h` at the pin `074a2219`): each pronunciation's keys,
+    /// tones included, and its `guint32` frequency, in stored order. This is
+    /// what `ForwardPhoneticConstraints::validate_constraint` revalidates a
+    /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
+    /// table. [`PhraseItemRead::NoItem`] when the dictionary has no item for
+    /// the token, as the pin's `get_phrase_item` fails then.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot read the item.
+    fn phrase_item_pronunciations(&self, token: PhraseToken)
+    -> Result<PhraseItemRead, Self::Error>;
+}
+
+/// A dictionary that lists entries: the fixture doubles and the evaluation
+/// tool's dictionary (`docs/findings/core-trait-seam.md`).
+///
+/// `lookup` is the one required method. The other methods are hooks with
+/// defaults; an implementor overrides only those it models. The blanket
+/// implementation derives [`Dictionary`] from them, with `PathMemo = ()`.
+pub trait PhraseList {
+    /// Syllable representation accepted by this dictionary.
+    type Syllable;
+
+    /// Lookup failure reported by this dictionary.
+    type Error;
 
     /// Looks up entries matching `syllables`.
     ///
@@ -97,9 +332,8 @@ pub trait Dictionary {
     /// Returns every matching pronunciation index record in library, range,
     /// and item order, retaining repeated tokens for the sentence trellis.
     /// `tones` supplies the query tones; missing tones are zero.
-    /// Ordinary lookup consumers continue to use [`Self::lookup`].
     ///
-    /// The default preserves existing dictionary implementations.
+    /// The default is [`Self::lookup`], which ignores the tones.
     ///
     /// # Errors
     ///
@@ -112,219 +346,25 @@ pub trait Dictionary {
         self.lookup(syllables)
     }
 
-    /// One `FacadeChewingTable2::search` call of the sentence trellis:
-    /// appends this lookup's `PhraseIndexRange`s to `ranges`
-    /// (`chewing_large_table2.h:91-133` at the pin `074a2219`), the system
-    /// table's call before the user table's
-    /// (`facade_chewing_table2.h:109-129`). `tones` is as for
-    /// [`Self::trellis_records`].
+    /// [`Self::lookup`] into a caller-owned buffer, also answering whether
+    /// the lookup met a token of a loaded library whose item could not be
+    /// read ([`Dictionary::candidate_search_into`]).
     ///
-    /// The ranges carry tokens only, as the pin's `convert` does: a step
-    /// prices the tokens it meets through [`Self::trellis_item`], and the
-    /// text of a result is read through [`Self::trellis_text`] when it is
-    /// emitted. Every ranged token holds a `Some(())` slot.
-    ///
-    /// The default applies [`PhraseIndexRanges::convert`] to
-    /// [`Self::trellis_records`]' tokens as one call, so dictionaries
-    /// without a stored index need no change.
+    /// The default copies [`Self::lookup`]'s vector and answers `false`.
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_ranges(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        ranges: &mut PhraseIndexRanges<()>,
-    ) -> Result<(), Self::Error> {
-        let entries = self.trellis_records(syllables, tones)?;
-        ranges.convert(
-            entries
-                .iter()
-                .map(|entry| (entry.token().value(), Some(()))),
-        );
-        Ok(())
-    }
-
-    /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] for the
-    /// same key path, answered together: the pin's one
-    /// `ChewingLargeTable2::search` call gives the ranges and
-    /// `SEARCH_CONTINUED` from a single DBM get
-    /// (`chewing_large_table2_bdb.cpp:165-192` at `074a2219`). Returns
-    /// whether the prefix is continued.
-    ///
-    /// The default is the two calls; a dictionary that can serve both from
-    /// one read overrides it and must answer exactly as the pair does.
-    ///
-    /// `scratch` is the caller's buffer for the read's value bytes, which
-    /// the decode loop passes to every search of a guess, as the pin's
-    /// table reuses its own chunk. Its contents on return are unspecified.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_ranges_continued(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        ranges: &mut PhraseIndexRanges<()>,
-        _scratch: &mut Vec<u8>,
-    ) -> Result<bool, Self::Error> {
-        self.trellis_ranges(syllables, tones, ranges)?;
-        self.phrase_prefix_exists(syllables)
-    }
-
-    /// What one trellis step prices of `token`, either ranged by
-    /// [`Self::trellis_ranges`] or explicitly forced over `syllables` and `tones`
-    /// (`get_phrase_item` and `compute_pronunciation_possibility`,
-    /// `phonetic_lookup.h:646-684`); `None` when the token has no
-    /// readable item there.
-    ///
-    /// The default reads the last of [`Self::trellis_records`]' entries
-    /// for the token. Dictionaries with unindexed item readings override it
-    /// to read those items independently of their index membership.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_item(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        Ok(self
-            .trellis_records(syllables, tones)?
-            .iter()
-            .rev()
-            .find(|entry| entry.token().value() == token)
-            .map(|entry| TrellisItem {
-                chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
-                pronunciation: entry.pronunciation_possibility(),
-            }))
-    }
-
-    /// [`Self::trellis_item`], given the `memo` the caller keeps for this
-    /// key path while one n-best call prices the tokens ranged on it. A
-    /// dictionary may keep there whatever it would otherwise work out
-    /// again for each token of the path; the answer must be exactly
-    /// [`Self::trellis_item`]'s. The caller makes a fresh
-    /// [`Self::PathMemo`] per path and drops it with the span search that
-    /// found the path.
-    ///
-    /// The default ignores the memo.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_item_on_path(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-        memo: &Self::PathMemo,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        let _ = memo;
-        self.trellis_item(syllables, tones, token)
-    }
-
-    /// Sentence-only pricing with a guess-local token memo.
-    /// # Errors
-    /// Preserves the dictionary's pricing errors.
-    fn trellis_item_with_facts(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-        memo: &Self::PathMemo,
-        _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        self.trellis_item_on_path(syllables, tones, token, memo)
-    }
-
-    /// Sentence-only final text read using the same token memo.
-    /// # Errors
-    /// Preserves the dictionary's text errors.
-    fn trellis_text_with_facts(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-        _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<Option<TokenPhrase>, Self::Error> {
-        self.trellis_text(syllables, tones, token)
-    }
-
-    /// The phrase [`Self::trellis_item`] priced, read when a result is
-    /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`): its stored
-    /// length and its text, which is `None` where GLib's conversion answers
-    /// NULL. `None` where that item is `None`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn trellis_text(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TokenPhrase>, Self::Error> {
-        Ok(self
-            .trellis_records(syllables, tones)?
-            .iter()
-            .rev()
-            .find(|entry| entry.token().value() == token)
-            .map(|entry| TokenPhrase::from(entry.text().clone())))
-    }
-
-    /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
-    /// across keystrokes on the window-scan path.
-    ///
-    /// The default copies [`Self::lookup`]'s vector. Implementors that
-    /// already fill a `Vec` should override this and `clear`+`push` into
-    /// `out` instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
-    fn lookup_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
-        let entries = self.lookup(syllables)?;
-        out.clear();
-        out.extend(entries);
-        Ok(())
-    }
-
-    /// [`Self::lookup_into`], also answering whether the lookup met a token
-    /// of a loaded library whose item could not be read (the entry is
-    /// dropped, as ever). The pin's candidate listing dies on such a token
-    /// (`pinyin.cpp:1635-1637`, `:2053`); the answer rides the call that met
-    /// it, not shared state, so the caller can fail exactly the listing it
-    /// was building.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::lookup_into`].
+    /// As [`Self::lookup`].
     fn lookup_into_flagged(
         &self,
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
-        self.lookup_into(syllables, out)?;
+        lookup_into(self, syllables, out)?;
         Ok(false)
     }
 
-    /// The candidate search of one key path: the entries, the first
-    /// unreadable token with the unreadable row count, and the
-    /// `SEARCH_CONTINUED` bit. The pin answers all three from one
-    /// `search_internal` read per table (`chewing_large_table2_bdb.cpp:
-    /// 180-189`, `facade_chewing_table2.h:109-129` at 074a2219), and a
-    /// nonzero query tone keeps only stored readings with an equal or zero
-    /// tone (`pinyin_phrase3.h:97-105`). `row` is the caller's buffer for
-    /// that read.
+    /// [`Dictionary::candidate_search_into`] for this dictionary.
     ///
     /// The default is the tone-less [`Self::lookup_into_flagged`] then
     /// [`Self::phrase_prefix_exists`].
@@ -360,12 +400,10 @@ pub trait Dictionary {
     /// (`pinyin_phrase3.h:170-178` at 074a2219) projects each position to
     /// its initial.
     ///
-    /// Defaulted to `true` so the frozen implementors keep compiling: always
-    /// continuing the scan yields the same candidate set (the probe only
-    /// stops windows that would return nothing), at the cost of searching
-    /// every window to the end of the input
-    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
-    /// methods only).
+    /// The default is `true`: always continuing the scan yields the same
+    /// candidate set (the probe only stops windows that would return
+    /// nothing), at the cost of searching every window to the end of the
+    /// input.
     ///
     /// # Errors
     ///
@@ -374,28 +412,18 @@ pub trait Dictionary {
         Ok(true)
     }
 
-    /// The phrase tokens stored for an exact UTF-8 `text`, the probe
-    /// `pinyin_phrase_segment`'s span DP looks up per character span
-    /// (`PhraseLookup::get_best_match` searches the phrase table per
-    /// span; `phrase_lookup.cpp:135-157` at the pin). Empty for every
-    /// existing implementor except the table-backed dictionaries, which
-    /// answer from their reverse text maps in stored order (system seam
-    /// first, then the user seam — the same merge order as
-    /// [`Dictionary::lookup`]).
+    /// The phrase tokens stored for an exact UTF-8 `text`.
     ///
-    /// Defaulted to empty so existing implementors compile unchanged
-    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
-    /// methods only).
+    /// The default is empty.
     fn tokens_for_text(&self, _text: &str) -> Vec<PhraseToken> {
         Vec::new()
     }
 
-    /// The phrase tokens stored for an exact raw UCS-4 span — the
-    /// non-scalar counterpart of [`Self::tokens_for_text`]. The span may
-    /// contain surrogate code points or values above U+10FFFF, so the
-    /// default converts only an all-scalar span to text; a span with a
-    /// non-scalar is empty, and a table-backed dictionary overrides this
-    /// with a raw key read.
+    /// [`Dictionary::tokens_for_ucs4`] for this dictionary: the
+    /// non-scalar counterpart of [`Self::tokens_for_text`].
+    ///
+    /// The default converts only an all-scalar span to text; a span with a
+    /// non-scalar is empty.
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
         let mut text = String::with_capacity(ucs4.len());
         for &word in ucs4 {
@@ -407,25 +435,9 @@ pub trait Dictionary {
         self.tokens_for_text(&text)
     }
 
-    /// Whether phrase segmentation must retain native search calls even
-    /// at unreachable steps. Failed native handles can emit diagnostics.
-    fn phrase_span_searches_are_observable(&self) -> bool {
-        false
-    }
-
-    /// Continuation after the preceding exact phrase-span search. This
-    /// auxiliary query must not repeat that search on a failed handle.
-    fn phrase_span_continues(&self, _ucs4: &[u32]) -> bool {
-        true
-    }
-
-    /// Addon-facade lookup pass, empty for every existing implementor.
+    /// Addon-facade lookup pass ([`Dictionary::search_addon_into`]).
     ///
-    /// W11: the default facade stays on [`Dictionary::lookup`]; the addon
-    /// facade is a second pass so an addon token never has to be
-    /// distinguished from `MERGED_DICTIONARY` by nibble alone
-    /// (`docs/findings/phrase-union.md` §6.3). Defaulted so other
-    /// implementors compile unchanged.
+    /// The default is empty.
     ///
     /// # Errors
     ///
@@ -434,13 +446,125 @@ pub trait Dictionary {
         Ok(Vec::new())
     }
 
-    /// Reads addon candidates into a caller-owned buffer and returns the
-    /// same search's `SEARCH_CONTINUED` bit. The default uses
-    /// [`Self::lookup_addon`] and has no continuation bit.
+    /// Tokens of phrases whose stored pinyin strictly extends `syllables`,
+    /// in the order [`Dictionary::checked_extension_tokens`] states.
+    ///
+    /// The default is empty: a dictionary that does not override it
+    /// surfaces no LONGER candidate.
     ///
     /// # Errors
     ///
-    /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
+    /// Returns [`Self::Error`] when the backend cannot serve the walk.
+    fn suggest_extension_tokens(
+        &self,
+        _syllables: &[Self::Syllable],
+    ) -> Result<Vec<PhraseToken>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    /// [`Dictionary::phrase_text_for_token`] for this dictionary.
+    ///
+    /// The default is `None`: the dictionary cannot back a LONGER row's
+    /// text.
+    fn phrase_text_for_token(&self, _token: u32) -> Option<PhraseText> {
+        None
+    }
+
+    /// [`Dictionary::phrase_length_for_token`] for this dictionary.
+    ///
+    /// The default is the length of [`Self::phrase_text_for_token`]'s text.
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        PhraseList::phrase_text_for_token(self, token).map(|text| text.phrase_length())
+    }
+
+    /// [`Dictionary::phrase_item_pronunciations`] for this dictionary.
+    ///
+    /// The default answers [`PhraseItemRead::NoItem`]: a dictionary that
+    /// keeps no phrase items has none to read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot read the item.
+    fn phrase_item_pronunciations(
+        &self,
+        _token: PhraseToken,
+    ) -> Result<PhraseItemRead, Self::Error> {
+        Ok(PhraseItemRead::NoItem)
+    }
+}
+
+/// [`Dictionary`] derived from a [`PhraseList`].
+impl<T: PhraseList> Dictionary for T {
+    type Syllable = <T as PhraseList>::Syllable;
+    type Error = <T as PhraseList>::Error;
+    type PathMemo = ();
+
+    /// The ranges of [`PhraseList::trellis_records`]' tokens, then
+    /// [`PhraseList::phrase_prefix_exists`].
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+        _scratch: &mut Vec<u8>,
+    ) -> Result<bool, Self::Error> {
+        trellis_ranges(self, syllables, tones, ranges)?;
+        self.phrase_prefix_exists(syllables)
+    }
+
+    /// The last of [`PhraseList::trellis_records`]' entries for the token.
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        Ok(self
+            .trellis_records(syllables, tones)?
+            .iter()
+            .rev()
+            .find(|entry| entry.token().value() == token)
+            .map(|entry| TrellisItem {
+                chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
+                pronunciation: entry.pronunciation_possibility(),
+            }))
+    }
+
+    /// [`Dictionary::trellis_item`]; the memo and the facts are not used.
+    fn trellis_item_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &Self::PathMemo,
+        _facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        trellis_item_on_path(self, syllables, tones, token, memo)
+    }
+
+    /// The text of the last of [`PhraseList::trellis_records`]' entries for
+    /// the token; the facts are not used.
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        _facts: &mut sentence_facts::SentenceFacts,
+    ) -> Result<Option<TokenPhrase>, Self::Error> {
+        trellis_text(self, syllables, tones, token)
+    }
+
+    fn candidate_search_into(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        out: &mut Vec<PhraseEntry>,
+        row: &mut Vec<u8>,
+    ) -> Result<(UnreadableRows, bool), Self::Error> {
+        PhraseList::candidate_search_into(self, syllables, tones, out, row)
+    }
+
+    /// [`PhraseList::lookup_addon`], with no continuation bit.
     fn search_addon_into(
         &self,
         syllables: &[Self::Syllable],
@@ -453,116 +577,109 @@ pub trait Dictionary {
         Ok(false)
     }
 
-    /// Tokens of phrases whose stored pinyin **strictly extends**
-    /// `syllables` — `ChewingLargeTable2::search_suggestion`
-    /// (`chewing_large_table2_tkrzwdb.cpp:493-535` at the pin `074a2219`),
-    /// the row source of the LONGER candidate
-    /// (`_prepend_longer_candidates`, `pinyin.cpp:1870-1933`).
-    ///
-    /// The pin's walk: the query's index key (tone-zeroed complete, or the
-    /// initial-only incomplete projection when any query syllable is
-    /// partial) must itself exist in the DBM; the cursor then walks the
-    /// rows **after** it, keeping a row when its key is strictly longer
-    /// and its first `prefix_len` keys equal the query under
-    /// `pinyin_compare_with_tones` (an incomplete query syllable accepts
-    /// every final; a zero tone accepts every tone), and each surviving
-    /// record's token is appended in cursor order. Rows at the query's
-    /// own length are the phrase itself and are never returned.
-    ///
-    /// Tokens come out in the pin's `reduce_tokens` order: grouped by
-    /// library nibble ascending, cursor order within a group — the
-    /// winner-selection loop over them keeps the first token on unigram
-    /// ties, so the order is observable. Defaulted to empty so existing
-    /// implementors compile unchanged (`docs/findings/core-trait-seam.md`:
-    /// the seam grows by defaulted methods only) — a dictionary that does
-    /// not override it surfaces no LONGER candidate, the pre-§9 behaviour
-    /// of every fixture double.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the backend cannot serve the walk.
-    fn suggest_extension_tokens(
-        &self,
-        _syllables: &[Self::Syllable],
-    ) -> Result<Vec<PhraseToken>, Self::Error> {
-        Ok(Vec::new())
-    }
-
-    /// Suggestions with the overlong-index gate checked in the same walk.
-    /// `None` names the pin's `search_suggestion` abort; `Some` holds the
-    /// tokens, including an empty list when the query has no extensions.
-    /// The default preserves existing dictionary implementations.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the backend cannot serve the walk.
+    /// [`PhraseList::suggest_extension_tokens`]; the gate is always open.
     fn checked_extension_tokens(
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<Option<Vec<PhraseToken>>, Self::Error> {
-        if self.overlong_extension_gate(syllables) {
+        if overlong_extension_gate(self, syllables) {
             Ok(None)
         } else {
             self.suggest_extension_tokens(syllables).map(Some)
         }
     }
 
-    /// The phrase text a token owns, for rows the candidate surface must
-    /// render from the token alone — `_token_get_phrase`
-    /// (`pinyin.cpp:1994-2050` at the pin), which fills a LONGER
-    /// candidate's string from the phrase index item.
-    ///
-    /// Defaulted to `None` so existing implementors compile unchanged;
-    /// a dictionary that does not override it cannot back a LONGER row's
-    /// text (the row is then not built).
-    fn phrase_text_for_token(&self, _token: u32) -> Option<PhraseText> {
-        None
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+        PhraseList::tokens_for_ucs4(self, ucs4)
     }
 
-    /// The current phrase item's stored length, or `None` for a missing or
-    /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
-    /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
-    /// Dictionaries without separate item storage may use their token text.
-    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
-        self.phrase_text_for_token(token)
-            .map(|text| text.phrase_length())
-    }
-
-    /// The pin's user-chewing-table over-long-key gate
-    /// (`src/storage/chewing_large_table2_bdb.cpp:282`): `true` when the
-    /// dictionary's user index holds a reading past `MAX_PHRASE_LENGTH`
-    /// syllables that extends `syllables`, so the pin's longer-candidate
-    /// walk reaches the key and dies at `switch`'s `default: abort()`.
-    ///
-    /// Defaulted to `false` so existing implementors and fixture doubles
-    /// compile unchanged (the seam grows by defaulted methods only,
-    /// `docs/findings/core-trait-seam.md`): only a user-index-backed
-    /// dictionary answers otherwise.
-    fn overlong_extension_gate(&self, _syllables: &[Self::Syllable]) -> bool {
+    /// `false`: a listed dictionary has no native handle.
+    fn phrase_span_searches_are_observable(&self) -> bool {
         false
     }
 
-    /// The stored pronunciations of the phrase item behind `token` —
-    /// `FacadePhraseIndex::get_phrase_item` then `get_nth_pronunciation`
-    /// (`phrase_index.h` at the pin `074a2219`): each pronunciation's keys,
-    /// tones included, and its `guint32` frequency, in stored order. This is
-    /// what `ForwardPhoneticConstraints::validate_constraint` revalidates a
-    /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
-    /// table.
-    ///
-    /// The default answers [`PhraseItemRead::NoItem`]: a dictionary that
-    /// keeps no phrase items has none to read, as the pin's
-    /// `get_phrase_item` fails for a token it has no item for.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Self::Error`] when the backend cannot read the item.
+    /// `true`.
+    fn phrase_span_continues(&self, _ucs4: &[u32]) -> bool {
+        true
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
+        PhraseList::phrase_text_for_token(self, token)
+    }
+
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        PhraseList::phrase_length_for_token(self, token)
+    }
+
     fn phrase_item_pronunciations(
         &self,
-        _token: PhraseToken,
+        token: PhraseToken,
     ) -> Result<PhraseItemRead, Self::Error> {
-        Ok(PhraseItemRead::NoItem)
+        PhraseList::phrase_item_pronunciations(self, token)
     }
+}
+
+/// Applies [`PhraseIndexRanges::convert`] to
+/// [`PhraseList::trellis_records`]' tokens as one call.
+fn trellis_ranges<L: PhraseList>(
+    list: &L,
+    syllables: &[L::Syllable],
+    tones: &[u8],
+    ranges: &mut PhraseIndexRanges<()>,
+) -> Result<(), L::Error> {
+    let entries = list.trellis_records(syllables, tones)?;
+    ranges.convert(
+        entries
+            .iter()
+            .map(|entry| (entry.token().value(), Some(()))),
+    );
+    Ok(())
+}
+
+/// [`Dictionary::trellis_item`]; a listed dictionary keeps no path memo.
+fn trellis_item_on_path<L: PhraseList>(
+    list: &L,
+    syllables: &[L::Syllable],
+    tones: &[u8],
+    token: u32,
+    memo: &(),
+) -> Result<Option<TrellisItem>, L::Error> {
+    let _ = memo;
+    list.trellis_item(syllables, tones, token)
+}
+
+/// The text of the last of [`PhraseList::trellis_records`]' entries for
+/// `token`.
+fn trellis_text<L: PhraseList>(
+    list: &L,
+    syllables: &[L::Syllable],
+    tones: &[u8],
+    token: u32,
+) -> Result<Option<TokenPhrase>, L::Error> {
+    Ok(list
+        .trellis_records(syllables, tones)?
+        .iter()
+        .rev()
+        .find(|entry| entry.token().value() == token)
+        .map(|entry| TokenPhrase::from(entry.text().clone())))
+}
+
+/// [`PhraseList::lookup`] into a caller-owned buffer.
+fn lookup_into<L: PhraseList + ?Sized>(
+    list: &L,
+    syllables: &[L::Syllable],
+    out: &mut Vec<PhraseEntry>,
+) -> Result<(), L::Error> {
+    let entries = list.lookup(syllables)?;
+    out.clear();
+    out.extend(entries);
+    Ok(())
+}
+
+/// A listed dictionary has no user index, so the over-long-key gate is
+/// always open.
+fn overlong_extension_gate<L: PhraseList>(_list: &L, _syllables: &[L::Syllable]) -> bool {
+    false
 }
 
 /// A phrase item's stored pronunciations in stored order: each one's keys,

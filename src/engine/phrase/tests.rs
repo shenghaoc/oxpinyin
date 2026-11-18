@@ -3,7 +3,7 @@ use crate::PhraseEntry;
 
 use crate::{
     PhraseToken, SyllableKey,
-    model::{Dictionary, LanguageModel, NbestStepCosts},
+    model::{LanguageModel, NbestStepCosts, PhraseList},
 };
 
 /// A tiny dictionary: the text → tokens reverse map the span DP probes.
@@ -22,10 +22,9 @@ impl Dict {
     }
 }
 
-impl Dictionary for Dict {
+impl PhraseList for Dict {
     type Syllable = SyllableKey;
     type Error = core::convert::Infallible;
-    type PathMemo = ();
 
     fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(Vec::new())
@@ -45,10 +44,9 @@ struct RawDict {
     entries: Vec<(Vec<u32>, PhraseToken)>,
 }
 
-impl Dictionary for RawDict {
+impl PhraseList for RawDict {
     type Syllable = SyllableKey;
     type Error = core::convert::Infallible;
-    type PathMemo = ();
 
     fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(Vec::new())

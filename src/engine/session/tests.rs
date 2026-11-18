@@ -35,7 +35,7 @@ fn full_parsed_len_reflects_the_exact_chain() {
 
 use crate::{
     PhraseEntry, PhraseToken, SyllableKey,
-    model::{Dictionary, LanguageModel, NbestStepCosts, UserModel},
+    model::{Dictionary, LanguageModel, NbestStepCosts, PhraseList, UserModel},
 };
 
 use super::{Selection, SelectionTarget, Session};
@@ -49,9 +49,8 @@ use crate::fixture_doubles::{
 /// machine and not a data set.
 struct Silent;
 
-impl Dictionary for Silent {
+impl PhraseList for Silent {
     type Error = EngineError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -397,9 +396,8 @@ struct Flaky {
     failures: core::cell::Cell<u32>,
 }
 
-impl Dictionary for Flaky {
+impl PhraseList for Flaky {
     type Error = FixtureError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
@@ -422,7 +420,7 @@ impl Dictionary for Flaky {
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<crate::PhraseText> {
-        self.inner.phrase_text_for_token(token)
+        PhraseList::phrase_text_for_token(&self.inner, token)
     }
 }
 
@@ -433,9 +431,8 @@ struct UnloadedToken {
     unloaded: u32,
 }
 
-impl Dictionary for UnloadedToken {
+impl PhraseList for UnloadedToken {
     type Error = FixtureError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
@@ -443,12 +440,12 @@ impl Dictionary for UnloadedToken {
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<crate::PhraseText> {
-        self.inner.phrase_text_for_token(token)
+        PhraseList::phrase_text_for_token(&self.inner, token)
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
         (token != self.unloaded)
-            .then(|| self.inner.phrase_length_for_token(token))
+            .then(|| PhraseList::phrase_length_for_token(&self.inner, token))
             .flatten()
     }
 }
@@ -1375,9 +1372,8 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
 /// merge count can be measured against its candidate count.
 struct SystemPhrases(Vec<PhraseEntry>);
 
-impl Dictionary for SystemPhrases {
+impl PhraseList for SystemPhrases {
     type Error = EngineError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -1892,9 +1888,8 @@ struct TwoFacadeDict {
     addon: PhraseEntry,
 }
 
-impl Dictionary for TwoFacadeDict {
+impl PhraseList for TwoFacadeDict {
     type Error = EngineError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -2083,9 +2078,8 @@ fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
 #[test]
 fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
     struct UnreadableDict;
-    impl Dictionary for UnreadableDict {
+    impl PhraseList for UnreadableDict {
         type Error = EngineError;
-        type PathMemo = ();
         type Syllable = SyllableKey;
 
         fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -3334,9 +3328,8 @@ fn choosing_behind_the_composition_moves_the_record_back() {
 /// the pin's tone match (`pinyin_compare_tone3`, `pinyin_phrase3.h:97-105`).
 struct StoredTone3;
 
-impl Dictionary for StoredTone3 {
+impl PhraseList for StoredTone3 {
     type Error = EngineError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -3927,9 +3920,8 @@ struct ItemDictionary {
     failing: bool,
 }
 
-impl Dictionary for ItemDictionary {
+impl PhraseList for ItemDictionary {
     type Error = EngineError;
-    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -4540,7 +4532,7 @@ pub(super) mod session_lifecycle {
 /// The F-D replay fixture session and the session-level replay tests; the
 /// scenarios themselves are in `selection/tests.rs`.
 pub(super) mod session_replay {
-    use crate::{SyllableKey, model::Dictionary};
+    use crate::{SyllableKey, model::PhraseList};
 
     use crate::engine::Session;
     use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};

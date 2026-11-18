@@ -29,7 +29,10 @@
 
 use rustc_hash::FxHashMap;
 
-use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
+use oxpinyin::{
+    PhraseEntry, PhraseToken, SyllableKey,
+    model::{Dictionary, PhraseList},
+};
 
 use super::error::EvalError;
 use super::model::EvalLanguageModel;
@@ -83,7 +86,7 @@ pub fn correction_rate<D, P>(
     sentences: &[Vec<PhraseToken>],
 ) -> Result<EvalReport, EvalError>
 where
-    D: Dictionary<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
     P: PhraseSource,
 {
@@ -215,7 +218,7 @@ fn get_nbest_match<D>(
     keys: &[SyllableKey],
 ) -> Result<Vec<PhraseToken>, EvalError>
 where
-    D: Dictionary<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     if keys.is_empty() {
@@ -272,7 +275,7 @@ where
 /// token order, each priced with its pronunciation possibility.
 fn priced_entries<D>(dictionary: &D, span: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EvalError>
 where
-    D: Dictionary<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
 {
     let mut entries = dictionary

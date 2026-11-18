@@ -5,7 +5,7 @@ use crate::engine::session::matrix::ScanMatrix;
 use crate::graph::SegmentGraph;
 use crate::{
     OptionBits, PhraseText, PhraseToken, SyllableKey,
-    model::{Dictionary, LanguageModel, NbestStepCosts},
+    model::{LanguageModel, NbestStepCosts, PhraseList},
 };
 use std::cell::RefCell;
 
@@ -27,10 +27,9 @@ impl std::error::Error for TextError {}
 
 struct TextDictionary;
 
-impl Dictionary for TextDictionary {
+impl PhraseList for TextDictionary {
     type Syllable = SyllableKey;
     type Error = TextError;
-    type PathMemo = ();
 
     fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(vec![PhraseEntry::new(PhraseToken::new(1), "你好")])
@@ -97,10 +96,9 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         reads: Cell<usize>,
     }
 
-    impl Dictionary for SpanDictionary {
+    impl PhraseList for SpanDictionary {
         type Syllable = SyllableKey;
         type Error = std::convert::Infallible;
-        type PathMemo = ();
 
         fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
             self.reads.set(self.reads.get() + 1);
@@ -691,10 +689,9 @@ fn one_column_matrix(text: &str) -> (ScanMatrix, usize) {
 #[test]
 fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
     struct TinyReadings;
-    impl Dictionary for TinyReadings {
+    impl PhraseList for TinyReadings {
         type Syllable = SyllableKey;
         type Error = TextError;
-        type PathMemo = ();
 
         fn lookup(&self, keys: &[SyllableKey]) -> Result<Vec<PhraseEntry>, TextError> {
             Ok(if keys.len() == 1 {

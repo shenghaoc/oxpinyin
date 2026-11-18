@@ -23,8 +23,9 @@ Decisions:
    user. Default nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same
    `USER_FILE` slot and the choose-promotion target (`pinyin.cpp:2534-2563`).
 2. **Punctuation prediction** reads `punct.bin` (§6.5).
-3. **Trait additions are defaulted methods**; other implementors compile
-   unchanged.
+3. **A new engine method is a required `Dictionary` method**, with one
+   derived body in the `PhraseList` blanket implementation, so the
+   `PhraseList` implementors compile unchanged.
 
 Upstream does not union up to 16 libraries by token nibble in one facade:
 it has two facades (§3.2).
@@ -255,7 +256,7 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 
 | Upstream | oxpinyin |
 |---|---|
-| Two `search_matrix` passes per window | `Dictionary::lookup` then `lookup_addon` per window (`src/engine/session/lookup.rs`) |
+| Two `search_matrix` passes per window | `Dictionary::candidate_search_into` then `Dictionary::search_addon_into` per window (`src/engine/session/lookup.rs`) |
 | `ADDON_CANDIDATE` type | `CandidateKind::Addon` (`src/engine/candidate.rs`) |
 | Addon frequency: addon total, no bigram | `Session::candidate_frequencies` addon branch |
 
