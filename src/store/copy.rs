@@ -41,8 +41,8 @@ pub(crate) fn copy(
 /// Fault points in [`copy`] for other crates' death tests: no input makes an
 /// in-memory container fail a read or a write, and a file's own writes fail
 /// at a page flush or a growth, not at a chosen record. Test-only: the
-/// module exists only with the `test-hooks` feature, which only a
-/// `[dev-dependencies]` entry enables.
+/// module exists only with the `test-hooks` feature, which no normal or
+/// shipped build enables (see the feature's comment in `Cargo.toml`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};

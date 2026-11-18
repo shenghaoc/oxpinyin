@@ -528,6 +528,7 @@ impl PhraseLibrary {
     /// layout the pin would reach through an out-of-bounds read, or state
     /// the pin would expose as a huge/overlapping chunk, stays
     /// [`LibraryError::Format`] and is refused.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
         let library = Self::open_retaining_layout(path)?;
         if library.layout_failed {

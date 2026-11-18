@@ -1091,6 +1091,7 @@ impl RuntimeDict<'_> {
     /// Exact-text token lookup across the system and user seams, in that
     /// order — the merge order `Self::lookup_into` established. The
     /// phrase-segment span DP consumes this per character span.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
         let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
         // The pin probes the user phrase table directly (074a2219
@@ -1199,7 +1200,7 @@ impl Dictionary for RuntimeDict<'_> {
         ))
     }
 
-    /// [`Self::tokens_for_text`] over raw UCS-4 spans, including
+    /// `Self::tokens_for_text` over raw UCS-4 spans, including
     /// surrogate or above-Unicode words. The system and user phrase
     /// tables compare the stored raw keys; no `char` or `str` is built
     /// from a non-scalar.

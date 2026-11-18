@@ -7,7 +7,7 @@
 //! and phrase table, the user bigram container, the live system items and
 //! the libraries' stored-total offsets — and every value operation —
 //! training, phrase adds, exports, masking — runs against that state.
-//! [`UserStore::save_reporting`] then exports the session back through
+//! `UserStore::save_reporting` then exports the session back through
 //! [`crate::user::persistence`] into the pin's files. The durability shape is
 //! therefore the pin's own: in memory between saves, as the pin's
 //! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
@@ -174,7 +174,7 @@ impl UserStore {
     /// [`check_profile`](Self::check_profile) already judged, over `originals`
     /// that the library loop fills as it walks `rows`. The loop reads the
     /// profile under `law` into the session's state in process memory, and
-    /// [`UserStore::save_reporting`] writes the pin's files back. Dropping
+    /// `UserStore::save_reporting` writes the pin's files back. Dropping
     /// the returned owner is the facade's fini: it makes the law's fini-time
     /// `user.conf` write ([`crate::user::persistence::fini`]).
     ///
@@ -661,7 +661,7 @@ fn seed_totals(
 }
 
 /// Reads the session's system items back into the persistence shape — the
-/// export half of the value mapping, [`UserStore::save_reporting`]'s — with
+/// export half of the value mapping, `UserStore::save_reporting`'s — with
 /// the live system items as values, for the tests.
 #[cfg(test)]
 pub fn export_state(
@@ -692,7 +692,7 @@ pub fn export_state(
 }
 
 /// Reads the session's system items back into the persistence shape — the
-/// export half of the value mapping, [`UserStore::save_reporting`]'s.
+/// export half of the value mapping, `UserStore::save_reporting`'s.
 #[cfg(test)]
 pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreError> {
     let mut state = UserState::default();

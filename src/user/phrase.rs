@@ -168,6 +168,7 @@ pub const fn is_user_token(token: Token) -> bool {
 /// bump in `_add_phrase` (`pinyin.cpp:592-594`) is a no-op on that value
 /// because the low 24 bits are already non-zero. Starting `range_end` at 0
 /// would hit the bump and land on the same token.
+#[cfg(any(test, feature = "test-hooks"))]
 pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end
@@ -215,6 +216,7 @@ impl UserPronunciation {
     /// phrase is created with (`pinyin.cpp:597-600`) and never one added
     /// to an existing phrase (`pinyin.cpp:569-582`, `add_pronunciation`
     /// without `add_index`).
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn indexed(&self) -> bool {
         self.indexed
@@ -257,12 +259,14 @@ pub struct UserPhrase {
 
 impl UserPhrase {
     /// Allocated user token (library nibble [`USER_DICTIONARY`]).
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn token(&self) -> Token {
         self.token
     }
 
     /// Exact stored words, including zero words and non-scalars.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn words(&self) -> &[u32] {
         &self.text

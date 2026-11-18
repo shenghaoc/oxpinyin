@@ -17,8 +17,8 @@
 //! the C ABI reach; it exposes the counts as a
 //! [`crate::model::UserCountDelta`] so decode can merge them additively
 //! with the system model, the §4 `m_modified` gate
-//! ([`UserStore::is_modified`] / [`UserStore::save_reporting`]) behind `pinyin_save`,
-//! and the §9 export surface ([`UserStore::export_phrases_in`] /
+//! ([`UserStore::is_modified`] / `UserStore::save_reporting`) behind `pinyin_save`,
+//! and the §9 export surface (`UserStore::export_phrases_in` /
 //! `UserStore::bigram_predecessors`) behind the C ABI's export iterators.
 //! Nothing is durable between saves: `save` writes the pin's own user file
 //! set (`.tmp` + rename), the pin's own shape (`docs/findings/user-store.md`
@@ -70,19 +70,22 @@ pub use persistence::{
     ChunkHeaderField, MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals,
     UserConfLaw, system_originals,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub use phrase::FIRST_USER_TOKEN;
 #[cfg(test)]
 pub use phrase::key_syllable;
 pub use phrase::{
-    ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
-    KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY,
-    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
-    UserPronunciation, is_user_token, key_pinyin_string, key_tone, phrase_index_library_index,
-    phrase_index_make_token, toned_key,
+    ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, KEY_SYLLABLE_MASK,
+    KEY_TONE_SHIFT, MAX_KEY_TONE, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK,
+    PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, is_user_token,
+    key_pinyin_string, key_tone, phrase_index_library_index, phrase_index_make_token, toned_key,
 };
 pub use replay::{JournalFault, UnigramAdd};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use store::ExportedPhrase;
 pub use store::{
-    ExportedPhrase, MaskCheck, SENTENCE_START, Token, TrainingCheck, TrainingFault, UserStore,
-    UserStoreError, add_system_reading,
+    MaskCheck, SENTENCE_START, Token, TrainingCheck, TrainingFault, UserStore, UserStoreError,
+    add_system_reading,
 };
 
 #[cfg(feature = "tools")]

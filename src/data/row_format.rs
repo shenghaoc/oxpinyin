@@ -384,10 +384,12 @@ pub mod bigram {
 pub mod punct {
     use crate::PhraseText;
 
+    #[cfg(any(test, feature = "test-hooks"))]
     use super::push_ucs4;
 
     /// Encodes punctuation strings as a UCS-4 stream with `u32` zero
     /// terminators — `PunctTableEntry::escape`'s layout.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn encode_puncts<S: AsRef<str>>(puncts: &[S]) -> Vec<u8> {
         let mut buf = Vec::new();

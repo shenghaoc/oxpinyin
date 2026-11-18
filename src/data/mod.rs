@@ -52,7 +52,9 @@ pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram};
 // re-export lets the consumers above it (`runtime`, the C crates, tests and
 // fuzz targets) name fixture directories and check `table.conf` against the
 // backend the build selected without naming `store` themselves.
-pub use crate::store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
+pub use crate::store::DEFAULT_STORE_DB_FORMAT;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use crate::store::DEFAULT_STORE_EXT;
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
 #[cfg(test)]

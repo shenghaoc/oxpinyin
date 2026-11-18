@@ -225,6 +225,7 @@ where
     /// [`EngineError::StaleTrainingConstraint`] or
     /// [`EngineError::StaleTrainingSpan`]; [`EngineError::Graph`] when the
     /// raw buffer cannot be built into a segment graph.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn train_nbest_preflight(&self, index: u8) -> Result<(), EngineError> {
         if let Some(row) = self.nbest_training_row(index)?
             && !row.spans.is_empty()
@@ -382,6 +383,7 @@ where
     /// record — exactly the phrases a `pinyin_train` call would train
     /// (`docs/findings/user-store.md` §2.1). The C ABI uses the tail of this
     /// slice as the predecessor for predicted-candidate training (§2.3).
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn selected_tokens(&self) -> &[PhraseToken] {
         self.record.history()
@@ -390,6 +392,7 @@ where
     /// Text retained by selections, including raw gaps before anchored choices.
     /// Unselected trailing input remains in [`Session::raw_input`] after
     /// [`Session::composition_offset`].
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn selected_text(&self) -> &PhraseText {
         self.record.selected()

@@ -15,7 +15,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-oxpinyin = { path = ".." }
+# test-hooks: the test-only library items the targets read.
+oxpinyin = { path = "..", features = ["test-hooks"] }
 # dict-loader: hostile bytes through the system chunk loader.
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib

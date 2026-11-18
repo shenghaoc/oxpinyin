@@ -416,6 +416,7 @@ pub trait WriteStore: RawReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the store cannot be created.
+    #[cfg(any(test, feature = "test-hooks"))]
     fn create_user_hash(path: &Path) -> Result<Self, StoreError>
     where
         Self: Sized,
@@ -464,6 +465,7 @@ pub trait WriteStore: RawReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the container cannot be written.
+    #[cfg(any(test, feature = "test-hooks"))]
     fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
     where
         Self: Sized,
@@ -516,7 +518,7 @@ pub trait WriteStore: RawReadStore {
     /// That is the floor the seam guarantees, and it is what `write`
     /// promises — no more.
     ///
-    /// **Stable storage is [`WriteStore::compact`]'s guarantee, not
+    /// **Stable storage is `WriteStore::compact`'s guarantee, not
     /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
     /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`.
     /// Berkeley DB exceeds the floor: it has no softer primitive to
@@ -623,6 +625,7 @@ pub trait WriteStore: RawReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when compaction fails.
+    #[cfg(any(test, feature = "test-hooks"))]
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
@@ -907,6 +910,7 @@ pub trait RawReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend open fails.
+    #[cfg(any(test, feature = "test-hooks"))]
     fn open_user_bigram(path: &std::path::Path) -> Result<Self, StoreError>
     where
         Self: Sized,
@@ -1034,6 +1038,7 @@ pub(crate) fn remove_if_present(path: &Path) -> Result<(), StoreError> {
 
 /// `<name>.<ext>.tmp` beside `path` — the staged-replacement sibling
 /// [`WriteStore::write_user_bigram`] builds before the atomic rename.
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
     let mut name = path
         .file_name()
@@ -1093,9 +1098,11 @@ pub(crate) type DefaultUserBigramDb = BdbUserBigramDb;
 /// File extension for [`DefaultStore`]'s native tables — one per peer;
 /// the store forces its database type through open parameters, so the
 /// extension is naming, not detection.
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg(feature = "kyotocabinet")]
 pub const DEFAULT_STORE_EXT: &str = "kct";
 /// File extension for [`DefaultStore`]'s native tables (tkrzw `TreeDBM`).
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
@@ -1103,6 +1110,7 @@ pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
 /// backend's session-scratch containers and the `fixtures/w3`
 /// directory of this backend.
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg(feature = "bdb")]
 pub const DEFAULT_STORE_EXT: &str = "db";
 

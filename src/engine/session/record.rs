@@ -35,6 +35,7 @@ impl SelectionRecord {
     }
 
     /// The text chosen so far.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) const fn selected(&self) -> &PhraseText {
         &self.selected
     }

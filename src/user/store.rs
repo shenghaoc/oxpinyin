@@ -44,6 +44,7 @@ pub type Token = u32;
 /// This is the `(phrase, pinyin, count)` triple
 /// `pinyin_iterator_get_next_phrase` yields upstream
 /// (`docs/findings/user-store.md` §9).
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportedPhrase {
     /// Exact stored phrase words.
@@ -1073,6 +1074,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
@@ -1085,6 +1087,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
@@ -1102,6 +1105,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the gram cannot be written.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_bigram_count(
         &mut self,
         prev: Token,
@@ -1678,6 +1682,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
         self.token_for_phrase_in(USER_DICTIONARY, phrase)
     }
@@ -1687,6 +1692,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn token_for_phrase_in(
         &self,
         library: u8,
@@ -1702,6 +1708,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns an error when the record cannot be read.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn phrase_table_tokens_for_text(&self, text: &str) -> Result<Vec<Token>, UserStoreError> {
         self.inner
             .libpinyin
@@ -1759,6 +1766,7 @@ impl UserStore {
     }
 
     /// Export rows for one `USER_FILE` nibble.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn export_phrases_in(&self, library: u8) -> Vec<ExportedPhrase> {
         let phrases = self.inner.libpinyin.phrases();
@@ -1802,6 +1810,7 @@ impl UserStore {
     }
 
     /// Every stored phrase (user and network) with pronunciations.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn phrases(&self) -> Vec<UserPhrase> {
         let phrases = self.inner.libpinyin.phrases();
@@ -1851,6 +1860,7 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the session cannot be exported or
     /// encoded — failures the pin has no counterpart for. A filesystem
     /// failure is never one.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
         self.save_reporting_compacted(&[])
     }
@@ -1859,6 +1869,7 @@ impl UserStore {
     /// the pin's `compact` rebuilt from no items: their saved log records a
     /// new header total of zero even though the system chunk's old total is
     /// the one the failed load read (`phrase_index.cpp:648-675`).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
         self.save_reporting_inner(
             compacted,
@@ -2273,6 +2284,7 @@ impl UserStore {
     /// user `ChewingLargeTable2::mask_out` walks every record and aborts on
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
         let checked = self.check_mask_out(mask, value)?;
         self.apply_mask_out(checked, mask, value)

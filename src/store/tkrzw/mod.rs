@@ -986,6 +986,7 @@ impl WriteStore for TkrzwStore {
         self.db.synchronize(false)
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     fn compact(&mut self) -> Result<(), StoreError> {
         if self.read_only {
             return Err(StoreError::ReadOnly);
