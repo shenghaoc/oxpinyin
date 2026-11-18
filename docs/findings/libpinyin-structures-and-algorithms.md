@@ -138,7 +138,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Lookup, and the output logic in `pinyin.cpp` | `oxpinyin` |
 | Wiring done in `pinyin_init` | `oxpinyin` |
 | Context and instance state shared by both APIs | `oxpinyin` |
-| `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin` |
+| `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxzhuyin-capi`, sharing `oxpinyin` |
 | `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries and the `k_mixture_model` operations) |
 
 The differences are deliberate:
@@ -364,7 +364,7 @@ policy rows 63 and 66).
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Instance | `PhoneticLookup<2, 3>` (`pinyin.cpp:406-409`) and `<1, 1>` (`zhuyin.cpp:348-351`) | `NbestShape` selects the same pair per instance (`oxpinyin/src/engine/nbest.rs:56-100`, `oxpinyin-zhuyin-capi/src/state.rs:59-74`). | different / argued ([decoder shape](#decoder-shape)) |
+| Instance | `PhoneticLookup<2, 3>` (`pinyin.cpp:406-409`) and `<1, 1>` (`zhuyin.cpp:348-351`) | `NbestShape` selects the same pair per instance (`oxpinyin/src/engine/nbest.rs:56-100`, `oxzhuyin-capi/src/state.rs:59-74`). | different / argued ([decoder shape](#decoder-shape)) |
 | Trellis | `ForwardPhoneticTrellis` (`lookup/phonetic_lookup.h:181`): per step a token → node hash table and an array of `trellis_node<nstore>` | `Trellis` (`nbest.rs`): per step a token map plus an explicit insertion order, so iteration never depends on hashing | different / argued (`sentence-surface.md`) |
 | Node store | `trellis_node::eval_item` (`lookup/phonetic_lookup_heap.h:56-81`) replaces the front when a newcomer beats it. The `<1>` specialisation checks the empty sentinel and then uses the raw predicate (`:89-122`). | `Node::keep` preserves front replacement and uses an explicit occupancy count (`oxpinyin/src/engine/nbest.rs:254-299`). | same / follows ([decoder shape](#decoder-shape)) |
 | Comparator | `trellis_value_less_than` (`lookup/phonetic_lookup.h:66`) with `LONG_SENTENCE_PENALTY = log(1.2f)` (`:39`) | `node_loses_to` (`nbest.rs`): pinyin orders the adjusted `f32` possibility `poss − length × ln(1.2f)` (`adjusted_poss`), best first with NaN last (`ordered_poss_compare`); zhuyin retains the pin's predicate | different / S1/S2 of the [algorithm-precondition ruling](compatibility-policy.md#algorithm-precondition-violations); node front eviction retained |
@@ -583,9 +583,9 @@ relative to the repository root.
 | Tone digits and direct Zhuyin default | Digits 1–5. Direct Zhuyin defaults to tone 1 | `storage/pinyin_parser2.cpp:179,443,542,638`, `storage/zhuyin_parser2.cpp:865,882-889` | `oxpinyin/src/full_pinyin_index.rs:151`, `oxpinyin/src/scheme.rs:338,821-828` |
 | Chewing-key table bounds | 24 initials, 4 middles, 18 finals, 6 tones | `storage/chewing_enum.h:38-40,53-55,81-83,97-99`, `storage/chewing_key.cpp:28-48,75,92,105` | `oxpinyin/src/chewing_key_tables.rs:3-7`, `oxpinyin/src/chewing_key.rs:100-111` |
 | Full-pinyin consumed length | At most 32767 from the signed 16-bit parse step | `storage/pinyin_parser2.cpp:67-70,289-292,353-359` | Wider internal positions under the [16-bit parse-step ruling](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps). `oxpinyin/src/graph.rs:18-26` |
-| Key rests and candidate positions | Wrap modulo 65536 | `storage/chewing_key.h:102-103`, `pinyin.cpp:103-104`, `zhuyin.cpp:83-84` | ABI values wrap. Internal placement follows the [key-position ruling](upstream-divergences.md#key-positions-past-byte-65535). `oxpinyin-capi/src/cursor.rs:108-109`, `oxpinyin-zhuyin-capi/src/cursor.rs:128-129` |
+| Key rests and candidate positions | Wrap modulo 65536 | `storage/chewing_key.h:102-103`, `pinyin.cpp:103-104`, `zhuyin.cpp:83-84` | ABI values wrap. Internal placement follows the [key-position ruling](upstream-divergences.md#key-positions-past-byte-65535). `oxpinyin-capi/src/cursor.rs:108-109`, `oxzhuyin-capi/src/cursor.rs:128-129` |
 | `MAX_PHRASE_LENGTH` | 16 keys. Import and remember accept lengths 1–15 | `include/novel_types.h:119`, `pinyin.cpp:643,1406,3602,3680`, `zhuyin.cpp:528,924`, `storage/phonetic_key_matrix.cpp:362,452,512` | `oxpinyin/src/engine/session/mod.rs:24`, `oxpinyin/src/user/phrase.rs:38`, `oxpinyin/src/data/chewing_table.rs:438`, `oxpinyin/src/facade/import.rs:44` |
-| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin/src/facade/import.rs:102-119`, `oxpinyin/src/facade/predict.rs:47`, `oxpinyin/src/engine/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:79`, `oxpinyin-zhuyin-capi/src/dict.rs:48` |
+| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin/src/facade/import.rs:102-119`, `oxpinyin/src/facade/predict.rs:47`, `oxpinyin/src/engine/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:79`, `oxzhuyin-capi/src/dict.rs:48` |
 | `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` | `oxpinyin/src/data/table_info.rs:41`, `oxpinyin/src/runtime/mod.rs:30` |
 | Token slot mask and allocation wrap | `0x00ffffff`. After the last slot, import uses slot 1 and addon promotion uses slot 0 | `include/novel_types.h:41-46`, `storage/phrase_index.cpp:620`, `pinyin.cpp:589-594,2541-2545` | `oxpinyin/src/user/phrase.rs:29,110-116`, `oxpinyin/src/user/store_arena.rs:378-382` |
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32,409,423` | `oxpinyin/src/data/user_files.rs:291,300,500` |
@@ -1151,11 +1151,11 @@ matrix and search costs. The pin also validates twice.
 returns −1 (#1989).
 The snapshot is cleared only by guess, reset and prediction
 (`oxpinyin-capi/src/instance.rs:122`, `predict.rs`, `sentence.rs`;
-`oxpinyin-zhuyin-capi/src/instance.rs:86`, `sentence.rs`). The refusal size
+`oxzhuyin-capi/src/instance.rs:86`, `sentence.rs`). The refusal size
 is computed in input coordinates (`oxpinyin/src/facade/instance.rs:509-517`)
 and guarded again in the engine (`oxpinyin/src/engine/session/selection.rs:398-409`). The answers are
 `choose_answer` (`oxpinyin-capi/src/candidates.rs:530,572-575`) and the
-zhuyin span answer (`oxpinyin-zhuyin-capi/src/candidates.rs:244-270`).
+zhuyin span answer (`oxzhuyin-capi/src/candidates.rs:244-270`).
 A guess clears the old candidates at entry (#1989).
 
 ### Candidate dedup over malformed phrase text

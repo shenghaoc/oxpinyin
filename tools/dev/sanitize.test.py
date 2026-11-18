@@ -204,7 +204,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(lifetime[:7], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}',
                                         'nextest', 'run'])
         self.assertIn('oxpinyin-capi', lifetime)
-        self.assertIn('oxpinyin-zhuyin-capi', lifetime)
+        self.assertIn('oxzhuyin-capi', lifetime)
         self.assertEqual(lifetime[-3:], ['--lib', '-E', 'test(outlives_context)'])
         self.assertIn('-Zsanitizer=address', environment['RUSTFLAGS'])
 

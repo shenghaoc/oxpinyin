@@ -31,7 +31,7 @@ deny = [
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
   { crate = "bindgen", wrappers = ["oxpinyin"] },
   { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-repl"] },
-  { crate = "oxpinyin-zhuyin-capi", wrappers = ["oxpinyin-repl"] },
+  { crate = "oxzhuyin-capi", wrappers = ["oxpinyin-repl"] },
   # The REPL is the utilities' only dependent: it uses their table builders.
   { crate = "oxpinyin-utils", wrappers = ["oxpinyin-repl"] },
   # Leaves: nothing may depend on them. The wrapper names the crate itself,

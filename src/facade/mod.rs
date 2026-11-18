@@ -1,7 +1,7 @@
 //! The facade-orchestration layer shared by the pinyin and zhuyin C-ABI
 //! facades.
 //!
-//! `oxpinyin-capi` and `oxpinyin-zhuyin-capi` drive the same
+//! `oxpinyin-capi` and `oxzhuyin-capi` drive the same
 //! `crate::runtime` session assembly through the laws this module holds:
 //! the parse-mode state machine (`begin_parse`'s continuation rule, the
 //! three batch-parse seams, the stored-parse originals), the shared halves

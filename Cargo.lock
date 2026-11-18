@@ -638,7 +638,7 @@ dependencies = [
  "oxpinyin",
  "oxpinyin-capi",
  "oxpinyin-utils",
- "oxpinyin-zhuyin-capi",
+ "oxzhuyin-capi",
  "regex",
  "rstest",
  "sha2",
@@ -661,7 +661,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-zhuyin-capi"
+name = "oxzhuyin-capi"
 version = "0.1.0-alpha.1"
 dependencies = [
  "glib-sys",

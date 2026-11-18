@@ -12,7 +12,7 @@ The code is the reference for the current surface: `src/engine/mod.rs` lists the
 ## What this seam is for
 
 `oxpinyin` is the in-tree session layer under the C facades.
-The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`).
+The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `oxzhuyin-capi`).
 The parser, engine and concrete models have internal Rust interfaces.
 
 The engine receives its inputs as data.

@@ -3,7 +3,7 @@
 This document records how `oxpinyin-capi` is packaged and installed as a shared and static C library, and the decisions behind it.
 On Linux, the installed tree is a drop-in for a same-backend libpinyin build.
 Consumers such as `ibus-libpinyin` link the 79-symbol `pinyin.h` surface exactly as they link upstream (`libpinyin.pc`, `-lpinyin`, `libpinyin.so.15`) and need no source changes.
-The same applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
+The same applies to `oxzhuyin-capi` and `libzhuyin`.
 
 oxpinyin maps system and addon data files with memmap2 `MmapOptions::map_copy`.
 System and addon data files must not be truncated or rewritten in place while a process has them mapped.
@@ -390,7 +390,7 @@ The `shipping-sizes` job in `.github/workflows/ci.yml` produces them; [verificat
 
 **When the job runs.**
 It runs on a pull request or a push to main when a file that can change a shipping library changes.
-Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxpinyin-zhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, the packaging tooling, and the vcpkg overlay port and triplets that provide tkrzw.
+Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxzhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, the packaging tooling, and the vcpkg overlay port and triplets that provide tkrzw.
 The job also runs when its own files change.
 `tools/dev/ship_sizes.py` holds the path list.
 The job is skipped in other cases, for example a documentation-only change.

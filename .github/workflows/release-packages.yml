@@ -2,7 +2,7 @@
 # every published release and attach them to that release.
 #
 # One matrix child per distro, each building oxpinyin-capi +
-# oxpinyin-zhuyin-capi under exactly ONE store backend — the backend that
+# oxzhuyin-capi under exactly ONE store backend — the backend that
 # matches the model data the distro's own libpinyin ships, so the drop-in
 # reads the data already on the system (docs/findings/compatibility-policy.md):
 #

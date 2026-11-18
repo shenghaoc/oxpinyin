@@ -13,15 +13,15 @@ workspace = true
 
 [features]
 default = ["tkrzw"]
-tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin/tkrzw", "oxpinyin-capi/tkrzw", "oxpinyin-zhuyin-capi/tkrzw"]
-bdb = ["oxpinyin-utils/bdb", "oxpinyin/bdb", "oxpinyin-capi/bdb", "oxpinyin-zhuyin-capi/bdb"]
-kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxpinyin-zhuyin-capi/kyotocabinet"]
+tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin/tkrzw", "oxpinyin-capi/tkrzw", "oxzhuyin-capi/tkrzw"]
+bdb = ["oxpinyin-utils/bdb", "oxpinyin/bdb", "oxpinyin-capi/bdb", "oxzhuyin-capi/bdb"]
+kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxzhuyin-capi/kyotocabinet"]
 
 [dependencies]
 oxpinyin-utils = { path = "../utils", version = "=0.1.0-alpha.1", default-features = false }
 oxpinyin = { workspace = true, features = ["tools"] }
 oxpinyin-capi = { path = "../capi", version = "=0.1.0-alpha.1", default-features = false, features = ["tools"] }
-oxpinyin-zhuyin-capi = { path = "../zhuyin-capi", version = "=0.1.0-alpha.1", default-features = false, features = ["tools"] }
+oxzhuyin-capi = { path = "../zhuyin-capi", version = "=0.1.0-alpha.1", default-features = false, features = ["tools"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

@@ -88,7 +88,7 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
     libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'libpinyin_capi.{extension}', 'oxpinyin-capi'),
                   settings.root / 'capi/libpinyin.ver', 'pinyin',
                   set()),
-                 ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxpinyin-zhuyin-capi'),
+                 ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'libzhuyin_capi.{extension}', 'oxzhuyin-capi'),
                   settings.root / 'zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
     status = 0
     for name, library, version, prefix, hooks in libraries:
@@ -257,9 +257,9 @@ def register_shape(text: str) -> list[str]:
     return errors
 
 
-def check_static(settings: Settings, abi: str, crate: str, header: str) -> int:
+def check_static(settings: Settings, abi: str, header: str) -> int:
     from collections import Counter
-    root = crate_dir(settings.root, crate)
+    root = crate_dir(settings.root, abi.removeprefix('lib'))
     header_file = root / header
     text = (root / (abi + '.alloc')).read_text()
     slots = header_slots(header_file.read_text())
@@ -340,17 +340,17 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
         print('fatal: the dynamic half needs Linux (LeakSanitizer); re-run with --static-only', file=sys.stderr)
         return 2
     gates = [('libpinyin', 'oxpinyin-capi', 'pinyin.h', 'pinyin_capi'),
-             ('libzhuyin', 'oxpinyin-zhuyin-capi', 'zhuyin.h', 'zhuyin_capi')]
+             ('libzhuyin', 'oxzhuyin-capi', 'zhuyin.h', 'zhuyin_capi')]
     status = 0
-    for abi, crate, header, _ in gates:
-        status |= check_static(settings, abi, crate, header)
+    for abi, _, header, _ in gates:
+        status |= check_static(settings, abi, header)
     if static_only:
         print('FAIL: the allocator-pairing register does not match the frozen ABI' if status else
               'PASS: static half only (--static-only); the dynamic half was not run')
         return status
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
-        print('--- building oxpinyin-capi and oxpinyin-zhuyin-capi ---')
+        print('--- building oxpinyin-capi and oxzhuyin-capi ---')
         library_directory = work / 'lib'
         library_directory.mkdir()
         for abi, crate, _, library in gates:
@@ -369,7 +369,8 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
         for abi, crate, _, library in gates:
             before = status
             source = settings.root / 'tools/abi' / ('alloc-pairing-' + abi.removeprefix('lib') + '.cc')
-            register = crate_dir(settings.root, crate) / (abi + '.alloc')
+            crate_root = crate_dir(settings.root, abi.removeprefix('lib'))
+            register = crate_root / (abi + '.alloc')
             rows = sorted(' '.join(fields[:4]) for _, fields in register_rows(register.read_text()) if len(fields) >= 4)
             print(f'--- {abi}: {source.name} under AddressSanitizer/LeakSanitizer ---')
             user = work / (abi + '-user')
@@ -378,7 +379,7 @@ def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFact
             def compile_driver(output: Path, leak: bool) -> int:
                 return services.command(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
                                          '-fno-omit-frame-pointer', '-fsanitize=address', *shlex.split(flags),
-                                         '-I' + str(crate_dir(settings.root, crate)), str(source),
+                                         '-I' + str(crate_root), str(source),
                                          '-L' + str(library_directory), '-Wl,-rpath,' + str(library_directory),
                                          '-l' + library, *shlex.split(libraries),
                                          *(['-DOXPINYIN_ALLOC_PAIRING_LEAK'] if leak else []),

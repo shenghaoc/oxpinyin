@@ -11,6 +11,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.dev import abi
 from tools.dev.abi import HostFacts, darwin_export_trie, exported_symbols, header_slots, version_globals
+from tools.dev.packaging import crate_dir
+from tools.dev.test_support import fixture_metadata
 
 
 class SymbolTests(unittest.TestCase):
@@ -56,15 +58,15 @@ class DarwinExportGateTests(unittest.TestCase):
             settings = abi.Settings.read(dict(os.environ, OXPINYIN_CAPI_SO=str(paths[0]),
                                               OXPINYIN_ZHUYIN_SO=str(paths[1])))
             def inspect(argv, **options):
-                crate, name = ('oxpinyin-capi', 'libpinyin') if argv[-1] == str(paths[0]) else ('oxpinyin-zhuyin-capi', 'libzhuyin')
-                names = version_globals((settings.root / crate.removeprefix('oxpinyin-') / (name + '.ver')).read_text())
+                crate, name = ('oxpinyin-capi', 'libpinyin') if argv[-1] == str(paths[0]) else ('oxzhuyin-capi', 'libzhuyin')
+                names = version_globals((crate_dir(settings.root, name.removeprefix('lib')) / (name + '.ver')).read_text())
                 if argv[0] == 'nm':
                     output = ''.join('10 T _' + symbol + '\n' for symbol in names) + nm_extra
                 else:
                     output = 'image [arm64]:\n -exports:\n offset symbol\n' + ''.join('0x10 _' + symbol + '\n' for symbol in names) + trie_extra
                 return SimpleNamespace(returncode=0, stdout=output, stderr='')
             output = io.StringIO()
-            with patch.object(abi.subprocess, 'run', side_effect=inspect), \
+            with fixture_metadata(), patch.object(abi.subprocess, 'run', side_effect=inspect), \
                  contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
                 result = abi.check_exports(settings, HostFacts('Darwin'))
             return result, output.getvalue()

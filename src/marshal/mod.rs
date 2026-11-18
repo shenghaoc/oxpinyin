@@ -1,5 +1,5 @@
 //! Declarative marshalling macros shared by the two C-ABI facades
-//! (`oxpinyin-capi` → `libpinyin.so.15`, `oxpinyin-zhuyin-capi` →
+//! (`oxpinyin-capi` → `libpinyin.so.15`, `oxzhuyin-capi` →
 //! `libzhuyin.so.15`).
 //!
 //! The two C crates expand the pointer casts, allocation and output writers

@@ -212,3 +212,29 @@ def native_row(**changes):
                 fingerprint='0123456789abcdef', wall_seconds=.1, cpu_seconds=.08,
                 loop_instructions=900000, loop_cpu_cycles=400000, loop_runnable_seconds=.09,
                 lifetime_max_phys_footprint_bytes=123456, peak_rss_bytes=234567, **changes)
+
+
+# The C crates of the flat layout: package name, directory and [package.metadata.capi.library] name.
+FLAT_CRATES = (('oxpinyin-capi', 'capi', 'pinyin'), ('oxzhuyin-capi', 'zhuyin-capi', 'zhuyin'))
+
+
+def capi_metadata(root, crates=FLAT_CRATES, *, features=None, targets=None):
+    """Fixture Cargo metadata for the source tree at root, in the shape `cargo metadata --no-deps` prints.
+
+    TARGETS names a crate's library target by its C library; the default is Cargo's, from the package name.
+    """
+    root = Path(root)
+    return {'workspace_root': str(root), 'packages': [
+        {'name': name, 'manifest_path': str(root / directory / 'Cargo.toml'), 'features': features or {},
+         'metadata': {'capi': {'library': {'name': library}}},
+         'targets': [{'name': (targets or {}).get(library, name.replace('-', '_')),
+                      'crate_types': ['cdylib', 'staticlib', 'rlib']}]}
+        for name, directory, library in crates]}
+
+
+@contextlib.contextmanager
+def fixture_metadata(read=capi_metadata):
+    """Give packaging READ(root) in place of a `cargo metadata` run."""
+    from tools.dev import packaging
+    with mock.patch.object(packaging, 'cargo_metadata', lambda root, env=None: read(root)):
+        yield

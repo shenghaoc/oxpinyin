@@ -87,7 +87,7 @@ class Context:
 
     def artifact(self, mode: str = 'pinyin') -> Path:
         variable, filename, package = ('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi') if mode == 'pinyin' else (
-            'OXPINYIN_ZHUYIN_SO', 'libzhuyin_capi.so', 'oxpinyin-zhuyin-capi')
+            'OXPINYIN_ZHUYIN_SO', 'libzhuyin_capi.so', 'oxzhuyin-capi')
         return self.settings.artifact(variable, filename, package)
 
     def run(self, driver: Path, so: Path, args: Sequence[str | Path], *, side: str,

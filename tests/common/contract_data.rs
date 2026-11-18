@@ -2,7 +2,7 @@
 //! tkrzw format. A missing package is a failure, not a skip.
 //!
 //! The package tests of `oxpinyin`, `oxpinyin`, `oxpinyin-capi`
-//! and `oxpinyin-zhuyin-capi` include this file by path.
+//! and `oxzhuyin-capi` include this file by path.
 
 use std::path::PathBuf;
 

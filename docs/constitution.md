@@ -29,7 +29,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - The `oxpinyin` crate root denies unsafe code. Every top-level module except `input` and `store` forbids it at its declaration.
    - In `oxpinyin::input`, `native` owns the library's libc, GLib and mapping operations. The feature-gated `tool` module owns the utilities' native operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
    - The store exceptions are scoped to `store::bdb::ffi`, `store::kyotocabinet::bridge`, `store::kyotocabinet::ffi` and `store::tkrzw::bridge`.
-   - Public C ABI marshalling stays in `oxpinyin-capi` and `oxpinyin-zhuyin-capi`.
+   - Public C ABI marshalling stays in `oxpinyin-capi` and `oxzhuyin-capi`.
    - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.
 
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.

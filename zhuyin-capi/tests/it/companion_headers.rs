@@ -1,5 +1,5 @@
 //! The companion headers `novel_types.h` and `pinyin_custom2.h` are shipped
-//! verbatim by BOTH `oxpinyin-capi` and `oxpinyin-zhuyin-capi` into the same
+//! verbatim by BOTH `oxpinyin-capi` and `oxzhuyin-capi` into the same
 //! installed include subdirectory (`libpinyin-2.11.92/`), because each
 //! library must be installable on its own and its public header must still
 //! resolve. Two copies in one destination are only coherent while they are
