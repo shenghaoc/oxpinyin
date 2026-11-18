@@ -60,7 +60,6 @@ impl PhraseList for Silent {
 
 impl LanguageModel for Silent {
     type Error = EngineError;
-    type Token = PhraseToken;
 }
 
 fn session() -> Session<Silent, Silent> {
@@ -557,10 +556,9 @@ struct Recorder {
 }
 
 impl UserModel for Recorder {
-    type Token = PhraseToken;
     type Error = EngineError;
 
-    fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error> {
+    fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error> {
         self.observed.push((history.to_vec(), *token));
         Ok(())
     }
@@ -584,9 +582,9 @@ fn train_prepared<D, L, U>(
 where
     D: Dictionary<Syllable = SyllableKey> + Clone,
     D::Error: std::fmt::Display,
-    L: LanguageModel<Token = PhraseToken> + Clone,
+    L: LanguageModel + Clone,
     L::Error: std::fmt::Display,
-    U: UserModel<Token = PhraseToken>,
+    U: UserModel,
     U::Error: std::fmt::Display,
 {
     let view = session.read(session.dictionary.clone(), session.model.clone());
@@ -909,21 +907,20 @@ fn a_stored_phrase_trains_with_its_stored_length() {
 
     struct Readings(Vec<Vec<crate::ChewingKey>>);
     impl UserModel for Readings {
-        type Token = PhraseToken;
         type Error = EngineError;
 
         fn observe(
             &mut self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
         fn observe_with_keys(
             &mut self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
             readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
         ) -> Result<(), Self::Error> {
             self.0.extend(readings);
@@ -1027,13 +1024,12 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
 fn train_reports_a_failing_user_model() {
     struct Failing;
     impl UserModel for Failing {
-        type Token = PhraseToken;
         type Error = EngineError;
 
         fn observe(
             &mut self,
-            _history: &[Self::Token],
-            _token: &Self::Token,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
         ) -> Result<(), Self::Error> {
             Err(EngineError::UserModel("closed".to_owned()))
         }
@@ -1370,7 +1366,6 @@ struct CountingBigrams {
 
 impl LanguageModel for CountingBigrams {
     type Error = EngineError;
-    type Token = PhraseToken;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         self.unigrams.unigram_freq(token)
@@ -1774,7 +1769,6 @@ struct FixedUnigrams {
 }
 impl LanguageModel for FixedUnigrams {
     type Error = EngineError;
-    type Token = PhraseToken;
 
     fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         Ok(Some(self.system))
@@ -1971,7 +1965,6 @@ struct TrainedUnigrams {
 
 impl LanguageModel for TrainedUnigrams {
     type Error = EngineError;
-    type Token = PhraseToken;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         let (first, second) = self.counts.get();
@@ -2191,7 +2184,6 @@ struct TrellisModel {
 
 impl LanguageModel for TrellisModel {
     type Error = EngineError;
-    type Token = PhraseToken;
 
     fn nbest_step_costs(
         &self,
@@ -2221,7 +2213,7 @@ fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
 /// Types `text` and selects the candidate carrying `token`.
 fn type_and_select_over<M>(session: &mut Session<FixtureDictionary, M>, text: &str, token: u32)
 where
-    M: LanguageModel<Token = PhraseToken>,
+    M: LanguageModel,
     M::Error: std::fmt::Display,
 {
     let mut typed = session.raw_input().to_owned();
@@ -4086,7 +4078,7 @@ pub(super) fn select_row<D, L>(
 where
     D: crate::model::Dictionary<Syllable = crate::SyllableKey>,
     D::Error: core::fmt::Display,
-    L: crate::model::LanguageModel<Token = PhraseToken>,
+    L: crate::model::LanguageModel,
     L::Error: core::fmt::Display,
 {
     session.refresh_candidates()?;
@@ -4288,7 +4280,7 @@ fn duplicate_the_first_key<D, L>(session: &mut Session<D, L>)
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: std::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: std::fmt::Display,
 {
     let physical = session.input.physical_separators();

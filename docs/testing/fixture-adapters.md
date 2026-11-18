@@ -103,7 +103,7 @@ is an error, not a silent skip.
   A slice with an initial-only key is answered as the runtime dictionaries' incomplete-projected index answers it: every entry of the same length whose keys pass `ChewingKey::matches_with_tones` at each position, in key order and then fixture order.
   `phrase_prefix_exists` on such a slice answers whether an entry's leading keys share the slice's initials; on a slice of complete keys it answers true, the trait default.
   An absent sequence is `Ok(vec![])`, never an error.
-- `FixtureLanguageModel` — `LanguageModel<Token = PhraseToken>`, an
+- `FixtureLanguageModel` — `LanguageModel`, an
   in-memory unigram model over the same vocabulary. It checks every bigram
   record against the vocabulary. `FrequencyFixtureModel` wraps it and answers
   the unigram queries.

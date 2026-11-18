@@ -110,7 +110,7 @@ fn step_costs<L>(
     row: &mut NbestStepRow,
 ) -> Result<NbestStepCosts, EngineError>
 where
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let lm = |error: L::Error| EngineError::row_read(model, prev, &error);
@@ -148,7 +148,7 @@ pub fn phrase_segment<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let words: Vec<u32> = sentence.chars().map(u32::from).collect();
@@ -170,7 +170,7 @@ pub(crate) fn phrase_segment_ucs4<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     segment(
@@ -194,7 +194,7 @@ fn segment<L, F>(
     mut tokens_for: F,
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
     F: FnMut(usize, usize) -> (Vec<PhraseToken>, bool),
 {
@@ -255,7 +255,7 @@ fn relax_span<L>(
     from_step: usize,
 ) -> Result<(), EngineError>
 where
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let mut unigrams = Vec::new();

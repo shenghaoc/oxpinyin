@@ -952,9 +952,6 @@ impl<E> PhraseIndexRanges<E> {
 /// do not consult hidden process-global state, and do not panic on caller
 /// input.
 pub trait UserModel {
-    /// Token representation observed by this model.
-    type Token;
-
     /// Observation failure reported by this model.
     type Error;
 
@@ -965,7 +962,7 @@ pub trait UserModel {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the model backend cannot record the observation.
-    fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error>;
+    fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error>;
 
     /// Records a trained token and the tone-bearing readings of its matrix span.
     ///
@@ -978,8 +975,8 @@ pub trait UserModel {
     /// Returns [`Self::Error`] when the observation cannot be recorded.
     fn observe_with_keys(
         &mut self,
-        history: &[Self::Token],
-        token: &Self::Token,
+        history: &[PhraseToken],
+        token: &PhraseToken,
         _readings: impl Iterator<Item = Vec<ChewingKey>>,
     ) -> Result<(), Self::Error> {
         self.observe(history, token)
@@ -1186,9 +1183,6 @@ pub enum NbestSuccessors<'a> {
 /// Implementations do not panic on caller input. They report arithmetic or
 /// backend failures through [`Result`].
 pub trait LanguageModel {
-    /// Token representation scored by this model.
-    type Token;
-
     /// Scoring failure reported by this model.
     type Error;
 
@@ -1208,7 +1202,7 @@ pub trait LanguageModel {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the model backend cannot read the unigram frequency.
-    fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+    fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
 
@@ -1229,7 +1223,7 @@ pub trait LanguageModel {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the model backend cannot read the merged-gram record.
-    fn merged_successors(&self, _prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
+    fn merged_successors(&self, _prev: &PhraseToken) -> Result<Option<MergedGram>, Self::Error> {
         Ok(None)
     }
 
@@ -1255,7 +1249,7 @@ pub trait LanguageModel {
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the addon model backend cannot read the unigram frequency.
-    fn addon_unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+    fn addon_unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
 
@@ -1283,8 +1277,8 @@ pub trait LanguageModel {
     /// Returns [`Self::Error`] when the model backend cannot assemble the step costs.
     fn nbest_step_costs(
         &self,
-        _prev: &Self::Token,
-        _token: &Self::Token,
+        _prev: &PhraseToken,
+        _token: &PhraseToken,
     ) -> Result<NbestStepCosts, Self::Error> {
         Ok(NbestStepCosts::default())
     }
@@ -1297,8 +1291,8 @@ pub trait LanguageModel {
     /// Returns the same backend errors as [`Self::nbest_step_costs`].
     fn nbest_step_costs_in_row(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
         _row: &mut NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         self.nbest_step_costs(prev, token)
@@ -1309,8 +1303,8 @@ pub trait LanguageModel {
     /// Preserves the model's occurrence-scoring errors.
     fn nbest_item_costs_with_facts(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
         item: Option<(u32, u32)>,
         row: &mut NbestStepRow,
         _facts: &mut sentence_facts::SentenceFacts,
@@ -1330,8 +1324,8 @@ pub trait LanguageModel {
     /// Returns the same backend errors as [`Self::nbest_step_costs`].
     fn nbest_item_costs_in_row(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
         _item: Option<(u32, u32)>,
         row: &mut NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
@@ -1347,7 +1341,7 @@ pub trait LanguageModel {
     /// Propagates row-load and parse errors without caching a failed load.
     fn nbest_successors_in_row<'a>(
         &self,
-        _prev: &Self::Token,
+        _prev: &PhraseToken,
         _row: &'a mut NbestStepRow,
     ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
         Ok(None)

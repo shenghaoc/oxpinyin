@@ -399,7 +399,6 @@ impl FixtureLanguageModel {
 
 impl LanguageModel for FixtureLanguageModel {
     type Error = FixtureError;
-    type Token = PhraseToken;
 }
 
 /// A [`FixtureLanguageModel`] wrapper that answers the unigram queries, so
@@ -439,7 +438,6 @@ impl FrequencyFixtureModel {
 
 impl LanguageModel for FrequencyFixtureModel {
     type Error = FixtureError;
-    type Token = PhraseToken;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, FixtureError> {
         Ok(self.inner.unigrams.get(token).copied())

@@ -135,10 +135,9 @@ Where both traits are in scope, a call on a `PhraseList` implementor names its t
 
 ```rust
 pub trait UserModel {
-    type Token;
     type Error;
 
-    fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error>;
+    fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error>;
     // defaulted: observe_with_keys
 }
 ```
@@ -152,7 +151,6 @@ The model may not depend on hidden process-global state.
 
 ```rust
 pub trait LanguageModel {
-    type Token;
     type Error;
     // every method is defaulted
 }

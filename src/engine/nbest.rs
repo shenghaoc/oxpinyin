@@ -821,7 +821,7 @@ pub fn nbest_sentences<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     nbest_sentences_generation(
@@ -850,7 +850,7 @@ pub(super) fn nbest_sentences_generation<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     // The sentence path's single-seed law: the constrained decode seeds
@@ -877,7 +877,7 @@ pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let GenerationInput {
@@ -972,7 +972,7 @@ fn expand_forced_span<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let mut found = SpanRanges::default();
@@ -1245,7 +1245,7 @@ fn widen_free_span<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
@@ -1428,7 +1428,7 @@ fn expand_entries<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     // #lizard forgives(cyclomatic_complexity): the predecessor loop (row load,
@@ -1527,7 +1527,7 @@ fn expand_span_entries<D, L>(
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: core::fmt::Display,
 {
     for (token, slot) in pricing.ranges.walk_tokens() {
@@ -1660,7 +1660,7 @@ struct StepCtx<'a, L> {
 }
 
 /// One trellis step on `branch`.
-fn expand_one<L: LanguageModel<Token = PhraseToken>>(
+fn expand_one<L: LanguageModel>(
     entry: &SpanEntry,
     ctx: StepCtx<'_, L>,
     predecessor: &BeamEntry,

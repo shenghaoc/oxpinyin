@@ -12,7 +12,7 @@ impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Segments an arbitrary already-typed sentence string into its
@@ -51,7 +51,7 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Runs the n-best sentence lookup and stores its rows
