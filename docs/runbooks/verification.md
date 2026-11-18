@@ -16,10 +16,12 @@ This rule makes sure that the non-default bdb and kc cells gate every change tha
 The three checks are:
 
 1. The diff lists a file under `src/store/`, `codegen/store.rs`, the root `build.rs` or `Cargo.lock`.
-2. A changed non-Markdown file contains `feature = "bdb"`, `feature = "tkrzw"` or `feature = "kyotocabinet"`.
+2. A changed non-Markdown file contains `feature = "bdb"`, `feature = "tkrzw"` or `feature = "kyotocabinet"`, at `HEAD` or at the merge base.
 3. A changed line in a `Cargo.toml` names a backend.
 
 Check 2 excludes Markdown because documentation quotes these patterns.
+Check 2 reads each changed file at both revisions, so a change that deletes a file's last gate, or deletes a gated file, still fires it.
+A deleted file matches through its merge-base version, and an added file through its `HEAD` version.
 `uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py [base]` applies the checks to `base...HEAD`.
 The default base is `origin/main`.
 The command prints the selected cells, the check that selected them, and the matching paths and lines.
