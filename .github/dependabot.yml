@@ -16,6 +16,12 @@ updates:
       phf:
         patterns:
           - "phf*"
+  - package-ecosystem: "rust-toolchain"
+    directories:
+      - "/"
+      - "/fuzz"
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "github-actions"
     directories:
       - "/"

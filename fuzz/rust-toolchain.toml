@@ -2,6 +2,7 @@
 # The repository's one nightly. rustup selects it for every command run in
 # this directory; the sanitizer gates read the channel from this file
 # (tools/dev/test_runner.py). Exact on purpose (#1074): a nightly is
-# identified only by its date. Bump it deliberately, with cargo-fuzz.
-channel = "nightly-2026-09-07"
+# identified only by its date.
+# Dependabot bumps the nightly weekly.
+channel = "nightly-2026-11-18"
 components = ["rust-src"]
