@@ -2,7 +2,6 @@
 import os
 from pathlib import Path
 import runpy
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -313,7 +312,7 @@ class CommandTests(unittest.TestCase):
 
 
 class RunFlagTests(unittest.TestCase):
-    """--run-flag, the line store-backends.yml's changes job appends to $GITHUB_OUTPUT."""
+    """--run-flag, the line ci.yml's changes job reads through tools/dev/ci_tree.py."""
 
     BASE = {'README.md': 'a\n', 'src/store/mod.rs': 'fn a() {}\n',
             'src/engine/mod.rs': 'fn a() {}\n',
@@ -352,16 +351,10 @@ class RunFlagTests(unittest.TestCase):
         self.assertIn('--run-without-base needs --run-flag', result.stderr)
 
     def gate_arguments(self):
-        """The arguments store-backends.yml's gate step gives the script, less the base they end with."""
-        workflow = (SCRIPT.parents[2] / '.github/workflows/store-backends.yml').read_text()
-        step = workflow.split('      - name: Compute the path-gate flag\n', 1)[1].split('\n\n', 1)[0]
-        self.assertIn("\n          BASE: ${{ github.event_name == 'pull_request' && "
-                      'github.event.pull_request.base.sha || github.event.before }}\n', step)
-        command = step.split('          uv run --managed-python python -X utf8'
-                             ' tools/bisection/cells-for-diff.py ', 1)[1]
-        *arguments, base, redirect, output = shlex.split(command.replace('\\\n', ' '))
-        self.assertEqual((base, redirect, output), ('$BASE', '>>', '$GITHUB_OUTPUT'))
-        return arguments
+        """The arguments ci.yml's gate step gives the script through ci_tree, less the base."""
+        from tools.dev import ci_tree
+        self.assertEqual(ci_tree.STORE_GATE_SCRIPT, SCRIPT.resolve())
+        return list(ci_tree.STORE_GATE_ARGUMENTS)
 
     def unrelated(self):
         """A repository whose branch `base` shares no history with HEAD."""

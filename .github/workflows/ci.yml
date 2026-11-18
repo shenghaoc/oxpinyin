@@ -1,14 +1,19 @@
 # Path gates. The workflow always starts. The `changes` job writes one flag per
-# job (`tools.dev.ci_tree gate`; CI_INPUTS in tools/dev/ci_tree.py
-# holds each job's paths), and a job runs only when its flag is true. A skipped
-# job still reports `skipped`, so the required `ci-aggregate` check sees it.
-# Paths that no job reads, such as docs/, reference/ and the root
-# Markdown files, select no job. The `changes` job itself checks the one rule
-# that reads every tracked file: the Python version request is written once.
+# job (`tools.dev.ci_tree gate`), and a job runs only when its flag is true.
+# CI_INPUTS in tools/dev/ci_tree.py holds the paths of `rust`, `harness` and
+# `shipping-sizes`. The `store` flag selects the `store` job: it is
+# docs/runbooks/verification.md, rule 2, as tools/bisection/cells-for-diff.py
+# implements it for local runs, plus the store job's own infrastructure
+# (STORE_GATE_ARGUMENTS in tools/dev/ci_tree.py). A skipped job still reports
+# `skipped`, so the required `ci-aggregate` check sees it. Paths that no job
+# reads, such as docs/, reference/ and the root Markdown files, select no job.
+# The `changes` job itself checks the one rule that reads every tracked file:
+# the Python version request is written once.
 #
-# The gate compares the event's base with HEAD (a two-dot diff). A branch behind
-# main also sees main's own changes, so it can select more jobs, never fewer. A
-# missing base selects every job.
+# The CI_INPUTS gates compare the event's base with HEAD (a two-dot diff). A
+# branch behind main also sees main's own changes, so it can select more jobs,
+# never fewer. The store gate diffs from the merge base. A missing base
+# selects every job.
 #
 # Main's required set is `ci-aggregate`. It fails when an applicable job fails or
 # when a job's result does not agree with its flag. A pull request that changes
@@ -45,30 +50,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs after the gate:
-#   lint — rustfmt, Clippy and the Lizard complexity limit
-#   test — the workspace tests on Linux; the macOS and Windows runs are in
-#          verify-nightly.yml
-#   deny — the supply-chain check: advisories, licenses, sources, duplicates
+#   rust — rustfmt, cargo-deny, Clippy, the fuzz-target compile, the Lizard
+#          complexity limit and the workspace tests on Linux under the default
+#          tkrzw backend; the macOS and Windows runs are in verify-nightly.yml
 #   harness — the ruff F check and the Python harness tests of tools/, when
 #             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
-# The lint job compiles every fuzz target; fuzz execution stays nightly.
+#   store — Clippy, rustdoc and the workspace tests under bdb, then under
+#           kyotocabinet; then the bdb, kyotocabinet and tkrzw store suites
+#           under the sanitizers
+# Fuzz execution stays nightly.
+#
+# The store backends. Kyoto Cabinet, tkrzw and Berkeley DB are equal
+# implementations behind the store's trait surface. Exactly one is compiled per
+# build: two `compile_error!` guards in `src/store/mod.rs` enforce it. So
+# cross-peer equivalence is proven by running the same test suite through
+# separate builds, one per peer. tkrzw is the workspace default, so `rust`
+# runs its workspace suite. Each sanitizer run goes through the sanitizer
+# service in tools/dev/test_runner.py, which `just sanitize` also uses, on the
+# date-pinned nightly that fuzz/rust-toolchain.toml names: tkrzw and Berkeley
+# DB under ASan, Kyoto Cabinet under ASan + LeakSanitizer. On a BerkeleyDB
+# distro the system bigram.db is BDB and every session opens it through that
+# FFI, so the instrumentation is load-bearing, not precautionary.
+#
+# libtkrzw comes from the vcpkg overlay through .github/actions/tkrzw, with a
+# binary cache and PKG_CONFIG_PATH discovery. libdb and libkyotocabinet come
+# from Ubuntu's apt.
+#
+# The pin-built oracle and the model20 archive are deliberately NOT CI
+# concerns: provisioning them (just fetch-model, tools/oracle/build.py) is a
+# LOCAL workflow, and no CI job may download model20.text.tar.gz or anything
+# like it. The oracle-gated differentials and the model cache live on
+# developer machines only.
 
 jobs:
-  store-backends:
-    uses: ./.github/workflows/store-backends.yml
-
   changes:
     # The one Linux runner label in this workflow; the other Linux jobs
     # alias it (*ubuntu). It names a release, not ubuntu-latest, so a runner
     # image change happens here under review.
     runs-on: &ubuntu ubuntu-26.04
     outputs:
-      lint: ${{ steps.gate.outputs.lint }}
-      test: ${{ steps.gate.outputs.test }}
-      deny: ${{ steps.gate.outputs.deny }}
+      rust: ${{ steps.gate.outputs.rust }}
       harness: ${{ steps.gate.outputs.harness }}
       ship: ${{ steps.gate.outputs.ship }}
+      store: ${{ steps.gate.outputs.store }}
       reuse: ${{ steps.evidence.outputs.reuse }}
       tree: ${{ steps.evidence.outputs.tree }}
       source_run: ${{ steps.evidence.outputs.source_run }}
@@ -95,16 +120,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence ci
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence
 
-  lint:
+  # The default-backend Rust lane: every check that reads the workspace under
+  # tkrzw. On a reused tree a push to main still compiles here to refresh the
+  # main Rust cache.
+  rust:
     needs: changes
-    if: needs.changes.outputs.lint == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    if: needs.changes.outputs.rust == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,22 +138,30 @@ jobs:
         with:
           rust-toolchain: 'true'
           rust-cache: 'true'
-          rust-cache-key: lint-job
+          rust-cache-key: rust-job
           # Every run: the tkrzw action and the cache refresh run on reuse too.
           uv: 'true'
           just: ${{ needs.changes.outputs.reuse != 'true' }}
+          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
+          cargo-deny: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action installs the overlay port with vcpkg and
         # points pkg-config at it. The tkrzw cxx bridge compiles with g++.
-        # Only the bdb feature runs bindgen, which needs libclang; this job
+        # The runner image ships gcc, g++, make and pkg-config, so apt adds
+        # only GLib. Only the bdb feature runs bindgen, which needs libclang; this job
         # builds the default tkrzw backend, so it installs no libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev
       - run: cargo fmt --all --check
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
+        if: needs.changes.outputs.reuse != 'true'
+      # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
+      # holds the policy. The justfile's deny recipe holds the checks and their
+      # order.
+      - run: just deny
         if: needs.changes.outputs.reuse != 'true'
       # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
       # false discards the crate attributes after it, so one above a `//!`
@@ -148,11 +181,12 @@ jobs:
       # pin-built libpinyin, which CI does not have.
       - run: uv run --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
+      # Before Clippy and the cache refresh, which build against it.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
-      # Run on every selected lint job, including the main cache refresh.
+      # Run on every selected rust job, including the main cache refresh.
       # The directory selects the nightly in fuzz/rust-toolchain.toml.
       # No cargo-fuzz, corpus, sanitizer run or model data is needed.
       - name: Install the fuzz toolchain
@@ -166,45 +200,8 @@ jobs:
       - name: Lizard complexity limit
         if: needs.changes.outputs.reuse != 'true'
         run: just complexity
-      - name: Refresh the main Rust cache using the lane's compile mode
-        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh lint
-
-  test:
-    needs: changes
-    if: needs.changes.outputs.test == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
-    runs-on: *ubuntu
-    timeout-minutes: 75
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          rust-toolchain: 'true'
-          rust-cache: 'true'
-          rust-cache-key: test-job
-          # Every run: the tkrzw action and the cache refresh run on reuse too.
-          uv: 'true'
-          just: ${{ needs.changes.outputs.reuse != 'true' }}
-          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
-      - run: rustup show active-toolchain
-      - name: Install build dependencies (apt)
-        # The tkrzw action installs the overlay port with vcpkg and
-        # points pkg-config at it. The tkrzw cxx bridge compiles with g++.
-        # Only the bdb feature runs bindgen, which needs libclang; this job
-        # builds the default tkrzw backend, so it installs no libclang.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev
-      # Before the cache refresh, which builds against it.
-      - name: Install tkrzw (vcpkg overlay and binary cache)
-        uses: ./.github/actions/tkrzw
       # Default-backend rustdoc, warnings denied; the peers' rustdoc runs in
-      # store-backends.yml.
+      # the `store` job.
       - name: Rustdoc for the default backend
         if: needs.changes.outputs.reuse != 'true'
         env:
@@ -267,31 +264,7 @@ jobs:
         run: just abi alloc-pairing
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh test
-
-  # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
-  # holds the policy. The bootstrap action installs a released binary, so
-  # the job takes less than a minute.
-  deny:
-    needs: changes
-    if: needs.changes.outputs.deny == 'true' && needs.changes.outputs.reuse != 'true'
-    runs-on: *ubuntu
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # cargo-deny shells out to `cargo metadata`, so a cargo binary is
-      # required. just runs the checks.
-      - uses: ./.github/actions/bootstrap
-        with:
-          rust-toolchain: 'true'
-          just: 'true'
-          cargo-deny: 'true'
-      # The justfile's deny recipe holds the checks and their order.
-      - run: just deny
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh rust
 
   # The Python harness tests of tools/, all of them whenever the gate selects
   # the job. Some of them run cargo metadata, a C compiler or GLib, so the job
@@ -316,25 +289,24 @@ jobs:
       - name: Install build dependencies (apt)
         # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
         # objcopy, objdump, as, ld) for the C stubs, make for the trainer
-        # layout, cmake for the tkrzw port's configure, pkg-config and the
-        # GLib development package for the packaging link, diff for the
+        # layout and pkg-config for the packaging link; the runner image ships
+        # those. apt adds cmake for the tkrzw port's configure, the GLib
+        # development package for the packaging link, diff for the
         # installed-metadata and neutrality comparisons, taskset (util-linux)
         # for the CPU-pinned child, and Valgrind for the end-to-end Linux
         # comparison on the stub library. No harness test compiles C++ or
         # reads libclang.
-        # zsh: the oracle environment file is sourced under sh, dash and zsh.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc make cmake pkg-config libglib2.0-dev binutils diffutils util-linux valgrind zsh
+          sudo apt-get install -y --no-install-recommends cmake libglib2.0-dev diffutils util-linux valgrind
       # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
       # the lint job does not run for Python-only paths such as tools/bisection.
       - run: just ruff
-      # just and zsh are installed above, so the size build's revision-recipe test and
-      # the environment-file source test's zsh case must run here rather than skip.
+      # just is installed above, so the size build's revision-recipe test must
+      # run here rather than skip.
       - run: just test-tools
         env:
           OXPINYIN_REQUIRE_JUST: '1'
-          OXPINYIN_REQUIRE_ZSH: '1'
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
@@ -389,7 +361,7 @@ jobs:
           backend=$(just packaging sizes apt)
           read -r -a backend_pkgs <<< "$backend"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev cargo-c "${backend_pkgs[@]}"
       # Before the key: the toolchain fingerprint reads the installed tkrzw.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
@@ -425,14 +397,205 @@ jobs:
           path: .ship-sizes
           key: ${{ steps.key.outputs.key }}
 
+  # The peer backends and the store sanitizers, in one job under the store
+  # gate. First each peer, Berkeley DB then Kyoto Cabinet: Clippy over all
+  # workspace targets, rustdoc and the workspace tests under exactly that
+  # peer. Then the store suite of bdb, Kyoto Cabinet and tkrzw under the
+  # sanitizers. tkrzw is the workspace default, so `rust` runs its workspace
+  # tests; its sanitizer run is here so that it runs under the store gate
+  # alone, and no step of `rust` depends on a path flag.
+  #
+  # The backend is exercised through the whole workspace: a backend that
+  # "passes" only in the store's own unit tests and never reaches the decode
+  # path does not count. Every pass decodes real queries through the fixture
+  # tables.
+  #
+  # `--features <peer>` at `--workspace` scope enables that feature on every
+  # workspace member that declares it, so the peer selection cascades through
+  # each consumer's own `<peer> = ["oxpinyin/<peer>", ...]` forwarder. A bare
+  # passthrough (`--features oxpinyin/<peer>`) does NOT — cargo features do
+  # not back-propagate — and would leave each consumer's own
+  # `#[cfg(feature = "<peer>")]` code (e.g. the per-backend mask walks in
+  # oxpinyin's `user_index.rs` and `user_phrase_table.rs`) skipped even while
+  # `DefaultStore` resolves to the peer. The bare-name form is the documented
+  # public interface. The exactly-one-backend invariant is unchanged.
+  #
+  # The KMM crate depends on the backend: its operations run on the selected
+  # store backend and its integration tests spawn the seven utilities against
+  # `fixtures/w3/<backend>`. The training package stays too: its eval decode
+  # compiles against the selected store backend. What runs is everything a
+  # backend choice can change: the store itself, the user store, data readers,
+  # runtime, engine, facade, both C ABIs, the training package and KMM.
+  # nextest runs the suite with the `ci` profile of .config/nextest.toml, so
+  # the store-backend test group applies.
+  #
+  # The two stable peer builds share the job's target directory and its Rust
+  # cache. The sanitizer builds use the nightly from fuzz/rust-toolchain.toml
+  # and their own target directory under the runner's temporary directory, so
+  # no sanitizer-flavoured artifact enters the cache.
+  store:
+    needs: changes
+    if: needs.changes.outputs.store == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    runs-on: *ubuntu
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          rust-cache-key: store-job
+          uv: 'true'
+          # The tests and the sanitizer service run nextest; a reuse run skips both.
+          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
+      - name: Install build dependencies (apt)
+        # Both peers' packages, once. libdb-dev resolves to libdb5.3-dev, the
+        # system libdb the bdb backend links and whose db.h bindgen reads.
+        # bindgen loads libclang at run time (its `runtime` feature): the
+        # runner image's Clang packages ship /usr/lib/llvm-*/lib/libclang-*.so.1
+        # and their builtin headers, so no libclang-dev. libkyotocabinet-dev:
+        # the library the kyotocabinet backend links and the headers its cxx
+        # bridge compiles against with g++. util-linux serves the sanitizer
+        # service; libasan ships with gcc.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends util-linux libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
+
+      - name: Clippy (bdb)
+        if: needs.changes.outputs.reuse != 'true'
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features bdb -- -D warnings
+      - name: Rustdoc (bdb)
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features bdb
+      - name: Test the workspace (bdb)
+        if: needs.changes.outputs.reuse != 'true'
+        id: test-bdb
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Clippy (kyotocabinet)
+        if: needs.changes.outputs.reuse != 'true'
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings
+      - name: Rustdoc (kyotocabinet)
+        if: needs.changes.outputs.reuse != 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features kyotocabinet
+      - name: Test the workspace (kyotocabinet)
+        if: needs.changes.outputs.reuse != 'true'
+        id: test-kyotocabinet
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      # The sanitizer runs go through the sanitizer service in
+      # tools/dev/test_runner.py, which `just sanitize` also uses.
+      - name: Install the sanitizer nightly
+        if: needs.changes.outputs.reuse != 'true'
+        working-directory: fuzz
+        run: rustup toolchain install
+      # The Berkeley DB feature's own suite under ASan. The hazards are the DBT
+      # plumbing and cursor buffers (Rust, ASan). libdb's own internals are not
+      # instrumented. On a BerkeleyDB distro the system bigram.db is BDB and
+      # every session opens it through this FFI.
+      - name: Sanitizers (bdb)
+        if: needs.changes.outputs.reuse != 'true'
+        id: sanitize-bdb
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+      # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer. The
+      # backend crosses into C++ through a cxx bridge
+      # (src/store/kyotocabinet/adapter.cc): visitor regions are borrowed for
+      # one callback, cursors borrow their database, and an empty region must
+      # not reach Kyoto Cabinet as address 1. The store's build script
+      # instruments the adapter and cxx's generated glue under address.
+      - name: Sanitizers (kyotocabinet)
+        if: needs.changes.outputs.reuse != 'true'
+        id: sanitize-kyotocabinet
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+      # After the peer builds: the action puts the overlay install first on
+      # PKG_CONFIG_PATH and LD_LIBRARY_PATH for every later step. The sanitizer
+      # service certifies each binary against the install that
+      # OXPINYIN_TKRZW_PREFIX names.
+      - name: Install tkrzw (vcpkg overlay and binary cache)
+        if: needs.changes.outputs.reuse != 'true'
+        uses: ./.github/actions/tkrzw
+      # The tkrzw backend crosses into C++ through a cxx bridge: borrowed byte
+      # slices become std::string_view for one call, iterator reads land in
+      # std::string out-parameters, and a RecordProcessor subclass in the
+      # adapter (src/store/tkrzw/adapter.cc) walks keys. The live hazards are a
+      # borrow outliving its call and a C++ exception crossing the noexcept
+      # shim, so the feature's own test surface runs under ASan. The store's
+      # build script passes -fsanitize=address -fno-omit-frame-pointer to the
+      # adapter and cxx's generated glue when CARGO_CFG_SANITIZE names address,
+      # so both sides of the bridge are instrumented.
+      - name: Sanitizers (tkrzw)
+        if: needs.changes.outputs.reuse != 'true'
+        id: sanitize-tkrzw
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+          TEST_BDB: ${{ steps.test-bdb.outcome }} ${{ steps.test-bdb.outputs.elapsed }}
+          TEST_KYOTOCABINET: ${{ steps.test-kyotocabinet.outcome }} ${{ steps.test-kyotocabinet.outputs.elapsed }}
+          SANITIZE_BDB: ${{ steps.sanitize-bdb.outcome }} ${{ steps.sanitize-bdb.outputs.elapsed }}
+          SANITIZE_KYOTOCABINET: ${{ steps.sanitize-kyotocabinet.outcome }} ${{ steps.sanitize-kyotocabinet.outputs.elapsed }}
+          SANITIZE_TKRZW: ${{ steps.sanitize-tkrzw.outcome }} ${{ steps.sanitize-tkrzw.outputs.elapsed }}
+        run: |
+          row() {
+            read -r outcome elapsed <<< "$2"
+            echo "| $1 | ${outcome:-not run} | ${elapsed:-—}s |"
+          }
+          {
+            echo "## store"
+            echo ""
+            echo "Result: **$([ "$JOB_STATUS" = 'success' ] && echo 'passed' || echo 'FAILED')**"
+            echo ""
+            echo "| Phase | Outcome | Wall clock |"
+            echo "|---|---|---:|"
+            row 'bdb workspace tests' "$TEST_BDB"
+            row 'kyotocabinet workspace tests' "$TEST_KYOTOCABINET"
+            row 'bdb sanitizers (address)' "$SANITIZE_BDB"
+            row 'kyotocabinet sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
+            row 'tkrzw sanitizers (address)' "$SANITIZE_TKRZW"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Refresh the main Rust cache using the lane's compile mode
+        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh store
+
   # The required aggregate checks each job against its flag and `reuse`,
   # and shipping-sizes against `ship` alone. Every applicable job must
   # succeed, and every other job must be skipped. It runs after failures and
-  # can be cancelled. The called store-backends workflow must also succeed;
-  # its own aggregate checks its backend and sanitizer jobs.
+  # can be cancelled.
   ci-aggregate:
-    needs:
-      [changes, lint, test, deny, harness, shipping-sizes, store-backends]
+    needs: [changes, rust, harness, shipping-sizes, store]
     if: ${{ !cancelled() }}
     runs-on: *ubuntu
     steps:
@@ -446,7 +609,7 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           EVENT_NAME: ${{ github.event_name }}
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate ci
+        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate
 
   # The marker says the aggregate passed: every lane the gate selected
   # succeeded and every other lane was skipped. A later run reads the lanes'

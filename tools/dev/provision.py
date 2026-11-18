@@ -37,9 +37,9 @@ from tools.tkrzw import runtime
 from . import vcpkg
 
 CELLS = backend_cell.CELLS
-# The first line of every environment file this module writes. A file without it came from
-# the retired shell setup and is regenerated, never parsed.
-ENV_HEADER = '# Written by tools.dev.provision; source it from sh, dash, bash or zsh; do not edit it.'
+# The first line of every environment file this module writes. A file without it, such as
+# one from the retired shell setup or one with an earlier header, is regenerated, never parsed.
+ENV_HEADER = '# Written by tools.dev.provision; source it from sh; do not edit it.'
 _EXPORT = re.compile(r"export ([A-Za-z_][A-Za-z_0-9]*)=((?:'[^']*'|\\')+)")
 _QUOTED = re.compile(r"'([^']*)'|\\(')")
 

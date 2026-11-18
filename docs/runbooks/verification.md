@@ -272,7 +272,7 @@ Check the build of the library, not its version:
 
 These rules govern the CI gates. This section is the only place that states them. A workflow or a runbook that needs a rule links to this section.
 
-1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the called store-backends gate.
+1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the `store` job when the store gate selects it.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
    The nightly runs their Rust checks. It runs the tools Python harness on those platforms only on a manual dispatch of `verify-nightly.yml` with `tools_harness` set.
    It is dispatched on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
@@ -280,16 +280,16 @@ These rules govern the CI gates. This section is the only place that states them
 2. **tkrzw is the default backend.** CI alone tests Berkeley DB and Kyoto Cabinet, and only when their KV code changes.
    Rule 2 decides that by path, not by judgement.
    The full-data contract tests run on tkrzw only.
-3. **Fuzz execution runs nightly.** The PR lint job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under the existing lint path gate.
+3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
-5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds each job's paths.
+5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`; the `store` job runs under rule 2 through `STORE_GATE_ARGUMENTS` in the same file.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
    The generated Rust tables are such files.
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.
    The Python version request rule reads every tracked file, so it runs on every change.
    A later run of the same tree reuses a pull request run only when that run passed every job the later run selects, within 24 hours.
-6. **Linux CI runs natively.** Every Linux job of `ci.yml`, `store-backends.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
+6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
    System packages come from Ubuntu's apt, except tkrzw, which comes from the vcpkg overlay port ([rule 9](#9-sound-tkrzw-library)).
    Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.
    Rejected: Linux CI in a Debian testing container.

@@ -66,7 +66,7 @@ jobs:
       - name: Install build dependencies (apt)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libglib2.0-dev util-linux
+          sudo apt-get install -y --no-install-recommends libc6-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -182,7 +182,7 @@ jobs:
       - name: Install build dependencies (apt)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libkyotocabinet-dev libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends libc6-dev libkyotocabinet-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

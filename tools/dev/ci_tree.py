@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tomllib
 from typing import Any
 from urllib.error import URLError
@@ -33,47 +34,25 @@ from . import cell
 class Workflow:
     path: str
     aggregate: str
+    # Each lane is a ci.yml job whose id is also its name, so a needs key and an
+    # API job name are the same string.
     lanes: tuple[str, ...]
-    cached: frozenset[str]
-    needs: tuple[str, ...]
-    skipped_lanes: tuple[str, ...]
-    # (display name, needs job id, `changes` output flag): lanes with their own
-    # path gate. They are not in `lanes`, so a skipped one never blocks tree
-    # reuse, and `reuse` never skips one that applies.
-    gated: tuple[tuple[str, str, str], ...] = ()
-    # Reusable workflows share the caller's run, with prefixed job names.
-    caller: str = ""
-    job_prefix: str = ""
-    # Called workflows own their path gates and must always report success.
-    required: tuple[str, ...] = ()
     # The `changes` output flag of each lane in `lanes`.
-    flags: tuple[str, ...] = ()
+    flags: tuple[str, ...]
+    # The lanes that still compile on a reused push to main, to refresh its Rust cache.
+    cached: frozenset[str]
+    # (job, `changes` output flag): lanes with their own path gate. They are not
+    # in `lanes`, so a skipped one never blocks tree reuse, and `reuse` never
+    # skips one that applies.
+    gated: tuple[tuple[str, str], ...] = ()
 
 
-WORKFLOWS: dict[str, Workflow] = {
-    "ci": Workflow(
-        ".github/workflows/ci.yml", "ci-aggregate",
-        ("lint", "test", "deny", "harness"),
-        frozenset({"lint", "test"}),
-        ("lint", "test", "deny", "harness"),
-        ("lint", "test", "deny", "harness"),
-        (("shipping-sizes", "shipping-sizes", "ship"),),
-        required=("store-backends",),
-        flags=("lint", "test", "deny", "harness")),
-    "store": Workflow(
-        ".github/workflows/store-backends.yml",
-        "store backends (kyotocabinet / tkrzw / bdb)",
-        ("store backend (bdb)", "store backend (kyotocabinet)",
-         "tkrzw FFI under address",
-         "bdb backend sanitizers", "kc backend sanitizers"),
-        frozenset({"store backend (bdb)", "store backend (kyotocabinet)"}),
-        ("store-features", "store-features", "tkrzw-sanitizers",
-         "bdb-sanitizers", "kc-sanitizers"),
-        ("store backend (${{ matrix.backend }})",
-         "tkrzw FFI under address", "bdb backend sanitizers", "kc backend sanitizers"),
-        caller=".github/workflows/ci.yml", job_prefix="store-backends / ",
-        flags=("run",) * 5),
-}
+WORKFLOW = Workflow(
+    ".github/workflows/ci.yml", "ci-aggregate",
+    ("rust", "harness", "store"),
+    ("rust", "harness", "store"),
+    frozenset({"rust", "store"}),
+    (("shipping-sizes", "ship"),))
 
 
 @dataclass(frozen=True)
@@ -150,26 +129,21 @@ GENERATED_TABLES = (
 CI_INPUTS = {
     # cargo fmt and the compile-only fuzz check read the fuzz workspace. The
     # complexity check runs Lizard from a dependency group, so the lockfile is
-    # an input. A job that runs no group syncs an empty environment, and the
-    # lockfile cannot affect it.
-    "lint": Inputs((*RUST, "fuzz", "uv.lock"), PYTHON_ONLY,
+    # an input. `just deny` runs cargo deny, which reads the manifests, the
+    # lockfiles and deny.toml.
+    "rust": Inputs((*RUST, "fuzz", "uv.lock", ".config/nextest.toml", "deny.toml"), PYTHON_ONLY,
                    (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
-    "test": Inputs((*RUST, ".config/nextest.toml"), PYTHON_ONLY, RUST_READS),
-    # `just deny` runs cargo deny, which reads the manifests and lockfiles only.
-    "deny": Inputs((".github/workflows/ci.yml", ".github/actions/bootstrap", "justfile", "rust-toolchain.toml",
-                    ".cargo", "Cargo.toml", "Cargo.lock", *(f"{directory}/Cargo.toml" for directory in CRATE_DIRS), "deny.toml",
-                    "fuzz/Cargo.toml", "fuzz/Cargo.lock")),
-    # tools/ and what its tests read outside it: the store-backends gate script,
-    # the manifests and the lockfile, the files directly in each crate's
-    # directory (version scripts, headers, allocator registers, build scripts),
-    # the generated Rust tables, the fixtures, the table-conf template, the
-    # sanitizer nightly, and the lockfile of the dependency group that holds Ruff. No harness
-    # test reads any other Rust source, so the files
-    # under a crate's src, tests, examples and benches do not select the job.
+    # tools/ and what its tests read outside it: the workflow, the manifests
+    # and the lockfile, the files directly in each crate's directory (version
+    # scripts, headers, allocator registers, build scripts), the generated Rust
+    # tables, the fixtures, the table-conf template, the sanitizer nightly, and
+    # the lockfile of the dependency group that holds Ruff. No harness test
+    # reads any other Rust source, so the files under a crate's src, tests,
+    # examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
     "harness": Inputs((*SHARED, "uv.lock",
-                       ".github/workflows/store-backends.yml", "tools", "Cargo.toml", "Cargo.lock",
+                       "tools", "Cargo.toml", "Cargo.lock",
                        *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml"),
                       tuple(f"{prefix}{section}/*.rs"
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
@@ -201,6 +175,38 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
         return dict.fromkeys(inputs, True)
     changed = done.stdout.split("\0")[:-1]
     return {name: any(lane.selects(path) for path in changed) for name, lane in inputs.items()}
+
+
+# The store job's gate: docs/runbooks/verification.md, rule 2, as
+# tools/bisection/cells-for-diff.py implements it for local runs, plus the store
+# job's own infrastructure as --also paths: the workflow, the utilities'
+# per-cell tests and their data under utils, the backend provisioning under
+# tools/tkrzw and .github/actions/tkrzw, the sanitizer service
+# (tools/dev/test_runner.py), the toolchain pins (the sanitizer nightly is in
+# fuzz/rust-toolchain.toml), nextest's configuration and this gate's own code.
+# Every Python step enters the uv project in pyproject.toml. --run-without-base
+# makes an empty base, one that is not a commit here or one with no merge base
+# select the store job, the over-trigger direction.
+STORE_GATE_SCRIPT = Path(__file__).resolve().parents[1] / "bisection" / "cells-for-diff.py"
+STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path in (
+    ".github/workflows/ci.yml", "utils/", "fixtures/w3/kct/", "fixtures/w3/db/",
+    "tools/dev/ci_tree.py", "tools/dev/ci_tree.test.py", "tools/bisection/cells-for-diff.py",
+    "tools/tkrzw", ".github/actions/tkrzw", "vcpkg-overlays", "triplets", "tools/dev/check.py",
+    "tools/dev/vcpkg.py", "tools/dev/test_runner.py", "rust-toolchain.toml", "fuzz/rust-toolchain.toml",
+    ".config/nextest.toml", "pyproject.toml") for argument in ("--also", path)))
+
+
+def store_gate(base: str, root: Path | None = None) -> bool:
+    """Whether the store gate selects the store job for base...HEAD.
+
+    The script's diagnostics reach stderr. A failure of the script raises
+    CalledProcessError, so the gate step fails rather than skip the jobs.
+    """
+    done = subprocess.run([sys.executable, "-X", "utf8", str(STORE_GATE_SCRIPT), *STORE_GATE_ARGUMENTS, base],
+                          cwd=root, stdout=subprocess.PIPE, text=True, check=True)
+    if done.stdout not in {"run=true\n", "run=false\n"}:
+        raise ValueError(f"unexpected store gate output {done.stdout!r}")
+    return done.stdout == "run=true\n"
 
 
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -251,7 +257,7 @@ def run_provenance(run: dict[str, Any], workflow: Workflow, repository_id: int,
     return (
         run.get("id") != current_run
         and run.get("event") == "pull_request"
-        and run.get("path") == (workflow.caller or workflow.path)
+        and run.get("path") == workflow.path
         and (run.get("repository") or {}).get("id") == repository_id
         and (run.get("head_repository") or {}).get("id") == repository_id
         and any((pr or {}).get("number") == pr_number for pr in run.get("pull_requests") or [])
@@ -310,7 +316,7 @@ def complete_jobs(jobs: list[dict[str, Any]], workflow: Workflow, tree: str,
         return False
     names = (*lanes, workflow.aggregate, "tested tree " + tree)
     return all(
-        len(matches := [job for job in jobs if job.get("name") == workflow.job_prefix + name]) == 1
+        len(matches := [job for job in jobs if job.get("name") == name]) == 1
         and matches[0].get("status") == "completed"
         and matches[0].get("conclusion") == "success"
         and fresh_job(matches[0], now)
@@ -331,12 +337,12 @@ def full_source(api: GitHub, run: dict[str, Any], jobs: list[dict[str, Any]],
     now = now or datetime.now(timezone.utc)
     if complete_jobs(jobs, workflow, tree, now, lanes):
         return int(run["id"])
-    for name in (*workflow.skipped_lanes, workflow.aggregate):
-        matches = [job for job in jobs if job.get("name") == workflow.job_prefix + name]
+    for name in (*workflow.lanes, workflow.aggregate):
+        matches = [job for job in jobs if job.get("name") == name]
         expected = "success" if name == workflow.aggregate else "skipped"
         if len(matches) != 1 or matches[0].get("status") != "completed" or matches[0].get("conclusion") != expected:
             return None
-    pattern = re.compile(re.escape(workflow.job_prefix) + r"reused tree " + tree + r" from run ([0-9]+)")
+    pattern = re.compile(r"reused tree " + tree + r" from run ([0-9]+)")
     markers = [(job, pattern.fullmatch(job.get("name", ""))) for job in jobs]
     markers = [(job, match) for job, match in markers if match]
     if len(markers) != 1:
@@ -385,7 +391,7 @@ def find_evidence(api: GitHub, workflow: Workflow, event: dict[str, Any],
         commit = api.get("/git/commits/" + head)
         if commit.get("tree", {}).get("sha") != tree:
             continue
-        runs = api.pages("/actions/workflows/" + (workflow.caller or workflow.path).rsplit("/", 1)[1]
+        runs = api.pages("/actions/workflows/" + workflow.path.rsplit("/", 1)[1]
                          + "/runs?" + urlencode({"event": "pull_request", "branch": head_info["ref"]}),
                          "workflow_runs")
         # Only the newest run for this exact tree is eligible. An older green
@@ -440,28 +446,26 @@ class CompileCommand:
     environment: tuple[tuple[str, str], ...] = ()
 
 
-CACHE_LANES = ("lint", "test", "store-features")
-BACKENDS = cell.BACKENDS
+CACHE_LANES = tuple(sorted(WORKFLOW.cached))
+# The non-default backends the store job builds with the stable toolchain.
+STORE_PEERS = ("bdb", "kyotocabinet")
 
 
-def refresh_commands(lane: str, backend: str | None = None) -> tuple[CompileCommand, ...]:
+def refresh_commands(lane: str) -> tuple[CompileCommand, ...]:
     """The cache-saving lanes' compile modes; never the invalid-feature probes."""
-    if lane not in CACHE_LANES or (backend is not None and lane != "store-features"):
+    if lane not in CACHE_LANES:
         raise ValueError("invalid cache refresh selection")
-    if lane == "lint":
-        return (CompileCommand(("cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings")),)
-    if lane == "test":
-        return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests")),)
-    if lane == "store-features":
-        if backend not in BACKENDS:
-            raise ValueError("cache refresh requires a store backend")
-        return (CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests",
-                                *cell.feature_flags(backend))),)
+    if lane == "rust":
+        return (CompileCommand(("cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings")),
+                CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests")))
+    # store: the two peer builds, in the job's order, into its one target directory.
+    return tuple(CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests", *cell.feature_flags(backend)))
+                 for backend in STORE_PEERS)
 
 
-def refresh_cache(lane: str, backend: str | None = None) -> None:
+def refresh_cache(lane: str) -> None:
     """Run shared cache refresh commands, inheriting the lane's Rust settings."""
-    for command in refresh_commands(lane, backend):
+    for command in refresh_commands(lane):
         environment = dict(os.environ)
         environment.update(command.environment)
         subprocess.run(command.argv, env=environment, check=True)
@@ -470,38 +474,34 @@ def refresh_cache(lane: str, backend: str | None = None) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("evidence", "aggregate"):
-        commands.add_parser(name).add_argument("workflow", choices=WORKFLOWS)
+    commands.add_parser("evidence", help="write the tree-reuse outputs to GITHUB_OUTPUT")
+    commands.add_parser("aggregate", help="check each lane's result against its flag")
     commands.add_parser("gate", help="write each ci.yml job's path-gate flag to GITHUB_OUTPUT")
-    refresh = commands.add_parser("refresh")
-    refresh.add_argument("lane", choices=CACHE_LANES)
-    refresh.add_argument("--backend", choices=BACKENDS)
+    commands.add_parser("refresh").add_argument("lane", choices=CACHE_LANES)
     args = parser.parse_args()
     if args.command == "refresh":
-        refresh_cache(args.lane, args.backend)
+        refresh_cache(args.lane)
         return 0
     if args.command == "gate":
         event_name = os.environ["GITHUB_EVENT_NAME"]
         base = event_base(event_name, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
-        flags = gate(base)
+        flags = {**gate(base), "store": store_gate(base)}
         lines = "".join(f"{name}={'true' if value else 'false'}\n" for name, value in flags.items())
         print(f"base {base or '(none)'}\n{lines}", end="")
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
             output.write(lines)
         return 0
-    workflow = WORKFLOWS[args.workflow]
+    workflow = WORKFLOW
     if args.command == "aggregate":
         needs = json.loads(os.environ["NEEDS"])
-        results = {name: needs[job]["result"] for name, job in zip(workflow.lanes, workflow.needs)}
+        results = {name: needs[name]["result"] for name in workflow.lanes}
         outputs = needs["changes"]["outputs"]
         flags = {name: outputs.get(flag, "") for name, flag in zip(workflow.lanes, workflow.flags)}
-        own_gate = {name: (needs[job]["result"], outputs.get(flag, "")) for name, job, flag in workflow.gated}
+        own_gate = {name: (needs[name]["result"], outputs.get(flag, "")) for name, flag in workflow.gated}
         passed = aggregate(needs["changes"]["result"], flags,
                            outputs.get("reuse", ""), results, workflow.cached, os.environ["EVENT_NAME"], own_gate)
-        required = {job: needs.get(job, {}).get("result") for job in workflow.required}
-        passed = passed and all(result == "success" for result in required.values())
         print(json.dumps({"changes": needs["changes"], "lanes": results, "own_gate": own_gate,
-                          "required": required, "passed": passed}))
+                          "passed": passed}))
         return 0 if passed else 1
     tree = git_tree("HEAD")
     evidence = None
