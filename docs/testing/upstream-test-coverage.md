@@ -156,9 +156,10 @@ recorded yield for an IME. oxpinyin has both, in the nightly `fuzz/`
 workspace (`fuzz/Cargo.toml` lists the targets):
 
 - **Stateful C-API fuzzer** (libchewing `fuzzer.rs`):
-  `capi-commands` (`fuzz/fuzz_targets/capi_commands.rs`). Each input byte
-  selects one command: parse, guess, candidate walks, setters and iterator
-  begin/end pairs.
+  `capi-commands` (`fuzz/fuzz_targets/capi_commands.rs`). Each command is
+  one selector byte and its own arguments: parse, guess, a candidate guess
+  with a choose, setters and iterator begin/end pairs. Each input runs on a
+  new context and a new user directory.
 - **Hostile data-file fuzzer** (libchewing `trieloader.rs`): `dict-loader`,
   `phrase-library` and `table-conf`.
 
