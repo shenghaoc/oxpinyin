@@ -25,6 +25,7 @@ mod chewing_key_data;
 pub mod direct;
 #[forbid(unsafe_code)]
 pub mod engine;
+pub mod facade;
 #[cfg(test)]
 #[path = "../tests/common/fixture_doubles.rs"]
 #[forbid(unsafe_code)]
@@ -42,6 +43,10 @@ pub mod model;
 pub mod options;
 #[forbid(unsafe_code)]
 mod parser;
+#[cfg(test)]
+#[path = "../tests/common/parser_rows.rs"]
+#[forbid(unsafe_code)]
+mod parser_rows;
 #[forbid(unsafe_code)]
 mod scheme;
 #[forbid(unsafe_code)]

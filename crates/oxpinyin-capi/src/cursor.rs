@@ -506,14 +506,16 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
     let result = match inst.core.left_offset(offset) {
         Ok(result) => result,
         Err(error) => {
-            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
-            {
+            match oxpinyin_core::facade::CursorFault::of(
+                &error,
+                oxpinyin_core::facade::CursorLaw::CheckOffset,
+            ) {
                 // Register row 14: `assert(_check_offset(...))`,
                 // `pinyin.cpp:3035`, `:3057`; an offset past the matrix asserts in
                 // its `get_column_size` (`phonetic_key_matrix.h:103`).
-                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
                 // A graph failure the pin has no counterpart for.
-                oxpinyin_facade::CursorFault::Unreadable => {
+                oxpinyin_core::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
                     return false;
                 }
@@ -573,14 +575,16 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
         // column, so `abort_past_matrix` above has already aborted.
         Ok(None) => return false,
         Err(error) => {
-            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
-            {
+            match oxpinyin_core::facade::CursorFault::of(
+                &error,
+                oxpinyin_core::facade::CursorLaw::CheckOffset,
+            ) {
                 // Register row 14: `assert(_check_offset(...))`,
                 // `pinyin.cpp:3067`, `:3092`, and the matrix's own index assert
                 // past its end.
-                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
                 // A graph failure the pin has no counterpart for.
-                oxpinyin_facade::CursorFault::Unreadable => {
+                oxpinyin_core::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
                     return false;
                 }

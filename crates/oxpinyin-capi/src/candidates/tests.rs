@@ -42,7 +42,7 @@ use crate::test_support::promotion_system;
 
 use oxpinyin_core::{PhraseToken, model::Dictionary as _};
 
-use oxpinyin_facade::TextSpan;
+use oxpinyin_core::facade::TextSpan;
 
 use oxpinyin_core::user::SENTENCE_START;
 

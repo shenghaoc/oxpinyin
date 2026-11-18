@@ -8,9 +8,9 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin_core::OptionBits;
+use oxpinyin_core::facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::user::{PinyinKey, toned_key};
-use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 
 use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
@@ -23,7 +23,7 @@ use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
 /// reads each item when a call needs it and buffers no row.
 struct ExportHandle {
     owner: ContextOwner,
-    cursor: oxpinyin_facade::PhraseExportCursor,
+    cursor: oxpinyin_core::facade::PhraseExportCursor,
 }
 
 /// State behind `bigram_export_iterator_t *`.
@@ -228,7 +228,7 @@ pub unsafe extern "C" fn pinyin_iterator_add_phrase(
 }
 
 /// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
-pub(crate) use oxpinyin_facade::ImportPlan;
+pub(crate) use oxpinyin_core::facade::ImportPlan;
 
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
@@ -239,7 +239,7 @@ pub(crate) use oxpinyin_facade::ImportPlan;
 /// Under the crate-level rules, Strings: both pointers are NULL or live
 /// NUL-terminated strings, unchanged for this call.
 unsafe fn plan_import(
-    core: &oxpinyin_facade::ContextCore,
+    core: &oxpinyin_core::facade::ContextCore,
     index: u8,
     phrase: *const c_char,
     pinyin: *const c_char,
@@ -378,7 +378,7 @@ pub unsafe extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 /// count)`, token order (`pinyin.cpp:662-768`): configured system libraries
 /// use their live chunks, and `USER_FILE` libraries use the user store.
 /// A nibble without a sub-index exports nothing
-/// ([`oxpinyin_facade::ContextCore::phrase_export_cursor`]).
+/// ([`oxpinyin_core::facade::ContextCore::phrase_export_cursor`]).
 ///
 /// # Safety
 ///
@@ -660,11 +660,11 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
 /// and so does the process; class (b), register row 98, `ngram.cpp:133-143`,
 /// a partial item tail `retrieve_all` reads past, where the walk ends with
 /// one warning and `false`.
-fn walk_answer(more: Result<bool, oxpinyin_facade::GramLoadFault>, name: &str) -> bool {
+fn walk_answer(more: Result<bool, oxpinyin_core::facade::GramLoadFault>, name: &str) -> bool {
     match more {
         Ok(more) => more,
-        Err(oxpinyin_facade::GramLoadFault::ShortTotal { .. }) => std::process::abort(),
-        Err(oxpinyin_facade::GramLoadFault::PartialTail { .. }) => {
+        Err(oxpinyin_core::facade::GramLoadFault::ShortTotal { .. }) => std::process::abort(),
+        Err(oxpinyin_core::facade::GramLoadFault::PartialTail { .. }) => {
             crate::ffi::log_warning(&format!(
                 "{name}: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:133-143)"

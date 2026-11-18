@@ -15,7 +15,7 @@ use contract_data::contract_data_dir;
 
 use std::ptr;
 
-#[path = "../../../oxpinyin-facade/tests/common/contract_data.rs"]
+#[path = "../../../oxpinyin-core/tests/common/contract_data.rs"]
 mod contract_data;
 
 /// A context and instance on the pinned data with a fresh user directory.

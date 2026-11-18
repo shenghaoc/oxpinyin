@@ -169,7 +169,7 @@ impl PhraseLibraries {
     /// The files `Self::map_library` found absent, in the order it met
     /// them: where the pin writes `mmap %s failed!` at init and goes on
     /// with an empty chunk (`pinyin.cpp:256`).
-    pub fn unmapped(&self) -> impl Iterator<Item = &Path> {
+    pub(crate) fn unmapped(&self) -> impl Iterator<Item = &Path> {
         self.unmapped.iter().map(PathBuf::as_path)
     }
 
@@ -177,7 +177,11 @@ impl PhraseLibraries {
     /// first fault's classification and the reportable paths. The caller
     /// applies its operation's table-row and visibility guards.
     #[must_use]
-    pub fn check_now(&self, selected: impl Fn(u8) -> bool, only: Option<u8>) -> LibraryCheck {
+    pub(crate) fn check_now(
+        &self,
+        selected: impl Fn(u8) -> bool,
+        only: Option<u8>,
+    ) -> LibraryCheck {
         let mut checked = LibraryCheck::default();
         let mut first_fault = false;
         for (_, slot) in (0u8..)
@@ -284,7 +288,7 @@ impl PhraseLibraries {
 
     /// Installs an already opened library, transferring its byte ownership.
     /// The path is retained for operations that remap the loaded file.
-    pub fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
+    pub(crate) fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
         let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
             return;
         };
@@ -354,7 +358,7 @@ impl PhraseLibraries {
     /// the one `load` was given; the snapshot is the mapping that load
     /// made, which keeps the replaced file's old bytes alive.
     #[must_use]
-    pub fn loaded_path_library(&self, nibble: u8) -> Option<(&Path, &PhraseLibrary)> {
+    pub(crate) fn loaded_path_library(&self, nibble: u8) -> Option<(&Path, &PhraseLibrary)> {
         let slot = self.by_nibble.get(usize::from(nibble))?;
         let loaded = slot.as_ref()?;
         Some((&loaded.path, &loaded.library))
@@ -407,7 +411,7 @@ impl PhraseLibraries {
     /// the pin's compact skips it (`:651-652`): its total stays as the
     /// unload took it out. Returns the compacted nibbles.
     #[must_use]
-    pub fn compact_layout_failed(&mut self, unloaded: u32) -> Vec<u8> {
+    pub(crate) fn compact_layout_failed(&mut self, unloaded: u32) -> Vec<u8> {
         let mut compacted = Vec::new();
         for (nibble, slot) in self.by_nibble.iter_mut().enumerate() {
             if unloaded & (1 << nibble) != 0 {

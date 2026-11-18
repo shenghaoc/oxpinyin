@@ -192,7 +192,7 @@ impl SystemLibrary {
     /// A current on-disk chunk as a diff baseline, with items read through
     /// the uniquely owned immutable mapping.
     #[must_use]
-    pub fn from_library(library: crate::user::data::phrase_library::PhraseLibrary) -> Self {
+    pub(crate) fn from_library(library: crate::user::data::phrase_library::PhraseLibrary) -> Self {
         Self {
             total: library.total_freq(),
             range_end: library.token_range().end,
@@ -445,7 +445,7 @@ impl SystemOriginals {
     }
 
     /// Exclusive access for a library transition.
-    pub fn phrase_libraries_mut(&mut self) -> &mut PhraseLibraries {
+    pub(crate) fn phrase_libraries_mut(&mut self) -> &mut PhraseLibraries {
         &mut self.mapped
     }
 
@@ -523,7 +523,7 @@ impl SystemOriginals {
     }
 
     /// Install an opened file with its remap path.
-    pub fn insert_mapping(
+    pub(crate) fn insert_mapping(
         &mut self,
         nibble: u8,
         path: PathBuf,
@@ -546,7 +546,7 @@ impl SystemOriginals {
     /// different mappings after a refused replay or a transient reload. Move
     /// the old mapping into the original's slot before replacing the current
     /// dictionary slot; both versions remain uniquely owned.
-    pub fn publish_current(&mut self, mut incoming: Self) {
+    pub(crate) fn publish_current(&mut self, mut incoming: Self) {
         for nibble in incoming.libraries.keys().copied() {
             let Some((path, mapping)) = incoming.mapped.take_mapping(nibble) else {
                 continue;

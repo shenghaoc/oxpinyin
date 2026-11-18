@@ -246,7 +246,7 @@ impl UserFileLayout {
 
     /// Whether sub-index `index` is a `USER_FILE` library with a file.
     #[must_use]
-    pub fn has_user_library(&self, index: u8) -> bool {
+    pub(crate) fn has_user_library(&self, index: u8) -> bool {
         self.user.iter().any(|&(nibble, _)| nibble == index)
     }
 }

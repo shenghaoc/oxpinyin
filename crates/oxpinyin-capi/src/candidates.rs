@@ -469,7 +469,7 @@ pub(crate) fn snapshot_candidates(
             continue;
         }
         let text = if missing {
-            oxpinyin_facade::TextSpan::NULL
+            oxpinyin_core::facade::TextSpan::NULL
         } else {
             let bytes = phrase_text_bytes(cand.text());
             let Some(text) = inst.state.candidates.intern(&bytes) else {
@@ -487,7 +487,7 @@ pub(crate) fn snapshot_candidates(
                 (0, 0)
             } else {
                 let selection =
-                    oxpinyin_facade::SelectionSpan::of_candidate(cand, frame.session_offset);
+                    oxpinyin_core::facade::SelectionSpan::of_candidate(cand, frame.session_offset);
                 (frame.offset as u16, published_bound(selection.end()) as u16)
             };
         if cand.text().outward_bytes().is_none() {
@@ -530,7 +530,7 @@ fn choose_phrase_row(
             Err(_) => -1,
         };
     };
-    let published = oxpinyin_facade::PublishedRow {
+    let published = oxpinyin_core::facade::PublishedRow {
         begin: row.begin,
         end: row.end,
         token,
@@ -1026,7 +1026,7 @@ pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) 
 /// `pinyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
 fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
-    use oxpinyin_facade::TrainingRefusal;
+    use oxpinyin_core::facade::TrainingRefusal;
     // The Pinyin caller supplies the n-best index (074a2219 pinyin.cpp:2684).
     if matches!(
         result,
@@ -1034,7 +1034,7 @@ fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> boo
     ) {
         std::process::abort();
     }
-    match oxpinyin_facade::training_answer(result) {
+    match oxpinyin_core::facade::training_answer(result) {
         Ok(trained) => trained,
         Err(TrainingRefusal::Abort) => std::process::abort(),
         Err(TrainingRefusal::PartialBigram) => {
@@ -1049,7 +1049,7 @@ fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> boo
 
 /// Whether [`pinyin_train`] of row `index` reaches one of the pin's own
 /// training asserts (register rows 6, 38 and 82): the facade's
-/// [`oxpinyin_facade::InstanceView::train_aborts`], the same row lookup and
+/// [`oxpinyin_core::facade::InstanceView::train_aborts`], the same row lookup and
 /// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
 /// which skips such a call: not in `pinyin.h`, a Rust function compiled
 /// only with `fuzz-api` and never into the shipped artifact.

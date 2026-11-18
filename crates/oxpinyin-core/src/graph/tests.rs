@@ -707,8 +707,7 @@ pub fn unescape(text: &str) -> Vec<u8> {
     out
 }
 
-#[path = "../../tests/common/parser_rows.rs"]
-mod parser_rows;
+use crate::parser_rows;
 
 parser_rows::gated_parser_rows! {
     fn a_gated_parser_row_follows_its_option_bit(

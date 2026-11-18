@@ -145,7 +145,7 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
 }
 
 /// What [`zhuyin_iterator_add_phrase`] does with one pair before it writes.
-pub(crate) use oxpinyin_facade::ImportPlan;
+pub(crate) use oxpinyin_core::facade::ImportPlan;
 
 /// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
@@ -156,7 +156,7 @@ pub(crate) use oxpinyin_facade::ImportPlan;
 /// Under the crate-level rules, Strings: both pointers are NULL or live
 /// NUL-terminated strings, unchanged for this call.
 unsafe fn plan_import(
-    core: &oxpinyin_facade::ContextCore,
+    core: &oxpinyin_core::facade::ContextCore,
     index: u8,
     phrase: *const c_char,
     pinyin: *const c_char,

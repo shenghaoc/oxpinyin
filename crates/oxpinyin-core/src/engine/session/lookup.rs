@@ -766,7 +766,7 @@ where
 
     /// The parse seams' and sentence guesses' refresh: [`Self::refresh`],
     /// unless the session defers list builds
-    /// ([`Session::set_defer_list_builds`]). Deferred, the scan matrix is
+    /// (`Session::set_defer_list_builds`). Deferred, the scan matrix is
     /// still built, so its errors surface here as before, and the list is
     /// left stale for [`Session::refresh_candidates`].
     pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
@@ -778,7 +778,7 @@ where
     }
 
     /// Builds the candidate list a deferred parse or sentence guess left
-    /// stale ([`Session::set_defer_list_builds`]): the list, and the parse
+    /// stale (`Session::set_defer_list_builds`): the list, and the parse
     /// length behind it, that the parse or guess would have built. A no-op
     /// when the list is current, and always under the default eager mode.
     ///

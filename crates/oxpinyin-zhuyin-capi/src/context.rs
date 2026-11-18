@@ -78,7 +78,7 @@ pub unsafe extern "C" fn zhuyin_init(
 /// `zhuyin_init`'s answer for a failed open, before it returns NULL: the
 /// process aborts where the pin dies, and a refusal writes the pin's line or
 /// one warning.
-fn refuse_init(error: &oxpinyin_facade::OpenFailure, system_path: &std::path::Path) {
+fn refuse_init(error: &oxpinyin_core::facade::OpenFailure, system_path: &std::path::Path) {
     error.refuse_init(
         system_path,
         "zhuyin_init",
@@ -167,21 +167,19 @@ pub unsafe extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
         // that were written and not renamed, no user index or bigram file
         // and no `user.conf`. The abort skips every destructor, so nothing
         // else is written either.
-        oxpinyin_facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
+        oxpinyin_core::facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
         // Register row 96, `memory_chunk.h:493`: the save's library loop
         // maps a loaded system library again and it is a directory. The
         // save stopped there with the earlier libraries' `.tmp` files
         // written and renamed in place (`zhuyin.cpp:554-617`).
-        oxpinyin_facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
+        oxpinyin_core::facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
         // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
         // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
         // `:67`). The save stopped in that copy, before its rename and the
         // marker.
-        oxpinyin_facade::SaveOutcome::FatalCopy => std::process::abort(),
-        outcome
-        @ (oxpinyin_facade::SaveOutcome::NotSaved | oxpinyin_facade::SaveOutcome::Saved) => {
-            outcome.is_saved()
-        }
+        oxpinyin_core::facade::SaveOutcome::FatalCopy => std::process::abort(),
+        outcome @ (oxpinyin_core::facade::SaveOutcome::NotSaved
+        | oxpinyin_core::facade::SaveOutcome::Saved) => outcome.is_saved(),
     }
 }
 

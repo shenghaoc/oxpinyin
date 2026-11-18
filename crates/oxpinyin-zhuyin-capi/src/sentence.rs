@@ -51,7 +51,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_core::engine::EngineError) -> bool {
-    oxpinyin_facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
+    oxpinyin_core::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
 fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     // (`zhuyin.cpp:933`, `:953`), which asserts on more than four tokens
     // (`phrase_large_table3.h:95`).
     let Ok(prefixes) =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
+        oxpinyin_core::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
     else {
         std::process::abort();
     };
@@ -264,18 +264,18 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
             }
             return false;
         }
-        Err(error) => match oxpinyin_facade::CursorFault::of(
+        Err(error) => match oxpinyin_core::facade::CursorFault::of(
             &error,
-            oxpinyin_facade::CursorLaw::CharacterOffset,
+            oxpinyin_core::facade::CursorLaw::CharacterOffset,
         ) {
             // Register row 19: the recursion's `assert(size > 0)`
             // (`zhuyin.cpp:2110`), the entry's `assert(offset <
             // matrix.size())` (`:2158`) and `_check_offset` (`:1453` via
             // `:2159`); and `_pre_compute_tokens`' `reduce_tokens` count
             // assert (`:2080`, `phrase_large_table3.h:95`).
-            oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+            oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
             // A graph or dictionary failure the pin has no counterpart for.
-            oxpinyin_facade::CursorFault::Unreadable => {
+            oxpinyin_core::facade::CursorFault::Unreadable => {
                 crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
                 return false;
             }
@@ -483,10 +483,10 @@ fn guess_candidates_result(
     // register row 66).
     let normalized = match inst.core.abi_candidate_offset(offset, true) {
         Ok(normalized) => normalized,
-        Err(oxpinyin_facade::CursorFault::PinAssert) => std::process::abort(),
+        Err(oxpinyin_core::facade::CursorFault::PinAssert) => std::process::abort(),
         // A parse the facade cannot read, which the pin has no counterpart
         // for.
-        Err(oxpinyin_facade::CursorFault::Unreadable) => {
+        Err(oxpinyin_core::facade::CursorFault::Unreadable) => {
             return Err(CandidateGuessRefusal::InvalidOffset);
         }
     };
@@ -501,7 +501,7 @@ fn guess_candidates_result(
     // the composition offset: unload may have changed library visibility
     // without a parse (074a2219 zhuyin.cpp:1468-1512).
     let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_lookup_session_offset(
+        oxpinyin_core::facade::zhuyin_lookup_session_offset(
             parse,
             inst.core.session.raw_input().len(),
             normalized,
@@ -518,11 +518,9 @@ fn guess_candidates_result(
     // window instead (issue #577); keep the window anchored there for a
     // later choose, but snapshot only its sentence rows.
     let sentence_rows_only = !before_cursor
-        && inst
-            .core
-            .zhuyin_parse
-            .as_ref()
-            .is_some_and(|parse| oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized));
+        && inst.core.zhuyin_parse.as_ref().is_some_and(|parse| {
+            oxpinyin_core::facade::zhuyin_offset_is_mid_key(parse, normalized)
+        });
     // The before-cursor window is re-anchored just like the after-cursor
     // one: `snapshot_candidates` records each row's index into THIS list,
     // so a later `zhuyin_choose_candidate` must resolve it here and not
@@ -530,11 +528,11 @@ fn guess_candidates_result(
     // general, and the caller would commit a row it never displayed. The
     // anchor is the buffer start rather than the lookup offset because the
     // ending-at window is END-anchored; see
-    // `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
+    // `oxpinyin_core::engine::BEFORE_CURSOR_ANCHOR`.
     let searched_here = !sentence_rows_only
         && (!before_cursor
             || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
-                oxpinyin_facade::zhuyin_original_offset(parse, session_offset) == normalized
+                oxpinyin_core::facade::zhuyin_original_offset(parse, session_offset) == normalized
             }));
     let abort_on_unreadable = searched_here && facade_total_is_zero(&inst.read());
     let window_owned = lookup_window(inst, session_offset, before_cursor, abort_on_unreadable)?;
@@ -542,7 +540,7 @@ fn guess_candidates_result(
     // later `zhuyin_choose_candidate` selects; the window's storage then
     // goes back to the session.
     let window_anchor = if before_cursor {
-        oxpinyin_facade::BEFORE_CURSOR_ANCHOR
+        oxpinyin_core::engine::BEFORE_CURSOR_ANCHOR
     } else {
         session_offset
     };

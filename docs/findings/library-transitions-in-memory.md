@@ -110,7 +110,7 @@ These paths add no abort. The fuzz harnesses need no filter:
 
 Unit tests:
 
-- `library_transition_tests` in `crates/oxpinyin-facade/src/context.rs`:
+- `library_transition_tests` in `crates/oxpinyin-core/src/facade/context.rs`:
   `unload_then_reload_restores_the_saved_library`,
   `unload_then_save_leaves_the_unloaded_librarys_log_alone` and
   `reload_after_an_unreadable_log_loads_the_system_chunk_alone` (a missing

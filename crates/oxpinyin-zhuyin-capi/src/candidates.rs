@@ -256,7 +256,7 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
     };
     let outcome = match token {
         Some(token) => inst.core.select_published(
-            &oxpinyin_facade::PublishedRow {
+            &oxpinyin_core::facade::PublishedRow {
                 begin,
                 end,
                 token,
@@ -324,8 +324,8 @@ pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
 fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
-    use oxpinyin_facade::TrainingRefusal;
-    match oxpinyin_facade::training_answer(result) {
+    use oxpinyin_core::facade::TrainingRefusal;
+    match oxpinyin_core::facade::training_answer(result) {
         Ok(trained) => trained,
         Err(TrainingRefusal::Abort) => std::process::abort(),
         Err(TrainingRefusal::PartialBigram) => {
@@ -363,7 +363,7 @@ fn sole_unreadable_row(
 /// law. `None` keeps every candidate (the after-cursor window). `anchor` is
 /// the session-coordinate origin the window's rows are measured from (the
 /// lookup offset, the composition offset, or
-/// [`oxpinyin_facade::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
+/// [`oxpinyin_core::engine::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
 /// start is `anchor + span_start()`. `sentence_rows_only` keeps the
 /// sentence rows and nothing else — the after-cursor window at a mid-key
 /// offset, where the pin's matrix column is empty (issue #577).
@@ -385,7 +385,7 @@ pub fn snapshot_candidates(
     let parse = inst.core.zhuyin_parse.as_ref();
     let original_end = |offset| {
         parse.map_or(offset, |parse| {
-            oxpinyin_facade::zhuyin_original_offset(parse, offset)
+            oxpinyin_core::facade::zhuyin_original_offset(parse, offset)
         })
     };
     // One row vector and one text buffer, each sized once for the window.
@@ -434,7 +434,7 @@ pub fn snapshot_candidates(
         };
         let span_end = original_end(anchor.saturating_add(cand.consumed_bytes()));
         let text = if missing {
-            oxpinyin_facade::TextSpan::NULL
+            oxpinyin_core::facade::TextSpan::NULL
         } else {
             let bytes = phrase_text_bytes(cand.text());
             let Some(text) = inst.state.candidates.intern(&bytes) else {

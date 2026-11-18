@@ -39,7 +39,7 @@ where
     /// # Errors
     ///
     /// Propagates the model's step-cost failures.
-    pub fn phrase_segment_ucs4(
+    pub(crate) fn phrase_segment_ucs4(
         &self,
         sentence: &[u32],
     ) -> Result<(bool, Vec<PhraseToken>), EngineError> {

@@ -14,7 +14,7 @@ The union covers the default facade (system, user, network and
 choose-promoted addon phrases), the addon facade, and prediction. At zero
 user data and zero loaded addons the union is the identity: the addon and
 prediction paths are empty, and the empty-store candidate surface does not
-move (`oxpinyin-facade`'s `candidate_surface` test;
+move (`oxpinyin-core`'s `candidate_surface` test;
 [goldens and pins](../runbooks/goldens-and-pins.md)).
 
 Decisions:
@@ -265,7 +265,7 @@ stores this arithmetic in `UserStore::observe_predicted` (§6.5).
 |---|---|
 | `lookup_candidate_type_t` per candidate | `CapiCandidate::candidate_type` (`crates/oxpinyin-capi/src/state.rs`) |
 | `pinyin_load_addon_phrase_library` | `crates/oxpinyin-capi/src/config.rs`, `RuntimeDict::load_addon_reporting` |
-| Prediction and punctuation prepend | `crates/oxpinyin-capi/src/predict.rs`, `crates/oxpinyin-facade/src/predict.rs` |
+| Prediction and punctuation prepend | `crates/oxpinyin-capi/src/predict.rs`, `crates/oxpinyin-core/src/facade/predict.rs` |
 
 ### 4.4 User store
 
@@ -292,7 +292,7 @@ from the model's `.table` text.
 oxpinyin mirrors upstream's two-facade split:
 
 - **Default union** = `SystemDictionary` + `UserLookup`, exposed as one
-  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin-facade`). Its
+  `Dictionary` implementation (`RuntimeDict`, `crates/oxpinyin-core`). Its
   `lookup` returns tokens in ascending library-nibble order — system, then
   default `USER_FILE` entries 5, 6 and 7 — as upstream's append does. Its
   `phrase_prefix_exists` ORs the system probe and the user-file probe. At
@@ -341,7 +341,7 @@ tags the entries `CandidateKind::Addon` and ORs the continuation bits
 Prediction lives at the facade and C ABI boundary rather than inside the
 generic `Session`, because it needs the phrase table and the user bigram:
 
-- `compute_prefixes` (`crates/oxpinyin-facade/src/predict.rs`) reproduces
+- `compute_prefixes` (`crates/oxpinyin-core/src/facade/predict.rs`) reproduces
   `_compute_prefixes`: a suffix search over the system and user phrase
   tables.
 - `crates/oxpinyin-capi/src/predict.rs` reproduces

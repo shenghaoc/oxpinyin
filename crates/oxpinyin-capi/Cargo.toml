@@ -43,14 +43,14 @@ tools = []
 fuzz-api = []
 # Backend selection (one backend per binary; see oxpinyin-core's
 # [features] for the model and precedence). Each peer feature forwards to
-# oxpinyin-facade, which selects the backend in core. The peer features stay on this crate because build.rs reads
+# oxpinyin-core. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
 # because `cargo cinstall --features <peer>` names them. `just packaging
 # install` writes the matching `database_format` into libpinyin.pc.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
-bdb = ["oxpinyin-facade/bdb"]
-tkrzw = ["oxpinyin-facade/tkrzw"]
+kyotocabinet = ["oxpinyin-core/kyotocabinet"]
+bdb = ["oxpinyin-core/bdb"]
+tkrzw = ["oxpinyin-core/tkrzw"]
 [lints]
 workspace = true
 
@@ -58,13 +58,6 @@ workspace = true
 rustc-hash.workspace = true
 num_enum.workspace = true
 oxpinyin-core.workspace = true
-# default-features = false on the store-reaching edges (the workspace table
-# carries it for the `workspace = true` ones) so `--no-default-features`
-# builds actually reach the store's backend selection; the [features] block
-# above forwards it.
-# The shared facade-orchestration layer (instance/context state machines,
-# parse seams, cursor laws) this crate's C wrappers translate.
-oxpinyin-facade = { path = "../oxpinyin-facade", version = "=0.1.0-alpha.1", default-features = false }
 glib-sys.workspace = true
 
 [dev-dependencies]

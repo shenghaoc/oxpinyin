@@ -422,7 +422,11 @@ impl MatrixKey {
 
     /// Retains the parser key and its original span.
     #[must_use]
-    pub const fn from_chewing(key: crate::ChewingKey, syllable_start: usize, end: usize) -> Self {
+    pub(crate) const fn from_chewing(
+        key: crate::ChewingKey,
+        syllable_start: usize,
+        end: usize,
+    ) -> Self {
         Self {
             key,
             syllable_start,

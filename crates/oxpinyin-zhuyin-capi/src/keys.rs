@@ -69,7 +69,7 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
         *onekey = ChewingKey::ZERO;
     }
     inst.core
-        .parse_one_full_pinyin(&text, oxpinyin_facade::PinyinCorrections::Masked)
+        .parse_one_full_pinyin(&text, oxpinyin_core::facade::PinyinCorrections::Masked)
         .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
             .live
             .full_scheme
             .get();
-        match oxpinyin_facade::full_scheme(scheme) {
+        match oxpinyin_core::facade::full_scheme(scheme) {
             Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
             Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),
             _ => core.pinyin_text(),

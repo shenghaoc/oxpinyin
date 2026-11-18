@@ -233,7 +233,7 @@ fn lookup_pinyin(spelling: &str) -> Option<SyllableKey> {
 /// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`) before
 /// checking the discriminant, so an out-of-enum call leaves the shengmu
 /// and yunmu tables intact but the fallback pointer null. The builder
-/// [`Self::with_fallback_suppressed`] creates that state.
+/// `Self::with_fallback_suppressed` creates that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DoublePinyinParser {
     scheme: DoublePinyinScheme,
@@ -268,7 +268,7 @@ impl DoublePinyinParser {
     /// `m_fallback_table` without assigning a new scheme
     /// (`pinyin_parser2.cpp:580`).
     #[must_use]
-    pub const fn with_fallback_suppressed(mut self) -> Self {
+    pub(crate) const fn with_fallback_suppressed(mut self) -> Self {
         self.suppress_fallback = true;
         self
     }
@@ -1005,7 +1005,7 @@ impl ZhuyinParser {
     /// mark come back — exactly `ZhuyinDiscreteParser2::
     /// in_chewing_scheme`'s vector (`zhuyin_parser2.cpp:496-545`).
     #[must_use]
-    pub fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<String> {
+    pub(crate) fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<String> {
         match self.scheme.keyboard() {
             Some(Keyboard::Simple(tables)) => {
                 let mut symbols = Vec::new();

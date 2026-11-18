@@ -60,7 +60,8 @@ pub mod faults {
     /// Lets the next `reads` source records of every later copy in this
     /// process through, then fails each source read after them, as a native
     /// walk that reports an error does.
-    pub fn fail_source_read_after(reads: usize) {
+    #[cfg(test)]
+    pub(crate) fn fail_source_read_after(reads: usize) {
         SOURCE_READS.store(reads, Ordering::SeqCst);
     }
 

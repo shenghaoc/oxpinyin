@@ -365,15 +365,17 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
         Err(error) => {
-            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
-            {
+            match oxpinyin_core::facade::CursorFault::of(
+                &error,
+                oxpinyin_core::facade::CursorLaw::CheckOffset,
+            ) {
                 // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
                 // via `:1998` and `:2020`), and its `get_column_size` past the
                 // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
                 // A parse the facade cannot read, which the pin has no counterpart
                 // for.
-                oxpinyin_facade::CursorFault::Unreadable => {
+                oxpinyin_core::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
                     return false;
                 }
@@ -423,15 +425,17 @@ pub unsafe extern "C" fn zhuyin_get_right_zhuyin_offset(
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).
         Ok(None) => return false,
         Err(error) => {
-            match oxpinyin_facade::CursorFault::of(&error, oxpinyin_facade::CursorLaw::CheckOffset)
-            {
+            match oxpinyin_core::facade::CursorFault::of(
+                &error,
+                oxpinyin_core::facade::CursorLaw::CheckOffset,
+            ) {
                 // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
                 // via `:2030` and `:2055`), and its `get_column_size` past the
                 // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
                 // A parse the facade cannot read, which the pin has no counterpart
                 // for.
-                oxpinyin_facade::CursorFault::Unreadable => {
+                oxpinyin_core::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
                     return false;
                 }

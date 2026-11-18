@@ -237,7 +237,7 @@ impl UserStoreError {
     /// Cabinet's body read after a good size check asserts
     /// (`ngram_kyotodb.cpp:138` at 074a2219).
     #[must_use]
-    pub const fn is_read_after_check(&self) -> bool {
+    pub(crate) const fn is_read_after_check(&self) -> bool {
         matches!(self, Self::Store(StoreError::ReadAfterCheck))
     }
 }
@@ -691,8 +691,8 @@ impl TrainingCheck {
     }
 }
 
-/// What [`UserStore::check_mask_out`] found fit to mask: the user bigram's
-/// keys from the one `get_all_items` walk, for [`UserStore::apply_mask_out`].
+/// What `UserStore::check_mask_out` found fit to mask: the user bigram's
+/// keys from the one `get_all_items` walk, for `UserStore::apply_mask_out`.
 pub struct MaskCheck {
     container_keys: Result<Vec<Option<Token>>, StoreError>,
 }
@@ -736,7 +736,7 @@ impl UserStore {
     /// the header fault `mask_out`'s reload would reach in it (rows 91 and
     /// 92), found without changing any state; `None` when it reaches none.
     /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
-    pub fn read_mask_log(
+    pub(crate) fn read_mask_log(
         &self,
         logs: &mut crate::user::persistence::MaskLogs,
         nibble: u8,
@@ -755,7 +755,7 @@ impl UserStore {
     }
 
     /// Borrow the init baselines exclusively for a library transition.
-    pub fn originals_mut(&mut self) -> &mut crate::user::persistence::SystemOriginals {
+    pub(crate) fn originals_mut(&mut self) -> &mut crate::user::persistence::SystemOriginals {
         &mut self.originals
     }
 
@@ -848,7 +848,7 @@ impl UserStore {
     /// predecessor (`pinyin.cpp:889`); callers scope this live check to the
     /// grams their pinned operation reaches.
     #[must_use]
-    pub fn has_short_bigram_value_for(&self, token: Token) -> bool {
+    pub(crate) fn has_short_bigram_value_for(&self, token: Token) -> bool {
         self.bigram_row(token)
             .ok()
             .flatten()
@@ -872,7 +872,7 @@ impl UserStore {
     /// `cur != end` and read past that tail. Read from the live value, so
     /// an in-session store or removal counts at once.
     #[must_use]
-    pub fn has_oob_bigram_value_for(&self, token: Token) -> bool {
+    pub(crate) fn has_oob_bigram_value_for(&self, token: Token) -> bool {
         self.bigram_row(token)
             .ok()
             .flatten()
@@ -908,7 +908,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns the store's read error or a short, partial, or malformed gram failure.
-    pub fn check_training_step_with(
+    pub(crate) fn check_training_step_with(
         &self,
         check: &mut TrainingCheck,
         prev: Token,
@@ -983,7 +983,7 @@ impl UserStore {
     /// consult the raw key set too. The engine surfaces the pin's abort as
     /// an error instead.
     #[must_use]
-    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+    pub(crate) fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
         let projection = index_projection(syllables);
         let target = &self.inner.libpinyin;
         let projection_bytes: Vec<u8> = projection
@@ -1038,7 +1038,7 @@ impl UserStore {
     /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
     /// into the length's table entry, which the next `mask_out` walk starts
     /// from (#785). Read that record from the canonical table.
-    pub fn note_pinyin_search(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
+    pub(crate) fn note_pinyin_search(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
         if !crate::user::user_index::ENTRY_PER_LENGTH {
             return;
         }
@@ -1047,7 +1047,7 @@ impl UserStore {
     }
 
     /// Record an exact search using keys already built for lookup.
-    pub fn note_pinyin_search_keys(&self, keys: &[ChewingKey]) {
+    pub(crate) fn note_pinyin_search_keys(&self, keys: &[ChewingKey]) {
         if crate::user::user_index::ENTRY_PER_LENGTH {
             self.inner.libpinyin.phrases_mut().index.note_search(keys);
         }
@@ -1055,7 +1055,7 @@ impl UserStore {
 
     /// A `search_suggestion` of the user pinyin table for the prefix `keys`
     /// makes (#785): every longer key it visits empties its length's entry.
-    pub fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
+    pub(crate) fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Vec<ChewingKey>) {
         if !crate::user::user_index::ENTRY_PER_LENGTH {
             return;
         }
@@ -1154,7 +1154,7 @@ impl UserStore {
     /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
     /// applies library visibility.
     #[must_use]
-    pub fn user_unigram_frequency(&self, token: Token) -> Option<u64> {
+    pub(crate) fn user_unigram_frequency(&self, token: Token) -> Option<u64> {
         self.with_user_item(token, |item| u64::from(item.unigram()))
     }
 
@@ -1192,7 +1192,7 @@ impl UserStore {
 
     /// Whether the session layout names a library as a system chunk.
     #[must_use]
-    pub fn is_system_library(&self, library: u8) -> bool {
+    pub(crate) fn is_system_library(&self, library: u8) -> bool {
         self.originals.get(&library).is_some()
             || self
                 .originals
@@ -1246,7 +1246,7 @@ impl UserStore {
     /// visible library's live sub-index total lies from its original's, as a
     /// wrapping `guint32` the model adds to those stored totals.
     #[must_use]
-    pub fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
+    pub(crate) fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
         let items = self.inner.system_items.borrow();
         let mut extra = items.facade_extra();
         for (&library, original) in self.originals.iter() {
@@ -1327,7 +1327,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn count_delta(
+    pub(crate) fn count_delta(
         &self,
         prev: Option<Token>,
         token: Token,
@@ -1523,7 +1523,7 @@ impl UserStore {
     /// with a file. Addon promotion can create a live sub-index without a
     /// file. A store without a system `table.conf` keeps the stock layout.
     #[must_use]
-    pub fn has_user_library(&self, library: u8) -> bool {
+    pub(crate) fn has_user_library(&self, library: u8) -> bool {
         self.originals.layout().has_user_library(library)
     }
 
@@ -1617,7 +1617,7 @@ impl UserStore {
 
     /// Read the stored count without decoding text or keys.
     #[must_use]
-    pub fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
+    pub(crate) fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.inner
             .libpinyin
             .phrases()
@@ -1629,7 +1629,7 @@ impl UserStore {
 
     /// Whether this store owns the phrase, without materializing its fields.
     #[must_use]
-    pub fn phrase_exists(&self, token: Token) -> bool {
+    pub(crate) fn phrase_exists(&self, token: Token) -> bool {
         self.with_user_item(token, |_| ()).is_some()
     }
 
@@ -1648,7 +1648,7 @@ impl UserStore {
     /// whether or not they name a syllable, and the token getters copy them
     /// once into the caller's array, as the pin's `get_nth_pronunciation`
     /// does (074a2219 `phrase_index.cpp:33-50`).
-    pub fn with_nth_pronunciation_words<R>(
+    pub(crate) fn with_nth_pronunciation_words<R>(
         &self,
         token: Token,
         nth: usize,
@@ -1716,7 +1716,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns an error when the record cannot be read.
-    pub fn phrase_table_tokens_for_ucs4(
+    pub(crate) fn phrase_table_tokens_for_ucs4(
         &self,
         words: &[u32],
     ) -> Result<Vec<Token>, UserStoreError> {
@@ -1731,7 +1731,7 @@ impl UserStore {
     /// Whether the user phrase table holds this exact key, including an
     /// empty prefix marker (`SEARCH_CONTINUED` in the pin).
     #[must_use]
-    pub fn phrase_table_contains_ucs4(&self, words: &[u32]) -> bool {
+    pub(crate) fn phrase_table_contains_ucs4(&self, words: &[u32]) -> bool {
         self.inner
             .libpinyin
             .phrases()
@@ -1742,7 +1742,7 @@ impl UserStore {
     /// Current write generation: moves on every committed write, counts
     /// included.
     #[must_use]
-    pub fn generation(&self) -> u64 {
+    pub(crate) fn generation(&self) -> u64 {
         self.write_generation()
     }
 
@@ -1834,7 +1834,7 @@ impl UserStore {
     /// Whether this session has a user-directory argument, including "".
     /// A transient NULL-user session has mutable state but no directory.
     #[must_use]
-    pub fn has_user_directory(&self) -> bool {
+    pub(crate) fn has_user_directory(&self) -> bool {
         self.inner.libpinyin.dir.is_some()
     }
 
@@ -1870,7 +1870,7 @@ impl UserStore {
     /// pin's `_write_files` order, immediately before that library's log is
     /// staged; the hook maps the current chunk and emits any layout
     /// critical at that point (`pinyin.cpp:956`, `zhuyin.cpp:589`).
-    pub fn save_reporting_with_baseline(
+    pub(crate) fn save_reporting_with_baseline(
         &mut self,
         compacted: &[u8],
         baseline: impl FnMut(
@@ -1934,7 +1934,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the store or the container cannot
     /// be read.
-    pub fn bigram_predecessors(&self) -> Result<Vec<Token>, UserStoreError> {
+    pub(crate) fn bigram_predecessors(&self) -> Result<Vec<Token>, UserStoreError> {
         Ok(self.gram_keys()?.into_iter().flatten().collect())
     }
 
@@ -1965,7 +1965,8 @@ impl UserStore {
     /// # Errors
     /// The [`JournalFault`](crate::user::JournalFault) of the first library whose log reaches a pin
     /// assertion, with nothing replaced.
-    pub fn reload_system_libraries(
+    #[cfg(test)]
+    pub(crate) fn reload_system_libraries(
         &mut self,
         mut originals: crate::user::persistence::SystemOriginals,
         mask: Token,
@@ -1977,7 +1978,7 @@ impl UserStore {
     /// Replay a remap without losing its mappings when the journal refuses it.
     ///
     /// # Errors
-    /// The same journal fault as [`Self::reload_system_libraries`].
+    /// The same journal fault as `Self::reload_system_libraries`.
     pub fn reload_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
@@ -1997,8 +1998,8 @@ impl UserStore {
     /// a library not in `logs` is read when the replay reaches it.
     ///
     /// # Errors
-    /// The same journal fault as [`Self::reload_system_libraries`].
-    pub fn reload_system_libraries_prefetched(
+    /// The same journal fault as `Self::reload_system_libraries`.
+    pub(crate) fn reload_system_libraries_prefetched(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
         mask: Token,
@@ -2043,7 +2044,7 @@ impl UserStore {
     ///
     /// # Errors
     /// The same journal fault as [`Self::load_system_libraries`].
-    pub fn load_system_libraries_retaining(
+    pub(crate) fn load_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
     ) -> Result<(), crate::user::JournalFault> {
@@ -2085,7 +2086,7 @@ impl UserStore {
     /// user pinyin index keep their entries, separate from the sub-index: a
     /// reading the index carried stays indexed on the item the chunk brings
     /// back. In memory, with no failure of its own.
-    pub fn load_user_library(&mut self, library: u8) {
+    pub(crate) fn load_user_library(&mut self, library: u8) {
         let layout = self.originals.layout().clone();
         if !layout.has_user_library(library) {
             return;
@@ -2107,7 +2108,7 @@ impl UserStore {
     /// The phrase table and the user pinyin index keep their entries. In
     /// memory, with no failure of its own; a save skips the library while
     /// it is unloaded (`pinyin.cpp:928-933`).
-    pub fn unload_user_library(&mut self, library: u8) {
+    pub(crate) fn unload_user_library(&mut self, library: u8) {
         if !self.originals.layout().has_user_library(library) {
             return;
         }
@@ -2138,7 +2139,7 @@ impl UserStore {
     /// Synchronize a system library's mutation guard with runtime visibility.
     /// This does not replace its items or reset its training state. USER_FILE
     /// markers belong exclusively to the store's own item load/unload.
-    pub fn set_library_loaded(&mut self, nibble: u8, loaded: bool) {
+    pub(crate) fn set_library_loaded(&mut self, nibble: u8, loaded: bool) {
         if nibble >= 16 || !self.is_system_library(nibble) {
             return;
         }
@@ -2151,7 +2152,7 @@ impl UserStore {
     }
 
     /// Reset one loaded baseline's replay and training state at unload.
-    pub fn reset_system_library(&mut self, nibble: u8) {
+    pub(crate) fn reset_system_library(&mut self, nibble: u8) {
         if nibble >= 16 {
             return;
         }
@@ -2238,7 +2239,11 @@ impl UserStore {
     /// # Errors
     ///
     /// The [`UserStoreError`] [`Self::mask_out`] would return.
-    pub fn check_mask_out(&self, mask: Token, value: Token) -> Result<MaskCheck, UserStoreError> {
+    pub(crate) fn check_mask_out(
+        &self,
+        mask: Token,
+        value: Token,
+    ) -> Result<MaskCheck, UserStoreError> {
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
@@ -2278,7 +2283,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the mask cannot be written.
-    pub fn apply_mask_out(
+    pub(crate) fn apply_mask_out(
         &mut self,
         checked: MaskCheck,
         mask: Token,
@@ -2561,7 +2566,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns an error for invalid input, unavailable originals, or store failure.
-    pub fn add_system_phrase_in(
+    pub(crate) fn add_system_phrase_in(
         &mut self,
         library: u8,
         original_token: Option<Token>,

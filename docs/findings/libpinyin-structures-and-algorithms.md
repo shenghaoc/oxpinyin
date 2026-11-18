@@ -99,9 +99,9 @@ state to the instance side:
 
 | Pin | oxpinyin |
 | --- | --- |
-| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-facade/src/context.rs`): the `SessionSettings` instances open with, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
+| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-core/src/facade/context.rs`): the `SessionSettings` instances open with, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
 | `pinyin_context_t`: the two decoders and their scratch | `Session` lookup state and composition scratch per instance, with the sentence trellis built per guess (`oxpinyin-core/src/engine/session/mod.rs`, `oxpinyin-core/src/engine/nbest.rs:849-871`) |
-| `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-facade/src/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
+| `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-core/src/facade/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
 | back pointer from instance to context | one retained context owner. Each operation borrows its runtime. The Pinyin instance also keeps the public context pointer for `pinyin_get_context` (`oxpinyin-capi/src/state.rs:259-271`). |
 
 ### The operations
@@ -120,7 +120,7 @@ oxpinyin's `Session` (`oxpinyin-core`) carries the same operations as
 methods — `replace_raw` and its variants for parse, `guess_sentence`
 and `candidates_at` for guess, `select` and `clear_constraint` for
 select, `prepare_training` and its `observe` plan, `phrase_segment` — with save on
-`ContextCore::save_user` (`oxpinyin-facade`). Both C ABIs drive only
+`ContextCore::save_user` (`oxpinyin-core`). Both C ABIs drive only
 these.
 
 ### How oxpinyin divides it
@@ -136,8 +136,8 @@ dependencies (`docs/architecture.md` has the full map):
 | Storage: the DBM backends | `oxpinyin-core`, one backend per build by cargo feature behind one ordered byte-KV seam |
 | Storage: user tables and user files | `oxpinyin-core` |
 | Lookup, and the output logic in `pinyin.cpp` | `oxpinyin-core` |
-| Wiring done in `pinyin_init` | `oxpinyin-facade` |
-| Context and instance state shared by both APIs | `oxpinyin-facade` |
+| Wiring done in `pinyin_init` | `oxpinyin-core` |
+| Context and instance state shared by both APIs | `oxpinyin-core` |
 | `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-core` |
 | `utils/storage`, `utils/training`, `utils/segment` | `oxpinyin-utils` (the pin-named binaries and the `k_mixture_model` operations) |
 
@@ -345,7 +345,7 @@ consumed bytes.
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
 | Layout | `PhoneticKeyMatrix` pairs the key and rest arrays at each column (`storage/phonetic_key_matrix.h:65-168`). | `ScanMatrix` is an ordered key buffer with column offsets. `ParsedMatrix` shares that buffer and holds the placed column offsets and zero flags (`oxpinyin-core/src/engine/session/matrix.rs`). | different / argued ([matrix representation](#matrix-representation)) |
-| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` finds each placed column's run of the shared buffer, copying no key, and marks zero columns (`oxpinyin-core/src/engine/session/matrix.rs`). Index-parsed full pinyin (Luoma, secondary zhuyin) fills the same matrix over the typed input, with each key at its original span (`InstanceView::parse_full_more_with_splits`, `oxpinyin-facade/src/parse.rs`; policy row 122). | same / follows (#2009) |
+| Fill | `fill_matrix` places the parser's raw spans and inserts zero keys after real keys and at the terminal column (`storage/phonetic_key_matrix.cpp:30-84`). | `ParsedMatrix::from_scan` finds each placed column's run of the shared buffer, copying no key, and marks zero columns (`oxpinyin-core/src/engine/session/matrix.rs`). Index-parsed full pinyin (Luoma, secondary zhuyin) fills the same matrix over the typed input, with each key at its original span (`InstanceView::parse_full_more_with_splits`, `oxpinyin-core/src/facade/parse.rs`; policy row 122). | same / follows (#2009) |
 | Resplit and inner split | `resplit_step` (`:87`), `inner_split_step` (`:169`); linear scans of the `special_table.h` tables | `resplit_step`, `inner_split_step` (`session/mod.rs`), same tables (`matrix-split-tables.md`) | same / follows |
 | Fuzzy | `fuzzy_syllable_step` (`:226-310`): an initials pass, then a finals pass over the grown column | `extend_matrix` and `parse_time_keys` run the two column passes; packed final alternates survive without a syllable-table row | same / follows |
 | Column multiplicity | `PhoneticTable::append` (`phonetic_key_matrix.h:92-100`): a column is a bag | both matrix builders append every entry in pass order, without collapse | same / follows |
@@ -357,7 +357,7 @@ within the column. The flat buffer records empty columns with equal adjacent
 offsets. The placed view represents each zero-only column as a hop to the
 next byte. Traversal keeps the pin's order and multiplicity, and the ABI
 reads the first key and rest as a pair. The empty, terminal and out-of-range
-checks are at the ABI consumers (`oxpinyin-facade/src/cursor.rs:450-456,571-593`,
+checks are at the ABI consumers (`oxpinyin-core/src/facade/cursor.rs:450-456,571-593`,
 policy rows 63 and 66).
 
 ## 4. Sentence decoding
@@ -483,18 +483,18 @@ and space, with two item reads per qualifying pair, as at the pin.
 | --- | --- | --- | --- |
 | Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `TrainingPlan::observe` over `Session::prepare_training` (`oxpinyin-core/src/engine/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-core/src/user/store.rs`), constants in `oxpinyin-core/src/user/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](upstream-divergences.md#stored-gram-partitions-training)) |
 | Predicted choice | `pinyin_choose_predicted_candidate` (`pinyin.cpp:2591`) | `observe_predicted`, `observe_predicted_prefix` | same / follows |
-| Add phrase | `_add_phrase` searches the phrase table, then merges a reading or allocates at the end of the sub-index range (`pinyin.cpp:514-611`). | `plan_add` preflights the lookup. `arena_add_phrase` uses `UserLibrary::token_end` or the live system range (`oxpinyin-facade/src/import.rs:91-150`, `oxpinyin-core/src/user/store_arena.rs:317-387,506-508`). | configured `USER_FILE` dispatch (#1965) |
+| Add phrase | `_add_phrase` searches the phrase table, then merges a reading or allocates at the end of the sub-index range (`pinyin.cpp:514-611`). | `plan_add` preflights the lookup. `arena_add_phrase` uses `UserLibrary::token_end` or the live system range (`oxpinyin-core/src/facade/import.rs:91-150`, `oxpinyin-core/src/user/store_arena.rs:317-387,506-508`). | configured `USER_FILE` dispatch (#1965) |
 | Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`) over `remember_walk` (`oxpinyin-core/src/engine/char_offset.rs`), the same walk over the parse-time matrix in every parse mode, with the pin's fuzzy alternatives (and, for the index-parsed full pinyin, its resplit and divided additions) built at the parse (register row 93) | same walk. Packed alternate retained (#1970). |
 | Remove user phrase | `pinyin_remove_user_candidate` (`pinyin.cpp:3726`) | `remove_user_phrase` (`store.rs`), same order; the store returns `Ok(false)` where the pin asserts and the C adapter aborts (row 81) | same / follows |
-| Mask out | `pinyin_mask_out` masks user tables, reloads the system chunks and merges filtered journals (`pinyin.cpp:1224-1295`). | `ContextCore::mask_out` preflights faults and remaps libraries around the user-store mask (`oxpinyin-facade/src/context.rs:627-707`, `oxpinyin-core/src/user/store.rs:2340-2445`). | library and slot masks (#1971) |
-| Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`) compacts and marks modified. | `ContextCore::end_import` calls `compact_libraries` and marks modified (`oxpinyin-facade/src/context.rs:905-910`, `oxpinyin-core/src/user/store.rs:1358-1407`). | slot zero dropped (#1973), system bodies separated (#2001) |
-| Export | Live token and pronunciation cursor and the bigram iterator with count greater than 68 (`pinyin.cpp:662-768,775-910`). | `PhraseExportCursor` and `BigramExportWalk` (`oxpinyin-facade/src/export_rows.rs:19-51,401-436,747-775`). | packed keys validated (#1974) |
+| Mask out | `pinyin_mask_out` masks user tables, reloads the system chunks and merges filtered journals (`pinyin.cpp:1224-1295`). | `ContextCore::mask_out` preflights faults and remaps libraries around the user-store mask (`oxpinyin-core/src/facade/context.rs:627-707`, `oxpinyin-core/src/user/store.rs:2340-2445`). | library and slot masks (#1971) |
+| Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`) compacts and marks modified. | `ContextCore::end_import` calls `compact_libraries` and marks modified (`oxpinyin-core/src/facade/context.rs:905-910`, `oxpinyin-core/src/user/store.rs:1358-1407`). | slot zero dropped (#1973), system bodies separated (#2001) |
+| Export | Live token and pronunciation cursor and the bigram iterator with count greater than 68 (`pinyin.cpp:662-768,775-910`). | `PhraseExportCursor` and `BigramExportWalk` (`oxpinyin-core/src/facade/export_rows.rs:19-51,401-436,747-775`). | packed keys validated (#1974) |
 
 ## 7. Object model and persistence
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Context and instance | The context owns the tables and lookup scratch, which instances borrow (`pinyin.cpp:39-95`). | Instances and iterators retain the context allocation through `Rc`. The instance owns composition state (`oxpinyin-capi/src/state.rs:259-283,333`, §0 above). Fini closes every native file attachment (`Runtime::finish`, `oxpinyin-facade/src/runtime/mod.rs`); the in-memory state stays with the surviving owners, whose reads through a closed attachment are misses ([row 42](compatibility-policy.md#classification-table)). | different / follows |
+| Context and instance | The context owns the tables and lookup scratch, which instances borrow (`pinyin.cpp:39-95`). | Instances and iterators retain the context allocation through `Rc`. The instance owns composition state (`oxpinyin-capi/src/state.rs:259-283,333`, §0 above). Fini closes every native file attachment (`Runtime::finish`, `oxpinyin-core/src/facade/runtime/mod.rs`); the in-memory state stays with the surviving owners, whose reads through a closed attachment are misses ([row 42](compatibility-policy.md#classification-table)). | different / follows |
 | Edits between saves | Mutations of in-memory chunks and DBs. Updating an imported reading removes and reinserts its item (`pinyin.cpp:563-582`). | Packed user arenas, live system items and native bigram storage. An exact reading update copies the edited body (`oxpinyin-core/src/user/user_library.rs`). | edited slot gets its own body (#1975) |
 | Init's library loop | Each default row in index order: judge it (`pinyin.cpp:388`), map the chunk (`:254-256`), merge the log (`:268-276`) or read the `USER_FILE` chunk (`:303-318`), then the next row; the bigram attaches after the loop (`:394-397`). `zhuyin.cpp:318-334`, `:198-220`, `:336-339` likewise. O(rows) steps, each linear in its chunk and log | `library_loop::run` over `TableConf::default_row_steps`, with the first fault in `LibraryLoopStop`. Same order and complexity; on a fault nothing past that row is touched | same / follows |
 | Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_reporting` (`oxpinyin-core/src/user/persistence.rs`) with the pin's file set and rename order | same / follows |
@@ -570,8 +570,8 @@ relative to `crates/`.
 | Predicted choice seed × unigram factor | 69 × 7 = 483 | `pinyin.cpp:2597-2598,2609-2639` | `oxpinyin-core/src/user/seed.rs:53-64`, `oxpinyin-core/src/user/store.rs:1494-1495`, `oxpinyin-capi/src/candidates.rs:778` |
 | Longer and without-sentence choice unigram increment | 69 × 7 = 483 | `pinyin.cpp:2504-2505,2523-2527,2565-2571` | `oxpinyin-capi/src/candidates.rs:473,505` |
 | `_add_phrase` default count and unigram factor | 5 and 3 | `pinyin.cpp:521-523`, `zhuyin.cpp:407-409` | `oxpinyin-core/src/user/phrase.rs:41-46`, `oxpinyin-core/src/user/store_arena.rs:383` |
-| Bigram export threshold | Count above `initial_seed - 1` = 68 | `pinyin.cpp:791-792,809` | `oxpinyin-facade/src/export_rows.rs:603,695` |
-| Bigram export count multiplier | 2 | `pinyin.cpp:901-906` | `oxpinyin-facade/src/export_rows.rs:748` |
+| Bigram export threshold | Count above `initial_seed - 1` = 68 | `pinyin.cpp:791-792,809` | `oxpinyin-core/src/facade/export_rows.rs:603,695` |
+| Bigram export count multiplier | 2 | `pinyin.cpp:901-906` | `oxpinyin-core/src/facade/export_rows.rs:748` |
 | `max_full_pinyin_length` | 7 bytes including tone | `storage/pinyin_parser2.cpp:82,269` | `oxpinyin-core/src/graph.rs:534-548`, `oxpinyin-core/src/full_pinyin_index.rs:53,247` |
 | Parse-step distance | 1 on the 232 `PINYIN_CORRECT_*` rows and the two ambiguity rows `sua` and `zua`. 0 on the other 428 rows and all Luoma and secondary zhuyin rows | `storage/pinyin_parser_table.h:9-1491`, `storage/pinyin_parser2.cpp:289-309` | `oxpinyin-core/src/vocab.rs:141-151`, `oxpinyin-core/src/graph.rs:493`, `oxpinyin-core/src/full_pinyin_index.rs:175-183` |
 | Double-pinyin probe window | 3 bytes. A key takes 1 byte if incomplete, 2 if complete without tone, or 3 with tone | `storage/pinyin_parser2.cpp:84,412-452,550-562` | `oxpinyin-core/src/scheme.rs:345,448-465` |
@@ -584,9 +584,9 @@ relative to `crates/`.
 | Chewing-key table bounds | 24 initials, 4 middles, 18 finals, 6 tones | `storage/chewing_enum.h:38-40,53-55,81-83,97-99`, `storage/chewing_key.cpp:28-48,75,92,105` | `oxpinyin-core/src/chewing_key_tables.rs:3-7`, `oxpinyin-core/src/chewing_key.rs:100-111` |
 | Full-pinyin consumed length | At most 32767 from the signed 16-bit parse step | `storage/pinyin_parser2.cpp:67-70,289-292,353-359` | Wider internal positions under the [16-bit parse-step ruling](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps). `oxpinyin-core/src/graph.rs:18-26` |
 | Key rests and candidate positions | Wrap modulo 65536 | `storage/chewing_key.h:102-103`, `pinyin.cpp:103-104`, `zhuyin.cpp:83-84` | ABI values wrap. Internal placement follows the [key-position ruling](upstream-divergences.md#key-positions-past-byte-65535). `oxpinyin-capi/src/cursor.rs:108-109`, `oxpinyin-zhuyin-capi/src/cursor.rs:128-129` |
-| `MAX_PHRASE_LENGTH` | 16 keys. Import and remember accept lengths 1–15 | `include/novel_types.h:119`, `pinyin.cpp:643,1406,3602,3680`, `zhuyin.cpp:528,924`, `storage/phonetic_key_matrix.cpp:362,452,512` | `oxpinyin-core/src/engine/session/mod.rs:24`, `oxpinyin-core/src/user/phrase.rs:38`, `oxpinyin-core/src/user/data/chewing_table.rs:438`, `oxpinyin-facade/src/import.rs:44` |
-| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin-facade/src/import.rs:102-119`, `oxpinyin-facade/src/predict.rs:47`, `oxpinyin-core/src/engine/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:79`, `oxpinyin-zhuyin-capi/src/dict.rs:48` |
-| `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` | `oxpinyin-core/src/user/data/table_info.rs:41`, `oxpinyin-facade/src/runtime/mod.rs:30` |
+| `MAX_PHRASE_LENGTH` | 16 keys. Import and remember accept lengths 1–15 | `include/novel_types.h:119`, `pinyin.cpp:643,1406,3602,3680`, `zhuyin.cpp:528,924`, `storage/phonetic_key_matrix.cpp:362,452,512` | `oxpinyin-core/src/engine/session/mod.rs:24`, `oxpinyin-core/src/user/phrase.rs:38`, `oxpinyin-core/src/user/data/chewing_table.rs:438`, `oxpinyin-core/src/facade/import.rs:44` |
+| Phrase-token reduction and import | At most 4 tokens where reduction validates. At most 1 match in the requested sub-index at import | `storage/phrase_large_table3.h:77-106`, `pinyin.cpp:536-555`, `zhuyin.cpp:422-445` | `oxpinyin-core/src/facade/import.rs:102-119`, `oxpinyin-core/src/facade/predict.rs:47`, `oxpinyin-core/src/engine/char_offset.rs:370-374`, `oxpinyin-capi/src/dict.rs:79`, `oxpinyin-zhuyin-capi/src/dict.rs:48` |
+| `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` | `oxpinyin-core/src/user/data/table_info.rs:41`, `oxpinyin-core/src/facade/runtime/mod.rs:30` |
 | Token slot mask and allocation wrap | `0x00ffffff`. After the last slot, import uses slot 1 and addon promotion uses slot 0 | `include/novel_types.h:41-46`, `storage/phrase_index.cpp:620`, `pinyin.cpp:589-594,2541-2545` | `oxpinyin-core/src/user/phrase.rs:29,110-116`, `oxpinyin-core/src/user/store_arena.rs:378-382` |
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32,409,423` | `oxpinyin-core/src/user/data/user_files.rs:291,300,500` |
 | Configuration scanner | 6 conversions per library row, at most 255 bytes per `%s` field | `storage/table_info.cpp:228,232,255-259,352` | `oxpinyin-core/src/input/native.rs:394,406,425-432`, `oxpinyin-core/src/input/config.rs:158` |
@@ -695,7 +695,7 @@ expected O(s) time and O(s) space for s occurrences, instead of O(u) node
 space for u distinct tokens. The C prefix path supplies at most 65 seeds
 (one start and four tokens per suffix, up to sixteen suffixes); the beam
 still keeps 32. Held by `repeated_prefix_tokens_keep_duplicate_sentence_rows`
-in `oxpinyin-facade/src/runtime/tests.rs`.
+in `oxpinyin-core/src/facade/runtime/tests.rs`.
 
 ONESTEP still requires a successful span search, but its forced token need
 not be in the returned ranges (`lookup/phonetic_lookup.h:552-554,601-612,
@@ -707,7 +707,7 @@ lookup costs. It adds one forced slot and one token sum, reuses the path
 inventory, and shares the sum across at most 32 beam predecessors.
 An unranged user item is read from its stored body. Held by
 `an_unranged_onestep_token_still_produces_a_sentence` in
-`oxpinyin-facade/src/runtime/tests.rs`, for system and user libraries.
+`oxpinyin-core/src/facade/runtime/tests.rs`, for system and user libraries.
 
 A zero stored tone compares equal to any query tone
 (`storage/pinyin_phrase3.h:96-105`), and the stock items carry tone 0, so
@@ -801,7 +801,7 @@ its survival through the next guess and through a shorter parse that no
 guess sees, and its clearing by a guess on the shorter parse. oxpinyin gives
 the same value at every call; the test
 `a_forcing_over_an_abbreviation_is_revalidated_as_the_pin_does` in
-`crates/oxpinyin-facade/src/instance/tests.rs` holds each leg as a case. The
+`crates/oxpinyin-core/src/facade/instance/tests.rs` holds each leg as a case. The
 zhuyin leg parses `zhg` as full pinyin, because the
 chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
 
@@ -885,7 +885,7 @@ order for strings without NUL. The flag bits Rust drops gate nothing. The
 forced bits apply only in the batch parse, as at the pin
 (`zhuyin_parser2.cpp:221,272,413,474-486`), and the caller's
 `ZHUYIN_CORRECT_ALL` is stripped at every entry
-(`pinyin.cpp:1573,1589,1621`; `oxpinyin-facade/src/parse.rs:232,372`).
+(`pinyin.cpp:1573,1589,1621`; `oxpinyin-core/src/facade/parse.rs:232,372`).
 Each `m_pinyin_str` is unique among the 441 content rows, so the key is the
 content key, and the canonical column is the `m_zhuyin_str` that
 `get_zhuyin_string` prints (`chewing_key.cpp:74-89`).
@@ -1152,7 +1152,7 @@ returns −1 (#1989).
 The snapshot is cleared only by guess, reset and prediction
 (`oxpinyin-capi/src/instance.rs:122`, `predict.rs`, `sentence.rs`;
 `oxpinyin-zhuyin-capi/src/instance.rs:86`, `sentence.rs`). The refusal size
-is computed in input coordinates (`oxpinyin-facade/src/instance.rs:509-517`)
+is computed in input coordinates (`oxpinyin-core/src/facade/instance.rs:509-517`)
 and guarded again in the engine (`oxpinyin-core/src/engine/session/selection.rs:398-409`). The answers are
 `choose_answer` (`oxpinyin-capi/src/candidates.rs:530,572-575`) and the
 zhuyin span answer (`oxpinyin-zhuyin-capi/src/candidates.rs:244-270`).

@@ -58,7 +58,7 @@ test.
 ## Candidate capture
 
 `fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate
-capture. `crates/oxpinyin-facade/tests/common/candidate_fixture.rs` reads its
+capture. `crates/oxpinyin-core/tests/common/candidate_fixture.rs` reads its
 structured rows and its `(input, rank, text)` projection. Both keep the input
 identity, row order, duplicates and the captured pin reference.
 

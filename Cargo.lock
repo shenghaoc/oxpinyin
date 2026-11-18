@@ -597,7 +597,6 @@ dependencies = [
  "libc",
  "num_enum",
  "oxpinyin-core",
- "oxpinyin-facade",
  "rstest",
  "rustc-hash",
  "tempfile",
@@ -631,16 +630,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-facade"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
- "rstest",
- "sha2",
- "tempfile",
-]
-
-[[package]]
 name = "oxpinyin-repl"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -649,7 +638,6 @@ dependencies = [
  "libc",
  "oxpinyin-capi",
  "oxpinyin-core",
- "oxpinyin-facade",
  "oxpinyin-utils",
  "oxpinyin-zhuyin-capi",
  "regex",
@@ -680,7 +668,6 @@ dependencies = [
  "glib-sys",
  "libc",
  "oxpinyin-core",
- "oxpinyin-facade",
  "rstest",
  "tempfile",
 ]

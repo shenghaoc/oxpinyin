@@ -23,7 +23,7 @@ impl StoragePaths {
 
     /// System data directories, in search order.
     #[must_use]
-    pub fn system_data_dirs(&self) -> &[PathBuf] {
+    pub(crate) fn system_data_dirs(&self) -> &[PathBuf] {
         &self.system_data_dirs
     }
 }

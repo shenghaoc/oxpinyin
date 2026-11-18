@@ -27,8 +27,10 @@ pub use cursor::{
 pub use error::{EngineError, TrainingSpanFault};
 pub use nbest::NbestShape;
 pub use session::{
-    CandidateRanking, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection, SelectionTarget,
-    SentencePart, Session, SessionSettings, SessionState, TrainingPlan, amplified_frequency,
-    check_lookup_offset_range, normalize_lookup_offset, parse_time_keys,
+    BEFORE_CURSOR_ANCHOR, CandidateRanking, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
+    SelectionTarget, SentencePart, Session, SessionSettings, SessionState, TrainingPlan,
+    amplified_frequency,
 };
 pub use storage::StoragePaths;
+
+pub(crate) use session::{check_lookup_offset_range, normalize_lookup_offset, parse_time_keys};

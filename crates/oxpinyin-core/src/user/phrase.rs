@@ -229,7 +229,7 @@ impl UserPronunciation {
     /// The single rendering path the §9 phrase and bigram exports share, so
     /// an unrenderable key is skipped identically on both surfaces.
     #[must_use]
-    pub fn render_pinyin(&self) -> Option<String> {
+    pub(crate) fn render_pinyin(&self) -> Option<String> {
         self.keys
             .iter()
             .map(|key| key_pinyin_string(*key))

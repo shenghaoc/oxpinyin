@@ -564,7 +564,7 @@ pub(crate) fn ucs4(text: &str) -> Vec<u8> {
 }
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../oxpinyin-facade/tests/common/contract_data.rs"]
+#[path = "../../oxpinyin-core/tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 
 use crate::iterators::{

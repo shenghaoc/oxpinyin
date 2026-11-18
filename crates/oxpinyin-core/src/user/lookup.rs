@@ -57,17 +57,17 @@ impl<'a> UserLookup<'a> {
 
     /// The trellis's with-tones query over the same stored records.
     #[must_use]
-    pub fn search_toned(&self, keys: &[crate::ChewingKey]) -> Vec<u32> {
+    pub(crate) fn search_toned(&self, keys: &[crate::ChewingKey]) -> Vec<u32> {
         self.with_index(|index| index.search(keys))
     }
 
     /// Append the matching live entries in stored token order.
-    pub fn lookup_into(&self, keys: &[crate::ChewingKey], out: &mut Vec<PhraseEntry>) {
+    pub(crate) fn lookup_into(&self, keys: &[crate::ChewingKey], out: &mut Vec<PhraseEntry>) {
         self.lookup_resolving_missing(keys, out, |_| None);
     }
 
     /// Appends live matches and calls the fallback for tokens without a live item.
-    pub fn lookup_resolving_missing(
+    pub(crate) fn lookup_resolving_missing(
         &self,
         keys: &[crate::ChewingKey],
         out: &mut Vec<PhraseEntry>,
@@ -126,7 +126,7 @@ impl<'a> UserLookup<'a> {
     /// walk, with each row's stored token order. The runtime re-groups by library
     /// nibble the way `reduce_tokens` does.
     #[must_use]
-    pub fn suggest_extensions(&self, syllables: &[SyllableKey]) -> Vec<u32> {
+    pub(crate) fn suggest_extensions(&self, syllables: &[SyllableKey]) -> Vec<u32> {
         let keys: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.with_index(|index| index.suggest(&keys))
     }
@@ -138,7 +138,7 @@ impl<'a> UserLookup<'a> {
     /// A prefix need not have a phrase token of its own. Rows are merged into
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
-    pub fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
+    pub(crate) fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
         let prefix = crate::user::phrase_table::key_ucs4(prefix);
         let Ok(rows) = self.phrases.borrow().phrase_table.suggest_after(&prefix) else {
             return Vec::new();

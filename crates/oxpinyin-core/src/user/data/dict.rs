@@ -268,7 +268,8 @@ impl SystemTables {
     ///
     /// # Errors
     /// Returns a native DBM construction error.
-    pub fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
+    #[cfg(feature = "tools")]
+    pub(crate) fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
         let attached = crate::user::data::chewing_table::DefaultDbm::attach(path, false)?;
         let empty = crate::user::data::chewing_table::DefaultDbm::new(
             <crate::store::DefaultStore as crate::store::WriteStore>::create_in_memory()
@@ -288,26 +289,26 @@ impl SystemTables {
 
     /// Whether the main pinyin-table attach failed.
     #[must_use]
-    pub fn pinyin_attachment_failed(&self) -> bool {
+    pub(crate) fn pinyin_attachment_failed(&self) -> bool {
         self.pinyin.attachment_failed()
     }
 
     /// Whether the main phrase-table attach failed.
     #[must_use]
-    pub fn phrase_attachment_failed(&self) -> bool {
+    pub(crate) fn phrase_attachment_failed(&self) -> bool {
         self.phrase.attachment_failed()
     }
 
     /// Closes the main indexes in the pin's pinyin/phrase order
     /// (`pinyin.cpp:1205-1206`, `zhuyin.cpp:744-745` at 074a2219).
-    pub fn finish_attachments(&mut self) {
+    pub(crate) fn finish_attachments(&mut self) {
         self.pinyin.finish_attachment();
         self.phrase.finish_attachment();
     }
 
     /// Whether both main indexes are closed.
     #[must_use]
-    pub fn attachments_finished(&self) -> bool {
+    pub(crate) fn attachments_finished(&self) -> bool {
         self.pinyin.attachment_finished() && self.phrase.attachment_finished()
     }
 
@@ -405,7 +406,10 @@ impl SystemDictionary {
     ///
     /// # Errors
     /// Returns failures before native attach.
-    pub fn attach_tables(system_dir: &Path, conf: &TableConf) -> Result<SystemTables, DictError> {
+    pub(crate) fn attach_tables(
+        system_dir: &Path,
+        conf: &TableConf,
+    ) -> Result<SystemTables, DictError> {
         Ok(SystemTables {
             pinyin: ChewingTable::new(crate::user::data::chewing_table::DefaultDbm::attach(
                 &crate::input::path::build_path(
@@ -463,7 +467,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     ///
     /// # Errors
     /// Returns a dictionary error when the system index cannot be searched.
-    pub fn lookup_with_live(
+    pub(crate) fn lookup_with_live(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -509,7 +513,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// chunk, or a `table.conf` `USER_FILE` sub-index — the pin's
     /// non-`NULL` `PhraseIndexRanges` array for it.
     #[must_use]
-    pub fn library_loaded(&self, token: u32) -> bool {
+    pub(crate) fn library_loaded(&self, token: u32) -> bool {
         library_loaded(self.libraries(), self.user_nibbles, token)
     }
 
@@ -585,7 +589,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggestion_tokens(&self, prefix: &[u32]) -> Result<Vec<u32>, DictError> {
+    pub(crate) fn suggestion_tokens(&self, prefix: &[u32]) -> Result<Vec<u32>, DictError> {
         self.phrase.search_suggestion(prefix)
     }
 
@@ -625,7 +629,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn checked_extension_tokens(
+    pub(crate) fn checked_extension_tokens(
         &self,
         syllables: &[SyllableKey],
     ) -> Result<Option<Vec<u32>>, DictError> {
@@ -665,7 +669,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// of the extension walk that would decode the rows. A failed read
     /// answers `false` and leaves the error to that walk.
     #[must_use]
-    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+    pub(crate) fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
         if self.pinyin.attachment_failed() {
             // This is an auxiliary Rust probe. The later suggestion makes
             // the one native call the pin makes, including its diagnostic.
@@ -688,7 +692,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or a value decode fails.
-    pub fn trellis_ranges_with(
+    pub(crate) fn trellis_ranges_with(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -720,7 +724,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or a value decode fails.
-    pub fn trellis_ranges_continued_with(
+    pub(crate) fn trellis_ranges_continued_with(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -816,7 +820,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     }
 
     /// `ChewingTableEntry::search` then `convert` over the system table:
-    /// [`SystemDictionary::trellis_ranges_with`] with every loaded
+    /// `SystemDictionary::trellis_ranges_with` with every loaded
     /// library visible.
     fn trellis_ranges(
         &self,
@@ -985,7 +989,7 @@ impl AddonDictionary {
     ///
     /// # Errors
     /// Returns failures before native attach.
-    pub fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
+    pub(crate) fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
         let path = |kind: SystemDbm| {
             crate::input::path::build_path(system_dir, std::ffi::OsStr::new(&kind.file_name()))
         };
@@ -1009,7 +1013,7 @@ impl AddonDictionary {
 
     /// Closes the addon pinyin then phrase attachments
     /// (`pinyin.cpp:1211-1212` at 074a2219).
-    pub fn finish_attachments(&mut self) {
+    pub(crate) fn finish_attachments(&mut self) {
         if let Some(table) = &mut self.pinyin {
             table.finish_attachment();
         }
@@ -1022,7 +1026,8 @@ impl AddonDictionary {
     /// attach (`chewing_large_table2_tkrzwdb.cpp:87-88` at 074a2219). An
     /// addon facade without the table answers `false`.
     #[must_use]
-    pub fn pinyin_attachment_failed(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn pinyin_attachment_failed(&self) -> bool {
         self.pinyin
             .as_ref()
             .is_some_and(ChewingTable::attachment_failed)
@@ -1031,7 +1036,8 @@ impl AddonDictionary {
     /// Whether the addon phrase index is the retained object of a failed
     /// attach (`phrase_large_table3_tkrzwdb.cpp:77-79` at 074a2219).
     #[must_use]
-    pub fn phrase_attachment_failed(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn phrase_attachment_failed(&self) -> bool {
         self.phrase
             .as_ref()
             .is_some_and(PhraseTable::attachment_failed)
@@ -1039,7 +1045,7 @@ impl AddonDictionary {
 
     /// Whether every addon index this facade holds is closed.
     #[must_use]
-    pub fn attachments_finished(&self) -> bool {
+    pub(crate) fn attachments_finished(&self) -> bool {
         self.pinyin
             .as_ref()
             .is_none_or(ChewingTable::attachment_finished)
@@ -1060,7 +1066,7 @@ impl AddonDictionary {
     /// addon indexes (`zhuyin.cpp`'s context has no addon facade); the rows
     /// stay those `table.conf` configured rather than the stock ones.
     #[must_use]
-    pub fn without_indexes(conf: &TableConf) -> Self {
+    pub(crate) fn without_indexes(conf: &TableConf) -> Self {
         Self {
             pinyin: None,
             phrase: None,
@@ -1097,7 +1103,7 @@ impl AddonDictionary {
     /// # Errors
     ///
     /// [`LibraryError`] when the file is absent or does not verify.
-    pub fn load_reporting(&mut self, index: u8, dir: &Path) -> Result<bool, LibraryError> {
+    pub(crate) fn load_reporting(&mut self, index: u8, dir: &Path) -> Result<bool, LibraryError> {
         // `pinyin_load_addon_phrase_library`: an unused row answers false
         // (`pinyin.cpp:487`); any other row that is not a DICTIONARY
         // asserts (`:491`), loaded or not.
@@ -1190,7 +1196,7 @@ impl AddonDictionary {
     /// # Errors
     ///
     /// Returns [`DictError`] when a value decode fails.
-    pub fn search_into(
+    pub(crate) fn search_into(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,

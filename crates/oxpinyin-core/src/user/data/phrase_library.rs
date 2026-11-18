@@ -132,7 +132,7 @@ impl LibraryError {
     /// The file `MemoryChunk::mmap` refused, when this error is that
     /// refusal; `None` for any other fault.
     #[must_use]
-    pub fn unmappable_path(&self) -> Option<&Path> {
+    pub(crate) fn unmappable_path(&self) -> Option<&Path> {
         match self {
             Self::Unmappable { path, .. } => Some(path),
             Self::Io(_) | Self::Format(_) | Self::Layout(_) | Self::Row(_) => None,
@@ -269,7 +269,7 @@ impl PhraseItemView<'_> {
 
     /// Whether every declared word of the text lies inside the item's bytes.
     #[must_use]
-    pub fn phrase_words_present(&self) -> bool {
+    pub(crate) fn phrase_words_present(&self) -> bool {
         self.phrase_codes().all(|word| word.is_some())
     }
 
@@ -543,7 +543,7 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns the same mapping and out-of-bounds layout errors as [`Self::open`].
-    pub fn open_retaining_layout(path: &Path) -> Result<Self, LibraryError> {
+    pub(crate) fn open_retaining_layout(path: &Path) -> Result<Self, LibraryError> {
         let file = LibraryBytes::Mapped(map_chunk(path)?);
         let bytes = file.as_slice();
         let payload = CHUNK_HEADER_SIZE
@@ -739,7 +739,7 @@ impl PhraseLibrary {
     /// The pin does not read the item body here (074a2219
     /// `phrase_index.cpp:180-205`, `phrase_index.h:112-115`).
     #[must_use]
-    pub fn pronunciation_count(&self, token: u32) -> Option<u32> {
+    pub(crate) fn pronunciation_count(&self, token: u32) -> Option<u32> {
         let offset = self.slot_offset((token & PHRASE_MASK) as usize)? as usize;
         if offset == 0 {
             return None;
