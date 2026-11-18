@@ -19,8 +19,13 @@ unsafe extern "C" {
 /// it with `g_free`, which releases both the GLib allocations and the
 /// encoder's `malloc` buffers. Test-only; the tests read ABI-allocated
 /// buffers through it.
+///
+/// # Safety
+///
+/// `ptr` is NULL or a NUL-terminated string that the library returned to the caller, who owns it.
+/// The call frees it with `g_free`, so the caller does not use it again.
 #[cfg(test)]
-pub fn take_owned_cstr(ptr: *mut c_char) -> String {
+pub unsafe fn take_owned_cstr(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }

@@ -41,11 +41,14 @@ fn punct_system(parent: &Path, rows: &[(&str, Vec<u8>)]) -> std::path::PathBuf {
     let (context, instance) = open_at(&user.path);
     let mut table = Vec::new();
     for (text, value) in rows {
-        for token in lookup(instance, text) {
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        for token in unsafe { lookup(instance, text) } {
             table.push((token.to_le_bytes().to_vec(), value.clone()));
         }
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let system = private_system(parent);
     craft_tree(&system.join("punct.bin"), &table);
     system
@@ -56,19 +59,29 @@ fn punct_words(words: &[u32]) -> Vec<u8> {
 }
 
 /// The punctuation rows of the current list, as hex of their bytes.
-fn punct_texts(instance: *mut PinyinInstance) -> Vec<String> {
-    capture_rows(instance)
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn punct_texts(instance: *mut PinyinInstance) -> Vec<String> {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { capture_rows(instance) })
         .iter()
         .enumerate()
         .filter(|(_, (kind, _, _))| *kind == PREDICTED_PUNCTUATION)
         .map(|(index, _)| {
             let mut text: *const c_char = ptr::null();
+            // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls
+            // into it.
+            let row = unsafe { candidate_at(instance, index) };
+            // SAFETY: the row is from the current snapshot and text is a writable local slot.
             assert!(unsafe {
-                crate::support::pinyin_get_candidate_string(
-                    instance,
-                    candidate_at(instance, index),
-                    &raw mut text,
-                )
+                crate::support::pinyin_get_candidate_string(instance, row, &raw mut text)
             });
             // SAFETY: a true answer points at the row's borrowed string.
             let bytes = unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes();
@@ -87,7 +100,9 @@ fn guess_candidates_aborts_on_a_toned_initial() {
             let user = TempUserDir::new("toned-candidates");
             let (context, instance) = open_at(&user.path);
             assert!(unsafe { pinyin_set_options(context, 0x28) });
-            assert_eq!(parse(instance, "n4"), 2);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "n4") }, 2);
             // SORT_WITHOUT_SENTENCE_CANDIDATE | SORT_WITHOUT_LONGER_CANDIDATE.
             unsafe { pinyin_guess_candidates(instance, 0, 0x3) };
         },
@@ -101,8 +116,11 @@ fn a_predicted_bigram_row_is_not_a_user_candidate() {
     let user = TempUserDir::new("predicted-is-user");
     let successor = saved_user_phrase(&user.path);
     let (context, instance) = open_at(&user.path);
-    let prefixes = lookup(instance, "你");
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let prefixes = unsafe { lookup(instance, "你") };
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let gram = gram_bytes(20, &[(successor, 20)]);
     let rows: Vec<_> = prefixes
         .iter()
@@ -113,17 +131,22 @@ fn a_predicted_bigram_row_is_not_a_user_candidate() {
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
     });
-    let index = capture_rows(instance)
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let index = unsafe { capture_rows(instance) }
         .iter()
         .position(|(kind, _, _)| *kind == PREDICTED_BIGRAM)
         .expect("a predicted bigram row");
-    assert_eq!(capture_rows(instance)[index].1, "龘龘");
-    let row = candidate_at(instance, index);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { capture_rows(instance) }[index].1, "龘龘");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { candidate_at(instance, index) };
     let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
     assert!(unsafe { pinyin_get_candidate_type(instance, row, &raw mut kind) });
     assert_eq!(kind, PREDICTED_BIGRAM);
     assert!(!unsafe { pinyin_is_user_candidate(instance, row) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The prediction walk aborts on a gram with no item and a total left
@@ -135,8 +158,13 @@ fn prediction_aborts_on_an_item_less_gram_with_a_total() {
         || {
             let user = TempUserDir::new("predict-empty-gram");
             let (context, instance) = open_at(&user.path);
-            let ni = lookup(instance, "你");
-            close(context, instance);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let ni = unsafe { lookup(instance, "你") };
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; nothing uses either handle after this call; only this thread
+            // calls into them.
+            unsafe { close(context, instance) };
             plant_bigram(
                 &user.path,
                 ni.iter()
@@ -155,8 +183,11 @@ fn prediction_aborts_on_an_item_less_gram_with_a_total() {
 fn prediction_reads_only_the_prefixes_it_reaches() {
     let user = TempUserDir::new("predict-unrelated-gram");
     let (context, instance) = open_at(&user.path);
-    let ni = lookup(instance, "你");
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { lookup(instance, "你") };
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     plant_bigram(
         &user.path,
         ni.iter()
@@ -165,7 +196,9 @@ fn prediction_reads_only_the_prefixes_it_reaches() {
     );
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"中".as_ptr()) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A predicted prefix choose of a library-1 row answers false where the
@@ -183,10 +216,13 @@ fn a_prefix_choose_past_the_library_total_is_refused() {
     );
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
-    let row = row_of(instance, PREDICTED_PREFIX);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_of(instance, PREDICTED_PREFIX) };
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
     assert!(!unsafe { pinyin_choose_predicted_candidate(instance, row) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The punctuation dedup ignores the existing candidates: a punctuation
@@ -196,8 +232,11 @@ fn the_punctuation_dedup_ignores_the_candidates() {
     let user = TempUserDir::new("punct-candidate-probe");
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
-    let first = capture_rows(instance)[0].1.clone();
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { capture_rows(instance) }[0].1.clone();
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let mut words: Vec<u32> = first.chars().map(u32::from).collect();
     words.extend([0, 0xFF0C, 0]);
     let scratch = tempfile::tempdir().expect("scratch");
@@ -205,18 +244,26 @@ fn the_punctuation_dedup_ignores_the_candidates() {
     let user = TempUserDir::new("punct-candidate");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
     });
     let first_hex: String = first.bytes().map(|byte| format!("{byte:02x}")).collect();
-    assert_eq!(punct_texts(instance), [first_hex, "efbc8c".to_owned()]);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { punct_texts(instance) },
+        [first_hex, "efbc8c".to_owned()]
+    );
     assert!(
-        capture_rows(instance)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { capture_rows(instance) }
             .iter()
             .any(|(kind, text, _)| *kind == PREDICTED_PREFIX && *text == first)
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A retained prefix whose user gram has a partial item tail emits one
@@ -227,7 +274,8 @@ fn partial_candidate_gram_logs_once(
 ) {
     let scratch = TempUserDir::new("partial-candidate-gram-token");
     let (context, instance) = open(scratch.path.to_str().expect("UTF-8 path"));
-    let token = crate::support::lookup(instance, "你好")[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { crate::support::lookup(instance, "你好") }[0];
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
 
@@ -291,7 +339,8 @@ fn partial_candidate_gram_logs_once(
 fn borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers() {
     let user = TempUserDir::new("borrowed-prediction-prefix");
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let borrowed_candidate = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let borrowed_candidate = unsafe { candidate(instance, "nihao", 0) };
     let mut borrowed_text = std::ptr::null();
     assert!(unsafe {
         crate::support::pinyin_get_candidate_string(
@@ -324,22 +373,25 @@ fn borrowed_prediction_prefix_clears_candidates_and_owned_text_recovers() {
 fn a_borrowed_punctuation_prefix_answers_true_with_no_row() {
     let user = TempUserDir::new("punct-alias");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe { pinyin_guess_sentence(instance) });
-    let sentence = sentence_out(instance, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let sentence = unsafe { sentence_out(instance, 0) };
     assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::support::DEFAULT_SORT) });
     let mut text: *const c_char = ptr::null();
-    assert!(unsafe {
-        crate::support::pinyin_get_candidate_string(
-            instance,
-            candidate_at(instance, 0),
-            &raw mut text,
-        )
-    });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { candidate_at(instance, 0) };
+    // SAFETY: the row is from the current snapshot and text is a writable local slot.
+    assert!(unsafe { crate::support::pinyin_get_candidate_string(instance, row, &raw mut text) });
     assert!(unsafe { pinyin_guess_predicted_candidates_with_punctuations(instance, text) });
-    assert_eq!(n_candidate(instance), 0);
-    assert_eq!(sentence_out(instance, 0), sentence);
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { n_candidate(instance) }, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence_out(instance, 0) }, sentence);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Punctuations of non-scalar words dedup by their bytes, across the
@@ -357,14 +409,18 @@ fn non_scalar_punctuations_dedup_by_their_bytes() {
     let user = TempUserDir::new("punct-non-scalar");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, c"你好".as_ptr())
     });
-    let mut puncts = punct_texts(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let mut puncts = unsafe { punct_texts(instance) };
     puncts.sort();
     assert_eq!(puncts, ["eda080", "f4908080"]);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 #[test]
@@ -372,14 +428,16 @@ fn predicted_candidates_include_trained_bigram_successors() {
     let user_dir = TempUserDir::new("predict");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    let first = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { candidate(instance, "nihao", 0) };
     assert!(unsafe { pinyin_choose_candidate(instance, 0, first) } > 0);
     assert!(unsafe { crate::support::pinyin_guess_sentence(instance) });
     assert!(unsafe { crate::support::pinyin_train(instance, 0) });
     // First train already seeds 69, which is above the copied filter of 10.
     for _ in 0..4 {
         assert!(unsafe { crate::support::pinyin_reset(instance) });
-        let again = candidate(instance, "nihao", 0);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let again = unsafe { candidate(instance, "nihao", 0) };
         assert!(unsafe { pinyin_choose_candidate(instance, 0, again) } > 0);
         assert!(unsafe { crate::support::pinyin_guess_sentence(instance) });
         assert!(unsafe { crate::support::pinyin_train(instance, 0) });
@@ -389,7 +447,8 @@ fn predicted_candidates_include_trained_bigram_successors() {
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, prefix.as_ptr())
     });
-    let rows = capture_rows(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows = unsafe { capture_rows(instance) };
     assert!(
         !rows.is_empty(),
         "prediction must return at least the prefix suggestions or bigrams"
@@ -418,7 +477,8 @@ fn predicted_punctuation_uses_shortest_suffix_first_and_dedups() {
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, prefix.as_ptr())
     });
-    let rows = capture_rows(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows = unsafe { capture_rows(instance) };
     let puncts: Vec<&str> = rows
         .iter()
         .filter(|(kind, _, _)| *kind == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
@@ -444,7 +504,8 @@ fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, prefix.as_ptr())
     });
-    let rows = capture_rows(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows = unsafe { capture_rows(instance) };
     let suggestions: Vec<&str> = rows
         .iter()
         .filter(|(kind, _, _)| *kind == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
@@ -466,7 +527,12 @@ static GLIB_LOG: std::sync::Mutex<Vec<(String, u32, String)>> = std::sync::Mutex
 
 /// Collects every GLib log record instead of printing it, so the child's
 /// stderr holds only the library's raw `fprintf` lines.
-extern "C" fn collect_glib_log(
+///
+/// # Safety
+///
+/// GLib calls it as a log handler: `domain` and `message` are each NULL or a NUL-terminated string
+/// that stays valid for the call.
+unsafe extern "C" fn collect_glib_log(
     domain: *const std::ffi::c_char,
     level: glib_sys::GLogLevelFlags,
     message: *const std::ffi::c_char,
@@ -515,7 +581,8 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
     }
     for _ in 0..2 {
         assert!(!unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-        assert!(capture_rows(instance).is_empty());
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert!(unsafe { capture_rows(instance) }.is_empty());
         let logs = std::mem::take(&mut *GLIB_LOG.lock().expect("log lock"));
         assert_eq!(
             logs,
@@ -554,14 +621,20 @@ fn predicted_rows_take_the_table_conf_lambda() {
         let context = unsafe { crate::support::pinyin_init(system_c.as_ptr(), user_c.as_ptr()) };
         assert!(!context.is_null());
         let instance = unsafe { crate::support::pinyin_alloc_instance(context) };
-        let before = predicted_texts(instance, c"你");
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let before = unsafe { predicted_texts(instance, c"你") };
         assert_eq!(before.len(), 2);
-        let last = lookup(instance, format!("你{}", before[1]))[0];
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let last = unsafe { lookup(instance, format!("你{}", before[1])) }[0];
         assert!(unsafe {
             crate::support::pinyin_token_add_unigram_frequency(instance, last, 50_000_000)
         });
-        let after = predicted_texts(instance, c"你");
-        close(context, instance);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let after = unsafe { predicted_texts(instance, c"你") };
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
         (before, after)
     };
     let (before, after) = order(Some("1"));

@@ -27,7 +27,23 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 // Oxpinyin retains the owner for a surviving instance. This is a safety
 // contract, not a pin oracle: the returned public handle keeps its identity
 // but is no longer live and must not be dereferenced.
-pub(crate) fn finalize_public_context(context: *mut PinyinContext, instance: *mut PinyinInstance) {
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `instance` belongs to `context`, and the caller does not use `context` after the call.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn finalize_public_context(
+    context: *mut PinyinContext,
+    instance: *mut PinyinInstance,
+) {
     assert_eq!(
         unsafe { crate::instance::pinyin_get_context(instance) },
         context
@@ -43,7 +59,19 @@ pub(crate) fn finalize_public_context(context: *mut PinyinContext, instance: *mu
 mod tests;
 
 /// The token snapshotted on the candidate pointer.
-pub fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `cand` is NULL or a row that `pinyin_get_candidate` answered from the current candidate list of
+/// a live instance.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub unsafe fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
     // SAFETY: `cand` was produced by `pinyin_get_candidate` on `instance`
     // and no later guess invalidated the snapshot.
     let inst = unsafe { instance_ref(instance) };
@@ -58,7 +86,16 @@ pub fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u3
 
 /// Adds the negation of the loaded facade total to token 0x01000001, so
 /// the total the model divides by wraps to zero (register row 61).
-pub fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub unsafe fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let total = unsafe { crate::state::instance_ref(instance) }
         .core
@@ -91,7 +128,17 @@ use oxpinyin::user::UserStore;
 use std::ptr;
 
 /// Read the live store for one assertion; no storage reference escapes.
-pub(crate) fn with_store<R>(
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule). `read` runs while this helper holds the store reference, so it must not call through the
+/// context, its instances or its iterators.
+pub(crate) unsafe fn with_store<R>(
     instance: *mut PinyinInstance,
     read: impl FnOnce(&UserStore) -> R,
 ) -> R {
@@ -102,7 +149,16 @@ pub(crate) fn with_store<R>(
 }
 
 /// The first snapshot row of `kind`, with its token.
-pub(crate) fn predicted_row(
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn predicted_row(
     instance: *mut PinyinInstance,
     kind: lookup_candidate_type_t,
 ) -> (*mut LookupCandidate, u32) {
@@ -121,5 +177,8 @@ pub(crate) fn predicted_row(
             &raw mut cand,
         )
     });
-    (cand, token_of(instance, cand))
+    // SAFETY: `instance` meets this function's `# Safety` contract; `cand` is a row of a live
+    // instance's current list, and no call since has rebuilt that list; only this thread calls into
+    // them.
+    (cand, unsafe { token_of(instance, cand) })
 }

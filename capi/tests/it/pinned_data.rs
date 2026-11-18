@@ -49,7 +49,9 @@ fn the_row_one_past_the_list_is_refused() {
     let mut cand = ptr::NonNull::<LookupCandidate>::dangling().as_ptr();
     assert!(!unsafe { pinyin_get_candidate(instance, count, &raw mut cand) });
     assert!(cand.is_null());
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// D10: `pinyin.cpp:2678-2688` at 074a2219 asserts that the train index is
@@ -69,7 +71,10 @@ fn training_the_last_two_nbest_results_succeeds() {
         );
         assert!(unsafe { pinyin_guess_sentence(instance) });
         assert!(unsafe { pinyin_train(instance, index) });
-        close(context, instance);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
 }
 

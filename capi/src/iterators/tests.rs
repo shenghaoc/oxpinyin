@@ -6,7 +6,7 @@
 use crate::context::pinyin_save;
 use crate::test_support::drain_phrases;
 #[cfg(unix)]
-use crate::test_support::take_exported;
+use crate::test_support::take_exported_row;
 
 use crate::test_support::with_store;
 
@@ -26,8 +26,12 @@ use std::ptr;
 /// `MAX_KEY_TONE` behind a spellable one; the aborting read writes its
 /// out-params into `page` (phrase, pinyin, then count).
 // Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
+/// # Safety
+///
+/// `page` points to `SHARED_PAGE` bytes that are valid for exclusive reads and writes for the call.
+/// The base is aligned for both a string pointer and a `c_int`.
 #[cfg(unix)]
-fn export_an_unspellable_reading(page: *mut u8) {
+unsafe fn export_an_unspellable_reading(page: *mut u8) {
     let user_dir = TempUserDir::new("export-unspellable");
     let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     {
@@ -66,7 +70,8 @@ fn export_an_unspellable_reading(page: *mut u8) {
         )
     });
     assert_eq!(
-        (take_exported(phrase), take_exported(pinyin), count),
+        // SAFETY: both slots hold the iterator outputs, owned by this caller.
+        unsafe { take_exported_row(phrase, pinyin, count) },
         ("你".to_owned(), "ni".to_owned(), 5)
     );
     // The probe selected the second item: it has a pronunciation.
@@ -102,7 +107,11 @@ fn export_iterator_aborts_on_a_reading_it_cannot_spell() {
     let page = crate::test_support::assert_aborts_sharing(
         "iterators::tests::export_iterator_aborts_on_a_reading_it_cannot_spell",
         &vec![0xAB; 2 * slot + 4],
-        export_an_unspellable_reading,
+        |page| {
+            // SAFETY: `page` is the shared page that `assert_aborts_sharing` mapped: `SHARED_PAGE`
+            // bytes that stay mapped until the child aborts.
+            unsafe { export_an_unspellable_reading(page) }
+        },
     );
     assert!(
         page[..2 * slot].iter().all(|&byte| byte == 0),
@@ -168,18 +177,23 @@ fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     // set-site is _end_add_phrases (pinyin.cpp:658) — a save before end is
     // the unmodified no-op.
     assert!(!unsafe { pinyin_save(context) });
-    assert!(!with_store(instance, |store| store.is_modified()));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe { with_store(instance, |store| store.is_modified()) });
 
     unsafe { pinyin_end_add_phrases(iter) };
 
     // End armed the shared dirty flag; the next save compacts and clears it.
-    assert!(with_store(instance, |store| store.is_modified()));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { with_store(instance, |store| store.is_modified()) });
     assert!(unsafe { pinyin_save(context) });
-    assert!(!with_store(instance, |store| store.is_modified()));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe { with_store(instance, |store| store.is_modified()) });
 
     let export = unsafe { pinyin_begin_get_phrases(context, 7) };
     assert_eq!(
-        drain_phrases(export),
+        // SAFETY: `export` is a live iterator from its `begin` call, not yet ended; only this
+        // thread calls into it.
+        unsafe { drain_phrases(export) },
         vec![
             ("你好".to_owned(), "ni'hao".to_owned(), 12),
             ("世界".to_owned(), "shi'jie".to_owned(), 3),
@@ -211,9 +225,11 @@ fn empty_import_batch_arms_modified_and_saves() {
 
     // Upstream sets m_modified unconditionally at end (:657-658), even with
     // no add calls, so the next save is a write cycle, not a no-op.
-    assert!(with_store(instance, |store| store.is_modified()));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { with_store(instance, |store| store.is_modified()) });
     assert!(unsafe { pinyin_save(context) });
-    assert!(!with_store(instance, |store| store.is_modified()));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe { with_store(instance, |store| store.is_modified()) });
 
     let export = unsafe { pinyin_begin_get_phrases(context, 7) };
     assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
@@ -246,7 +262,8 @@ fn an_import_reading_parses_past_long_separator_runs() {
     }
     unsafe { crate::iterators::pinyin_end_add_phrases(iter) };
     assert_eq!(
-        crate::test_support::export_of(context, 7),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::test_support::export_of(context, 7) },
         [("你好".to_owned(), "ni3'hao3".to_owned(), 2)]
     );
     unsafe { crate::instance::pinyin_free_instance(instance) };

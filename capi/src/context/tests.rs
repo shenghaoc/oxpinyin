@@ -77,10 +77,14 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             let context = init_at(&system_dir(), user);
             assert!(!context.is_null());
             // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
-            train_once(context);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
             assert!(unsafe { pinyin_save(context) });
             keep_before(user);
-            train_once(context);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
             // The first copy writes one record and fails the next.
             oxpinyin::store::copy_faults::fail_destination_write_after(1);
             unsafe { pinyin_save(context) };
@@ -175,7 +179,16 @@ fn save_aborts_on_a_directory_library() {
 }
 
 /// Snapshot of phrase candidates as `(token, text)`.
-fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let mut inst = unsafe { instance_mut(instance) };
     // The facade defers the parse's list build to its first reader.
@@ -222,8 +235,12 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
 
     // Train once: the save gate arms, a dirty save returns true, clears,
     // and leaves the pin's own files behind — the bigram hash among them.
-    let first = candidate(instance, "nihao", 0);
-    let t1 = token_of(instance, first);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { candidate(instance, "nihao", 0) };
+    // SAFETY: `instance` was opened above and is not yet freed; `first` is a row of a live
+    // instance's current list, and no call since has rebuilt that list; only this thread calls into
+    // them.
+    let t1 = unsafe { token_of(instance, first) };
     assert!(unsafe { pinyin_choose_candidate(instance, 0, first) } > 0);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { pinyin_train(instance, 0) });
@@ -243,14 +260,25 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     // Decode against the populated store (T4's merge) — the state the
     // reopened store must reproduce.
     assert!(unsafe { pinyin_reset(instance) });
-    let _ = candidate(instance, "nihao", 0);
-    let decode_before = phrase_snapshot(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let _ = unsafe { candidate(instance, "nihao", 0) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let decode_before = unsafe { phrase_snapshot(instance) };
     let counts = {
         (
-            with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
-            with_store(instance, |store| store.bigram_total(SENTENCE_START)).unwrap(),
-            with_store(instance, |store| store.system_unigram(t1)),
-            with_store(instance, |store| store.unigram_total()),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)) }
+                .unwrap(),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.system_unigram(t1)) },
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.unigram_total()) },
         )
     };
 
@@ -262,31 +290,45 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
 
     // Reopen: counts, allocation state, and decode all resume.
     let (context2, instance2) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let _ = candidate(instance2, "nihao", 0);
+    // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls into it.
+    let _ = unsafe { candidate(instance2, "nihao", 0) };
     assert_eq!(
-        phrase_snapshot(instance2),
+        // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls into
+        // it.
+        unsafe { phrase_snapshot(instance2) },
         decode_before,
         "decode-after-reopen must match the pre-save populated-store decode"
     );
     {
         assert!(
-            !with_store(instance2, |store| store.is_modified()),
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            !unsafe { with_store(instance2, |store| store.is_modified()) },
             "a reopen starts clean"
         );
         assert_eq!(
-            with_store(instance2, |store| store.bigram_count(SENTENCE_START, t1)).unwrap(),
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.bigram_count(SENTENCE_START, t1)) }
+                .unwrap(),
             counts.0
         );
         assert_eq!(
-            with_store(instance2, |store| store.bigram_total(SENTENCE_START)).unwrap(),
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
             counts.1
         );
         assert_eq!(
-            with_store(instance2, |store| store.system_unigram(t1)),
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.system_unigram(t1)) },
             counts.2
         );
         assert_eq!(
-            with_store(instance2, |store| store.unigram_total()),
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.unigram_total()) },
             counts.3
         );
     }
@@ -309,28 +351,35 @@ fn the_short_table_row_sequence_writes_no_glib_log() {
     let logs = LogCapture::new();
     let context = crate::test_support::init_at(&system, &user.path);
     for text in ["nihao", "yishu"] {
-        let instance = crate::test_support::alloc(context);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { crate::test_support::alloc(context) };
         let _ =
             unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) };
         unsafe { crate::sentence::pinyin_guess_sentence(instance) };
         let mut sentence = std::ptr::null_mut();
         unsafe { crate::sentence::pinyin_get_sentence(instance, 0, &raw mut sentence) };
         if !sentence.is_null() {
-            crate::ffi::take_owned_cstr(sentence);
+            // SAFETY: `sentence` is the string the library just returned; this code owns it and
+            // frees it only here.
+            unsafe { crate::ffi::take_owned_cstr(sentence) };
         }
         assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, 0) });
         unsafe { crate::instance::pinyin_free_instance(instance) };
     }
-    let instance = crate::test_support::alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
     let _ = unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) };
     unsafe { crate::sentence::pinyin_guess_sentence(instance) };
     assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
     assert_eq!(
-        crate::test_support::import_batch(context, 7, &[("测试词", "ce'shi'ci", 1)]),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::test_support::import_batch(context, 7, &[("测试词", "ce'shi'ci", 1)]) },
         [true]
     );
     assert!(unsafe { crate::context::pinyin_save(context) });
-    crate::test_support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
     assert!(logs.take().is_empty());
 }
 
@@ -351,12 +400,16 @@ fn saving_against_a_failed_layout_writes_no_glib_critical() {
     let user = TempUserDir::new("failed-layout-log");
     let logs = LogCapture::new();
     let context = crate::test_support::init_at(&system, &user.path);
-    let instance = crate::test_support::alloc(context);
-    assert_eq!(crate::test_support::parse(instance, "nihao"), 5);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { crate::test_support::parse(instance, "nihao") }, 5);
     assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
     assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
     replace_with_failed_layout(&system.join("merged.bin"), 123);
     assert!(unsafe { crate::context::pinyin_save(context) });
-    crate::test_support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
     assert!(logs.take().is_empty());
 }

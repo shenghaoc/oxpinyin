@@ -144,7 +144,9 @@ parser_rows::gated_parser_rows! {
         }
         let mut text = std::ptr::null_mut();
         assert!(unsafe { super::pinyin_get_full_pinyin_auxiliary_text(instance, parsed, &raw mut text) });
-        assert_eq!(crate::ffi::take_owned_cstr(text), aux);
+        // SAFETY: `text` is the string the library just returned; this code owns it and frees it
+        // only here.
+        assert_eq!(unsafe { crate::ffi::take_owned_cstr(text) }, aux);
         unsafe { crate::instance::pinyin_free_instance(instance) };
         unsafe { crate::context::pinyin_fini(context) };
     }

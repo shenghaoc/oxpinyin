@@ -53,7 +53,8 @@ fn guess_sentence_aborts_on_a_toned_initial() {
         let user = TempUserDir::new("toned-sentence");
         let (context, instance) = open_at(&user.path);
         assert!(unsafe { pinyin_set_options(context, 0x28) });
-        assert_eq!(parse(instance, "n4"), 2);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "n4") }, 2);
         unsafe { pinyin_guess_sentence(instance) };
     });
 }
@@ -64,7 +65,8 @@ fn get_sentence_aborts_past_the_rows() {
     assert_aborts("sentence::get_sentence_aborts_past_the_rows", || {
         let user = TempUserDir::new("sentence-past-rows");
         let (_context, instance) = open_at(&user.path);
-        assert_eq!(parse(instance, "nihao"), 5);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "nihao") }, 5);
         assert!(unsafe { pinyin_guess_sentence(instance) });
         let mut out: *mut c_char = ptr::null_mut();
         unsafe { pinyin_get_sentence(instance, 5, &raw mut out) };
@@ -78,10 +80,14 @@ fn a_leading_separator_guess_has_no_sentence() {
     let user = TempUserDir::new("separator-sentence");
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
-    assert_eq!(parse(instance, "'ni'hao"), 7);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "'ni'hao") }, 7);
     assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence_out(instance, 0), (false, None));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence_out(instance, 0) }, (false, None));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A keyless parse (one separator) refuses both sentence guesses before
@@ -98,21 +104,30 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
         },
     ];
     for guess in guesses {
-        let instance = alloc(context);
-        assert_eq!(parse(instance, "ni3hao3"), 7);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "ni3hao3") }, 7);
         assert!(unsafe { pinyin_guess_sentence(instance) });
-        let sentence = sentence_out(instance, 0);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let sentence = unsafe { sentence_out(instance, 0) };
         assert!(sentence.0);
-        assert_eq!(parse(instance, "'"), 1);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "'") }, 1);
         assert!(!guess(instance));
-        assert_eq!(sentence_out(instance, 0), sentence);
-        assert_eq!(n_candidate(instance), 0);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { sentence_out(instance, 0) }, sentence);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { n_candidate(instance) }, 0);
         unsafe { pinyin_free_instance(instance) };
 
-        let fresh = alloc(context);
-        assert_eq!(parse(fresh, "'"), 1);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let fresh = unsafe { alloc(context) };
+        // SAFETY: `fresh` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(fresh, "'") }, 1);
         assert!(!guess(fresh));
-        assert_eq!(sentence_out(fresh, 0), (false, None));
+        // SAFETY: `fresh` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { sentence_out(fresh, 0) }, (false, None));
         unsafe { pinyin_free_instance(fresh) };
     }
     unsafe { pinyin_fini(context) };
@@ -128,14 +143,22 @@ fn a_null_sentence_prefix_is_no_prefix() {
     let user = TempUserDir::new("prefix-null");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "ba1"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1") }, 3);
     let valid = std::ffi::CString::new(glib_utf8(&[0x7532, 0x4e01, 0x4e59])).expect("no NUL");
     assert!(unsafe { crate::support::pinyin_guess_sentence_with_prefix(instance, valid.as_ptr()) });
     assert!(unsafe { crate::support::pinyin_guess_sentence_with_prefix(instance, ptr::null()) });
-    assert_eq!(sentence_out(instance, 0), (true, Some("丙".to_owned())));
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_out(instance, 0) },
+        (true, Some("丙".to_owned()))
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The sentence prefix is converted with `prefix_text`, which accepts a
@@ -148,16 +171,24 @@ fn a_sentence_prefix_above_unicode_is_converted() {
     let user = TempUserDir::new("prefix-above-unicode");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "ba1"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1") }, 3);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     let prefix = std::ffi::CString::new(glib_utf8(&[0x7532, 0x11_0000, 0x4e59])).expect("no NUL");
     assert!(unsafe {
         crate::support::pinyin_guess_sentence_with_prefix(instance, prefix.as_ptr())
     });
-    assert_eq!(sentence_out(instance, 0), (true, Some("戌".to_owned())));
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_out(instance, 0) },
+        (true, Some("戌".to_owned()))
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// An n-best row whose phrases all start with a zero word has the string
@@ -176,14 +207,26 @@ fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
     let user = TempUserDir::new("nbest-empty-text");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "ba1ba1"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1ba1") }, 6);
     assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence_out(instance, 0), (true, Some(String::new())));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_out(instance, 0) },
+        (true, Some(String::new()))
+    );
     assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
-    assert_eq!(capture_rows(instance), [(NBEST, String::new(), Some(0))]);
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { capture_rows(instance) },
+        [(NBEST, String::new(), Some(0))]
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `convert_to_utf8` leaves out a phrase whose `g_ucs4_to_utf8` is NULL, a
@@ -207,12 +250,20 @@ fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
     let user = TempUserDir::new("nbest-unconvertible");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "ba1an1"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1an1") }, 6);
     assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence_out(instance, 0), (true, Some("丙".to_owned())));
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_out(instance, 0) },
+        (true, Some("丙".to_owned()))
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A failed conversion for the row's only phrase leaves the sentence NULL
@@ -230,15 +281,19 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let user = TempUserDir::new("nbest-null-text");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, oxpinyin::OptionBits::USE_TONE.bits()) });
-    assert_eq!(parse(instance, "ba1"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1") }, 3);
     assert!(unsafe { pinyin_guess_sentence(instance) });
 
     let mut out = UNTOUCHED as usize as *mut c_char;
     assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut out) });
     assert!(out.is_null());
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// NBEST choose reaches diff_result without validation (pinyin.cpp:2515-2520).
@@ -252,10 +307,14 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
         || {
             let user = TempUserDir::new("empty-matrix-diff-write");
             let (context, instance) = open_at(&user.path);
-            assert_eq!(parse(instance, "nihao"), 5);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
             assert!(unsafe { pinyin_guess_sentence(instance) });
             assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
-            let rows = capture_rows(instance);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let rows = unsafe { capture_rows(instance) };
             let index = rows
                 .iter()
                 .enumerate()
@@ -263,7 +322,9 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
                     if *kind != NBEST {
                         return None;
                     }
-                    let row = candidate_at(instance, index);
+                    // SAFETY: `instance` was opened above and is not yet freed; only this thread
+                    // calls into it.
+                    let row = unsafe { candidate_at(instance, index) };
                     let mut rank = 0;
                     assert!(unsafe {
                         pinyin_get_candidate_nbest_index(instance, row, &raw mut rank)
@@ -271,11 +332,18 @@ fn a_kept_differing_sentence_aborts_after_an_empty_matrix_guess() {
                     (rank > 0).then_some(index)
                 })
                 .expect("a differing n-best row");
-            let row = candidate_at(instance, index);
-            assert_eq!(parse(instance, ""), 0);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let row = unsafe { candidate_at(instance, index) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "") }, 0);
             assert!(!unsafe { pinyin_guess_sentence(instance) });
             unsafe { pinyin_choose_candidate(instance, 0, row) };
-            close(context, instance);
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; nothing uses either handle after this call; only this thread
+            // calls into them.
+            unsafe { close(context, instance) };
         },
     );
 }
@@ -293,7 +361,15 @@ fn parity_instance(
     (context, instance, user_dir)
 }
 
-fn character_offset(
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn character_offset(
     instance: *mut crate::support::PinyinInstance,
     phrase: &str,
     offset: usize,
@@ -329,7 +405,9 @@ fn a_non_hanzi_phrase_answers_false_before_the_separator() {
 
     for offset in 0..=2 {
         assert_eq!(
-            character_offset(instance, "ni'", offset),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { character_offset(instance, "ni'", offset) },
             (false, usize::MAX),
             "offset {offset}"
         );
@@ -361,7 +439,9 @@ fn counts_the_sentence_characters_up_to_the_offset() {
 
     for (offset, expected) in [(0, 0), (2, 1), (5, 2)] {
         assert_eq!(
-            character_offset(instance, "你好", offset),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { character_offset(instance, "你好", offset) },
             (true, expected),
             "offset {offset}"
         );
@@ -369,11 +449,17 @@ fn counts_the_sentence_characters_up_to_the_offset() {
     // A phrase whose characters do not pronounce the keys: no path.
     // The walk's own `false` stores the length it reached, 0
     // (`*plength = length`, `pinyin.cpp:3238`).
-    assert_eq!(character_offset(instance, "好你", 2), (false, 0));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { character_offset(instance, "好你", 2) }, (false, 0));
     // A walk beyond the phrase's tokens: the pin's miss at the terminator.
-    assert_eq!(character_offset(instance, "你", 5), (false, 0));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { character_offset(instance, "你", 5) }, (false, 0));
     // An empty phrase and a NULL phrase are the pin's `false`.
-    assert_eq!(character_offset(instance, "", 0), (false, usize::MAX));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { character_offset(instance, "", 0) },
+        (false, usize::MAX)
+    );
     let mut length = usize::MAX;
     assert!(!unsafe {
         crate::support::pinyin_get_character_offset(instance, std::ptr::null(), 0, &raw mut length)
@@ -386,7 +472,8 @@ fn counts_the_sentence_characters_up_to_the_offset() {
         6
     );
     // `pinyin.cpp:3158-3163` steps over the separator and tail zero keys.
-    assert_eq!(character_offset(instance, "你好", 6), (true, 2));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { character_offset(instance, "你好", 6) }, (true, 2));
 
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
@@ -396,14 +483,23 @@ fn counts_the_sentence_characters_up_to_the_offset() {
 #[test]
 fn an_empty_matrix_answers_false() {
     let (context, instance, _user_dir) = parity_instance("char-offset-empty");
-    assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { character_offset(instance, "你", 0) },
+        (false, usize::MAX)
+    );
     for (input, consumed) in [("!", 0), ("'", 1)] {
         let input = cstr(input);
         assert_eq!(
             unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
             consumed
         );
-        assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { character_offset(instance, "你", 0) },
+            (false, usize::MAX)
+        );
     }
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
@@ -458,22 +554,34 @@ fn get_sentence_before_a_guess_leaves_the_out_pointer() {
     let (context, instance) = open_at(&user.path);
     for index in [0, 255] {
         assert_eq!(
-            sentence_out(instance, index),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { sentence_out(instance, index) },
             (false, None),
             "fresh {index}"
         );
     }
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     for index in [0, 255] {
         assert_eq!(
-            sentence_out(instance, index),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { sentence_out(instance, index) },
             (false, None),
             "parsed {index}"
         );
     }
     assert!(unsafe { pinyin_guess_sentence(instance) });
-    assert_eq!(sentence_out(instance, 0), (true, Some("你好".to_owned())));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_out(instance, 0) },
+        (true, Some("你好".to_owned()))
+    );
     assert!(unsafe { pinyin_reset(instance) });
-    assert_eq!(sentence_out(instance, 0), (false, None));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence_out(instance, 0) }, (false, None));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

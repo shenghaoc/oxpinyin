@@ -27,7 +27,16 @@ use std::ffi::c_char;
 use std::ptr;
 
 /// The symbols `in_chewing_keyboard` answers for `key`, freed.
-fn keyboard(instance: *mut PinyinInstance, key: u8) -> (bool, Option<Vec<String>>) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn keyboard(instance: *mut PinyinInstance, key: u8) -> (bool, Option<Vec<String>>) {
     let mut symbols: *mut *mut c_char = UNTOUCHED as usize as *mut *mut c_char;
     let ret = unsafe {
         crate::support::pinyin_in_chewing_keyboard(
@@ -64,7 +73,8 @@ fn luoma_and_secondary_zhuyin_refuse_the_zero_key() {
     let user = TempUserDir::new("zero-key-renderers");
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_set_options(context, 0x1aa) });
-    assert_eq!(parse(instance, "xi'"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "xi'") }, 3);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut key: *mut ChewingKey = ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_key(instance, 2, &raw mut key) });
@@ -76,7 +86,9 @@ fn luoma_and_secondary_zhuyin_refuse_the_zero_key() {
         assert!(!unsafe { render(instance, key, &raw mut out) });
         assert!(out.is_null());
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Init seeds USE_TONE alone: a toned key parses, an initial does not
@@ -86,8 +98,10 @@ fn init_options_parse_tones_but_not_initials() {
     let user = TempUserDir::new("default-options");
     let (context, _) = open_at(&user.path);
     for (text, parsed) in [("n", 0), ("ni3", 3), ("zzz", 0), ("ni2hao", 6)] {
-        let instance = alloc(context);
-        assert_eq!(parse(instance, text), parsed, "{text}");
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, text) }, parsed, "{text}");
         unsafe { pinyin_free_instance(instance) };
     }
     unsafe { pinyin_fini(context) };
@@ -134,7 +148,9 @@ fn full_auxiliary_text_aborts_on_a_leading_apostrophe() {
         || {
             let user = TempUserDir::new("aux-leading-apostrophe");
             let (_context, instance) = open_at(&user.path);
-            assert_eq!(parse(instance, "'nihao"), 6);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "'nihao") }, 6);
             let mut render_aux: *mut c_char = ptr::null_mut();
             unsafe { pinyin_get_full_pinyin_auxiliary_text(instance, 2, &raw mut render_aux) };
         },
@@ -150,7 +166,9 @@ fn double_auxiliary_text_aborts_three_bytes_into_a_key() {
         || {
             let user = TempUserDir::new("aux-double-cut");
             let (_context, instance) = open_at(&user.path);
-            assert_eq!(parse(instance, "zhong"), 5);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "zhong") }, 5);
             let mut render_aux: *mut c_char = ptr::null_mut();
             unsafe { pinyin_get_double_pinyin_auxiliary_text(instance, 3, &raw mut render_aux) };
         },
@@ -174,7 +192,8 @@ fn left_offset_aborts_after_a_separator() {
     assert_aborts("parse_keys::left_offset_aborts_after_a_separator", || {
         let user = TempUserDir::new("left-after-separator");
         let (_context, instance) = open_at(&user.path);
-        assert_eq!(parse(instance, "ni'hao"), 6);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "ni'hao") }, 6);
         let mut left = 0_usize;
         unsafe { pinyin_get_left_pinyin_offset(instance, 3, &raw mut left) };
     });
@@ -186,7 +205,8 @@ fn right_offset_aborts_after_a_separator() {
     assert_aborts("parse_keys::right_offset_aborts_after_a_separator", || {
         let user = TempUserDir::new("right-after-separator");
         let (_context, instance) = open_at(&user.path);
-        assert_eq!(parse(instance, "ni'hao"), 6);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "ni'hao") }, 6);
         let mut right = 0_usize;
         unsafe { pinyin_get_right_pinyin_offset(instance, 3, &raw mut right) };
     });
@@ -202,7 +222,9 @@ fn character_offset_aborts_on_an_empty_leading_column() {
             let user = TempUserDir::new("character-leading-separator");
             let (context, instance) = open_at(&user.path);
             assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
-            assert_eq!(parse(instance, "'ni"), 3);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "'ni") }, 3);
             unsafe { pinyin_guess_sentence(instance) };
             let mut length = 0_usize;
             unsafe { pinyin_get_character_offset(instance, c"你".as_ptr(), 0, &raw mut length) };
@@ -217,12 +239,15 @@ fn right_offset_at_a_leading_separator_is_refused() {
     let user = TempUserDir::new("right-leading-separator");
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_set_options(context, SEPARATOR_OPTIONS) });
-    assert_eq!(parse(instance, "''ni"), 4);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "''ni") }, 4);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut right = UNTOUCHED as usize;
     assert!(!unsafe { pinyin_get_right_pinyin_offset(instance, 0, &raw mut right) });
     assert_eq!(right, UNTOUCHED as usize);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Invalid bytes in pinyin input: an import reading keeps its parsed
@@ -245,7 +270,8 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
     assert!(!add(b"\xe4\xbd\xa0\xe5\xa5\xbd\xff", b"ni'hao"));
     unsafe { crate::support::pinyin_end_add_phrases(iter) };
     assert_eq!(
-        crate::support::export_of(context, 7),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::support::export_of(context, 7) },
         [
             ("你好".to_owned(), "ni'ha".to_owned(), 1),
             ("世界".to_owned(), "shi'jie".to_owned(), 1),
@@ -253,7 +279,8 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
     );
     let consumed = |parser: unsafe extern "C" fn(*mut PinyinInstance, *const c_char) -> usize,
                     text: &[u8]| {
-        let fresh = alloc(context);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let fresh = unsafe { alloc(context) };
         let text = std::ffi::CString::new(text).expect("no NUL");
         let parsed = unsafe { parser(fresh, text.as_ptr()) };
         unsafe { pinyin_free_instance(fresh) };
@@ -267,7 +294,9 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
     assert_eq!(consumed(chewings, b"su\xff3"), 2);
     assert_eq!(consumed(chewings, b"su3\xff"), 3);
     assert_eq!(consumed(chewings, b"\xffsu3"), 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The pinyin wrapper of `in_chewing_keyboard`: a key of the
@@ -280,21 +309,41 @@ fn the_pinyin_chewing_keyboard_wrapper_answers_per_key() {
     assert!(unsafe { pinyin_set_options(context, 0) });
     assert!(unsafe { crate::support::pinyin_set_zhuyin_scheme(context, 1) });
     assert_eq!(
-        keyboard(instance, b's'),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { keyboard(instance, b's') },
         (true, Some(vec!["ㄋ".to_owned()]))
     );
-    assert_eq!(keyboard(instance, b'3'), (false, None));
-    assert_eq!(keyboard(instance, b'!'), (false, None));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b'3') }, (false, None));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b'!') }, (false, None));
     assert!(unsafe { pinyin_set_options(context, 0x60) });
-    assert_eq!(keyboard(instance, b'3'), (true, Some(vec!["ˇ".to_owned()])));
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { keyboard(instance, b'3') },
+        (true, Some(vec!["ˇ".to_owned()]))
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 const USE_TONE: u32 = 0x20;
 
 const FORCE_TONE: u32 = 0x40;
 
-fn parse_len(
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn parse_len(
     context: *mut crate::support::PinyinContext,
     instance: *mut crate::support::PinyinInstance,
     word: u32,
@@ -315,7 +364,9 @@ fn force_tone_rejects_toneless_input_under_use_tone() {
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     let word = PARITY | USE_TONE | FORCE_TONE;
 
-    assert_eq!(parse_len(context, instance, word, "nihao"), 0);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, word, "nihao") }, 0);
     assert!(
         !unsafe { pinyin_guess_sentence(instance) },
         "no sentence on an empty parse"
@@ -326,13 +377,17 @@ fn force_tone_rejects_toneless_input_under_use_tone() {
              no rows and no engine fallback row on an empty parse"
     );
     assert_eq!(
-        parse_len(context, instance, word, "zai6"),
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; only this thread calls into them.
+        unsafe { parse_len(context, instance, word, "zai6") },
         0,
         "'6' is not a tone digit"
     );
 
     assert_eq!(
-        parse_len(context, instance, word, "ni3hao3"),
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; only this thread calls into them.
+        unsafe { parse_len(context, instance, word, "ni3hao3") },
         7,
         "toned input parses"
     );
@@ -342,7 +397,9 @@ fn force_tone_rejects_toneless_input_under_use_tone() {
     assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut n) });
     assert!(n > 0, "the toned window is non-empty");
 
-    assert_eq!(parse_len(context, instance, word, "zai4"), 4);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, word, "zai4") }, 4);
 
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
@@ -357,14 +414,23 @@ fn stop_bytes_terminate_the_parse() {
     let user_dir = TempUserDir::new("b2-stop");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    assert_eq!(parse_len(context, instance, PARITY, "ni hao"), 2);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, PARITY, "ni hao") }, 2);
     assert!(
         unsafe { pinyin_guess_sentence(instance) },
         "the ni window still decodes"
     );
-    assert_eq!(parse_len(context, instance, PARITY, "\u{ff0c}nihao"), 0);
     assert_eq!(
-        parse_len(context, instance, PARITY, "ni'hao"),
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; only this thread calls into them.
+        unsafe { parse_len(context, instance, PARITY, "\u{ff0c}nihao") },
+        0
+    );
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; only this thread calls into them.
+        unsafe { parse_len(context, instance, PARITY, "ni'hao") },
         6,
         "internal run unchanged"
     );
@@ -372,9 +438,15 @@ fn stop_bytes_terminate_the_parse() {
     // The inherited apostrophe class, folded in: trailing and
     // standalone runs are consumed by the pin's propagation
     // (the pin parses ni' → 3; nihao' → 6 by the same law).
-    assert_eq!(parse_len(context, instance, PARITY, "nihao'"), 6);
-    assert_eq!(parse_len(context, instance, PARITY, "ni'"), 3);
-    assert_eq!(parse_len(context, instance, PARITY, "'''"), 3);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, PARITY, "nihao'") }, 6);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, PARITY, "ni'") }, 3);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    assert_eq!(unsafe { parse_len(context, instance, PARITY, "'''") }, 3);
     // Apostrophe-only parses hold no keys but are NOT empty parses: no
     // candidate and never the engine's raw-input fallback row. The
     // sentence guess answers `false` there: `get_nbest_match` returns
@@ -423,7 +495,8 @@ fn key_rest_positions_follow_the_pins_reads() {
     let _slots = crate::support::key_slot_guard();
     let user = TempUserDir::new("key-rest-positions-null");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let (_, rest) = parsed_key_and_rest(instance, "ni3");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (_, rest) = unsafe { parsed_key_and_rest(instance, "ni3") };
     let (mut begin, mut end) = (u16::MAX, u16::MAX);
     // NULL instance: answered (`:2967-2977` never reads it).
     assert!(unsafe {
@@ -484,7 +557,16 @@ fn step(key: Option<u16>, span: Option<(u16, u16)>, pinyin: Option<&str>) -> Ste
 }
 
 /// Every offset from 0 to the parsed length, the calls in `key_walk`'s order.
-fn walk(instance: *mut crate::support::PinyinInstance, parsed: usize) -> Vec<Step> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn walk(instance: *mut crate::support::PinyinInstance, parsed: usize) -> Vec<Step> {
     (0..=parsed)
         .map(|offset| {
             let mut key: *mut ChewingKey = ptr::null_mut();
@@ -522,7 +604,9 @@ fn walk(instance: *mut crate::support::PinyinInstance, parsed: usize) -> Vec<Ste
                 let rendered = unsafe { pinyin_get_pinyin_string(instance, key, &raw mut text) };
                 (
                     Some(packed),
-                    rendered.then(|| crate::support::take_owned_cstr(text)),
+                    // SAFETY: `text` is the string the library just returned; this code owns it and
+                    // frees it only here.
+                    rendered.then(|| unsafe { crate::support::take_owned_cstr(text) }),
                 )
             };
             Step {
@@ -720,7 +804,8 @@ fn a_trailing_apostrophe_walks_as_the_pin_does(#[case] input: &str) {
     );
     assert_eq!(unsafe { pinyin_get_parsed_input_length(instance) }, 3);
     assert_eq!(
-        walk(instance, 3),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { walk(instance, 3) },
         vec![
             step(Some(43), Some((0, 2)), Some("ni")),
             step(None, None, None),
@@ -735,7 +820,18 @@ fn a_trailing_apostrophe_walks_as_the_pin_does(#[case] input: &str) {
 mod chewing_batch_force_tone {
     use super::*;
 
-    fn chewing_len(
+    /// # Safety
+    ///
+    /// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not
+    /// taken it.
+    ///
+    /// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+    /// `pinyin_free_instance` has not freed it.
+    ///
+    /// Calls are serial across the context, its sibling instances and its iterators: no other call
+    /// through any of them, and no borrow of their state, overlaps this call (the crate's Serial
+    /// calls rule).
+    unsafe fn chewing_len(
         context: *mut crate::support::PinyinContext,
         instance: *mut crate::support::PinyinInstance,
         word: u32,
@@ -756,12 +852,16 @@ mod chewing_batch_force_tone {
         let word = PARITY | USE_TONE | FORCE_TONE;
 
         assert_eq!(
-            chewing_len(context, instance, word, "su"),
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; only this thread calls into them.
+            unsafe { chewing_len(context, instance, word, "su") },
             0,
             "toneless syllable refuses under FORCE_TONE"
         );
         assert_eq!(
-            chewing_len(context, instance, word, "su3"),
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; only this thread calls into them.
+            unsafe { chewing_len(context, instance, word, "su3") },
             3,
             "toned syllable parses under FORCE_TONE"
         );
@@ -772,14 +872,28 @@ mod chewing_batch_force_tone {
 }
 
 /// `(true, text)` for an answer, `(false, "")` for the empty matrix.
-fn render_aux(
+///
+/// # Safety
+///
+/// `render` is one of the crate's auxiliary-text renderers.
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn render_aux(
     render: unsafe extern "C" fn(*mut PinyinInstance, usize, *mut *mut GChar) -> bool,
     instance: *mut PinyinInstance,
     cursor: usize,
 ) -> (bool, String) {
     let mut text: *mut GChar = std::ptr::null_mut();
+    // SAFETY: the caller supplies an auxiliary renderer and valid handle; text is a writable slot.
     let answered = unsafe { render(instance, cursor, &raw mut text) };
-    (answered, crate::support::take_owned_cstr(text))
+    // SAFETY: `text` is the string the library just returned; this code owns it and frees it only
+    // here.
+    (answered, unsafe { crate::support::take_owned_cstr(text) })
 }
 
 /// The chewing split is the pin's `g_utf8_substring` cut: the raw byte
@@ -799,16 +913,22 @@ fn chewing_cuts_the_zhuyin_spelling_by_scalar() {
     // "hao" spans bytes 2..5 and spells two scalars: cursor 3 cuts after
     // the first, cursor 4 after the second (the terminator).
     assert_eq!(
-        render_aux(pinyin_get_chewing_auxiliary_text, instance, 3),
+        // SAFETY: `pinyin_get_chewing_auxiliary_text` is one of the crate's renderers; `instance`
+        // was opened above and is not yet freed; only this thread calls into it.
+        unsafe { render_aux(pinyin_get_chewing_auxiliary_text, instance, 3) },
         (true, "ㄋㄧ ㄏ|ㄠ ".to_owned())
     );
     assert_eq!(
-        render_aux(pinyin_get_chewing_auxiliary_text, instance, 4),
+        // SAFETY: `pinyin_get_chewing_auxiliary_text` is one of the crate's renderers; `instance`
+        // was opened above and is not yet freed; only this thread calls into it.
+        unsafe { render_aux(pinyin_get_chewing_auxiliary_text, instance, 4) },
         (true, "ㄋㄧ ㄏㄠ| ".to_owned())
     );
     // An overrun cursor clamps to the parsed length, the end boundary.
     assert_eq!(
-        render_aux(pinyin_get_chewing_auxiliary_text, instance, 99),
+        // SAFETY: `pinyin_get_chewing_auxiliary_text` is one of the crate's renderers; `instance`
+        // was opened above and is not yet freed; only this thread calls into it.
+        unsafe { render_aux(pinyin_get_chewing_auxiliary_text, instance, 99) },
         (true, "ㄋㄧ ㄏㄠ |".to_owned())
     );
 
@@ -819,7 +939,9 @@ fn chewing_cuts_the_zhuyin_spelling_by_scalar() {
         5
     );
     assert_eq!(
-        render_aux(pinyin_get_chewing_auxiliary_text, instance, 4),
+        // SAFETY: `pinyin_get_chewing_auxiliary_text` is one of the crate's renderers; `instance`
+        // was opened above and is not yet freed; only this thread calls into it.
+        unsafe { render_aux(pinyin_get_chewing_auxiliary_text, instance, 4) },
         (true, "ㄓㄨㄥ| ".to_owned())
     );
 
@@ -830,7 +952,9 @@ fn chewing_cuts_the_zhuyin_spelling_by_scalar() {
         3
     );
     assert_eq!(
-        render_aux(pinyin_get_chewing_auxiliary_text, instance, 2),
+        // SAFETY: `pinyin_get_chewing_auxiliary_text` is one of the crate's renderers; `instance`
+        // was opened above and is not yet freed; only this thread calls into it.
+        unsafe { render_aux(pinyin_get_chewing_auxiliary_text, instance, 2) },
         (true, "ㄋㄧ| ".to_owned())
     );
 
@@ -846,14 +970,26 @@ const DOUBLE_AUX: Render = pinyin_get_double_pinyin_auxiliary_text;
 
 const CHEWING_AUX: Render = crate::support::pinyin_get_chewing_auxiliary_text;
 
-fn aux(instance: *mut PinyinInstance, render: Render, cursor: usize) -> Option<String> {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule). `render` is FULL_AUX, DOUBLE_AUX or CHEWING_AUX. Each returns NULL or an owned string
+/// that the caller releases with g_free.
+unsafe fn aux(instance: *mut PinyinInstance, render: Render, cursor: usize) -> Option<String> {
     let mut out = UNTOUCHED as usize as *mut c_char;
+    // SAFETY: the caller supplies an auxiliary renderer and valid handle; out is a writable slot.
     let ret = unsafe { render(instance, cursor, &raw mut out) };
     assert!(
         out as usize != UNTOUCHED as usize,
         "the renderer writes its out-parameter"
     );
-    ret.then(|| crate::support::take_owned_cstr(out))
+    // SAFETY: `out` is the string the library just returned; this code owns it and frees it only
+    // here.
+    ret.then(|| unsafe { crate::support::take_owned_cstr(out) })
 }
 
 /// The double-pinyin renderer cuts at two bytes into a key with a tone
@@ -875,12 +1011,16 @@ fn auxiliary_text_cuts_before_a_tone() {
         (CHEWING_AUX, 5, "ㄋㄧˇ ㄏㄠ|ˋ "),
     ] {
         assert_eq!(
-            aux(instance, render, cursor).as_deref(),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { aux(instance, render, cursor) }.as_deref(),
             Some(text),
             "{cursor}"
         );
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The getter reads the keys made by the last parse. Setting options only
@@ -898,18 +1038,34 @@ fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess
             (incomplete | oxpinyin::OptionBits::USE_TONE).bits(),
         )
     });
-    assert_eq!(parse(instance, "ni3hao3"), 7);
-    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni3hao3") }, 7);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { aux(instance, FULL_AUX, 7) }.as_deref(),
+        Some("ni3 hao3 |")
+    );
 
     assert!(unsafe { pinyin_set_options(context, incomplete.bits()) });
     if after_guess {
         assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::support::DEFAULT_SORT) });
     }
-    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni3 hao3 |"));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { aux(instance, FULL_AUX, 7) }.as_deref(),
+        Some("ni3 hao3 |")
+    );
 
-    assert_eq!(parse(instance, "ni3hao3"), 2);
-    assert_eq!(aux(instance, FULL_AUX, 7).as_deref(), Some("ni |"));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni3hao3") }, 2);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { aux(instance, FULL_AUX, 7) }.as_deref(),
+        Some("ni |")
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The chewing renderer clamps a cursor past the input to the end.
@@ -917,9 +1073,12 @@ fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess
 fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
     let user = TempUserDir::new("aux-chewing-overrun");
     let (context, _) = open_at(&user.path);
-    let full = alloc(context);
-    assert_eq!(parse(full, "nihao"), 5);
-    let chewing = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let full = unsafe { alloc(context) };
+    // SAFETY: `full` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(full, "nihao") }, 5);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let chewing = unsafe { alloc(context) };
     assert_eq!(
         unsafe { crate::support::pinyin_parse_more_chewings(chewing, c"su3cl3".as_ptr()) },
         6
@@ -929,7 +1088,12 @@ fn chewing_auxiliary_text_clamps_a_cursor_past_the_input() {
         (chewing, [7, 13, usize::MAX], "ㄋㄧˇ ㄏㄠˇ |"),
     ] {
         for cursor in cursors {
-            assert_eq!(aux(instance, CHEWING_AUX, cursor).as_deref(), Some(text));
+            assert_eq!(
+                // SAFETY: `instance` is `full` or `chewing`, which the test opened above and has
+                // not freed; only this thread calls into it.
+                unsafe { aux(instance, CHEWING_AUX, cursor) }.as_deref(),
+                Some(text)
+            );
         }
         unsafe { pinyin_free_instance(instance) };
     }
@@ -961,11 +1125,15 @@ fn auxiliary_text_shows_the_parsed_keys_under_the_divided_table() {
             ],
         ),
     ] {
-        let instance = alloc(context);
-        assert_eq!(parse(instance, input), input.len());
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, input) }, input.len());
         for (render, cursor, text) in expected {
             assert_eq!(
-                aux(instance, render, cursor).as_deref(),
+                // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { aux(instance, render, cursor) }.as_deref(),
                 Some(text),
                 "{input} {cursor}"
             );
@@ -985,9 +1153,13 @@ fn auxiliary_text_without_a_parse_is_an_empty_string() {
         let mut out = UNTOUCHED as usize as *mut c_char;
         assert!(!unsafe { render(instance, 0, &raw mut out) });
         assert!(!out.is_null() && out as usize != UNTOUCHED as usize);
-        assert_eq!(crate::support::take_owned_cstr(out), "");
+        // SAFETY: `out` is the string the library just returned; this code owns it and frees it
+        // only here.
+        assert_eq!(unsafe { crate::support::take_owned_cstr(out) }, "");
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// NULL string arguments after defined prior work (#1279,
@@ -1008,7 +1180,8 @@ fn null_string_arguments_after_prior_work() {
     assert_eq!(count, 0);
     assert_eq!(logs.take(), [(Some("GLib".to_owned()), CRITICAL)]);
 
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert_eq!(
         unsafe { pinyin_parse_more_full_pinyins(instance, ptr::null()) },
         0
@@ -1029,7 +1202,10 @@ fn null_string_arguments_after_prior_work() {
     unsafe { crate::support::pinyin_end_add_phrases(iter) };
 
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "da1da1da1"), 9);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "da1da1da1") }, 9);
     assert!(!unsafe { crate::support::pinyin_remember_user_input(instance, ptr::null(), 5) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

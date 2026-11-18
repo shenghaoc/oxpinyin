@@ -18,15 +18,19 @@ fn remember_keeps_the_parse_time_tones() {
     let user = TempUserDir::new("remember-cleared-tone");
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_set_options(context, 0x20) });
-    assert_eq!(parse(instance, "ni3hao3"), 7);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni3hao3") }, 7);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { pinyin_set_options(context, 0) });
     assert!(unsafe { crate::support::pinyin_remember_user_input(instance, c"你好".as_ptr(), 3) });
     assert_eq!(
-        crate::support::export_of(context, 7),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::support::export_of(context, 7) },
         [("你好".to_owned(), "ni3'hao3".to_owned(), 3)]
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Remember stores the matrix's own key, with or without a syllable-table
@@ -53,7 +57,10 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     };
     // The final field is bits 7 to 11 of the packed key.
     let alternate = (key("shun3") & !0x0f80) | (key("sheng") & 0x0f80);
-    close(key_context, key_instance);
+    // SAFETY: `key_context` was opened above and is not yet freed; `key_instance` was opened above
+    // and is not yet freed; nothing uses either handle after this call; only this thread calls into
+    // them.
+    unsafe { close(key_context, key_instance) };
 
     let scratch = tempfile::tempdir().expect("scratch");
     let system = crate::support::items_system(
@@ -65,23 +72,36 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     let user = TempUserDir::new("remember-alternate");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe {
         pinyin_set_options(
             context,
             (oxpinyin::OptionBits::USE_TONE | oxpinyin::OptionBits::PINYIN_AMB_EN_ENG).bits(),
         )
     });
-    assert_eq!(parse(instance, "shun3"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "shun3") }, 5);
     let phrase = cstr("甲");
     assert!(unsafe { crate::support::pinyin_remember_user_input(instance, phrase.as_ptr(), 5) });
-    let token = lookup(instance, "甲")
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "甲") }
         .into_iter()
         .find(|&token| oxpinyin::user::is_user_token(token))
         .expect("the remembered library-7 token");
-    assert_eq!(reading_bytes(instance, token, 0), alternate.to_le_bytes());
-    assert_eq!(export_rows_of(context, 7, "甲"), [("3".to_owned(), 5)]);
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { reading_bytes(instance, token, 0) },
+        alternate.to_le_bytes()
+    );
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { export_rows_of(context, 7, "甲") },
+        [("3".to_owned(), 5)]
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A negative remember count is stored as its bit pattern: `i32::MIN`
@@ -90,13 +110,17 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
 fn a_negative_remember_count_is_stored_as_its_bit_pattern() {
     let user = TempUserDir::new("remember-count-min");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe {
         crate::support::pinyin_remember_user_input(instance, c"你好".as_ptr(), i32::MIN)
     });
     assert_eq!(
-        crate::support::export_of(context, 7),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::support::export_of(context, 7) },
         [("你好".to_owned(), "ni'hao".to_owned(), i32::MIN)]
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

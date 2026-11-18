@@ -40,8 +40,13 @@ fn load_of_the_reserved_library_aborts() {
 fn pinyin_unloads_only_the_gbk_library() {
     let user = TempUserDir::new("unload-gate");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
-    let token = lookup(instance, "龘龘")[0];
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("龘龘", "da2'da2", 5)]) },
+        [true]
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "龘龘") }[0];
     for library in [1, 15, 7] {
         assert!(
             !unsafe { crate::support::pinyin_unload_phrase_library(context, library) },
@@ -52,7 +57,9 @@ fn pinyin_unloads_only_the_gbk_library() {
     assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
     assert_eq!(count, 1);
     assert!(!unsafe { pinyin_load_phrase_library(context, 7) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Register row 91 on the reload path: `pinyin_load_phrase_library` of the
@@ -165,9 +172,13 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     );
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
     assert!(
-        capture_rows(instance).iter().any(|(kind, text, _)| {
-            *kind == lookup_candidate_type_t::ADDON_CANDIDATE && (text == "二簧" || text == "二黄")
-        }),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { capture_rows(instance) }
+            .iter()
+            .any(|(kind, text, _)| {
+                *kind == lookup_candidate_type_t::ADDON_CANDIDATE
+                    && (text == "二簧" || text == "二黄")
+            }),
         "loaded art addon must offer 二簧/二黄 for erhuang"
     );
 

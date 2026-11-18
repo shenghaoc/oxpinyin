@@ -17,9 +17,20 @@ use crate::support::{
 use std::ptr;
 
 /// Parses `nihao`, guesses the sentence and the candidates at 0 with sort 0.
-fn guessed_nihao(context: *mut PinyinContext) -> *mut PinyinInstance {
-    let instance = alloc(context);
-    assert_eq!(parse(instance, "nihao"), 5);
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn guessed_nihao(context: *mut PinyinContext) -> *mut PinyinInstance {
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
     instance
@@ -36,7 +47,10 @@ fn choose_candidate_aborts_on_a_predicted_prefix_row() {
             assert!(unsafe {
                 pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
             });
-            unsafe { pinyin_choose_candidate(instance, 0, row_of(instance, PREDICTED_PREFIX)) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, PREDICTED_PREFIX) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_choose_candidate(instance, 0, row) };
         },
     );
 }
@@ -49,8 +63,13 @@ fn choose_predicted_candidate_aborts_on_a_normal_row() {
         || {
             let user = TempUserDir::new("choose-predicted-normal");
             let (context, _) = open_at(&user.path);
-            let instance = guessed_nihao(context);
-            unsafe { pinyin_choose_predicted_candidate(instance, row_of(instance, NORMAL)) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { guessed_nihao(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, NORMAL) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_choose_predicted_candidate(instance, row) };
         },
     );
 }
@@ -61,11 +80,13 @@ fn nbest_index_aborts_on_a_normal_row() {
     assert_aborts("choose::nbest_index_aborts_on_a_normal_row", || {
         let user = TempUserDir::new("nbest-normal");
         let (context, _) = open_at(&user.path);
-        let instance = guessed_nihao(context);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { guessed_nihao(context) };
         let mut index = 0xAB_u8;
-        unsafe {
-            pinyin_get_candidate_nbest_index(instance, row_of(instance, NORMAL), &raw mut index)
-        };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let row = unsafe { row_of(instance, NORMAL) };
+        // SAFETY: the row still belongs to this snapshot and index is a writable local slot.
+        unsafe { pinyin_get_candidate_nbest_index(instance, row, &raw mut index) };
     });
 }
 
@@ -77,8 +98,13 @@ fn remove_user_candidate_aborts_on_a_sentence_row() {
         || {
             let user = TempUserDir::new("remove-sentence-row");
             let (context, _) = open_at(&user.path);
-            let instance = guessed_nihao(context);
-            unsafe { pinyin_remove_user_candidate(instance, row_of(instance, NBEST)) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { guessed_nihao(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, NBEST) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_remove_user_candidate(instance, row) };
         },
     );
 }
@@ -91,8 +117,13 @@ fn remove_user_candidate_aborts_on_a_system_token() {
         || {
             let user = TempUserDir::new("remove-system-token");
             let (context, _) = open_at(&user.path);
-            let instance = guessed_nihao(context);
-            unsafe { pinyin_remove_user_candidate(instance, row_of(instance, NORMAL)) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { guessed_nihao(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, NORMAL) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_remove_user_candidate(instance, row) };
         },
     );
 }
@@ -145,10 +176,15 @@ fn choose_candidate_aborts_at_offset_one_without_a_sentence() {
         || {
             let user = TempUserDir::new("choose-without-sentence");
             let (_context, instance) = open_at(&user.path);
-            assert_eq!(parse(instance, "nihao"), 5);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
             // SORT_WITHOUT_SENTENCE_CANDIDATE.
             assert!(unsafe { pinyin_guess_candidates(instance, 0, 0x1) });
-            unsafe { pinyin_choose_candidate(instance, 1, row_of(instance, NORMAL)) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, NORMAL) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_choose_candidate(instance, 1, row) };
         },
     );
 }
@@ -161,10 +197,13 @@ fn a_predicted_punctuation_row_chooses() {
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
     });
-    let row = row_of(instance, PREDICTED_PUNCTUATION);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_of(instance, PREDICTED_PUNCTUATION) };
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// An NBEST row chosen after a reparse that places no key answers the
@@ -174,16 +213,21 @@ fn a_predicted_punctuation_row_chooses() {
 fn an_nbest_choose_after_a_keyless_reparse_answers_minus_one() {
     let user = TempUserDir::new("keyless-nbest-choose");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
-    let row = row_of(instance, NBEST);
-    assert_eq!(parse(instance, "'''"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_of(instance, NBEST) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "'''") }, 3);
     assert_eq!(
         unsafe { crate::support::pinyin_choose_candidate(instance, 0, row) },
         -1
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A choose with a caller offset other than the row's `m_begin` forces the
@@ -196,14 +240,18 @@ fn an_nbest_choose_after_a_keyless_reparse_answers_minus_one() {
 fn a_choose_at_another_offset_answers_that_offset_plus_the_row_span() {
     let user = TempUserDir::new("choose-other-offset");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(parse(instance, "nihao"), 5);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe { pinyin_guess_candidates(instance, 2, crate::support::DEFAULT_SORT) });
-    let row = row_with(instance, NORMAL, "好");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_with(instance, NORMAL, "好") };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 3);
     // The forcing is the row's `[2, 5)`, not one from the caller's 0.
     assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 0) });
     assert!(unsafe { crate::support::pinyin_clear_constraint(instance, 2) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The span length the pin adds is a `guint8` (`pinyin.cpp:2582`): a row
@@ -214,14 +262,18 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
     let user = TempUserDir::new("choose-long-run");
     let (context, instance) = open_at(&user.path);
     let input = format!("ni{}hao", "'".repeat(300));
-    assert_eq!(parse(instance, &input), input.len());
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, &input) }, input.len());
     assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::support::DEFAULT_SORT) });
-    let row = row_with(instance, NORMAL, "你好");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_with(instance, NORMAL, "你好") };
     assert_eq!(
         unsafe { pinyin_choose_candidate(instance, 0, row) },
         i32::try_from(input.len() % 256).expect("small")
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Register row 37 for the transformed input schemes (maintainer ruling
@@ -233,8 +285,19 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
 /// answers the span's end in original coordinates, `0 + len = 2`.
 #[test]
 fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span() {
-    fn row(instance: *mut PinyinInstance, text: &str) -> *mut LookupCandidate {
-        let index = capture_rows(instance)
+    /// # Safety
+    ///
+    /// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+    /// `pinyin_free_instance` has not freed it.
+    ///
+    /// Calls are serial across the context, its sibling instances and its iterators: no other call
+    /// through any of them, and no borrow of their state, overlaps this call (the crate's Serial
+    /// calls rule). The returned row is valid until the snapshot is invalidated or the instance is
+    /// freed.
+    unsafe fn row(instance: *mut PinyinInstance, text: &str) -> *mut LookupCandidate {
+        // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into
+        // it.
+        let index = unsafe { capture_rows(instance) }
             .iter()
             .position(|(_, row, _)| row == text)
             .unwrap_or_else(|| panic!("{text} is offered"));
@@ -258,14 +321,20 @@ fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span()
         4
     );
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let phrase = unsafe { row(instance, "你好") };
     assert_eq!(
-        unsafe { pinyin_choose_candidate(instance, 0, row(instance, "你好")) },
+        // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+        unsafe { pinyin_choose_candidate(instance, 0, phrase) },
         4,
         "the chosen phrase consumes both keys, in original coordinates"
     );
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let word = unsafe { row(instance, "你") };
     assert_eq!(
-        unsafe { pinyin_choose_candidate(instance, 0, row(instance, "你")) },
+        // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+        unsafe { pinyin_choose_candidate(instance, 0, word) },
         2,
         "the pin's offset + len for the key-wide choose behind the composition"
     );

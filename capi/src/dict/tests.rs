@@ -15,7 +15,16 @@ use std::ptr;
 
 /// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
 /// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
-fn hold_nihao_in_libraries(context: *mut crate::types::PinyinContext, libraries: u8) {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn hold_nihao_in_libraries(context: *mut crate::types::PinyinContext, libraries: u8) {
     for library in 1..=libraries {
         let iter = unsafe { pinyin_begin_add_phrases(context, library) };
         assert!(unsafe {
@@ -46,7 +55,9 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
                 );
             }
             let (context, instance) = open(&path);
-            hold_nihao_in_libraries(context, 5);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { hold_nihao_in_libraries(context, 5) };
             unsafe {
                 crate::dict::pinyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
             };
@@ -113,8 +124,10 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     let scratch = tempfile::tempdir().expect("scratch");
     let path = scratch.path();
     let (context, instance) = open(path.to_str().expect("UTF-8 path"));
-    hold_nihao_in_libraries(context, 4);
-    let before = crate::test_support::lookup(instance, "你好");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { hold_nihao_in_libraries(context, 4) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let before = unsafe { crate::test_support::lookup(instance, "你好") };
     assert_eq!(before.len(), 4);
     assert!(before.iter().any(|token| token >> 24 == 2));
     let prepared = {
@@ -146,7 +159,8 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     assert!(answer);
     assert_eq!(unload.result, Some(true));
     assert_eq!(unload.appends, prepared);
-    let after = crate::test_support::lookup(instance, "你好");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let after = unsafe { crate::test_support::lookup(instance, "你好") };
     assert_eq!(
         after,
         before
@@ -168,7 +182,8 @@ fn an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array() {
     let user = TempUserDir::new("token-overrun");
     let context = crate::test_support::init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = crate::test_support::alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
     // SAFETY: the array stores packed two-byte keys and is freed below.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
     assert!(!unsafe {
@@ -179,7 +194,9 @@ fn an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array() {
         assert_eq!((*keys).len, 0);
         glib_sys::g_array_free(keys, 1);
     }
-    crate::test_support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
 }
 
 /// The stored surrogate is converted to historical UTF-8, with phrase length 3.
@@ -209,7 +226,8 @@ fn a_journal_surrogate_is_published_as_historical_utf8() {
     std::fs::write(user.path.join("gb_char.dbin"), bytes).unwrap();
     let context = crate::test_support::init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = crate::test_support::alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
     let (mut length, mut text) = (0x00ab_cdef, ptr::null_mut());
     assert!(unsafe {
         super::pinyin_token_get_phrase(instance, 0x0100_0003, &raw mut length, &raw mut text)
@@ -223,5 +241,7 @@ fn a_journal_surrogate_is_published_as_historical_utf8() {
         );
         glib_sys::g_free(text.cast());
     }
-    crate::test_support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
 }

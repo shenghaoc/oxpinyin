@@ -269,7 +269,9 @@ fn token_get_phrase_round_trips() {
     });
     assert_eq!(len as usize, 2, "len is the character count");
     assert_eq!(
-        take(rendered).as_deref(),
+        // SAFETY: `rendered` is the string the library just returned; this code owns it and frees
+        // it only here.
+        unsafe { take(rendered) }.as_deref(),
         Some("你好"),
         "the text round-trips"
     );

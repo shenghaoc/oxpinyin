@@ -19,20 +19,53 @@ use std::ffi::c_uint;
 /// `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.h:56`).
 const SORT_WITHOUT_SENTENCE: c_uint = 0x1;
 
-fn parse_whole(instance: *mut PinyinInstance, input: &str) {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn parse_whole(instance: *mut PinyinInstance, input: &str) {
     assert_eq!(
         unsafe { pinyin_parse_more_full_pinyins(instance, cstr(input).as_ptr()) },
         input.len()
     );
 }
 
-fn row_type(instance: *mut PinyinInstance, row: *mut LookupCandidate) -> lookup_candidate_type_t {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `row` is NULL or a row that `pinyin_get_candidate` answered from the current candidate list of a
+/// live instance.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn row_type(
+    instance: *mut PinyinInstance,
+    row: *mut LookupCandidate,
+) -> lookup_candidate_type_t {
     let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
     assert!(unsafe { pinyin_get_candidate_type(instance, row, &raw mut kind) });
     kind
 }
 
-fn row_text(instance: *mut PinyinInstance, row: *mut LookupCandidate) -> String {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `row` is NULL or a row that `pinyin_get_candidate` answered from the current candidate list of a
+/// live instance.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn row_text(instance: *mut PinyinInstance, row: *mut LookupCandidate) -> String {
     let mut text = std::ptr::null();
     assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut text) });
     assert!(!text.is_null());
@@ -44,7 +77,17 @@ fn row_text(instance: *mut PinyinInstance, row: *mut LookupCandidate) -> String 
 }
 
 /// The first row of `instance`'s list that `wanted` accepts.
-fn find_row(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule). The predicate must keep the instance and its candidate snapshot live. The returned
+/// pointer expires when that snapshot is invalidated or the instance is freed.
+unsafe fn find_row(
     instance: *mut PinyinInstance,
     wanted: impl Fn(lookup_candidate_type_t, &str) -> bool,
 ) -> *mut LookupCandidate {
@@ -56,11 +99,26 @@ fn find_row(
             assert!(unsafe { pinyin_get_candidate(instance, index, &raw mut row) });
             row
         })
-        .find(|&row| wanted(row_type(instance, row), &row_text(instance, row)))
+        .find(|&row| {
+            // SAFETY: `instance` meets this function's `# Safety` contract; `row` is a row of a
+            // live instance's current list, and no call since has rebuilt that list; only this
+            // thread calls into them.
+            wanted(unsafe { row_type(instance, row) }, &unsafe {
+                row_text(instance, row)
+            })
+        })
         .expect("the guess publishes the wanted row")
 }
 
-fn unigram_frequency(instance: *mut PinyinInstance, token: u32) -> u32 {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn unigram_frequency(instance: *mut PinyinInstance, token: u32) -> u32 {
     let mut freq = 0;
     unsafe { pinyin_token_get_unigram_frequency(instance, token, &raw mut freq) };
     freq
@@ -93,12 +151,22 @@ fn divided(
     assert!(unsafe { crate::support::pinyin_set_full_pinyin_scheme(context, scheme) });
     let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
-    parse_whole(instance, input);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { parse_whole(instance, input) };
     (context, instance)
 }
 
 /// A user NORMAL row of `instance`'s list.
-fn user_row(instance: *mut PinyinInstance) -> *mut LookupCandidate {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn user_row(instance: *mut PinyinInstance) -> *mut LookupCandidate {
     let mut count = 0;
     assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     (0..count)
@@ -118,12 +186,20 @@ fn a_normal_row_from_another_instance_forces_its_span_on_the_receiver(
     #[values(true, false)] same_context: bool,
 ) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer(), "nihao");
-    parse_whole(pair.receiver(), "nihao");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "nihao") };
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver(), "nihao") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
-    });
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         5
@@ -137,12 +213,20 @@ fn a_normal_row_from_another_instance_forces_its_span_on_the_receiver(
 #[rstest::rstest]
 fn a_span_past_the_receivers_matrix_is_refused(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer(), "nihao");
-    parse_whole(pair.receiver(), "ni");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "nihao") };
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver(), "ni") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
-    });
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         0
@@ -155,30 +239,52 @@ fn a_span_past_the_receivers_matrix_is_refused(#[values(true, false)] same_conte
 #[rstest::rstest]
 fn a_longer_row_trains_the_receivers_unigram(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer(), "ni");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "ni") };
     assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, IBUS_DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, _| {
-        kind == lookup_candidate_type_t::LONGER_CANDIDATE
-    });
-    let text = row_text(pair.producer(), row);
-    let token = *lookup(pair.receiver(), &text)
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, _| {
+            kind == lookup_candidate_type_t::LONGER_CANDIDATE
+        })
+    };
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; `row` is a row of a live instance's current list, and no
+    // call since has rebuilt that list; only this thread calls into them.
+    let text = unsafe { row_text(pair.producer(), row) };
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let token = *unsafe { lookup(pair.receiver(), &text) }
         .first()
         .expect("the LONGER phrase");
-    let (receiver_before, producer_before) = (
-        unigram_frequency(pair.receiver(), token),
-        unigram_frequency(pair.producer(), token),
-    );
+    let (receiver_before, producer_before) =
+        // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+        // `pair` drops at the end of the test; `pair.producer()` comes from the `Pair` fixture, which
+        // frees its handles only when `pair` drops at the end of the test; only this thread calls
+        // into them.
+        (unsafe { unigram_frequency(pair.receiver(), token) }, unsafe {
+            unigram_frequency(pair.producer(), token)
+        });
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         1
     );
     assert_eq!(
-        unigram_frequency(pair.receiver(), token),
+        // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+        // `pair` drops at the end of the test; only this thread calls into it.
+        unsafe { unigram_frequency(pair.receiver(), token) },
         receiver_before + 483
     );
     if !same_context {
-        assert_eq!(unigram_frequency(pair.producer(), token), producer_before);
+        assert_eq!(
+            // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
+            // when `pair` drops at the end of the test; only this thread calls into it.
+            unsafe { unigram_frequency(pair.producer(), token) },
+            producer_before
+        );
     }
     assert!(!unsafe { pinyin_clear_constraint(pair.receiver(), 0) });
 }
@@ -188,15 +294,23 @@ fn a_longer_row_trains_the_receivers_unigram(#[values(true, false)] same_context
 #[rstest::rstest]
 fn the_receivers_sort_option_selects_the_unigram_leg(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer(), "nihao");
-    parse_whole(pair.receiver(), "nihao");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "nihao") };
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver(), "nihao") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
     assert!(unsafe {
         pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT | SORT_WITHOUT_SENTENCE)
     });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
-    });
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         1
@@ -218,7 +332,9 @@ fn an_nbest_row_selects_from_the_receivers_results(#[values(true, false)] same_c
     };
     for rank in [0_usize, 1] {
         let pair = Pair::open(same_context);
-        parse_whole(pair.producer(), "nihao");
+        // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+        // `pair` drops at the end of the test; only this thread calls into it.
+        unsafe { parse_whole(pair.producer(), "nihao") };
         assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
         assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
         let mut count = 0;
@@ -230,11 +346,18 @@ fn an_nbest_row_selects_from_the_receivers_results(#[values(true, false)] same_c
                 row
             })
             .filter(|&row| {
-                row_type(pair.producer(), row) == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles
+                // only when `pair` drops at the end of the test; `row` is a row of a live
+                // instance's current list, and no call since has rebuilt that list; only this
+                // thread calls into them.
+                (unsafe { row_type(pair.producer(), row) })
+                    == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
             })
             .collect();
         assert!(rows.len() > 1, "two sentence rows for nihao");
-        parse_whole(pair.receiver(), "nihao");
+        // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+        // `pair` drops at the end of the test; only this thread calls into it.
+        unsafe { parse_whole(pair.receiver(), "nihao") };
         assert!(unsafe { pinyin_guess_sentence(pair.receiver()) });
         assert_eq!(
             unsafe { pinyin_choose_candidate(pair.receiver(), 0, rows[rank]) },
@@ -260,13 +383,21 @@ fn an_nbest_row_on_a_receiver_without_results_aborts() {
         "foreign_candidates::an_nbest_row_on_a_receiver_without_results_aborts",
         || {
             let pair = Pair::open(true);
-            parse_whole(pair.producer(), "ni");
+            // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
+            // when `pair` drops at the end of the test; only this thread calls into it.
+            unsafe { parse_whole(pair.producer(), "ni") };
             assert!(unsafe { pinyin_guess_sentence(pair.producer()) });
             assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-            let row = find_row(pair.producer(), |kind, _| {
-                kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-            });
-            parse_whole(pair.receiver(), "nihao");
+            // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
+            // when `pair` drops at the end of the test; only this thread calls into it.
+            let row = unsafe {
+                find_row(pair.producer(), |kind, _| {
+                    kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                })
+            };
+            // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only
+            // when `pair` drops at the end of the test; only this thread calls into it.
+            unsafe { parse_whole(pair.receiver(), "nihao") };
             unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) };
         },
     );
@@ -304,15 +435,25 @@ fn an_addon_row_promotes_into_the_receivers_context(#[values(true, false)] same_
     };
     let producer = unsafe { pinyin_alloc_instance(producer_context) };
     let receiver = unsafe { pinyin_alloc_instance(receiver_context) };
-    parse_whole(producer, "erhuang");
-    parse_whole(receiver, "erhuang");
+    // SAFETY: `producer` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { parse_whole(producer, "erhuang") };
+    // SAFETY: `receiver` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { parse_whole(receiver, "erhuang") };
     assert!(unsafe { pinyin_guess_candidates(producer, 0, DEFAULT_SORT) });
-    let row = find_row(producer, |kind, _| {
-        kind == lookup_candidate_type_t::ADDON_CANDIDATE
-    });
-    let text = row_text(producer, row);
+    // SAFETY: `producer` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe {
+        find_row(producer, |kind, _| {
+            kind == lookup_candidate_type_t::ADDON_CANDIDATE
+        })
+    };
+    // SAFETY: `producer` was opened above and is not yet freed; `row` is a row of a live instance's
+    // current list, and no call since has rebuilt that list; only this thread calls into them.
+    let text = unsafe { row_text(producer, row) };
     let promoted = |instance| {
-        lookup(instance, &text)
+        // SAFETY: `instance` is the closure's argument, and the test calls `promoted` only with
+        // `producer` or `receiver`, which it opened above and has not freed; only this thread calls
+        // into it.
+        (unsafe { lookup(instance, &text) })
             .into_iter()
             .filter(|&token| library(token) == 5)
             .count()
@@ -321,10 +462,20 @@ fn an_addon_row_promotes_into_the_receivers_context(#[values(true, false)] same_
 
     assert_eq!(unsafe { pinyin_choose_candidate(receiver, 0, row) }, 7);
     assert_eq!(
-        row_type(producer, row),
+        // SAFETY: `producer` was opened above and is not yet freed; `row` is a row of a live
+        // instance's current list, and no call since has rebuilt that list; only this thread calls
+        // into them.
+        unsafe { row_type(producer, row) },
         lookup_candidate_type_t::NORMAL_CANDIDATE
     );
-    assert_eq!(row_text(producer, row), text, "the string is unchanged");
+    assert_eq!(
+        // SAFETY: `producer` was opened above and is not yet freed; `row` is a row of a live
+        // instance's current list, and no call since has rebuilt that list; only this thread calls
+        // into them.
+        unsafe { row_text(producer, row) },
+        text,
+        "the string is unchanged"
+    );
     assert_eq!(promoted(receiver), 1);
     assert_eq!(promoted(producer), usize::from(same_context));
     assert!(unsafe { pinyin_clear_constraint(receiver, 0) });
@@ -359,19 +510,29 @@ fn a_span_to_the_receivers_reserved_column_clears_and_forces_nothing() {
         4
     );
     assert!(unsafe { pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT) });
-    let own = find_row(pair.receiver(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
-    });
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let own = unsafe {
+        find_row(pair.receiver(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, own) },
         2
     );
 
-    parse_whole(pair.producer(), "nihao");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "nihao") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
-    });
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         5
@@ -386,12 +547,20 @@ fn a_span_to_the_receivers_reserved_column_clears_and_forces_nothing() {
 #[rstest::rstest]
 fn a_forcing_the_receiver_cannot_spell_is_dropped(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer(), "ni");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "ni") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
-    });
-    parse_whole(pair.receiver(), "ma");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
+        })
+    };
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver(), "ma") };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, row) },
         2
@@ -416,15 +585,25 @@ fn a_span_ending_inside_a_receiver_key_clears_and_forces_nothing() {
         4
     );
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = find_row(pair.producer(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
-    });
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe {
+        find_row(pair.producer(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你好"
+        })
+    };
 
-    parse_whole(pair.receiver(), "nihao");
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver(), "nihao") };
     assert!(unsafe { pinyin_guess_candidates(pair.receiver(), 0, DEFAULT_SORT) });
-    let own = find_row(pair.receiver(), |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
-    });
+    // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let own = unsafe {
+        find_row(pair.receiver(), |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "你"
+        })
+    };
     assert_eq!(
         unsafe { pinyin_choose_candidate(pair.receiver(), 0, own) },
         2
@@ -465,17 +644,23 @@ fn a_divided_column_row_forces_its_span(#[values(true, false)] same_instance: bo
     let (hanyu_context, hanyu) = divided(&system, &hanyu_dir, 1, "xian");
     let producer = if same_instance { luoma } else { hanyu };
     assert!(unsafe { pinyin_guess_candidates(producer, 0, DEFAULT_SORT) });
-    let row = find_row(producer, |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "西"
-    });
+    // SAFETY: `producer` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe {
+        find_row(producer, |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "西"
+        })
+    };
     assert_eq!(unsafe { pinyin_choose_candidate(luoma, 0, row) }, 2);
     assert!(!unsafe { pinyin_clear_constraint(luoma, 2) });
     assert!(unsafe { pinyin_clear_constraint(luoma, 0) });
     // The Hanyu producer publishes the complementary divided [2, 4) span.
     assert!(unsafe { pinyin_guess_candidates(hanyu, 2, DEFAULT_SORT) });
-    let row = find_row(hanyu, |kind, text| {
-        kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "安"
-    });
+    // SAFETY: `hanyu` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe {
+        find_row(hanyu, |kind, text| {
+            kind == lookup_candidate_type_t::NORMAL_CANDIDATE && text == "安"
+        })
+    };
     assert_eq!(unsafe { pinyin_choose_candidate(luoma, 2, row) }, 4);
     assert!(!unsafe { pinyin_clear_constraint(luoma, 0) });
     assert!(unsafe { pinyin_clear_constraint(luoma, 2) });
@@ -495,13 +680,29 @@ fn a_user_row_from_another_instance_is_removed_from_the_receivers_context(
     use crate::support::{export_of, import_batch};
     let pair = Pair::open(same_context);
     for context in pair.contexts() {
-        assert_eq!(import_batch(*context, 7, &[("测侧", "ce'ce", 7)]), [true]);
+        assert_eq!(
+            // SAFETY: `*context` is one of `pair.contexts()`, which the `Pair` fixture frees only
+            // when `pair` drops at the end of the test; only this thread calls into it.
+            unsafe { import_batch(*context, 7, &[("测侧", "ce'ce", 7)]) },
+            [true]
+        );
     }
-    parse_whole(pair.producer(), "cece");
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer(), "cece") };
     assert!(unsafe { pinyin_guess_candidates(pair.producer(), 0, DEFAULT_SORT) });
-    let row = user_row(pair.producer());
+    // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let row = unsafe { user_row(pair.producer()) };
 
     assert!(unsafe { crate::support::pinyin_remove_user_candidate(pair.receiver(), row) });
-    assert!(export_of(pair.receiver_context(), 7).is_empty());
-    assert_eq!(export_of(pair.contexts()[0], 7).is_empty(), same_context);
+    // SAFETY: `pair.receiver_context()` comes from the `Pair` fixture, which frees its handles only
+    // when `pair` drops at the end of the test; only this thread calls into it.
+    assert!(unsafe { export_of(pair.receiver_context(), 7) }.is_empty());
+    assert_eq!(
+        // SAFETY: `pair.contexts()[0]` comes from the `Pair` fixture, which frees its handles only
+        // when `pair` drops at the end of the test; only this thread calls into it.
+        unsafe { export_of(pair.contexts()[0], 7) }.is_empty(),
+        same_context
+    );
 }

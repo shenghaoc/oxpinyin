@@ -22,7 +22,13 @@ std::thread_local! {
     static CLEARED: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-extern "C" fn record_cleared(element: glib_sys::gpointer) {
+/// Records the four-byte element that GLib clears.
+///
+/// # Safety
+///
+/// GLib calls it as the array's clear function: `element` points to one live four-byte element of
+/// that array, valid for reads for the call.
+unsafe extern "C" fn record_cleared(element: glib_sys::gpointer) {
     // SAFETY: GLib hands the clear function one live four-byte element.
     let value = unsafe { element.cast::<u32>().read_unaligned() };
     CLEARED.with(|cleared| cleared.borrow_mut().push(value));
@@ -34,7 +40,12 @@ fn take_cleared() -> Vec<u32> {
 
 /// The elements of a zero-terminated GArray of `u32`, its terminator
 /// checked.
-fn terminated_u32(array: *mut glib_sys::GArray) -> Vec<u32> {
+///
+/// # Safety
+///
+/// `array` points to a live `GArray` of four-byte elements whose data is followed by a zero
+/// element.
+unsafe fn terminated_u32(array: *mut glib_sys::GArray) -> Vec<u32> {
     // SAFETY: a live zero-terminated GArray of four-byte elements.
     unsafe {
         let view = &*array;
@@ -51,7 +62,12 @@ fn terminated_u32(array: *mut glib_sys::GArray) -> Vec<u32> {
 }
 
 /// Hex of the NUL-terminated `text`, freed with `g_free`.
-fn take_hex(text: *mut c_char) -> String {
+///
+/// # Safety
+///
+/// `text` is a NUL-terminated string, not NULL, that the library returned to the caller, who owns
+/// it. The call frees it with `g_free`, so the caller does not use it again.
+unsafe fn take_hex(text: *mut c_char) -> String {
     assert!(!text.is_null());
     // SAFETY: a NUL-terminated GLib string the caller owns.
     let bytes = unsafe { std::ffi::CStr::from_ptr(text) }
@@ -85,7 +101,9 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
     let mut count = UNTOUCHED;
     assert!(!unsafe { pinyin_token_get_n_pronunciation(instance, 0x0f00_0001, &raw mut count) });
     assert_eq!(count, 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Register entry "Token getters on a phrase longer than sixteen characters
@@ -122,12 +140,20 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
         crate::support::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
     });
     assert_eq!(
-        (length, crate::support::take_owned_cstr(phrase).as_str()),
+        (
+            length,
+            // SAFETY: `phrase` is the string the library just returned; this code owns it and frees
+            // it only here.
+            unsafe { crate::support::take_owned_cstr(phrase) }.as_str()
+        ),
         (17, text)
     );
     let expected: Vec<u8> = keys.iter().flat_map(|key| key.to_le_bytes()).collect();
-    assert_eq!(reading_bytes(instance, token, 0), expected);
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { reading_bytes(instance, token, 0) }, expected);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A stored user key word is read back as it is stored: 0x8000.
@@ -135,13 +161,20 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
 fn a_stored_user_key_word_is_read_back_verbatim() {
     let user = TempUserDir::new("stored-key-8000");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(import_batch(context, 7, &[("你", "ni3", 5)]), [true]);
-    let token = lookup(instance, "你")
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("你", "ni3", 5)]) },
+        [true]
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "你") }
         .into_iter()
         .find(|token| token >> 24 == 7)
         .expect("a user token");
     assert!(unsafe { pinyin_save(context) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let path = user.path.join("user.bin");
     let mut payload = std::fs::read(&path).expect("user.bin")[8..].to_vec();
     let text = 0x4f60_u32.to_le_bytes();
@@ -162,11 +195,19 @@ fn a_stored_user_key_word_is_read_back_verbatim() {
         crate::support::pinyin_token_get_phrase(instance, token, &raw mut length, &raw mut phrase)
     });
     assert_eq!(
-        (length, crate::support::take_owned_cstr(phrase).as_str()),
+        (
+            length,
+            // SAFETY: `phrase` is the string the library just returned; this code owns it and frees
+            // it only here.
+            unsafe { crate::support::take_owned_cstr(phrase) }.as_str()
+        ),
         (1, "你")
     );
-    assert_eq!(reading_bytes(instance, token, 0), [0x00, 0x80]);
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { reading_bytes(instance, token, 0) }, [0x00, 0x80]);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A stored word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL,
@@ -179,7 +220,8 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
     let user = TempUserDir::new("token-phrase-null");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     let (mut length, mut phrase) = (UNTOUCHED, UNTOUCHED as usize as *mut c_char);
     assert!(unsafe {
         crate::support::pinyin_token_get_phrase(
@@ -190,7 +232,9 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
         )
     });
     assert_eq!((length, phrase), (3, ptr::null_mut()));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `lookup_tokens` clears the caller's GArray through its clear function
@@ -213,16 +257,20 @@ fn lookup_tokens_resets_the_callers_array() {
         crate::support::pinyin_lookup_tokens(instance, c"你好".as_ptr(), array.cast())
     });
     assert_eq!(take_cleared(), [0x1234]);
-    let found = terminated_u32(array);
+    // SAFETY: `array` is the live `GArray` made above, of the element width `terminated_u32` reads.
+    let found = unsafe { terminated_u32(array) };
     assert_eq!(found, [0x0100_6205]);
     assert!(!unsafe {
         crate::support::pinyin_lookup_tokens(instance, c"not-a-phrase".as_ptr(), array.cast())
     });
     assert_eq!(take_cleared(), found);
-    assert!(terminated_u32(array).is_empty());
+    // SAFETY: `array` is the live `GArray` made above, of the element width `terminated_u32` reads.
+    assert!(unsafe { terminated_u32(array) }.is_empty());
     // SAFETY: the array is freed once, with its data.
     unsafe { glib_sys::g_array_free(array, 1) };
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `token_get_nth_pronunciation` into a NULL array logs the GArray
@@ -233,7 +281,8 @@ fn nth_pronunciation_into_a_null_array_logs_the_glib_criticals() {
     let user = TempUserDir::new("garray-null-pronunciation");
     let user_token = saved_user_phrase(&user.path);
     let (context, instance) = open_at(&user.path);
-    let token = lookup(instance, "你好")[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "你好") }[0];
     let logs = crate::support::LogCapture::new();
     let glib = (Some("GLib".to_owned()), CRITICAL);
     for token in [token, user_token] {
@@ -259,7 +308,9 @@ fn nth_pronunciation_into_a_null_array_logs_the_glib_criticals() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0, glib);
     assert!(records[0].1.contains("g_array_set_size"));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A stored phrase word above Unicode reaches the sentence, the training
@@ -271,21 +322,27 @@ fn a_system_phrase_above_unicode_is_chosen_and_trained() {
     let user = TempUserDir::new("phrase-text-above-unicode");
     let context = init_at(&system, &user.path);
     assert!(!context.is_null());
-    let instance = alloc(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
     assert!(unsafe { pinyin_set_options(context, 1 << 5) });
-    assert_eq!(parse(instance, "da1da1da1ba1"), 12);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "da1da1da1ba1") }, 12);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::support::DEFAULT_SORT) });
-    assert_eq!(
-        unsafe { pinyin_choose_candidate(instance, 0, row_of(instance, NORMAL)) },
-        9
-    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_of(instance, NORMAL) };
+    // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 9);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
     assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut sentence) });
-    assert_eq!(take_hex(sentence), "e794b2f4908080e4b999e4b899");
+    // SAFETY: `sentence` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take_hex(sentence) }, "e794b2f4908080e4b999e4b899");
     assert!(unsafe { crate::support::pinyin_train(instance, 0) });
-    assert_eq!(unigram(instance, 0x0100_0001), (true, 583));
-    assert_eq!(unigram(instance, 0x0100_0002), (true, 583));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { unigram(instance, 0x0100_0001) }, (true, 583));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { unigram(instance, 0x0100_0002) }, (true, 583));
     let iter = unsafe { crate::support::pinyin_begin_get_phrases(context, 1) };
     let mut rows = Vec::new();
     while unsafe { crate::support::pinyin_iterator_has_next_phrase(iter) } {
@@ -298,7 +355,15 @@ fn a_system_phrase_above_unicode_is_chosen_and_trained() {
                 &raw mut count,
             )
         });
-        rows.push((take_hex(phrase), take_hex(reading), count));
+        rows.push((
+            // SAFETY: `phrase` is the string the library just returned; this code owns it and frees
+            // it only here.
+            unsafe { take_hex(phrase) },
+            // SAFETY: `reading` is the string the library just returned; this code owns it and
+            // frees it only here.
+            unsafe { take_hex(reading) },
+            count,
+        ));
     }
     unsafe { crate::support::pinyin_end_get_phrases(iter) };
     let row = |text: &str, reading: &str| (text.to_owned(), reading.to_owned(), 79);
@@ -309,5 +374,7 @@ fn a_system_phrase_above_unicode_is_chosen_and_trained() {
             row("e4b899", "626131"),
         ]
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

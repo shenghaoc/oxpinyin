@@ -23,7 +23,19 @@ use crate::user_data::pinyin_remember_user_input;
 use oxpinyin::user::{FIRST_USER_TOKEN, UserStore};
 
 /// Imports `phrase` into library 7 once per reading and returns its token.
-fn import_readings(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `instance` is a live, non-NULL instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn import_readings(
     context: *mut crate::types::PinyinContext,
     instance: *mut PinyinInstance,
     phrase: &str,
@@ -36,14 +48,25 @@ fn import_readings(
         });
     }
     unsafe { pinyin_end_add_phrases(import) };
-    with_store(instance, |store| store.token_for_phrase(phrase))
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { with_store(instance, |store| store.token_for_phrase(phrase)) })
         .expect("readable store")
         .expect("the import gave the phrase a token")
 }
 
 /// The stored readings of `token` as `(packed first key, frequency)`.
-fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
-    with_store(instance, |store| store.item_pronunciations(token))
+///
+/// # Safety
+///
+/// `instance` is a live, non-NULL instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
         .expect("readable store")
         .expect("an item")
         .iter()
@@ -66,7 +89,9 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
     for (input, remembered) in [("ni3", true), ("ni2", false)] {
         let user_dir = TempUserDir::new("remember-double-tone");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        let token = import_readings(context, instance, "农", &["ni3"]);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; only this thread calls into them.
+        let token = unsafe { import_readings(context, instance, "农", &["ni3"]) };
         assert!(unsafe { pinyin_set_options(context, 0x28) });
         assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 2) });
         assert_eq!(
@@ -80,7 +105,9 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
         );
         let expected = if remembered { 1 + 3 } else { 1 };
         assert_eq!(
-            stored_readings(instance, token),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { stored_readings(instance, token) },
             [(ni3, expected)],
             "{input}"
         );
@@ -111,7 +138,12 @@ fn remember_user_input_requires_known_characters() {
 
     for phrase in [b"ni\0".as_slice(), "你i\0".as_bytes(), "😀好\0".as_bytes()] {
         assert!(!unsafe { pinyin_remember_user_input(instance, phrase.as_ptr().cast(), 1) });
-        assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, next_user_token) },
+            FIRST_USER_TOKEN
+        );
         let export = unsafe { pinyin_begin_get_phrases(context, 7) };
         assert!(!export.is_null());
         assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
@@ -121,7 +153,8 @@ fn remember_user_input_requires_known_characters() {
     // Known characters remain eligible.
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), 1) });
     assert_eq!(
-        with_store(instance, |store| store.token_for_phrase("你好")).unwrap(),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { with_store(instance, |store| store.token_for_phrase("你好")) }.unwrap(),
         Some(FIRST_USER_TOKEN)
     );
 
@@ -165,7 +198,11 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
     ] {
         assert!(!unsafe { pinyin_remember_user_input(instance, invalid.as_ptr().cast(), 1) });
     }
-    assert_eq!(with_store(instance, next_user_token), FIRST_USER_TOKEN);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { with_store(instance, next_user_token) },
+        FIRST_USER_TOKEN
+    );
     let export = unsafe { pinyin_begin_get_phrases(context, 7) };
     assert!(!export.is_null());
     assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
@@ -223,8 +260,11 @@ fn parsed_nong_under_l_n(
     use crate::parse::pinyin_parse_more_double_pinyins;
 
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let token = import_readings(context, instance, "弄", &["nong", "long"]);
-    let before = stored_readings(instance, token);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; only this thread calls into them.
+    let token = unsafe { import_readings(context, instance, "弄", &["nong", "long"]) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let before = unsafe { stored_readings(instance, token) };
     assert_eq!(before.len(), 2);
     assert!(unsafe { pinyin_set_options(context, 0x8 | (1 << 15)) });
     assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 2) });
@@ -236,8 +276,22 @@ fn parsed_nong_under_l_n(
 }
 
 /// Both readings' frequencies rose by the count of 3.
-fn assert_both_readings_rose(instance: *mut PinyinInstance, token: u32, before: &[(u16, u32)]) {
-    let after = stored_readings(instance, token);
+///
+/// # Safety
+///
+/// `instance` is a live, non-NULL instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn assert_both_readings_rose(
+    instance: *mut PinyinInstance,
+    token: u32,
+    before: &[(u16, u32)],
+) {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    let after = unsafe { stored_readings(instance, token) };
     assert_eq!(after.len(), 2);
     for ((_, was), (_, now)) in before.iter().zip(&after) {
         assert_eq!(*now, *was + 3);
@@ -252,7 +306,8 @@ fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
     let (context, instance, token, before) = parsed_nong_under_l_n(&user_dir);
     assert!(unsafe { pinyin_set_options(context, 0x8) });
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3) });
-    assert_both_readings_rose(instance, token, &before);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { assert_both_readings_rose(instance, token, &before) };
 }
 
 /// `_remember_phrase_recur` calls `_add_phrase` for every complete path and
@@ -271,11 +326,13 @@ fn remember_user_input_adds_along_every_complete_path() {
         });
     }
     unsafe { pinyin_end_add_phrases(import) };
-    let token = with_store(instance, |store| store.token_for_phrase("弄"))
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { with_store(instance, |store| store.token_for_phrase("弄")) }
         .expect("readable store")
         .expect("the import gave 弄 a token");
     let readings = |instance| {
-        with_store(instance, |store| store.item_pronunciations(token))
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
             .expect("readable store")
             .expect("an item")
             .iter()
@@ -314,7 +371,8 @@ fn remember_user_input_writes_again_for_an_identical_complete_path() {
         first.key().to_packed()
     };
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3) });
-    let after = stored_readings(instance, token);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let after = unsafe { stored_readings(instance, token) };
     for ((key, was), (after_key, now)) in before.iter().zip(&after) {
         assert_eq!(key, after_key);
         assert_eq!(*now, *was + if *key == duplicate { 6 } else { 3 });

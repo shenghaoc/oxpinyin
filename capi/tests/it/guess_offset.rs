@@ -18,23 +18,55 @@ use std::ptr;
 use crate::support::capture_rows;
 
 /// The current snapshot's candidate texts, in list order.
-fn texts(instance: *mut PinyinInstance) -> Vec<String> {
-    capture_rows(instance)
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn texts(instance: *mut PinyinInstance) -> Vec<String> {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { capture_rows(instance) })
         .into_iter()
         .map(|(_, text, _)| text)
         .collect()
 }
 
 /// The snapshot position of the first candidate with `text`.
-fn position_of(instance: *mut PinyinInstance, text: &str) -> usize {
-    capture_rows(instance)
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn position_of(instance: *mut PinyinInstance, text: &str) -> usize {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { capture_rows(instance) })
         .iter()
         .position(|(_, row, _)| row == text)
         .unwrap_or_else(|| panic!("{text:?} is offered"))
 }
 
 /// Borrowed pointer to the snapshot candidate at `index`.
-fn checked_candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandidate {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn checked_candidate_at(
+    instance: *mut PinyinInstance,
+    index: usize,
+) -> *mut LookupCandidate {
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(
         unsafe {
@@ -56,9 +88,15 @@ fn guess_offset_normalizes_across_the_separator_run() {
     let user_dir = TempUserDir::new("guess-zero-run");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    assert_eq!(parse(instance, input), input.len(), "{input} parses whole");
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { parse(instance, input) },
+        input.len(),
+        "{input} parses whole"
+    );
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let ni = checked_candidate_at(instance, position_of(instance, "\u{4f60}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { checked_candidate_at(instance, position_of(instance, "\u{4f60}")) };
     assert_eq!(
         unsafe { pinyin_choose_candidate(instance, 0, ni) },
         2,
@@ -68,21 +106,24 @@ fn guess_offset_normalizes_across_the_separator_run() {
     // ibus's raw begin of the next key rest (one past the run) and the
     // run's first zero-key byte answer the same list.
     assert!(unsafe { pinyin_guess_candidates(instance, post_run, DEFAULT_SORT) });
-    let after_run = texts(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let after_run = unsafe { texts(instance) };
     assert!(
         !after_run.is_empty(),
         "{input}: the remaining group offers candidates"
     );
     assert!(unsafe { pinyin_guess_candidates(instance, zero_start, DEFAULT_SORT) });
     assert_eq!(
-        texts(instance),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { texts(instance) },
         after_run,
         "{input}: both caller offsets normalize to the same lookup"
     );
 
     // The scan anchor never moved to the normalized offset, so a choose
     // at the caller offset still advances past it.
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     let cursor = unsafe { pinyin_choose_candidate(instance, post_run, hao) };
     assert!(
         cursor > i32::try_from(post_run).expect("small input offset"),
@@ -104,14 +145,17 @@ fn a_post_separator_choose_returns_the_candidate_end() {
     let user_dir = TempUserDir::new("guess-zero-choose-end");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    assert_eq!(parse(instance, "ni'hao"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni'hao") }, 6);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let ni = checked_candidate_at(instance, position_of(instance, "\u{4f60}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { checked_candidate_at(instance, position_of(instance, "\u{4f60}")) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, ni) }, 2);
     // ibus's caller offset: the raw begin of the next key rest, one past
     // the separator.
     assert!(unsafe { pinyin_guess_candidates(instance, 3, DEFAULT_SORT) });
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     let cursor = unsafe { pinyin_choose_candidate(instance, 3, hao) };
     assert_eq!(
         cursor, 6,
@@ -139,7 +183,8 @@ fn a_post_separator_choose_returns_the_candidate_end() {
     // dropping both re-opens the walk at 0. (The pre-revert rule
     // re-parsed this shape fresh: the probes answered false and the
     // head window answered \u{4f60} at offset 0.)
-    assert_eq!(parse(instance, "ni'hao'a"), 8);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni'hao'a") }, 8);
     assert!(
         unsafe { pinyin_clear_constraint(instance, 0) },
         "the \u{4f60} forcing survived the committed re-parse"
@@ -149,7 +194,8 @@ fn a_post_separator_choose_returns_the_candidate_end() {
         "the \u{597d} forcing survived the committed re-parse"
     );
     assert!(unsafe { pinyin_guess_candidates(instance, 3, DEFAULT_SORT) });
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     assert_eq!(
         unsafe { pinyin_choose_candidate(instance, 3, hao) },
         6,
@@ -158,7 +204,8 @@ fn a_post_separator_choose_returns_the_candidate_end() {
     // The walk continues from ibus's next post-separator begin and commits
     // exactly at the parse length.
     assert!(unsafe { pinyin_guess_candidates(instance, 7, DEFAULT_SORT) });
-    let rest = checked_candidate_at(instance, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rest = unsafe { checked_candidate_at(instance, 0) };
     let cursor = unsafe { pinyin_choose_candidate(instance, 7, rest) };
     assert_eq!(
         usize::try_from(cursor).expect("non-negative cursor"),
@@ -207,10 +254,12 @@ fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
     // transformed separator the session inserts between the keys never
     // leaks into it, and the walk lands the commit branch.
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let ni = checked_candidate_at(instance, position_of(instance, "\u{4f60}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { checked_candidate_at(instance, position_of(instance, "\u{4f60}")) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, ni) }, 2);
     assert!(unsafe { pinyin_guess_candidates(instance, 2, DEFAULT_SORT) });
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     let cursor = unsafe { pinyin_choose_candidate(instance, 2, hao) };
     assert_eq!(cursor, 4, "the second group ends at its own original end");
     assert_eq!(
@@ -248,10 +297,12 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
 
     // The choose cursor is the absolute end in original coordinates.
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let ni = checked_candidate_at(instance, position_of(instance, "\u{4f60}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { checked_candidate_at(instance, position_of(instance, "\u{4f60}")) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, ni) }, 2);
     assert!(unsafe { pinyin_guess_candidates(instance, 2, DEFAULT_SORT) });
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     let cursor = unsafe { pinyin_choose_candidate(instance, 2, hao) };
     assert_eq!(cursor, 4, "the second group ends at its own original end");
     assert_eq!(
@@ -290,17 +341,21 @@ fn luoma_input_carries_the_full_offset_law() {
     // out-of-range. "ni" and "hao" spell the same as hanyu in the index.
     assert!(unsafe { pinyin_set_full_pinyin_scheme(context, 2) });
 
-    assert_eq!(parse(instance, "ni'hao"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni'hao") }, 6);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    let ni = checked_candidate_at(instance, position_of(instance, "\u{4f60}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let ni = unsafe { checked_candidate_at(instance, position_of(instance, "\u{4f60}")) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, ni) }, 2);
 
     assert!(unsafe { pinyin_guess_candidates(instance, 3, DEFAULT_SORT) });
-    let after_run = texts(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let after_run = unsafe { texts(instance) };
     assert!(!after_run.is_empty());
     assert!(unsafe { pinyin_guess_candidates(instance, 2, DEFAULT_SORT) });
     assert_eq!(
-        texts(instance),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { texts(instance) },
         after_run,
         "post-run and run-start offsets answer the same list"
     );
@@ -309,12 +364,14 @@ fn luoma_input_carries_the_full_offset_law() {
     // `m_end` 6 (`pinyin.cpp:2228`, `:2246`). A choose at 3 answers the
     // caller's offset plus that span's length, `3 + 4` (`:2582-2588`),
     // whatever offset the caller passes.
-    let hao = checked_candidate_at(instance, position_of(instance, "\u{597d}"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let hao = unsafe { checked_candidate_at(instance, position_of(instance, "\u{597d}")) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 3, hao) }, 7);
 
     // One past the reserved slot finds nothing (offset 8 and beyond abort,
     // as at the pin); the leading gap does not erase its real key.
-    assert_eq!(parse(instance, "ni'hao"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni'hao") }, 6);
     assert!(unsafe { pinyin_guess_candidates(instance, 7, DEFAULT_SORT) });
     // The re-send of the same buffer CONTINUES the committed composition
     // (the R5 revert, register #8: upstream's parse path never touches
@@ -330,14 +387,16 @@ fn luoma_input_carries_the_full_offset_law() {
         unsafe { pinyin_clear_constraint(instance, 3) },
         "the \u{597d} forcing survived the committed re-send"
     );
-    assert_eq!(parse(instance, "'ni"), 3);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "'ni") }, 3);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
     assert!(unsafe { pinyin_guess_candidates(instance, 1, DEFAULT_SORT) });
 
     // An unparsed suffix is outside the law's domain: the bound is the
     // parse's consumed prefix, not the stored buffer, exactly like the
     // other transformed seams' parsed lengths.
-    assert_eq!(parse(instance, "ni'hao!"), 6);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni'hao!") }, 6);
     assert!(
         unsafe { pinyin_guess_candidates(instance, 6, DEFAULT_SORT) },
         "one past the parsed region is the reserved slot"

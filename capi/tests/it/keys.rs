@@ -27,9 +27,15 @@ use std::ptr;
 /// The renderers allocate through GLib; `take_owned_cstr` frees with
 /// `g_free`, so a leak or a mismatched free would surface here rather
 /// than in a consumer.
-fn take_rendered(p: *mut crate::support::GChar) -> String {
+///
+/// # Safety
+///
+/// `p` is a NUL-terminated string, not NULL, that the library returned to the caller, who owns it.
+/// The call frees it with `g_free`, so the caller does not use it again.
+unsafe fn take_rendered(p: *mut crate::support::GChar) -> String {
     assert!(!p.is_null(), "renderer answered true with a NULL out-param");
-    crate::support::take_owned_cstr(p)
+    // SAFETY: `p` meets this function's `# Safety` contract.
+    unsafe { crate::support::take_owned_cstr(p) }
 }
 
 /// S7: the key at offset 0 of a `nihao` parse under full-pinyin scheme 2 (luoma) and
@@ -59,11 +65,15 @@ fn a_scheme_parse_keys_render_as_luoma_and_secondary_zhuyin() {
         assert!(unsafe {
             crate::support::pinyin_get_luoma_pinyin_string(instance, key, &raw mut rendered)
         });
-        assert_eq!(take_rendered(rendered), "ni", "scheme {scheme}");
+        // SAFETY: `rendered` is the string the library just returned; this code owns it and frees
+        // it only here.
+        assert_eq!(unsafe { take_rendered(rendered) }, "ni", "scheme {scheme}");
         assert!(unsafe {
             crate::support::pinyin_get_secondary_zhuyin_string(instance, key, &raw mut rendered)
         });
-        assert_eq!(take_rendered(rendered), "ni", "scheme {scheme}");
+        // SAFETY: `rendered` is the string the library just returned; this code owns it and frees
+        // it only here.
+        assert_eq!(unsafe { take_rendered(rendered) }, "ni", "scheme {scheme}");
         unsafe { crate::support::pinyin_free_instance(instance) };
         unsafe { crate::support::pinyin_fini(context) };
     }
@@ -118,7 +128,9 @@ fn nihao_preedit_family_matches_the_pin_expectation_table() {
 
         let mut s: *mut crate::support::GChar = ptr::null_mut();
         assert!(unsafe { crate::support::pinyin_get_pinyin_string(instance, key, &raw mut s) });
-        assert_eq!(take_rendered(s), pinyin);
+        // SAFETY: `s` is the string the library just returned; this code owns it and frees it only
+        // here.
+        assert_eq!(unsafe { take_rendered(s) }, pinyin);
 
         let (mut sm, mut ym): (*mut crate::support::GChar, *mut crate::support::GChar) =
             (ptr::null_mut(), ptr::null_mut());
@@ -126,13 +138,18 @@ fn nihao_preedit_family_matches_the_pin_expectation_table() {
             crate::support::pinyin_get_pinyin_strings(instance, key, &raw mut sm, &raw mut ym)
         });
         assert_eq!(
-            (take_rendered(sm), take_rendered(ym)),
+            // SAFETY: `sm` is the string the library just returned; this code owns it and frees it
+            // only here; `ym` is the string the library just returned; this code owns it and frees
+            // it only here.
+            (unsafe { take_rendered(sm) }, unsafe { take_rendered(ym) }),
             (shengmu.to_owned(), yunmu.to_owned())
         );
 
         let mut z: *mut crate::support::GChar = ptr::null_mut();
         assert!(unsafe { crate::support::pinyin_get_zhuyin_string(instance, key, &raw mut z) });
-        assert_eq!(take_rendered(z), zhuyin);
+        // SAFETY: `z` is the string the library just returned; this code owns it and frees it only
+        // here.
+        assert_eq!(unsafe { take_rendered(z) }, zhuyin);
     }
 
     for offset in [1_usize, 3, 4, 5] {
@@ -262,18 +279,26 @@ fn full_pinyin_one_key_surface() {
 
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ni"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ni"));
     assert!(unsafe { pinyin_get_zhuyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ㄋㄧ"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ㄋㄧ"));
     assert!(unsafe {
         pinyin_get_luoma_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered)
     });
-    assert_eq!(take(rendered).as_deref(), Some("ni"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ni"));
     assert!(unsafe {
         pinyin_get_secondary_zhuyin_string(fixture.instance, &raw mut key, &raw mut rendered)
     });
     assert_eq!(
-        take(rendered).as_deref(),
+        // SAFETY: `rendered` is the string the library just returned; this code owns it and frees
+        // it only here.
+        unsafe { take(rendered) }.as_deref(),
         Some("ni"),
         "secondary zhuyin for ni is ASCII"
     );
@@ -291,12 +316,16 @@ fn full_pinyin_one_key_surface() {
     });
     assert!(unsafe { pinyin_get_pinyin_is_incomplete(fixture.instance, &raw mut key) });
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("b"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("b"));
     // Luoma/secondary for an initial-only key are the pin's "None" rows.
     assert!(unsafe {
         pinyin_get_luoma_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered)
     });
-    assert_eq!(take(rendered).as_deref(), Some("None"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("None"));
 }
 
 /// The double-pinyin one-key surface (MS default): `ni` resolves, tone
@@ -313,7 +342,9 @@ fn double_pinyin_one_key_surface() {
     });
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ni"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ni"));
 
     // Without USE_TONE the three-byte form is refused and the key keeps
     // its prior bytes (the pin writes only on success).
@@ -327,7 +358,9 @@ fn double_pinyin_one_key_surface() {
         pinyin_parse_double_pinyin(fixture.instance, cstr("ni3").as_ptr(), &raw mut key)
     });
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ni3"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ni3"));
 
     // FORCE_TONE demands exactly three bytes.
     fixture.set_options(USE_TONE | FORCE_TONE | PINYIN_INCOMPLETE);
@@ -344,7 +377,9 @@ fn double_pinyin_one_key_surface() {
         pinyin_parse_double_pinyin(fixture.instance, cstr("z").as_ptr(), &raw mut key)
     });
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("z"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("z"));
 }
 
 /// The chewing one-key surface (STANDARD keyboard): `18` is ㄅㄚ; the
@@ -360,16 +395,22 @@ fn chewing_one_key_surface() {
     assert!(unsafe { pinyin_parse_chewing(fixture.instance, cstr("18").as_ptr(), &raw mut key) });
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ba"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ba"));
     assert!(unsafe { pinyin_get_zhuyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ㄅㄚ"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ㄅㄚ"));
     assert!(!unsafe { pinyin_get_pinyin_is_incomplete(fixture.instance, &raw mut key) });
 
     // Tone: `3` is a tone key on STANDARD under USE_TONE.
     fixture.set_options(USE_TONE);
     assert!(unsafe { pinyin_parse_chewing(fixture.instance, cstr("183").as_ptr(), &raw mut key) });
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
-    assert_eq!(take(rendered).as_deref(), Some("ba3"));
+    // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(rendered) }.as_deref(), Some("ba3"));
 
     // Incomplete ㄅ: refused without the bit, the initial-only `b` with
     // it (ZHUYIN_INCOMPLETE = 0x10).
@@ -401,8 +442,12 @@ fn pinyin_strings_contract() {
             &raw mut yunmu,
         )
     });
-    assert_eq!(take(shengmu).as_deref(), Some("b"));
-    assert_eq!(take(yunmu).as_deref(), Some("a"));
+    // SAFETY: `shengmu` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(shengmu) }.as_deref(), Some("b"));
+    // SAFETY: `yunmu` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take(yunmu) }.as_deref(), Some("a"));
 
     // NULL out-params are tolerated on success.
     shengmu = std::ptr::null_mut();
@@ -414,7 +459,9 @@ fn pinyin_strings_contract() {
             std::ptr::null_mut(),
         )
     });
-    assert_eq!(take(shengmu).as_deref(), Some("b"));
+    // SAFETY: `shengmu` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { take(shengmu) }.as_deref(), Some("b"));
 
     // The zero key fails without touching the out-params.
     let mut key = ChewingKey::ZERO;

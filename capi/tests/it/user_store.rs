@@ -26,10 +26,21 @@ use std::path::Path;
 use std::ptr;
 
 /// The first key of `text` as parsed by a scratch instance: its two bytes.
-fn first_key_bytes(context: *mut PinyinContext, text: &str) -> Vec<u8> {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn first_key_bytes(context: *mut PinyinContext, text: &str) -> Vec<u8> {
     let _slots = crate::support::key_slot_guard();
-    let instance = alloc(context);
-    assert!(parse(instance, text) > 0);
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { parse(instance, text) } > 0);
     let mut key: *mut ChewingKey = ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_key(instance, 0, &raw mut key) });
     // SAFETY: a true answer points at a live two-byte ChewingKey, read
@@ -48,7 +59,8 @@ fn overlong_index_context(
 ) -> *mut PinyinContext {
     let context = init_at(system, user);
     assert!(!context.is_null());
-    let first = first_key_bytes(context, "ni");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { first_key_bytes(context, "ni") };
     unsafe { pinyin_fini(context) };
     let rows: Vec<(Vec<u8>, Vec<u8>)> = keys(&first)
         .into_iter()
@@ -93,8 +105,12 @@ fn guess_candidates_aborts_on_an_overlong_index_key() {
             let user = TempUserDir::new("overlong-guess");
             let context =
                 overlong_index_context(&system_dir(), &user.path, ni_and_its_overlong_run);
-            let instance = alloc(context);
-            assert_eq!(parse(instance, "ni"), 2);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { alloc(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "ni") }, 2);
             unsafe { pinyin_guess_candidates(instance, 0, 0) };
         },
     );
@@ -152,7 +168,12 @@ fn mask_out_aborts_on_two_log_headers_and_leaves_the_files() {
             write_user_conf(user, &system_dir());
             let context = init_at(&system_dir(), user);
             assert!(!context.is_null());
-            assert_eq!(import_batch(context, 7, &[("你好", "ni3'hao3", 1)]), [true]);
+            assert_eq!(
+                // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { import_batch(context, 7, &[("你好", "ni3'hao3", 1)]) },
+                [true]
+            );
             assert!(unsafe { pinyin_save(context) });
             write_log(user, "gb_char.dbin", &two_headers());
             let before = user.parent().expect("scratch").join("before");

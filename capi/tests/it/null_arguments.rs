@@ -37,7 +37,8 @@ fn null_user_directory_refuses_training_but_keeps_mutable_state() {
 
     // (`pinyin_choose_predicted_candidate` takes a predicted row only; a
     // normal row is the pin's assert, `pinyin.cpp:2593`.)
-    let cand = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe { candidate(instance, "nihao", 0) };
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1) });
     assert!(unsafe { pinyin_mask_out(context, 0, 0) });
 
@@ -105,7 +106,8 @@ fn null_addon_chunk_name_aborts_or_logs_once() {
 fn null_instance_candidate_type_answers() {
     let user = TempUserDir::new("null-instance-candidate-type");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let cand = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe { candidate(instance, "nihao", 0) };
     let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
     assert!(unsafe {
         crate::support::pinyin_get_candidate_type(ptr::null_mut(), cand, &raw mut kind)
@@ -118,7 +120,8 @@ fn null_instance_candidate_type_answers() {
 fn null_instance_candidate_string_answers() {
     let user = TempUserDir::new("null-instance-candidate-string");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let cand = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe { candidate(instance, "nihao", 0) };
     let mut text = ptr::null();
     assert!(unsafe {
         crate::support::pinyin_get_candidate_string(ptr::null_mut(), cand, &raw mut text)
@@ -162,7 +165,8 @@ fn null_instance_is_user_candidate_answers() {
         pinyin_iterator_add_phrase(iter, cstr("你号").as_ptr(), cstr("ni3'hao4").as_ptr(), 1)
     });
     unsafe { pinyin_end_add_phrases(iter) };
-    let _ = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let _ = unsafe { candidate(instance, "nihao", 0) };
     let mut count = 0;
     assert!(unsafe { crate::support::pinyin_get_n_candidate(instance, &raw mut count) });
     let mut found = false;
@@ -185,9 +189,11 @@ fn null_instance_is_incomplete_answers() {
     let user = TempUserDir::new("null-instance-is-incomplete");
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     assert!(unsafe { pinyin_set_options(context, 0x28) });
-    let (key, _) = parsed_key_and_rest(instance, "n");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (key, _) = unsafe { parsed_key_and_rest(instance, "n") };
     assert!(unsafe { crate::support::pinyin_get_pinyin_is_incomplete(ptr::null_mut(), key) });
-    let (complete, _) = parsed_key_and_rest(instance, "ni3");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (complete, _) = unsafe { parsed_key_and_rest(instance, "ni3") };
     assert!(!unsafe { crate::support::pinyin_get_pinyin_is_incomplete(ptr::null_mut(), complete) });
 }
 
@@ -198,7 +204,8 @@ fn null_instance_key_rest_length_answers() {
     let _slots = crate::support::key_slot_guard();
     let user = TempUserDir::new("null-instance-key-rest-length");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let (_, rest) = parsed_key_and_rest(instance, "ni3");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (_, rest) = unsafe { parsed_key_and_rest(instance, "ni3") };
     let mut length = u16::MAX;
     assert!(unsafe {
         crate::support::pinyin_get_pinyin_key_rest_length(ptr::null_mut(), rest, &raw mut length)
@@ -272,7 +279,8 @@ fn null_instance_key_string_renderers_answer() {
     let _slots = crate::support::key_slot_guard();
     let user = TempUserDir::new("null-instance-key-strings");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let (key, _) = parsed_key_and_rest(instance, "ni3");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (key, _) = unsafe { parsed_key_and_rest(instance, "ni3") };
     let render = |getter: unsafe extern "C" fn(
         *mut PinyinInstance,
         *mut crate::support::ChewingKey,
@@ -280,7 +288,9 @@ fn null_instance_key_string_renderers_answer() {
     ) -> bool| {
         let mut out = ptr::null_mut();
         assert!(unsafe { getter(ptr::null_mut(), key, &raw mut out) });
-        crate::support::take_owned_cstr(out)
+        // SAFETY: `out` is the string the library just returned; this code owns it and frees it
+        // only here.
+        unsafe { crate::support::take_owned_cstr(out) }
     };
     assert_eq!(render(crate::support::pinyin_get_pinyin_string), "ni3"); // :2718-2727
     assert_eq!(render(crate::support::pinyin_get_zhuyin_string), "ㄋㄧˇ"); // :2707-2716
@@ -301,7 +311,8 @@ fn null_instance_pinyin_strings_answer() {
     let _slots = crate::support::key_slot_guard();
     let user = TempUserDir::new("null-instance-pinyin-strings");
     let (_context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let (key, _) = parsed_key_and_rest(instance, "ni3");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (key, _) = unsafe { parsed_key_and_rest(instance, "ni3") };
     let (mut shengmu, mut yunmu) = (ptr::null_mut(), ptr::null_mut());
     assert!(unsafe {
         crate::support::pinyin_get_pinyin_strings(
@@ -311,8 +322,12 @@ fn null_instance_pinyin_strings_answer() {
             &raw mut yunmu,
         )
     });
-    assert_eq!(crate::support::take_owned_cstr(shengmu), "n");
-    assert_eq!(crate::support::take_owned_cstr(yunmu), "i");
+    // SAFETY: `shengmu` is the string the library just returned; this code owns it and frees it
+    // only here.
+    assert_eq!(unsafe { crate::support::take_owned_cstr(shengmu) }, "n");
+    // SAFETY: `yunmu` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { crate::support::take_owned_cstr(yunmu) }, "i");
     assert!(unsafe {
         crate::support::pinyin_get_pinyin_strings(
             ptr::null_mut(),

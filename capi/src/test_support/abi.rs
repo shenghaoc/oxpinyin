@@ -31,7 +31,16 @@ pub(crate) const DEFAULT_SORT: c_uint = 0x1e;
 
 /// Parses `text`, guesses candidates, and returns the pointer to candidate
 /// `index` (borrowed into the instance's snapshot until the next guess).
-pub(crate) fn candidate(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate(
     instance: *mut PinyinInstance,
     text: &str,
     index: c_uint,
@@ -137,7 +146,16 @@ pub(crate) fn assert_aborts_sharing(
 }
 
 /// The tokens `pinyin_lookup_tokens` writes for `text`.
-pub(crate) fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> Vec<u32> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> Vec<u32> {
     let text = CString::new(text.as_ref()).expect("no interior NUL");
     // SAFETY: a fresh GArray of four-byte elements, freed below.
     let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
@@ -275,36 +293,88 @@ pub(crate) fn open_at(user: &Path) -> (*mut PinyinContext, *mut PinyinInstance) 
     open(user.to_str().expect("UTF-8 path"))
 }
 
-pub(crate) fn alloc(context: *mut PinyinContext) -> *mut PinyinInstance {
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn alloc(context: *mut PinyinContext) -> *mut PinyinInstance {
     let instance = unsafe { pinyin_alloc_instance(context) };
     assert!(!instance.is_null());
     instance
 }
 
-pub(crate) fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `instance` is NULL or belongs to `context`. The call frees both, so the caller does not use
+/// either again.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn close(context: *mut PinyinContext, instance: *mut PinyinInstance) {
     unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
 }
 
-pub(crate) fn parse(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> usize {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn parse(instance: *mut PinyinInstance, text: impl AsRef<[u8]>) -> usize {
     let text = std::ffi::CString::new(text.as_ref()).expect("no interior NUL");
     unsafe { pinyin_parse_more_full_pinyins(instance, text.as_ptr()) }
 }
 
 /// The first row of `kind` whose text is `text`.
-pub(crate) fn row_with(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn row_with(
     instance: *mut PinyinInstance,
     kind: lookup_candidate_type_t,
     text: &str,
 ) -> *mut LookupCandidate {
-    let index = capture_rows(instance)
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    let index = unsafe { capture_rows(instance) }
         .iter()
         .position(|(found, row, _)| *found == kind && row == text)
         .unwrap_or_else(|| panic!("a {kind:?} row {text} is listed"));
-    candidate_at(instance, index)
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    unsafe { candidate_at(instance, index) }
 }
 
-pub(crate) fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandidate {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate_at(
+    instance: *mut PinyinInstance,
+    index: usize,
+) -> *mut LookupCandidate {
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(unsafe {
         pinyin_get_candidate(
@@ -316,13 +386,29 @@ pub(crate) fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut 
     cand
 }
 
-pub(crate) fn n_candidate(instance: *mut PinyinInstance) -> u32 {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn n_candidate(instance: *mut PinyinInstance) -> u32 {
     let mut count = UNTOUCHED;
     assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
     count
 }
 
-pub(crate) fn unigram(instance: *mut PinyinInstance, token: u32) -> (bool, u32) {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn unigram(instance: *mut PinyinInstance, token: u32) -> (bool, u32) {
     let mut freq = UNTOUCHED;
     let ret = unsafe { pinyin_token_get_unigram_frequency(instance, token, &raw mut freq) };
     (ret, freq)
@@ -339,31 +425,52 @@ pub(crate) fn replace_user_bigram(user: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// answers its token.
 pub(crate) fn saved_user_phrase(user: &Path) -> u32 {
     let (context, instance) = open_at(user);
-    assert_eq!(import_batch(context, 7, &[("龘龘", "da2'da2", 5)]), [true]);
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("龘龘", "da2'da2", 5)]) },
+        [true]
+    );
     assert!(unsafe { pinyin_save(context) });
-    let token = lookup(instance, "龘龘")[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "龘龘") }[0];
     assert_eq!(token >> 24, 7);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     token
 }
 
 /// The first NORMAL user row of `dada` on a new context over `user`.
 pub(crate) fn user_row_of_dada(user: &Path) -> (*mut PinyinInstance, *mut LookupCandidate) {
     let (_context, instance) = open_at(user);
-    assert_eq!(parse(instance, "dada"), 4);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "dada") }, 4);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
-    let rows = capture_rows(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows = unsafe { capture_rows(instance) };
     let index = (0..rows.len())
         .find(|&index| {
-            let cand = candidate_at(instance, index);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let cand = unsafe { candidate_at(instance, index) };
             rows[index].0 == NORMAL && unsafe { pinyin_is_user_candidate(instance, cand) }
         })
         .expect("a NORMAL user row");
-    (instance, candidate_at(instance, index))
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    (instance, unsafe { candidate_at(instance, index) })
 }
 
 /// Every row of the current candidate list as (type, string, n-best index of an NBEST row).
-pub(crate) fn capture_rows(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn capture_rows(
     instance: *mut PinyinInstance,
 ) -> Vec<(lookup_candidate_type_t, String, Option<u8>)> {
     let mut count = 0;
@@ -376,7 +483,8 @@ pub(crate) fn capture_rows(
             assert!(unsafe { pinyin_get_candidate_type(instance, cand, &raw mut kind) });
             let mut text: *const GChar = ptr::null();
             assert!(unsafe { pinyin_get_candidate_string(instance, cand, &raw mut text) });
-            // SAFETY: a true answer points `text` at the row's borrowed string.
+            assert!(!text.is_null(), "expected a candidate with display text");
+            // SAFETY: the current row owns the non-NULL, NUL-terminated display string.
             let text = unsafe { std::ffi::CStr::from_ptr(text) }
                 .to_string_lossy()
                 .into_owned();
@@ -393,7 +501,16 @@ pub(crate) fn capture_rows(
 }
 
 /// Imports ROWS into LIBRARY in one batch; answers each add's flag.
-pub(crate) fn import_batch(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn import_batch(
     context: *mut PinyinContext,
     library: u8,
     rows: &[(&str, &str, i32)],
@@ -411,20 +528,43 @@ pub(crate) fn import_batch(
 }
 
 /// Library INDEX's export rows, through `begin`/`has_next`/`get_next`.
-pub(crate) fn export_of(context: *mut PinyinContext, index: u32) -> Vec<(String, String, i32)> {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn export_of(
+    context: *mut PinyinContext,
+    index: u32,
+) -> Vec<(String, String, i32)> {
     let iter = unsafe { pinyin_begin_get_phrases(context, index) };
     assert!(
         !iter.is_null(),
         "begin never answers NULL on a live context (pinyin.cpp:662-687)"
     );
-    let rows = drain_phrases(iter);
+    // SAFETY: `iter` is a live iterator from its `begin` call, not yet ended; only this thread
+    // calls into it.
+    let rows = unsafe { drain_phrases(iter) };
     unsafe { pinyin_end_get_phrases(iter) };
     rows
 }
 
 /// Drains an export iterator into owned `(phrase, pinyin, count)` triples,
 /// freeing each caller-owned buffer as it goes.
-pub(crate) fn drain_phrases(iter: *mut ExportIterator) -> Vec<(String, String, i32)> {
+///
+/// # Safety
+///
+/// `iter` is NULL or a live export iterator: `pinyin_begin_get_phrases` returned it and
+/// `pinyin_end_get_phrases` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn drain_phrases(iter: *mut ExportIterator) -> Vec<(String, String, i32)> {
     let mut rows = Vec::new();
     while unsafe { pinyin_iterator_has_next_phrase(iter) } {
         let mut phrase: *mut GChar = ptr::null_mut();
@@ -433,7 +573,10 @@ pub(crate) fn drain_phrases(iter: *mut ExportIterator) -> Vec<(String, String, i
         assert!(unsafe {
             pinyin_iterator_get_next_phrase(iter, &raw mut phrase, &raw mut pinyin, &raw mut count)
         });
-        rows.push((take_exported(phrase), take_exported(pinyin), count));
+        rows.push(
+            // SAFETY: both slots hold the iterator outputs, owned by this caller.
+            unsafe { take_exported_row(phrase, pinyin, count) },
+        );
     }
     rows
 }
@@ -479,14 +622,42 @@ pub(crate) fn promotion_system(parent: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Reads a caller-owned, NUL-terminated export string and frees it.
-pub(crate) fn take_exported(ptr: *mut std::ffi::c_char) -> String {
+///
+/// # Safety
+///
+/// `ptr` is a NUL-terminated UTF-8 string, not NULL, that the library returned to the caller, who
+/// owns it. The call frees it with `g_free`, so the caller does not use it again.
+pub(crate) unsafe fn take_exported(ptr: *mut std::ffi::c_char) -> String {
     // SAFETY: the iterator hands out NUL-terminated, valid UTF-8 text.
     let text = unsafe { std::ffi::CStr::from_ptr(ptr) }
         .to_str()
         .expect("UTF-8 export string")
         .to_owned();
-    free_exported(ptr);
+    // SAFETY: `ptr` meets this function's `# Safety` contract.
+    unsafe { free_exported(ptr) };
     text
+}
+
+/// Takes ownership of both string outputs from an export step.
+///
+/// # Safety
+///
+/// Each pointer is NULL or a distinct caller-owned export string.
+pub(crate) unsafe fn take_exported_row(
+    phrase: *mut GChar,
+    pinyin: *mut GChar,
+    count: i32,
+) -> (String, String, i32) {
+    if phrase.is_null() || pinyin.is_null() {
+        // SAFETY: both slots are NULL or hold separate owned export strings.
+        unsafe {
+            free_exported(phrase);
+            free_exported(pinyin);
+        }
+        panic!("expected both export strings");
+    }
+    // SAFETY: both outputs are non-NULL, owned, NUL-terminated UTF-8 strings.
+    unsafe { (take_exported(phrase), take_exported(pinyin), count) }
 }
 
 /// The packed key of `spelling` at `tone`, as an addon item stores it.
@@ -498,21 +669,14 @@ pub(crate) fn packed_key(spelling: &str, tone: u8) -> u16 {
 }
 
 /// Frees a caller-owned buffer the export iterators hand out.
-pub(crate) fn free_exported(ptr: *mut std::ffi::c_char) {
-    if !ptr.is_null() {
-        // SAFETY: the iterator's buffers come from libc `malloc`, directly
-        // or through GLib; `free` releases them.
-        unsafe {
-            free(ptr.cast());
-        }
-    }
-}
-
-// The deallocator for buffers the export iterators hand out (GLib and the
-// conversion encoder allocate with libc `malloc`, which `g_free` and `free`
-// both release on Linux).
-unsafe extern "C" {
-    fn free(ptr: *mut std::ffi::c_void);
+///
+/// # Safety
+///
+/// `ptr` is NULL or a NUL-terminated string that the library returned to the caller, who owns it.
+/// The call frees it with `g_free`, so the caller does not use it again.
+pub(crate) unsafe fn free_exported(ptr: *mut std::ffi::c_char) {
+    // SAFETY: the export ABI specifies g_free for these strings and permits NULL.
+    unsafe { glib_sys::g_free(ptr.cast()) };
 }
 
 pub(crate) const PARITY: u32 = 0x18a;
@@ -652,12 +816,22 @@ impl Drop for Pair {
 
 /// The texts of the rows `pinyin_guess_predicted_candidates` lists
 /// after `prefix`.
-pub(crate) fn predicted_texts(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn predicted_texts(
     instance: *mut PinyinInstance,
     prefix: &std::ffi::CStr,
 ) -> Vec<String> {
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, prefix.as_ptr()) });
-    capture_rows(instance)
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { capture_rows(instance) })
         .into_iter()
         .map(|(_, text, _)| text)
         .collect()
@@ -665,9 +839,20 @@ pub(crate) fn predicted_texts(
 
 #[cfg(any(unix, feature = "tkrzw", feature = "bdb"))]
 /// Trains the top sentence of `nihao` once on a new instance.
-pub(crate) fn train_once(context: *mut PinyinContext) {
-    let instance = alloc(context);
-    assert_eq!(parse(instance, "nihao"), 5);
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn train_once(context: *mut PinyinContext) {
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { pinyin_train(instance, 0) });
     unsafe { pinyin_free_instance(instance) };

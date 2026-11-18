@@ -43,8 +43,18 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
         || {
             let user = TempUserDir::new("row58-total-zero");
             let (context, instance) = open_at(&user.path);
-            let (ni, hao) = (lookup(instance, "你"), lookup(instance, "好")[0]);
-            close(context, instance);
+            let (ni, hao) = (
+                // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { lookup(instance, "你") },
+                // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { lookup(instance, "好") }[0],
+            );
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; nothing uses either handle after this call; only this thread
+            // calls into them.
+            unsafe { close(context, instance) };
             let gram = gram_bytes(20, &[(hao, 20)]);
             plant_bigram(
                 &user.path,
@@ -53,7 +63,9 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
                     .collect(),
             );
             let (_context, instance) = open_at(&user.path);
-            wrap_facade_total_to_zero(instance);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { wrap_facade_total_to_zero(instance) };
             unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) };
         },
     );
@@ -265,7 +277,8 @@ fn a_short_live_row_after_the_stale_skip_still_replaces_the_gate() {
 fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
     let user = TempUserDir::new("predict-bigram-terms");
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let [ni, hao, zhong] = ["你", "好", "中"].map(|text| lookup(instance, text)[0]);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let [ni, hao, zhong] = ["你", "好", "中"].map(|text| unsafe { lookup(instance, text) }[0]);
     let mut lists = Vec::new();
     for (hao_count, zhong_count) in [(1000, 20), (20, 1000)] {
         // SAFETY: the live context has no reader retained across this write.
@@ -275,17 +288,24 @@ fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
         store.set_bigram_count(ni, zhong, zhong_count).expect("set");
         for dynamic in [0, DYNAMIC_ADJUST] {
             assert!(unsafe { pinyin_set_options(context, OPTIONS | dynamic) });
-            lists.push(predicted_texts(instance, c"你"));
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            lists.push(unsafe { predicted_texts(instance, c"你") });
         }
     }
     assert!(
-        capture_rows(instance).iter().any(|(kind, text, _)| {
-            *kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE && text == "中"
-        }),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { capture_rows(instance) }
+            .iter()
+            .any(|(kind, text, _)| {
+                *kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE && text == "中"
+            }),
         "the bigram rows are listed"
     );
     assert!(lists.iter().all(|list| *list == lists[0]), "{lists:?}");
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Prefix rows alone never reach the zero-total assert, which gates the
@@ -295,7 +315,8 @@ fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
 fn prefix_rows_rank_on_a_zero_facade_total() {
     let user = TempUserDir::new("predict-prefix-zero-total");
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
-    let before = predicted_texts(instance, c"你");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let before = unsafe { predicted_texts(instance, c"你") };
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let total = unsafe { crate::state::instance_ref(instance) }
         .core
@@ -305,12 +326,15 @@ fn prefix_rows_rank_on_a_zero_facade_total() {
     assert!(unsafe {
         crate::dict::pinyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
     });
-    let mut after = predicted_texts(instance, c"你");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let mut after = unsafe { predicted_texts(instance, c"你") };
     after.sort();
     let mut expected = before;
     expected.sort();
     assert_eq!(after, expected);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A system-library import ranks by its live item count, runtime
@@ -320,17 +344,22 @@ fn a_system_library_import_ranks_by_its_live_count() {
     let user = TempUserDir::new("predict-system-import");
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     assert_eq!(
-        import_batch(context, 1, &[("你甲甲", "ni3'jia3'jia3", 100_000)]),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 1, &[("你甲甲", "ni3'jia3'jia3", 100_000)]) },
         [true]
     );
     assert_eq!(
-        import_batch(context, 7, &[("你乙乙", "ni3'yi3'yi3", 110_000)]),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("你乙乙", "ni3'yi3'yi3", 110_000)]) },
         [true]
     );
-    let system = lookup(instance, "你甲甲")[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let system = unsafe { lookup(instance, "你甲甲") }[0];
     assert_eq!(system >> 24, 1);
     let rank = |instance| {
-        predicted_texts(instance, c"你")
+        // SAFETY: the test calls `rank` only with its own `instance`, which was opened above and
+        // is not yet freed; only this thread calls into it.
+        (unsafe { predicted_texts(instance, c"你") })
             .into_iter()
             .filter(|text| text == "甲甲" || text == "乙乙")
             .collect::<Vec<_>>()
@@ -338,7 +367,9 @@ fn a_system_library_import_ranks_by_its_live_count() {
     assert_eq!(rank(instance), ["乙乙", "甲甲"]);
     assert!(unsafe { crate::dict::pinyin_token_add_unigram_frequency(instance, system, 100_000) });
     assert_eq!(rank(instance), ["甲甲", "乙乙"]);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Overwrites a user-bigram successor count by phrase text.
@@ -347,7 +378,20 @@ fn a_system_library_import_ranks_by_its_live_count() {
 /// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
 /// reached through the C ABI. Looks up `prev` and `cur` in the user
 /// phrase index.
-fn set_user_bigram(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `prev` is a NUL-terminated string that stays valid for the call.
+///
+/// `cur` is a NUL-terminated string that stays valid for the call.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn set_user_bigram(
     context: *mut crate::types::PinyinContext,
     prev: *const std::os::raw::c_char,
     cur: *const std::os::raw::c_char,
@@ -398,18 +442,18 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     });
     unsafe { pinyin_end_add_phrases(iter) };
 
-    assert!(set_user_bigram(
-        context,
-        cstr("测测").as_ptr(),
-        cstr("甲甲").as_ptr(),
-        9,
-    ));
-    assert!(set_user_bigram(
-        context,
-        cstr("测测").as_ptr(),
-        cstr("乙乙").as_ptr(),
-        10,
-    ));
+    // SAFETY: `context` was opened above and is not yet freed; `cstr("测测").as_ptr()` is a
+    // NUL-terminated string that outlives the call; `cstr("甲甲").as_ptr()` is a NUL-terminated
+    // string that outlives the call; only this thread calls into it.
+    assert!(unsafe {
+        set_user_bigram(context, cstr("测测").as_ptr(), cstr("甲甲").as_ptr(), 9)
+    });
+    // SAFETY: `context` was opened above and is not yet freed; `cstr("测测").as_ptr()` is a
+    // NUL-terminated string that outlives the call; `cstr("乙乙").as_ptr()` is a NUL-terminated
+    // string that outlives the call; only this thread calls into it.
+    assert!(unsafe {
+        set_user_bigram(context, cstr("测测").as_ptr(), cstr("乙乙").as_ptr(), 10)
+    });
 
     let prefix = cstr("测测");
     assert!(unsafe {
@@ -585,14 +629,17 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     let (context, instance) = open_at(&user.path);
     oxpinyin::store::read_faults::fail_point_read_of(&extensions[1], 0);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
-    let rows: Vec<String> = capture_rows(instance)
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows: Vec<String> = unsafe { capture_rows(instance) }
         .into_iter()
         .map(|(_, text, _)| text)
         .collect();
     let first = text(&extensions[0]);
     let first = first.strip_prefix('你').expect("the prefix");
     assert!(rows.iter().any(|row| row == first), "{rows:?}");
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 use crate::candidates::pinyin_choose_predicted_candidate;
@@ -612,21 +659,30 @@ fn a_prefix_row_under_high_bits_is_listed_and_trains_its_item() {
     let user = TempUserDir::new("tagged-prefix");
     let (context, instance) = open_at(&user.path);
     assert_eq!(
-        import_batch(context, 7, &[("龘", "da2", 1), ("龘龘", "da2'da2", 1)]),
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("龘", "da2", 1), ("龘龘", "da2'da2", 1)]) },
         [true, true]
     );
     assert!(unsafe { pinyin_save(context) });
-    let token = lookup(instance, "龘龘")[0];
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "龘龘") }[0];
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     set_phrase_table_row(&user.path, "龘龘", &[token | TAG]);
     let (context, instance) = open_at(&user.path);
-    let (found, base) = unigram(instance, token);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (found, base) = unsafe { unigram(instance, token) };
     assert!(found);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"龘".as_ptr()) });
-    let row = row_with(instance, PREDICTED_PREFIX, "龘");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_with(instance, PREDICTED_PREFIX, "龘") };
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
-    assert_eq!(unigram(instance, token), (true, base + 483));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { unigram(instance, token) }, (true, base + 483));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A user gram item whose token has high bits set. The bigram rows keep
@@ -642,8 +698,11 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
     let user = TempUserDir::new("tagged-bigram-row");
     let successor = saved_user_phrase(&user.path);
     let (context, instance) = open_at(&user.path);
-    let prefixes = lookup(instance, "你");
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let prefixes = unsafe { lookup(instance, "你") };
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let gram = gram_bytes(20, &[(successor | TAG, 20)]);
     let rows: Vec<_> = prefixes
         .iter()
@@ -651,12 +710,15 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
         .collect();
     replace_user_bigram(&user.path, &rows);
     let (context, instance) = open_at(&user.path);
-    let (found, base) = unigram(instance, successor);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (found, base) = unsafe { unigram(instance, successor) };
     assert!(found);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
-    let row = row_with(instance, PREDICTED_BIGRAM, "龘龘");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_with(instance, PREDICTED_BIGRAM, "龘龘") };
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, row) });
-    assert_eq!(unigram(instance, successor), (true, base + 483));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { unigram(instance, successor) }, (true, base + 483));
     let trained: Vec<_> = {
         // SAFETY: the instance is live and this read ends before the close.
         let inst = unsafe { crate::state::instance_ref(instance) };
@@ -667,7 +729,9 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
             .collect()
     };
     assert_eq!(trained, [[(successor | TAG, 89)]]);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The prediction walks the user phrase table by raw key bytes and takes
@@ -695,11 +759,14 @@ fn a_raw_user_key_predicts_its_live_item() {
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     assert!(
-        capture_rows(instance)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { capture_rows(instance) }
             .iter()
             .any(|(kind, text, _)| *kind == PREDICTED_PREFIX && text == "龘")
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// User phrase-table rows whose token names a library that is never
@@ -737,11 +804,14 @@ fn rows_of_a_never_loaded_library_are_filtered() {
     }
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
     assert!(
-        !capture_rows(instance)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        !unsafe { capture_rows(instance) }
             .iter()
             .any(|(_, text, _)| text.contains('龘'))
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The pin sorts the predicted rows with the stable `g_array_sort_with_data`

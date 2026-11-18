@@ -8,7 +8,7 @@
 
 use crate::support::{
     drain_phrases, export_of, export_order_fixture, import_batch, init_fixture_at, partial_gram,
-    take_exported, whole_gram,
+    take_exported_row, whole_gram,
 };
 
 use crate::support::{
@@ -52,13 +52,21 @@ fn bigram_get_next_aborts_on_an_empty_export() {
 fn an_import_reading_parses_with_the_corrections() {
     let user = TempUserDir::new("import-egn");
     let (context, instance) = open_at(&user.path);
-    assert_eq!(import_batch(context, 7, &[("嗯", "egn", 5)]), [true]);
-    let token = lookup(instance, "嗯")[0];
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { import_batch(context, 7, &[("嗯", "egn", 5)]) },
+        [true]
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "嗯") }[0];
     let mut count = UNTOUCHED;
     assert!(unsafe { pinyin_token_get_n_pronunciation(instance, token, &raw mut count) });
     assert_eq!(count, 1);
-    assert_eq!(reading_bytes(instance, token, 0), [0x00, 0x05]);
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { reading_bytes(instance, token, 0) }, [0x00, 0x05]);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A system item's reading count is its `guint32` bit pattern in the
@@ -68,7 +76,8 @@ fn an_import_reading_parses_with_the_corrections() {
 fn a_system_reading_count_exports_its_bit_pattern() {
     let user = TempUserDir::new("export-prefix-overflow");
     let (context, instance) = open_at(&user.path);
-    let token = lookup(instance, "你")[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { lookup(instance, "你") }[0];
     assert_eq!(token >> 24, 1);
     let key = |text: &str| {
         let mut key = 0_u16;
@@ -83,7 +92,9 @@ fn a_system_reading_count_exports_its_bit_pattern() {
         (key("ni2"), 0),
         (key("na4"), 0),
     ];
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     // A MODIFY of the item: its readings replaced, its unigram kept.
     let file = std::fs::read(system_dir().join("gb_char.bin")).expect("gb_char.bin");
     let payload = &file[8..];
@@ -116,10 +127,15 @@ fn a_system_reading_count_exports_its_bit_pattern() {
         ("ni2".to_owned(), -1),
         ("na4".to_owned(), -1),
     ];
-    assert_eq!(export_rows_of(context, 1, "你"), before);
-    assert_eq!(parse(instance, "ni"), 2);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { export_rows_of(context, 1, "你") }, before);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni") }, 2);
     assert!(unsafe { pinyin_guess_candidates(instance, 0, crate::support::DEFAULT_SORT) });
-    assert!(unsafe { pinyin_choose_candidate(instance, 0, row_with(instance, NORMAL, "你")) } > 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let row = unsafe { row_with(instance, NORMAL, "你") };
+    // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+    assert!(unsafe { pinyin_choose_candidate(instance, 0, row) } > 0);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     assert!(unsafe { crate::support::pinyin_train(instance, 0) });
     let after = [
@@ -127,12 +143,29 @@ fn a_system_reading_count_exports_its_bit_pattern() {
         ("ni2".to_owned(), -1),
         ("na4".to_owned(), -1),
     ];
-    assert_eq!(export_rows_of(context, 1, "你"), after);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { export_rows_of(context, 1, "你") }, after);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Saves, then reopens the context on the same user directory.
-fn save_and_reopen(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// `instance` belongs to `context`. The call frees both, so the caller does not use either again.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn save_and_reopen(
     context: *mut crate::support::PinyinContext,
     instance: *mut PinyinInstance,
     user_dir: &std::path::Path,
@@ -171,18 +204,45 @@ fn import_counts_reach_the_export_as_the_pin_stores_them() {
     for (rows, (phrase, reading, count)) in cases {
         let user_dir = TempUserDir::new("import-count");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-        assert!(import_batch(context, 7, rows).iter().all(|&added| added));
+        assert!(
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { import_batch(context, 7, rows) }
+                .iter()
+                .all(|&added| added)
+        );
         let expected = vec![(phrase.to_owned(), reading.to_owned(), count)];
-        assert_eq!(export_of(context, 7), expected, "{rows:?}");
-        let (context, instance) = save_and_reopen(context, instance, &user_dir.path);
-        assert_eq!(export_of(context, 7), expected, "{rows:?} after reopen");
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { export_of(context, 7) }, expected, "{rows:?}");
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        let (context, instance) = unsafe { save_and_reopen(context, instance, &user_dir.path) };
+        assert_eq!(
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { export_of(context, 7) },
+            expected,
+            "{rows:?} after reopen"
+        );
         unsafe { crate::support::pinyin_free_instance(instance) };
         unsafe { crate::support::pinyin_fini(context) };
     }
 }
 
 /// Drains a bigram export iterator the same way.
-fn drain_bigrams(iter: *mut crate::support::BigramExportIterator) -> Vec<(String, String, i32)> {
+///
+/// # Safety
+///
+/// `iter` is NULL or a live bigram export iterator: `pinyin_begin_get_bigram_phrases` returned it
+/// and `pinyin_end_get_bigram_phrases` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn drain_bigrams(
+    iter: *mut crate::support::BigramExportIterator,
+) -> Vec<(String, String, i32)> {
     let mut rows = Vec::new();
     while unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) } {
         let mut phrase: *mut crate::support::GChar = ptr::null_mut();
@@ -196,7 +256,11 @@ fn drain_bigrams(iter: *mut crate::support::BigramExportIterator) -> Vec<(String
                 &raw mut count,
             )
         };
-        rows.push((take_exported(phrase), take_exported(pinyin), count));
+        // SAFETY: `phrase` and `pinyin` are this step's outputs, each NULL or a separate string
+        // the library returned to this code, which owns them and frees them only here.
+        // `take_exported_row` fails the test if either is NULL; `more` is not the check, since
+        // `false` is the expected answer on the last row.
+        rows.push(unsafe { take_exported_row(phrase, pinyin, count) });
         // Register row 36: `get_next` answers `has_next` after the row
         // (`pinyin.cpp:896-911`), so `false` on the last one.
         assert_eq!(more, unsafe {
@@ -209,11 +273,23 @@ fn drain_bigrams(iter: *mut crate::support::BigramExportIterator) -> Vec<(String
 /// Trains one multi-phrase sentence through choose/guess/train: choosing 你
 /// consumes the ni group, the 好 group is guessed at the post-choose cursor
 /// (never offset 0), and the (你 → 好) bigram lands at 69.
-fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
     // Train one multi-phrase sentence: (你 → 好) = 69.
-    let _ = candidate(instance, "nihao", 0);
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    let _ = unsafe { candidate(instance, "nihao", 0) };
     let (_, ni_ptr) = {
-        let index = capture_rows(instance)
+        // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into
+        // it.
+        let index = unsafe { capture_rows(instance) }
             .iter()
             .position(|(_, row, _)| row == "你")
             .expect("你 is offered for ni");
@@ -242,7 +318,9 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
         )
     });
     let hao_ptr = {
-        let index = capture_rows(instance)
+        // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into
+        // it.
+        let index = unsafe { capture_rows(instance) }
             .iter()
             .position(|(_, row, _)| row == "好")
             .expect("好 is offered for hao");
@@ -374,8 +452,11 @@ fn bigram_export_ends_at_a_partial_predecessor() {
         )
     });
     assert_eq!(count, 200);
-    take_exported(phrase);
-    take_exported(pinyin);
+    // SAFETY: `phrase` and `pinyin` are this step's outputs, each NULL or a separate string the
+    // library returned to this code, which owns them and frees them only here.
+    // `take_exported_row` fails the test if either is NULL; the `false` answer above is expected
+    // here and is not the check.
+    let _row = unsafe { take_exported_row(phrase, pinyin, count) };
     assert!(!unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) });
     unsafe { crate::support::pinyin_end_get_bigram_phrases(iter) };
     unsafe { crate::support::pinyin_fini(context) };
@@ -392,7 +473,8 @@ fn export_iterator_outlives_context() {
         pinyin_iterator_add_phrase(import, cstr("你好").as_ptr(), cstr("ni'hao").as_ptr(), 7)
     });
     unsafe { pinyin_end_add_phrases(import) };
-    train_one_multiphrase_sentence(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { train_one_multiphrase_sentence(instance) };
     let phrases = unsafe { crate::support::pinyin_begin_get_phrases(context, 5) };
     let bigrams = unsafe { crate::support::pinyin_begin_get_bigram_phrases(context) };
     assert!(!phrases.is_null());
@@ -400,11 +482,15 @@ fn export_iterator_outlives_context() {
     unsafe { crate::support::pinyin_free_instance(instance) };
     unsafe { crate::support::pinyin_fini(context) };
     assert_eq!(
-        drain_phrases(phrases),
+        // SAFETY: `phrases` is a live iterator from its `begin` call, not yet ended; only this
+        // thread calls into it.
+        unsafe { drain_phrases(phrases) },
         vec![("你好".to_owned(), "ni'hao".to_owned(), 7)]
     );
     assert_eq!(
-        drain_bigrams(bigrams),
+        // SAFETY: `bigrams` is a live iterator from its `begin` call, not yet ended; only this
+        // thread calls into it.
+        unsafe { drain_bigrams(bigrams) },
         vec![("你好".to_owned(), "ni'hao".to_owned(), 138)]
     );
     unsafe { crate::support::pinyin_end_get_phrases(phrases) };

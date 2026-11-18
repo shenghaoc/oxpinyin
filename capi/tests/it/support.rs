@@ -70,27 +70,52 @@ pub(crate) fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> C
 pub(crate) const NBEST: lookup_candidate_type_t = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
 
 /// The first row of `kind` in the current list.
-pub(crate) fn row_of(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn row_of(
     instance: *mut PinyinInstance,
     kind: lookup_candidate_type_t,
 ) -> *mut LookupCandidate {
-    let index = capture_rows(instance)
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    let index = unsafe { capture_rows(instance) }
         .iter()
         .position(|(found, _, _)| *found == kind)
         .unwrap_or_else(|| panic!("a {kind:?} row is listed"));
-    candidate_at(instance, index)
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    unsafe { candidate_at(instance, index) }
 }
 
 /// `get_sentence(index)` with a seeded out-pointer: the answer, and the
 /// text or `None` when the pointer was left alone.
-pub(crate) fn sentence_out(instance: *mut PinyinInstance, index: u8) -> (bool, Option<String>) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn sentence_out(
+    instance: *mut PinyinInstance,
+    index: u8,
+) -> (bool, Option<String>) {
     let seed = UNTOUCHED as usize as *mut c_char;
     let mut out = seed;
     let ret = unsafe { pinyin_get_sentence(instance, index, &raw mut out) };
     if out == seed {
         (ret, None)
     } else {
-        (ret, Some(crate::support::take_owned_cstr(out)))
+        // SAFETY: `out` is the string the library just returned; this code owns it and frees it
+        // only here.
+        (ret, Some(unsafe { crate::support::take_owned_cstr(out) }))
     }
 }
 
@@ -107,7 +132,16 @@ pub(crate) fn write_log(user: &Path, name: &str, payload: &[u8]) {
 }
 
 /// The keys of reading `nth` of `token` as little-endian bytes.
-pub(crate) fn reading_bytes(instance: *mut PinyinInstance, token: u32, nth: u32) -> Vec<u8> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn reading_bytes(instance: *mut PinyinInstance, token: u32, nth: u32) -> Vec<u8> {
     // SAFETY: a fresh GArray of two-byte elements, freed below.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
     assert!(unsafe {
@@ -116,7 +150,11 @@ pub(crate) fn reading_bytes(instance: *mut PinyinInstance, token: u32, nth: u32)
     // SAFETY: a live GArray of two-byte elements.
     let bytes = unsafe {
         let view = &*keys;
-        std::slice::from_raw_parts(view.data.cast::<u8>(), view.len as usize * 2).to_vec()
+        if view.len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(view.data.cast::<u8>(), view.len as usize * 2).to_vec()
+        }
     };
     // SAFETY: allocated above, freed once.
     unsafe { glib_sys::g_array_free(keys, 1) };
@@ -124,12 +162,22 @@ pub(crate) fn reading_bytes(instance: *mut PinyinInstance, token: u32, nth: u32)
 }
 
 /// Library 1's export of `phrase`: each row's reading and count.
-pub(crate) fn export_rows_of(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn export_rows_of(
     context: *mut PinyinContext,
     library: u32,
     phrase: &str,
 ) -> Vec<(String, i32)> {
-    crate::support::export_of(context, library)
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { crate::support::export_of(context, library) })
         .into_iter()
         .filter(|(text, _, _)| text == phrase)
         .map(|(_, reading, count)| (reading, count))
@@ -173,7 +221,12 @@ pub(crate) const CRITICAL: glib_sys::GLogLevelFlags = glib_sys::G_LOG_LEVEL_CRIT
 // and options, so the w3 mini fixture holds it too.
 
 /// Copies a string the C API handed out and frees it with `g_free`.
-pub(crate) fn take_owned_cstr(ptr: *mut c_char) -> String {
+///
+/// # Safety
+///
+/// `ptr` is NULL or a NUL-terminated string that the library returned to the caller, who owns it.
+/// The call frees it with `g_free`, so the caller does not use it again.
+pub(crate) unsafe fn take_owned_cstr(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
@@ -214,7 +267,13 @@ pub(crate) fn export_order_fixture() -> (u32, u32, u32) {
     // The first three characters the fixture's dictionary holds.
     let found: Vec<(&str, u32)> = ["你", "好", "我", "的", "是", "中", "国", "人"]
         .into_iter()
-        .filter_map(|text| lookup(instance, text).first().map(|&token| (text, token)))
+        .filter_map(|text| {
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { lookup(instance, text) }
+                .first()
+                .map(|&token| (text, token))
+        })
         .take(3)
         .collect();
     assert_eq!(found.len(), 3, "the fixture holds three of the characters");
@@ -243,7 +302,10 @@ pub(crate) fn export_order_fixture() -> (u32, u32, u32) {
                 &raw mut count,
             )
         };
-        rows.push((take_exported(phrase), take_exported(pinyin), count));
+        // SAFETY: `phrase` and `pinyin` are this step's outputs, each NULL or a separate string
+        // the library returned to this code, which owns them and frees them only here.
+        // `take_exported_row` fails the test if either is NULL.
+        rows.push(unsafe { take_exported_row(phrase, pinyin, count) });
     }
     unsafe { crate::support::pinyin_end_get_bigram_phrases(iter) };
     unsafe { crate::support::pinyin_fini(context) };
@@ -264,7 +326,16 @@ pub(crate) fn export_order_fixture() -> (u32, u32, u32) {
 
 /// A parsed pinyin key and key rest at offset 0 of `text`, borrowed from the
 /// process-wide key slots (hold `key_slot_guard`).
-pub(crate) fn parsed_key_and_rest(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn parsed_key_and_rest(
     instance: *mut PinyinInstance,
     text: &str,
 ) -> (
@@ -317,13 +388,13 @@ pub(crate) fn remap_a_directory_library(site: &str) -> bool {
     }
 }
 
-unsafe extern "C" {
-    #[link_name = "free"]
-    fn libc_free(ptr: *mut core::ffi::c_void);
-}
-
 /// Reads a caller-owned rendered string (`g_free`-releasable) and frees it.
-pub(crate) fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
+///
+/// # Safety
+///
+/// `rendered` is NULL or a NUL-terminated string that the library returned to the caller, who owns
+/// it. The call frees it with `g_free`, so the caller does not use it again.
+pub(crate) unsafe fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
     if rendered.is_null() {
         return None;
     }
@@ -334,10 +405,9 @@ pub(crate) fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
             .expect("UTF-8 render")
             .to_owned(),
     );
-    // SAFETY: The buffer is a returned string this test owns; GLib
-    // allocates with malloc, which libc `free` releases.
+    // SAFETY: the rendering ABI gives the caller an owned buffer to release with g_free.
     unsafe {
-        libc_free(rendered.cast());
+        glib_sys::g_free(rendered.cast());
     }
     text
 }

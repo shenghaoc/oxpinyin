@@ -32,8 +32,12 @@ fn guess_candidates_aborts_on_a_zero_facade_total() {
         || {
             let user = TempUserDir::new("facade-total-zero");
             let (_context, instance) = open_at(&user.path);
-            wrap_facade_total_to_zero(instance);
-            assert_eq!(parse(instance, "nihao"), 5);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { wrap_facade_total_to_zero(instance) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
             unsafe { pinyin_guess_candidates(instance, 0, crate::test_support::DEFAULT_SORT) };
         },
     );
@@ -49,14 +53,18 @@ fn a_guess_with_no_word_row_ranks_nothing_on_a_zero_total() {
     let (context, _) = open_at(&user.path);
     let logs = crate::test_support::LogCapture::new();
     for (offset, sort) in [(3, 3), (5, 2)] {
-        let instance = alloc(context);
-        assert_eq!(parse(instance, "nihao"), 5);
-        wrap_facade_total_to_zero(instance);
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "nihao") }, 5);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { wrap_facade_total_to_zero(instance) };
         assert!(
             unsafe { pinyin_guess_candidates(instance, offset, sort) },
             "{offset}"
         );
-        assert_eq!(n_candidate(instance), 0, "{offset}");
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { n_candidate(instance) }, 0, "{offset}");
         unsafe { pinyin_free_instance(instance) };
     }
     assert!(logs.take().is_empty());
@@ -131,7 +139,9 @@ fn the_chain_joins_each_phrase_and_no_phrase_is_null() {
         Some(PhraseText::from("世界")),
     ];
     assert_eq!(
-        crate::ffi::take_owned_cstr(crate::ffi::sentence_text(phrases)),
+        // SAFETY: `crate::ffi::sentence_text(phrases)` is the string the library just returned;
+        // this code owns it and frees it only here.
+        unsafe { crate::ffi::take_owned_cstr(crate::ffi::sentence_text(phrases)) },
         "你好世界"
     );
     assert!(crate::ffi::sentence_text([None::<PhraseText>]).is_null());

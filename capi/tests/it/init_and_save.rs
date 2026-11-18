@@ -55,7 +55,9 @@ fn save_aborts_where_the_chunk_header_write_fails() {
         |user| {
             let context = init_at(&system_dir(), user);
             assert!(!context.is_null());
-            train_once(context);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
             let limit = libc::rlimit {
                 rlim_cur: 4,
                 rlim_max: 4,
@@ -281,7 +283,9 @@ fn two_contexts_on_one_user_dir_are_independent() {
     unsafe { pinyin_end_add_phrases(iter) };
     let export = unsafe { pinyin_begin_get_phrases(ctx_b, 7) };
     assert!(
-        drain_phrases(export).is_empty(),
+        // SAFETY: `export` is a live iterator from its `begin` call, not yet ended; only this
+        // thread calls into it.
+        unsafe { drain_phrases(export) }.is_empty(),
         "B sees A's unsaved import"
     );
     unsafe { pinyin_end_get_phrases(export) };
