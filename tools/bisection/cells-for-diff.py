@@ -7,13 +7,17 @@ fires selects all three cells; no check selects the reference cell alone.
   1. The diff lists a file under src/store/, codegen/store.rs, the root build.rs or
      Cargo.lock.
   2. A changed non-Markdown file contains feature = "<backend>", for bdb, tkrzw or
-     kyotocabinet, with optional spaces around the =.
+     kyotocabinet, with optional spaces around the =, at HEAD or at the merge base.
   3. The diff adds or removes a line that names a backend in any Cargo.toml.
 
 Check 3 reads the added and removed lines of a -U0 diff. Once a hunk has started
 every +/- line is content, so a name at the start of a line counts, and the ---/+++
 file headers, which carry paths and not lines, never do. Check 2 reads each changed
-file as committed at HEAD. Diffs use --no-renames: both paths of a move count, and
+file as committed at HEAD and as committed at the merge base, so a change that deletes a
+file's last gate, or deletes a gated file, still fires it. A deleted file matches through
+its merge-base version and an added file through its HEAD version. Each match line starts
+with the revision it came from, head or merge base; a merge-base line is listed only when
+the same text does not match in that file at HEAD. Diffs use --no-renames: both paths of a move count, and
 the host's diff.renames setting cannot change the answer.
 
 Git reads a pathspec relative to the directory it runs in, so every git command runs
@@ -133,23 +137,49 @@ def store_paths(base, head, repo):
     return changed_paths(base, head, pathspec=(STORE_DIR, *STORE_BUILD, 'Cargo.lock'), repo=repo)
 
 
-def feature_gates(base, head, repo):
-    """Check 2: the lines of the changed non-Markdown files, as at head, that gate on a backend.
+def gate_lines(revision, paths, repo):
+    """The (path, line number, text) of each line that gates on a backend in paths at revision.
 
-    A file the diff deletes is not at head and matches nothing.
+    A path that is not at revision matches nothing. A pathspec that names a directory matches the
+    files under it, so a path that is a directory at revision, and a file at the other revision,
+    would match files that are not in paths; only the matches for paths themselves are kept.
     """
-    paths = changed_paths(base, head, pathspec=(':!*.md',), repo=repo)
+    wanted = set(paths)
     found = []
     for start in range(0, len(paths), GREP_BATCH):
         batch = [literal(path) for path in paths[start:start + GREP_BATCH]]
         out = git('grep', '--no-color', '--no-column', '-z', '-n', '-I', '-E', '-e', FEATURE_GATE,
-                  head, '--', *batch, repo=repo, ok=(0, 1))
-        for record in out.split(b'\n'):
-            if record:
-                where, number, text = record.split(b'\0', 2)
-                path = os.fsdecode(where).partition(':')[2]
-                found.append(f"{path}:{number.decode()}: {text.decode('utf-8', 'replace').strip()}")
+                  revision, '--', *batch, repo=repo, ok=(0, 1))
+        # Each record is <revision>:<path> NUL <number> NUL <text> LF. With -z the path is printed
+        # verbatim and can hold a newline, so read it and the number through their NULs first.
+        position = 0
+        while position < len(out):
+            path_end = out.index(b'\0', position)
+            number_end = out.index(b'\0', path_end + 1)
+            text_end = out.index(b'\n', number_end + 1)
+            path = os.fsdecode(out[position:path_end]).partition(':')[2]
+            if path in wanted:
+                found.append((path, out[path_end + 1:number_end].decode(),
+                              out[number_end + 1:text_end].decode('utf-8', 'replace').strip()))
+            position = text_end + 1
     return found
+
+
+def feature_gates(base, head, repo):
+    """Check 2: the lines of the changed non-Markdown files that gate on a backend, at head or at base.
+
+    base is the merge base. A file that holds a gate at either revision fires the check, so a
+    change that deletes a file's last gate, or deletes a gated file, still fires it. A deleted
+    file matches through its base version and an added file through its head version. Each
+    match names its revision. A base match is listed only when the same line text does not
+    match in that file at head, so an unchanged gate is listed once, from head.
+    """
+    paths = changed_paths(base, head, pathspec=(':!*.md',), repo=repo)
+    at_head = gate_lines(head, paths, repo)
+    kept = {(path, text) for path, _, text in at_head}
+    at_base = [match for match in gate_lines(base, paths, repo) if (match[0], match[2]) not in kept]
+    return ([f'head {path}:{number}: {text}' for path, number, text in at_head]
+            + [f'merge base {path}:{number}: {text}' for path, number, text in at_base])
 
 
 def backend_lines(base, head, repo):
@@ -172,7 +202,8 @@ def backend_lines(base, head, repo):
 
 CHECKS = (
     (1, f'a changed path under {STORE_DIR}, {STORE_BUILD[0]}, the root build.rs or Cargo.lock', store_paths),
-    (2, 'a feature = "<backend>" line in a changed non-Markdown file', feature_gates),
+    (2, 'a feature = "<backend>" line in a changed non-Markdown file, at HEAD or the merge base',
+     feature_gates),
     (3, 'a changed Cargo.toml line that names a backend', backend_lines),
 )
 

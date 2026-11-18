@@ -44,11 +44,15 @@ class Repo:
         return result.stdout.strip()
 
     def commit(self, files):
-        """Write files ({path: text}, None deletes the path) and commit them."""
+        """Write files ({path: text}, None deletes the path and its emptied directories) and commit them."""
         for name, text in files.items():
             path = self.root / name
             if text is None:
                 path.unlink()
+                for parent in path.parents:
+                    if parent == self.root or any(parent.iterdir()):
+                        break
+                    parent.rmdir()
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
@@ -108,7 +112,7 @@ class StoreCrateTests(unittest.TestCase):
         text = f'[package]\nname = "a"\n\n[package.metadata.system-deps.x]\n{line}\n'
         repo = Repo(self, {'Cargo.toml': text}, {'Cargo.toml': text.replace('"a"', '"b"')})
         got = repo.checks()
-        self.assertEqual(got[2], [f'Cargo.toml:5: {line}'])
+        self.assertEqual(got[2], [f'head Cargo.toml:5: {line}'])
         self.assertEqual(fired(got), {2})
         result = repo.cli('--run-flag', 'base')
         self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
@@ -140,7 +144,7 @@ class FeatureGateTests(unittest.TestCase):
         head = {f'x/src/{backend}.rs': f'fn f() {{}}\n{gate(backend)}\nfn g() {{}}\n'
                 for backend in BACKENDS}
         got = Repo(self, {'README.md': 'a\n'}, head).checks()
-        self.assertEqual(got[2], [f'x/src/{backend}.rs:2: {gate(backend)}'
+        self.assertEqual(got[2], [f'head x/src/{backend}.rs:2: {gate(backend)}'
                                   for backend in sorted(BACKENDS)])
         self.assertEqual(fired(got), {2})
 
@@ -153,10 +157,47 @@ class FeatureGateTests(unittest.TestCase):
         repo = Repo(self, {'a.txt': 'a\n'}, {'x/src/lib.rs': '\n'.join(lines) + '\n'})
         self.assertEqual([found.split(':')[1] for found in repo.checks()[2]], ['1', '2', '4'])
 
-    def test_a_changed_file_is_read_whole_as_committed_at_head(self):
-        repo = Repo(self, {'x/src/lib.rs': gate('bdb') + '\nfn a() {}\n', 'x/src/gone.rs': gate('tkrzw') + '\n'},
-                    {'x/src/lib.rs': gate('bdb') + '\nfn b() {}\n', 'x/src/gone.rs': None})
-        self.assertEqual(repo.checks()[2], [f'x/src/lib.rs:1: {gate("bdb")}'])
+    def test_a_changed_file_is_read_whole_and_an_unchanged_gate_is_listed_once_from_head(self):
+        repo = Repo(self, {'x/src/lib.rs': 'fn a() {}\n' + gate('bdb') + '\n'},
+                    {'x/src/lib.rs': gate('bdb') + '\nfn b() {}\n'})
+        self.assertEqual(repo.checks()[2], [f'head x/src/lib.rs:1: {gate("bdb")}'])
+
+    def test_a_removed_gate_line_fires_check_2_through_the_merge_base(self):
+        repo = Repo(self, {'x/src/lib.rs': 'fn a() {}\n' + gate('kyotocabinet') + '\nfn b() {}\n'},
+                    {'x/src/lib.rs': 'fn a() {}\nfn b() {}\n'})
+        got = repo.checks()
+        self.assertEqual(got[2], [f'merge base x/src/lib.rs:2: {gate("kyotocabinet")}'])
+        self.assertEqual(fired(got), {2})
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
+    def test_a_deleted_gated_file_fires_check_2_through_the_merge_base(self):
+        repo = Repo(self, {'x/src/keep.rs': 'fn a() {}\n', 'x/src/gone.rs': 'fn f() {}\n' + gate('tkrzw') + '\n'},
+                    {'x/src/keep.rs': 'fn b() {}\n', 'x/src/gone.rs': None})
+        got = repo.checks()
+        self.assertEqual(got[2], [f'merge base x/src/gone.rs:2: {gate("tkrzw")}'])
+        self.assertEqual(fired(got), {2})
+        result = repo.cli('base')
+        self.assertIn(f'\n  merge base x/src/gone.rs:2: {gate("tkrzw")}\n', result.stdout, result.stderr)
+
+    def test_a_deleted_gated_file_with_a_newline_in_its_path_fires_check_2(self):
+        # git grep -z prints the path verbatim, so its newline is not a record separator.
+        name = 'x/src/gone\nfile.rs'
+        repo = Repo(self, {'x/src/keep.rs': 'fn a() {}\n', name: gate('bdb') + '\n'},
+                    {'x/src/keep.rs': 'fn b() {}\n', name: None})
+        self.assertEqual(repo.checks()[2], [f'merge base {name}:1: {gate("bdb")}'])
+        result = repo.cli('--run-flag', 'base')
+        self.assertEqual((result.returncode, result.stdout), (0, 'run=true\n'), result.stderr)
+
+    def test_a_directory_replaced_by_a_file_does_not_match_its_markdown_through_the_prefix(self):
+        # The new file's path names the old directory, and a pathspec matches a directory's files.
+        repo = Repo(self, {'x/gated/notes.md': gate('bdb') + '\n', 'x/gated/a.txt': 'a\n'},
+                    {'x/gated/notes.md': None, 'x/gated/a.txt': None, 'x/gated': 'a\n'})
+        self.assertEqual(fired(repo.checks()), set())
+
+    def test_an_added_gated_file_fires_check_2_through_head(self):
+        repo = Repo(self, {'README.txt': 'a\n'}, {'x/src/new.rs': gate('bdb') + '\n'})
+        self.assertEqual(repo.checks()[2], [f'head x/src/new.rs:1: {gate("bdb")}'])
 
     def test_markdown_and_unchanged_files_do_not_fire_check_2(self):
         text = '\n'.join(gate(backend) for backend in BACKENDS) + '\n'
@@ -251,7 +292,7 @@ class DirectoryTests(unittest.TestCase):
 
     def test_checks_two_and_three_see_changes_outside_the_directory_they_run_in(self):
         cases = (('check 2', {'utils/src/lib.rs': gate('bdb') + '\n'},
-                  f'\n  utils/src/lib.rs:1: {gate("bdb")}\n'),
+                  f'\n  head utils/src/lib.rs:1: {gate("bdb")}\n'),
                  ('check 3', {'utils/Cargo.toml': '[features]\nold = []\ntkrzw = []\n'},
                   '\n  utils/Cargo.toml: +tkrzw = []\n'))
         for check, head, evidence in cases:
