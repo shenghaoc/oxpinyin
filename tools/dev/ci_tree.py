@@ -120,8 +120,11 @@ PYTHON_ONLY = ("tools/*.test.py", "tools/bisection/*.py",
 RUST_READS = (
               "tools/oracle/build.py", "tools/oracle/image.py", "tools/oracle/versions.py",
               "tools/oracle/oracle-pin.txt", "tools/oracle/libpinyin-data.json")
-# The shipping-size gate selects workspace package inputs without a Cargo toolchain.
-SHIP = (*CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
+# The shipping-size gate selects the inputs of the shipped libraries without a Cargo toolchain:
+# the root library and the two C API crates. The other workspace members, the root tests and
+# each C API crate's integration tests are in no shipped library.
+SHIP_CRATES = ("capi", "zhuyin-capi")
+SHIP = ("src", "codegen", "build.rs", *SHIP_CRATES, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "vcpkg-overlays", "triplets",
@@ -172,9 +175,8 @@ CI_INPUTS = {
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
                             for section in ("src", "tests", "examples", "benches")),
                       GENERATED_TABLES),
-    # Every crate is a safe superset of the C API dependency closure: this job
-    # runs without Cargo, and ship_sizes keys the base result on the same crates.
-    "ship": Inputs(SHIP),
+    # This job runs without Cargo, and ship_sizes keys the base result on the same crates.
+    "ship": Inputs(SHIP, tuple(f"{directory}/tests" for directory in SHIP_CRATES)),
 }
 
 

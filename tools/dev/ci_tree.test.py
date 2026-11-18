@@ -626,17 +626,25 @@ class GateTests(unittest.TestCase):
             'tools/dev/new_module.py': {'lint', 'test', 'harness'},
             'tools/oracle/oracle-pin.txt': {'lint', 'test', 'harness', 'ship'},
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
-            # A Rust-only change does not select the harness.
-            'repl/src/lib.rs': {'lint', 'test', 'ship'},
+            # A Rust-only change does not select the harness. Only the root library and the
+            # two C API crates ship.
+            'repl/src/lib.rs': {'lint', 'test'},
+            'utils/src/lib.rs': {'lint', 'test'},
             'src/lib.rs': {'lint', 'test', 'ship'},
-            'tests/suite.rs': {'lint', 'test', 'ship'},
+            'capi/src/lib.rs': {'lint', 'test', 'ship'},
+            'zhuyin-capi/src/lib.rs': {'lint', 'test', 'ship'},
+            'codegen/store.rs': {'lint', 'test', 'harness', 'ship'},
+            'build.rs': {'lint', 'test', 'harness', 'ship'},
+            'tests/suite.rs': {'lint', 'test'},
+            'capi/tests/it/main.rs': {'lint', 'test'},
+            'zhuyin-capi/tests/it/main.rs': {'lint', 'test'},
             'src/table_data/mod.rs': {'lint', 'test', 'ship'},
-            'benches/new.rs': {'lint', 'test', 'ship'},
-            'examples/new.rs': {'lint', 'test', 'ship'},
+            'benches/new.rs': {'lint', 'test'},
+            'examples/new.rs': {'lint', 'test'},
             # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
             'capi/build.rs': {'lint', 'test', 'harness', 'ship'},
             'zhuyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
-            'repl/Cargo.toml': {'lint', 'test', 'deny', 'harness', 'ship'},
+            'repl/Cargo.toml': {'lint', 'test', 'deny', 'harness'},
             'capi/libpinyin.ver': {'lint', 'test', 'harness', 'ship'},
             'zhuyin-capi/novel_types.h': {'lint', 'test', 'harness', 'ship'},
             'fixtures/w3/tkt/bigram.db': {'lint', 'test', 'harness'},
@@ -683,8 +691,10 @@ class GateTests(unittest.TestCase):
         for directory in ci_tree.CRATE_DIRS:
             with self.subTest(directory=directory):
                 self.assertTrue((ROOT / directory / 'Cargo.toml').is_file())
+                ship = {'ship'} if directory in ci_tree.SHIP_CRATES else set()
                 self.assertEqual(self.selected(f'{directory}/Cargo.toml'),
-                                 {'lint', 'test', 'deny', 'harness', 'ship'})
+                                 {'lint', 'test', 'deny', 'harness'} | ship)
+        self.assertLessEqual(set(ci_tree.SHIP_CRATES), set(ci_tree.CRATE_DIRS))
 
     def test_every_generated_table_selects_the_harness(self):
         from tools.dev import rust_tables

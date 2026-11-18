@@ -12,10 +12,10 @@ recipe key: the tree ids of every input that can change the libraries plus the
 toolchain fingerprint. The key does not name a commit, so every main commit
 with the same inputs shares one result.
 
-The crate inputs are all workspace package directories and main library sources, a conservative superset of the C API crates'
-dependency closure: the key needs no Cargo and no closure read at the head, so a
-base revision is keyed by its own tree. A change in a crate outside the closure
-only misses the cache.
+The crate inputs are the root library's sources and build inputs and the two C
+API crate directories, the crates that ship: the key needs no Cargo and no
+closure read at the head, so a base revision is keyed by its own tree. A change
+to a C API crate's tests only misses the cache.
 
 The key and report subcommands use the standard library only.
 """
@@ -40,7 +40,7 @@ SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
 # Inputs that can change a library byte: they key the cached base result. The
 # same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
-INPUTS = ('src', 'tests', 'codegen', 'build.rs', 'benches', 'examples', 'capi', 'zhuyin-capi', 'utils', 'repl', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
+INPUTS = ('src', 'codegen', 'build.rs', 'capi', 'zhuyin-capi', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
           'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt',
           'vcpkg-overlays', 'triplets')
 
