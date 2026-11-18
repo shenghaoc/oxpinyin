@@ -29,9 +29,13 @@ use libfuzzer_sys::fuzz_target;
 use oxpinyin::data::table_info::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
-    LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore, UserStoreError,
+    FIRST_USER_TOKEN, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore,
+    UserStoreError,
 };
-use oxpinyin::{SyllableKey, USER_DICTIONARY, phrase_index_library_index};
+use oxpinyin::{
+    NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, SyllableKey, USER_DICTIONARY,
+    phrase_index_library_index, phrase_index_make_token,
+};
 use tempfile::TempDir;
 
 /// Real frozen syllables (a slice of the inventory the w4 fixtures
@@ -67,6 +71,19 @@ const SYLLABLES: &[&str] = &[
     "zha", "zhai", "zhan", "zhang", "zhao", "zhe", "zhen", "zheng", "zhi", "zhong", "zhou", "zhu",
     "zhua", "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zhuo", "zi", "zong", "zou", "zu", "zuan",
     "zui", "zun",
+];
+
+/// The masks the mask command selects from: the library index, the whole
+/// token, the lowest bit and the low byte (they split the sequential user
+/// tokens), the slot's high byte, and the four bits above the library
+/// index, which take no part in the pin's test (`novel_types.h:41-44`).
+const MASKS: [u32; 6] = [
+    PHRASE_INDEX_LIBRARY_MASK,
+    PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK,
+    0x0000_0001,
+    0x0000_00FF,
+    0x00FF_0000,
+    0xF000_0000,
 ];
 
 /// The syllable a byte selects, as a store key.
@@ -376,14 +393,54 @@ fuzz_target!(|data: &[u8]| {
                     lefts.push(prev);
                 }
             }
-            // mask_out over a small mask/value pair; the totals law must
-            // survive the rewrite, so `lefts` is kept
+            // mask_out; the totals law must survive the rewrite, so `lefts`
+            // is kept. The pin accepts any mask and value: the facade tests
+            // the library through the four-bit library index of both, and
+            // the sub-index tests each token under their low 24 bits
+            // (`phrase_index.cpp:677-717` at 074a2219).
+            //
+            // Byte 0 selects the mode, byte 1 the mask and byte 2 a tracked
+            // token. The value comes from that token, so the matching mode
+            // removes a live phrase; a value from one payload byte is 0
+            // under every mask with clear low bits.
             6 => {
-                let mask = [0xF000_0000, 0x0F00_0000, 0x00FF_0000]
-                    [usize::from(payload.first().copied().unwrap_or(0)) % 3];
-                let value = u32::from(payload.get(1).copied().unwrap_or(0)) & mask;
+                let other_library = payload.first().copied().unwrap_or(0) & 1 == 1;
+                let mask = MASKS[usize::from(payload.get(1).copied().unwrap_or(0)) % MASKS.len()];
+                let pick = usize::from(payload.get(2).copied().unwrap_or(0));
+                let token = added
+                    .get(pick % added.len().max(1))
+                    .copied()
+                    .unwrap_or(FIRST_USER_TOKEN);
+                let was_live = store.phrase(token).is_some();
+                let (mask, value) = if other_library {
+                    // The token's value moved to NETWORK_DICTIONARY, under a
+                    // mask that tests the whole library index: the facade's
+                    // library check refuses the user library
+                    // (`phrase_index.cpp:707-711`), and no user token
+                    // matches in the index tables.
+                    let mask = mask | PHRASE_INDEX_LIBRARY_MASK;
+                    let value = (token & mask & !PHRASE_INDEX_LIBRARY_MASK)
+                        | phrase_index_make_token(NETWORK_DICTIONARY, 0);
+                    (mask, value)
+                } else {
+                    // `token & mask == value` holds for the token itself.
+                    (mask, token & mask)
+                };
                 store.mask_out(mask, value).expect("mask_out");
                 masked_out = true;
+                if other_library {
+                    assert!(
+                        !was_live || store.phrase(token).is_some(),
+                        "a mask of another library must keep token {token:#010x} \
+                         (mask {mask:#010x}, value {value:#010x})"
+                    );
+                } else {
+                    assert!(
+                        store.phrase(token).is_none(),
+                        "a matching mask must remove token {token:#010x} \
+                         (mask {mask:#010x}, value {value:#010x})"
+                    );
+                }
             }
             // save, then the dirty flag is clear
             _ => {
