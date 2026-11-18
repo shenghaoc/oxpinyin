@@ -21,7 +21,9 @@
 //! that outgrows the capacity) every row is pointed again, so no row ever
 //! holds a pointer into a freed buffer.
 
-use std::ffi::{CStr, c_char};
+#[cfg(test)]
+use std::ffi::CStr;
+use std::ffi::c_char;
 use std::ops::{Deref, DerefMut};
 
 use crate::PhraseText;
@@ -134,6 +136,7 @@ impl<R> CandidateSnapshot<R> {
 
     /// `span`'s bytes without the terminator. A span that is not of this
     /// buffer (which the type's own calls never produce) reads as empty.
+    #[cfg(test)]
     #[must_use]
     pub fn text_bytes(&self, span: TextSpan) -> &[u8] {
         let start = span.start as usize;
@@ -143,6 +146,7 @@ impl<R> CandidateSnapshot<R> {
     }
 
     /// `span`'s string with its terminator.
+    #[cfg(test)]
     #[must_use]
     pub fn text(&self, span: TextSpan) -> &CStr {
         let start = span.start as usize;
@@ -154,6 +158,7 @@ impl<R> CandidateSnapshot<R> {
 
     /// The pointer C reads `span`'s string through: the first byte of the
     /// string inside the buffer, NUL-terminated there.
+    #[cfg(test)]
     #[must_use]
     pub fn text_ptr(&self, span: TextSpan) -> *const c_char {
         span_ptr(&self.text, span)

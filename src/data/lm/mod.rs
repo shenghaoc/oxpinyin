@@ -198,6 +198,7 @@ impl<L, T: std::borrow::Borrow<BigramTables>, M> std::ops::Deref for BigramLangu
 
 impl BigramTables {
     /// Open only the bigram table; readers borrow phrase storage separately.
+    #[cfg(test)]
     pub fn open(bigram_path: &Path) -> Result<Self, LmError> {
         Ok(Self::with_table(BigramTable::open(bigram_path)?))
     }
@@ -226,6 +227,7 @@ impl BigramTables {
     }
 
     /// Whether the system hash is closed.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn attachment_finished(&self) -> bool {
         self.bigram.attachment_finished()
@@ -273,6 +275,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
     /// # Errors
     ///
     /// Returns [`LmError`] when the bigram file cannot be opened.
+    #[cfg(test)]
     pub fn open_with_mask(
         bigram_path: &Path,
         libraries: L,
@@ -324,6 +327,7 @@ impl<
     /// Whether unigram counts are available for interpolation: some
     /// visible library holds items. Decided by the tables, not by the
     /// facade total, which a `guint32` can wrap to zero while they stand.
+    #[cfg(test)]
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
         self.libraries()

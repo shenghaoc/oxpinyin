@@ -1375,15 +1375,9 @@ pub mod storage {
     }
 
     /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
-    #[cfg(windows)]
+    #[cfg(all(test, windows))]
     fn write_count(count: usize) -> libc::c_uint {
         count as libc::c_uint
-    }
-
-    /// Unix write takes size_t without a conversion.
-    #[cfg(not(windows))]
-    fn write_count(count: usize) -> usize {
-        count
     }
 
     #[cfg(all(test, windows, target_pointer_width = "64"))]
@@ -1412,19 +1406,16 @@ pub mod storage {
         assert_eq!(error, libc::ERANGE);
     }
 
-    /// `O_BINARY`, defined as zero where the target has no text/binary
-    /// distinction (`src/include/memory_chunk.h:39-40`).
-    #[cfg(windows)]
+    /// `O_BINARY` (`src/include/memory_chunk.h:39-40`).
+    #[cfg(all(test, windows))]
     const O_BINARY: c_int = libc::O_BINARY;
-    /// See the Windows definition.
-    #[cfg(not(windows))]
-    const O_BINARY: c_int = 0;
 
     /// `MemoryChunk::save` (`src/include/memory_chunk.h:536-557`): the
     /// `open(filename, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY, 0644)` sequence,
     /// the length and checksum words, the payload write, `g_fsync` and
     /// `close`. The pin's answers are kept: a short header write aborts (its
     /// `assert`), a short payload write returns `false` after the close.
+    #[cfg(all(test, windows))]
     #[must_use]
     pub fn save_chunk(
         filename: &(impl crate::input::FileName + ?Sized),
@@ -1432,17 +1423,10 @@ pub mod storage {
         checksum: u32,
         payload: &[u8],
     ) -> bool {
-        #[cfg(not(windows))]
-        let filename = filename.as_c_name();
-        #[cfg(windows)]
         let filename = crate::input::native::wide_path(&filename.as_path());
-        #[cfg(not(windows))]
-        use libc::open;
-        #[cfg(windows)]
         use libc::wopen as open;
         let flags = libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY;
-        // Windows only: the CRT descriptor is not inherited by children.
-        #[cfg(windows)]
+        // The CRT descriptor is not inherited by children.
         let flags = flags | libc::O_NOINHERIT;
         // SAFETY: `filename` is NUL-terminated and outlives the call.
         let fd = unsafe { open(filename.as_ptr(), flags, 0o644) };
@@ -1482,16 +1466,8 @@ pub mod storage {
         true
     }
 
-    /// `g_fsync(fd)` on this target: ordinary Unix GLib headers expand it
-    /// to `fsync`; Windows GLib calls `_commit`.
-    #[cfg(unix)]
-    unsafe fn sync_fd(fd: c_int) {
-        // SAFETY: the caller owns the open descriptor.
-        unsafe { libc::fsync(fd) };
-    }
-
-    /// See the Unix definition.
-    #[cfg(windows)]
+    /// `g_fsync(fd)`: Windows GLib calls `_commit`.
+    #[cfg(all(test, windows))]
     unsafe fn sync_fd(fd: c_int) {
         // SAFETY: the caller owns the open descriptor.
         unsafe { libc::commit(fd) };

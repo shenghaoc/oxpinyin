@@ -56,7 +56,7 @@ impl SystemDbm {
 ///
 /// The base name is the library's identity
 /// across the whole pipeline: `<name>.table` is its model20 source,
-/// `<name>.bin` its chunk file ([`SYSTEM_LIBRARY_FILES`]); `gen_binary_files`
+/// `<name>.bin` its chunk file (`SYSTEM_LIBRARY_FILES`); `gen_binary_files`
 /// compiles the first into the second.
 pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
     (1, "gb_char"),
@@ -88,6 +88,7 @@ pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
 ///
 /// `<name>.bin` for each of [`SYSTEM_LIBRARY_NAMES`], spelled out because
 /// a `const` cannot concatenate; the test below holds the two in step.
+#[cfg(test)]
 pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
     (1, "gb_char.bin"),
     (2, "gbk_char.bin"),
@@ -104,6 +105,7 @@ pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
 ///
 /// `<name>.bin` for each of [`ADDON_LIBRARY_NAMES`], spelled out because
 /// a `const` cannot concatenate; the test below holds the two in step.
+#[cfg(test)]
 pub const ADDON_LIBRARY_FILES: &[(u8, &str)] = &[
     (4, "art.bin"),
     (5, "culture.bin"),

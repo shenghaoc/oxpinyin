@@ -301,12 +301,14 @@ impl LibrarySet {
     }
 
     /// Whether the set has no library.
+    #[cfg(test)]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0 == 0
     }
 
     /// The libraries of the set, in ascending order.
+    #[cfg(test)]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = u8> + use<'_> {
         LIBRARIES
             .into_iter()

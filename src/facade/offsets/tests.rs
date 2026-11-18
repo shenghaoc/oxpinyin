@@ -2,6 +2,27 @@ use crate::{DoublePinyinParser, DoublePinyinScheme, OptionBits, ZhuyinParser, Zh
 
 use super::*;
 
+/// Maps a byte offset in the transformed `'`-joined full-pinyin string
+/// back to the original double-pinyin input offset.
+///
+/// Candidate consumption — and the session's post-select composition
+/// offset — always lands on a key boundary, so the mapping is exact
+/// there; an offset inside a transformed key is clamped to that key's
+/// original end (the same place a candidate would consume it).
+#[must_use]
+fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        let key_len = item.key().text().len();
+        let boundary = transformed + key_len;
+        if offset <= boundary {
+            return item.end();
+        }
+        transformed = boundary + 1; // apostrophe between keys
+    }
+    parse.consumed()
+}
+
 /// `su3cl3` on the standard keyboard is 你好: two keys, `ni` over
 /// original `[0, 3)` and `hao` over `[3, 6)`; the joined session
 /// buffer is `ni'hao` (the syllable texts, no tones), so the

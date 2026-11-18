@@ -886,6 +886,7 @@ impl<E> PhraseIndexRanges<E> {
     }
 
     /// Library `library`'s ranges in append order; empty past the last library.
+    #[cfg(test)]
     #[must_use]
     pub fn ranges(&self, library: usize) -> &[PhraseIndexRange] {
         self.libraries.get(library).map_or(&[], Vec::as_slice)
@@ -909,6 +910,7 @@ impl<E> PhraseIndexRanges<E> {
     }
 
     /// `range`'s resolved entries, ascending by token.
+    #[cfg(test)]
     pub fn entries<'a>(&'a self, range: &PhraseIndexRange) -> impl Iterator<Item = &'a E> + 'a {
         let count =
             usize::try_from(range.last - range.first).map_or(0, |span| span.saturating_add(1));
@@ -1053,6 +1055,7 @@ impl MergedGram {
 
     /// A row from its total and `(token, count)` items, kept in the order
     /// given; each field is stored as the pin's `guint32`.
+    #[cfg(test)]
     #[must_use]
     pub fn new(total: u64, records: Vec<(u32, u64)>) -> Self {
         let mut chunk = Vec::with_capacity(
@@ -1142,6 +1145,7 @@ impl MergedGram {
     }
 
     /// A copy of the merged chunk's bytes.
+    #[cfg(test)]
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.chunk.clone()

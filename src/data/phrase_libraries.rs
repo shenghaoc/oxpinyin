@@ -23,6 +23,7 @@ use crate::data::phrase_library::{
     LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk,
 };
 
+#[cfg(test)]
 pub use crate::data::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
 /// One pronunciation of a library item.
@@ -103,6 +104,7 @@ impl PhraseLibraries {
     /// Returns [`LibraryError`] when a present file does not verify as a
     /// well-formed `SubPhraseIndex` chunk, or when a nibble is named
     /// twice or lies outside the sixteen-library space.
+    #[cfg(test)]
     pub fn open<S: AsRef<std::ffi::OsStr>>(
         dir: &Path,
         stems: &[(u8, S)],
@@ -430,6 +432,7 @@ impl PhraseLibraries {
     /// Whether a loaded library outside the `unloaded` bits holds an
     /// item: there is a unigram table to price with, whatever the
     /// wrapping total adds up to.
+    #[cfg(test)]
     #[must_use]
     pub fn has_items_unloaded(&self, unloaded: u32) -> bool {
         self.stocked & !unloaded != 0

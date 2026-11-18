@@ -1,6 +1,18 @@
 use super::phrase_text_bytes;
 use crate::PhraseText;
 
+/// Whether `text` stores exactly `phrase`'s code points: the pin's check of
+/// an existing item against an imported phrase, its stored length then a
+/// `memcmp` over every stored word, a zero and what follows it included
+/// (`pinyin.cpp:568-571`, `zhuyin.cpp:454-457` at 074a2219).
+#[must_use]
+fn stored_words_match(text: &PhraseText, phrase: &str) -> bool {
+    match text.stored_words() {
+        Some(words) => words.iter().copied().eq(phrase.chars().map(u32::from)),
+        None => text.as_str() == Some(phrase),
+    }
+}
+
 #[test]
 fn scalar_text_is_borrowed_and_nul_text_is_encoded() {
     let ordinary = PhraseText::from("甲乙");
@@ -64,7 +76,6 @@ fn length_matches_the_encoding_without_encoding() {
 
 #[test]
 fn stored_words_match_reads_every_stored_word() {
-    use super::stored_words_match;
     assert!(stored_words_match(&PhraseText::from("甲乙"), "甲乙"));
     assert!(!stored_words_match(&PhraseText::from("甲\0乙"), "甲"));
     let with_zero = PhraseText::from_words([0x7532, 0, 0x4E59]).expect("stored");

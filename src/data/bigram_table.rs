@@ -67,6 +67,7 @@ impl<D: ChewingDbm> BigramTable<D> {
         self.dbm.finish_attachment();
     }
 
+    #[cfg(test)]
     pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm.attachment_finished()
     }

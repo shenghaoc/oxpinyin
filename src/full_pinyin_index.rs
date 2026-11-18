@@ -11,6 +11,7 @@
 
 use crate::static_strings::StringTable;
 
+#[cfg(test)]
 include!("table_data/full_pinyin_counts.rs");
 
 /// An indexed full-pinyin spelling table, decoded on demand.

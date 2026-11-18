@@ -165,13 +165,11 @@ impl Candidate {
     /// window it came from: 0 for a window anchored at a lookup offset
     /// (its rows are measured from that offset) and the span's absolute
     /// start for a before-cursor window, whose rows all END at the lookup
-    /// offset ([`Session::candidates_ending_at`]) but begin wherever each
+    /// offset (`Session::candidates_ending_at`) but begin wherever each
     /// matching key path starts. Upstream's `m_begin`: the choose writes
     /// its constraint on `[m_begin, m_end)` and, for a before-cursor row,
     /// answers `m_begin` as the new cursor (`zhuyin.cpp:1656-1660` at the
     /// pin).
-    ///
-    /// [`Session::candidates_ending_at`]: crate::engine::Session::candidates_ending_at
     #[must_use]
     pub const fn span_start(&self) -> usize {
         self.span_start as usize

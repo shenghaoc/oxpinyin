@@ -33,6 +33,7 @@ use crate::data::row_format::pinyin_index::{
 };
 
 /// One DBM file's rows: `(key, value)` pairs in ascending key order.
+#[cfg(test)]
 pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// `pinyin_exact_compare2` (`pinyin_phrase3.h:33`): all initials across
