@@ -99,7 +99,7 @@ impl<'a> SystemItem<'a> {
     }
 
     /// The item's bytes, borrowed only for this callback. Under
-    /// [`LiveSystemItems::read_fields`] a shipped item's bytes can end at the
+    /// `LiveSystemItems::read_fields` a shipped item's bytes can end at the
     /// content end, before the item's header-derived length.
     #[must_use]
     pub fn as_bytes(&self) -> &'a [u8] {
@@ -132,7 +132,7 @@ impl<'a> SystemItem<'a> {
 
     /// Whether every declared word of the text lies inside the item's bytes.
     #[must_use]
-    pub fn phrase_words_present(&self) -> bool {
+    pub(crate) fn phrase_words_present(&self) -> bool {
         self.view().phrase_words_present()
     }
 
@@ -208,7 +208,7 @@ impl<'a> LiveSystemItems<'a> {
     /// library's visibility once when it probes and then reads the items it
     /// probed whatever the mask says.
     #[must_use]
-    pub const fn unmasked(libraries: &'a PhraseLibraries, user: &'a UserStore) -> Self {
+    pub(crate) const fn unmasked(libraries: &'a PhraseLibraries, user: &'a UserStore) -> Self {
         Self {
             libraries,
             user,
@@ -227,14 +227,14 @@ impl<'a> LiveSystemItems<'a> {
 
     /// Whether the facade's table layout names this library as a system chunk.
     #[must_use]
-    pub fn is_system_library(&self, library: u8) -> bool {
+    pub(crate) fn is_system_library(&self, library: u8) -> bool {
         self.user.is_system_library(library)
     }
 
     /// Whether the session holds items beyond the shipped chunks.
     /// Consumer: the pricing overlay gate, `RuntimeDict::effective_query`.
     #[must_use]
-    pub fn has_overlay(&self) -> bool {
+    pub(crate) fn has_overlay(&self) -> bool {
         self.user.has_system_items()
     }
 
@@ -242,7 +242,7 @@ impl<'a> LiveSystemItems<'a> {
     /// unloaded or the session holds a removed item. Consumers:
     /// `RuntimeDict::token_filter_active`.
     #[must_use]
-    pub fn filter_active(&self) -> bool {
+    pub(crate) fn filter_active(&self) -> bool {
         self.unloaded_mask() != 0 || self.user.has_removed_system_items()
     }
 
@@ -250,7 +250,7 @@ impl<'a> LiveSystemItems<'a> {
     /// item out. Consumers: `RuntimeDict::library_visible_token`, the export
     /// probe's removed check.
     #[must_use]
-    pub fn is_visible(&self, token: Token) -> bool {
+    pub(crate) fn is_visible(&self, token: Token) -> bool {
         self.library_loaded(u32::from(crate::user::phrase::phrase_index_library_index(
             token,
         ))) && !self.user.system_item_removed(token)
@@ -310,7 +310,7 @@ impl<'a> LiveSystemItems<'a> {
     /// buffer (compatibility policy row 130). A journal-written item row 107
     /// rejected still answers no item. Consumers: `effective_unigram`,
     /// `token_phrase`, `token_nth_pronunciation`.
-    pub fn read_fields<R>(
+    pub(crate) fn read_fields<R>(
         &self,
         token: Token,
         read: impl FnOnce(SystemItem<'_>) -> R,
@@ -354,7 +354,7 @@ impl<'a> LiveSystemItems<'a> {
     /// this answers where [`Self::read`] cannot build a view over a short
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
-    pub fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
+    pub(crate) fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
         if !self.is_system_library(crate::user::phrase::phrase_index_library_index(token)) {
             return Lookup::Absent;
         }
@@ -389,7 +389,7 @@ impl<'a> LiveSystemItems<'a> {
 
     /// The current sub-index's range end (phrase_index.cpp:610–646).
     #[must_use]
-    pub fn system_range_end(&self, library: u8) -> Option<Token> {
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
         self.user.system_range_end(library)
     }
 }

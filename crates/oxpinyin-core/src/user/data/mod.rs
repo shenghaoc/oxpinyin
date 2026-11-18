@@ -30,7 +30,7 @@ pub mod row_format;
 pub mod single_gram;
 #[cfg(test)]
 #[path = "../../../tests/support/mod.rs"]
-mod support;
+pub(crate) mod support;
 pub mod system_files;
 pub mod table;
 pub mod table_conf;
@@ -41,11 +41,11 @@ pub mod user_files;
 pub use crate::model::UserCountDelta;
 pub use bigram_table::BigramTable;
 pub use dict::{AddonDictionary, DictError, PhraseIndexTable, PinyinIndexTable, SystemDictionary};
-pub use lm::{BigramLanguageModel, BigramRow, LmError, library_visible, merge_bigram};
+pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram};
 // The compiled-in backend's native-table extension and `database format:`
 // token, re-exported so consumers above this crate (runtime, capi, tests,
 // fuzz) name fixture directories and check `table.conf` consistently with
-// the backend the build selected — oxpinyin-facade has no direct store
+// the backend the build selected — oxpinyin-core has no direct store
 // edge.
 pub use crate::store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT};
 pub use phrase_libraries::PhraseLibraries;

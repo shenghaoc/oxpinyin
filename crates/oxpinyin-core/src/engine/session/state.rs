@@ -108,7 +108,7 @@ where
     /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
     /// corpus pins were captured without a sentence guess.
     ///
-    /// Under [`Session::set_defer_list_builds`], call
+    /// Under `Session::set_defer_list_builds`, call
     /// [`Session::refresh_candidates`] first.
     #[must_use]
     pub fn candidates(&self) -> &CandidateList {
@@ -233,7 +233,7 @@ where
     /// `pinyin_reset` (`:2700`) and the next `guess_sentence` replace it.
     /// Until then `pinyin_get_sentence` answers the old rows and
     /// `pinyin_guess_candidates` prepends them (register row 34).
-    pub fn discard_composition(&mut self) {
+    pub(crate) fn discard_composition(&mut self) {
         self.reset_composition();
         self.input.clear();
         self.record.clear();
@@ -261,7 +261,7 @@ where
     /// in [`Session::replace_raw`], which clears, refills, clamps, and
     /// refreshes in one call, so this reset alone always leaves a
     /// consistent session.
-    pub fn reset_composition(&mut self) {
+    pub(crate) fn reset_composition(&mut self) {
         self.lookup.reset();
     }
 
@@ -339,7 +339,7 @@ where
     ///
     /// Returns [`EngineError`] when the refresh under the new input hits
     /// a backend failure.
-    pub fn replace_raw_exact(
+    pub(crate) fn replace_raw_exact(
         &mut self,
         text: &str,
         segments: &[ExactSegment],
@@ -365,7 +365,7 @@ where
     ///
     /// # Errors
     /// Returns [`EngineError`] if refreshing the new input fails.
-    pub fn replace_raw_full_pinyin(
+    pub(crate) fn replace_raw_full_pinyin(
         &mut self,
         text: &str,
         segments: &[ExactSegment],
@@ -470,7 +470,7 @@ where
     ///
     /// Refreshes a composing session, exactly `set_options`'s contract:
     /// the cached list's order and LONGER row are functions of the word.
-    /// Under [`Session::set_defer_list_builds`] a change leaves the list
+    /// Under `Session::set_defer_list_builds` a change leaves the list
     /// stale instead, for [`Session::refresh_candidates`]: the pin takes the
     /// word as a `pinyin_guess_candidates` argument and builds once under it
     /// (`pinyin.cpp:2184-2198` at 074a2219), as [`Session::candidates_at`]
@@ -543,7 +543,7 @@ where
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`
     /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from
     /// its own re-anchored window ([`Session::candidates_at`]).
-    pub fn set_defer_list_builds(&mut self, defer: bool) {
+    pub(crate) fn set_defer_list_builds(&mut self, defer: bool) {
         self.defer_list_builds = defer;
     }
 

@@ -66,7 +66,11 @@ impl<T> LibraryTable<T> {
 
     /// The value of `library`, stored from `make` first when it is absent.
     /// `None` for an index that names no slot.
-    pub fn get_or_insert_with(&mut self, library: u8, make: impl FnOnce() -> T) -> Option<&mut T> {
+    pub(crate) fn get_or_insert_with(
+        &mut self,
+        library: u8,
+        make: impl FnOnce() -> T,
+    ) -> Option<&mut T> {
         Some(
             self.slots
                 .get_mut(usize::from(library))?
@@ -74,7 +78,7 @@ impl<T> LibraryTable<T> {
         )
     }
 
-    /// [`Self::get_or_insert_with`] storing `T::default()`.
+    /// `Self::get_or_insert_with` storing `T::default()`.
     pub fn get_or_default(&mut self, library: u8) -> Option<&mut T>
     where
         T: Default,

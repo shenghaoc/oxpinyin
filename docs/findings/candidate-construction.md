@@ -59,7 +59,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
 
 ### 8.2 The gate and the frequency key
 
-The gate is the `candidate_surface` test, in `crates/oxpinyin-facade/src/runtime/tests.rs`.
+The gate is the `candidate_surface` test, in `crates/oxpinyin-core/src/facade/runtime/tests.rs`.
 
 - It reads `fixtures/w4/oracle-candidate-structure.txt`: the pin's first ten candidates per input, with candidate type and n-best index.
 - It runs a fresh session over every input that the capture holds, on the pinned libpinyin-data package.

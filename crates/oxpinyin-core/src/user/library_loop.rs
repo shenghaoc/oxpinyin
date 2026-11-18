@@ -86,7 +86,10 @@ impl<'a> LibraryLoopRows<'a> {
     /// # Errors
     ///
     /// The loop's first fault.
-    pub fn map_libraries(&self, originals: &mut SystemOriginals) -> Result<(), LibraryLoopStop> {
+    pub(crate) fn map_libraries(
+        &self,
+        originals: &mut SystemOriginals,
+    ) -> Result<(), LibraryLoopStop> {
         run(&self.steps, self.system_dir, originals, None)
     }
 }

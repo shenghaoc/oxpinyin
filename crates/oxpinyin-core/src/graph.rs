@@ -42,14 +42,14 @@ pub enum GraphError {
         /// Largest length accepted.
         limit: usize,
     },
-    /// [`SegmentGraph::build_exact`] was given segments that do not
+    /// `SegmentGraph::build_exact` was given segments that do not
     /// describe a walk over the input: out-of-order, overlapping,
     /// out-of-bounds, or empty spans, or bytes between adjacent spans
     /// that are not apostrophe separators.
     ExactSegmentsInvalid,
 }
 
-/// One pre-parsed syllable for [`SegmentGraph::build_exact`]: the byte
+/// One pre-parsed syllable for `SegmentGraph::build_exact`: the byte
 /// span of the key's own text and the key itself, with its tone.
 ///
 /// The span excludes separator bytes; a separator between two segments
@@ -193,7 +193,7 @@ impl Edge {
     /// The matched index row's correction distance: 1 for a
     /// `PINYIN_CORRECT_*` or `PINYIN_AMB_S_SH` / `PINYIN_AMB_Z_ZH` alias,
     /// 0 otherwise ([`SyllableKey::from_option_text_with_distance`]).
-    /// Pre-parsed edges ([`SegmentGraph::build_exact`]) are 0.
+    /// Pre-parsed edges (`SegmentGraph::build_exact`) are 0.
     #[must_use]
     pub const fn distance(&self) -> u8 {
         self.distance
@@ -314,7 +314,7 @@ impl SegmentGraph {
     /// Returns [`GraphError::InputTooLong`] beyond [`MAX_GRAPH_POSITION`] and
     /// [`GraphError::ExactSegmentsInvalid`] for out-of-order, overlapping,
     /// out-of-bounds, or empty spans.
-    pub fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Result<Self, GraphError> {
+    pub(crate) fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Result<Self, GraphError> {
         if input.len() > MAX_GRAPH_POSITION {
             return Err(GraphError::InputTooLong {
                 len: input.len(),

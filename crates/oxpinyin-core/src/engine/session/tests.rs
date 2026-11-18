@@ -2983,11 +2983,8 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
 /// chosen text nor lost, and the composition advances to the span's end.
 #[test]
 fn choosing_a_before_cursor_row_constrains_its_own_span() {
+    use super::BEFORE_CURSOR_ANCHOR;
     use super::CandidateKind;
-    use oxpinyin_facade_anchor::BEFORE_CURSOR_ANCHOR;
-    mod oxpinyin_facade_anchor {
-        pub const BEFORE_CURSOR_ANCHOR: usize = 0;
-    }
 
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");

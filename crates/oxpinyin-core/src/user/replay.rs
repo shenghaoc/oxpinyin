@@ -189,7 +189,7 @@ pub enum UnigramAdd {
 impl UnigramAdd {
     /// `ERROR_OK`.
     #[must_use]
-    pub fn is_accepted(self) -> bool {
+    pub(crate) fn is_accepted(self) -> bool {
         self == Self::Accepted
     }
 }

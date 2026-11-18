@@ -482,11 +482,11 @@ and exposes the stored counts as `UserCountDelta` for the §5 merge.
 | Behaviour | oxpinyin |
 |---|---|
 | §2.1 training seed arithmetic | `crates/oxpinyin-core/src/user/seed.rs` |
-| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-core/src/engine/session/selection.rs`, `crates/oxpinyin-facade` |
+| §2.2 per-candidate side effects, §2.3 prediction | `crates/oxpinyin-core/src/engine/session/selection.rs`, `crates/oxpinyin-core` |
 | §3 user phrase index and token allocation | `crates/oxpinyin-core/src/user/phrase.rs`, `store.rs` |
 | §4 save cycle and `m_modified` gate | `crates/oxpinyin-core/src/user/persistence.rs`, `UserStore::save_reporting` |
 | §5 additive merge | `BigramLanguageModel` over `UserCountDelta` (`crates/oxpinyin-core/src/user/data/lm/mod.rs`) |
-| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-facade/src/export_rows.rs` |
+| §9 export iterators | `crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-core/src/facade/export_rows.rs` |
 | §11 user files | `crates/oxpinyin-core/src/user/data/user_files.rs`, `crates/oxpinyin-core/src/user/store_libpinyin.rs` |
 
 The C entry points `pinyin_save`, `pinyin_train`, `pinyin_choose_candidate`,

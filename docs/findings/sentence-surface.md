@@ -217,7 +217,7 @@ it (§7).
 
 ## 7. The C ABI n-best wiring
 
-`SharedLm` (a re-export of `oxpinyin_facade::runtime::RuntimeLm`) overrides
+`SharedLm` (a re-export of `oxpinyin_core::facade::runtime::RuntimeLm`) overrides
 `nbest_step_costs` and forwards to the model behind it, the same model
 that the rest of the C ABI decode scores against. The trellis, the
 comparator and the candidate code did not change for this. The trait
@@ -335,7 +335,7 @@ phrase slice that shifts because a different number of NBEST rows survive
 is an intact phrase order seen through a shifted 6-row window.
 
 The fixture holds the pin's answer. The gate is the test module
-`sentence_surface_parity` (`crates/oxpinyin-facade/src/runtime/tests.rs`), which calls
+`sentence_surface_parity` (`crates/oxpinyin-core/src/facade/runtime/tests.rs`), which calls
 `sentence_tail::measure` over the pinned libpinyin-data package and asserts
 the current numbers. A move is a deliberate change of this section, not a
 silent drift.
@@ -653,7 +653,7 @@ sides and of `rongkan…` on the subject is therefore not read here.
 
 The unchanged `fixtures/w4/oracle-sentence-surface.txt` holds each complete
 pin observation, including the six candidate rows.
-`crates/oxpinyin-facade/tests/fixtures/sentence-surface/residuals.txt` uses the same four-column TSV
+`crates/oxpinyin-core/tests/fixtures/sentence-surface/residuals.txt` uses the same four-column TSV
 format to bind all nine complete subject observations. `sentence_tail::measure`
 compares every comparable input to that binding, or to the pin where no
 residual is declared. The gate checks guessed status, the entire indexed
@@ -746,7 +746,7 @@ observations differ. Each is the third n-best sentence, the
 Both are POLICY-ACCEPTED under the existing S2 ruling, with the same
 disposition as `fupie` above. They exist only on the `phrases` profile,
 so the fresh-profile fixtures do not hold them and
-`crates/oxpinyin-facade/tests/fixtures/sentence-surface/residuals.txt`
+`crates/oxpinyin-core/tests/fixtures/sentence-surface/residuals.txt`
 does not bind them.
 
 **Profile.** The profile imports 10,000 library-1 rows at count 20000.

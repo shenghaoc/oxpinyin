@@ -1,7 +1,7 @@
 //! Parsing symbols: full pinyin, double pinyin, chewing.
 //!
 //! C wrappers over the shared facade-orchestration seams
-//! (`oxpinyin_facade::InstanceCore`); the laws themselves — the
+//! (`oxpinyin_core::facade::InstanceCore`); the laws themselves — the
 //! continue-or-restart rule, the scheme dispatch, the exact-input drive,
 //! the LUOMA / `SECONDARY_ZHUYIN` index branch — live there once, shared
 //! with the zhuyin facade. This facade's chewing seam forwards
@@ -10,7 +10,7 @@
 
 use std::os::raw::c_char;
 
-use oxpinyin_facade::ToneForwarding;
+use oxpinyin_core::facade::ToneForwarding;
 
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};

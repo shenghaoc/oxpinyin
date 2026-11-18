@@ -197,7 +197,7 @@ impl SessionState {
     /// [`Session::candidates_ending_at`] that its holder has replaced, so
     /// the next window is built in its storage. Its rows are dropped here;
     /// only the capacity is kept.
-    pub fn recycle_candidates(&mut self, list: CandidateList) {
+    pub(crate) fn recycle_candidates(&mut self, list: CandidateList) {
         let mut items = list.into_items();
         items.clear();
         self.scratch.window_items = items;
@@ -207,7 +207,7 @@ impl SessionState {
 impl<D, L> Session<D, L> {
     /// Retain only composition state after an operation's readers are dropped.
     #[must_use]
-    pub fn into_state(self) -> SessionState {
+    pub(crate) fn into_state(self) -> SessionState {
         self.state
     }
 }
@@ -310,7 +310,7 @@ mod lookup;
 mod offsets;
 mod selection;
 pub(crate) use selection::column_is_empty;
-pub use selection::{RowText, SelectionTarget, TrainingPlan};
+pub use selection::{BEFORE_CURSOR_ANCHOR, RowText, SelectionTarget, TrainingPlan};
 mod state;
 
 #[cfg(test)]
@@ -671,7 +671,7 @@ fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: boo
 /// `:1602-1604`). Every alternative keeps its source key's tone, column and
 /// end. The result is in column order; no keys leave the matrix empty.
 #[must_use]
-pub fn parse_time_keys(
+pub(crate) fn parse_time_keys(
     keys: &[crate::engine::cursor::MatrixKey],
     parsed_len: usize,
     options: OptionBits,
@@ -889,7 +889,7 @@ fn append_split(columns: &mut [Vec<ScanKey>], key: ScanKey, end: usize, left: &s
 /// [`EngineError::LookupOffsetOutOfRange`] past one-past-end;
 /// [`EngineError::LookupOffsetPastSeparator`] for the leading-run shape
 /// upstream aborts on.
-pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, EngineError> {
+pub(crate) fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, EngineError> {
     check_lookup_offset_range(input.len(), offset)?;
     let mut normalized = offset;
     let mut index = offset.saturating_sub(1);
@@ -921,7 +921,10 @@ pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, Eng
 /// [`EngineError::LookupOffsetOutOfRange`] when `offset > len` — upstream
 /// reads its matrix out of bounds there, so no pinned behaviour exists
 /// and the offset is refused.
-pub const fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, EngineError> {
+pub(crate) const fn check_lookup_offset_range(
+    len: usize,
+    offset: usize,
+) -> Result<usize, EngineError> {
     if offset > len {
         return Err(EngineError::LookupOffsetOutOfRange { offset, len });
     }

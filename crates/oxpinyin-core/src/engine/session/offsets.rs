@@ -52,7 +52,7 @@ where
     /// `_check_offset` aborts: the normalized offset still sits one past a
     /// separator, which only a leading apostrophe run can cause (the walk
     /// never crosses byte 0).
-    pub fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
+    pub(crate) fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
         normalize_lookup_offset(self.input.as_bytes(), offset)
     }
 
@@ -66,7 +66,7 @@ where
     /// aborts. A cursor past one-past-end is NOT an
     /// error: like the pin, the cursor is clamped to the parsed length, so
     /// there is no out-of-range shape here.
-    pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
+    pub(crate) fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
         let keys = self.matrix_keys();
         let parsed = self.retained_parse().matrix.bound;
         crate::engine::cursor::lookup_offset_over_spans(
@@ -90,7 +90,7 @@ where
     /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
-    pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
+    pub(crate) fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
         let keys = self.matrix_keys();
         let parsed = self.retained_parse().matrix.bound;
         crate::engine::cursor::left_word_offset_over_spans(
@@ -115,7 +115,7 @@ where
     /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
-    pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
+    pub(crate) fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
         let keys = self.matrix_keys();
         let parsed = self.retained_parse().matrix.bound;
         crate::engine::cursor::right_word_offset_over_spans(
@@ -131,7 +131,7 @@ where
     ///
     /// The cursor laws above walk these same keys through the
     /// `*_over_spans` laws, so a key answered here and an offset answered
-    /// by [`Session::right_word_offset`] agree by construction. The C ABI's
+    /// by `Session::right_word_offset` agree by construction. The C ABI's
     /// `pinyin_get_pinyin_key` family reads this.
     ///
     /// The keys are in the pin's column order ([`crate::engine::cursor::KeySpans`]),
@@ -158,7 +158,7 @@ where
     /// [`EngineError::ZeroKeyOffsetCheck`] and
     /// [`EngineError::MatrixColumnAssert`] where the pin asserts; the
     /// dictionary's backend failure.
-    pub fn character_offset_with_walk(
+    pub(crate) fn character_offset_with_walk(
         &self,
         phrase: &crate::PhraseText,
         offset: usize,
@@ -189,7 +189,7 @@ where
     /// the consistent-chain length, so a trailing or standalone run is
     /// consumed even though no key covers it.
     #[must_use]
-    pub fn full_parsed_len(&self) -> usize {
+    pub(crate) fn full_parsed_len(&self) -> usize {
         if self.input.is_empty() {
             return 0;
         }

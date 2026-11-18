@@ -16,7 +16,7 @@
 //! with the system model, the §4 `m_modified` gate
 //! ([`UserStore::is_modified`] / [`UserStore::save_reporting`]) behind `pinyin_save`,
 //! and the §9 export surface ([`UserStore::export_phrases_in`] /
-//! [`UserStore::bigram_predecessors`]) behind the C ABI's export iterators.
+//! `UserStore::bigram_predecessors`) behind the C ABI's export iterators.
 //! Nothing is durable between saves: `save` writes the pin's own user file
 //! set (`.tmp` + rename), the pin's own shape (`docs/findings/user-store.md`
 //! §11). The user bigram is held once, as the pin's own `SingleGram`
@@ -53,7 +53,7 @@ mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
 #[cfg(test)]
-mod test_child;
+pub(crate) mod test_child;
 #[cfg(test)]
 mod test_session;
 mod user_index;
@@ -87,8 +87,8 @@ pub use replay::tool;
 
 #[cfg(test)]
 #[path = "../../tests/support/native_fixture.rs"]
-mod native_fixture;
+pub(crate) mod native_fixture;
 
 #[cfg(all(test, feature = "tkrzw"))]
-#[path = "../../../oxpinyin-facade/tests/common/contract_data.rs"]
-mod contract_data;
+#[path = "../../tests/common/contract_data.rs"]
+pub(crate) mod contract_data;

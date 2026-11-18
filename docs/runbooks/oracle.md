@@ -412,7 +412,7 @@ New pin observations come from [pin captures](pin-captures.md).
 Before each release, the three-cell sweep that [verification rule 3](verification.md#3-sweep-and-release-coverage) requires runs.
 The report gives each result or each outstanding input limitation.
 
-Every ordinary test run includes the tkrzw `pin_data` and `sentence_surface_parity` tests of `oxpinyin-facade`, and
+Every ordinary test run includes the tkrzw `pin_data` and `sentence_surface_parity` tests of `oxpinyin-core`, and
 `package_libraries` in `oxpinyin-core`. These tests read the pinned libpinyin-data package
 ([test inputs](../testing/README.md#test-inputs)).
 

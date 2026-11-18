@@ -10,6 +10,32 @@ use super::*;
 use crate::engine::constraint::PhraseSpan;
 use crate::engine::error::TrainingSpanFault;
 
+/// The anchor of a **before-cursor** window — the buffer start, not the
+/// lookup offset — that a caller passes to [`SelectionTarget::of_candidate`]
+/// for a row of that window.
+///
+/// The two window builders measure a candidate's `consumed_bytes` in
+/// different coordinates, and [`SelectionTarget::of_candidate`] reads the
+/// chosen span as `[anchor, anchor + consumed_bytes)`:
+///
+/// - **After-cursor** (`Session::candidates_at(offset)`) rebases its graph
+///   onto `raw[offset..]`, so `consumed_bytes` is a LENGTH measured from
+///   the lookup offset. Its anchor is that offset.
+/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) reads
+///   the retained matrix, whose coordinates are absolute from
+///   the buffer start, so every row's `consumed_bytes` is the span's
+///   ABSOLUTE END — the lookup offset itself, shared by every row in the
+///   window, whatever byte each span starts on. The anchor that reproduces
+///   that end (and so the consumed advance) is therefore the coordinate
+///   those ends are measured from: 0.
+///
+/// Reusing the after-cursor anchor here would read the span as
+/// `[offset, 2 * offset)` and walk the composition off the end of the
+/// buffer; resolving the row's index against the composition-anchored
+/// cached list instead reads a different list — the caller would commit a
+/// row it never displayed.
+pub const BEFORE_CURSOR_ANCHOR: usize = 0;
+
 /// What a choose reads off the row it selects: the pin's `m_begin`,
 /// `m_end` and `m_token`, and for an n-best row `m_nbest_index`
 /// (`lookup_candidate_t`, 074a2219 `pinyin.cpp:97-105`; read at
@@ -32,7 +58,7 @@ pub struct SelectionTarget<'a> {
     pub text: &'a PhraseText,
 }
 
-/// Where [`Session::select_row`] takes the recorded text from.
+/// Where `Session::select_row` takes the recorded text from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowText {
     /// The session dictionary's item text for the token.
@@ -87,7 +113,7 @@ impl TrainingPlan<'_> {
     ///
     /// # Errors
     /// User-model errors retain the observations before the failure.
-    pub fn observe<U: UserModel<Token = PhraseToken>>(
+    pub(crate) fn observe<U: UserModel<Token = PhraseToken>>(
         self,
         user: &mut U,
     ) -> Result<bool, EngineError>
@@ -141,7 +167,7 @@ where
     /// # Errors
     /// The ordered index, constraint, store and span checks of
     /// [`Self::train_nbest_preflight`], plus the user model's per-step store checks.
-    pub fn prepare_training(
+    pub(crate) fn prepare_training(
         &self,
         index: u8,
         check: &mut impl FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
@@ -199,7 +225,7 @@ where
     /// [`EngineError::StaleTrainingConstraint`] or
     /// [`EngineError::StaleTrainingSpan`]; [`EngineError::Graph`] when the
     /// raw buffer cannot be built into a segment graph.
-    pub fn train_nbest_preflight(&self, index: u8) -> Result<(), EngineError> {
+    pub(crate) fn train_nbest_preflight(&self, index: u8) -> Result<(), EngineError> {
         if let Some(row) = self.nbest_training_row(index)?
             && !row.spans.is_empty()
         {
@@ -593,7 +619,7 @@ where
     /// `m_constraints->len` after `validate_constraint` (074a2219
     /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
     #[must_use]
-    pub fn selection_capacity(&self) -> usize {
+    pub(crate) fn selection_capacity(&self) -> usize {
         self.selection_constraint_size()
     }
 
@@ -605,7 +631,7 @@ where
     /// # Errors
     ///
     /// [`EngineError`] from the refresh that follows the selection.
-    pub fn select_nbest_row(&mut self, rank: u8) -> Result<Selection, EngineError> {
+    pub(crate) fn select_nbest_row(&mut self, rank: u8) -> Result<Selection, EngineError> {
         let Some(row) = self.sentence.rows.get(usize::from(rank)) else {
             return Ok(Selection::Refused);
         };
@@ -632,7 +658,7 @@ where
     /// # Errors
     ///
     /// [`EngineError`] from the validations and the refresh.
-    pub fn select_row(
+    pub(crate) fn select_row(
         &mut self,
         start: usize,
         end: usize,
@@ -672,7 +698,7 @@ where
     /// # Errors
     ///
     /// [`EngineError`] from either validation.
-    pub fn choose_unspellable_span(
+    pub(crate) fn choose_unspellable_span(
         &mut self,
         start: usize,
         end: usize,

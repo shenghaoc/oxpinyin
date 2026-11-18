@@ -115,8 +115,8 @@ fn a_user_session_fault_aborts_the_init() {
     let stderr = crate::test_support::assert_aborts(
         "context::tests::a_user_session_fault_aborts_the_init",
         || {
-            let error = oxpinyin_facade::OpenFailure::Runtime(
-                oxpinyin_facade::runtime::OpenError::UserSession(
+            let error = oxpinyin_core::facade::OpenFailure::Runtime(
+                oxpinyin_core::facade::runtime::OpenError::UserSession(
                     oxpinyin_core::user::UserStoreError::SessionSeed("injected".into()),
                 ),
             );

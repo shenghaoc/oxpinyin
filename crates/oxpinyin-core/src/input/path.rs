@@ -105,7 +105,7 @@ pub fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> CString {
 /// `OsString` unchanged; elsewhere GLib returns UTF-8 and the path takes
 /// that text.
 #[must_use]
-pub fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
+pub(crate) fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
     let joined = build_filename(Some(&c_string(dir.as_os_str())), Some(&c_string(name)));
     path_from_c_string(joined)
 }
@@ -113,7 +113,7 @@ pub fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
 /// Build a system/addon chunk path, retaining Windows `OsStr` bytes through
 /// GLib's separator handling without a lossy UTF-8 conversion.
 #[must_use]
-pub fn build_chunk_path(dir: &Path, name: &OsStr) -> PathBuf {
+pub(crate) fn build_chunk_path(dir: &Path, name: &OsStr) -> PathBuf {
     #[cfg(not(windows))]
     {
         build_path(dir, name)

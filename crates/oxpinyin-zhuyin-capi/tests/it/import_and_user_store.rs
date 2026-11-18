@@ -237,7 +237,7 @@ fn mask_out_aborts_on_a_short_bigram_value() {
 }
 
 /// Register row 96 at mask-out, after the user tables are masked.
-// Unix only, for the reason `oxpinyin-facade`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+// Unix only, for the reason `oxpinyin-core`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn mask_out_aborts_on_a_directory_library() {

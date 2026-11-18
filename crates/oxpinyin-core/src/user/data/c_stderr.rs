@@ -36,7 +36,7 @@ pub fn table_conf_load_failed(system_dir: Option<&Path>) {
 /// `_write_files` (`pinyin.cpp:956`, `zhuyin.cpp:589`) and `mask_out`
 /// (`pinyin.cpp:1265`, `zhuyin.cpp:800`). The pin carries on with an empty
 /// chunk and dies reading it; the line is all of its output (policy row 76).
-pub fn mmap_failed(path: &Path) {
+pub(crate) fn mmap_failed(path: &Path) {
     crate::input::diagnostic::report_mmap_failed(&c_prefix(path_bytes(path)));
 }
 

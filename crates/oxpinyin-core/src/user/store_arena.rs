@@ -342,7 +342,7 @@ impl UserStore {
 
     /// Borrow a live user item directly from the session arena. The callback
     /// cannot retain the view past the borrow or a later writer.
-    pub fn with_user_item<R>(
+    pub(crate) fn with_user_item<R>(
         &self,
         token: Token,
         read: impl FnOnce(PhraseItemView<'_>) -> R,

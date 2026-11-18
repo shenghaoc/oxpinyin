@@ -162,7 +162,7 @@ impl UserStore {
     /// Returns [`UserStoreError::SessionSeed`] if an in-memory container
     /// cannot be created or seeded with the system libraries' allocation
     /// bases, where the pin dies.
-    pub fn open_transient(
+    pub(crate) fn open_transient(
         mut originals: SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
@@ -220,7 +220,7 @@ impl UserStore {
     /// `check_format` for an init without a user dir, whose `user.conf` the
     /// pin names `""` ([`crate::user::persistence::check_format_unnamed`]): the
     /// pin's failed load and, under libpinyin's law, failed save.
-    pub fn check_profile_unnamed(versions: &SystemVersions, law: UserConfLaw) {
+    pub(crate) fn check_profile_unnamed(versions: &SystemVersions, law: UserConfLaw) {
         persistence::check_format_unnamed(versions, law);
     }
 

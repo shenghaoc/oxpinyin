@@ -4,8 +4,7 @@
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
-| oxpinyin-core | Session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables, system-data readers, user persistence, native I/O and the selected DBM backend. | deny, scoped input and backend exceptions | yes | yes |
-| oxpinyin-facade | Shared context/instance state machines, parse seams, cursor laws and §9 user-data export materialization. See facade dependencies below. | forbid | yes | via capi |
+| oxpinyin-core | Shared C facade orchestration, session state, candidate selection, decoding, Pinyin and Zhuyin parsers, SegmentGraph, the key comparison and model traits. Packed chewing keys, renderers, frozen content tables, system-data readers, user persistence, native I/O and the selected DBM backend. | deny, scoped input and backend exceptions | yes | yes |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through `oxpinyin-core`'s `tools` boundary (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS (needs GLib) | never |
@@ -36,11 +35,7 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 
 ### Facades
 
-Both C-ABI facades consume `oxpinyin-facade`. They expand the pointer macros defined in `oxpinyin-core` and decode nullable filenames through `oxpinyin-core`.
-Its runtime module assembles sessions for both libraries.
-`oxpinyin-facade` depends on core and user.
-It holds the concrete dictionary, language-model and user handles of runtime by value.
-For that reason, it forwards the complete backend feature matrix and is not generic over engine traits.
+Both C crates use the shared context and instance state machines in `oxpinyin_core::facade`. Its runtime module assembles the dictionary, language-model and user handles for each session. Each C crate forwards its backend selection to core.
 
 ## Backend selection
 
@@ -105,9 +100,9 @@ The core user module owns the following data. Native system-data readers and the
 
 ## Centralized assembly
 
-Decodable engines are constructed in exactly one place, `oxpinyin-facade`.
+Decodable engines are constructed in exactly one place, `oxpinyin-core`.
 It assembles system tables, unigram model, λ, a persistent or transient user store, addons and punctuation.
-Facades through `oxpinyin-facade`, capi and future adapters consume that assembly.
+Facades through `oxpinyin-core`, capi and future adapters consume that assembly.
 Nothing else assembles equivalents independently.
 This prevents native and C-ABI paths from silently diverging.
 
@@ -118,7 +113,7 @@ Its deliberate pinned algorithms are:
   Arithmetic lives in data's `*_with_user_delta` methods.
   Gate 2 merges whole rows through `load_merged_row` over core's `MergedGram`.
 - Suggestion row order through `merge_suggestion_rows`.
-  C facades consume it through `oxpinyin-facade::merged_suggestions`.
+  C facades consume it through `oxpinyin-core::merged_suggestions`.
 
 Each algorithm's source cites the pin.
 

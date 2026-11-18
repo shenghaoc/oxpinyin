@@ -57,7 +57,7 @@ impl<D: ChewingDbm> PunctTable<D> {
 
     /// Closes the table's native object once at facade fini
     /// (`pinyin.cpp:1215` at 074a2219).
-    pub fn finish_attachment(&mut self) {
+    pub(crate) fn finish_attachment(&mut self) {
         if let Some(dbm) = self.dbm.as_mut() {
             dbm.finish_attachment();
         }
@@ -66,7 +66,7 @@ impl<D: ChewingDbm> PunctTable<D> {
     /// Whether the native object is closed; `true` for an empty table,
     /// which holds none.
     #[must_use]
-    pub fn attachment_finished(&self) -> bool {
+    pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm
             .as_ref()
             .is_none_or(ChewingDbm::attachment_finished)

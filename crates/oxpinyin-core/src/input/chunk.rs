@@ -23,7 +23,7 @@ use crate::input::path;
 /// header checks; Windows refuses the open, so a directory row is skipped
 /// without a word.
 #[must_use]
-pub const fn opens_directories() -> bool {
+pub(crate) const fn opens_directories() -> bool {
     cfg!(unix)
 }
 

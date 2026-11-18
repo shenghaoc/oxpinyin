@@ -106,7 +106,7 @@ impl LmError {
     /// at 074a2219); the engine reports `ReadAfterCheck` and the C adapters
     /// abort (register row 110).
     #[must_use]
-    pub fn is_read_after_check(&self) -> bool {
+    pub(crate) fn is_read_after_check(&self) -> bool {
         matches!(
             self,
             Self::Table(TableError::Store(crate::store::StoreError::ReadAfterCheck))
@@ -164,7 +164,7 @@ pub use crate::user::data::row_format::bigram::BigramRow;
 /// range are trivially visible — the same rule the runtime's dictionary
 /// applies.
 #[must_use]
-pub const fn library_visible(mask: u32, nibble: u8) -> bool {
+pub(crate) const fn library_visible(mask: u32, nibble: u8) -> bool {
     mask == 0 || nibble >= 32 || mask & (1_u32 << nibble) == 0
 }
 
@@ -227,18 +227,19 @@ impl BigramTables {
     /// Runs the system bigram's reset at facade fini: close and delete
     /// (`pinyin.cpp:1208`; `ngram_tkrzwdb.cpp:40-46` and its BDB and KC
     /// peers at 074a2219).
-    pub fn finish_attachment(&mut self) {
+    pub(crate) fn finish_attachment(&mut self) {
         self.bigram.finish_attachment();
     }
 
     /// Whether the system hash is closed.
     #[must_use]
-    pub fn attachment_finished(&self) -> bool {
+    pub(crate) fn attachment_finished(&self) -> bool {
         self.bigram.attachment_finished()
     }
 
     /// Borrow all loaded phrase libraries for a model operation.
-    pub fn read_all<'a>(
+    #[cfg(feature = "tools")]
+    pub(crate) fn read_all<'a>(
         &'a self,
         libraries: &'a PhraseLibraries,
     ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self> {
@@ -300,7 +301,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>> BigramLanguageModel<L> {
 
 impl BigramTables {
     /// Installs λ from the parsed system `table.conf`.
-    pub fn set_lambda_from_conf(&mut self, conf: &crate::user::data::table_info::TableConf) {
+    pub(crate) fn set_lambda_from_conf(&mut self, conf: &crate::user::data::table_info::TableConf) {
         self.lambda_f32 = conf.lambda_f32();
     }
 }
@@ -325,7 +326,7 @@ impl<
 
     /// Whether `nibble` names a library the model reads.
     #[must_use]
-    pub fn is_visible(&self, nibble: u8) -> bool {
+    pub(crate) fn is_visible(&self, nibble: u8) -> bool {
         self.visible(nibble)
     }
 
@@ -434,7 +435,7 @@ impl<
     ///
     /// # Errors
     /// Propagates DBM read and schema errors, including a present empty value.
-    pub fn load_merged_row(
+    pub(crate) fn load_merged_row(
         &self,
         prev: u32,
         user: Option<Vec<u8>>,
@@ -465,7 +466,7 @@ impl<
     /// with no item that the user overlay did not raise; the chunk items
     /// are the real frequency table.
     #[must_use]
-    pub fn unigram_freq_with_user_delta(
+    pub(crate) fn unigram_freq_with_user_delta(
         &self,
         token: u32,
         live: Option<u32>,
@@ -506,7 +507,7 @@ impl<
     /// # Errors
     ///
     /// Returns [`LmError`] when the system table cannot be read.
-    pub fn nbest_step_costs_with_user_delta(
+    pub(crate) fn nbest_step_costs_with_user_delta(
         &self,
         prev: &PhraseToken,
         token: &PhraseToken,
@@ -524,7 +525,7 @@ impl<
     ///
     /// # Errors
     /// None today; the signature keeps the cost law's error type.
-    pub fn nbest_item_costs(
+    pub(crate) fn nbest_item_costs(
         &self,
         token: &PhraseToken,
         user: UserCountDelta,

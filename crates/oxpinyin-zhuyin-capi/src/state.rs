@@ -6,18 +6,18 @@
 //!
 //! The orchestration half of both structs — the runtime assembly, the
 //! user store, the live option/scheme word, the parse-mode state machine,
-//! the re-anchored window — lives in [`oxpinyin_facade`]'s
+//! the re-anchored window — lives in [`oxpinyin_core::facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the pinyin facade; this file
 //! keeps only the zhuyin-facing shell: the ABI
 //! key slots, the `CString` candidate snapshot (with the zhuyin-local
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
-pub use oxpinyin_facade::InstanceCore;
+pub use oxpinyin_core::facade::InstanceCore;
 use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
 
-use oxpinyin_facade::{ContextCore, OpenFailure};
+use oxpinyin_core::facade::{ContextCore, OpenFailure};
 
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
@@ -41,7 +41,7 @@ impl CapiContext {
             core: ContextCore::try_open(
                 system_dir,
                 user_dir,
-                oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD,
+                oxpinyin_core::facade::ZHUYIN_DEFAULT_OPTION_WORD,
                 oxpinyin_core::user::UserConfLaw::Zhuyin,
             )?,
         })
@@ -67,7 +67,7 @@ impl CapiContext {
             owner,
             core,
             state: CapiInstanceState {
-                candidates: oxpinyin_facade::CandidateSnapshot::new(),
+                candidates: oxpinyin_core::facade::CandidateSnapshot::new(),
             },
         }
     }
@@ -79,14 +79,14 @@ impl CapiContext {
 /// `lookup_candidate_t *` can borrow into it across C calls.
 ///
 /// Sized to need, as the pinyin facade's row is: the text lives in the
-/// instance's [`CandidateSnapshot`](oxpinyin_facade::CandidateSnapshot)
+/// instance's [`CandidateSnapshot`](oxpinyin_core::facade::CandidateSnapshot)
 /// buffer and the counts are `u32`. It carries only what this facade's
 /// getters and its choose read: the pin's choose reads the row's own
 /// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219),
 /// on whichever instance a caller passes it to.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
-    pub(crate) text: oxpinyin_facade::TextSpan,
+    pub(crate) text: oxpinyin_core::facade::TextSpan,
     /// The pointer `zhuyin_get_candidate_string` answers — from the row
     /// alone, as the pin reads only the candidate there — kept current by
     /// the snapshot.
@@ -122,12 +122,12 @@ impl CapiCandidate {
     }
 }
 
-impl oxpinyin_facade::SnapshotRow for CapiCandidate {
-    fn text_span(&self) -> oxpinyin_facade::TextSpan {
+impl oxpinyin_core::facade::SnapshotRow for CapiCandidate {
+    fn text_span(&self) -> oxpinyin_core::facade::TextSpan {
         self.text
     }
 
-    fn set_text(&mut self, span: oxpinyin_facade::TextSpan, ptr: *const std::ffi::c_char) {
+    fn set_text(&mut self, span: oxpinyin_core::facade::TextSpan, ptr: *const std::ffi::c_char) {
         self.text = span;
         self.text_ptr = ptr;
     }
@@ -149,7 +149,7 @@ pub struct CapiInstanceState {
     /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`:
     /// the rows `lookup_candidate_t *` pointers address and the packed
     /// strings they read.
-    pub(crate) candidates: oxpinyin_facade::CandidateSnapshot<CapiCandidate>,
+    pub(crate) candidates: oxpinyin_core::facade::CandidateSnapshot<CapiCandidate>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────
@@ -176,16 +176,19 @@ impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
 }
 
 pub type CapiInstanceRead<'a> =
-    CapiInstance<oxpinyin_facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
-pub type CapiInstanceMut<'a> =
-    CapiInstance<oxpinyin_facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
+    CapiInstance<oxpinyin_core::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
+pub type CapiInstanceMut<'a> = CapiInstance<
+    oxpinyin_core::facade::InstanceMut<'a>,
+    &'a mut CapiInstanceState,
+    &'a ContextOwner,
+>;
 
 impl<
-    S: std::borrow::Borrow<oxpinyin_facade::InstanceState>,
+    S: std::borrow::Borrow<oxpinyin_core::facade::InstanceState>,
     E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
-> CapiInstance<oxpinyin_facade::InstanceView<'_, S, E>, V, O>
+> CapiInstance<oxpinyin_core::facade::InstanceView<'_, S, E>, V, O>
 {
     pub(crate) fn read(&self) -> CapiInstanceRead<'_> {
         CapiInstance {

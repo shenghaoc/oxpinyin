@@ -201,7 +201,7 @@ class DirectoryTests(unittest.TestCase):
     """The answer does not depend on where in the work tree the script is run."""
 
     BASE = {'README.md': 'a\n', 'tools/notes.txt': 'a\n', 'crates/oxpinyin-core/src/store/mod.rs': 'fn a() {}\n',
-            'crates/oxpinyin-facade/Cargo.toml': '[features]\nold = []\n', 'crates/oxpinyin-facade/src/lib.rs': 'fn a() {}\n'}
+            'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\n', 'crates/oxpinyin-utils/src/lib.rs': 'fn a() {}\n'}
     DIRECTORIES = ('.', 'tools', 'crates/oxpinyin-core')
 
     def reports(self, repo):
@@ -219,10 +219,10 @@ class DirectoryTests(unittest.TestCase):
                 self.assertEqual(report, reports['.'])
 
     def test_checks_two_and_three_see_changes_outside_the_directory_they_run_in(self):
-        cases = (('check 2', {'crates/oxpinyin-facade/src/lib.rs': gate('bdb') + '\n'},
-                  f'\n  crates/oxpinyin-facade/src/lib.rs:1: {gate("bdb")}\n'),
-                 ('check 3', {'crates/oxpinyin-facade/Cargo.toml': '[features]\nold = []\ntkrzw = []\n'},
-                  '\n  crates/oxpinyin-facade/Cargo.toml: +tkrzw = []\n'))
+        cases = (('check 2', {'crates/oxpinyin-utils/src/lib.rs': gate('bdb') + '\n'},
+                  f'\n  crates/oxpinyin-utils/src/lib.rs:1: {gate("bdb")}\n'),
+                 ('check 3', {'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\ntkrzw = []\n'},
+                  '\n  crates/oxpinyin-utils/Cargo.toml: +tkrzw = []\n'))
         for check, head, evidence in cases:
             with self.subTest(check=check):
                 reports = self.reports(Repo(self, self.BASE, head))
@@ -285,7 +285,7 @@ class RunFlagTests(unittest.TestCase):
 
     BASE = {'README.md': 'a\n', 'crates/oxpinyin-core/src/store/mod.rs': 'fn a() {}\n',
             'crates/oxpinyin-core/src/engine/mod.rs': 'fn a() {}\n',
-            'crates/oxpinyin-facade/Cargo.toml': '[features]\nold = []\n',
+            'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\n',
             'tools/tkrzw/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
     ALSO = ('--also', 'tools/tkrzw', '--also', 'tools/dev/check.py')
 
@@ -297,7 +297,7 @@ class RunFlagTests(unittest.TestCase):
     def test_each_kind_of_change_sets_the_flag(self):
         cases = (('store change', {'crates/oxpinyin-core/src/store/mod.rs': 'fn b() {}\n'}, 'true'),
                  ('feature line', {'crates/oxpinyin-core/src/engine/mod.rs': gate('kyotocabinet') + '\n'}, 'true'),
-                 ('backend Cargo.toml line', {'crates/oxpinyin-facade/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
+                 ('backend Cargo.toml line', {'crates/oxpinyin-utils/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
                   'true'),
                  ('infrastructure change', {'tools/tkrzw/build.sh': 'b\n'}, 'true'),
                  ('infrastructure file', {'tools/dev/check.py': 'b\n'}, 'true'),

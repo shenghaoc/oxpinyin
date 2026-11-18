@@ -45,7 +45,7 @@ and no policy digest. Each case is captured on the bdb cell through
 
 ## 2. The frozen parity numbers
 
-These are the parity numbers. The tests of `oxpinyin-facade` assert them over
+These are the parity numbers. The tests of `oxpinyin-core` assert them over
 the pinned libpinyin-data package (`just fetch-contract-data`):
 
 - `candidate_surface` (`candidates_match_the_frozen_capture`): the candidate surface

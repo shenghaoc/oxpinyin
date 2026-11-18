@@ -336,7 +336,6 @@ dependencies = [
  "glib-sys",
  "num_enum",
  "oxpinyin-core",
- "oxpinyin-facade",
  "rustc-hash",
 ]
 
@@ -359,13 +358,6 @@ dependencies = [
  "smallvec",
  "system-deps",
  "thiserror",
-]
-
-[[package]]
-name = "oxpinyin-facade"
-version = "0.1.0-alpha.1"
-dependencies = [
- "oxpinyin-core",
 ]
 
 [[package]]

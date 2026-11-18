@@ -92,7 +92,8 @@ fn guess_predicted_result(
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
     // more than four tokens, before the empty check.
-    let Ok(prefixes) = oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix)
+    let Ok(prefixes) =
+        oxpinyin_core::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix)
     else {
         std::process::abort();
     };
@@ -143,7 +144,7 @@ fn guess_predicted_result(
         // Only one pre-dedup row: neither strcmp runs. Its opaque score and
         // length are unobservable; preserve the NULL getter and choose token.
         inst.state.candidates.push(CapiCandidate {
-            text: oxpinyin_facade::TextSpan::NULL,
+            text: oxpinyin_core::facade::TextSpan::NULL,
             text_ptr: std::ptr::null(),
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
@@ -489,7 +490,7 @@ fn append_predicted_prefix(
     // The facade merge reproduces reduce_tokens: library groups first,
     // then each DBM's UCS-4 byte cursor order. The stable length/score sort
     // preserves this collection order on ties, including user/system ties.
-    let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
+    let suggestions = oxpinyin_core::facade::merged_suggestions(dict, user, prefix);
     let total = predicted_total(lm);
     let (kept, sole_missing) =
         select_prefix_rows(suggestions, limit, into.len() + earlier_rows_without_item);

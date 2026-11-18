@@ -58,7 +58,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_core::engine::EngineError) -> bool {
-    oxpinyin_facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
+    oxpinyin_core::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
 /// Whether the facade's `guint32` unigram total is zero: the loaded
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     // validating `reduce_tokens` (`pinyin.cpp:1415`), which asserts on more
     // than four tokens (`phrase_large_table3.h:95`) before the guess.
     let Ok(prefixes) =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
+        oxpinyin_core::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
     else {
         std::process::abort();
     };
@@ -306,17 +306,17 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
             }
             return false;
         }
-        Err(error) => match oxpinyin_facade::CursorFault::of(
+        Err(error) => match oxpinyin_core::facade::CursorFault::of(
             &error,
-            oxpinyin_facade::CursorLaw::CharacterOffset,
+            oxpinyin_core::facade::CursorLaw::CharacterOffset,
         ) {
             // Register row 19: the pin's recursion and entry asserts
             // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
             // `_pre_compute_tokens`' `reduce_tokens` count assert
             // (`pinyin.cpp:3117`, `phrase_large_table3.h:95`).
-            oxpinyin_facade::CursorFault::PinAssert => std::process::abort(),
+            oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
             // A graph or dictionary failure the pin has no counterpart for.
-            oxpinyin_facade::CursorFault::Unreadable => {
+            oxpinyin_core::facade::CursorFault::Unreadable => {
                 crate::ffi::log_warning("pinyin_get_character_offset: the lookup failed");
                 return false;
             }
@@ -363,9 +363,9 @@ impl GuessFrame {
         // apostrophe in front of the key, the column a forcing there spells
         // under); plain and index-parsed full pinyin are the identity.
         let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
-            oxpinyin_facade::double_session_offset(parse, normalized)
+            oxpinyin_core::facade::double_session_offset(parse, normalized)
         } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_session_offset(parse, normalized)
+            oxpinyin_core::facade::zhuyin_session_offset(parse, normalized)
         } else {
             normalized
         };
@@ -377,9 +377,9 @@ impl GuessFrame {
         // as in the zhuyin facade (issue #577); only its sentence rows are
         // snapshot.
         let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
-            oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
+            oxpinyin_core::facade::double_offset_is_mid_key(parse, normalized)
         } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
+            oxpinyin_core::facade::zhuyin_offset_is_mid_key(parse, normalized)
         } else {
             false
         };
@@ -492,7 +492,7 @@ fn lookup_window(
 /// separator run (ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next
 /// key rest, issue #570). libpinyin@dbff264 normalizes it back to the first
 /// byte of that run and validates the normalized offset —
-/// [`oxpinyin_facade::InstanceView::validate_lookup_offset`] runs that law in
+/// [`oxpinyin_core::facade::InstanceView::validate_lookup_offset`] runs that law in
 /// the active parse mode's own coordinates: the full walk where `'` is a
 /// zero-key separator (plain full pinyin, Luoma/secondary-zhuyin), the
 /// range refusal alone where a composition cannot hold one (double pinyin,
@@ -574,8 +574,8 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // refusal keeps its silent `false`.
     let normalized = match inst.core.abi_candidate_offset(offset, false) {
         Ok(normalized) => normalized,
-        Err(oxpinyin_facade::CursorFault::PinAssert) => std::process::abort(),
-        Err(oxpinyin_facade::CursorFault::Unreadable) => return false,
+        Err(oxpinyin_core::facade::CursorFault::PinAssert) => std::process::abort(),
+        Err(oxpinyin_core::facade::CursorFault::Unreadable) => return false,
     };
     let frame = GuessFrame::of(&inst, offset, normalized);
     // Publish each row of the re-anchored window with its own span: a

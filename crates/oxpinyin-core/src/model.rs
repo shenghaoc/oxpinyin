@@ -625,7 +625,7 @@ pub const fn phrase_index_library(token: u32) -> usize {
 ///
 /// Every caller sorts through this function, so the libraries hold one
 /// instance of the sort.
-pub fn sort_tokens_by_library(tokens: &mut [u32]) {
+pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
     tokens.sort_by_key(|token| phrase_index_library(*token));
 }
 
@@ -660,7 +660,7 @@ impl<T> TrellisPathMemo<T> {
     ///
     /// Returns `init`'s error, keeping nothing, so the next call tries
     /// again.
-    pub fn get_or_try_init<E>(&self, init: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+    pub(crate) fn get_or_try_init<E>(&self, init: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
         if let Some(value) = self.0.get() {
             return Ok(value);
         }
@@ -810,7 +810,7 @@ impl<E> PhraseIndexRanges<E> {
     }
 
     /// Every filled slot with its token, in the walk order of [`Self::iter`].
-    pub fn walk_tokens(&self) -> impl Iterator<Item = (u32, &E)> {
+    pub(crate) fn walk_tokens(&self) -> impl Iterator<Item = (u32, &E)> {
         self.iter().flat_map(move |range| {
             (range.first..=range.last)
                 .filter_map(move |token| self.entry(range, token).map(|entry| (token, entry)))
@@ -1018,7 +1018,7 @@ impl MergedGram {
     ///
     /// # Errors
     /// The merge's fault, else what [`single_gram::checked_search`] meets.
-    pub fn search_into(
+    pub(crate) fn search_into(
         &self,
         first: u32,
         last: u32,
@@ -1055,7 +1055,7 @@ impl NbestStepRow {
     ///
     /// # Errors
     /// Returns the loader's error unchanged.
-    pub fn get_or_try_init<E>(
+    pub(crate) fn get_or_try_init<E>(
         &mut self,
         load: impl FnOnce() -> Result<Option<MergedGram>, E>,
     ) -> Result<Option<&MergedGram>, E> {
