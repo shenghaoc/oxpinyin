@@ -11,10 +11,11 @@ use std::path::Path;
 use oxpinyin::data::single_gram::decode_single_gram;
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OutputStream;
+use oxpinyin::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
 
 use crate::storage::dbm::Hash;
-use crate::storage::libraries::{Libraries, token_to_string};
-use crate::storage::{load_table_conf, make_token};
+use crate::storage::libraries::{Libraries, Library, token_to_string};
+use crate::storage::load_table_conf;
 
 /// `main` (`:43-73`), which reads no argument.
 pub fn main(_args: impl IntoIterator<Item = OsString>) {
@@ -43,27 +44,48 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
 /// `gen_unigram` (`:75-104`).
 fn gen_unigram(output: &OutputStream, libraries: &Libraries) {
     tool::storage::print_gram_1(output);
-    for index in 0..16_u8 {
+    for index in 0..PHRASE_INDEX_LIBRARY_COUNT {
+        // `get_range(i, range)` (`:80-82`): a library that is not loaded
+        // is `ERROR_NO_SUB_PHRASE_INDEX` and skipped.
         let Some(library) = &libraries.by_library(index) else {
             continue;
         };
-        // `get_range`: every resident slot, ascending; an absent slot is
-        // `ERROR_NO_ITEM` and skipped.
-        for (slot, item) in &library.items {
-            if *slot == 0 {
-                continue;
-            }
+        for (token, item) in walked_items(index, library) {
             let freq = item.unigram;
             if freq == 0 {
                 continue;
             }
-            let token = make_token(index, *slot);
             let Some(word) = token_to_string(libraries, token) else {
                 continue;
             };
             tool::storage::print_unigram(output, token as i32, &word, i64::from(freq));
         }
     }
+}
+
+/// The items `gen_unigram` reads from library `index`, as `(token, item)`
+/// pairs in slot order.
+///
+/// The pin walks `for (token = range.m_range_begin; token <
+/// range.m_range_end; token++)` (`:85-86`). `FacadePhraseIndex::get_range`
+/// makes both ends tokens with `PHRASE_INDEX_MAKE_TOKEN`
+/// (`src/storage/phrase_index.cpp:619-620`), which keeps only the low 24
+/// bits of `SubPhraseIndex::get_range`'s end, the offset count with
+/// trailing zeros trimmed (`:624-645`). So the walk covers slots 1 to
+/// `range_end & PHRASE_MASK`, and nothing when that end is 0 or 1.
+/// `get_phrase_item` reads the slot `token & PHRASE_MASK` (`:180-187`), and
+/// an empty slot is `ERROR_NO_ITEM` and skipped (`export_interpolation.cpp:87-90`):
+/// only the resident items in that range are read.
+fn walked_items(
+    index: u8,
+    library: &Library,
+) -> impl Iterator<Item = (u32, &oxpinyin::data::chunk_write::ChunkItem)> {
+    let end = library.range_end & PHRASE_MASK;
+    (end > 1)
+        .then(|| library.items.range(1..end))
+        .into_iter()
+        .flatten()
+        .map(move |(&slot, item)| (phrase_index_make_token(index, slot), item))
 }
 
 /// `gen_bigram` (`:106-143`).
@@ -106,3 +128,6 @@ fn gen_bigram(output: &OutputStream, libraries: &Libraries, bigram: Option<&Hash
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
