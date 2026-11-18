@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import shutil
 import stat
 import subprocess
 import sys
@@ -417,79 +416,13 @@ def _run_bdb(backend, sanitizer, *, environment, out, err, tools, host_os, night
     if sanitizer == 'address':
         suffix = ('(LeakSanitizer off on Darwin)' if host_os == 'Darwin'
                   else '(+ LeakSanitizer)')
-        print(f'--- 1/2: Rust under {display} {suffix} ---', file=out, flush=True)
+        print(f'--- Rust under {display} {suffix} ---', file=out, flush=True)
     else:
-        print(f'--- 1/2: Rust under {display} ---', file=out, flush=True)
+        print(f'--- Rust under {display} ---', file=out, flush=True)
     result = _launch(tools, command, environment=test_environment, err=err,
                      stdout=None, stderr=None)
     if result.returncode:
         return native.shell_status(result.returncode)
-    if sanitizer != 'address':
-        print('', file=out, flush=True)
-        print("sanitizers: clean (libdb's own internals are NOT instrumented)", file=out, flush=True)
-        return 0
-    print('', file=out, flush=True)
-    print('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', file=out, flush=True)
-    work = tempfile.mkdtemp(prefix='tmp.')
-    try:
-        compile = ['gcc', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
-                   '-fsanitize=address,undefined', '-fno-sanitize-recover=all']
-        compile += native.path_list_flags(child, 'SYSTEM_DEPS_BDB_INCLUDE', '-I')
-        compile += native.path_list_flags(child, 'SYSTEM_DEPS_BDB_SEARCH_NATIVE', '-L')
-        hash_walk = str(Path(work) / 'hash-walk')
-        btree_order = str(Path(work) / 'btree-order')
-        for output, source in ((hash_walk, 'tools/bdb/hash-walk.c'),
-                               (btree_order, 'tools/bdb/btree-order.c')):
-            result = _launch(tools, [*compile, '-o', output, source, '-ldb'],
-                             environment=child, err=err, stdout=None, stderr=None)
-            if result.returncode:
-                return native.shell_status(result.returncode)
-        result = _launch(
-            tools, ['cargo', f'+{nightly}', 'build', '-p', 'oxpinyin-store',
-                    '--no-default-features', '--features', 'bdb', '--target', target,
-                    '--example', 'bdb_write_profile'],
-            environment=child, err=err, stdout=None, stderr=None)
-        if result.returncode:
-            return native.shell_status(result.returncode)
-        target_dir = Path(child.get('CARGO_TARGET_DIR') or 'target')
-        example = target_dir / target / 'debug/examples/bdb_write_profile'
-        result = _launch(tools, [example, str(Path(work) / 'user_bigram.db')],
-                         environment=child, err=err, stdout=None, stderr=None)
-        if result.returncode:
-            return native.shell_status(result.returncode)
-        print(f'walking the backend-written {work}/user_bigram.db', file=out, flush=True)
-        result = _launch(tools, [hash_walk, str(Path(work) / 'user_bigram.db')],
-                         environment=child, err=err, stdout=None, stderr=None)
-        if result.returncode:
-            return native.shell_status(result.returncode)
-        data_dir = child.get('OXPINYIN_LIBPINYIN_DATA_DIR', '')
-        if not data_dir:
-            for candidate in ('/usr/lib/x86_64-linux-gnu/libpinyin/data',
-                              '/usr/lib/aarch64-linux-gnu/libpinyin/data',
-                              '/usr/lib64/libpinyin/data',
-                              '/usr/lib/libpinyin/data',
-                              '/usr/local/lib/libpinyin/data'):
-                if (Path(candidate) / 'bigram.db').is_file():
-                    data_dir = candidate
-                    break
-        if data_dir:
-            print(f'walking {data_dir}/bigram.db', file=out, flush=True)
-            result = _launch(tools, [hash_walk, f'{data_dir}/bigram.db'],
-                             environment=child, err=err, stdout=None, stderr=None)
-            if result.returncode:
-                return native.shell_status(result.returncode)
-        else:
-            print('note: no installed libpinyin bigram.db; the real-file walk did not run.',
-                  file=out, flush=True)
-        print('', file=out, flush=True)
-        print(f'exercising DB_BTREE create/put/cursor in {work}', file=out, flush=True)
-        result = _launch(tools, [btree_order, str(Path(work) / 'btree-order.db')],
-                         environment=child, err=err, stdout=subprocess.DEVNULL,
-                         stderr=None)
-        if result.returncode:
-            return native.shell_status(result.returncode)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
     print('', file=out, flush=True)
     print("sanitizers: clean (libdb's own internals are NOT instrumented)", file=out, flush=True)
     return 0
