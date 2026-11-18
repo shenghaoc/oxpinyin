@@ -774,7 +774,9 @@ fn a_raw_user_key_predicts_its_live_item() {
 #[test]
 fn rows_of_a_never_loaded_library_are_filtered() {
     let user = TempUserDir::new("never-loaded-library");
-    let value = ((15_u32 << 24) | 1).to_le_bytes().to_vec();
+    let value = (oxpinyin::phrase_index_make_token(15, 1))
+        .to_le_bytes()
+        .to_vec();
     crate::test_support::craft_user_index(
         &user.path.join("user_phrase_index.bin"),
         &[

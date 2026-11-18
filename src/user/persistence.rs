@@ -496,10 +496,10 @@ impl SystemOriginals {
             total: library.total,
             range_end: library.range_end,
             items: &library.items,
-            mapped: library
-                .mapped
-                .as_ref()
-                .or_else(|| self.mapped.library(u32::from(*nibble) << 24)),
+            mapped: library.mapped.as_ref().or_else(|| {
+                self.mapped
+                    .library(crate::phrase_index_make_token(*nibble, 0))
+            }),
         })
     }
 
@@ -512,10 +512,10 @@ impl SystemOriginals {
                     total: library.total,
                     range_end: library.range_end,
                     items: &library.items,
-                    mapped: library
-                        .mapped
-                        .as_ref()
-                        .or_else(|| self.mapped.library(u32::from(*nibble) << 24)),
+                    mapped: library.mapped.as_ref().or_else(|| {
+                        self.mapped
+                            .library(crate::phrase_index_make_token(*nibble, 0))
+                    }),
                 },
             )
         })
@@ -630,7 +630,7 @@ pub fn system_originals(libraries: PhraseLibraries, layout: UserFileLayout) -> S
 
 /// A mapped library's load-time metadata, without its bytes or items.
 fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLibrary> {
-    let library = libraries.library(u32::from(nibble) << 24)?;
+    let library = libraries.library(crate::phrase_index_make_token(nibble, 0))?;
     Some(SystemLibrary {
         total: library.total_freq(),
         range_end: library.token_range().end,
@@ -677,10 +677,13 @@ impl UserState {
         let mut phrases = Vec::new();
         for (&nibble, items) in &self.libraries {
             for (&slot, item) in items {
-                phrases.push((item.phrase.clone(), token_of(nibble, slot)));
+                phrases.push((
+                    item.phrase.clone(),
+                    crate::phrase_index_make_token(nibble, slot),
+                ));
                 for (packed, _) in &item.prons {
                     self.indexed
-                        .insert((token_of(nibble, slot), packed.clone()));
+                        .insert((crate::phrase_index_make_token(nibble, slot), packed.clone()));
                 }
             }
         }
@@ -943,7 +946,7 @@ fn chewing_rows_inner(
     let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
     for (&nibble, items) in &state.libraries {
         for (&slot, item) in items {
-            let token = token_of(nibble, slot);
+            let token = crate::phrase_index_make_token(nibble, slot);
             for (packed, _freq) in &item.prons {
                 if !state.indexed.contains(&(token, packed.clone())) {
                     continue;
@@ -971,7 +974,7 @@ fn chewing_rows_inner(
             let Some(item) = item else {
                 continue;
             };
-            let token = token_of(nibble, slot);
+            let token = crate::phrase_index_make_token(nibble, slot);
             for (packed, _) in &item.prons {
                 if state.indexed.contains(&(token, packed.clone())) {
                     chewing_rows.push(PinyinIndexItem {
@@ -1010,12 +1013,6 @@ fn chewing_rows_inner(
         });
     }
     chewing_rows
-}
-
-/// The full token of a system-library item.
-#[cfg(test)]
-const fn token_of(nibble: u8, slot: u32) -> u32 {
-    ((nibble as u32) << 24) | slot
 }
 
 /// What `check_format` decided about a profile: the open counter this

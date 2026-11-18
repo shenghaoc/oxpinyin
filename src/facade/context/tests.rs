@@ -79,7 +79,7 @@ fn open(user: &Path) -> ContextCore {
 
 /// The first token of `library` and its text.
 fn first_item(ctx: &ContextCore, library: u8) -> (u32, PhraseText) {
-    let token = (u32::from(library) << 24) | 1;
+    let token = crate::phrase_index_make_token(library, 1);
     let dict = ctx.runtime.dict();
     let text = dict.token_text(token).expect("text");
     (token, PhraseText::from(text.as_str().expect("scalar text")))

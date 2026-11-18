@@ -171,7 +171,7 @@ impl SystemItems {
                 return;
             }
         }
-        let token = Token::from(nibble) << 24;
+        let token = crate::phrase_index_make_token(nibble, 0);
         if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
             library.unshare_bodies();
         }

@@ -250,10 +250,10 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     let unloaded = Cell::new(0);
     let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
     let (replayed, removed, untouched, absent) = (
-        (1_u32 << 24) | 1,
-        (1_u32 << 24) | 2,
-        (1_u32 << 24) | 3,
-        (1_u32 << 24) | 9,
+        crate::phrase_index_make_token(1, 1),
+        crate::phrase_index_make_token(1, 2),
+        crate::phrase_index_make_token(1, 3),
+        crate::phrase_index_make_token(1, 9),
     );
     let summary = |item: SystemItem<'_>| {
         let reading = item.pronunciation(0).expect("reading");
@@ -284,7 +284,10 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     );
     assert_eq!(live.read(removed, summary), Lookup::Absent);
     assert_eq!(live.read(absent, summary), Lookup::Absent);
-    assert_eq!(live.read((5_u32 << 24) | 1, summary), Lookup::Absent);
+    assert_eq!(
+        live.read(crate::phrase_index_make_token(5, 1), summary),
+        Lookup::Absent
+    );
     assert!(live.is_visible(untouched) && !live.is_visible(removed));
 
     // The header-only count agrees with the view for every state.

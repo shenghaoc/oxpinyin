@@ -27,7 +27,7 @@
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
-use oxpinyin::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
 use rustc_hash::FxHashMap;
 
 use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
@@ -35,8 +35,6 @@ use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 use super::error::EvalError;
 use super::model::EvalLanguageModel;
 
-/// Longest phrase the decoder considers, in keys (`MAX_PHRASE_LENGTH`).
-const MAX_PHRASE_KEYS: usize = 16;
 /// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
 const NBEAM: usize = 32;
 
@@ -241,7 +239,7 @@ where
             continue;
         }
         let topresults = steps[i].top_results(NBEAM);
-        let last = (i + MAX_PHRASE_KEYS).min(nstep - 1);
+        let last = (i + MAX_PHRASE_LENGTH).min(nstep - 1);
         for m in i + 1..=last {
             let span = &keys[i..m];
             let entries = priced_entries(dictionary, span)?;

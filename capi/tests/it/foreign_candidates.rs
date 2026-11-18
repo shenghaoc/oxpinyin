@@ -124,11 +124,6 @@ unsafe fn unigram_frequency(instance: *mut PinyinInstance, token: u32) -> u32 {
     freq
 }
 
-/// The library nibble of `token` (`PHRASE_INDEX_LIBRARY_INDEX`).
-fn library(token: u32) -> u32 {
-    (token >> 24) & 0x0f
-}
-
 /// `USE_DIVIDED_TABLE` (`pinyin.h`, bit 7).
 const DIVIDED: u32 = 1 << 7;
 
@@ -455,7 +450,7 @@ fn an_addon_row_promotes_into_the_receivers_context(#[values(true, false)] same_
         // into it.
         (unsafe { lookup(instance, &text) })
             .into_iter()
-            .filter(|&token| library(token) == 5)
+            .filter(|&token| oxpinyin::phrase_index_library_index(token) == 5)
             .count()
     };
     assert_eq!(promoted(receiver), 0);
