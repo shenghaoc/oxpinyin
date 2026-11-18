@@ -522,14 +522,17 @@ class Plan(NamedTuple):
 MIN_OVERLAP_JOBS = 2
 
 
-def plan(tasks: int, cpus: int) -> Plan:
+def plan(tasks: int, cpus: int, limit: int | None = None) -> Plan:
     """Divide a CPU budget among TASKS independent builds.
 
     Workers times jobs never exceeds CPUS, so the nested make -j is counted, and
-    every overlapped build keeps MIN_OVERLAP_JOBS jobs.
+    every overlapped build keeps MIN_OVERLAP_JOBS jobs. LIMIT caps the workers; the
+    builds that then run get the whole budget.
     """
     cpus, tasks = max(1, cpus), max(1, tasks)
     workers = max(1, min(tasks, cpus // MIN_OVERLAP_JOBS))
+    if limit is not None:
+        workers = min(workers, limit)
     return Plan(workers, max(1, cpus // workers))
 
 
@@ -575,10 +578,12 @@ def run_command(args, out=sys.stderr, launcher_factory=ProcessLauncher) -> int:
         raise SystemExit('pool run needs --items and a command after --')
     if len(set(args.items)) != len(args.items):
         raise SystemExit('pool run needs distinct --items')
+    if args.workers is not None and args.workers < 1:
+        raise SystemExit('pool run needs a positive --workers')
     token = secrets.token_hex(8)
     allowed = len(host.allowed_cpus())
     cpus = allowed if args.cpus is None else min(allowed, args.cpus)
-    chosen = plan(len(args.items), cpus)
+    chosen = plan(len(args.items), cpus, args.workers)
     print(f'{args.label}: {" ".join(args.items)} with {chosen.workers} at once, make -j{chosen.jobs} each '
           f'({cpus} CPUs)', file=out, flush=True)
     with tempfile.TemporaryDirectory(prefix='oxpinyin-pool-') as cid_directory:
@@ -599,6 +604,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     run.add_argument('--items', type=lambda value: [part for part in value.split(',') if part], default=[],
                      help='comma-separated item names; {item} in the command and log')
     run.add_argument('--cpus', type=int, help='cap the CPU budget (default: the allowed CPUs)')
+    run.add_argument('--workers', type=int, help='cap the items that run at once (default: the CPU budget decides)')
     run.add_argument('--log', help='log file per item; output of a failed item is tailed')
     run.add_argument('--container-runtime', help='container command (shell-quoted); with it, items may use {token} and '
                      '{cidfile}, and a failure or signal removes only the containers this run recorded and labelled')

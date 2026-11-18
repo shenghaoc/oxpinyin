@@ -147,6 +147,13 @@ class PlanTests(unittest.TestCase):
                 if chosen.workers > 1:
                     self.assertGreaterEqual(chosen.jobs, pool.MIN_OVERLAP_JOBS, (tasks, cpus))
 
+    def test_a_worker_limit_caps_the_workers_and_gives_each_build_the_budget(self):
+        for tasks in range(1, 7):
+            for cpus in range(1, 33):
+                with self.subTest(tasks=tasks, cpus=cpus):
+                    self.assertEqual(pool.plan(tasks, cpus, 1), pool.Plan(1, cpus))
+                    self.assertEqual(pool.plan(tasks, cpus, 99), pool.plan(tasks, cpus))
+
 
 class CommandTemplateTests(unittest.TestCase):
     def test_placeholders_are_filled_per_item_and_other_braces_are_kept(self):
@@ -181,6 +188,22 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn('a: failed with status 5', result.stderr)
             self.assertIn('boom', result.stderr)
+
+    def test_workers_one_runs_the_items_one_at_a_time_with_the_whole_budget(self):
+        result = self.run_cli('run', '--label', 'demo', '--items', 'a,b,c', '--cpus', '8', '--workers', '1',
+                              '--', sys.executable, '-c', 'pass')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cpus = min(8, len(pool.host.allowed_cpus()))
+        self.assertIn(f'demo: a b c with 1 at once, make -j{cpus} each ({cpus} CPUs)', result.stderr)
+
+    def test_a_worker_limit_below_one_is_rejected_before_anything_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'ran'
+            result = self.run_cli('run', '--items', 'a', '--workers', '0', '--',
+                                  sys.executable, '-c', f'open({str(marker)!r}, "w")')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('positive --workers', result.stderr)
+            self.assertFalse(marker.exists())
 
     def test_duplicate_items_are_rejected_before_anything_starts(self):
         with tempfile.TemporaryDirectory() as directory:

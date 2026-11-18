@@ -426,6 +426,30 @@ if sys.platform.startswith('linux'):
                     self.assertEqual(done.returncode, 1)
                     self.assertEqual(done.stderr, b'cell other was not provisioned by this environment file\n')
 
+        def test_without_an_override_the_file_is_written_and_read_in_the_cache_root(self):
+            del self.service.env['OXPINYIN_ORACLE_ENV']
+            root = Path(self.env['OXPINYIN_CACHE'])
+            root.mkdir()
+            path = root / 'oracle.env'
+            self.assertEqual(self.service.env_file, path)
+            self.write()
+            self.assertFalse((self.work / 'oracle.env').exists())
+            self.assertEqual(sorted(entry.name for entry in root.iterdir()), ['oracle.env'])
+            values = provision.read_env(path)
+            for cell in provision.CELLS:
+                prefix = str(self.service.oracle_root / cell)
+                self.assertEqual(values[f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}'], prefix)
+                done = self.source(cell)
+                self.assertEqual(done.returncode, 0, done.stderr.decode())
+                self.assertEqual(done.stdout.split(b'\0')[0], prefix.encode())
+            # The next run reads the file at the same path: it keeps the cells it does not provision.
+            self.service.cells = ['bdb']
+            self.write()
+            self.assertEqual(provision.read_env(path).keys() & {
+                'OXPINYIN_ORACLE_PREFIX_BDB', 'OXPINYIN_ORACLE_PREFIX_KC', 'OXPINYIN_ORACLE_PREFIX_TKRZW'},
+                {'OXPINYIN_ORACLE_PREFIX_BDB', 'OXPINYIN_ORACLE_PREFIX_KC', 'OXPINYIN_ORACLE_PREFIX_TKRZW'})
+            self.assertEqual(self.source('kc').returncode, 0)
+
         def test_a_file_from_the_retired_shell_setup_is_regenerated_not_parsed(self):
             legacy = self.work / 'legacy-prefix'
             self.service.env_file.write_text(
@@ -968,6 +992,27 @@ class RuntimeProvisionTests(unittest.TestCase):
             self.assertIn('HOME=/tmp', commands['docker'])
         for ctr in ('podman', 'container'):
             self.assertNotIn('--user', commands[ctr], ctr)
+
+    def test_wslc_builds_one_cell_at_a_time_and_the_other_runtimes_overlap(self):
+        for ctr in ('docker', 'podman', 'wslc', 'wslc.exe', 'container'):
+            with self.subTest(ctr=ctr):
+                self.calls.clear()
+                service = self.service(ctr)
+                with mock.patch.object(provision, 'run', self.runner()):
+                    self.assertEqual(service.pool_phase('libraries', ['bdb', 'kc'], self.work / '{item}.log', ['--libs-only']), 0)
+                command, = self.commands()
+                pool_options = command[:command.index('--')]
+                serial = ['--workers', '1'] if ctr.startswith('wslc') else []
+                self.assertEqual([part for part in pool_options if part in ('--workers', '1')], serial)
+
+    def test_the_environment_file_is_in_the_cache_root_unless_it_is_overridden(self):
+        root = self.work / 'root'
+        service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(root)})
+        self.assertEqual(service.env_file, root / 'oracle.env')
+        service.env['OXPINYIN_ORACLE_ENV'] = str(self.work / 'other.env')
+        self.assertEqual(service.env_file, self.work / 'other.env')
+        with self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute'):
+            provision.Provision(root=ROOT, env={'PATH': ''}).env_file
 
     def test_runtime_readiness_asks_each_runtime_its_own_way(self):
         for ctr, expected in (('docker', ['docker', 'info']), ('podman', ['podman', 'info']),
