@@ -170,7 +170,7 @@ impl<S: KeySpans + ?Sized> Column<'_, S> {
 /// order ([`KeySpans`]); `separators` controls the `'` zero-key fill —
 /// plain and index-parsed full pinyin consume `'` as the separator, while
 /// double pinyin and the zhuyin keyboards never hold a zero-key column
-/// ([`crate::engine::session::Session::validate_lookup_offset`]'s taxonomy).
+/// ([`crate::facade::InstanceView::validate_lookup_offset`]'s taxonomy).
 struct Columns<'a, S: KeySpans + ?Sized> {
     input: &'a [u8],
     /// The parsed length, at most the buffer length.

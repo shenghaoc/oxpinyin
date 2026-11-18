@@ -1,16 +1,15 @@
 //! The facade-orchestration layer shared by the pinyin and zhuyin C-ABI
 //! facades.
 //!
-//! Both `oxpinyin-capi` and `oxpinyin-zhuyin-capi` drive the same
-//! `crate::runtime` session assembly through the same laws — the
-//! parse-mode state machine (`begin_parse`'s continuation rule, the three
-//! batch-parse seams, the stored-parse originals), the candidate-snapshot
-//! machinery's shared halves, the cursor/offset matrix laws, and the
-//! prefix/sentence seam — which existed twice, once per C crate, each copy
-//! cited against the same upstream pin. This module holds those laws once:
-//! each facade keeps only its C marshalling and the laws that genuinely
-//! differ (the candidate-type enums, the guess re-anchor policies, the
-//! choose end-offset chains, the sentence-row display law).
+//! `oxpinyin-capi` and `oxpinyin-zhuyin-capi` drive the same
+//! `crate::runtime` session assembly through the laws this module holds:
+//! the parse-mode state machine (`begin_parse`'s continuation rule, the
+//! three batch-parse seams, the stored-parse originals), the shared halves
+//! of the candidate-snapshot machinery, the cursor/offset matrix laws, and
+//! the prefix/sentence seam. Each facade keeps only its C marshalling and
+//! the laws that differ between the two pins (the candidate-type enums,
+//! the guess re-anchor policies, the choose end-offset chains, the
+//! sentence-row display law).
 //!
 //! What this module does **not** do is unify per-facade parity decisions.
 //! Where the two facades' pins diverge — `FORCE_TONE` forwarding on the

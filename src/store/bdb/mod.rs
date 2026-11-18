@@ -639,7 +639,7 @@ impl BdbUserBigramDb {
         Self::failed()
     }
 
-    /// [`UserBigramDb::load_db`] over `create`, the in-memory container's
+    /// [`crate::store::UserBigramDb::load_db`] over `create`, the in-memory container's
     /// open: [`Db::open_in_memory_hash_attach`], or an injected failure.
     fn load_db_with(
         path: &Path,
