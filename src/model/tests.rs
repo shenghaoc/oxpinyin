@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library, sort_tokens_by_library};
 use crate::fixture_doubles::{FixtureDictionary, FixtureError, FixtureLanguageModel};
-use crate::{SyllableKey, model::Dictionary};
+use crate::{SyllableKey, model::PhraseList};
 
 /// `add_index` files a token under `PHRASE_INDEX_LIBRARY_INDEX(token)`
 /// and keeps its whole value (`phrase_large_table3.cpp:42`,

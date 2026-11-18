@@ -3852,7 +3852,6 @@ fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
     let user = tempfile::tempdir().unwrap();
     let system = crate::user::native_fixture::system_dir();
     let dict = crate::data::SystemDictionary::open(&system).unwrap();
-    use crate::model::Dictionary as _;
     let ni_key = crate::SyllableKey::from_text("ni").unwrap();
     let gbk = dict
         .lookup(&[ni_key])

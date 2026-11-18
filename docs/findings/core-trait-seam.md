@@ -9,11 +9,17 @@ It is not a compatibility contract; the traits and their rules change with the c
 Failure behaviour is set by the [compatibility policy](compatibility-policy.md#failure-behaviour), and candidate order by the C APIs' pin-derived behaviour.
 The C APIs/ABIs are the only supported external interfaces ([interface ruling](../constitution.md#external-interfaces)).
 
-## Growth rule
+## Growth rules
 
-The seam grows by defaulted methods only.
+`Dictionary` grows by required methods only.
+The engine calls every `Dictionary` method, and every implementor answers each one itself.
+A new engine method is required on `Dictionary`, gets one derived body in the `PhraseList` blanket implementation, and is implemented directly by each dictionary that implements `Dictionary` directly.
+The `PhraseList` implementors do not change.
+
+`UserModel` and `LanguageModel` grow by defaulted methods only.
 A new method has a default that answers as the trait did before it existed, so existing implementors and fixture doubles compile unchanged.
-The associated types are the exception: an implementor names each one.
+
+The associated types are an exception in every trait: an implementor names each one.
 
 ## `Dictionary`
 
@@ -22,38 +28,109 @@ pub trait Dictionary {
     type Syllable;
     type Error;
     type PathMemo: Default;
-
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error>;
-    // every other method is defaulted
+    // 13 required methods; none has a default
 }
 ```
 
-`lookup` is the one required method.
-An empty lookup is `Ok(Vec::new())`.
+`Dictionary` is the seam the engine reads dictionaries through.
+Its methods are exactly the 13 methods the engine calls:
+
+| Group | Methods | Engine callers |
+|---|---|---|
+| Sentence trellis | `trellis_ranges_continued`, `trellis_item`, `trellis_item_with_facts`, `trellis_text_with_facts` | `src/engine/nbest.rs` |
+| Candidate window | `candidate_search_into`, `search_addon_into`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` | `src/engine/session/lookup.rs`, `src/engine/session/selection.rs` |
+| Phrase segmentation | `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues` | `src/engine/phrase.rs`, `src/engine/char_offset.rs` |
+| Forcing | `phrase_item_pronunciations` | `src/engine/nbest.rs`, `src/engine/char_offset.rs` |
+
+An empty search is `Ok` with no entries.
 Implementations return entries in a stable, deterministic order.
 The trait does not prescribe storage or ranking; the entry type is the core's `PhraseEntry`.
 
-The defaulted methods form these groups:
+Three types implement `Dictionary` directly:
 
-- **Sentence trellis.**
-  `trellis_records(syllables, tones)` returns every matching pronunciation record in library, range and item order (default: `lookup`).
-  `trellis_ranges` fills token-only ranges, `PhraseIndexRanges<()>`, as the pin's `convert` does.
-  `trellis_ranges_continued` gives the ranges and the `SEARCH_CONTINUED` probe from one read (default: `trellis_ranges`, then `phrase_prefix_exists`).
-  A step prices a ranged token through `trellis_item(syllables, tones, token) -> Option<TrellisItem>`, where `TrellisItem { chars, pronunciation }` carries the item, and a result's text is read through `trellis_text` when it is emitted.
-  The defaults read `trellis_records`, so a dictionary that overrides none of them needs no change.
-- **Path memo.**
-  `trellis_item_on_path(syllables, tones, token, memo: &Self::PathMemo)` answers exactly as `trellis_item`; the default ignores the memo.
-  The n-best caller makes a fresh `PathMemo` per key path and drops it with the span search that found the path, so nothing in it outlives one guess.
-  A dictionary with nothing to keep uses `()`.
-  `TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value; `RuntimeDict` keeps the path's user lookup and toned keys there (`PathPricing`, `src/runtime/mod.rs`) instead of recomputing them per token.
-  `trellis_item_with_facts` and `trellis_text_with_facts` are the sentence-only variants that also record sentence facts.
-- **Candidate lookup.**
-  `lookup_into`, `lookup_into_flagged`, `candidate_search_into` and the addon variants (`lookup_addon`, `search_addon_into`) fill caller-owned buffers or read the addon facade. A lookup carries tokens and text only; a step reads one token's pronunciation possibility through `trellis_item`.
-  `candidate_search_into` gives a key path's tone-filtered rows, its unreadable rows and the `SEARCH_CONTINUED` bit from one read per table, into a caller-owned row buffer (default: `lookup_into_flagged`, then `phrase_prefix_exists`).
-- **Phrase index reads.**
-  `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues`, `suggest_extension_tokens`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `overlong_extension_gate`.
-- **`phrase_item_pronunciations(token)`** reads the stored pronunciations of the phrase item behind a token; the default answers `PhraseItemRead::NoItem`, as the pin's `get_phrase_item` fails for a token it has no item for.
-  A forcing is then revalidated as the pin's `validate_constraint` does it (`phonetic_lookup.cpp:120-165` at 074a2219).
+- `RuntimeDict` (`src/runtime/mod.rs`), the production dictionary: the system table, then the user table, with the addon facade beside them.
+- `SystemDictionary` (`src/data/dict.rs`), the system table alone. The nonshipping REPL lookup (`src/runtime/tool.rs`, `tools` feature) gives it to the engine.
+- Every `PhraseList` implementor, through the blanket implementation.
+
+The other reads of `RuntimeDict` and `SystemDictionary` are inherent methods, for example `lookup`, `trellis_records`, `trellis_ranges`, `lookup_into_flagged` and `phrase_prefix_exists`.
+The engine does not call them.
+
+### Sentence trellis
+
+- `trellis_ranges_continued(syllables, tones, ranges, scratch)` fills token-only ranges, `PhraseIndexRanges<()>`, as the pin's `convert` does, and returns the `SEARCH_CONTINUED` bit from the same read.
+- A step prices a ranged token through `trellis_item_with_facts(syllables, tones, token, memo, facts) -> Option<TrellisItem>`, where `TrellisItem { chars, pronunciation }` carries the item.
+  This is the n-best search's pricing path (`src/engine/nbest.rs`, `Pricing::price`), and it also records sentence facts.
+- `trellis_item(syllables, tones, token)` answers the same item without a memo.
+  The n-best search calls it only for a path that has no memo.
+  The search makes a memo for every path, so this call is a fallback.
+- `trellis_text_with_facts(syllables, tones, token, facts)` reads a result's stored length and text when the result is emitted.
+  It takes no path memo.
+
+### Path memo
+
+The n-best caller makes a fresh `PathMemo` for each key path and drops it with the span search that found the path, so nothing in it outlives one guess.
+`trellis_item_with_facts` answers exactly as `trellis_item` does; the memo only keeps what the dictionary would otherwise compute again for each token of the path.
+A dictionary with nothing to keep uses `()`.
+`TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value.
+`RuntimeDict` keeps the path's user lookup and toned keys there (`PathPricing`, `src/runtime/mod.rs`) instead of recomputing them for each token.
+
+### Candidate window
+
+- `candidate_search_into` gives a key path's tone-filtered rows, its unreadable rows and the `SEARCH_CONTINUED` bit from one read per table, into a caller-owned row buffer.
+- `search_addon_into` is the addon facade's pass over the same key path.
+- `checked_extension_tokens` gives the LONGER candidate's tokens, or `None` where the pin's over-long-key gate aborts `search_suggestion`.
+- `phrase_text_for_token` and `phrase_length_for_token` read a token's phrase item.
+
+### Phrase segmentation
+
+`tokens_for_ucs4` gives the phrase tokens of an exact raw UCS-4 span.
+`phrase_span_searches_are_observable` and `phrase_span_continues` tell the span search how a failed native handle behaves.
+
+### Forcing
+
+`phrase_item_pronunciations(token)` reads the stored pronunciations of the phrase item behind a token.
+It answers `PhraseItemRead::NoItem` for a token without an item, as the pin's `get_phrase_item` fails for it.
+A forcing is then revalidated as the pin's `validate_constraint` does it (`phonetic_lookup.cpp:120-165` at 074a2219).
+
+## `PhraseList`
+
+```rust
+pub trait PhraseList {
+    type Syllable;
+    type Error;
+
+    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error>;
+    // every other method is a defaulted hook
+}
+
+impl<T: PhraseList> Dictionary for T { /* PathMemo = () */ }
+```
+
+`PhraseList` is the adapter for a dictionary that lists entries: the fixture doubles (`tests/common/fixture_doubles.rs` and the unit-test doubles) and the evaluation tool's `EvalDictionary` (`utils/src/training/eval_correction_rate.rs`).
+`lookup` is its one required method.
+An implementor overrides only the hooks it models:
+`trellis_records`, `lookup_into_flagged`, `candidate_search_into`, `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `lookup_addon`, `suggest_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `phrase_item_pronunciations`.
+
+The blanket implementation derives every `Dictionary` method from the hooks, with `PathMemo = ()`.
+A dictionary that overrides no hook gets these answers, which are weaker than the pin's:
+
+| `Dictionary` method | Derived answer |
+|---|---|
+| `trellis_ranges_continued` | The ranges of `trellis_records`' tokens (default: `lookup`), then `phrase_prefix_exists`. |
+| `trellis_item`, `trellis_item_with_facts` | The last `trellis_records` entry for the token; the memo and the facts are not used. |
+| `trellis_text_with_facts` | The text of that entry. |
+| `candidate_search_into` | `lookup_into_flagged` (default: `lookup`, no unreadable row), then `phrase_prefix_exists`. The query tones are ignored, so no row is tone-filtered. |
+| `search_addon_into` | `lookup_addon` (default: empty), with no continuation bit. |
+| `checked_extension_tokens` | `Some(suggest_extension_tokens)` (default: empty, so no LONGER candidate); the over-long-key gate is always open. |
+| `tokens_for_ucs4` | `tokens_for_text` (default: empty) for an all-scalar span; empty for a span with a non-scalar. |
+| `phrase_span_searches_are_observable`, `phrase_span_continues` | `false`, `true`. |
+| `phrase_text_for_token`, `phrase_length_for_token` | `None`, and the length of `phrase_text_for_token`'s text. |
+| `phrase_item_pronunciations` | `PhraseItemRead::NoItem`. |
+
+`phrase_prefix_exists` defaults to `true`, so `SEARCH_CONTINUED` is always set: the candidate set is the same, and the window scan searches to the end of the input.
+
+A `PhraseList` method and a `Dictionary` method can have the same name.
+Where both traits are in scope, a call on a `PhraseList` implementor names its trait, for example `PhraseList::phrase_text_for_token(&inner, token)`.
 
 ## `UserModel`
 

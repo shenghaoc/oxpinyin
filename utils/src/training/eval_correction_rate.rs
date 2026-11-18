@@ -23,7 +23,7 @@ use oxpinyin::data::phrase_library::{LibraryError, RowFault};
 use oxpinyin::data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::LineReader;
-use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::Dictionary};
+use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{NULL_TOKEN, all_tokens, load_gram, load_table_conf, parse_segmented_line};
@@ -240,10 +240,9 @@ struct EvalDictionary<'a> {
     libraries: &'a PhraseLibraries,
 }
 
-impl Dictionary for EvalDictionary<'_> {
+impl PhraseList for EvalDictionary<'_> {
     type Syllable = SyllableKey;
     type Error = DictError;
-    type PathMemo = ();
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let Some(pinyin) = self.pinyin else {

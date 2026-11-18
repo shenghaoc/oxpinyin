@@ -552,7 +552,8 @@ where
     ///
     /// Widening is prefix-driven: a window whose sequences cannot extend to
     /// any stored phrase stops the scan (the pin's continued-search probe,
-    /// [`crate::model::Dictionary::phrase_prefix_exists`]). Consecutive apostrophe
+    /// the `SEARCH_CONTINUED` bit of
+    /// [`crate::model::Dictionary::candidate_search_into`]). Consecutive apostrophe
     /// bytes after a searched window are skipped so the next window does not
     /// repeat the same key sequence.
     pub(super) fn collect_window_scan(

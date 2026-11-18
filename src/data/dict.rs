@@ -594,7 +594,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the default facade's
-    /// pinyin DBM — [`Dictionary::suggest_extension_tokens`]'s system seam:
+    /// pinyin DBM — [`Dictionary::checked_extension_tokens`]'s system seam:
     /// every token of a stored pronunciation whose index key strictly
     /// extends `syllables`' index key, in the pin's `reduce_tokens` order
     /// (library nibble ascending, cursor order within — the stable sort
@@ -773,7 +773,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.libraries().trellis_item(token, keys)
     }
 
-    /// [`Dictionary::lookup_into_flagged`]'s body: [`Self::lookup_with_live`]
+    /// [`Self::lookup_into_flagged`]'s body: [`Self::lookup_with_live`]
     /// with every library visible and each item read from its own chunk.
     fn fill_lookup(
         &self,
@@ -792,20 +792,27 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     }
 }
 
-impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>> Dictionary
-    for SystemDictionary<L, T>
+impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
+    SystemDictionary<L, T>
 {
-    type Syllable = SyllableKey;
-    type Error = DictError;
-    type PathMemo = ();
-
-    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+    /// Looks up the entries matching `syllables` in the system table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
     }
 
-    fn trellis_records(
+    /// Every matching pronunciation index record in library, range and item
+    /// order, each resolved to its entry. `tones` supplies the query tones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn trellis_records(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -822,7 +829,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// `ChewingTableEntry::search` then `convert` over the system table:
     /// `SystemDictionary::trellis_ranges_with` with every loaded
     /// library visible.
-    fn trellis_ranges(
+    pub fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -830,6 +837,66 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     ) -> Result<(), DictError> {
         self.trellis_ranges_with(syllables, tones, ranges, |_| true)
     }
+
+    /// The stored length and text of `token`'s loaded library item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn trellis_text(
+        &self,
+        _syllables: &[SyllableKey],
+        _tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TokenPhrase>, DictError> {
+        Ok(self.libraries().token_phrase(token))
+    }
+
+    /// [`Self::lookup`] into a caller-owned buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        self.fill_lookup(syllables, out).map(|_| ())
+    }
+
+    /// [`Self::lookup_into`], also answering whether the lookup met a token
+    /// of a loaded library whose item could not be read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup_into_flagged(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<bool, DictError> {
+        self.fill_lookup(syllables, out).map(|rows| rows.count != 0)
+    }
+
+    /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
+    /// phrase or as a marker for longer phrases — one point read, no
+    /// record decode (the bit is set whenever the key exists).
+    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+        if syllables.is_empty() {
+            return Ok(true);
+        }
+        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        self.pinyin.key_exists(&keys)
+    }
+}
+
+impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>> Dictionary
+    for SystemDictionary<L, T>
+{
+    type Syllable = SyllableKey;
+    type Error = DictError;
+    type PathMemo = ();
 
     fn trellis_ranges_continued(
         &self,
@@ -850,29 +917,27 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         Ok(self.trellis_item(syllables, token))
     }
 
-    fn trellis_text(
+    /// [`Dictionary::trellis_item`]; the memo and the facts are not used.
+    fn trellis_item_with_facts(
         &self,
-        _syllables: &[SyllableKey],
-        _tones: &[u8],
+        syllables: &[SyllableKey],
+        tones: &[u8],
         token: u32,
+        _memo: &(),
+        _facts: &mut crate::sentence_facts::SentenceFacts,
+    ) -> Result<Option<TrellisItem>, DictError> {
+        Dictionary::trellis_item(self, syllables, tones, token)
+    }
+
+    /// [`Self::trellis_text`]; the facts are not used.
+    fn trellis_text_with_facts(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        token: u32,
+        _facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, DictError> {
-        Ok(self.libraries().token_phrase(token))
-    }
-
-    fn lookup_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out).map(|_| ())
-    }
-
-    fn lookup_into_flagged(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out).map(|rows| rows.count != 0)
+        self.trellis_text(syllables, tones, token)
     }
 
     fn candidate_search_into(
@@ -892,39 +957,16 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         )
     }
 
-    /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
-    /// phrase or as a marker for longer phrases — one point read, no
-    /// record decode (the bit is set whenever the key exists).
-    fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
-        if syllables.is_empty() {
-            return Ok(true);
-        }
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
-        self.pinyin.key_exists(&keys)
-    }
-
-    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
-        self.tokens_for_text(text)
-            .unwrap_or_default()
-            .into_iter()
-            .map(PhraseToken::new)
-            .collect()
-    }
-
-    /// The system seam of the suggestion walk: tokens of strictly-longer
-    /// pronunciations, `reduce_tokens` order. The `RuntimeDict`
-    /// composition adds the user seam; this impl answers the system DBM
-    /// alone, so the addon facade (which the pin's suggestion facade does
-    /// not consult) is correctly absent.
-    fn suggest_extension_tokens(
+    /// The system dictionary has no addon facade: no entries and no
+    /// continuation bit.
+    fn search_addon_into(
         &self,
-        syllables: &[SyllableKey],
-    ) -> Result<Vec<PhraseToken>, DictError> {
-        Ok(self
-            .suggest_extension_tokens(syllables)?
-            .into_iter()
-            .map(PhraseToken::new)
-            .collect())
+        _syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+        _row: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        out.clear();
+        Ok(false)
     }
 
     fn checked_extension_tokens(
@@ -935,13 +977,39 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             .map(|tokens| tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
+    /// Converts only an all-scalar span to text and answers
+    /// [`Self::tokens_for_text`] for it; a span with a non-scalar is empty.
+    fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+        let mut text = String::with_capacity(ucs4.len());
+        for &word in ucs4 {
+            let Some(character) = char::from_u32(word) else {
+                return Vec::new();
+            };
+            text.push(character);
+        }
+        self.tokens_for_text(&text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(PhraseToken::new)
+            .collect()
+    }
+
+    fn phrase_span_searches_are_observable(&self) -> bool {
+        false
+    }
+
+    fn phrase_span_continues(&self, _ucs4: &[u32]) -> bool {
+        true
+    }
+
     /// `_token_get_phrase`'s system half: the loaded library item's text.
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
         self.libraries().phrase_text(token)
     }
 
-    fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
-        SystemDictionary::overlong_extension_gate(self, syllables)
+    /// The length of [`Dictionary::phrase_text_for_token`]'s text.
+    fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
+        Dictionary::phrase_text_for_token(self, token).map(|text| text.phrase_length())
     }
 
     /// `get_phrase_item` then the item's stored pronunciations, read from

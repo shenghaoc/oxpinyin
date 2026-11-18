@@ -923,22 +923,31 @@ struct PricedToken {
     text: Option<TokenPhrase>,
 }
 
-impl Dictionary for RuntimeDict<'_> {
-    type Syllable = SyllableKey;
-    type Error = DictError;
-    type PathMemo = TrellisPathMemo<PathPricing>;
-
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
+impl RuntimeDict<'_> {
+    /// Looks up the entries matching `syllables`: the system table's, then
+    /// the user table's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.lookup_into(syllables, &mut entries)?;
         Ok(entries)
     }
 
-    fn trellis_records(
+    /// Every matching pronunciation index record of the sentence trellis,
+    /// each priced and resolved to its entry. `tones` supplies the query
+    /// tones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn trellis_records(
         &self,
-        syllables: &[Self::Syllable],
+        syllables: &[SyllableKey],
         tones: &[u8],
-    ) -> Result<Vec<PhraseEntry>, Self::Error> {
+    ) -> Result<Vec<PhraseEntry>, DictError> {
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         let mut out = Vec::new();
@@ -963,12 +972,12 @@ impl Dictionary for RuntimeDict<'_> {
     /// the pin `074a2219`): the system table's ranges, then the user
     /// table's, each its own `convert` call. Tokens only, as the pin's
     /// `convert` files them; [`Self::trellis_item`] prices one on demand.
-    fn trellis_ranges(
+    pub fn trellis_ranges(
         &self,
-        syllables: &[Self::Syllable],
+        syllables: &[SyllableKey],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<(), DictError> {
         let query = Self::trellis_query(syllables, tones);
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
@@ -979,6 +988,160 @@ impl Dictionary for RuntimeDict<'_> {
         self.user_trellis_ranges(&query, ranges);
         Ok(())
     }
+
+    /// [`Self::trellis_item`], reading the user lookup and the keys once
+    /// per path.
+    pub fn trellis_item_on_path(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        token: u32,
+        memo: &TrellisPathMemo<PathPricing>,
+    ) -> Result<Option<TrellisItem>, DictError> {
+        if syllables.is_empty() {
+            return Ok(None);
+        }
+        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
+        Ok(self
+            .priced_on_path(path, token, false)
+            .map(|priced| priced.item))
+    }
+
+    /// The phrase [`Dictionary::trellis_item`] priced: its stored length
+    /// and its text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn trellis_text(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TokenPhrase>, DictError> {
+        Ok(self
+            .priced_token(syllables, tones, token, true)?
+            .and_then(|priced| priced.text))
+    }
+
+    /// [`Self::lookup`] into a caller-owned buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        self.lookup_into_flagged(syllables, out).map(|_| ())
+    }
+
+    /// [`Self::lookup_into`], also answering whether the lookup met a token
+    /// of a loaded library whose item could not be read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup_into_flagged(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<bool, DictError> {
+        self.fill_lookup(syllables, &[], out, &mut Vec::new())
+            .map(|(rows, _)| rows.count != 0)
+    }
+
+    /// `SEARCH_CONTINUED`: whether a stored phrase's pinyin can extend
+    /// `syllables`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+        // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
+        // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
+        // `chewing_large_table2_bdb.cpp:182-187`,
+        // `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219). A library mask
+        // only drops a token at `convert`'s NULL range
+        // (`chewing_large_table2.h:107-111`), and a journal REMOVE clears only the
+        // sub-index, so neither reaches this answer.
+        let system_extends = self.system.phrase_prefix_exists(syllables)?;
+        // The pin searches the system table and then the user table with no
+        // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
+        // the user lookup and its search note come before the answer.
+        let user = self.user_lookup();
+        self.note_user_search(syllables);
+        if system_extends {
+            return Ok(true);
+        }
+        Ok(user.phrase_prefix_exists(syllables))
+    }
+
+    /// Exact-text token lookup across the system and user seams, in that
+    /// order — the merge order [`Self::lookup_into`] established. The
+    /// phrase-segment span DP consumes this per character span.
+    pub fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
+        let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
+        // The pin probes the user phrase table directly (074a2219
+        // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
+        // Read only this text's row. A phrase write must not make this
+        // query rebuild the full pronunciation and phrase indices.
+        tokens.extend(
+            self.user
+                .phrase_table_tokens_for_text(text)
+                .unwrap_or_default(),
+        );
+        tokens.retain(|token| self.phrase_table_token_enabled(*token));
+        // reduce_tokens groups the system and user table results by library.
+        crate::model::sort_tokens_by_library(&mut tokens);
+        tokens.into_iter().map(PhraseToken::new).collect()
+    }
+
+    /// The addon facade's entries for `syllables`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
+    pub fn lookup_addon(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+        let mut entries = Vec::new();
+        self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
+        Ok(entries)
+    }
+
+    /// `FacadeChewingTable2::search_suggestion`'s composition: the system
+    /// table's walk, then the user table's, `reduce_tokens` order over
+    /// the union (nibble ascending — system libraries 1–4 before the
+    /// user library 7 — cursor order within a group). The library mask
+    /// drops an unloaded library's tokens, as every other read here
+    /// does; the addon facade is absent because the pin's suggestion
+    /// facade does not consult it.
+    pub fn suggest_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<PhraseToken>, DictError> {
+        Ok(self
+            .checked_extension_tokens(syllables)?
+            .unwrap_or_default())
+    }
+
+    /// The pin's `search_suggestion` gate (`chewing_large_table2_bdb.cpp:282`):
+    /// the facade consults both the system and the user `ChewingLargeTable2`
+    /// (`facade_chewing_table2.h` `search_suggestion`), so an over-long key in
+    /// either `pinyin_index.bin` drives the abort. The system half is the
+    /// walk's key range (`SystemDictionary::overlong_extension_gate`), the
+    /// user half the keys `user_pinyin_index.bin` carried at open.
+    #[must_use]
+    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        self.system.overlong_extension_gate(syllables)
+            || self.user.overlong_extension_gate(syllables)
+    }
+}
+
+impl Dictionary for RuntimeDict<'_> {
+    type Syllable = SyllableKey;
+    type Error = DictError;
+    type PathMemo = TrellisPathMemo<PathPricing>;
 
     /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] with one
     /// system DBM get.
@@ -1014,24 +1177,6 @@ impl Dictionary for RuntimeDict<'_> {
             .map(|priced| priced.item))
     }
 
-    /// [`Self::trellis_item`], reading the user lookup and the keys once
-    /// per path.
-    fn trellis_item_on_path(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-        memo: &Self::PathMemo,
-    ) -> Result<Option<TrellisItem>, Self::Error> {
-        if syllables.is_empty() {
-            return Ok(None);
-        }
-        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
-        Ok(self
-            .priced_on_path(path, token, false)
-            .map(|priced| priced.item))
-    }
-
     fn trellis_item_with_facts(
         &self,
         syllables: &[Self::Syllable],
@@ -1064,34 +1209,6 @@ impl Dictionary for RuntimeDict<'_> {
             .and_then(|priced| priced.text))
     }
 
-    fn trellis_text(
-        &self,
-        syllables: &[Self::Syllable],
-        tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TokenPhrase>, Self::Error> {
-        Ok(self
-            .priced_token(syllables, tones, token, true)?
-            .and_then(|priced| priced.text))
-    }
-
-    fn lookup_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), Self::Error> {
-        self.lookup_into_flagged(syllables, out).map(|_| ())
-    }
-
-    fn lookup_into_flagged(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<bool, Self::Error> {
-        self.fill_lookup(syllables, &[], out, &mut Vec::new())
-            .map(|(rows, _)| rows.count != 0)
-    }
-
     fn candidate_search_into(
         &self,
         syllables: &[Self::Syllable],
@@ -1108,46 +1225,6 @@ impl Dictionary for RuntimeDict<'_> {
             unreadable,
             system_present || self.user_lookup().phrase_prefix_exists(syllables),
         ))
-    }
-
-    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
-        // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
-        // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
-        // `chewing_large_table2_bdb.cpp:182-187`,
-        // `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219). A library mask
-        // only drops a token at `convert`'s NULL range
-        // (`chewing_large_table2.h:107-111`), and a journal REMOVE clears only the
-        // sub-index, so neither reaches this answer.
-        let system_extends = self.system.phrase_prefix_exists(syllables)?;
-        // The pin searches the system table and then the user table with no
-        // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
-        // the user lookup and its search note come before the answer.
-        let user = self.user_lookup();
-        self.note_user_search(syllables);
-        if system_extends {
-            return Ok(true);
-        }
-        Ok(user.phrase_prefix_exists(syllables))
-    }
-
-    /// Exact-text token lookup across the system and user seams, in that
-    /// order — the merge order `Dictionary::lookup_into` established. The
-    /// phrase-segment span DP consumes this per character span.
-    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
-        let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
-        // The pin probes the user phrase table directly (074a2219
-        // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
-        // Read only this text's row. A phrase write must not make this
-        // query rebuild the full pronunciation and phrase indices.
-        tokens.extend(
-            self.user
-                .phrase_table_tokens_for_text(text)
-                .unwrap_or_default(),
-        );
-        tokens.retain(|token| self.phrase_table_token_enabled(*token));
-        // reduce_tokens groups the system and user table results by library.
-        crate::model::sort_tokens_by_library(&mut tokens);
-        tokens.into_iter().map(PhraseToken::new).collect()
     }
 
     /// [`Self::tokens_for_text`] over raw UCS-4 spans, including
@@ -1174,12 +1251,6 @@ impl Dictionary for RuntimeDict<'_> {
         !self.system.phrase_attachment_failed() || self.user.phrase_table_contains_ucs4(words)
     }
 
-    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
-        let mut entries = Vec::new();
-        self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
-        Ok(entries)
-    }
-
     fn search_addon_into(
         &self,
         syllables: &[Self::Syllable],
@@ -1187,22 +1258,6 @@ impl Dictionary for RuntimeDict<'_> {
         row: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
         self.addons.borrow().search_into(syllables, out, row)
-    }
-
-    /// `FacadeChewingTable2::search_suggestion`'s composition: the system
-    /// table's walk, then the user table's, `reduce_tokens` order over
-    /// the union (nibble ascending — system libraries 1–4 before the
-    /// user library 7 — cursor order within a group). The library mask
-    /// drops an unloaded library's tokens, as every other read here
-    /// does; the addon facade is absent because the pin's suggestion
-    /// facade does not consult it.
-    fn suggest_extension_tokens(
-        &self,
-        syllables: &[Self::Syllable],
-    ) -> Result<Vec<PhraseToken>, Self::Error> {
-        Ok(self
-            .checked_extension_tokens(syllables)?
-            .unwrap_or_default())
     }
 
     fn checked_extension_tokens(
@@ -1224,17 +1279,6 @@ impl Dictionary for RuntimeDict<'_> {
         }
         crate::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
-    }
-
-    /// The pin's `search_suggestion` gate (`chewing_large_table2_bdb.cpp:282`):
-    /// the facade consults both the system and the user `ChewingLargeTable2`
-    /// (`facade_chewing_table2.h` `search_suggestion`), so an over-long key in
-    /// either `pinyin_index.bin` drives the abort. The system half is the
-    /// walk's key range (`SystemDictionary::overlong_extension_gate`), the
-    /// user half the keys `user_pinyin_index.bin` carried at open.
-    fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
-        self.system.overlong_extension_gate(syllables)
-            || self.user.overlong_extension_gate(syllables)
     }
 
     /// `_token_get_phrase` over the facade: the system libraries' item
