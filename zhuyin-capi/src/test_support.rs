@@ -19,7 +19,16 @@ mod c_harness;
 pub(crate) use c_harness::*;
 
 /// The text a snapshot row carries, by row index.
-pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub unsafe fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
     // SAFETY: `instance` is live and was produced by
     // `zhuyin_alloc_instance`; the borrow ends with this function.
     let inst = unsafe { instance_mut(instance) };
@@ -33,7 +42,17 @@ pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
 /// connection the entry points write through; every update commits
 /// before returning). The borrow is scoped to the callback, so it cannot
 /// outlive the instance or its close.
-pub fn with_store<R>(
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule). `f` runs while this helper holds the store reference, so it must not call through the
+/// context, its instances or its iterators.
+pub unsafe fn with_store<R>(
     instance: *mut ZhuyinInstance,
     f: impl FnOnce(&oxpinyin::user::UserStore) -> R,
 ) -> R {

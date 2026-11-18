@@ -66,7 +66,16 @@ pub(crate) const SEEDED: usize = 0x00AB_CDEF;
 pub(crate) const CRITICAL: u32 = 8;
 
 /// A fresh instance with `text` parsed as full pinyin under `options`.
-pub(crate) fn full_pinyin(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn full_pinyin(
     context: *mut ZhuyinContext,
     options: u32,
     text: &str,
@@ -79,22 +88,58 @@ pub(crate) fn full_pinyin(
 }
 
 /// The sentence getter's answer and text; `None` for an untouched output.
-pub(crate) fn sentence(instance: *mut ZhuyinInstance) -> (bool, Option<String>) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn sentence(instance: *mut ZhuyinInstance) -> (bool, Option<String>) {
     let mut text = SEEDED as *mut c_char;
+    // SAFETY: `instance` meets this function's `# Safety` contract, and `text` is a local pointer
+    // slot, valid and aligned for the write the getter makes.
     let ret = unsafe { zhuyin_get_sentence(instance, &raw mut text) };
-    let text = (text as usize != SEEDED).then(|| take_sentence(text));
+    let text = (text as usize != SEEDED).then(|| {
+        assert!(
+            !text.is_null(),
+            "zhuyin_get_sentence replaced the seeded output with NULL"
+        );
+        // SAFETY: `text` is neither the seed nor NULL (checked above), so it is the string that
+        // `zhuyin_get_sentence` allocated for this caller, who owns it and frees it only here.
+        unsafe { take_sentence(text) }
+    });
     (ret, text)
 }
 
-pub(crate) fn candidate_at(instance: *mut ZhuyinInstance, index: u32) -> *mut LookupCandidate {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate_at(
+    instance: *mut ZhuyinInstance,
+    index: u32,
+) -> *mut LookupCandidate {
     let mut candidate: *mut LookupCandidate = ptr::null_mut();
     assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut candidate) });
     candidate
 }
 
 /// The keys of a GArray of two-byte elements as lowercase hex.
-pub(crate) fn keys_hex(array: *mut glib_sys::GArray) -> String {
-    // SAFETY: a live GArray of two-byte elements with `len` of them.
+///
+/// # Safety
+///
+/// `array` points to a live `GArray` of two-byte elements. Its header and its first `len`
+/// elements are initialized and stay valid and unchanged until this call returns.
+pub(crate) unsafe fn keys_hex(array: *mut glib_sys::GArray) -> String {
+    // SAFETY: a live GArray of two-byte elements whose header and first `len` elements stay
+    // unchanged during this read (the `# Safety` contract).
     unsafe {
         let view = &*array;
         (0..view.len as usize)
@@ -111,7 +156,16 @@ pub(crate) fn keys_hex(array: *mut glib_sys::GArray) -> String {
 }
 
 /// The `nth` pronunciation of `token`: the answer, the key count and the keys.
-pub(crate) fn nth_pronunciation(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn nth_pronunciation(
     instance: *mut ZhuyinInstance,
     token: u32,
     nth: u32,
@@ -121,7 +175,8 @@ pub(crate) fn nth_pronunciation(
     let ret = unsafe { zhuyin_token_get_nth_pronunciation(instance, token, nth, keys) };
     // SAFETY: the array is live.
     let len = unsafe { (*keys).len };
-    let hex = keys_hex(keys);
+    // SAFETY: `keys` is the live `GArray` made above, of the element width `keys_hex` reads.
+    let hex = unsafe { keys_hex(keys) };
     // SAFETY: the array was allocated above and is freed once.
     unsafe { glib_sys::g_array_free(keys, 1) };
     (ret, len, hex)
@@ -129,20 +184,47 @@ pub(crate) fn nth_pronunciation(
 
 /// The phrase of `token`: the answer, the length and the text, the seeds
 /// kept where untouched.
-pub(crate) fn token_phrase(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn token_phrase(
     instance: *mut ZhuyinInstance,
     token: u32,
 ) -> (bool, u32, Option<String>) {
     let mut length = UNTOUCHED;
     let mut text = SEEDED as *mut c_char;
     let ret = unsafe { zhuyin_token_get_phrase(instance, token, &raw mut length, &raw mut text) };
-    let text = (text as usize != SEEDED).then(|| take_sentence(text));
+    let text = (text as usize != SEEDED).then(|| {
+        assert!(
+            !text.is_null(),
+            "zhuyin_token_get_phrase replaced the seeded output with NULL"
+        );
+        // SAFETY: `text` is neither the seed nor NULL (checked above), so it is the string that
+        // `zhuyin_token_get_phrase` allocated for this caller, who owns it and frees it only here.
+        unsafe { take_sentence(text) }
+    });
     (ret, length, text)
 }
 
 /// The library-7 tokens of `text`.
-pub(crate) fn user_tokens(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
-    tokens_of(instance, text)
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn user_tokens(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    (unsafe { tokens_of(instance, text) })
         .into_iter()
         .filter(|token| token >> 24 == 7)
         .collect()
@@ -150,8 +232,23 @@ pub(crate) fn user_tokens(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32>
 
 /// The elements of a zero-terminated GArray of `width`-byte elements; the
 /// terminator is checked.
-pub(crate) fn elements(array: *mut glib_sys::GArray, width: usize) -> Vec<u32> {
-    // SAFETY: a live zero-terminated GArray of `width`-byte elements.
+///
+/// # Safety
+///
+/// `array` points to a live `GArray` of `width`-byte elements. Its first `len` elements and the one
+/// element after them are initialized and readable, and its header and that storage stay unchanged
+/// until this call returns. The element after them need not be zero: the assertion checks its
+/// value.
+///
+/// `width` is 2 or 4. Any other width fails the test before the array is read.
+pub(crate) unsafe fn elements(array: *mut glib_sys::GArray, width: usize) -> Vec<u32> {
+    assert!(
+        width == 2 || width == 4,
+        "elements reads two- or four-byte elements, not {width}-byte ones"
+    );
+    // SAFETY: a live GArray whose first `len + 1` elements of `width` bytes are readable and
+    // unchanged during this read (the `# Safety` contract), and `width` is 2 or 4 (checked
+    // above).
     unsafe {
         let view = &*array;
         let read = |index: usize| {
@@ -168,7 +265,16 @@ pub(crate) fn elements(array: *mut glib_sys::GArray, width: usize) -> Vec<u32> {
 
 /// The text of the candidate at `index`, read through `zhuyin_get_candidate`
 /// and `zhuyin_get_candidate_string`.
-pub(crate) fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
     let mut row: *mut LookupCandidate = std::ptr::null_mut();
     assert!(unsafe {
         zhuyin_get_candidate(
@@ -179,7 +285,13 @@ pub(crate) fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> Str
     });
     let mut text: *const GChar = std::ptr::null();
     assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut text) });
-    // SAFETY: a true answer points `text` at the row's borrowed string.
+    assert!(
+        !text.is_null(),
+        "zhuyin_get_candidate_string answered true with a NULL string for row {index}"
+    );
+    // SAFETY: `text` is not NULL (checked above), and `zhuyin_get_candidate_string` points it at
+    // the row's NUL-terminated string, which stays valid until the list is rebuilt; nothing
+    // rebuilds it before this read.
     unsafe { std::ffi::CStr::from_ptr(text) }
         .to_str()
         .expect("candidate text is UTF-8")

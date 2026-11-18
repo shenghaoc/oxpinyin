@@ -84,5 +84,7 @@ fn surrogate_segment_matches_pin_length_and_no_critical() {
         assert_eq!(count, 2);
         LOGS.with(|logs| assert!(logs.borrow().as_ref().expect("active capture").is_empty()));
     }
-    crate::support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::support::close(context, instance) };
 }

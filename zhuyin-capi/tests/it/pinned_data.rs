@@ -35,7 +35,9 @@ fn five_libraries(user_dir: &Path) -> (*mut ZhuyinContext, *mut ZhuyinInstance) 
     let (context, instance) = open_on(&contract_data_dir(), user_dir);
     for library in 1..=5 {
         assert!(
-            import(context, library, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 100_000),
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { import(context, library, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 100_000) },
             "{library}"
         );
     }
@@ -123,8 +125,11 @@ fn items_system(parent: &Path, items: &[(&[u32], &[u16], u32)], total: u32) -> P
 fn a_short_reading_refuses_the_import_after_five_libraries() {
     let user_dir = TempUserDir::new("invalid-reading");
     let (context, instance) = five_libraries(&user_dir.path);
-    assert!(!import(context, 6, "你好", "ㄋㄧˇ".as_bytes(), 3));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe { import(context, 6, "你好", "ㄋㄧˇ".as_bytes(), 3) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The prefix of a guess is reduced with the same assert on five tokens
@@ -156,7 +161,8 @@ fn training_a_stale_forced_choice_aborts() {
         );
         assert!(unsafe { zhuyin_guess_sentence(instance) });
         assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
-        let (chosen, _, _) = candidate_rows(instance)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let (chosen, _, _) = unsafe { candidate_rows(instance) }
             .into_iter()
             .find(|(_, _, text)| text.as_slice() == "泥".as_bytes())
             .expect("a 泥 row");
@@ -185,7 +191,8 @@ fn a_stored_phrase_above_unicode_is_chosen_and_trained_byte_for_byte() {
         12
     );
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
-    let (candidate, _, chosen) = candidate_rows(instance)
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (candidate, _, chosen) = unsafe { candidate_rows(instance) }
         .into_iter()
         .find(|(_, kind, _)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR)
         .expect("the stored phrase row");
@@ -197,7 +204,11 @@ fn a_stored_phrase_above_unicode_is_chosen_and_trained_byte_for_byte() {
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
-    assert_eq!(hex(&bytes_at(sentence)), "e794b2f4908080e4b999e4b899");
+    assert_eq!(
+        // SAFETY: `sentence` is a live NUL-terminated string that the library just answered.
+        hex(&unsafe { bytes_at(sentence) }),
+        "e794b2f4908080e4b999e4b899"
+    );
     // SAFETY: the sentence is the caller's GLib string, freed once.
     unsafe { glib_sys::g_free(sentence.cast()) };
     assert!(unsafe { zhuyin_train(instance) });
@@ -206,5 +217,7 @@ fn a_stored_phrase_above_unicode_is_chosen_and_trained_byte_for_byte() {
         assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
         assert_eq!(freq, 583, "{token:#x}");
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

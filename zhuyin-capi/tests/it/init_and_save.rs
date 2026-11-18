@@ -266,7 +266,9 @@ fn zhuyin_launches_never_move_the_open_counter() {
         String::from_utf8_lossy(&saved).ends_with(&format!("open counter:0{newline}")),
         "zhuyin_save's marker carries a fresh counter"
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     assert_eq!(
         std::fs::read(&marker).expect("marker"),
         saved,
@@ -275,7 +277,10 @@ fn zhuyin_launches_never_move_the_open_counter() {
 
     for _ in 0..10 {
         let (context, instance) = open_with_user(&user_dir.path);
-        close(context, instance);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
     assert_eq!(std::fs::read(&marker).expect("marker"), saved);
 }

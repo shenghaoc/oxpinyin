@@ -15,7 +15,16 @@ use std::ptr;
 
 /// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
 /// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
-fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries: u8) {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn hold_nihao_in_libraries(context: *mut crate::types::ZhuyinContext, libraries: u8) {
     for library in 1..=libraries {
         let iter = unsafe { zhuyin_begin_add_phrases(context, library) };
         assert!(unsafe {
@@ -46,7 +55,9 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
                 );
             }
             let (context, instance) = open_with_user(&path);
-            hold_nihao_in_libraries(context, 5);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { hold_nihao_in_libraries(context, 5) };
             unsafe {
                 crate::dict::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
             };
@@ -59,7 +70,9 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
     let loaded = (0..16_u32)
         .filter(|library| inst.core.dict.phrase_table_token_enabled(library << 24))
         .count();
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let stderr = String::from_utf8_lossy(&stderr);
     let criticals: Vec<&str> = stderr
         .lines()
@@ -112,8 +125,10 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     let scratch = tempfile::tempdir().expect("scratch");
     let path = scratch.path();
     let (context, instance) = open_with_user(path);
-    hold_nihao_in_libraries(context, 4);
-    let before = tokens_of(instance, "你好");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { hold_nihao_in_libraries(context, 4) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let before = unsafe { tokens_of(instance, "你好") };
     assert_eq!(before.len(), 4);
     assert!(before.iter().any(|token| token >> 24 == 2));
     let prepared = {
@@ -145,7 +160,8 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     assert!(answer);
     assert_eq!(unload.result, Some(true));
     assert_eq!(unload.appends, prepared);
-    let after = tokens_of(instance, "你好");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let after = unsafe { tokens_of(instance, "你好") };
     assert_eq!(
         after,
         before
@@ -154,7 +170,9 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
             .collect::<Vec<_>>()
     );
 
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 #[test]
@@ -169,7 +187,8 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
         zhuyin_iterator_add_phrase(iter, cstr("网词").as_ptr(), cstr("ㄨㄤˇ ㄘˊ").as_ptr(), 0)
     });
     unsafe { zhuyin_end_add_phrases(iter) };
-    let token = with_store(instance, |store| store.phrases()[0].token());
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { with_store(instance, |store| store.phrases()[0].token()) };
     assert_eq!(token >> 24, u32::from(USER_DICTIONARY));
     let mut freq = u32::MAX;
     assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
@@ -180,5 +199,7 @@ fn token_unigram_distinguishes_zero_user_item_from_absent() {
     assert!(unsafe { zhuyin_token_add_unigram_frequency(instance, token, 7) });
     assert!(unsafe { zhuyin_token_get_unigram_frequency(instance, token, &raw mut freq) });
     assert_eq!(freq, 7);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

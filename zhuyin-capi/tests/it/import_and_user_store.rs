@@ -50,7 +50,8 @@ fn add_after_index(user_dir: &Path, value: &[u8]) {
     );
     write_user_conf(user_dir, &system_dir());
     let (context, _instance) = open_with_user(user_dir);
-    import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1) };
 }
 
 /// libzhuyin's import parses chewing (`zhuyin.cpp:515-523`): ㄉㄣ, a reading
@@ -59,21 +60,29 @@ fn add_after_index(user_dir: &Path, value: &[u8]) {
 fn an_imported_den_reading_stores_its_key() {
     let user_dir = TempUserDir::new("den");
     let (context, instance) = open_with_user(&user_dir.path);
-    assert!(import(context, 7, "扽", "ㄉㄣ".as_bytes(), 5));
-    let tokens = user_tokens(instance, "扽");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "扽", "ㄉㄣ".as_bytes(), 5) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let tokens = unsafe { user_tokens(instance, "扽") };
     assert_eq!(tokens, [0x0700_0001]);
     assert_eq!(
-        nth_pronunciation(instance, tokens[0], 0),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { nth_pronunciation(instance, tokens[0], 0) },
         (true, 1, "8414".to_owned())
     );
     assert!(unsafe { zhuyin_save(context) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
-        nth_pronunciation(instance, tokens[0], 0),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { nth_pronunciation(instance, tokens[0], 0) },
         (true, 1, "8414".to_owned())
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// mask_out walks the user index and asserts on a key longer than 16 words
@@ -104,7 +113,9 @@ fn cursor_guesses_ignore_an_overlong_user_index_key() {
     );
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Two library-7 tokens for one phrase key (register row 93).
@@ -160,10 +171,14 @@ fn an_import_after_a_refused_bigram_mask_still_adds() {
     );
     let (context, instance) = open_with_user(&user_dir.path);
     let reading = "ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ".as_bytes();
-    assert!(import(context, 1, "你你你你", reading, 5));
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 1, "你你你你", reading, 5) });
     assert!(!unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) });
-    assert!(import(context, 1, "你你你你", reading, 4));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 1, "你你你你", reading, 4) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The import reads a chewing reading directly: an invalid byte in a later
@@ -173,29 +188,33 @@ fn an_import_after_a_refused_bigram_mask_still_adds() {
 fn the_import_reads_a_chewing_reading_up_to_an_invalid_byte() {
     let user_dir = TempUserDir::new("direct-reading");
     let (context, instance) = open_with_user(&user_dir.path);
-    let before = tokens_of(instance, "甲");
-    assert!(import(
-        context,
-        7,
-        "甲",
-        &["ㄉㄚ ".as_bytes(), b"\xff"].concat(),
-        5
-    ));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let before = unsafe { tokens_of(instance, "甲") };
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "甲", &["ㄉㄚ ".as_bytes(), b"\xff"].concat(), 5) });
     assert_eq!(
-        tokens_of(instance, "甲"),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { tokens_of(instance, "甲") },
         [before, vec![0x0700_0001]].concat()
     );
     let whole = "ㄋㄧˇ ㄏㄠˇ".as_bytes();
-    assert!(!import(context, 7, "你好", &[whole, b"\xff"].concat(), 1));
-    assert!(!import(
-        context,
-        7,
-        "你好",
-        &["ㄋㄧˇ".as_bytes(), b"\xff", "ㄏㄠˇ".as_bytes()].concat(),
-        1
-    ));
-    assert!(import(context, 7, "你好", whole, 1));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe { import(context, 7, "你好", &[whole, b"\xff"].concat(), 1) });
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(!unsafe {
+        import(
+            context,
+            7,
+            "你好",
+            &["ㄋㄧˇ".as_bytes(), b"\xff", "ㄏㄠˇ".as_bytes()].concat(),
+            1,
+        )
+    });
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "你好", whole, 1) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`

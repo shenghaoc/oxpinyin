@@ -29,8 +29,18 @@ use std::ptr;
 
 /// `'ni'hao` under the separator options, guessed: column 3 holds the zero
 /// key that `_check_offset` asserts on (`zhuyin.cpp:1453`).
-fn separated(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
-    let instance = full_pinyin(context, SEPARATOR_OPTIONS, "'ni'hao");
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn separated(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    let instance = unsafe { full_pinyin(context, SEPARATOR_OPTIONS, "'ni'hao") };
     assert_eq!(unsafe { zhuyin_get_parsed_input_length(instance) }, 7);
     unsafe { zhuyin_guess_sentence(instance) };
     instance
@@ -38,7 +48,16 @@ fn separated(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
 
 /// The keyboard symbols of one key: the answer and the symbols, `None` for
 /// a NULL vector. The vector is freed.
-fn keyboard(instance: *mut ZhuyinInstance, key: u8) -> (bool, Option<Vec<String>>) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn keyboard(instance: *mut ZhuyinInstance, key: u8) -> (bool, Option<Vec<String>>) {
     let mut symbols: *mut *mut c_char = ptr::null_mut();
     #[allow(clippy::cast_possible_wrap)]
     let ret = unsafe { zhuyin_in_chewing_keyboard(instance, key as c_char, &raw mut symbols) };
@@ -84,17 +103,25 @@ fn string_getters_refuse_the_zero_key_and_render_a_real_key() {
     assert!(unsafe { zhuyin_get_zhuyin_key(instance, 0, &raw mut key) });
     let mut text: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_pinyin_string(instance, key, &raw mut text) });
-    assert_eq!(take_sentence(text), "xi1");
+    // SAFETY: `text` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take_sentence(text) }, "xi1");
 
     let mut key = ChewingKey::ZERO;
     assert!(unsafe { zhuyin_parse_chewing(instance, cstr("su3").as_ptr(), &raw mut key) });
     let mut text: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_zhuyin_string(instance, &raw mut key, &raw mut text) });
-    assert_eq!(take_sentence(text), "ㄋㄧˇ");
+    // SAFETY: `text` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take_sentence(text) }, "ㄋㄧˇ");
     let mut text: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_pinyin_string(instance, &raw mut key, &raw mut text) });
-    assert_eq!(take_sentence(text), "ni3");
-    close(context, instance);
+    // SAFETY: `text` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take_sentence(text) }, "ni3");
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The left move from just past a separator asserts (`zhuyin.cpp:1998`).
@@ -105,7 +132,9 @@ fn left_offset_just_past_a_separator_aborts() {
         || {
             let (context, _) = open();
             let mut out = 0;
-            unsafe { zhuyin_get_left_zhuyin_offset(separated(context), 4, &raw mut out) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+            let instance = unsafe { separated(context) };
+            unsafe { zhuyin_get_left_zhuyin_offset(instance, 4, &raw mut out) };
         },
     );
 }
@@ -118,7 +147,9 @@ fn right_offset_just_past_a_separator_aborts() {
         || {
             let (context, _) = open();
             let mut out = 0;
-            unsafe { zhuyin_get_right_zhuyin_offset(separated(context), 4, &raw mut out) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+            let instance = unsafe { separated(context) };
+            unsafe { zhuyin_get_right_zhuyin_offset(instance, 4, &raw mut out) };
         },
     );
 }
@@ -129,7 +160,9 @@ fn key_rest_just_past_a_separator_aborts() {
     assert_aborts("parse_keys::key_rest_just_past_a_separator_aborts", || {
         let (context, _) = open();
         let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-        unsafe { zhuyin_get_zhuyin_key_rest(separated(context), 4, &raw mut rest) };
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { separated(context) };
+        unsafe { zhuyin_get_zhuyin_key_rest(instance, 4, &raw mut rest) };
     });
 }
 
@@ -141,7 +174,9 @@ fn character_offset_on_a_leading_separator_aborts() {
         "parse_keys::character_offset_on_a_leading_separator_aborts",
         || {
             let (context, _) = open();
-            let instance = full_pinyin(context, SEPARATOR_OPTIONS, "'ni");
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { full_pinyin(context, SEPARATOR_OPTIONS, "'ni") };
             unsafe { zhuyin_guess_sentence(instance) };
             let mut out = 0;
             unsafe { zhuyin_get_character_offset(instance, cstr("你").as_ptr(), 0, &raw mut out) };
@@ -185,7 +220,9 @@ fn left_offset_past_the_matrix_aborts() {
     assert_aborts("parse_keys::left_offset_past_the_matrix_aborts", || {
         let (context, _) = open();
         let mut out = 0;
-        unsafe { zhuyin_get_left_zhuyin_offset(chewing(context, "su3cl3"), 99, &raw mut out) };
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { chewing(context, "su3cl3") };
+        unsafe { zhuyin_get_left_zhuyin_offset(instance, 99, &raw mut out) };
     });
 }
 
@@ -195,7 +232,9 @@ fn right_offset_past_the_matrix_aborts() {
     assert_aborts("parse_keys::right_offset_past_the_matrix_aborts", || {
         let (context, _) = open();
         let mut out = 0;
-        unsafe { zhuyin_get_right_zhuyin_offset(chewing(context, "su3cl3"), 99, &raw mut out) };
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { chewing(context, "su3cl3") };
+        unsafe { zhuyin_get_right_zhuyin_offset(instance, 99, &raw mut out) };
     });
 }
 
@@ -215,13 +254,16 @@ fn key_rest_on_an_empty_matrix_aborts() {
 #[test]
 fn a_failed_character_walk_writes_zero() {
     let (context, _) = open();
-    let instance = chewing(context, "su3cl3");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { chewing(context, "su3cl3") };
     let mut length = UNTOUCHED as usize;
     assert!(!unsafe {
         zhuyin_get_character_offset(instance, cstr("啊").as_ptr(), 3, &raw mut length)
     });
     assert_eq!(length, 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The key getters hand out the pin's function-local statics
@@ -231,7 +273,10 @@ fn a_failed_character_walk_writes_zero() {
 #[test]
 fn key_slots_are_process_wide_statics() {
     let (context, _) = open();
-    let (first, second) = (chewing(context, "su3"), chewing(context, "cl3"));
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let (first, second) = (unsafe { chewing(context, "su3") }, unsafe {
+        chewing(context, "cl3")
+    });
     let mut keys: [*mut ChewingKey; 2] = [ptr::null_mut(); 2];
     let mut rests: [*mut ChewingKeyRest; 2] = [ptr::null_mut(); 2];
     assert!(unsafe { zhuyin_get_zhuyin_key(first, 0, &raw mut keys[0]) });
@@ -260,7 +305,9 @@ fn chewing_schemes_and_library_bounds_follow_the_pin() {
     }
     assert!(!unsafe { zhuyin_load_phrase_library(context, 16) });
     assert!(!unsafe { zhuyin_load_phrase_library(context, 255) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_in_chewing_keyboard` maps a key by the scheme and the tone option
@@ -269,22 +316,37 @@ fn chewing_schemes_and_library_bounds_follow_the_pin() {
 fn the_chewing_keyboard_maps_keys_by_scheme_and_options() {
     let (context, instance) = open();
     let one = |symbol: &str| (true, Some(vec![symbol.to_owned()]));
-    assert_eq!(keyboard(instance, b's'), one("ㄋ"));
-    assert_eq!(keyboard(instance, b'3'), one("ˇ"));
-    assert_eq!(keyboard(instance, b'1'), one("ㄅ"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b's') }, one("ㄋ"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b'3') }, one("ˇ"));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b'1') }, one("ㄅ"));
     for key in [b'!', 0x80, b'~'] {
-        assert_eq!(keyboard(instance, key), (false, None), "{key:#x}");
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { keyboard(instance, key) },
+            (false, None),
+            "{key:#x}"
+        );
     }
     assert!(unsafe { zhuyin_set_options(context, 0) });
-    assert_eq!(keyboard(instance, b'3'), (false, None));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { keyboard(instance, b'3') }, (false, None));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let (context, instance) = open();
     assert!(unsafe { zhuyin_set_chewing_scheme(context, 2) });
     assert_eq!(
-        keyboard(instance, b's'),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { keyboard(instance, b's') },
         (true, Some(vec!["ㄙ".to_owned(), "˙".to_owned()]))
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_parse_chewing` writes the key only for one whole syllable.
@@ -306,7 +368,9 @@ fn parse_chewing_writes_the_key_only_on_success() {
         );
         assert_eq!(key.packed, packed, "{text}");
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
@@ -369,7 +433,9 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
         crate::support::zhuyin_get_zhuyin_key_rest(instance, usize::MAX, &raw mut rest)
     });
     assert!(rest.is_null());
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Past byte 65535 the key-rest positions narrow into the pin's `guint16`
@@ -406,7 +472,9 @@ fn key_rest_positions_past_byte_65535_wrap() {
         });
         assert_eq!(length, 2, "offset {offset}");
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_get_zhuyin_key_rest_positions` reads `key_rest` only to fill a
@@ -469,7 +537,9 @@ fn key_rest_positions_follow_the_pins_reads() {
         )
     });
     assert_eq!((begin, end), (0, 3));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 // At 074a2219, zhuyin.cpp:1017-1081,1460-1471,1718-1729,1865-1870: parsing
@@ -558,7 +628,9 @@ fn reparse_preserves_candidate_strings_until_guess_or_reset(
     assert_eq!(after, 0);
     assert!(!unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
     assert!(current.is_null());
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// An apostrophe-only parse under the default options. libzhuyin's
@@ -595,7 +667,9 @@ fn an_apostrophe_only_parse_matches_the_pin(
         parsed_length
     );
 
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 #[test]
@@ -662,7 +736,9 @@ fn a_choose_at_another_offset_answers_the_rows_own_end(#[values(false, true)] be
         let mut count = 0;
         assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
         (0..count as usize)
-            .position(|index| crate::support::candidate_text(instance, index) == "好")
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            .position(|index| unsafe { crate::support::candidate_text(instance, index) } == "好")
             .expect("好 over the second key")
     };
     let mut row = ptr::null_mut();
@@ -687,5 +763,7 @@ fn a_choose_at_another_offset_answers_the_rows_own_end(#[values(false, true)] be
         unsafe { zhuyin_choose_candidate(instance, 0, row) },
         expected
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

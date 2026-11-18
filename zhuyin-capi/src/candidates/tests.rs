@@ -87,7 +87,8 @@ fn choosing_from_a_before_cursor_window_uses_that_window() {
     // No sentence was guessed, so nothing is prepended
     // (`zhuyin.cpp:1277-1278`): every row is a phrase row of the spans
     // ending at the cursor (`:1594`), and row 1 is the second of them.
-    let displayed = candidate_text(instance, 1);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let displayed = unsafe { candidate_text(instance, 1) };
     assert_eq!(displayed, "好", "the fixture's before(6) row 1");
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(unsafe { zhuyin_get_candidate(instance, 1, &raw mut cand) });
@@ -232,18 +233,44 @@ fn reparse_keeps_the_reanchored_candidates_selection(
     }
     assert!(!unsafe { zhuyin_clear_constraint(instance, 0) });
     assert_eq!(unsafe { zhuyin_clear_constraint(instance, 3) }, !refused);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The decoded sentence of n-best row 0.
-fn sentence_of(instance: *mut crate::types::ZhuyinInstance) -> String {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn sentence_of(instance: *mut crate::types::ZhuyinInstance) -> String {
     let mut sentence: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
-    take_sentence(sentence)
+    assert!(
+        !sentence.is_null(),
+        "zhuyin_get_sentence answered true but wrote a NULL sentence"
+    );
+    // SAFETY: `sentence` is not NULL (checked above), so it is the string that
+    // `zhuyin_get_sentence` allocated for this caller, who owns it and frees it only here.
+    unsafe { take_sentence(sentence) }
 }
 
 /// Each token's unigram, as `zhuyin_token_get_unigram_frequency` reads it.
-fn unigrams_of(instance: *mut crate::types::ZhuyinInstance, tokens: &[u32]) -> Vec<u32> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn unigrams_of(instance: *mut crate::types::ZhuyinInstance, tokens: &[u32]) -> Vec<u32> {
     tokens
         .iter()
         .map(|&token| {
@@ -280,27 +307,45 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         6
     );
     assert!(unsafe { zhuyin_guess_sentence(instance) });
-    let sentence = sentence_of(instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let sentence = unsafe { sentence_of(instance) };
     // Every token of the sentence and of each of its characters: the
     // decoded row's tokens are among them, whatever its segmentation.
-    let mut tokens = tokens_of(instance, &sentence);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let mut tokens = unsafe { tokens_of(instance, &sentence) };
     for ch in sentence.chars() {
-        tokens.extend(tokens_of(instance, &ch.to_string()));
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        tokens.extend(unsafe { tokens_of(instance, &ch.to_string()) });
     }
     assert!(!tokens.is_empty(), "the sentence {sentence:?} has tokens");
-    let unigrams = unigrams_of(instance, &tokens);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let unigrams = unsafe { unigrams_of(instance, &tokens) };
 
     assert!(
         unsafe { zhuyin_train(instance) },
         "the live sentence result admits the train"
     );
-    assert_eq!(unigrams_of(instance, &tokens), unigrams, "no unigram moved");
-    assert_eq!(sentence_of(instance), sentence, "the retained result");
-    with_store(instance, |store| {
-        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
-    });
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { unigrams_of(instance, &tokens) },
+        unigrams,
+        "no unigram moved"
+    );
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence_of(instance) },
+        sentence,
+        "the retained result"
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    unsafe {
+        with_store(instance, |store| {
+            assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
+        })
+    };
     assert!(unsafe { zhuyin_guess_sentence(instance) });
-    assert_eq!(sentence_of(instance), sentence, "a fresh decode");
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence_of(instance) }, sentence, "a fresh decode");
 
     assert!(unsafe { zhuyin_save(context) }, "the train armed the save");
     assert!(
@@ -309,7 +354,9 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     );
     assert_eq!(logs.take(), Vec::new(), "no diagnostics");
     drop(logs);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 
     let mut journals = 0;
     for entry in std::fs::read_dir(&user_dir.path).expect("the user dir") {
@@ -365,11 +412,14 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     // No user dir: the corpus driver's shape — training degrades to
     // refusing, never to a write.
     let (context, instance) = open();
-    let chosen = candidate(instance, "su3cl3", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let chosen = unsafe { candidate(instance, "su3cl3", 0) };
     assert!(unsafe { zhuyin_choose_candidate(instance, 0, chosen) } > 0);
     assert!(
         !unsafe { zhuyin_train(instance) },
         "NULL user directory refuses training"
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

@@ -41,7 +41,9 @@ fn cursor_zero_over_a_keyless_parse_reads_no_column() {
     let mut offset = usize::MAX;
     assert!(unsafe { zhuyin_get_zhuyin_offset(instance, 0, &raw mut offset) });
     assert_eq!(offset, 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 #[test]
@@ -102,7 +104,9 @@ fn a_null_phrase_within_the_columns_answers_false() {
     let mut length = 7;
     assert!(!unsafe { zhuyin_get_character_offset(instance, ptr::null(), 2, &raw mut length) });
     assert_eq!(length, 7);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 // With no keys, fill_matrix leaves the matrix empty (phonetic_key_matrix.cpp:30-38).

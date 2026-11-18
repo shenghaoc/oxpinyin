@@ -87,7 +87,8 @@ fn null_arguments_answer_the_declared_value() {
     assert!(unsafe { zhuyin_get_zhuyin_key_rest_length(instance, rest, ptr::null_mut()) });
 
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
-    let candidate = candidate_at(instance, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let candidate = unsafe { candidate_at(instance, 0) };
     let mut kind = crate::support::lookup_candidate_type_t::ZOMBIE_CANDIDATE;
     assert!(!unsafe { zhuyin_get_candidate_type(instance, ptr::null_mut(), &raw mut kind) });
     assert!(unsafe { zhuyin_get_candidate_type(instance, candidate, ptr::null_mut()) });
@@ -116,7 +117,9 @@ fn null_arguments_answer_the_declared_value() {
     let mut count = UNTOUCHED;
     assert!(unsafe { zhuyin_get_n_phrase(instance, &raw mut count) });
     assert_eq!(count, 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Null and empty inputs are refused, never dereferenced: the
@@ -161,7 +164,8 @@ fn null_and_empty_inputs_are_refused() {
 #[test]
 fn null_instance_candidate_type_answers() {
     let (context, instance) = open();
-    let cand = candidate(instance, "su3cl3", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe { candidate(instance, "su3cl3", 0) };
     let mut kind = crate::support::lookup_candidate_type_t::ZOMBIE_CANDIDATE;
     assert!(unsafe {
         crate::support::zhuyin_get_candidate_type(ptr::null_mut(), cand, &raw mut kind)
@@ -170,14 +174,17 @@ fn null_instance_candidate_type_answers() {
         kind,
         crate::support::lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_get_candidate_string` never reads `instance` (`zhuyin.cpp:1865-1870`).
 #[test]
 fn null_instance_candidate_string_answers() {
     let (context, instance) = open();
-    let cand = candidate(instance, "su3cl3", 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe { candidate(instance, "su3cl3", 0) };
     let mut text = ptr::null();
     assert!(unsafe {
         crate::support::zhuyin_get_candidate_string(ptr::null_mut(), cand, &raw mut text)
@@ -186,7 +193,9 @@ fn null_instance_candidate_string_answers() {
     // SAFETY: the candidate text is NUL-terminated and borrowed from the instance.
     let text = unsafe { std::ffi::CStr::from_ptr(text) };
     assert_eq!(text.to_str().expect("UTF-8"), "你好");
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_get_zhuyin_string` never reads `instance` (`zhuyin.cpp:1732-1741`).
@@ -201,8 +210,12 @@ fn null_instance_zhuyin_string_answers() {
     assert!(unsafe {
         crate::support::zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut out)
     });
-    assert_eq!(take_sentence(out), "ㄋㄧˇ");
-    close(context, instance);
+    // SAFETY: `out` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take_sentence(out) }, "ㄋㄧˇ");
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// `zhuyin_begin_add_phrases` stores the context unread and returns the

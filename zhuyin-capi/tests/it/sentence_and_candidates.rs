@@ -38,10 +38,13 @@ fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
     // The count makes the 1-best row A's token alone, not the two system
     // phrases 好 and 你, which also read "好你". The read after the reload
     // tells the two rows apart.
-    assert!(import(context, 7, "好你", "ㄏㄠˇ ㄋㄧˇ".as_bytes(), 10_000));
-    let instance = chewing(context, "cl3su3");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "好你", "ㄏㄠˇ ㄋㄧˇ".as_bytes(), 10_000) });
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { chewing(context, "cl3su3") };
     let user_tokens = |text| {
-        tokens_of(instance, text)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        (unsafe { tokens_of(instance, text) })
             .into_iter()
             .filter(|token| token >> 24 == 7)
             .collect::<Vec<_>>()
@@ -51,7 +54,8 @@ fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
     };
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
-    let candidate = candidate_at(instance, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let candidate = unsafe { candidate_at(instance, 0) };
     let candidate_text = || {
         let mut text: *const c_char = ptr::null();
         assert!(unsafe { zhuyin_get_candidate_string(instance, candidate, &raw mut text) });
@@ -63,27 +67,39 @@ fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
             .to_owned()
     };
     assert_eq!(
-        token_phrase(instance, token),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
         (true, 2, Some("好你".into()))
     );
-    assert_eq!(sentence(instance), (true, Some("好你".into())));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (true, Some("好你".into())));
     assert_eq!(candidate_text(), "好你");
 
     assert!(unsafe { zhuyin_unload_phrase_library(context, 7) });
     assert!(unsafe { zhuyin_load_phrase_library(context, 7) });
-    assert_eq!(token_phrase(instance, token), (false, UNTOUCHED, None));
-    assert_eq!(sentence(instance), (true, Some(String::new())));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
+        (false, UNTOUCHED, None)
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (true, Some(String::new())));
 
-    assert!(import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 50));
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 50) });
     assert_eq!(user_tokens("你好"), [token]);
     assert_eq!(
-        token_phrase(instance, token),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
         (true, 2, Some("你好".into()))
     );
-    assert_eq!(sentence(instance), (true, Some("你好".into())));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (true, Some("你好".into())));
     assert_eq!(candidate_text(), "好你");
     unsafe { zhuyin_free_instance(instance) };
-    close(context, spare);
+    // SAFETY: `context` was opened above and is not yet freed; `spare` was opened above and is not
+    // yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, spare) };
 }
 
 /// A failed conversion for the row's only phrase leaves the sentence NULL
@@ -117,13 +133,16 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
 
     let context = init_on(&system, None);
     assert!(!context.is_null());
-    let instance = full_pinyin(context, oxpinyin::OptionBits::USE_TONE.bits(), "ba1");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { full_pinyin(context, oxpinyin::OptionBits::USE_TONE.bits(), "ba1") };
     assert!(unsafe { zhuyin_guess_sentence(instance) });
 
     let mut out = SEEDED as *mut c_char;
     assert!(unsafe { zhuyin_get_sentence(instance, &raw mut out) });
     assert!(out.is_null());
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A parse that places no key refuses the guess: an empty reparse, and a
@@ -133,7 +152,8 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
 fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
     let (context, _) = open();
     assert!(unsafe { zhuyin_set_options(context, 1 << 5) });
-    let instance = chewing(context, "su3cl3");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { chewing(context, "su3cl3") };
     assert_eq!(unsafe { zhuyin_get_parsed_input_length(instance) }, 6);
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert_eq!(
@@ -141,7 +161,9 @@ fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
         0
     );
     assert!(!unsafe { zhuyin_guess_sentence(instance) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 
     let (context, instance) = open();
     unsafe { zhuyin_parse_more_full_pinyins(instance, cstr("ni3hao3").as_ptr()) };
@@ -151,8 +173,13 @@ fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
         1
     );
     assert!(!unsafe { zhuyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance), (true, Some("你好".to_owned())));
-    assert_eq!(n_candidate(instance), (true, 0));
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { sentence(instance) },
+        (true, Some("你好".to_owned()))
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { n_candidate(instance) }, (true, 0));
     unsafe { zhuyin_free_instance(instance) };
 
     let instance = unsafe { zhuyin_alloc_instance(context) };
@@ -161,8 +188,11 @@ fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
         1
     );
     assert!(!unsafe { zhuyin_guess_sentence(instance) });
-    assert_eq!(sentence(instance), (false, None));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (false, None));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A `BEST_MATCH` row chosen after a reparse that places no key answers the
@@ -171,7 +201,8 @@ fn a_keyless_parse_refuses_the_guess_and_keeps_the_sentence() {
 #[test]
 fn a_best_match_choose_after_a_keyless_reparse_answers_minus_one() {
     let (context, _) = open();
-    let instance = chewing(context, "su3cl3");
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { chewing(context, "su3cl3") };
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
     let mut row: *mut LookupCandidate = ptr::null_mut();
@@ -190,7 +221,9 @@ fn a_best_match_choose_after_a_keyless_reparse_answers_minus_one() {
         unsafe { crate::support::zhuyin_choose_candidate(instance, 0, row) },
         -1
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The after-cursor guess answers at the reserved slot and asserts one past
@@ -201,7 +234,9 @@ fn after_cursor_guess_one_past_the_reserved_slot_aborts() {
         "sentence_and_candidates::after_cursor_guess_one_past_the_reserved_slot_aborts",
         || {
             let (context, _) = open();
-            let instance = chewing(context, "su3cl3");
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let instance = unsafe { chewing(context, "su3cl3") };
             assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 6) });
             unsafe { zhuyin_guess_candidates_after_cursor(instance, 7) };
         },
@@ -213,18 +248,25 @@ fn after_cursor_guess_one_past_the_reserved_slot_aborts() {
 #[test]
 fn get_sentence_before_a_guess_leaves_the_output() {
     let (context, instance) = open();
-    assert_eq!(sentence(instance), (false, None));
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (false, None));
     unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
-    assert_eq!(sentence(instance), (false, None));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { sentence(instance) }, (false, None));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A partial user gram refuses the candidate lookup with one warning.
 #[test]
 fn partial_candidate_gram_logs_once() {
     let (context, instance) = open();
-    let token = tokens_of(instance, "你好")[0];
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { tokens_of(instance, "你好") }[0];
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let user = TempUserDir::new("partial-candidate-gram");
     let mut gram = 7_u32.to_le_bytes().to_vec();
     gram.extend_from_slice(&token.to_le_bytes());
@@ -251,7 +293,9 @@ fn partial_candidate_gram_logs_once() {
     let mut count = u32::MAX;
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     assert_eq!(count, 0);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The zhuyin twin of issue #356: `zhuyin_get_character_offset` runs
@@ -312,15 +356,22 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
     let (context, instance) = open();
     let first = (0..8)
         .find(|index| {
-            let _ = candidate(instance, "su3cl3", 0);
-            candidate_text(instance, *index) == "你"
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let _ = unsafe { candidate(instance, "su3cl3", 0) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            (unsafe { candidate_text(instance, *index) }) == "你"
         })
         .expect("你 is offered at 0");
-    let cand = candidate(
-        instance,
-        "su3cl3",
-        u32::try_from(first).expect("small index"),
-    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let cand = unsafe {
+        candidate(
+            instance,
+            "su3cl3",
+            u32::try_from(first).expect("small index"),
+        )
+    };
     assert_eq!(unsafe { zhuyin_choose_candidate(instance, 0, cand) }, 3);
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 3) });
@@ -328,11 +379,14 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     let other = (0..usize::try_from(count).expect("count fits"))
         .find(|index| {
-            let text = candidate_text(instance, *index);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let text = unsafe { candidate_text(instance, *index) };
             text.chars().count() == 1 && text != "好"
         })
         .expect("a one-character row other than 好 is offered at 3");
-    let text = candidate_text(instance, other);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let text = unsafe { candidate_text(instance, other) };
     let mut chosen: *mut crate::support::LookupCandidate = ptr::null_mut();
     assert!(unsafe {
         zhuyin_get_candidate(
@@ -345,10 +399,18 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
+    assert!(
+        !sentence.is_null(),
+        "zhuyin_get_sentence answered true but wrote a NULL sentence"
+    );
     assert_eq!(
-        take_sentence(sentence),
+        // SAFETY: `sentence` is not NULL (checked above), so it is the string that
+        // `zhuyin_get_sentence` allocated for this caller, who owns it and frees it only here.
+        unsafe { take_sentence(sentence) },
         format!("你{text}"),
         "the forcing at the cursor survived the re-guess"
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

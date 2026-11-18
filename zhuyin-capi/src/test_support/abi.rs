@@ -39,7 +39,8 @@ pub(crate) const CHILD_DIR: &str = "OXPINYIN_ZHUYIN_CAPI_CHILD_DIR";
 /// corpus driver's shape; `""` would be the working directory — and one
 /// instance on it.
 pub(crate) fn open() -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
-    open_at(std::ptr::null())
+    // SAFETY: `std::ptr::null()` is NULL, which `open_at` accepts.
+    unsafe { open_at(std::ptr::null()) }
 }
 
 /// Opens the fixture context with `user_dir` and one instance on it.
@@ -47,10 +48,14 @@ pub(crate) fn open_with_user(
     user_dir: impl AsRef<Path>,
 ) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
     let user = cstr(user_dir.as_ref().to_str().expect("UTF-8 path"));
-    open_at(user.as_ptr())
+    // SAFETY: `user.as_ptr()` is a NUL-terminated string that outlives the call.
+    unsafe { open_at(user.as_ptr()) }
 }
 
-pub(crate) fn open_at(user: *const c_char) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
+/// # Safety
+///
+/// `user` is NULL or a NUL-terminated string that stays valid for the call.
+pub(crate) unsafe fn open_at(user: *const c_char) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let context = unsafe { zhuyin_init(system.as_ptr(), user) };
     assert!(!context.is_null(), "the mini fixture must open");
@@ -60,7 +65,22 @@ pub(crate) fn open_at(user: *const c_char) -> (*mut ZhuyinContext, *mut ZhuyinIn
 }
 
 /// Releases a pair [`open`] / [`open_with_user`] returned.
-pub(crate) fn close(context: *mut ZhuyinContext, instance: *mut ZhuyinInstance) {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// `instance` is NULL or belongs to `context`. The call frees both, so the caller does not use
+/// either again.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn close(context: *mut ZhuyinContext, instance: *mut ZhuyinInstance) {
     unsafe { zhuyin_free_instance(instance) };
     unsafe { zhuyin_fini(context) };
 }
@@ -69,7 +89,16 @@ pub(crate) fn close(context: *mut ZhuyinContext, instance: *mut ZhuyinInstance) 
 /// composition-anchored candidate window from offset 0, and returns the
 /// pointer to candidate `index` — borrowed into the instance's snapshot
 /// until the next guess, exactly the contract a C consumer holds.
-pub(crate) fn candidate(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate(
     instance: *mut ZhuyinInstance,
     keys: &str,
     index: c_uint,
@@ -99,7 +128,12 @@ pub(crate) fn candidate(
 
 /// Reads the malloc'd sentence a getter handed out and frees it with the
 /// matching allocator.
-pub(crate) fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
+///
+/// # Safety
+///
+/// `sentence` is a NUL-terminated string, not NULL, that the library returned to the caller, who
+/// owns it. The call frees it with `g_free`, so the caller does not use it again.
+pub(crate) unsafe fn take_sentence(sentence: *mut std::os::raw::c_char) -> String {
     assert!(!sentence.is_null(), "the getter allocated a string");
     // SAFETY: `sentence` is a NUL-terminated string this facade just
     // malloc'd for the caller; it is read, then released with the
@@ -172,7 +206,16 @@ pub(crate) fn init_on(system: &Path, user: Option<&Path>) -> *mut ZhuyinContext 
 
 /// Imports `text` with the chewing `reading` and `count` into `library`.
 /// Answers the add.
-pub(crate) fn import(
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn import(
     context: *mut ZhuyinContext,
     library: u8,
     text: &str,
@@ -189,7 +232,16 @@ pub(crate) fn import(
 }
 
 /// The tokens `zhuyin_lookup_tokens` finds for `text`.
-pub(crate) fn tokens_of(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn tokens_of(instance: *mut ZhuyinInstance, text: &str) -> Vec<u32> {
     // SAFETY: a fresh GArray of four-byte elements, freed below.
     let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
     unsafe { zhuyin_lookup_tokens(instance, cstr(text).as_ptr(), array) };
@@ -287,7 +339,16 @@ impl Drop for LogCapture {
 }
 
 /// A fresh instance on `context` with `keys` parsed as chewing keystrokes.
-pub(crate) fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinInstance {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinInstance {
     let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
     unsafe { zhuyin_parse_more_chewings(instance, cstr(keys).as_ptr()) };
@@ -296,7 +357,11 @@ pub(crate) fn chewing(context: *mut ZhuyinContext, keys: &str) -> *mut ZhuyinIns
 
 #[cfg(feature = "tkrzw")]
 /// The raw bytes of a NUL-terminated string.
-pub(crate) fn bytes_at(text: *const c_char) -> Vec<u8> {
+///
+/// # Safety
+///
+/// `text` is a NUL-terminated string, not NULL, that stays valid for the call.
+pub(crate) unsafe fn bytes_at(text: *const c_char) -> Vec<u8> {
     assert!(!text.is_null());
     // SAFETY: the facade answered a live NUL-terminated string.
     unsafe { std::ffi::CStr::from_ptr(text) }
@@ -306,7 +371,16 @@ pub(crate) fn bytes_at(text: *const c_char) -> Vec<u8> {
 
 #[cfg(feature = "tkrzw")]
 /// The candidate rows of the current list: type and text bytes.
-pub(crate) fn candidate_rows(
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn candidate_rows(
     instance: *mut ZhuyinInstance,
 ) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t, Vec<u8>)> {
     let mut count = 0;
@@ -319,13 +393,29 @@ pub(crate) fn candidate_rows(
             assert!(unsafe { zhuyin_get_candidate_type(instance, candidate, &raw mut kind) });
             let mut text: *const c_char = ptr::null();
             assert!(unsafe { zhuyin_get_candidate_string(instance, candidate, &raw mut text) });
-            (candidate, kind, bytes_at(text))
+            assert!(
+                !text.is_null(),
+                "zhuyin_get_candidate_string answered true but wrote a NULL string for row {index}"
+            );
+            // SAFETY: `text` is not NULL (checked above), and `zhuyin_get_candidate_string`
+            // points it at the row's NUL-terminated string, which stays valid until the list is
+            // rebuilt; nothing rebuilds it before this read.
+            (candidate, kind, unsafe { bytes_at(text) })
         })
         .collect()
 }
 
 /// The candidate count of the current list.
-pub(crate) fn n_candidate(instance: *mut ZhuyinInstance) -> (bool, u32) {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn n_candidate(instance: *mut ZhuyinInstance) -> (bool, u32) {
     let mut count = UNTOUCHED;
     let ret = unsafe { zhuyin_get_n_candidate(instance, &raw mut count) };
     (ret, count)

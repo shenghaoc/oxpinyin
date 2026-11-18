@@ -49,7 +49,15 @@ impl Drop for Pair {
     }
 }
 
-fn parse_whole(instance: *mut ZhuyinInstance, input: &str) {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn parse_whole(instance: *mut ZhuyinInstance, input: &str) {
     assert_eq!(
         unsafe { zhuyin_parse_more_chewings(instance, cstr(input).as_ptr()) },
         input.len()
@@ -57,7 +65,18 @@ fn parse_whole(instance: *mut ZhuyinInstance, input: &str) {
 }
 
 /// Every row of `instance`'s list with its type.
-fn rows(instance: *mut ZhuyinInstance) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t)> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn rows(
+    instance: *mut ZhuyinInstance,
+) -> Vec<(*mut LookupCandidate, lookup_candidate_type_t)> {
     let mut count = 0;
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     (0..count)
@@ -76,14 +95,20 @@ fn rows(instance: *mut ZhuyinInstance) -> Vec<(*mut LookupCandidate, lookup_cand
 #[rstest::rstest]
 fn a_best_match_row_answers_the_receivers_matrix_end(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "su3cl3");
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer, "su3cl3") };
     assert!(unsafe { zhuyin_guess_sentence(pair.producer) });
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(pair.producer, 0) });
-    let (row, _) = rows(pair.producer)
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let (row, _) = unsafe { rows(pair.producer) }
         .into_iter()
         .find(|(_, kind)| *kind == lookup_candidate_type_t::BEST_MATCH_CANDIDATE)
         .expect("a sentence row");
-    parse_whole(pair.receiver, "su3");
+    // SAFETY: `pair.receiver` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver, "su3") };
     assert_eq!(unsafe { zhuyin_choose_candidate(pair.receiver, 0, row) }, 3);
     assert!(!unsafe { zhuyin_clear_constraint(pair.receiver, 0) });
 }
@@ -101,10 +126,16 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
     #[values(true, false)] same_context: bool,
 ) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "su3cl3");
-    parse_whole(pair.receiver, "su3cl3");
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer, "su3cl3") };
+    // SAFETY: `pair.receiver` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver, "su3cl3") };
     assert!(unsafe { zhuyin_guess_candidates_after_cursor(pair.producer, 0) });
-    let after: Vec<_> = rows(pair.producer)
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let after: Vec<_> = unsafe { rows(pair.producer) }
         .into_iter()
         .filter(|(_, kind)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR)
         .map(|(row, _)| row)
@@ -124,7 +155,8 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
         .position(|&end| end == 6)
         .expect("a two-key row")];
     let short = unsafe { zhuyin_alloc_instance(*pair.contexts.last().expect("a context")) };
-    parse_whole(short, "su3");
+    // SAFETY: `short` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { parse_whole(short, "su3") };
     assert_eq!(unsafe { zhuyin_choose_candidate(short, 0, whole) }, 6);
     assert!(!unsafe { zhuyin_clear_constraint(short, 0) });
     unsafe { zhuyin_free_instance(short) };
@@ -134,7 +166,8 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
         .position(|&end| end == 3)
         .expect("a one-key row")];
     let unspellable = unsafe { zhuyin_alloc_instance(*pair.contexts.last().expect("a context")) };
-    parse_whole(unspellable, "a83");
+    // SAFETY: `unspellable` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { parse_whole(unspellable, "a83") };
     assert_eq!(
         unsafe { zhuyin_choose_candidate(unspellable, 0, one_key) },
         3
@@ -148,10 +181,17 @@ fn an_after_cursor_row_forces_the_receiver_and_answers_its_end(
 #[rstest::rstest]
 fn a_before_cursor_row_answers_its_begin(#[values(true, false)] same_context: bool) {
     let pair = Pair::open(same_context);
-    parse_whole(pair.producer, "su3cl3");
-    parse_whole(pair.receiver, "su3cl3");
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.producer, "su3cl3") };
+    // SAFETY: `pair.receiver` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    unsafe { parse_whole(pair.receiver, "su3cl3") };
     assert!(unsafe { zhuyin_guess_candidates_before_cursor(pair.producer, 6) });
-    let begins: Vec<_> = rows(pair.producer)
+    // SAFETY: `pair.producer` comes from the `Pair` fixture, which frees its handles only when
+    // `pair` drops at the end of the test; only this thread calls into it.
+    let producer_rows = unsafe { rows(pair.producer) };
+    let begins: Vec<_> = producer_rows
         .into_iter()
         .filter(|(_, kind)| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR)
         .map(|(row, _)| unsafe { zhuyin_choose_candidate(pair.receiver, 9, row) })

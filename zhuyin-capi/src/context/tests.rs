@@ -42,8 +42,17 @@ use crate::test_support::cstr;
 use crate::types::ZhuyinContext;
 
 /// Trains one sentence on `context`, so that the next save writes.
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
-fn train_once(context: *mut ZhuyinContext) {
+unsafe fn train_once(context: *mut ZhuyinContext) {
     let instance = unsafe { zhuyin_alloc_instance(context) };
     assert!(!instance.is_null());
     unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
@@ -71,14 +80,18 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
                 ],
             );
             let (context, _instance) = open_with_user(user);
-            train_once(context);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
             assert!(unsafe { zhuyin_save(context) });
             let before = user.parent().expect("the child's scratch").join("before");
             std::fs::create_dir(&before).expect("the before directory");
             for (name, bytes) in files_of(user) {
                 std::fs::write(before.join(name), bytes).expect("keep a file");
             }
-            train_once(context);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
             // The first copy writes one record and fails the next.
             oxpinyin::store::copy_faults::fail_destination_write_after(1);
             unsafe { zhuyin_save(context) };
@@ -192,7 +205,9 @@ fn the_short_table_row_sequence_writes_no_glib_log() {
         let mut sentence = std::ptr::null_mut();
         unsafe { crate::sentence::zhuyin_get_sentence(instance, &raw mut sentence) };
         if !sentence.is_null() {
-            crate::test_support::take_sentence(sentence);
+            // SAFETY: `sentence` is the string the library just returned; this code owns it and
+            // frees it only here.
+            unsafe { crate::test_support::take_sentence(sentence) };
         }
         assert!(unsafe { crate::sentence::zhuyin_guess_candidates_after_cursor(instance, 0) });
         unsafe { crate::instance::zhuyin_free_instance(instance) };
@@ -201,14 +216,13 @@ fn the_short_table_row_sequence_writes_no_glib_log() {
     let _ = unsafe { crate::parse::zhuyin_parse_more_full_pinyins(instance, c"ni3hao3".as_ptr()) };
     unsafe { crate::sentence::zhuyin_guess_sentence(instance) };
     assert!(unsafe { crate::candidates::zhuyin_train(instance) });
-    assert!(crate::test_support::import(
-        context,
-        7,
-        "测试词",
-        "ㄘㄜˋ ㄕˋ ㄘˊ".as_bytes(),
-        1
-    ));
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe {
+        crate::test_support::import(context, 7, "测试词", "ㄘㄜˋ ㄕˋ ㄘˊ".as_bytes(), 1)
+    });
     assert!(unsafe { crate::context::zhuyin_save(context) });
-    crate::test_support::close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
     assert!(logs.take().is_empty());
 }

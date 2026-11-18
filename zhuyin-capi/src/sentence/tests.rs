@@ -24,8 +24,18 @@ use std::ptr;
 
 /// su3cl3 with the facade's unigram total wrapped to zero through
 /// `zhuyin_token_add_unigram_frequency`.
-fn zero_total(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
-    let instance = chewing(context, "su3cl3");
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn zero_total(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
+    // SAFETY: `context` meets this function's `# Safety` contract; only this thread calls into it.
+    let instance = unsafe { chewing(context, "su3cl3") };
     // SAFETY: `instance` is live; the reference ends in this block.
     let total = unsafe { crate::state::instance_ref(instance) }
         .core
@@ -43,10 +53,14 @@ fn zero_total(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
 #[test]
 fn a_zero_facade_total_before_offset_zero_ranks_nothing() {
     let (context, _) = open();
-    let instance = zero_total(context);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { zero_total(context) };
     assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 0) });
-    assert_eq!(n_candidate(instance), (true, 0));
-    close(context, instance);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { n_candidate(instance) }, (true, 0));
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 #[test]
@@ -65,7 +79,16 @@ fn a_read_failure_after_the_size_check_aborts() {
 }
 
 /// Every row's type in the current list.
-fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candidate_type_t> {
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candidate_type_t> {
     let mut count = 0;
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
     (0..count)
@@ -124,8 +147,12 @@ fn an_unguessed_before_cursor_window_with_no_span_is_empty() {
             answer,
             "{keys}@{offset}"
         );
-        assert_eq!(kinds(instance), [], "{keys}@{offset}");
-        close(context, instance);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { kinds(instance) }, [], "{keys}@{offset}");
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
 }
 
@@ -145,7 +172,8 @@ fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
             6
         );
         assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, offset) });
-        let unguessed = kinds(instance);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let unguessed = unsafe { kinds(instance) };
         assert!(!unguessed.is_empty());
         assert!(
             unguessed
@@ -155,7 +183,8 @@ fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
         );
         assert!(unsafe { zhuyin_guess_sentence(instance) });
         assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, offset) });
-        let guessed = kinds(instance);
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let guessed = unsafe { kinds(instance) };
         assert_eq!(
             guessed[0],
             lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
@@ -167,7 +196,10 @@ fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
                 .all(|kind| *kind == lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR),
             "{offset}: {guessed:?}"
         );
-        close(context, instance);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
     let (context, instance) = open();
     let text = cstr("su3cl3");
@@ -178,10 +210,13 @@ fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 0) });
     assert_eq!(
-        kinds(instance),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { kinds(instance) },
         [lookup_candidate_type_t::BEST_MATCH_CANDIDATE]
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A zero facade total asserts while the after-cursor guess ranks a row
@@ -192,7 +227,9 @@ fn a_zero_facade_total_aborts_the_after_cursor_ranking() {
         "sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking",
         || {
             let (context, _) = open();
-            unsafe { zhuyin_guess_candidates_after_cursor(zero_total(context), 0) };
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+            let instance = unsafe { zero_total(context) };
+            unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) };
         },
     );
 }
@@ -222,7 +259,8 @@ mod configured_window {
             4
         );
         assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
-        let texts: Vec<String> = candidate_rows(instance)
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let texts: Vec<String> = unsafe { candidate_rows(instance) }
             .into_iter()
             .map(|(_, _, text)| String::from_utf8(text).expect("UTF-8"))
             .collect();
@@ -230,6 +268,9 @@ mod configured_window {
         for split in ["西安", "西岸", "锡安"] {
             assert!(!texts.iter().any(|text| text == split), "{split}");
         }
-        close(context, instance);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
 }

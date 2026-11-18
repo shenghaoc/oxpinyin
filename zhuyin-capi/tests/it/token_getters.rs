@@ -18,8 +18,18 @@ use std::os::raw::c_char;
 
 use std::ptr;
 
-fn n_pronunciation(instance: *mut ZhuyinInstance, token: u32) -> (bool, u32) {
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `zhuyin_alloc_instance` returned it and
+/// `zhuyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn n_pronunciation(instance: *mut ZhuyinInstance, token: u32) -> (bool, u32) {
     let mut count = UNTOUCHED;
+    // SAFETY: `instance` meets this function's `# Safety` contract, and `count` is a local `u32`,
+    // valid and aligned for the write the getter makes.
     let ret = unsafe { zhuyin_token_get_n_pronunciation(instance, token, &raw mut count) };
     (ret, count)
 }
@@ -27,7 +37,13 @@ fn n_pronunciation(instance: *mut ZhuyinInstance, token: u32) -> (bool, u32) {
 /// The values a GLib clear callback saw.
 static CLEARED: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
 
-extern "C" fn clear_element(element: glib_sys::gpointer) {
+/// Records the low two bytes of the element that GLib clears.
+///
+/// # Safety
+///
+/// GLib calls it as the array's clear function: `element` points to one live element of that
+/// array, two or four bytes wide, valid for reads for the call.
+unsafe extern "C" fn clear_element(element: glib_sys::gpointer) {
     // SAFETY: GLib hands the callback one live element; the arrays here hold
     // four-byte or two-byte elements, and both start with their low bytes.
     let low = unsafe { element.cast::<u16>().read_unaligned() };
@@ -50,8 +66,14 @@ fn take_cleared() -> Vec<u32> {
 #[test]
 fn pronunciation_count_without_a_sub_index_writes_zero() {
     let (context, instance) = open();
-    assert_eq!(n_pronunciation(instance, 0x0f00_0001), (false, 0));
-    close(context, instance);
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { n_pronunciation(instance, 0x0f00_0001) },
+        (false, 0)
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Register entry "Token getters on a phrase longer than sixteen characters
@@ -83,14 +105,18 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
     let (context, instance) = open_with_user(&user.path);
     let token = 0x0700_0001;
     assert_eq!(
-        token_phrase(instance, token),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
         (true, 17, Some(text.to_owned()))
     );
     assert_eq!(
-        nth_pronunciation(instance, token, 0),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { nth_pronunciation(instance, token, 0) },
         (true, 17, "2b30".repeat(17))
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A stored word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL,
@@ -120,7 +146,9 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
         zhuyin_token_get_phrase(instance, 0x0700_0001, &raw mut length, &raw mut text)
     });
     assert_eq!((length, text), (2, ptr::null_mut()));
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A stored key word 0x8000 reads back verbatim (`phrase_index.cpp:33-50`).
@@ -128,14 +156,19 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
 fn a_stored_key_word_reads_back_verbatim() {
     let user_dir = TempUserDir::new("key-8000");
     let (context, instance) = open_with_user(&user_dir.path);
-    assert!(import(context, 7, "你", "ㄋㄧˇ".as_bytes(), 5));
-    let token = user_tokens(instance, "你")[0];
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "你", "ㄋㄧˇ".as_bytes(), 5) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { user_tokens(instance, "你") }[0];
     assert_eq!(
-        nth_pronunciation(instance, token, 0),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { nth_pronunciation(instance, token, 0) },
         (true, 1, "2b30".to_owned())
     );
     assert!(unsafe { zhuyin_save(context) });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
     let path = user_dir.path.join("user.bin");
     let mut payload = std::fs::read(&path).expect("user.bin")[8..].to_vec();
     let text = ucs4_key("你");
@@ -152,14 +185,18 @@ fn a_stored_key_word_reads_back_verbatim() {
     .expect("write user.bin");
     let (context, instance) = open_with_user(&user_dir.path);
     assert_eq!(
-        token_phrase(instance, token),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
         (true, 1, Some("你".to_owned()))
     );
     assert_eq!(
-        nth_pronunciation(instance, token, 0),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { nth_pronunciation(instance, token, 0) },
         (true, 1, "0080".to_owned())
     );
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A caller's zero-terminated, cleared GArray keeps its metadata: the
@@ -187,7 +224,8 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
         };
         assert!(ret);
         assert_eq!(take_cleared(), [0x1234]);
-        let filled = elements(array, width as usize);
+        // SAFETY: `array` is the live `GArray` made above, of the element width `elements` reads.
+        let filled = unsafe { elements(array, width as usize) };
         assert!(!filled.is_empty());
         if width == 4 {
             token = filled[0];
@@ -200,13 +238,16 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
             unsafe { zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, array) }
         };
         assert!(!refused);
-        assert!(elements(array, width as usize).is_empty());
+        // SAFETY: `array` is the live `GArray` made above, of the element width `elements` reads.
+        assert!(unsafe { elements(array, width as usize) }.is_empty());
         let low: Vec<u32> = filled.iter().map(|value| value & 0xFFFF).collect();
         assert_eq!(take_cleared(), low);
         // SAFETY: the array is freed once, with its data.
         unsafe { glib_sys::g_array_free(array, 1) };
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// A NULL key array makes GLib log a critical for each array call: two for
@@ -216,9 +257,12 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
 fn a_null_pronunciation_array_logs_the_glib_criticals() {
     let user = TempUserDir::new("garray-null-pronunciation");
     let (context, instance) = open_with_user(&user.path);
-    let token = tokens_of(instance, "你好")[0];
-    assert!(import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1));
-    let user_token = tokens_of(instance, "你好")
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { tokens_of(instance, "你好") }[0];
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    assert!(unsafe { import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let user_token = unsafe { tokens_of(instance, "你好") }
         .into_iter()
         .find(|token| token >> 24 == 7)
         .expect("the imported USER_FILE item");
@@ -241,7 +285,9 @@ fn a_null_pronunciation_array_logs_the_glib_criticals() {
     assert_eq!(records[0].0, glib);
     assert!(records[0].1.contains("g_array_set_size"));
     drop(logs);
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// The token getters (`zhuyin.cpp:1793-1826`): the nth pronunciation answers
@@ -251,13 +297,21 @@ fn a_null_pronunciation_array_logs_the_glib_criticals() {
 #[test]
 fn token_getters_answer_the_pins_ranges_and_outputs() {
     let (context, instance) = open();
-    let token = tokens_of(instance, "你好")[0];
-    let (_, count) = n_pronunciation(instance, token);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let token = unsafe { tokens_of(instance, "你好") }[0];
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let (_, count) = unsafe { n_pronunciation(instance, token) };
     assert_eq!(count, 1);
-    let first = nth_pronunciation(instance, token, 0);
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { nth_pronunciation(instance, token, 0) };
     assert_eq!((first.0, first.1), (true, 2));
     for nth in [count, count + 1, u32::MAX] {
-        assert!(nth_pronunciation(instance, token, nth).0, "nth {nth}");
+        assert!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { nth_pronunciation(instance, token, nth) }.0,
+            "nth {nth}"
+        );
     }
     // SAFETY: a fresh GArray of two-byte elements, seeded with one key.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };
@@ -272,7 +326,8 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
     }
 
     assert_eq!(
-        token_phrase(instance, token),
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { token_phrase(instance, token) },
         (true, 2, Some("你好".to_owned()))
     );
     let mut length = UNTOUCHED;
@@ -280,30 +335,57 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
     assert_eq!(length, 2);
     let mut text: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_token_get_phrase(instance, token, ptr::null_mut(), &raw mut text) });
-    assert_eq!(take_sentence(text), "你好");
+    // SAFETY: `text` is the string the library just returned; this code owns it and frees it only
+    // here.
+    assert_eq!(unsafe { take_sentence(text) }, "你好");
     assert!(unsafe { zhuyin_token_get_phrase(instance, token, ptr::null_mut(), ptr::null_mut()) });
     for miss in [0xFFFF_FFFF, 0x0DEA_DBEE, 0x0100_0000] {
         assert_eq!(
-            token_phrase(instance, miss),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { token_phrase(instance, miss) },
             (false, UNTOUCHED, None),
             "{miss:#x}"
         );
         assert!(!unsafe {
             zhuyin_token_get_phrase(instance, miss, ptr::null_mut(), ptr::null_mut())
         });
-        assert_eq!(n_pronunciation(instance, miss), (false, 0), "{miss:#x}");
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { n_pronunciation(instance, miss) },
+            (false, 0),
+            "{miss:#x}"
+        );
     }
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
 /// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
-fn hold_nihao_in_libraries(context: *mut crate::support::ZhuyinContext, libraries: u8) {
+///
+/// # Safety
+///
+/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
+/// it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn hold_nihao_in_libraries(context: *mut crate::support::ZhuyinContext, libraries: u8) {
     for library in 1..=libraries {
+        // SAFETY: `context` meets this function's `# Safety` contract.
         let iter = unsafe { zhuyin_begin_add_phrases(context, library) };
+        // SAFETY: `iter` is the iterator `zhuyin_begin_add_phrases` returned above, NULL or live
+        // and not yet ended. The two `cstr` temporaries are NUL-terminated and live until the end
+        // of this statement, after the call returns.
         assert!(unsafe {
             zhuyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
         });
+        // SAFETY: `iter` is the same iterator from `zhuyin_begin_add_phrases`, not yet ended, and
+        // this call ends it; nothing uses it afterwards.
         unsafe { zhuyin_end_add_phrases(iter) };
     }
 }
@@ -314,9 +396,12 @@ fn hold_nihao_in_libraries(context: *mut crate::support::ZhuyinContext, librarie
 fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
     let user_dir = TempUserDir::new("lookup-null-four");
     let (context, instance) = open_with_user(&user_dir.path);
-    hold_nihao_in_libraries(context, 4);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    unsafe { hold_nihao_in_libraries(context, 4) };
     assert!(unsafe {
         crate::support::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
     });
-    close(context, instance);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }

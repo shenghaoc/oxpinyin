@@ -39,7 +39,10 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
             "{reading:?}"
         );
         unsafe { zhuyin_end_add_phrases(iter) };
-        let rows = with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY));
+        let rows =
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY)) };
         let expected: Vec<oxpinyin::user::ExportedPhrase> = if added {
             vec![oxpinyin::user::ExportedPhrase {
                 text: phrase.chars().map(u32::from).collect(),
@@ -50,6 +53,9 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
             Vec::new()
         };
         assert_eq!(rows, expected, "{reading:?}");
-        close(context, instance);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
     }
 }
