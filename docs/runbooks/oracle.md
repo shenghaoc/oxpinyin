@@ -14,7 +14,7 @@ A differential selects its cell with `PINYIN_ORACLE_DBM`.
 
 The oracle is built and run only in Linux. The commands that start a build
 are Python and run on Windows, macOS and Linux:
-`just provision-oracle`, `just provision` and
+`just provision-oracle` and
 `python -m tools.oracle.image build-image`.
 Each command selects a [container runtime](setup.md#container-runtimes) and runs the builder,
 [`tools/oracle/build.py`](../../tools/oracle/build.py), in a Linux container.
@@ -132,11 +132,12 @@ digest in the `verified` file beside `extracted/` before reusing the extraction.
 
 ### From any host
 
-`just provision-oracle` builds the local `deps` image, the `deps` stage of
-`tools/oracle/Dockerfile.oracle` that `just provision` also uses, when it is
-absent, then provisions the cells in it. It builds missing or stale
-libraries, fetches model20, regenerates missing or damaged data, and
-validates every recorded output before it returns:
+`just provision-oracle` runs the native `just provision` first. It then copies
+the libraries out of the published oracle image, or builds missing or stale
+libraries in the local `deps` image (the `deps` stage of
+`tools/oracle/Dockerfile.oracle`), fetches model20, regenerates missing or damaged
+data in the `deps` image, and validates every recorded output. Last, it writes the
+[environment file](cloud.md#the-environment-file) on Linux:
 
 ```sh
 just provision-oracle --cells 'bdb kc tkrzw' --jobs 4
@@ -147,8 +148,7 @@ the `pin-<commit>` entry of the [cache directory](setup.md#cache-directory).
 The [container runtimes](setup.md#container-runtimes) section names the runtime and how to select another.
 On Windows, run it from PowerShell 7
 ([native Windows](setup.md#native-windows-and-wsl-containers)).
-[`just provision`](cloud.md) does the same work for a full compatibility
-host, with the builds pooled in the `deps` image.
+The cells build in a bounded pool of `deps` containers ([cloud provisioning](cloud.md#what-it-does)).
 
 ### With the builder, inside Linux
 
@@ -303,8 +303,9 @@ docker run --rm \
 ```
 
 The checkout is mounted over the image's own `/opt/oracle-recipe`, so the
-builder, the pin and the recipe hash are the checkout's. `just provision`
-runs this command for each cell through the selected runtime, using Debian’s Python in the `deps` image.
+builder, the pin and the recipe hash are the checkout's. `just provision-oracle`
+runs this command for each cell through the selected runtime, using Debian’s Python in the `deps` image,
+with the provisioning cache mounted at `/build` and the work directory `/build/data-<cell>`.
 The other cells use `--dbm bdb` or `--dbm kc` with the matching
 subdirectory.
 
@@ -377,11 +378,12 @@ prefix in one environment, and compares only those two sets of library hashes. I
 Image verification separately checks current pin/recipe provenance, recorded
 library bytes and absence of model-derived data.
 
-`just provision-oracle` runs this command in the `deps` image. The command refuses to run
-outside that image, which it recognizes by `/usr/local/share/oxpinyin/version-manifest.json`:
+`just provision-oracle` runs its container steps with this host command, after `just provision`,
+and then `provision oracle-env` writes the environment file. The command refuses to run on
+GitHub Actions:
 
 ```sh
-uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cache-dir /provision --cells 'bdb kc tkrzw' --jobs 4
+uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cells 'bdb kc tkrzw' --jobs 4
 ```
 
 ## 3. Produce the export

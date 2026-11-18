@@ -614,7 +614,6 @@ class GateTests(unittest.TestCase):
             'vcpkg-overlays/tkrzw/usage': {'lint', 'test', 'harness', 'ship'},
             'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
-            'docs/findings/glib-libc-call-sites.tsv': {'harness'},
             'AGENTS.md': set(),
             # cells-for-diff.test.py runs the gate script in this workflow.
             '.github/workflows/store-backends.yml': {'harness'},
@@ -652,10 +651,10 @@ class GateTests(unittest.TestCase):
             '.python-version': {'lint', 'test', 'harness'},
             # Every job that runs repository Python enters the uv project.
             'pyproject.toml': {'lint', 'test', 'harness', 'ship'},
-            # Only the jobs that run a dependency group read the lockfile: Lizard in lint, Ruff and
-            # the clang bindings in the harness.
+            # Only the jobs that run a dependency group read the lockfile: Lizard in lint, Ruff in
+            # the harness.
             'uv.lock': {'lint', 'harness'},
-            'justfile': {'lint', 'test', 'harness', 'ship'},
+            'justfile': {'lint', 'test', 'deny', 'harness', 'ship'},
             'triplets/x64-linux-oxpinyin.cmake': {'lint', 'test', 'harness', 'ship'},
             '.github/actions/bootstrap/action.yml': {'lint', 'test', 'deny', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'lint', 'test', 'deny', 'harness', 'ship'},

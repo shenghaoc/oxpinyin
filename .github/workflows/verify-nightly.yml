@@ -61,10 +61,12 @@ jobs:
       run:
         shell: bash
     steps:
+      # The fuzz targets build the default tkrzw backend, which uses cxx;
+      # only the bdb feature runs bindgen, so no libclang.
       - name: Install build dependencies (apt)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libclang-dev libglib2.0-dev util-linux
+          sudo apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -210,8 +212,6 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
-      # The peer backend bindings use the runner's preinstalled LLVM.
-      LIBCLANG_PATH: C:\Program Files\LLVM\bin
       # The package specs (port[features]:triplet) passed to `vcpkg install`,
       # space-separated. The binary cache key hashes this value, so adding a
       # port or feature here gives the cache a new key.
@@ -327,12 +327,10 @@ jobs:
           cargo-nextest: 'true'
           cargo-c: 'true'
       - run: rustup show active-toolchain
-      # GLib, pkg-config and the call-site LLVM from Homebrew; tkrzw from the
-      # vcpkg overlay port, first on PKG_CONFIG_PATH.
-      - name: Install GLib, pkg-config and the call-site LLVM (Homebrew)
-        run: |
-          llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
-          brew install glib pkgconf "llvm@${llvm_major}"
+      # GLib and pkg-config from Homebrew; tkrzw from the vcpkg overlay port,
+      # first on PKG_CONFIG_PATH.
+      - name: Install GLib and pkg-config (Homebrew)
+        run: brew install glib pkgconf
       # vcpkg's binary cache, as in the Windows job above. The key also names
       # the vcpkg root: the installed libtkrzw records its own path there as
       # its install name, so an archive built under another root is not reused.

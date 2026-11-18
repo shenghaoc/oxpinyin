@@ -775,12 +775,10 @@ def oracle_build_command(engine, root, selected_platform, tag, target):
 # interpreter it names.
 DEPS_INPUTS = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json',
                'tools/oracle/oracle-pin.txt', '.python-version')
-# The deps stage installs the version manifest here; `provision oracle` takes it as the image's mark.
-DEPS_MARKER = Path('/usr/local/share/oxpinyin/version-manifest.json')
 
 
 def deps_tag(root=ROOT):
-    """The local deps image's tag, which `just provision` and `just provision-oracle` share."""
+    """The local deps image's tag, which `just provision-oracle` builds or pulls."""
     digest = hashlib.sha256()
     for path in DEPS_INPUTS:
         digest.update((Path(root) / path).read_bytes())
@@ -788,7 +786,7 @@ def deps_tag(root=ROOT):
 
 
 def provision_cache(env, root=ROOT):
-    """The provisioning cache `provision` and `provision-oracle` share:
+    """The provisioning cache of `just provision-oracle`:
     pin-<the first 12 digits of the libpinyin commit>/ under the cache root (tools/cachedir.py)."""
     commit = fields(Path(root) / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
     return cachedir.root(env) / f'pin-{commit[:12]}'
@@ -797,71 +795,6 @@ def provision_cache(env, root=ROOT):
 def model_cache(env):
     """The model20 entry of the cache root, which every provisioning run shares."""
     return model.default_cache(env)
-
-
-PROVISION_ORACLE_USAGE = '''usage: just provision-oracle [--cells CELLS] [--jobs N]
-
-Run `provision oracle` in the oracle's deps image, through the selected runtime
-(OXPINYIN_CONTAINER overrides it). The cache root OXPINYIN_CACHE is mounted at
-/cache, and its provisioning cache pin-<commit> also at /provision, where it
-receives oracle/<cell> (the pin's libraries and data). The image is built when absent;
-OXPINYIN_CAPTURE_BUILD_FLAGS carries site flags for that build (no quoting inside).
-'''
-
-
-def provision_oracle_command(engine, root, cache, tag, selected_platform, argv, shared):
-    """The run of `provision oracle` in the deps image TAG (docker grammar).
-
-    The host's cache root SHARED is mounted at /cache, which the run receives as OXPINYIN_CACHE,
-    so the model20 entry is the host's. The provisioning cache CACHE is mounted at /provision
-    and named with --cache-dir, so a prefix keeps its path /provision/oracle/<cell>.
-    On rootful docker the run is the invoking user (run_user), so the cache it writes stays theirs;
-    podman maps the user already, as for the capture run, and Apple's container keeps the run its
-    macOS lane verified. uv then needs a writable HOME and cache, in /tmp; the managed interpreter
-    under /opt/uv/python is world-readable (Dockerfile.oracle). The checkout is read-only, so the
-    uv project's environment goes to CONTAINER_VENV."""
-    user = [] if Path(engine).name.startswith('podman') or is_apple(engine) else run_user()
-    home = ['-e', 'HOME=/tmp', '-e', 'UV_CACHE_DIR=/tmp/uv-cache'] if user else []
-    return [engine, 'run', '--rm', '--platform', selected_platform, *container_resources(engine), *user,
-            '-v', f'{Path(root).resolve()}:/repo:ro', '-v', f'{Path(cache).resolve()}:/provision',
-            '-v', f'{Path(shared).resolve()}:/cache', '-e', 'OXPINYIN_CACHE=/cache',
-            '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={CONTAINER_VENV}', *home,
-            '-w', '/repo', tag,
-            'uv', 'run', '--managed-python', 'python', '-X', 'utf8',
-            '-m', 'tools.dev.provision', 'oracle', '--cache-dir', '/provision', *argv]
-
-
-def provision_oracle(argv, *, root=ROOT, env=None):
-    """Provision the oracle cells into the host's provisioning cache, inside the deps image."""
-    environment = os.environ if env is None else env
-    if argv[:1] in (['-h'], ['--help']):
-        print(PROVISION_ORACLE_USAGE, end='')
-        return 0
-    rest = list(argv)
-    while rest:
-        option = rest.pop(0)
-        if option not in ('--cells', '--jobs') or not rest:
-            fail(f'unknown option or missing value: {option} (the cache root is OXPINYIN_CACHE)\n'
-                 + PROVISION_ORACLE_USAGE, 2)
-        rest.pop(0)
-    if environment.get('GITHUB_ACTIONS') == 'true':
-        fail('provision-oracle is local-only; never run it on GitHub Actions', 2)
-    selected = host_platform()
-    if selected is None:
-        fail('FAIL: provision-oracle supports only native x86_64 and aarch64', 2)
-    engine = select_runtime(env=environment)
-    tag = deps_tag(root)
-    if quiet([engine, 'image', 'inspect', tag], environment):
-        flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
-        build = oracle_build_command(engine, root, selected, tag, 'deps')
-        if run(runtime_command([*build[:2], *flags, *build[2:]]), cwd=root, env=environment, check=False):
-            raise Finished(1)
-    cache = provision_cache(environment, root)
-    cache.mkdir(parents=True, exist_ok=True)
-    print(f'provisioning cache: {cache.resolve()}', file=sys.stderr, flush=True)
-    return run(runtime_command(provision_oracle_command(engine, root, cache, tag, selected, argv,
-                                                        cachedir.root(environment))),
-               cwd=root, env=environment, check=False)
 
 
 def check_reproducible(argv, *, root=ROOT):
@@ -912,8 +845,6 @@ def main(argv=None):
     def call():
         if args[:1] == ['check-reproducible']:
             return check_reproducible(args[1:])
-        if args[:1] == ['provision-oracle']:
-            return provision_oracle(args[1:])
         if args[:1] == ['image-tag']:
             print(image_tag())
             return 0
@@ -931,7 +862,7 @@ def main(argv=None):
             print(image_field(*args[1:]))
             return 0
         print('usage: python -m tools.oracle.image '
-              'image-tag|pin-field|verify-image|build-image|image-field|capture-pin|run-in-capture-image|provision-oracle ...',
+              'image-tag|pin-field|verify-image|build-image|image-field|capture-pin|run-in-capture-image ...',
               file=sys.stderr)
         return 2
     return guarded(call)

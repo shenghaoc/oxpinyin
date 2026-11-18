@@ -120,11 +120,12 @@ jobs:
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action installs the overlay port with vcpkg and
-        # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
-        # bindgen (libclang) serves the Berkeley DB lanes.
+        # points pkg-config at it. The tkrzw cxx bridge compiles with g++.
+        # Only the bdb feature runs bindgen, which needs libclang; this job
+        # builds the default tkrzw backend, so it installs no libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev
       - run: cargo fmt --all --check
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -193,11 +194,12 @@ jobs:
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # The tkrzw action installs the overlay port with vcpkg and
-        # points pkg-config at it. The tkrzw cxx bridge compiles with g++;
-        # bindgen (libclang) serves the Berkeley DB lanes.
+        # points pkg-config at it. The tkrzw cxx bridge compiles with g++.
+        # Only the bdb feature runs bindgen, which needs libclang; this job
+        # builds the default tkrzw backend, so it installs no libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev
       # Before the cache refresh, which builds against it.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
@@ -282,18 +284,14 @@ jobs:
         with:
           persist-credentials: false
       # cargo-deny shells out to `cargo metadata`, so a cargo binary is
-      # required.
+      # required. just runs the checks.
       - uses: ./.github/actions/bootstrap
         with:
           rust-toolchain: 'true'
+          just: 'true'
           cargo-deny: 'true'
-      # The default-feature graph, then the feature-gated graphs, then the
-      # fuzz workspace's own graph. --locked holds each to its committed
-      # lockfile, so a root change that the fuzz lockfile does not follow
-      # fails here.
-      - run: cargo deny --locked --log-level error check
-      - run: cargo deny --locked --all-features --log-level error check
-      - run: cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
+      # The justfile's deny recipe holds the checks and their order.
+      - run: just deny
 
   # The Python harness tests of tools/, all of them whenever the gate selects
   # the job. Some of them run cargo metadata, a C compiler or GLib, so the job
@@ -317,16 +315,19 @@ jobs:
           just: 'true'
       - name: Install build dependencies (apt)
         # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
-        # objcopy, objdump, ld), Clang and the libclang package for the
-        # call-site fixture's major, taskset for the CPU-pinned child, and
-        # Valgrind for the end-to-end Linux comparison on the stub library.
+        # objcopy, objdump, as, ld) for the C stubs, make for the trainer
+        # layout, cmake for the tkrzw port's configure, pkg-config and the
+        # GLib development package for the packaging link, diff for the
+        # installed-metadata and neutrality comparisons, taskset (util-linux)
+        # for the CPU-pinned child, and Valgrind for the end-to-end Linux
+        # comparison on the stub library. No harness test compiles C++ or
+        # reads libclang.
         # zsh: the oracle environment file is sourced under sh, dash and zsh.
         run: |
-          llvm_major=$(uv run --locked --only-group audit --managed-python python tools/audit/glib_call_sites.py --print-llvm-major)
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make cmake pkg-config libclang-dev libglib2.0-dev "clang-${llvm_major}" binutils diffutils "libclang-${llvm_major}-dev" util-linux valgrind zsh
+          sudo apt-get install -y --no-install-recommends gcc make cmake pkg-config libglib2.0-dev binutils diffutils util-linux valgrind zsh
       # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
-      # the lint job does not run for Python-only paths such as tools/audit.
+      # the lint job does not run for Python-only paths such as tools/bisection.
       - run: just ruff
       # just and zsh are installed above, so the size build's revision-recipe test and
       # the environment-file source test's zsh case must run here rather than skip.
@@ -381,13 +382,14 @@ jobs:
       # cargo-c is the distribution's own package, as in release-packages.yml.
       # The backend packages follow the reference cell (tools/dev/cell.py);
       # tkrzw, the reference cell, needs none: it comes from the overlay below.
+      # Only the bdb feature runs bindgen, so the build needs no libclang.
       - name: Install build dependencies (apt)
         run: |
           set -euo pipefail
           backend=$(just packaging sizes apt)
           read -r -a backend_pkgs <<< "$backend"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+          sudo apt-get install -y --no-install-recommends gcc g++ make pkg-config libglib2.0-dev cargo-c "${backend_pkgs[@]}"
       # Before the key: the toolchain fingerprint reads the installed tkrzw.
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw

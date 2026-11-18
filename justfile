@@ -48,7 +48,8 @@ _test-argv status *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
 
 
-# Cloud provisioning after `uv python install`; uv itself must already be installed.
+# Native provisioning after `uv python install`; uv itself must already be installed.
+# It never starts a container: `just provision-oracle` provisions the pin oracle.
 [unix]
 provision *args:
     @uv run --managed-python python -X utf8 -m tools.dev.provision "$@"
@@ -168,17 +169,6 @@ fmt *args:
 fmt *args:
     @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
-# Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
-[unix]
-audit-glib-call-sites pin *args:
-    @uv run --locked --only-group audit --managed-python python -X utf8 tools/audit/glib_call_sites.py "$@"
-
-# The audit needs bear, make and Unix linker options.
-[windows]
-audit-glib-call-sites pin *args:
-    @{{windows_args}} echo "audit-glib-call-sites is unsupported on Windows: the audit needs bear, make and Unix linker options."
-    @{{windows_args}} exit 1
-
 # Lint the workspace.
 [unix]
 clippy *args:
@@ -187,6 +177,16 @@ clippy *args:
 [windows]
 clippy *args:
     @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
+
+# Run the cargo-deny checks of CI's deny job; deny.toml holds the policy. The
+# default-feature graph, then the feature-gated graphs, then the fuzz
+# workspace's own graph. --locked holds each to its committed lockfile, so a
+# root change that the fuzz lockfile does not follow fails here.
+# One definition serves every shell: the commands take no arguments.
+deny:
+    @cargo deny --locked --log-level error check
+    @cargo deny --locked --all-features --log-level error check
+    @cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
 
 # Check tools/ Python with ruff's pyflakes rules (F) only. upstream/ holds
 # unmodified pin copies (tools/scripts2/README.md), so it is excluded.
@@ -267,16 +267,27 @@ capture-pin run:
 capture-pin run:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image capture-pin @forwarded; exit $LASTEXITCODE
 
-# Provision the oracle cells into the provisioning cache `just provision` also uses
-# (the pin's entry of the cache root), running `provision oracle` in the
-# oracle deps image through the selected runtime (docs/runbooks/pin-captures.md).
+# Provision the pin oracle: native `just provision` first, then the oracle cells
+# in containers through the selected runtime into the provisioning cache (the
+# pin's entry of the cache root), then the environment file (docs/runbooks/oracle.md).
 [unix]
-provision-oracle *args:
-    @uv run --managed-python python -X utf8 -m tools.oracle.image provision-oracle "$@"
+provision-oracle *args: provision && _oracle-env
+    @uv run --managed-python python -X utf8 -m tools.dev.provision oracle "$@"
 
 [windows]
-provision-oracle *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.oracle.image provision-oracle @forwarded; exit $LASTEXITCODE
+provision-oracle *args: provision && _oracle-env
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision oracle @forwarded; exit $LASTEXITCODE
+
+# The one writer of the oracle environment file; only provision-oracle runs it.
+[unix]
+[private]
+_oracle-env:
+    @uv run --managed-python python -X utf8 -m tools.dev.provision oracle-env
+
+[windows]
+[private]
+_oracle-env:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision oracle-env; exit $LASTEXITCODE
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]

@@ -12,10 +12,9 @@ is listed separately.
 
 ## Abstract
 
-The exported surface reaches **70 distinct GLib/libc functions at 1,179
-call sites**: 43 GLib functions (874 sites) and 27 libc functions (305
-sites). They form fifteen reachable semantic families (G1–G15), plus
-tool-only (G16) and dead (G17) groups. The internal container, hash and
+The GLib and libc functions that the exported surface reaches form fifteen
+reachable semantic families (G1–G15), plus tool-only (G16) and dead (G17)
+groups. The internal container, hash and
 primitive rows are ordinary C-facing or internal parity, with no
 language/runtime quirk. No entry changes a valid-input answer.
 
@@ -30,31 +29,24 @@ Three results govern the inventory:
 3. `LC_NUMERIC` is retained (row 39,
    [ruling](compatibility-policy.md#lc_numeric-after-init-row-39)).
 
-The math surface is `log` only: seven reachable sites, all class (a)
-under row 11. oxpinyin's sentence scores use `ln` directly
+The math surface is `log` only, all class (a) under row 11. oxpinyin's sentence scores use `ln` directly
 (`engine/src/nbest.rs` and `engine/src/phrase.rs`).
 
 ## Reachability and negative coverage
 
 A function is reachable when an exported `pinyin_*` or `zhuyin_*` entry
 can call it without a test, tool or uninstantiated class in between.
-The matrix below follows that definition. The complete call-site list is
-[glib-libc-call-sites.tsv](glib-libc-call-sites.tsv), which records the
-family, library, facade, backend, pin file and line, function and call.
-`just audit-glib-call-sites <pin-checkout>` regenerates it; the
-[runbook](../runbooks/glib-call-sites.md) names the tools. The `facade`
-column comes from the linker's maps. The one hand-kept input is `tools/audit/glib_call_sites.families.tsv`.
+The matrix below follows that definition. Besides the reachable calls:
 
-- 1,179 reachable sites (`pinyin`, `zhuyin` or `both`): 874 GLib, 305 libc.
-- 190 `tools` sites, kept only by `utils/` programs: `tag_utility.cpp`,
+- Some calls are kept only by `utils/` programs: `tag_utility.cpp`,
   `table_text_parser.h`, the `load_text` methods, the `FlexibleBigram` and
   `FlexibleSingleGram` classes behind the training utilities, and the
   punctuation and parser helpers that only `utils/` calls.
-- 188 `none` sites, kept by no link: `PinyinLookup2` (never instantiated), the
+- Some calls are kept by no link: `PinyinLookup2` (never instantiated), the
   old `ChewingLargeTable` / `PhraseLargeTable2` and `FacadeChewingTable` /
   `FacadePhraseTable2` classes, the `PunctTableEntry` writer methods, and
-  the debug dumps. Code under `#if 0` is not compiled and has no row.
-- Six of the `none` sites are in functions that no link sees at all,
+  the debug dumps. Code under `#if 0` is not compiled.
+- Some of those are in functions that no link sees at all,
   because nothing calls them: `memory_chunk.h:404`, `facade_chewing_table.h:115,185`,
   `facade_phrase_table2.h:96,165` and `flexible_single_gram.h:136`.
 
@@ -90,19 +82,19 @@ prediction-only surfaces; `all` means bdb, kc and tkrzw. `Disposition`:
 | ID | Family and pin call sites | Reach | oxpinyin counterpart | Valid / malformed | Disposition |
 | --- | --- | --- | --- | --- | --- |
 | G1 | UTF-8/UCS-4 conversion and category: `pinyin.cpp:628,715,1397,1450-1454,2658,3210,3678`; `lookup.cpp:54,58`; `zhuyin.cpp:918,969-973,1684,2165`; `zhuyin_parser2.cpp:871,879`; `punct_table.cpp:48` (dead); `tag_utility.cpp` (tool) | both (punct pinyin only); all | `core/src/marshal/input.rs` `utf8_to_ucs4` / `parser_prefix` / `scalar_text`; `capi/src/phrase.rs` `pinyin_phrase_segment`; `data/src/phrase_library.rs` `phrase_text`; `input/src/tool.rs` `unichar_isgraph` (tools); `data/src/row_format.rs` `decode_puncts` | valid: identical strings. malformed/non-scalar: `g_utf8_to_ucs4` accepts surrogates and values above U+10FFFF; Rust `str` cannot. Embedded U+0000 stops the pin's conversion. | valid: contract. malformed: identical through `PhraseText`; tool: the pin's calls; punct: class (b) (G15) |
-| G2 | C strings, joins and vectors: `g_strdup` 44, `g_free` 152, `g_strdup_printf` 14, `g_strconcat` 16, `g_strjoinv` 3, `g_strndup` 6, `g_strfreev` 10, `g_strv_length`/`g_strv_contains` 2, `g_string_*` 4 | both (punct subset pinyin only); all | `capi/src/ffi.rs` `strdup` / `key_text` (`g_strdup_printf`) / `strconcat_aux` / `strconcat_pair` / `strjoinv` / `symbol_vector`, the pin's own calls; `capi/src/aux_matrix.rs` `AuxText`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `core/src/input/path.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: G3 paths; aux over-read class (b); punctuation order and duplicates contract |
-| G3 | Path joining: `g_build_filename`, 68 sites, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `core/src/input/path.rs` `build_filename` / `build_path` / `build_bytes` (the pin's `g_build_filename` through `glib-sys`); `core/src/input/path.rs` `filename` | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | contract: the pin's call |
-| G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*`, 502 sites (`g_array_index` 105, `g_array_new` 64, `g_array_free` 68, `g_ptr_array_index` 59, `g_array_set_size` 49, `g_array_append_val` 45, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b) rows; ABI arrays MUST RETAIN |
+| G2 | C strings, joins and vectors: `g_strdup`, `g_free`, `g_strdup_printf`, `g_strconcat`, `g_strjoinv`, `g_strndup`, `g_strfreev`, `g_strv_length`/`g_strv_contains`, `g_string_*` | both (punct subset pinyin only); all | `capi/src/ffi.rs` `strdup` / `key_text` (`g_strdup_printf`) / `strconcat_aux` / `strconcat_pair` / `strjoinv` / `symbol_vector`, the pin's own calls; `capi/src/aux_matrix.rs` `AuxText`; `capi/src/predict.rs` `prepend_punctuations`; `capi/src/iterators.rs` export rendering; `core/src/input/path.rs` `build_filename` | valid: identical bytes. malformed: raw path bytes, missing middle aux component, NUL in a diagnostic, duplicate punctuation. | valid: contract. malformed: G3 paths; aux over-read class (b); punctuation order and duplicates contract |
+| G3 | Path joining: `g_build_filename`, e.g. `pinyin.cpp:164,252,268,286,308,395,400,952,968,985,1052`; `zhuyin.cpp:118,196,212,230,252,337,342,585,601,605,626,630,684` | both; all | `core/src/input/path.rs` `build_filename` / `build_path` / `build_bytes` (the pin's `g_build_filename` through `glib-sys`); `core/src/input/path.rs` `filename` | valid: same resolved path. malformed: leading `/`, empty name, `..`, duplicate separators, non-UTF-8 bytes. | contract: the pin's call |
+| G4 | GArray/GPtrArray containers: `g_array_*` and `g_ptr_array_*` (`g_array_index`, `g_array_new`, `g_array_free`, `g_ptr_array_index`, `g_array_set_size`, `g_array_append_val`, ...) | both; all | `capi/src/dict.rs` and zhuyin twin keep real `GArray` for the ABI; internal steps are `Vec`/slices in `engine/src/nbest.rs`, `engine/src/session/*`, `data/src/phrase_library.rs` | valid: identical candidate/result arrays. malformed: out-of-range indices, a key with no whole word, a short chunk header. | valid: contract. malformed: class (b) rows; ABI arrays MUST RETAIN |
 | G5 | n-best tail sort: `phonetic_lookup.h:337` `g_ptr_array_sort(tails, trellis_value_compare)` | both; all | `engine/src/nbest.rs` `tail_merge` (stable `sort_by` on raw possibility, NaN last) | valid: the pin's `gint` truncation ties scores under one unit apart, so its comparator is not transitive on finite scores. malformed: NaN and ±∞ from λ outside `[0, 1]`. | language artefact: S3 in [compatibility-policy.md](compatibility-policy.md#registered-sites) |
 | G6 | candidate and predicted list sorts: `pinyin.cpp:2286,2443` `g_array_sort_with_data(compare_item_with_sort_option)`; `zhuyin.cpp:1529,1610` `g_array_sort`; phrase-string dedup `pinyin.cpp:2067`, `zhuyin.cpp:1375` | both; all | `engine/src/candidate.rs` `rank_by_frequency`, called by `engine/src/session/mod.rs` `rank_candidates` and `capi/src/predict.rs` `sort_predicted` | valid: stable order over the enabled keys and the dedup winner. Frequency groups can be cyclic under the wrapping comparison. | contract: guarded wrapping frequency, [Candidate sorting guards the wrapping frequency order](upstream-divergences.md#candidate-sorting-guards-the-wrapping-frequency-order) |
-| G7 | hash tables: `g_hash_table_new` 2, `insert` 4, `lookup_extended` 4, `destroy` 2; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) |
-| G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `abort` 45, nearly all after a failed internal check; `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning`; zhuyin twin; `capi/src/phrase.rs` calls `glib_sys::g_utf8_strlen` | valid: the pin's asserts abort in the C adapters (`std::process::abort()`). malformed: the `g_utf8_strlen` critical is GLib's own; the other five sites are early returns of the pin's value with no critical ([Phrase segmentation writes no invalid-UTF-8 critical](upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical), [Phrase-library layout faults write no critical](upstream-divergences.md#phrase-library-layout-faults-write-no-critical)). | abort where the pin aborts; D1 for the six macro sites |
-| G9 | allocation/free and real GArray ABI: `g_free` 152, `g_strdup` 44, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 5; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` (both facades): returned strings and the keyboard vector from the pin's GLib calls; `malloc_cstr_with`, the fallible libc-`malloc` encoder for the `g_ucs4_to_utf8` sites (NULL, no warning); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN |
-| G10 | rename and sync: `g_rename` 10 (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` 1 (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_reporting`, `pin_rename_order`; `core/src/input/path.rs` `rename`; `input/src/chunk.rs` `save` | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract |
-| G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | the pin's own calls in `oxpinyin::input` `config.rs` / `native.rs` through the `libc` crate, decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: the host libc's `%d`/`%f`/`%255s` scanner, the pin's own call; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: the pin's call except the class (b) refusals; host scanner host-dependent (policy row 78); `LC_NUMERIC` row 39 |
-| G12 | file I/O and `MemoryChunk`: `mmap` 1, `munmap` 2, `lseek` 4, `read` 5, `write` 3, `open` 3, `close` 12, `unlink` 20, `fopen` 3, `fclose` 8, `feof` 1, `fprintf` 27 | both; all | `input/src/chunk.rs` `load` / `save` (the pin's `open`/`read`/`mmap`/`write`/`fsync`/`close`); `data/src/phrase_library.rs` `map_chunk`; `user/src/persistence.rs`; `data/src/c_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) row 76, abort row 96, row 109 |
-| G13 | C primitives: `memset` 86, `memcpy` 11, `strlen` 16, `strcmp` 18, `memcmp` 3, `memmove` 7, `strchr` 1 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at rows 80, 106 |
-| G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `engine/src/nbest.rs` and `engine/src/phrase.rs` (`f64::ln`) | valid: class (a) last-bit differences are accepted. | class (a), row 11 |
+| G7 | hash tables: `g_hash_table_new`, `insert`, `lookup_extended`, `destroy`; `g_direct_hash`/`equal` | both; all | `engine/src/nbest.rs` `Step`, `engine/src/session/*` vectors; no exposed iteration order | valid: lookup only; no order reaches the ABI. malformed: none. | contract (internal; no observable order) |
+| G8 | diagnostics: `g_return_val_if_fail` (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `abort`, nearly all after a failed internal check; `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning`; zhuyin twin; `capi/src/phrase.rs` calls `glib_sys::g_utf8_strlen` | valid: the pin's asserts abort in the C adapters (`std::process::abort()`). malformed: the `g_utf8_strlen` critical is GLib's own; the other five sites are early returns of the pin's value with no critical ([Phrase segmentation writes no invalid-UTF-8 critical](upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical), [Phrase-library layout faults write no critical](upstream-divergences.md#phrase-library-layout-faults-write-no-critical)). | abort where the pin aborts; D1 for the six macro sites |
+| G9 | allocation/free and real GArray ABI: `g_free`, `g_strdup`, `g_strdup_printf`; C `malloc`/`free`/`realloc`; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` (both facades): returned strings and the keyboard vector from the pin's GLib calls; `malloc_cstr_with`, the fallible libc-`malloc` encoder for the `g_ucs4_to_utf8` sites (NULL, no warning); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN |
+| G10 | rename and sync: `g_rename` (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_reporting`, `pin_rename_order`; `core/src/input/path.rs` `rename`; `input/src/chunk.rs` `save` | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract |
+| G11 | numeric parsing and locale: `fscanf` (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` (`:160`); `setlocale` (`:197,291,328,372,378,394`) | both; all | the pin's own calls in `oxpinyin::input` `config.rs` / `native.rs` through the `libc` crate, decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: the host libc's `%d`/`%f`/`%255s` scanner, the pin's own call; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: the pin's call except the class (b) refusals; host scanner host-dependent (policy row 78); `LC_NUMERIC` row 39 |
+| G12 | file I/O and `MemoryChunk`: `mmap`, `munmap`, `lseek`, `read`, `write`, `open`, `close`, `unlink`, `fopen`, `fclose`, `feof`, `fprintf` | both; all | `input/src/chunk.rs` `load` / `save` (the pin's `open`/`read`/`mmap`/`write`/`fsync`/`close`); `data/src/phrase_library.rs` `map_chunk`; `user/src/persistence.rs`; `data/src/c_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) row 76, abort row 96, row 109 |
+| G13 | C primitives: `memset`, `memcpy`, `strlen`, `strcmp`, `memcmp`, `memmove`, `strchr` | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at rows 80, 106 |
+| G14 | libm: `log` (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `engine/src/nbest.rs` and `engine/src/phrase.rs` (`f64::ln`) | valid: class (a) last-bit differences are accepted. | class (a), row 11 |
 | G15 | punctuation decoding: `punct_table.cpp:56-72` `unescape`, `:74-94` `get_all_punctuations`, reached at `pinyin.cpp:2474` | pinyin; all | `data/src/row_format.rs` `decode_puncts` (whole stored words per punctuation; infallible); `data/src/punct.rs` `PunctTable::punctuations` (`Err` only for a failed read; `Ok(Vec::new())` for unopened/absent/empty); `runtime/src/lib.rs` `RuntimeDict::punctuations`; `capi/src/predict.rs` `prepend_punctuations` (`phrase_text_bytes` at the C boundary) | valid: identical punctuation strings. malformed: partitions below; misaligned lengths read whole words ([Punctuation values contain whole words](upstream-divergences.md#punctuation-values-contain-whole-words)). | contract; class (b) for the unterminated over-read |
 | G16 | tool-only GLib: `tag_utility.cpp` (`g_strsplit_set`, `g_unichar_*`, `g_strv_length`, `g_utf8_get_char/next_char`, `g_ptr_array_foreach`, `g_hash_table_foreach_steal`, `g_warning`); `table_text_parser.h` (`g_ascii_strtoull`, `g_strlcpy`); the `load_text` methods | not C ABI | `utils/src/utils_helper/taglib.rs` (the pin's taglib); `input/src/tool.rs` (`g_strsplit_set`, `g_unichar_isgraph`, `atoi`, `atol`, `fprintf` through `glib-sys` and `libc`) | valid: tool input, identical records. malformed: the pin's calls, so its results. | tool scope: the pin's calls ([external I/O](external-io-boundary.md)) |
 | G17 | dead code: `pinyin_lookup2.cpp`, `chewing_large_table.cpp`, `phrase_large_table2.cpp`, `facade_chewing_table.h`, `facade_phrase_table2.h`, `PunctTableEntry::escape/append/remove`, `#if 0` dumps | none | no shipped counterpart; the runtime uses `PhoneticLookup`, `PhraseLookup` and the large-table-3/chunk path | n/a | negative coverage |
@@ -430,9 +422,7 @@ The version scripts `src/libpinyin.ver` and `src/libzhuyin.ver` are the ABI. At 
 the macOS export list `src/libpinyin.exp` omits five exports that `libpinyin.ver` has:
 `pinyin_begin_get_bigram_phrases`, `pinyin_bigram_iterator_get_next_phrase`,
 `pinyin_bigram_iterator_has_next_phrase`, `pinyin_end_get_bigram_phrases` and
-`pinyin_guess_predicted_candidates_with_punctuations`. The
-[call-site audit](../runbooks/glib-call-sites.md#what-it-does) therefore rewrites both `.exp`
-files from the version scripts on macOS.
+`pinyin_guess_predicted_candidates_with_punctuations`.
 
 #### Exported allocation and lifetime matrix
 
@@ -961,8 +951,7 @@ This section follows the ruling "No ported external-library internals"
 It covers the workspace packages and `tools/`. All five items are replaced; the
 [classification on main](#classification-on-main) gives the current code.
 No other transcription of GLib, libstdc++, libc++ or glibc comparison or
-probe order exists. `tools/audit/glib_call_sites.py` lists call sites; it
-does not port them.
+probe order exists.
 
 **Compliant, not ports:**
 

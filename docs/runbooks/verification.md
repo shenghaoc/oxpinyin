@@ -57,10 +57,7 @@ Diagnostics are fixed when they appear.
 Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets -- -D warnings` runs on the final tree. These also run, only when the change calls for them:
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
-- When a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed:
-  - `cargo deny --locked --log-level error check`
-  - `cargo deny --locked --all-features --log-level error check`
-  - `cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check`
+- `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
 - `just complexity` when Rust functions changed: the [complexity limit](#complexity-limit).
 - `just test-tools` when `tools/` changed.
 - `just ruff` when Python under `tools/` changed.

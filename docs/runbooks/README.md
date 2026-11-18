@@ -14,7 +14,6 @@ The findings that each page links give the reasons for the procedure.
 | [`pin-captures.md`](pin-captures.md) | stage the pin's observations of the apostrophe inputs for review |
 | [`cloud.md`](cloud.md) | provision a remote Linux host (container runtime, oracle, data) so that every gate runs there |
 | [`benches.md`](benches.md) | run a Callgrind or Massif recipe, or a plain timing |
-| [`glib-call-sites.md`](glib-call-sites.md) | regenerate the GLib and libc call-site list from the pin |
 | [`goldens-and-pins.md`](goldens-and-pins.md) | refresh a committed golden, move the oracle pin, or re-freeze a pinned number |
 | [`release.md`](release.md) | cut a release, and see what the packaging pipeline gates |
 | [`tool-diff.md`](tool-diff.md) | run and extend the frozen compatibility cases of the pin's standalone utilities |

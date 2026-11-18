@@ -158,6 +158,8 @@ class DoctorTests(unittest.TestCase):
 SAMPLES = {
     'pwsh': ('PowerShell {}', '7.4.99', doctor.PWSH_MINIMUM, '7.6.1'),
     'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.10', '0.10.11', '0.10.25'),
+    # The minimum is the bootstrap action's version file, whatever it says.
+    'cargo-deny': ('cargo-deny {}', '0.0.1', doctor.CARGO_DENY_VERSION, '999.0.0'),
     'cargo-fuzz': ('cargo-fuzz {}', '0.13.1', '0.13.2', '0.14.0'),
     'cargo-llvm-cov': ('cargo-llvm-cov {}', '0.8.9', '0.9.0', '0.10.1'),
     'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.41', '2.42', '2.47'),
@@ -251,6 +253,13 @@ class ToolMinimumTests(ToolCase):
                 line = self.check(ld, output)
                 self.assertTrue(line.startswith(f'GNU ld: not found, ld is {output} at /tools/ld '), line)
                 self.assertIn('requires 2.42 or later', line)
+
+    def test_cargo_deny_requires_the_version_of_the_bootstrap_file(self):
+        stated = (ROOT / '.github/actions/bootstrap/cargo-deny-version.txt').read_text().strip()
+        deny = next(candidate for candidate in doctor.TOOLS if candidate.name == 'cargo-deny')
+        self.assertEqual(deny.minimum, stated)
+        self.assertEqual(doctor.cargo_tool_pins()['cargo-deny'], stated)
+        self.assertIn(f'--version {stated}', deny.install)
 
     def test_linux_only_tools_are_skipped_elsewhere(self):
         linux_only = {candidate.name for candidate in doctor.TOOLS if candidate.platform == 'linux'}

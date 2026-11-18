@@ -16,10 +16,12 @@ When several worktrees share a host, each worktree has its own
 
 ## Host requirements
 
-Full setup requires Linux on a supported native platform:
+`just provision` runs natively and never starts a container.
+`just provision-oracle` runs it first, then provisions the pin oracle in containers.
+The oracle setup requires Linux on a supported native platform:
 linux/amd64 or linux/arm64. `tools.dev.provision` selects the platform from
 the machine architecture and refuses any other.
-It also requires:
+The two recipes together require:
 
 - Cargo on `PATH`, rustup, and the installed toolchain and components that
   `rust-toolchain.toml` selects. Setup checks these before provisioning. It does not
@@ -30,8 +32,9 @@ It also requires:
   downloads. The environment owner then installs it, or the work moves to a
   host that already has a suitable Valgrind.
 - uv on `PATH` meeting the requirement in `uv.toml`, plus writable managed-Python and cache locations. See [native setup](setup.md) for installing uv.
-- A usable Podman or Docker runtime, the backend dump utilities described
-  below, and the native build prerequisites in [native setup](setup.md).
+- For `just provision-oracle` only: a usable Podman or Docker runtime and the backend
+  dump utilities described below. Both recipes need the native build prerequisites in
+  [native setup](setup.md).
   Non-root accounts must arrange missing backend utilities with the owner.
   That step prints its apt command and does not use sudo.
 - Network access to the [download hosts](#allowlist-domains) that any
@@ -64,32 +67,47 @@ it must install.
 ## Setup command
 
 Workspace tests in a cloud session need the tkrzw vcpkg overlay installed
-and its paths exported as [Linux setup](setup.md#linux) describes; full setup
-does both ([step 3b](#what-it-does)). The Debian packages
+and its paths exported as [Linux setup](setup.md#linux) describes. `just provision`
+installs it ([step 3b](#what-it-does)); the environment file of `just provision-oracle`
+also exports its paths. The Debian packages
 `build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake
 ninja-build` must be installed first. GLib stays on the system.
 
-**When to run it.** The setup is needed only when the work needs the pin oracle:
-a differential, a same-run measurement against the pin, or a data check.
-Work that does not touch the oracle does not need it. From the repository
-root, run these two commands. They are the same in sh, zsh and pwsh:
+**Native provisioning.** From the repository root, run these two commands. They are the
+same in sh, zsh and pwsh:
 
 ```sh
 uv python install
-uv run --managed-python python -X utf8 -m tools.dev.provision
+just provision
 ```
 
 The first installs the interpreter that `.python-version` names, and does nothing
-when it is present. The second runs provisioning in that interpreter; pass the
-options below after `tools.dev.provision`. Both must run from the repository root,
-where uv finds `.python-version` and `uv.toml` and Python finds `tools`.
+when it is present. The second runs `tools.dev.provision` in that interpreter.
+It checks Cargo, the repository toolchain and, on Linux, Valgrind; keeps or installs the
+development tools (`--dev-tools` below); installs tkrzw through the vcpkg overlay on Linux;
+and prints the ext4 path report. It starts no container, reads no oracle and does not write
+the environment file. Both commands must run from the repository root, where uv finds
+`.python-version` and `uv.toml` and Python finds `tools`.
+
+**When to provision the oracle.** The oracle is needed only when the work needs the pin:
+a differential, a same-run measurement against the pin, or a data check.
+Work that does not touch the oracle does not need it. Then run:
+
+```sh
+just provision-oracle
+```
+
+It runs `just provision` first, then `provision oracle`, the container steps below, then
+`provision oracle-env`, which writes the environment file.
 
 The setup is idempotent. Every step checks its result and skips when the result holds,
-so a second run only verifies again. The options are:
+so a second run only verifies again. The options of `just provision-oracle` are:
 
 - `--cells`;
 - `--jobs`;
 - `--no-pull`: builds the libraries even if the published image exists.
+
+`just provision` refuses these options with exit 2.
 
 `OXPINYIN_CONTAINER` names the container command ([container runtimes](setup.md#container-runtimes)). Progress goes to stderr.
 Stdout includes an informational ext4 path report and one line for each cell:
@@ -98,7 +116,8 @@ Stdout includes an informational ext4 path report and one line for each cell:
 bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 ```
 
-The setup is done when it prints one such line for each requested cell.
+The setup is done when it prints one such line for each requested cell and
+`provision oracle-env` reports the environment file it wrote.
 
 ### Python-only tools.dev hosts
 
@@ -111,32 +130,35 @@ uv run --managed-python python -X utf8 -m tools.dev.provision --python-only
 uv run --managed-python python -X utf8 -m tools.dev.doctor
 ```
 
-This mode runs the Linux platform checks, then the same managed-CPython
-interpreter verification as full setup
+This mode runs the same managed-CPython
+interpreter verification as `just provision`
 ([interpreter policy](setup.md#linux)). It prints the verified-interpreter line
 and the ext4 path report, and exits successfully after Python provisioning.
 It does not touch a container runtime, Valgrind, backend utilities, oracle
 libraries, model data or the oracle environment file. On a host that has
 `just`, the first `uv run` of any Python recipe provisions the same interpreter.
 
-`--python-only` cannot be combined with `--cells`, `--jobs`
-or `--no-pull`; these combinations fail with exit 2 before
+`--python-only` does not take `--cells`, `--jobs`
+or `--no-pull`; these options fail with exit 2 before
 provisioning. For concurrent worktrees, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned interpreter and download-cache locations.
 
-To provision development tools without the oracle, use `--dev-tools` in place of `--python-only`.
+To provision the development tools without the Rust, Valgrind and tkrzw steps,
+use `--dev-tools` in place of `--python-only`.
 
 ### The environment file
 
-When full setup succeeds, it writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
-overrides the path). Every run rewrites the file. A runner sources it
-first:
+`just provision-oracle` writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
+overrides the path) after its container steps succeed. Its private step
+`provision oracle-env` is the one writer; `just provision` never writes the file.
+The file names every cell of the provisioning cache that passes the checks below.
+Every run rewrites the file. A runner sources it first:
 
 ```sh
 . ~/.oxpinyin-oracle.env                       # reference cell, tkrzw
 PINYIN_ORACLE_DBM=kc . ~/.oxpinyin-oracle.env  # another cell
 ```
 
-A subset run, such as `--cells bdb`, keeps the other cells that the
+The file also keeps the cells of other caches that the
 existing file names, if their saved prefixes still pass two checks:
 
 - the library hashes in the current pin/recipe provenance;
@@ -144,7 +166,7 @@ existing file names, if their saved prefixes still pass two checks:
 
 A cell that fails
 either check is removed, with one diagnostic that names the cell and the check.
-The file contains the verified retained cells and the cells of this run, also
+The file contains the verified retained cells and the verified cells of this cache, also
 when they use different cache directories. A retained tkrzw cell also
 keeps its local runtime paths. Setup publishes the complete file with an
 atomic rename.
@@ -257,11 +279,16 @@ uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
 
 ## What it does
 
+`just provision` runs steps 0 and 3b. `just provision-oracle` runs `just provision`, then
+steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
+
 0. Bootstraps uv and managed CPython, after it checks the uv installation
    destination. The Python provisioning service then checks Cargo and the
    repository toolchain on every OS. On Linux it also installs Valgrind when
    `valgrind --version` fails, and prints its version in the summary.
-   On Linux it requires the backend dump utilities for the requested cells:
+   It keeps or installs the development tools and the rust-analyzer component
+   ([native setup](setup.md#linux)), and prints the ext4 path report.
+   `provision oracle` requires, on Linux, the backend dump utilities for the requested cells:
    `db5.3_dump` (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root
    containers may install them with apt; ordinary accounts get an explicit
    missing-package error, so they are installed before setup runs. On
@@ -318,7 +345,11 @@ uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
    that does not run (the interpreter, an import, the runtime) stops
    provisioning with its error, and setup keeps the prefix.
 
-   3b. Linux only: installs tkrzw through the repository's vcpkg overlay.
+   The container runs write the libraries and the build trees into the provisioning cache:
+   `oracle/<cell>`, `build/<cell>` and `data-<cell>`. On rootful Docker they run as the invoking
+   user, so the cache stays theirs.
+
+   3b. Linux only, in `just provision`: installs tkrzw through the repository's vcpkg overlay.
    macOS and Windows load the oracle only in containers and skip this step.
    - Uses `VCPKG_ROOT`, or bootstraps a checkout under `<root>/vcpkg`. An
      existing checkout stays unchanged: vcpkg installs tkrzw with the
@@ -328,10 +359,8 @@ uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
    - Installs `tkrzw:x64-linux-oxpinyin`, with binaries cached under
      `<root>/vcpkg-binary-cache` unless `VCPKG_BINARY_SOURCES` is configured.
      The port alone reads `vcpkg-overlays/tkrzw/pin.json`.
-   - Certifies the installed utility and extracted oracle library against the
-     installed `libtkrzw.so.1` with `tools/tkrzw/runtime.py`.
-   - Writes `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`, the utility `PATH` and
-     `OXPINYIN_TKRZW_PREFIX` for that install to the environment file.
+   - Certifies the installed utility against the installed `libtkrzw.so.1` with
+     `tools/tkrzw/runtime.py`. Step 5 certifies the oracle library against it.
    - Every invocation runs vcpkg install; its ABI checks decide cache reuse.
 4. Uses model20, which the model fetch (`tools/dev/model.py`) got early into
    `<root>/model20-<digest>`. It runs `build.py --regen-data` for each cell inside
@@ -339,11 +368,15 @@ uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
    [data verification](oracle.md#regenerate-the-data-after-every-pull). The data is generated in a
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file. The repository pin freezes no generated output.
-5. Prints the per-cell lines. On Linux it first rewrites the `.pc` files of the prefixes
-   to the host location and writes the environment file above.
-   On macOS and Windows the host loads no oracle, so setup writes neither.
+   `provision oracle` then prints the per-cell lines.
+5. `provision oracle-env`, on Linux only, checks every cell in the provisioning cache with the
+   [data verification](#data-verification). It certifies the tkrzw cell's oracle library against
+   the vcpkg install of step 3b, rewrites the `.pc` files of the verified prefixes to the host
+   location and writes the environment file above, with `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`, the
+   utility `PATH` and `OXPINYIN_TKRZW_PREFIX` for that install. With no verified cell it fails
+   and writes nothing. On macOS and Windows the host loads no oracle, so it writes neither.
 
-These host steps of `just provision` run only on Linux, and macOS and Windows
+These host steps run only on Linux, and macOS and Windows
 skip them: the Valgrind check and apt install, the apt install of the dump
 utilities, the start of `dockerd`, the ext4 report, the host libtkrzw check,
 the `.pc` rewrite and the environment file.
@@ -433,9 +466,9 @@ side.
 - An unwritable uv destination, such as a read-only `~/.local/bin`: setup
   exits 1 before any download. The `UV_*` overrides in
   [host requirements](#host-requirements) resolve it.
-- Missing Cargo/toolchain, or Valgrind without root/sudo: setup exits 1 with
-  the prerequisite and the next action after interpreter verification,
-  but before the oracle downloads. `--python-only` omits these checks.
+- Missing Cargo/toolchain, or Valgrind without root/sudo: `just provision` exits 1 with
+  the prerequisite and the next action, and `just provision-oracle` stops before the
+  oracle downloads. `--python-only` and `--dev-tools` omit these checks.
 - `429 Too Many Requests` from the registry: the script retries, and a further run continues.
 - `403` from the proxy: the host is not allowed for the environment. It
   is not routed around; the host (table above) is added to Allowed domains.
@@ -448,6 +481,7 @@ side.
 
 `tools.dev.provision` is the single provisioning service. `just provision` runs
 the same module through `uv run`, which provisions the interpreter first.
+`just provision-oracle` runs its `oracle` and `oracle-env` subcommands.
 
 The synthetic provisioning fixtures run through normal Python discovery:
 

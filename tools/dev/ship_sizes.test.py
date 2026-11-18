@@ -204,7 +204,7 @@ class VersionScriptTests(unittest.TestCase):
         for name, directory in layouts.items():
             with self.subTest(layout=name), tempfile.TemporaryDirectory() as scratch:
                 source = Path(scratch)
-                fixtures = source / 'tools/audit/fixtures/small'
+                fixtures = source / 'tests/fixtures'
                 fixtures.mkdir(parents=True)
                 for library, (crate, _) in ship_sizes.LIBRARIES.items():
                     (fixtures / f'{library}.ver').write_text('fixture\n')

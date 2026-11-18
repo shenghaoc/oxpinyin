@@ -549,93 +549,16 @@ class RuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(images.container_ids(('container',), 'k', 'tok', run=garbled), [])
 
 
-class ProvisionOracleTests(unittest.TestCase):
-    """just provision-oracle: the deps image build and the provision oracle run, per runtime."""
-    def setUp(self):
-        as_macos(self)
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name) / 'root'
-        self.cache = images.provision_cache({'OXPINYIN_CACHE': str(self.root)})
-
-    def calls(self, engine, argv=(), env=None, present=False):
-        calls = []
-
-        def fake_run(command, **kwargs):
-            calls.append([str(part) for part in command])
-            return 0
-        environment = dict(env or {}, OXPINYIN_CACHE=str(self.root))
-        with (mock.patch.object(images.platform, 'machine', return_value='x86_64'),
-              mock.patch.object(images, 'select_runtime', return_value=engine),
-              mock.patch.object(images, 'image_tag', return_value='TAG'),
-              mock.patch.object(images, 'quiet', return_value=0 if present else 1),
-              mock.patch.object(images, 'run', fake_run), contextlib.redirect_stderr(io.StringIO())):
-            self.assertEqual(images.provision_oracle(list(argv), env=environment), 0)
-        return calls
-
-    def test_each_runtime_builds_the_deps_target_and_runs_provision_oracle(self):
-        for engine in ('docker', 'podman', 'wslc', 'container'):
-            with self.subTest(engine=engine):
-                build, launch = self.calls(engine, ['--cells', 'tkrzw'])
-                self.assertEqual(build[build.index('--target') + 1], 'deps')
-                # `just provision` builds and checks prefixes in the image of this same tag.
-                self.assertIn(images.deps_tag(ROOT), build)
-                self.assertIn(images.deps_tag(ROOT), launch)
-                self.assertIn('ORACLE_PLATFORM=linux/amd64', build)
-                self.assertEqual('--platform' in build, engine != 'wslc')
-                self.assertEqual('--platform' in launch, engine != 'wslc')
-                self.assertEqual('--memory' in build, engine == 'container')
-                if engine == 'container':
-                    self.assertIn(f'type=bind,source={ROOT.resolve()},target=/repo,readonly', launch)
-                else:
-                    self.assertIn(f'{ROOT.resolve()}:/repo:ro', launch)
-                self.assertIn(f'{self.cache.resolve()}:/provision', launch)
-                # The checkout is read-only, so the uv project's environment is outside it.
-                self.assertIn(f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}', launch)
-                # The guest receives the host's cache root at a path of its own, never the host path.
-                self.assertIn(f'{self.root.resolve()}:/cache', launch)
-                self.assertIn('OXPINYIN_CACHE=/cache', launch)
-                self.assertNotIn(f'OXPINYIN_CACHE={self.root}', launch)
-                self.assertEqual(self.cache.parent, self.root)
-                self.assertEqual(launch[launch.index('-m') + 1:],
-                                 ['tools.dev.provision', 'oracle', '--cache-dir', '/provision', '--cells', 'tkrzw'])
-                self.assertEqual(launch[launch.index('-w') + 2], images.deps_tag(ROOT))
-
-    def test_rootful_docker_runs_as_the_host_user_with_a_writable_uv(self):
-        with mock.patch.object(images, 'run_user', return_value=['--user', '1000:1001']):
-            commands = {engine: images.provision_oracle_command(engine, ROOT, self.cache, 'tag', 'linux/amd64', [],
-                                                                self.root)
-                        for engine in ('docker', 'podman', 'container', 'wslc')}
-        docker = commands['docker']
-        self.assertEqual(docker[docker.index('--user') + 1], '1000:1001')
-        self.assertIn('HOME=/tmp', docker)
-        self.assertIn('UV_CACHE_DIR=/tmp/uv-cache', docker)
-        self.assertLess(docker.index('UV_CACHE_DIR=/tmp/uv-cache'), docker.index('tag'))
-        for engine in ('podman', 'container'):
-            self.assertNotIn('--user', commands[engine], engine)
-            self.assertNotIn('UV_CACHE_DIR=/tmp/uv-cache', commands[engine], engine)
-        with mock.patch.object(images, 'run_user', return_value=[]):
-            self.assertNotIn('--user', images.provision_oracle_command('wslc', ROOT, self.cache, 'tag', 'linux/amd64', [],
-                                                                       self.root))
-
+class ProvisionCacheTests(unittest.TestCase):
+    """The keyed entries of the cache root that `just provision-oracle` fills."""
     def test_the_caches_are_the_keyed_entries_of_the_cache_root(self):
         from tools.dev import model
-        commit = images.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
-        env = {'OXPINYIN_CACHE': str(self.root)}
-        self.assertEqual(images.provision_cache(env), self.root / f'pin-{commit[:12]}')
-        self.assertEqual(images.model_cache(env), self.root / f'model20-{model.archive_sha256()[:12]}')
-
-    def test_other_options_ci_and_foreign_architectures_are_refused_before_any_runtime_call(self):
-        for argv, env, machine in ((['--cache-dir', '/x'], {}, 'x86_64'), (['--cells'], {}, 'x86_64'),
-                                   ([], {'GITHUB_ACTIONS': 'true'}, 'x86_64'), ([], {}, 'riscv64')):
-            with (self.subTest(argv=argv, env=env, machine=machine),
-                  mock.patch.object(images.platform, 'machine', return_value=machine),
-                  mock.patch.object(images, 'select_runtime') as select, mock.patch.object(images, 'run') as run,
-                  contextlib.redirect_stderr(io.StringIO()), self.assertRaises(images.Finished) as raised):
-                images.provision_oracle(argv, env=env)
-            self.assertEqual(raised.exception.status, 2)
-            select.assert_not_called()
-            run.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'root'
+            commit = images.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
+            env = {'OXPINYIN_CACHE': str(root)}
+            self.assertEqual(images.provision_cache(env), root / f'pin-{commit[:12]}')
+            self.assertEqual(images.model_cache(env), root / f'model20-{model.archive_sha256()[:12]}')
 
 
 class AppleSavedImageTests(unittest.TestCase):

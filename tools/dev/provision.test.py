@@ -46,7 +46,7 @@ def copy_entrypoint_tree(root):
     """Copy the provisioning sources and their repository data dependencies."""
     shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
     for name in ('.python-version', 'rust-toolchain.toml', 'Cargo.toml', 'justfile',
-                 '.config/nextest.toml'):
+                 '.config/nextest.toml', '.github/actions/bootstrap/cargo-deny-version.txt'):
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
@@ -54,7 +54,7 @@ def copy_entrypoint_tree(root):
 
 # How each fake cargo tool answers the provisioner's check, as a tool that meets its requirement.
 # just and nextest enforce their own minimums, so their fakes answer for themselves and name no
-# version; the cargo-c fake reports the floor in the doctor's row of ROOT's tree.
+# version; the cargo-c and cargo-deny fakes report the floor in the doctor's row of ROOT's tree.
 FAKE_ANSWERS = {
     'just': ("if '--summary' in sys.argv: sys.exit(0)\n"
              "if sys.argv[1:] == ['--version']: print('just (synthetic)'); sys.exit(0)\n"
@@ -64,6 +64,9 @@ FAKE_ANSWERS = {
     'cargo-cinstall': ("if sys.argv[1:] != ['--version']: sys.exit(97)\n"
                        "sys.path.insert(0, str(root)); from tools.dev.doctor import TOOLS\n"
                        "print('cargo-c', next(t.minimum for t in TOOLS if t.name == 'cargo-c'))\n"),
+    'cargo-deny': ("if sys.argv[1:] != ['--version']: sys.exit(97)\n"
+                   "sys.path.insert(0, str(root)); from tools.dev.doctor import TOOLS\n"
+                   "print('cargo-deny', next(t.minimum for t in TOOLS if t.name == 'cargo-deny'))\n"),
 }
 
 
@@ -96,7 +99,7 @@ class EntrypointFixtureTests(unittest.TestCase):
 
 
 class CargoToolTests(unittest.TestCase):
-    """The provisioner keeps just, cargo-nextest and cargo-c at their floors, or installs them."""
+    """The provisioner keeps just, cargo-nextest, cargo-c and cargo-deny at their floors, or installs them."""
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -107,7 +110,8 @@ class CargoToolTests(unittest.TestCase):
     def fake_cargo(self):
         """A cargo whose `install` records the call and writes that crate's fake at its floor."""
         sources = {crate: (executable, floor_source(executable, ROOT)) for crate, executable in
-                   (('just', 'just'), ('cargo-nextest', 'cargo-nextest'), ('cargo-c', 'cargo-cinstall'))}
+                   (('just', 'just'), ('cargo-nextest', 'cargo-nextest'), ('cargo-c', 'cargo-cinstall'),
+                    ('cargo-deny', 'cargo-deny'))}
         test_support.python_tool(self.bin, 'cargo', (
             f'import sys\nsys.path.insert(0, {str(ROOT)!r})\nfrom tools.dev import test_support\n'
             f'with open({str(self.calls)!r}, "a") as calls: calls.write(" ".join(sys.argv[1:]) + "\\n")\n'
@@ -142,6 +146,7 @@ class CargoToolTests(unittest.TestCase):
         (root / 'justfile').write_text('set minimum-version := "9.8.7"\n')
         floor_tool(self.bin, 'cargo-nextest', ROOT)
         floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        floor_tool(self.bin, 'cargo-deny', ROOT)
         self.fake_cargo()
         status, error, _ = self.provision(root)
         self.assertEqual(status, 0, error)
@@ -157,15 +162,29 @@ class CargoToolTests(unittest.TestCase):
         status, error, _ = self.provision()
         self.assertEqual(status, 0, error)
         self.assertIn('installing cargo-nextest with cargo (requires the nextest-version in .config/nextest.toml)', error)
+        deny = provision.doctor.CARGO_DENY_VERSION
         self.assertEqual(self.recorded(), [
             'install cargo-nextest --locked --quiet',
             'install cargo-c --version 0.10.25 --locked --quiet',
+            f'install cargo-deny --version {deny} --locked --quiet',
         ])
+
+    def test_a_cargo_deny_below_the_bootstrap_version_is_replaced_at_that_version(self):
+        for name in ('just', 'cargo-nextest', 'cargo-cinstall'):
+            floor_tool(self.bin, name, ROOT)
+        floor_tool(self.bin, 'cargo-deny', ROOT, "print('cargo-deny 0.0.1')\n")
+        self.fake_cargo()
+        status, error, _ = self.provision()
+        self.assertEqual(status, 0, error)
+        deny = provision.doctor.CARGO_DENY_VERSION
+        self.assertIn(f'installing cargo-deny {deny} with cargo (requires {deny} or later)', error)
+        self.assertEqual(self.recorded(), [f'install cargo-deny --version {deny} --locked --quiet'])
 
     def test_a_just_that_refuses_the_justfile_is_replaced(self):
         floor_tool(self.bin, 'just', ROOT, "sys.exit(1 if '--summary' in sys.argv else 97)\n")
         floor_tool(self.bin, 'cargo-nextest', ROOT)
         floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        floor_tool(self.bin, 'cargo-deny', ROOT)
         self.fake_cargo()
         status, error, _ = self.provision()
         self.assertEqual(status, 0, error)
@@ -175,6 +194,7 @@ class CargoToolTests(unittest.TestCase):
     def test_a_nextest_that_refuses_its_requirement_stops_when_cargo_cannot_fix_it(self):
         floor_tool(self.bin, 'just', ROOT)
         floor_tool(self.bin, 'cargo-cinstall', ROOT)
+        floor_tool(self.bin, 'cargo-deny', ROOT)
         floor_tool(self.bin, 'cargo-nextest', ROOT, "print('evaluation result: does not meet required version')\n"
                                                     "sys.exit(92)\n")
         test_support.python_tool(self.bin, 'cargo', 'import sys\nsys.exit(0)\n')
@@ -191,7 +211,7 @@ class CargoToolTests(unittest.TestCase):
         self.assertEqual((status, error), (1, 'FAIL: installing cargo-nextest needs cargo; follow docs/runbooks/setup.md\n'))
 
     def test_an_installed_tool_that_stays_below_its_floor_stops(self):
-        for name in ('just', 'cargo-nextest'):
+        for name in ('just', 'cargo-nextest', 'cargo-deny'):
             floor_tool(self.bin, name, ROOT)
         test_support.python_tool(self.bin, 'cargo', 'import sys\nsys.exit(0)\n')
         status, error, _ = self.provision()
@@ -200,7 +220,7 @@ class CargoToolTests(unittest.TestCase):
                                 r'put \$CARGO_HOME/bin on PATH\n$')
 
     def test_the_cache_root_comes_from_just_when_it_is_unset(self):
-        for name in ('cargo-nextest', 'cargo-cinstall'):
+        for name in ('cargo-nextest', 'cargo-cinstall', 'cargo-deny'):
             floor_tool(self.bin, name, ROOT)
         cache = str(self.bin / 'from-just')
         floor_tool(self.bin, 'just', ROOT, (
@@ -215,7 +235,7 @@ class CargoToolTests(unittest.TestCase):
 
     def test_the_cache_root_from_just_loses_a_crlf_line_ending(self):
         # The Windows cache-root recipe writes its line with Console.WriteLine.
-        for name in ('cargo-nextest', 'cargo-cinstall'):
+        for name in ('cargo-nextest', 'cargo-cinstall', 'cargo-deny'):
             floor_tool(self.bin, name, ROOT)
         cache = str(self.bin / 'from-just')
         floor_tool(self.bin, 'just', ROOT, (
@@ -641,7 +661,9 @@ elif name in ('curl','apt-get','sudo'):
                             UV_CACHE_DIR=str(self.work / 'uv-cache'), OXPINYIN_CACHE=str(self.work / 'cache'),
                             OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'), OXPINYIN_CCR_DIR=str(self.work / 'ccr'),
                             OXPINYIN_SYSTEM_CA_BUNDLES=str(self.work / 'no-system-ca'), OXPINYIN_CONTAINER='podman',
-                            CALLS=str(self.calls))
+                            CALLS=str(self.calls),
+                            # Native provisioning stops at the tkrzw install: no vcpkg checkout is here.
+                            VCPKG_ROOT=str(self.work / 'no-vcpkg'))
             # The cargo tools the provisioner keeps, each at its floor, so it installs nothing.
             for name in FAKE_ANSWERS:
                 floor_tool(self.bin, name, self.root)
@@ -662,21 +684,27 @@ elif name in ('curl','apt-get','sudo'):
             return current
 
         def test_usage_options_and_missing_argument_statuses(self):
-            for args in (['--unknown'], ['--cells', 'bad'], ['--cells', '']):
+            for args in (['--unknown'], ['oracle', '--unknown'], ['oracle', '--cells', 'bad'],
+                         ['oracle', '--cells', ''], ['oracle', '--jobs', '0'], ['oracle', '--python-only'],
+                         ['oracle', '--dev-tools'], ['oracle-env', 'bdb']):
                 with self.subTest(args=args):
                     self.check_entry(args, 2)
-            for mode in (['--python-only'], ['--dev-tools'], ['--python-only', '--dev-tools']):
+            # The oracle options belong to `provision oracle`; native provisioning refuses them.
+            for mode in ([], ['--python-only'], ['--dev-tools'], ['--python-only', '--dev-tools']):
                 for option in ('--cells', '--jobs', '--no-pull'):
                     args = mode + [option] + (['bdb' if option == '--cells' else '1'] if option in ('--cells', '--jobs') else [])
                     with self.subTest(args=args):
-                        self.assertEqual(self.check_entry(args, 2).stderr, b'--python-only and --dev-tools cannot be '
-                                                                           b'combined with --cells, --jobs or --no-pull\n')
-            # The host takes OXPINYIN_CACHE; --cache-dir exists only at provision-oracle's mount in the deps image.
-            self.check_entry(['--cache-dir', str(self.work / 'named')], 2)
+                        self.assertEqual(self.check_entry(args, 2).stderr,
+                                         f'{option} is an option of just provision-oracle; '
+                                         'just provision runs natively\n'.encode())
+            # Every run takes OXPINYIN_CACHE; --cache-dir is no option.
+            for args in (['--cache-dir', str(self.work / 'named')], ['oracle', '--cache-dir', str(self.work / 'named')]):
+                with self.subTest(args=args):
+                    self.check_entry(args, 2)
             for option in ('--cells', '--jobs'):
                 # Bash-specific unbound-variable diagnostic is deliberately retired;
                 # status remains 1, and Python names the missing option.
-                done = self.run_entry([option])
+                done = self.run_entry(['oracle', option])
                 self.assertEqual(done.returncode, 1)
                 self.assertEqual(done.stderr, (option + ': requires an argument\n').encode())
 
@@ -684,7 +712,7 @@ elif name in ('curl','apt-get','sudo'):
             # PYTHONHOME is refused too, but a wrong one stops the interpreter before any check.
             for name in ('UV_PYTHON', 'PYTHONPATH', 'UV_PYTHON_PREFERENCE'):
                 self.env[name] = str(self.work / 'override')
-                for args in (['--python-only'], ['--cells', 'bdb'], ['--unknown']):
+                for args in (['--python-only'], [], ['oracle', '--cells', 'bdb'], ['oracle-env'], ['--unknown']):
                     with self.subTest(name=name, args=args):
                         self.calls.unlink(missing_ok=True)
                         done = self.check_entry(args, 1)
@@ -699,17 +727,19 @@ elif name in ('curl','apt-get','sudo'):
             self.env.pop('FAKE_PYTHON_FAILURE')
 
         def test_valgrind_minimum_and_install_retry(self):
+            # Past the Valgrind check, native provisioning reaches the tkrzw install, which stops here.
+            vcpkg = f'FAIL: VCPKG_ROOT needs a bootstrapped vcpkg checkout: {self.work / "no-vcpkg"}'.encode()
             for version in ('3.22.0', '3.27.1', '3.22.0.GIT', '3.21.0'):
                 with self.subTest(version=version):
                     self.env['FAKE_VALGRIND'] = version
-                    result = self.check_entry(['--cells', 'bdb'], 1)
+                    result = self.check_entry([], 1)
                     if version == '3.21.0':
                         self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
                     else:
-                        self.assertIn(b'FAIL: model20 is unavailable', result.stderr)
+                        self.assertIn(vcpkg, result.stderr)
             self.env.pop('FAKE_VALGRIND')
             self.env['FAKE_VALGRIND_MISSING'] = '1'
-            result = self.check_entry(['--cells', 'bdb'], 1)
+            result = self.check_entry([], 1)
             self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
             self.env.pop('FAKE_VALGRIND_MISSING')
 
@@ -719,14 +749,18 @@ elif name in ('curl','apt-get','sudo'):
             with mock.patch.object(provision.shutil, 'which', return_value=None), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished):
                 provision.Provision(env=self.env).prerequisites()
             (self.bin / 'cargo').symlink_to('/bin/true')
+            channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+            with mock.patch.dict(self.env, {'FAKE_RUST': '1'}):
+                last = self.check_entry([], 1).stderr.decode().splitlines()[-1]
+            self.assertEqual(last, f'FAIL: Rust toolchain {channel} is not installed; run: rustup toolchain '
+                                   f'install {channel} --component clippy --component rustfmt')
+            # Native provisioning starts no container: no runtime command ran on the way to the vcpkg stop.
+            self.assertNotIn(b'podman', self.check_entry([], 1).stderr)
             model = ('FAIL: model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net '
                      'redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
-            # Each prerequisite stops the run with its own refusal, and no private CA copy is left (check_entry).
+            # Each oracle prerequisite stops the run with its own refusal, and no private CA copy is left (check_entry).
             (self.work / 'fake-ca').write_text('synthetic CA\n')
-            channel = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
             for settings, refusal in (
-                    ({'FAKE_RUST': '1'}, f'FAIL: Rust toolchain {channel} is not installed; run: rustup toolchain '
-                                         f'install {channel} --component clippy --component rustfmt'),
                     ({}, model),  # model access is refused before runtime provisioning
                     ({'HTTPS_PROXY': 'http://127.0.0.1:1'}, 'FAIL: HTTPS_PROXY is set but there is no proxy CA bundle: '),
                     ({'OXPINYIN_PROXY_CA': str(self.work / 'missing')},
@@ -734,7 +768,7 @@ elif name in ('curl','apt-get','sudo'):
                     # A present CA bundle is accepted: the run goes on to the model refusal.
                     ({'OXPINYIN_PROXY_CA': str(self.work / 'fake-ca')}, model)):
                 with self.subTest(settings=settings), mock.patch.dict(self.env, settings):
-                    last = self.check_entry(['--cells', 'bdb'], 1).stderr.decode().splitlines()[-1]
+                    last = self.check_entry(['oracle', '--cells', 'bdb'], 1).stderr.decode().splitlines()[-1]
                     self.assertTrue(last.startswith(refusal), last)
             # The Python-only scope reads no filesystem type.
             self.env['FAKE_EXT4'] = 'unknown'
@@ -778,7 +812,7 @@ elif name in ('curl','apt-get','sudo'):
             for runtime in ('wslc', 'container'):
                 with self.subTest(runtime=runtime):
                     self.env['OXPINYIN_CONTAINER'] = runtime
-                    current = self.check_entry(['--cells', 'bdb'], 1)
+                    current = self.check_entry(['oracle', '--cells', 'bdb'], 1)
                     self.assertNotIn(b'not supported', current.stderr)
                     self.assertIn(f'FAIL: {runtime} info failed; there is no daemon to start for it'.encode(), current.stderr)
 
@@ -800,9 +834,12 @@ elif name in ('curl','apt-get','sudo'):
                 record_prefix(prefix, cell, self.root)
             self.env['FAKE_RUNTIME_READY'] = '1'
             (self.bin / 'kchashmgr').symlink_to('/bin/true')
-            current = self.check_entry(['--cells', 'kc bdb'], 0)
+            current = self.check_entry(['oracle', '--cells', 'kc bdb'], 0)
             rows = [line for line in current.stdout.decode().splitlines() if 'data manifest OK' in line]
             self.assertEqual([line.split()[0] for line in rows], ['kc', 'bdb'])
+            # The container step writes no environment file; oracle-env, its one writer, does.
+            self.assertFalse(Path(self.env['OXPINYIN_ORACLE_ENV']).exists())
+            self.check_entry(['oracle-env'], 0)
             for cell in ('bdb', 'kc'):
                 source = subprocess.run(['sh', '-c', '. "$1"; printf "%s" "$PINYIN_ORACLE_PREFIX"',
                                          'fixture', self.env['OXPINYIN_ORACLE_ENV']],
@@ -811,6 +848,15 @@ elif name in ('curl','apt-get','sudo'):
                 self.assertEqual(source.stdout.decode(), str(cache / 'oracle' / cell))
                 self.assertEqual((cache / 'oracle' / cell / 'lib/pkgconfig/libpinyin.pc').read_text(),
                                  'prefix=' + str(cache / 'oracle' / cell) + '\n')
+
+        def test_the_environment_file_needs_a_verified_cell(self):
+            cache = provision.images.provision_cache(self.env, self.root)
+            (cache / 'oracle/bdb/lib').mkdir(parents=True)
+            done = self.check_entry(['oracle-env'], 1)
+            self.assertIn(b'bdb: left out of the environment file', done.stderr)
+            self.assertEqual(done.stderr.decode().splitlines()[-1],
+                             f'FAIL: no verified oracle cell in {cache / "oracle"}; run just provision-oracle')
+            self.assertFalse(Path(self.env['OXPINYIN_ORACLE_ENV']).exists())
 
         def verified_model(self):
             model = provision.images.model_cache(self.env)
@@ -824,7 +870,7 @@ elif name in ('curl','apt-get','sudo'):
         def test_cold_no_pull_unrecorded_library_is_rejected(self):
             self.verified_model()
             self.env.update(FAKE_POOL='1', FAKE_RUNTIME_READY='1')
-            done = self.run_entry(['--cells', 'bdb', '--no-pull', '--jobs', '1'])
+            done = self.run_entry(['oracle', '--cells', 'bdb', '--no-pull', '--jobs', '1'])
             self.assertEqual(done.returncode, 1, done.stderr.decode())
             self.assertIn(b'stale pin/recipe or damaged build provenance', done.stderr)
             cache = provision.images.provision_cache(self.env, self.root)
@@ -844,7 +890,7 @@ elif name in ('curl','apt-get','sudo'):
                 else:
                     self.env.pop('OXPINYIN_PROXY_CA', None)
                 ready.unlink(missing_ok=True)
-                child = subprocess.Popen([*PROVISION_COMMAND, '--cells', 'bdb'], executable=self.bin / 'uv',
+                child = subprocess.Popen([*PROVISION_COMMAND, 'oracle', '--cells', 'bdb'], executable=self.bin / 'uv',
                                          cwd=self.root, env=self.env,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 self.addCleanup(lambda: child.poll() is not None or os.killpg(child.pid, signal.SIGKILL))
@@ -912,6 +958,16 @@ class RuntimeProvisionTests(unittest.TestCase):
             self.assertFalse(any(str(part).endswith(('z', ',z')) and ':' in str(part) for part in commands[ctr]), ctr)
         for ctr, command in commands.items():
             self.assertEqual(command[-3:], ['python3', '/opt/oracle-recipe/tools/oracle/build.py', '--libs-only'], ctr)
+        # The build trees persist in the provisioning cache, mounted at /build.
+        for ctr in ('docker', 'podman'):
+            self.assertIn(f'{self.work / "cache"}:/build:z', commands[ctr])
+        # Rootful docker runs the build as the invoking user; podman and Apple's container do not take --user.
+        if hasattr(os, 'getuid'):
+            user = commands['docker'][commands['docker'].index('--user') + 1]
+            self.assertEqual(user, f'{os.getuid()}:{os.getgid()}')
+            self.assertIn('HOME=/tmp', commands['docker'])
+        for ctr in ('podman', 'container'):
+            self.assertNotIn('--user', commands[ctr], ctr)
 
     def test_runtime_readiness_asks_each_runtime_its_own_way(self):
         for ctr, expected in (('docker', ['docker', 'info']), ('podman', ['podman', 'info']),
@@ -1050,7 +1106,7 @@ class RuntimeProvisionTests(unittest.TestCase):
                 self.assertFalse(any('rm -rf' in ' '.join(command) or 'export' in command for command in commands))
 
     def test_an_invalid_verdict_is_a_status_of_its_own(self):
-        with mock.patch.object(provision.Provision, 'options', lambda self, argv: None):
+        with mock.patch.object(provision.Provision, 'options', lambda self, argv, oracle=False: None):
             for check in ('libs', 'data'):
                 with self.subTest(check=check), mock.patch.object(provision.Provision, check + '_ok', return_value=False):
                     self.assertEqual(provision.main(['prefix-check', check, 'tkrzw', '/p', '/pin']), provision.PREFIX_INVALID)
@@ -1065,21 +1121,44 @@ class RuntimeProvisionTests(unittest.TestCase):
         with (mock.patch.object(provision.vcpkg, 'install'),
               mock.patch.object(provision.runtime, 'check', side_effect=provision.runtime.RuntimeRefused('loader failed')),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
-            service.sound_tkrzw()
+            service.install_tkrzw()
         self.assertIn('loader failed', error.getvalue())
         self.assertEqual(utility.read_text(), 'kept')
+
+    def test_native_provisioning_certifies_only_the_vcpkg_utility(self):
+        service = self.service('podman')
+        utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
+        utility.parent.mkdir(parents=True)
+        utility.write_text('utility')
+        with (mock.patch.object(provision.vcpkg, 'install') as install,
+              mock.patch.object(provision.runtime, 'check', return_value=Path('/verified/libtkrzw.so.1')) as check):
+            service.install_tkrzw()
+        install.assert_called_once()
+        self.assertEqual([call.args[2:4] for call in check.call_args_list], [('subject', utility)])
+        self.assertTrue(service.tkrzw_local)
 
     def test_each_tkrzw_binary_must_load_the_library(self):
         for missing, results in (('subject', [None]), ('pin', [Path('/verified/libtkrzw.so.1'), None])):
             with self.subTest(missing=missing):
                 service = self.service('podman')
-                with (mock.patch.object(provision.vcpkg, 'install'),
-                      mock.patch.object(provision.runtime, 'check', side_effect=results) as check,
+                utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
+                utility.parent.mkdir(parents=True, exist_ok=True)
+                utility.write_text('utility')
+                with (mock.patch.object(provision.runtime, 'check', side_effect=results) as check,
                       contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
-                    service.sound_tkrzw()
+                    service.certify_tkrzw()
                 self.assertIn(f'{missing} binary does not load libtkrzw', error.getvalue())
                 self.assertEqual(check.call_count, len(results))
                 self.assertFalse(service.tkrzw_local)
+
+    def test_the_environment_file_step_needs_the_native_tkrzw_install(self):
+        service = self.service('podman')
+        with (mock.patch.object(provision.runtime, 'check') as check,
+              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
+            service.certify_tkrzw()
+        self.assertIn('missing vcpkg utility', error.getvalue())
+        self.assertIn('run just provision', error.getvalue())
+        check.assert_not_called()
 
     def test_valgrind_ext4_and_dump_utilities_off_linux(self):
         for host in ('Darwin', 'Windows'):
@@ -1114,7 +1193,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         self.assertIn('missing: db5.3_dump kchashmgr\nrun as root: apt-get install -y db5.3-util kyotocabinet-utils',
                       error.getvalue())
 
-    def test_provision_and_provision_oracle_share_the_keyed_entries_of_one_root(self):
+    def test_provision_and_provision_oracle_use_the_keyed_entries_of_one_root(self):
         env = {'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')}
         service = provision.Provision(root=ROOT, env=env)
         self.assertEqual(service.cache, provision.images.provision_cache(env))
@@ -1129,45 +1208,43 @@ class RuntimeProvisionTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, 'OXPINYIN_CACHE must name an absolute'):
             service.cache
 
-    def test_cache_dir_names_the_provisioning_cache_only_inside_the_image(self):
+    def test_cache_dir_is_no_option(self):
         service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')})
-        with contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished) as raised:
-            service.options(['--cache-dir', '/provision'])
-        self.assertEqual((raised.exception.status, error.getvalue()), (2, 'unknown option: --cache-dir\n'))
-        with contextlib.suppress(Finished):
-            service.options(['--cache-dir', '/provision'], in_image=True)
-        self.assertEqual(service.cache, Path('/provision'))
-        self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
+        for oracle in (False, True):
+            with (self.subTest(oracle=oracle), contextlib.redirect_stderr(io.StringIO()) as error,
+                  self.assertRaises(Finished) as raised):
+                service.options(['--cache-dir', '/provision'], oracle=oracle)
+            self.assertEqual((raised.exception.status, error.getvalue()), (2, 'unknown option: --cache-dir\n'))
+        self.assertEqual(service.cache, provision.images.provision_cache(service.env))
 
-    def test_provision_oracle_runs_only_where_the_deps_image_marker_is(self):
-        marker = self.work / 'version-manifest.json'
-        for present in (False, True):
-            if present:
-                marker.write_text('{}')
-            service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')})
-            with (self.subTest(present=present), mock.patch.object(provision.images, 'DEPS_MARKER', marker),
-                  mock.patch.object(service, 'refuse_overrides'), mock.patch.object(service, 'libraries') as libraries,
-                  mock.patch.object(service, 'data_ok', return_value=True),
-                  contextlib.redirect_stderr(io.StringIO()) as error):
-                if present:
-                    self.assertEqual(service.oracle(['--cache-dir', str(self.work / 'provision'), '--cells', 'tkrzw']), 0)
-                    libraries.assert_called_once_with()
-                else:
-                    with self.assertRaises(Finished):
-                        service.oracle(['--cache-dir', str(self.work / 'provision')])
-                    self.assertIn('provision oracle runs locally inside just provision-oracle', error.getvalue())
-                    libraries.assert_not_called()
+    def test_provision_oracle_is_local_only(self):
+        service = provision.Provision(root=ROOT, env={'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root'),
+                                                      'GITHUB_ACTIONS': 'true'})
+        with (mock.patch.object(service, 'proxy_ca') as proxy_ca, contextlib.redirect_stderr(io.StringIO()) as error,
+              self.assertRaises(Finished) as raised):
+            service.oracle_setup(['--cells', 'tkrzw'])
+        self.assertEqual(raised.exception.status, 2)
+        self.assertIn('provision-oracle is local-only', error.getvalue())
+        proxy_ca.assert_not_called()
+
+    def test_native_provisioning_reads_no_oracle_platform(self):
+        with mock.patch.object(provision.platform, 'machine', return_value='riscv64'):
+            service = self.service('docker')
+            service.platform = ''
+            service.options(['--dev-tools'])
+        self.assertTrue(service.dev_tools)
+        self.assertEqual(service.platform, '')
 
     def test_the_platform_comes_from_the_host_architecture_on_every_os(self):
         for machine, expected in (('x86_64', 'linux/amd64'), ('AMD64', 'linux/amd64'), ('aarch64', 'linux/arm64'),
                                   ('ARM64', 'linux/arm64')):
             with self.subTest(machine=machine), mock.patch.object(provision.platform, 'machine', return_value=machine):
                 service = self.service('docker')
-                service.options(['--cells', 'tkrzw'])
+                service.options(['--cells', 'tkrzw'], oracle=True)
                 self.assertEqual(service.platform, expected)
         with (mock.patch.object(provision.platform, 'machine', return_value='riscv64'),
               contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished) as raised):
-            self.service('docker').options([])
+            self.service('docker').options([], oracle=True)
         self.assertEqual(raised.exception.status, 2)
 
 
