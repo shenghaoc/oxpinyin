@@ -707,6 +707,7 @@ impl Db {
     /// An in-memory `StashDB` opened as `"-"` with the pin's mode, the
     /// container libpinyin's KC user bigram lives in between its snapshot
     /// load and dump (`ngram_kyotodb.cpp:58-60`).
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn open_stash() -> Result<Self, StoreError> {
         Self::open(Path::new("-"), DbType::Stash, false, true)
     }

@@ -61,7 +61,7 @@ where
     /// (`crate::engine::nbest`). Rows survive further typing and selections
     /// until the next [`Session::guess_sentence`] or [`Session::reset`] —
     /// upstream's `m_nbest_results` is cleared nowhere else — and
-    /// [`Session::candidates`] prepends them while they live.
+    /// `Session::candidates` prepends them while they live.
     ///
     /// The walk always covers the whole matrix the last parse filled, with
     /// the constraint store forcing the chosen spans, as the pin's

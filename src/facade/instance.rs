@@ -374,6 +374,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// phrase or a span outside the matrix
     /// (`crate::engine::Session::train_nbest_preflight`) — after the
     /// same directory gate. Reads only.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
         if !self.user.has_user_directory() {

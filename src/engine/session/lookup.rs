@@ -789,6 +789,7 @@ where
     /// failure. The list then stays stale, so the next
     /// `refresh_candidates` or `Space` retries the
     /// scan.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn refresh_candidates(&mut self) -> Result<(), EngineError> {
         if self.lookup.stale
             && let Err(error) = self.refresh()

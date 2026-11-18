@@ -463,6 +463,7 @@ impl WriteStore for BdbStore {
 
     /// The user bigram, created as `Bigram::save_db` creates it: a
     /// `DB_HASH` file, mode 0600 (`ffi::USER_FILE_MODE`).
+    #[cfg(any(test, feature = "test-hooks"))]
     fn create_user_hash(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?,
@@ -532,6 +533,7 @@ impl WriteStore for BdbStore {
         self.db.sync()
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     fn compact(&mut self) -> Result<(), StoreError> {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);

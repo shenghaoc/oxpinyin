@@ -8,6 +8,7 @@
 use crate::store::StoreError;
 
 /// Encode phrase text as the pin's little-endian UCS-4 key.
+#[cfg(any(test, feature = "test-hooks"))]
 #[must_use]
 pub fn key(text: &str) -> Vec<u8> {
     text.chars()

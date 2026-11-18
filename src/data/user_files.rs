@@ -31,6 +31,7 @@ use crate::data::table_info::FileName;
 use crate::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::store::DEFAULT_STORE_DB_FORMAT;
 
 /// A `MemoryChunk` file that does not frame a valid payload.
@@ -269,6 +270,7 @@ pub struct SystemVersions {
 impl SystemVersions {
     /// This build's identity — the versions of the system `table.conf`
     /// it opens, paired with its own backend token.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn for_this_build(binary_format_version: u32, model_data_version: u32) -> Self {
         Self {
@@ -466,6 +468,7 @@ impl UserTableInfo {
 
     /// The four lines [`Self::save`] writes, in its order, for composing
     /// fixtures; the save itself prints them with the pin's `fprintf`.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn to_text(&self) -> String {
         let database_format = self.database_format.as_deref().unwrap_or("UNKNOWN");

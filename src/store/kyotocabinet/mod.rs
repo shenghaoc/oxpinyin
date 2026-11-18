@@ -35,7 +35,7 @@
 //! Commits end with `synchronize(false)`: the commit is pushed to the
 //! operating system, so another process — or another handle in this one
 //! — observes it and it survives a process crash, but it is not yet on
-//! the device. [`WriteStore::compact`] is the hard `synchronize(true)`,
+//! the device. `WriteStore::compact` is the hard `synchronize(true)`,
 //! the one point at which a file-backed store reaches stable storage.
 //! The tkrzw backend documents the same split and the measurement
 //! behind it.
@@ -371,6 +371,7 @@ impl crate::store::RawReadStore for KcStore {
         })
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     fn open_user_bigram(path: &Path) -> Result<Self, crate::store::StoreError> {
         // Kyoto Cabinet's user bigram is a snapshot stream, not a hash
         // file (`ngram_kyotodb.cpp:54-64`): open an in-memory stash and
@@ -491,6 +492,7 @@ impl WriteStore for KcStore {
         db.dump_snapshot(path)
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
         // The inverse of `open_user_bigram`, mirroring the pin's
         // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`) — unlink then
@@ -578,6 +580,7 @@ impl WriteStore for KcStore {
         self.db.sync(false)
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     fn compact(&mut self) -> Result<(), StoreError> {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);

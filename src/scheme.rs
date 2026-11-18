@@ -277,6 +277,7 @@ impl DoublePinyinParser {
     /// `Customized`, mirroring upstream's lack of a compiled table there
     /// (`src/storage/pinyin_parser2.cpp:610-612`) without the abort.
     /// A successful switch clears the suppressed-fallback flag.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
         if scheme == DoublePinyinScheme::Customized {
             return false;
@@ -287,6 +288,7 @@ impl DoublePinyinParser {
     }
 
     /// The scheme in force.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn scheme(self) -> DoublePinyinScheme {
         self.scheme

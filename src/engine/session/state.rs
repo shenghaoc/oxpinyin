@@ -62,7 +62,7 @@ where
     /// lives in these canonical bytes: a replacement that passes those
     /// checks but does not extend the covered span — a scheme switch
     /// that decodes the same codes to a different spelling, any
-    /// transform divergence — must reconcile, or [`Session::selected_text`]
+    /// transform divergence — must reconcile, or `Session::selected_text`
     /// retains stale text alongside the new raw input.
     pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
         text.as_bytes()
@@ -109,7 +109,8 @@ where
     /// corpus pins were captured without a sentence guess.
     ///
     /// Under `Session::set_defer_list_builds`, call
-    /// [`Session::refresh_candidates`] first.
+    /// `Session::refresh_candidates` first.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn candidates(&self) -> &CandidateList {
         &self.lookup.candidates
@@ -178,6 +179,7 @@ where
     /// candidate's span (separator run included), never past the raw
     /// input. The C ABIs do not answer it: a choose answers from the row's
     /// own `m_begin` and `m_end` as the pin does.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn composition_offset(&self) -> usize {
         self.record.consumed()
@@ -275,7 +277,7 @@ where
     /// not extend the covered selection span — a clamp below it, or a
     /// byte divergence inside it — reconciles the record from a temporary
     /// constraint copy (`Session::reconcile_replaced_selection`), so
-    /// [`Session::selected_text`] retains only text valid for the current
+    /// `Session::selected_text` retains only text valid for the current
     /// input.
     ///
     /// Keeps every character: the pin's parser accepts any input string
@@ -472,7 +474,7 @@ where
     /// Refreshes a composing session, exactly `set_options`'s contract:
     /// the cached list's order and LONGER row are functions of the word.
     /// Under `Session::set_defer_list_builds` a change leaves the list
-    /// stale instead, for [`Session::refresh_candidates`]: the pin takes the
+    /// stale instead, for `Session::refresh_candidates`: the pin takes the
     /// word as a `pinyin_guess_candidates` argument and builds once under it
     /// (`pinyin.cpp:2184-2198` at 074a2219), as `Session::candidates_at`
     /// does.
@@ -539,7 +541,7 @@ where
     /// the parse seams and the guesses still build the scan matrix, so its
     /// errors surface where they did, and all three leave the list stale.
     /// A reader of [`Session::candidates`] or [`Session::full_parsed_len`] calls
-    /// [`Session::refresh_candidates`] first. A failure of the deferred build then surfaces from that call
+    /// `Session::refresh_candidates` first. A failure of the deferred build then surfaces from that call
     /// rather than from the parse or the guess. This is the C facades'
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`
     /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from

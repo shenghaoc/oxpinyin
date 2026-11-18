@@ -39,8 +39,9 @@ capi = []
 tools = []
 # Rust-visible facade for the in-tree fuzz harness only. Off by default:
 # the default build carries no Rust-visible facade (the supported external
-# interfaces are the C ABI alone).
-fuzz-api = []
+# interfaces are the C ABI alone). It turns on oxpinyin's test-hooks for
+# the facade's test-only reads.
+fuzz-api = ["oxpinyin/test-hooks"]
 # Backend selection (one backend per binary; see oxpinyin's
 # [features] for the model and precedence). Each peer feature forwards to
 # oxpinyin. The peer features stay on this crate because build.rs reads

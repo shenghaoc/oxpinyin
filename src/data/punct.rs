@@ -11,14 +11,17 @@
 //!
 //! Every lookup is one point read; nothing is walked at open. Upstream's
 //! `pinyin_init` ignores a failed `PunctTable::attach`, so a missing or
-//! unopenable file is an empty table ([`PunctTable::open`]).
+//! unopenable file is an empty table (`PunctTable::open`).
 
 use std::path::Path;
 
 use crate::PhraseText;
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::store::{DefaultStore, RawReadStore};
 
-use crate::data::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::data::chewing_table::RawChewingDbm;
+use crate::data::chewing_table::{ChewingDbm, DefaultDbm};
 use crate::data::dict::DictError;
 // The key and value layout this reader shares with `gen_binary_files`'s
 // writer: one written copy (`crate::data::row_format`).
@@ -26,6 +29,7 @@ use crate::data::row_format::encode_token_key;
 use crate::data::row_format::punct::decode_puncts;
 #[cfg(test)]
 use crate::data::row_format::punct::encode_puncts;
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::data::table::TableError;
 
 /// The read-only punctuation table over a DBM handle.
@@ -113,6 +117,7 @@ impl PunctTable {
     /// # Errors
     ///
     /// Returns [`DictError`] when the file cannot be opened read-only.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn open(path: &Path) -> Result<Self, DictError> {
         let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
         Ok(Self::new(RawChewingDbm::new(store)))
