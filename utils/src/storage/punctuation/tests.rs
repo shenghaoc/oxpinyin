@@ -1,9 +1,9 @@
 use super::*;
-use oxpinyin::store::{DefaultStore, RawReadStore, WriteStore};
-use oxpinyin::user::data::{
+use oxpinyin::data::{
     PunctTable,
     row_format::punct::{decode_puncts, encode_puncts},
 };
+use oxpinyin::store::{DefaultStore, RawReadStore, WriteStore};
 use std::ops::Bound;
 
 #[test]

@@ -120,7 +120,7 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
         |user| {
             let format = format!(
                 "database format:{}",
-                oxpinyin::user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::data::DEFAULT_STORE_DB_FORMAT
             );
             let system = conf_system(
                 user.parent().expect("scratch"),
@@ -145,7 +145,7 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
             let text = std::fs::read_to_string(&path).expect("user.conf");
             let format = format!(
                 "database format:{}",
-                oxpinyin::user::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::data::DEFAULT_STORE_DB_FORMAT
             );
             std::fs::write(&path, text.replace(&format, "database format:LMDB"))
                 .expect("write user.conf");

@@ -29,9 +29,9 @@
 
 use std::ffi::{CStr, CString, OsString};
 
+use oxpinyin::data::table_info::{TableConf, TableConfError};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
-use oxpinyin::user::data::table_info::{TableConf, TableConfError};
 
 pub mod dbm;
 pub mod export_interpolation;

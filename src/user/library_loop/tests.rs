@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::user::data::chunk_format::build_memory_chunk;
-use crate::user::data::chunk_write::{ChunkItem, build_chunk};
-use crate::user::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
+use crate::data::chunk_format::build_memory_chunk;
+use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
 use super::*;
 use crate::user::persistence::{
@@ -88,7 +88,7 @@ impl Fixture {
         let versions = SystemVersions::from_conf(&conf);
         let check = check_format(&self.user, &versions, &layout, law).expect("check_format");
         let mut originals = system_originals(
-            crate::user::data::phrase_libraries::PhraseLibraries::empty(),
+            crate::data::phrase_libraries::PhraseLibraries::empty(),
             layout,
         );
         let mut profile = begin_session_profile(&self.user, &check).expect("the user tables");
@@ -293,7 +293,7 @@ fn the_loop_without_a_profile_stops_at_the_first_fault() {
     let conf = fixture.conf();
     let rows = LibraryLoopRows::new(&fixture.system, &conf, None);
     let mut originals = system_originals(
-        crate::user::data::phrase_libraries::PhraseLibraries::empty(),
+        crate::data::phrase_libraries::PhraseLibraries::empty(),
         UserFileLayout::from_conf(&conf),
     );
     let stop = rows.map_libraries(&mut originals);

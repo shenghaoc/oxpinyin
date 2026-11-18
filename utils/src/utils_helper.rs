@@ -3,10 +3,10 @@
 use std::ffi::{CStr, CString, c_int};
 use std::path::Path;
 
+use oxpinyin::data::PhraseLibraries;
+use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary};
+use oxpinyin::data::table_info::{FileName, FileType, TableConf};
 use oxpinyin::input::tool;
-use oxpinyin::user::data::PhraseLibraries;
-use oxpinyin::user::data::phrase_library::{LibraryError, PhraseLibrary};
-use oxpinyin::user::data::table_info::{FileName, FileType, TableConf};
 
 pub mod taglib;
 

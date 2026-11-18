@@ -1,7 +1,7 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
-use crate::user::data::chunk_write::sub_phrase_index_sections;
-use crate::user::data::phrase_library::PhraseItemView;
+use crate::data::chunk_write::sub_phrase_index_sections;
+use crate::data::phrase_library::PhraseItemView;
 
 use crate::user::user_index::UserIndex;
 use crate::user::user_phrase_table::UserPhraseTable;
@@ -227,7 +227,7 @@ impl UserLibrary {
     }
 
     fn replacement(&self, slot: u32, bytes: &[u8]) -> Result<Replacement, String> {
-        if slot > crate::user::data::chunk_write::PHRASE_MASK {
+        if slot > crate::data::chunk_write::PHRASE_MASK {
             return Err("user phrase slot exceeds PHRASE_MASK".into());
         }
         let view = PhraseItemView::from_bytes(bytes).ok_or("invalid user phrase body")?;
@@ -451,7 +451,7 @@ impl UserLibrary {
     #[cfg(test)]
     pub(crate) fn load(file: &[u8]) -> Result<Self, String> {
         let payload =
-            crate::user::data::user_files::read_chunk_payload(file).map_err(|e| e.to_string())?;
+            crate::data::user_files::read_chunk_payload(file).map_err(|e| e.to_string())?;
         Self::load_payload(payload)
     }
 
@@ -558,7 +558,7 @@ impl UserLibrary {
         // holds the wrapped sum of the items a compaction copied.
         let mut total = 0_u32;
         for (slot, view) in self.items() {
-            if slot > crate::user::data::chunk_write::PHRASE_MASK {
+            if slot > crate::data::chunk_write::PHRASE_MASK {
                 return Err(format!(
                     "chunk write error: chunk slot {slot:#010x} exceeds PHRASE_MASK"
                 ));
@@ -572,8 +572,7 @@ impl UserLibrary {
         }
         payload[..4].copy_from_slice(&total.to_le_bytes());
         payload.push(b'#');
-        crate::user::data::chunk_format::build_memory_chunk_owned(payload)
-            .map_err(|e| e.to_string())
+        crate::data::chunk_format::build_memory_chunk_owned(payload).map_err(|e| e.to_string())
     }
 }
 

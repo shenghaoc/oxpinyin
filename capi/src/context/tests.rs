@@ -161,7 +161,7 @@ fn a_user_session_fault_aborts_the_init() {
 fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk(probe.path())
+    oxpinyin::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// A context over a private system directory, with its user dir.
@@ -295,7 +295,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     assert!(
         user_dir
             .path
-            .join(oxpinyin::user::data::user_files::UserDbm::Bigram.file_name())
+            .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
             .exists(),
         "the dirty save wrote the user bigram"
     );

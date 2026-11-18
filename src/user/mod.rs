@@ -35,7 +35,6 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
-pub mod data;
 pub mod phrase;
 pub mod phrase_table;
 pub mod seed;

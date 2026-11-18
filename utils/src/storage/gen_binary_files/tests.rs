@@ -1,5 +1,5 @@
 use super::*;
-use oxpinyin::user::data::phrase_library::PhraseLibrary;
+use oxpinyin::data::phrase_library::PhraseLibrary;
 use std::{ffi::OsStr, path::Path};
 
 fn open_table(path: &Path) -> TableFile {
@@ -28,7 +28,7 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let mut libraries: [Option<ChunkMap>; 16] = Default::default();
     load_phrase_index(1, &mut file, &mut libraries, PhoneticType::Pinyin);
     let items: Vec<_> = libraries[1].take().unwrap().into_iter().collect();
-    let frame = oxpinyin::user::data::chunk_write::build_chunk(&items).unwrap();
+    let frame = oxpinyin::data::chunk_write::build_chunk(&items).unwrap();
     oxpinyin::input::chunk::save(&chunk, &frame).unwrap();
     let library = PhraseLibrary::load_heap(&chunk).unwrap();
     let single = library.item(16777222).unwrap();

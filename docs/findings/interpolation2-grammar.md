@@ -20,7 +20,7 @@ of that tagger, `oxpinyin_utils::taglib`
 The tagger's character steps and warnings are GLib's, through the tool
 boundary (`oxpinyin::input::tool`), including `g_unichar_isgraph`
 ([external I/O boundary](external-io-boundary.md)). This is an input-text
-grammar, not an on-disk row layout, so `oxpinyin::user::data::row_format` does
+grammar, not an on-disk row layout, so `oxpinyin::data::row_format` does
 not cover it.
 
 ## Scope: build-time tools, not the runtime

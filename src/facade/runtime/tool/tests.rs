@@ -3,7 +3,7 @@
 
 use crate::OptionBits;
 
-use crate::user::data::table_info::TableConf;
+use crate::data::table_info::TableConf;
 
 use crate::engine::tool::prepare_lookup;
 
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 fn embedded_nul_lookup_keeps_the_original_terminal_column() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::user::data::DEFAULT_STORE_EXT);
+        .join(crate::data::DEFAULT_STORE_EXT);
     let conf_path = crate::input::c_path(&data.join("table.conf")).unwrap();
     let conf = TableConf::load(&conf_path).unwrap();
     let lookup = Lookup::open(&data, &conf, true, true).unwrap_or_else(|_| panic!("W3 lookup"));

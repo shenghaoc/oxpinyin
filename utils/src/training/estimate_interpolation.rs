@@ -11,8 +11,8 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use oxpinyin::data::table_info::FileType;
 use oxpinyin::input::tool;
-use oxpinyin::user::data::table_info::FileType;
 
 use crate::storage::dbm::Hash;
 use crate::storage::libraries::Libraries;

@@ -29,17 +29,17 @@ use std::path::{Path, PathBuf};
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 
-use crate::engine::{EngineError, Session, SessionSettings, StoragePaths};
-pub(crate) use crate::user::data::phrase_library::{
+pub(crate) use crate::data::phrase_library::{
     LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
 };
-pub(crate) use crate::user::data::table_info::{FileType, TableConfSite};
-pub(crate) use crate::user::data::table_info::{TableConf, TableConfError};
-use crate::user::data::user_files::{SystemVersions, UserFileLayout};
-use crate::user::data::{
+pub(crate) use crate::data::table_info::{FileType, TableConfSite};
+pub(crate) use crate::data::table_info::{TableConf, TableConfError};
+use crate::data::user_files::{SystemVersions, UserFileLayout};
+use crate::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary,
 };
+use crate::engine::{EngineError, Session, SessionSettings, StoragePaths};
 use crate::user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
     UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
@@ -322,8 +322,8 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::ChewingKey> {
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
     system: SystemDictionary<
-        &'a crate::user::data::phrase_libraries::PhraseLibraries,
-        &'a crate::user::data::dict::SystemTables,
+        &'a crate::data::phrase_libraries::PhraseLibraries,
+        &'a crate::data::dict::SystemTables,
     >,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
@@ -601,8 +601,8 @@ impl<'a> RuntimeDict<'a> {
     pub fn system(
         &self,
     ) -> &SystemDictionary<
-        &'a crate::user::data::phrase_libraries::PhraseLibraries,
-        &'a crate::user::data::dict::SystemTables,
+        &'a crate::data::phrase_libraries::PhraseLibraries,
+        &'a crate::data::dict::SystemTables,
     > {
         &self.system
     }
@@ -1290,8 +1290,8 @@ impl Dictionary for RuntimeDict<'_> {
 #[derive(Clone, Copy)]
 pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<
-        &'a crate::user::data::phrase_libraries::PhraseLibraries,
-        &'a crate::user::data::lm::BigramTables,
+        &'a crate::data::phrase_libraries::PhraseLibraries,
+        &'a crate::data::lm::BigramTables,
         &'a Cell<u32>,
     >,
     user: &'a UserStore,
@@ -1470,8 +1470,8 @@ pub type RuntimeSession<'a> =
 /// training and saving.
 pub struct Runtime {
     paths: StoragePaths,
-    system: crate::user::data::dict::SystemTables,
-    model: crate::user::data::lm::BigramTables,
+    system: crate::data::dict::SystemTables,
+    model: crate::data::lm::BigramTables,
     user: UserStore,
     conf: TableConf,
     addons: RefCell<AddonSet>,
@@ -1718,7 +1718,7 @@ impl Runtime {
         // as freeing the sub-index does upstream.
         let library_mask = Cell::new(0);
         let mut originals = crate::user::system_originals(
-            crate::user::data::phrase_libraries::PhraseLibraries::empty(),
+            crate::data::phrase_libraries::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
         );
         // The library loop: each default row is judged, mapped and merged
@@ -1786,7 +1786,7 @@ impl Runtime {
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
-        let mut lm = crate::user::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+        let mut lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
@@ -1818,7 +1818,7 @@ impl Runtime {
         })
     }
 
-    fn libraries(&self) -> &crate::user::data::phrase_libraries::PhraseLibraries {
+    fn libraries(&self) -> &crate::data::phrase_libraries::PhraseLibraries {
         self.user.originals().phrase_libraries()
     }
 
@@ -2030,7 +2030,7 @@ impl Runtime {
     pub(crate) fn check_system_libraries(
         &self,
         only: Option<u8>,
-    ) -> crate::user::data::phrase_libraries::LibraryCheck {
+    ) -> crate::data::phrase_libraries::LibraryCheck {
         self.libraries().check_now(
             |nibble| {
                 only.is_some()
@@ -2087,7 +2087,7 @@ impl Runtime {
         let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
             return Ok(SaveBaseline::Keep);
         };
-        match crate::user::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
+        match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
             Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
                 Err(SaveRemapFault::ChunkHeaderRead)
@@ -2176,7 +2176,7 @@ impl Runtime {
             if !libraries.is_loaded(index) {
                 continue;
             }
-            match crate::user::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
+            match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
                 Ok(library) => {
                     walk.originals.insert_mapping(index, path, library);
                     return Some(RemapStep::Mapped(index));

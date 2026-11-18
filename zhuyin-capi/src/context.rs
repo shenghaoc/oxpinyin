@@ -50,8 +50,8 @@ pub unsafe extern "C" fn zhuyin_init(
         // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
         // `setlocale` and failed `fopen("")` with its `open  failed.` line,
         // then the init's `load  failed!` (`table_info.cpp:197-202`).
-        let _ = oxpinyin::user::data::table_info::TableConf::load(c"");
-        oxpinyin::user::data::c_stderr::table_conf_load_failed(None);
+        let _ = oxpinyin::data::table_info::TableConf::load(c"");
+        oxpinyin::data::c_stderr::table_conf_load_failed(None);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
@@ -82,7 +82,7 @@ fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::P
     error.refuse_init(
         system_path,
         "zhuyin_init",
-        |path| oxpinyin::user::data::c_stderr::table_conf_load_failed(Some(path)),
+        |path| oxpinyin::data::c_stderr::table_conf_load_failed(Some(path)),
         crate::ffi::log_warning,
     );
 }

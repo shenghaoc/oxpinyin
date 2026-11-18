@@ -15,8 +15,8 @@
 use std::cell::Cell;
 
 use crate::PhraseText;
-use crate::user::data::phrase_libraries::PhraseLibraries;
-use crate::user::data::phrase_library::PhraseItemView;
+use crate::data::phrase_libraries::PhraseLibraries;
+use crate::data::phrase_library::PhraseItemView;
 
 use crate::user::store::{Token, UserStore};
 

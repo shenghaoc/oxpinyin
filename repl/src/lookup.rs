@@ -18,7 +18,7 @@ fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
     Lookup::open(data, &conf, phonetic, bigram).unwrap_or_else(|error| {
         if matches!(
             error.cause,
-            oxpinyin::user::data::phrase_library::LibraryError::Row(_)
+            oxpinyin::data::phrase_library::LibraryError::Row(_)
         ) {
             tool::abort();
         }

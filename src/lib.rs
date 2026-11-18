@@ -22,6 +22,8 @@ mod chewing_key;
 #[forbid(unsafe_code)]
 mod chewing_key_data;
 #[forbid(unsafe_code)]
+pub mod data;
+#[forbid(unsafe_code)]
 pub mod direct;
 #[forbid(unsafe_code)]
 pub mod engine;

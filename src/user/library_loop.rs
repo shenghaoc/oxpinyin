@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use crate::user::data::phrase_library::LibraryError;
-use crate::user::data::table_info::{DefaultRowStep, TableConf, TableConfSite};
+use crate::data::phrase_library::LibraryError;
+use crate::data::table_info::{DefaultRowStep, TableConf, TableConfSite};
 
 use crate::user::persistence::{SessionProfile, SystemOriginals};
 use crate::user::replay::JournalFault;

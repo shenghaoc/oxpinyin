@@ -1,8 +1,8 @@
 //! Session phrase operations over the arenas and the live system items.
 
 use super::*;
-use crate::user::data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
-use crate::user::data::phrase_library::PhraseItemView;
+use crate::data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
+use crate::data::phrase_library::PhraseItemView;
 use crate::user::replay::UnigramAdd;
 use crate::user::user_library::{SessionPhrases, UserLibrary};
 

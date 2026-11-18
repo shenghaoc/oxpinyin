@@ -1,9 +1,9 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
 use crate::{load_text_tables, present};
+use oxpinyin::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
+use oxpinyin::data::{chewing_index_key as index_key, search_chewing_row as search_row};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::table_tests as output;
-use oxpinyin::user::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
-use oxpinyin::user::data::{chewing_index_key as index_key, search_chewing_row as search_row};
 use oxpinyin::user::tool::Index;
 use oxpinyin::{ChewingKey, OptionBits};
 use oxpinyin_utils::storage::dbm::Tree;

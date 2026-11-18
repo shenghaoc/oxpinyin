@@ -1,6 +1,6 @@
 use super::super::counts::Counts;
 use super::EvalLanguageModel;
-use oxpinyin::user::data::PINNED_LAMBDA;
+use oxpinyin::data::PINNED_LAMBDA;
 
 fn model() -> EvalLanguageModel {
     let mut counts = Counts::default();

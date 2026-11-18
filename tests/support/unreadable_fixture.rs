@@ -1,7 +1,7 @@
 //! Native unreadable candidate fixtures shared by the runtime and C tests.
 use oxpinyin::ChewingKey;
+use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 use oxpinyin::store::{DefaultStore, WriteStore, WriteTxn};
-use oxpinyin::user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 use std::{fs, path::Path};
 
 #[derive(Clone, Copy)]
@@ -29,7 +29,7 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         } else {
             "../fixtures/w3"
         })
-        .join(oxpinyin::user::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::data::DEFAULT_STORE_EXT);
     for name in [
         "table.conf",
         "phrase_index.bin",
@@ -62,11 +62,11 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
     }
 
     let index_path = if matches!(case, Case::Fallback) {
-        let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
-        let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
+        let conf = oxpinyin::data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
+        let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
         fs::write(
             user.path().join("user.conf"),
-            oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
+            oxpinyin::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
         )
         .unwrap();
         user.path().join("user_pinyin_index.bin")

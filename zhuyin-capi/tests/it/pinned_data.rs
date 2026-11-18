@@ -110,7 +110,7 @@ fn items_system(parent: &Path, items: &[(&[u32], &[u16], u32)], total: u32) -> P
     std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
     std::fs::write(
         &gb_char,
-        oxpinyin::user::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("gb_char.bin");
     for (name, rows) in [

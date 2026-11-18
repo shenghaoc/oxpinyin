@@ -13,16 +13,16 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
 
+use oxpinyin::data::chunk_write::{ChunkItem, PHRASE_MASK};
+use oxpinyin::data::row_format::phrase_index::encode_tokens;
+use oxpinyin::data::row_format::pinyin_index::{
+    PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
+};
+use oxpinyin::data::table_entries::exact_compare2;
+use oxpinyin::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OptionValue;
 use oxpinyin::input::tool::storage::TableFile;
-use oxpinyin::user::data::chunk_write::{ChunkItem, PHRASE_MASK};
-use oxpinyin::user::data::row_format::phrase_index::encode_tokens;
-use oxpinyin::user::data::row_format::pinyin_index::{
-    PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
-};
-use oxpinyin::user::data::table_entries::exact_compare2;
-use oxpinyin::user::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
 
 use crate::storage::dbm::Tree;
 use crate::storage::libraries::items_of;
@@ -242,7 +242,7 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
         // `assert(NULL != m_db)`.
         tool::abort();
     };
-    let key = oxpinyin::user::data::row_format::phrase_index::encode_ucs4_key_scalars(phrase);
+    let key = oxpinyin::data::row_format::phrase_index::encode_ucs4_key_scalars(phrase);
     match table.get(&key) {
         None => {
             let _ = table.put(&key, &token.to_le_bytes());
@@ -255,7 +255,7 @@ fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
             }
         }
         Some(value) => {
-            let mut tokens = oxpinyin::user::data::row_format::phrase_index::decode_tokens(&value)
+            let mut tokens = oxpinyin::data::row_format::phrase_index::decode_tokens(&value)
                 .unwrap_or_else(|_| tool::abort());
             if let Err(position) = tokens.binary_search(&token) {
                 tokens.insert(position, token);
@@ -381,8 +381,7 @@ fn save_chunks(
                     .iter()
                     .map(|(slot, item)| (*slot, item.clone()))
                     .collect();
-                oxpinyin::user::data::chunk_write::build_chunk(&items)
-                    .unwrap_or_else(|_| tool::abort())
+                oxpinyin::data::chunk_write::build_chunk(&items).unwrap_or_else(|_| tool::abort())
             }
             // The pin stores an empty `MemoryChunk` when the library never
             // loaded: the eight-byte zero header.

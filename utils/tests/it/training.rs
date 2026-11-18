@@ -11,9 +11,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use oxpinyin::data::row_format::encode_token_key;
+use oxpinyin::data::single_gram::decode_single_gram;
 use oxpinyin::store::{DefaultStore, RawReadStore};
-use oxpinyin::user::data::row_format::encode_token_key;
-use oxpinyin::user::data::single_gram::decode_single_gram;
 
 /// The repository root.
 fn root() -> PathBuf {
@@ -24,7 +24,7 @@ fn root() -> PathBuf {
 fn fixture() -> PathBuf {
     root()
         .join("fixtures/w3")
-        .join(oxpinyin::user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::data::DEFAULT_STORE_EXT)
 }
 
 /// A private copy of [`fixture`].

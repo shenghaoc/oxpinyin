@@ -206,7 +206,7 @@ mod frozen {
                 .to_packed()
                 .to_le_bytes();
             for name in ["gb_char.bin", "addon.bin"] {
-                let library = oxpinyin::user::data::phrase_library::PhraseLibrary::open(
+                let library = oxpinyin::data::phrase_library::PhraseLibrary::open(
                     &directory.path().join(name),
                 )
                 .expect("generated phrase library");
@@ -251,7 +251,7 @@ mod frozen {
                     "ChewingLargeTable2::load_text:den4\t扥\t16777217\t1\n\
                      FacadePhraseIndex::load_text:den4\t扥\n",
                 );
-            let library = oxpinyin::user::data::phrase_library::PhraseLibrary::open(
+            let library = oxpinyin::data::phrase_library::PhraseLibrary::open(
                 &directory.path().join("gb_char.bin"),
             )
             .expect("generated phrase library");

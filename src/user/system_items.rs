@@ -1,6 +1,6 @@
 //! Live system items: each loaded system library's private buffer.
 
-use crate::user::data::chunk_write::ChunkItem;
+use crate::data::chunk_write::ChunkItem;
 
 use crate::user::persistence::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
