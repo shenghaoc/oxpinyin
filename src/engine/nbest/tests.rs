@@ -657,7 +657,6 @@ struct Fixed {
 
 impl LanguageModel for Fixed {
     type Error = EngineError;
-    type Token = PhraseToken;
 
     fn nbest_step_costs(
         &self,
@@ -757,7 +756,6 @@ fn a_model_without_step_costs_yields_no_rows() {
 fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
     struct UnigramOnly;
     impl LanguageModel for UnigramOnly {
-        type Token = PhraseToken;
         type Error = EngineError;
         fn nbest_step_costs(
             &self,
@@ -822,7 +820,6 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     }
     struct Pairwise<'a>(&'a Cell<bool>);
     impl LanguageModel for Pairwise<'_> {
-        type Token = PhraseToken;
         type Error = EngineError;
         fn nbest_step_costs(
             &self,
@@ -835,7 +832,6 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     }
     struct RowCached<'a>(&'a Cell<bool>);
     impl LanguageModel for RowCached<'_> {
-        type Token = PhraseToken;
         type Error = EngineError;
         fn nbest_step_costs_in_row(
             &self,
@@ -909,7 +905,6 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
 
     struct Sparse(RefCell<Vec<u32>>);
     impl LanguageModel for Sparse {
-        type Token = PhraseToken;
         type Error = EngineError;
 
         fn nbest_successors_in_row<'a>(
@@ -968,7 +963,6 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
 
     struct Rows(Option<MergedGram>);
     impl LanguageModel for Rows {
-        type Token = PhraseToken;
         type Error = EngineError;
 
         fn nbest_successors_in_row<'a>(
@@ -1049,7 +1043,6 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
     type Steps = Vec<(u32, Option<(u32, u32)>)>;
     struct Walked(RefCell<Steps>);
     impl LanguageModel for Walked {
-        type Token = PhraseToken;
         type Error = EngineError;
 
         fn nbest_successors_in_row<'a>(

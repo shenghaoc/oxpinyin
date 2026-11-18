@@ -66,12 +66,11 @@ impl PhraseList for RawDict {
 struct CheckedModel;
 
 impl LanguageModel for CheckedModel {
-    type Token = PhraseToken;
     type Error = &'static str;
 
     fn nbest_successors_in_row<'a>(
         &self,
-        _prev: &Self::Token,
+        _prev: &PhraseToken,
         _row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Err("read after check")
@@ -110,7 +109,6 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Recording {
-        type Token = PhraseToken;
         type Error = core::convert::Infallible;
 
         fn nbest_successors_in_row<'a>(
@@ -160,7 +158,6 @@ fn row_read_names_only_the_checked_read_failure() {
     );
     struct Unchecked;
     impl LanguageModel for Unchecked {
-        type Token = PhraseToken;
         type Error = &'static str;
     }
     assert!(matches!(
@@ -186,7 +183,6 @@ fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
 fn prefix_faults_follow_spans_before_predecessors() {
     struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
     impl LanguageModel for Ordered {
-        type Token = PhraseToken;
         type Error = &'static str;
 
         fn nbest_item_costs_in_row(
@@ -231,7 +227,6 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
 
     struct Missing(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Missing {
-        type Token = PhraseToken;
         type Error = core::convert::Infallible;
 
         fn nbest_successors_in_row<'a>(
@@ -278,12 +273,11 @@ struct Rows {
 }
 
 impl LanguageModel for Rows {
-    type Token = PhraseToken;
     type Error = core::convert::Infallible;
 
     fn nbest_successors_in_row<'a>(
         &self,
-        _: &Self::Token,
+        _: &PhraseToken,
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(
@@ -297,8 +291,8 @@ impl LanguageModel for Rows {
 
     fn nbest_item_costs_in_row(
         &self,
-        _: &Self::Token,
-        _: &Self::Token,
+        _: &PhraseToken,
+        _: &PhraseToken,
         item: Option<(u32, u32)>,
         _: &mut crate::model::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {

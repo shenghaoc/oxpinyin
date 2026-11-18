@@ -29,7 +29,7 @@ impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Offset-zero predecessor for candidate ranking and predicted bigram
@@ -723,7 +723,7 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Recomputes the candidate list for the current state.

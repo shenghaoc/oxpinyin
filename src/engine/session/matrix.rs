@@ -173,7 +173,7 @@ impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Whether the session's scan matrix carries the resplit and divided
@@ -242,7 +242,7 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Parses the raw input and keeps the result: every parse seam calls

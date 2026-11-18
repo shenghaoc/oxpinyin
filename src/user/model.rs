@@ -20,13 +20,12 @@ use crate::SENTENCE_START;
 use crate::user::store::{UserStore, UserStoreError};
 
 impl UserModel for UserStore {
-    type Token = PhraseToken;
     type Error = UserStoreError;
 
     /// Record an accepted `token` after `history` via the training-selection
     /// path (§2). The predecessor is the last token of `history`, or
     /// [`SENTENCE_START`] when `history` is empty.
-    fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error> {
+    fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         self.observe_selection(last, *token)?;
         Ok(())
@@ -34,8 +33,8 @@ impl UserModel for UserStore {
 
     fn observe_with_keys(
         &mut self,
-        history: &[Self::Token],
-        token: &Self::Token,
+        history: &[PhraseToken],
+        token: &PhraseToken,
         readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);

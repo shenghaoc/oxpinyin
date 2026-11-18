@@ -577,14 +577,13 @@ impl<
     M: std::borrow::Borrow<Cell<u32>>,
 > LanguageModel for BigramLanguageModel<L, T, M>
 {
-    type Token = PhraseToken;
     type Error = LmError;
 
     fn amplification_lambda(&self) -> f32 {
         self.lambda_f32
     }
 
-    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+    fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
         // The chunk items are the phrase index's real frequency table.
         Ok(Some(self.unigram_count(*token).unwrap_or(0)))
     }
@@ -595,8 +594,8 @@ impl<
 
     fn nbest_step_costs(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
     ) -> Result<crate::model::NbestStepCosts, Self::Error> {
         // System-only: the empty-user identity of the merged path.
         self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
@@ -604,8 +603,8 @@ impl<
 
     fn nbest_item_costs_in_row(
         &self,
-        _prev: &Self::Token,
-        token: &Self::Token,
+        _prev: &PhraseToken,
+        token: &PhraseToken,
         item: Option<(u32, u32)>,
         _row: &mut crate::model::NbestStepRow,
     ) -> Result<crate::model::NbestStepCosts, Self::Error> {
@@ -614,7 +613,7 @@ impl<
 
     fn nbest_successors_in_row<'a>(
         &self,
-        prev: &Self::Token,
+        prev: &PhraseToken,
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(

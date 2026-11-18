@@ -12,7 +12,7 @@ impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Normalizes a caller lookup offset back to the first byte of the
@@ -217,7 +217,7 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
 }

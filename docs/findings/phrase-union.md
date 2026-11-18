@@ -327,7 +327,7 @@ tags the entries `CandidateKind::Addon` and ORs the continuation bits
 - Addon candidates use a separate denominator, through defaulted
   `LanguageModel` accessors:
   ```rust
-  fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> { Ok(None) }
+  fn addon_unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> { Ok(None) }
   fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> { Ok(None) }
   ```
   `RuntimeLm` supplies these from the loaded addon set. When a candidate is

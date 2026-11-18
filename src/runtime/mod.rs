@@ -1359,7 +1359,6 @@ impl RuntimeLm<'_> {
 }
 
 impl LanguageModel for RuntimeLm<'_> {
-    type Token = PhraseToken;
     type Error = LmError;
 
     fn amplification_lambda(&self) -> f32 {
@@ -1369,7 +1368,7 @@ impl LanguageModel for RuntimeLm<'_> {
     /// Upstream's Gate 2 (`pinyin.cpp:2210-2215`): the system gram and the
     /// user gram loaded once each and merged, as ONE row the caller indexes
     /// per candidate. The n-best and phrase paths load the same row.
-    fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
+    fn merged_successors(&self, prev: &PhraseToken) -> Result<Option<MergedGram>, Self::Error> {
         self.merged_row(*prev)
     }
 
@@ -1377,7 +1376,7 @@ impl LanguageModel for RuntimeLm<'_> {
         error.is_read_after_check()
     }
 
-    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+    fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
         let live = self.user.system_unigram(*token);
         let extra = if live.is_some() && self.inner.is_visible(phrase_index_library_index(*token)) {
             // The model uses only the live field on this branch.
@@ -1397,7 +1396,7 @@ impl LanguageModel for RuntimeLm<'_> {
         Ok(Some(self.inner.facade_total(user_total)))
     }
 
-    fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+    fn addon_unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
         let addons = self.addons.borrow();
         if addons.is_empty() {
             return Ok(None);
@@ -1413,8 +1412,8 @@ impl LanguageModel for RuntimeLm<'_> {
     /// The §5 overlay the n-best step costs take.
     fn nbest_step_costs(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
     ) -> Result<NbestStepCosts, Self::Error> {
         let extra = self.delta(Some(*prev), *token)?;
         self.inner
@@ -1423,8 +1422,8 @@ impl LanguageModel for RuntimeLm<'_> {
 
     fn nbest_item_costs_with_facts(
         &self,
-        prev: &Self::Token,
-        token: &Self::Token,
+        prev: &PhraseToken,
+        token: &PhraseToken,
         item: Option<(u32, u32)>,
         row: &mut crate::model::NbestStepRow,
         facts: &mut crate::sentence_facts::SentenceFacts,
@@ -1437,8 +1436,8 @@ impl LanguageModel for RuntimeLm<'_> {
 
     fn nbest_item_costs_in_row(
         &self,
-        _prev: &Self::Token,
-        token: &Self::Token,
+        _prev: &PhraseToken,
+        token: &PhraseToken,
         item: Option<(u32, u32)>,
         _row: &mut crate::model::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
@@ -1448,7 +1447,7 @@ impl LanguageModel for RuntimeLm<'_> {
 
     fn nbest_successors_in_row<'a>(
         &self,
-        prev: &Self::Token,
+        prev: &PhraseToken,
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
         Ok(Some(

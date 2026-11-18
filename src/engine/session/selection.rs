@@ -113,10 +113,7 @@ impl TrainingPlan<'_> {
     ///
     /// # Errors
     /// User-model errors retain the observations before the failure.
-    pub(crate) fn observe<U: UserModel<Token = PhraseToken>>(
-        self,
-        user: &mut U,
-    ) -> Result<bool, EngineError>
+    pub(crate) fn observe<U: UserModel>(self, user: &mut U) -> Result<bool, EngineError>
     where
         U::Error: Display,
     {
@@ -152,7 +149,7 @@ impl<'s, D, L> Session<D, L, &'s SessionState>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// The retained matrix, borrowed for the composition state's own
@@ -197,7 +194,7 @@ impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// The common tail of [`Session::select_target`].
@@ -403,7 +400,7 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
     D::Error: Display,
-    L: LanguageModel<Token = PhraseToken>,
+    L: LanguageModel,
     L::Error: Display,
 {
     /// Chooses the row `target` describes: the span, token and n-best rank
