@@ -18,10 +18,10 @@ use std::path::PathBuf;
 
 use std::ptr;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(target_os = "linux")]
 const LC_NUMERIC: c_int = 1;
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(not(target_os = "linux"))]
 const LC_NUMERIC: c_int = 4;
 
 unsafe extern "C" {

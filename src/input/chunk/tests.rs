@@ -183,8 +183,8 @@ fn validation_owns_the_descriptor_and_finish_closes_it() {
     assert!(file_mappings(&path).is_empty());
 }
 
-// Linux only: /proc/self/maps, and a 4 GiB sparse mapping on a 64-bit host.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+// Unix only: a 4 GiB sparse mapping on a 64-bit host.
+#[cfg(all(unix, target_pointer_width = "64"))]
 #[test]
 fn sparse_file_has_one_whole_writable_private_mapping_and_no_residual() {
     // Row 109's source-derived witness: the pin's u32 data length wraps
@@ -203,11 +203,17 @@ fn sparse_file_has_one_whole_writable_private_mapping_and_no_residual() {
     assert_eq!(source.read_word().unwrap(), [0; 4]);
     let mapping = source.map().unwrap().finish();
     assert_eq!(mapping.as_slice().len() as u64, file_size);
-    let ranges = file_mappings(&path);
-    assert_eq!(ranges.len(), 1);
-    assert_eq!(ranges[0].split_whitespace().nth(1), Some("rw-p"));
-    assert_eq!(open_descriptors(&path), 0);
+    // Linux only: /proc/self/fd and /proc/self/maps.
+    #[cfg(target_os = "linux")]
+    {
+        let ranges = file_mappings(&path);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].split_whitespace().nth(1), Some("rw-p"));
+        assert_eq!(open_descriptors(&path), 0);
+    }
     drop(mapping);
+    // Linux only: /proc/self/maps.
+    #[cfg(target_os = "linux")]
     assert!(file_mappings(&path).is_empty());
 }
 

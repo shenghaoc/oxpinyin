@@ -233,14 +233,10 @@ unsafe extern "C" {
     static mut stderr: *mut File;
 }
 
-#[cfg(any(
-    target_vendor = "apple",
-    target_os = "freebsd",
-    target_os = "dragonfly"
-))]
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
-    // `#define stdout __stdoutp` and `#define stderr __stderrp` (Apple Libc
-    // and FreeBSD `stdio.h`).
+    // `#define stdout __stdoutp` and `#define stderr __stderrp` (macOS
+    // `stdio.h`, Apple Libc).
     #[cfg(feature = "tools")]
     #[link_name = "__stdoutp"]
     static mut stdout: *mut File;
@@ -255,13 +251,7 @@ unsafe extern "C" {
     fn __acrt_iob_func(index: core::ffi::c_uint) -> *mut File;
 }
 
-#[cfg(not(any(
-    target_os = "linux",
-    target_vendor = "apple",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    windows
-)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 compile_error!(
     "oxpinyin: no declaration of the C library's `stdout` and `stderr` objects \
      for this target; add its per-platform `extern` block in src/native.rs"

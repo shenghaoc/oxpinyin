@@ -1349,7 +1349,7 @@ pub mod storage {
     }
 
     /// The errno cell `g_ascii_strtoull` sets.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: the caller makes the access; the function is the C
         // library's thread-local cell accessor.
@@ -1357,11 +1357,7 @@ pub mod storage {
     }
 
     /// The errno cell `g_ascii_strtoull` sets.
-    #[cfg(any(
-        target_vendor = "apple",
-        target_os = "freebsd",
-        target_os = "dragonfly"
-    ))]
+    #[cfg(target_os = "macos")]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
         unsafe { libc::__error() }
