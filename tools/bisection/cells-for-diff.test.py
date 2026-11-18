@@ -266,8 +266,8 @@ class RunFlagTests(unittest.TestCase):
     BASE = {'README.md': 'a\n', 'crates/oxpinyin-store/src/lib.rs': 'fn a() {}\n',
             'crates/oxpinyin-engine/src/lib.rs': 'fn a() {}\n',
             'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\n',
-            'tools/bdb/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
-    ALSO = ('--also', 'tools/bdb', '--also', 'tools/dev/check.py')
+            'tools/tkrzw/build.sh': 'a\n', 'tools/dev/check.py': 'a\n'}
+    ALSO = ('--also', 'tools/tkrzw', '--also', 'tools/dev/check.py')
 
     def flag(self, head, *also):
         result = Repo(self, self.BASE, head).cli('--run-flag', *also, 'base')
@@ -279,7 +279,7 @@ class RunFlagTests(unittest.TestCase):
                  ('feature line', {'crates/oxpinyin-engine/src/lib.rs': gate('kyotocabinet') + '\n'}, 'true'),
                  ('backend Cargo.toml line', {'crates/oxpinyin-user/Cargo.toml': '[features]\nold = []\nbdb = []\n'},
                   'true'),
-                 ('infrastructure change', {'tools/bdb/build.sh': 'b\n'}, 'true'),
+                 ('infrastructure change', {'tools/tkrzw/build.sh': 'b\n'}, 'true'),
                  ('infrastructure file', {'tools/dev/check.py': 'b\n'}, 'true'),
                  ('engine-only change', {'crates/oxpinyin-engine/src/lib.rs': 'fn b() {}\n'}, 'false'),
                  ('docs-only change', {'README.md': gate('tkrzw') + '\n'}, 'false'))
@@ -288,7 +288,7 @@ class RunFlagTests(unittest.TestCase):
                 self.assertEqual(self.flag(head, *self.ALSO), f'run={expected}\n')
 
     def test_also_needs_run_flag(self):
-        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--also', 'tools/bdb', 'base')
+        result = Repo(self, self.BASE, {'README.md': 'b\n'}).cli('--also', 'tools/tkrzw', 'base')
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, '')
         self.assertIn('--also needs --run-flag', result.stderr)
@@ -341,7 +341,7 @@ class RunFlagTests(unittest.TestCase):
         arguments = self.gate_arguments()
         self.assertEqual(arguments[:2], ['--run-flag', '--run-without-base'])
         for name, head, expected in (('docs-only change', {'README.md': 'b\n'}, 'false'),
-                                     ('infrastructure change', {'tools/bdb/build.sh': 'b\n'}, 'true')):
+                                     ('infrastructure change', {'tools/tkrzw/build.sh': 'b\n'}, 'true')):
             with self.subTest(name):
                 result = Repo(self, self.BASE, head).cli(*arguments, 'base')
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, f'run={expected}\n', ''))

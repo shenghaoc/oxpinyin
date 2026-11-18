@@ -49,8 +49,8 @@ Every backend satisfies exactly this rule.
   comparator therefore applies: **byte-wise `memcmp`, shorter key first on a
   shared prefix**. This is the configuration that libpinyin uses:
   `phrase_large_table3_bdb.cpp` and `chewing_large_table2_bdb.cpp` install
-  no comparator either. `tools/bdb/btree-order.c` confirms it by
-  experiment ([Berkeley DB backend](berkeleydb-backend.md#key-ordering)).
+  no comparator either. The shared key-ordering suite asserts it
+  ([Berkeley DB backend](berkeleydb-backend.md#key-ordering)).
   Setting a comparator here would silently reorder files that libpinyin
   wrote.
 

@@ -533,12 +533,6 @@ mod pin_data {
     //! for `bigram.db` (`RawReadStore::open_hash_read_only`).
     //! `fixtures/w3/db/`'s `bigram.db`, `phrase_index.bin` and `pinyin_index.bin` were written by
     //! `oxpinyin-utils`; their rows are frozen against the pin's own data sequence (pin capture C1).
-    //!
-    //! The write gate is the other file: `examples/bdb_write_profile.rs`
-    //! writes a `bigram.db` through the backend's own `write_user_bigram`
-    //! seam for `tools/bdb/hash-walk.c`, a C harness with no Rust in it, to
-    //! check — a drop-in that trains a user's profile writes back into
-    //! libpinyin's files, and a mismatch there is silent corruption.
 
     use std::ops::Bound;
 

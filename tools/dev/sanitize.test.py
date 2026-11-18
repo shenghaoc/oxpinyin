@@ -136,7 +136,7 @@ class BackendTests(unittest.TestCase):
         return {'OXPINYIN_SANITIZER_TARGET': 'x86_64-unknown-linux-gnu',
                 'OXPINYIN_SANITIZER_TOOLCHAIN': NIGHTLY, **values}
 
-    def test_bdb_runs_the_rust_test_then_the_c_harness(self):
+    def test_bdb_runs_the_rust_test_alone(self):
         tools = FakeTools()
         with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):
             status, out, err = run('bdb', tools=tools,
@@ -150,13 +150,11 @@ class BackendTests(unittest.TestCase):
                     if command[:4] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertIn('--features', test)
         self.assertEqual(test[test.index('--features') + 1], 'bdb')
-        self.assertTrue(any(command[0] == 'gcc' and '-fsanitize=address,undefined' in command
-                            for command in commands))
+        self.assertFalse(any(command[0] == 'gcc' for command in commands))
         test_environment = next(env for command, env in tools.calls
                                 if command[:4] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertEqual(test_environment['RUSTFLAGS'],
                          '-Zsanitizer=address -Cdebuginfo=1')
-        self.assertIn('--- 2/2: the libdb call pattern under ASan + UBSan (C) ---', out)
         self.assertIn('sanitizers: clean', out)
 
     def test_kc_thread_uses_the_darwin_deadlock_option(self):
