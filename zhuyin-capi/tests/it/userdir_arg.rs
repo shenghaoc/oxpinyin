@@ -32,7 +32,7 @@ fn scratch(tag: &str) -> PathBuf {
             const { std::cell::RefCell::new(Vec::new()) };
     }
     let dir = tempfile::Builder::new()
-        .prefix(&format!("oxpinyin-zhuyin-capi-userdir-arg-{tag}-"))
+        .prefix(&format!("oxzhuyin-capi-userdir-arg-{tag}-"))
         .tempdir()
         .expect("scratch dir");
     let path = dir.path().to_path_buf();

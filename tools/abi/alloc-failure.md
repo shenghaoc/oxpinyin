@@ -14,7 +14,7 @@ libraries that the cell builds. The harness reads no symbols, so a stripped
 library also works:
 
 ```sh
-cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+cargo build --locked -p oxpinyin-capi -p oxzhuyin-capi
 just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
@@ -70,7 +70,7 @@ on both sides. These tests cover the part of oxpinyin, and return a real GLib-ow
 
 - `token_getters::lookup_tokens_resets_the_callers_array` in `oxpinyin-capi`;
 - `token_getters::caller_arrays_keep_their_metadata_and_clear_through_the_callback` in
-  `oxpinyin-zhuyin-capi`.
+  `oxzhuyin-capi`.
 
 The full ABI
 harness is a source-derived

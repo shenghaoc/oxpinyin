@@ -1,6 +1,6 @@
 # oxpinyin
 
-这是拼音输入法库 [libpinyin](https://github.com/libpinyin/libpinyin) 的可移植 Rust 重写。默认构建就是可直接替换的目标：替换拼音库的 `libpinyin.so.15` 和注音库的 `libzhuyin.so.15`。目标是与固定版本的 libpinyin（pin）保持 bug-for-bug 兼容，连缺陷也一并复现。
+这是拼音输入法库 [libpinyin](https://github.com/libpinyin/libpinyin) 的可移植 Rust 重写。默认构建就是可直接替换的目标：替换拼音库的 `libpinyin.so.15`，以及 libpinyin 以 `--enable-libzhuyin` 构建的注音库 `libzhuyin.so.15`。目标是与固定版本的 libpinyin（pin）保持 bug-for-bug 兼容，连缺陷也一并复现。
 
 [源码政策](docs/source-policy.md#stages)定义各阶段。
 

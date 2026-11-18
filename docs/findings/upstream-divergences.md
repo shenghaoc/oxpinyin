@@ -60,7 +60,7 @@ An entry holds nothing else.
 - **Pin:** 68 `pinyin_*` exports dereference a NULL argument before any check: the instance (`src/pinyin.cpp:1312`), the context or iterator (`:509`, `:665`, `:777`, `:1196`), an out-parameter (`:2847`, `:2876`, `:2982`), a candidate in an `assert` (`:2507`, `:2593`), a key (`:2711`, `:2722`, `:2733`, `:2744`). The libzhuyin exports have the same shape.
 - **oxpinyin:** guards the NULL arguments covered by row 41 and returns the entry point’s prescribed refusal. Other NULL cases retain their own rules.
 - **Decision:** accepted, class (b): a NULL dereference is undefined.
-- **Tests:** `null_arguments::null_handles_answer_false`; `oxpinyin-zhuyin-capi` `null_arguments::null_arguments_answer_the_declared_value`.
+- **Tests:** `null_arguments::null_handles_answer_false`; `oxzhuyin-capi` `null_arguments::null_arguments_answer_the_declared_value`.
 
 ### A guess on an instance whose context was finalised (policy row 42)
 
@@ -110,7 +110,7 @@ An entry holds nothing else.
 - **oxpinyin:** both return at once, with no log, for a context the live-context registry does not hold.
 - **Decision:** accepted, class (b): a double free.
 - **Rejected:** a registry of live instances for a second `*_free_instance` (`pinyin.cpp:1347-1356`, `zhuyin.cpp:876-884`), which would cost time and space on every alloc and free; that call stays caller UB.
-- **Tests:** `init_and_save::fini_twice_returns_silently` (`oxpinyin-capi`) and `init_and_save::fini_twice_returns_silently` (`oxpinyin-zhuyin-capi`).
+- **Tests:** `init_and_save::fini_twice_returns_silently` (`oxpinyin-capi`) and `init_and_save::fini_twice_returns_silently` (`oxzhuyin-capi`).
 
 ### A prediction candidate whose phrase item a journal REMOVE took out (policy row 106a, class (b))
 
@@ -457,7 +457,7 @@ An entry holds nothing else.
 - **Pin:** the double-pinyin and keyboard zhuyin parsers store `int` positions into the `guint16`s of `ChewingKeyRest` (`src/storage/pinyin_parser2.cpp:565`, `zhuyin_parser2.cpp:259`, `chewing_key.h:102-103`), and `fill_matrix` puts each key at its wrapped begin (`phonetic_key_matrix.cpp:51-55`), so the getters answer `false` from column 65536 (`src/pinyin.cpp:2930-2931`).
 - **oxpinyin:** stores the positions `as u16`, as the pin does, but keeps the facade's columns at real offsets.
 - **Decision:** accepted under the [key-positions ruling](compatibility-policy.md#key-positions-past-byte-65535): no IME composition reaches 65536 bytes.
-- **Tests:** `keys::key_rest_positions_past_byte_65535_wrap`, `oxpinyin-zhuyin-capi` `parse_keys::key_rest_positions_past_byte_65535_wrap`.
+- **Tests:** `keys::key_rest_positions_past_byte_65535_wrap`, `oxzhuyin-capi` `parse_keys::key_rest_positions_past_byte_65535_wrap`.
 - **Candidate bounds:** a candidate's `m_begin` and `m_end` are `guint16` too (`src/pinyin.cpp:103-104`, `src/zhuyin.cpp:83-84`). oxpinyin stores them `as u16` and answers them from `zhuyin_choose_candidate` as the pin does, while a choose reads them against real-offset columns; the same ruling covers it.
 
 ### A candidate pointer that is not a row of a live published list
@@ -465,7 +465,7 @@ An entry holds nothing else.
 - **Pin:** `pinyin_choose_candidate`, `zhuyin_choose_candidate`, `pinyin_choose_predicted_candidate` and `pinyin_remove_user_candidate` dereference the candidate (`src/pinyin.cpp:2501-2588`, `:2591-2640`, `:3726-3768`; `src/zhuyin.cpp:1635-1666`). A pointer past a regenerated, shorter list reads a stale row only because `GArray` keeps its capacity when the list shrinks.
 - **oxpinyin:** all four read the row directly, as the candidate getters do; a pointer that is not a row of a live instance's published list is a caller precondition violation.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals): GLib's retained capacity is a library internal, and in Rust the read is undefined. A row of another live instance's list follows the pin.
-- **Tests:** `tests/it/foreign_candidates.rs` (`oxpinyin-capi`, `oxpinyin-zhuyin-capi`) for rows of other instances; none for an invalid pointer.
+- **Tests:** `tests/it/foreign_candidates.rs` (`oxpinyin-capi`, `oxzhuyin-capi`) for rows of other instances; none for an invalid pointer.
 
 ### FlexibleBigram unsorted-record search
 
@@ -538,7 +538,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | An empty bigram gram in a prediction (row 88) | `storage/ngram.cpp:70`, through `pinyin.cpp:2332` | `guess_predict::prediction_aborts_on_an_item_less_gram_with_a_total` |
 | Zhuyin import token checks (rows 89, 90, 104) | `zhuyin.cpp:440`, `:454`, `:457` | `import_and_user_store::adding_a_phrase_with_two_library_tokens_aborts`, `oxpinyin::facade::import::tests::an_index_token_with_another_item_refuses_import::case_3_zhuyin_text`, `oxpinyin::facade::import::tests::adding_a_user_phrase_again_after_a_reload_refuses_the_missing_item` |
 | Pinyin import token checks (row 93) | `pinyin.cpp:554`, `:568`, `:571` | `library_tokens::import_aborts_on_two_tokens_of_one_library`, `user_store::remember_user_input_aborts_on_two_same_library_tokens`, `oxpinyin::facade::import::tests::an_index_token_with_another_item_refuses_import::case_1_pinyin_length`, `oxpinyin::facade::import::tests::an_index_token_with_another_item_refuses_import::case_2_pinyin_text` |
-| A journal header record with a token, at init, reload or mask-out (row 91) | `storage/phrase_index_logger.h:202` | `library_loading::reload_aborts_on_a_log_header_token` (`oxpinyin-capi`), `init_and_save::reload_aborts_on_a_log_header_token` (`oxpinyin-zhuyin-capi`), `init_and_save::init_aborts_on_a_log_header_token` (`oxpinyin-capi`); `a_bad_log_aborts_before_a_later_library_that_cannot_map` |
+| A journal header record with a token, at init, reload or mask-out (row 91) | `storage/phrase_index_logger.h:202` | `library_loading::reload_aborts_on_a_log_header_token` (`oxpinyin-capi`), `init_and_save::reload_aborts_on_a_log_header_token` (`oxzhuyin-capi`), `init_and_save::init_aborts_on_a_log_header_token` (`oxpinyin-capi`); `a_bad_log_aborts_before_a_later_library_that_cannot_map` |
 | More than one journal header at mask-out (row 92) | `storage/phrase_index.cpp:745` | `user_store::mask_out_aborts_on_two_log_headers_and_leaves_the_files` |
 | A kept ADD or REMOVE record at mask-out (row 97) | `storage/phrase_index_logger.h:245`, `:257`, through `storage/phrase_index.cpp:838` | `mask_out_aborts_on_a_surviving_add` |
 | A journal ADD payload under six bytes (row 108) | `include/memory_chunk.h:390`, through `storage/phrase_index.cpp:457`, `:215` and `:778`-`:795` | `a_short_add_payload_is_the_load_fault` |

@@ -2,7 +2,7 @@
 
 oxpinyin is a portable Rust re-expression of
 [libpinyin](https://github.com/libpinyin/libpinyin).
-The default build is the drop-in target: it replaces `libpinyin.so.15` and `libzhuyin.so.15`.
+The default build is the drop-in target: it replaces `libpinyin.so.15`, and `libzhuyin.so.15` as libpinyin builds it with `--enable-libzhuyin`.
 Its target is bug-for-bug compatibility with a pinned libpinyin, defects included.
 
 The [source policy](docs/source-policy.md#stages) defines the stages.

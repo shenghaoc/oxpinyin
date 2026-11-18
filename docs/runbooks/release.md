@@ -31,8 +31,8 @@ Each of these conditions holds before a release is tagged:
 The crates.io alpha is a separate step from the distro release:
 
 1. Merge the release commit to `main`.
-2. From the merged commit, run `cargo publish --dry-run -p oxpinyin -p oxpinyin-capi -p oxpinyin-zhuyin-capi`.
-3. When the dry run passes, run `cargo publish -p oxpinyin -p oxpinyin-capi -p oxpinyin-zhuyin-capi` from the same commit.
+2. From the merged commit, run `cargo publish --dry-run -p oxpinyin -p oxpinyin-capi -p oxzhuyin-capi`.
+3. When the dry run passes, run `cargo publish -p oxpinyin -p oxpinyin-capi -p oxzhuyin-capi` from the same commit.
 
 The alpha needs no tag.
 `release-packages.yml` builds distro packages only for stable `X.Y.Z` tags, so a Cargo alpha builds none.

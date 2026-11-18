@@ -528,7 +528,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
         print('--- C facade handles that outlive their context under AddressSanitizer ---',
               file=out, flush=True)
         lifetime = ['cargo', f'+{nightly}', 'nextest', 'run', '--locked', '--target', target,
-                    '-p', 'oxpinyin-capi', '-p', 'oxpinyin-zhuyin-capi',
+                    '-p', 'oxpinyin-capi', '-p', 'oxzhuyin-capi',
                     '--no-default-features', '--features', backend.feature,
                     '--lib', '-E', 'test(outlives_context)']
         if platform.system() == 'Linux':

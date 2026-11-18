@@ -12,10 +12,12 @@ if __name__ == '__main__':
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -23,7 +25,8 @@ from . import cell, pool, slot
 from .runners import Finished, emit, guarded, status, write
 
 ROOT = Path(__file__).resolve().parents[2]
-LIBRARIES = {'libpinyin': 'oxpinyin-capi', 'libzhuyin': 'oxpinyin-zhuyin-capi'}
+# Each installed library, with the name that its C crate declares in [package.metadata.capi.library].
+LIBRARIES = {'libpinyin': 'pinyin', 'libzhuyin': 'zhuyin'}
 HEADERS = ('novel_types.h', 'pinyin_custom2.h')
 LOAD_CHILD = r'''
 import ctypes, os, sys
@@ -215,20 +218,52 @@ def version(root=ROOT):
     return value
 
 
-def crate_dir(root, crate):
-    """The directory of the C crate named crate in the source tree at root.
+def cargo_metadata(root, env=None):
+    """The Cargo metadata of the workspace at root, without its dependencies.
 
-    The flat layout keeps each C crate at the root (capi/, zhuyin-capi/); older revisions keep it
-    under crates/ (crates/oxpinyin-capi/). The older directory counts only when it holds the crate's
-    manifest, so a tree with neither resolves to the flat layout.
+    Nothing keeps the result between calls: one path can hold one revision and then another
+    in one process, as the size build's source directory does. An operation that needs several
+    answers about one tree reads once and passes the result down as METADATA.
     """
-    older = root / 'crates' / crate
-    return older if (older / 'Cargo.toml').is_file() else root / crate.removeprefix('oxpinyin-')
+    command = ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1']
+    try:
+        done = subprocess.run(command, cwd=root, env=env, capture_output=True)
+    except FileNotFoundError as error:
+        fail(f'error: {root}: cannot run cargo metadata: {error.strerror}', 127)
+    except PermissionError as error:
+        fail(str(error), 126)
+    if done.returncode:
+        write(done.stderr, error=True)
+        fail(f'error: {root}: cargo metadata failed', status(done.returncode))
+    return json.loads(done.stdout)
+
+
+def capi_package(root, library, env=None, *, metadata=None):
+    """The package at root whose [package.metadata.capi.library] name is library ('pinyin' or 'zhuyin')."""
+    metadata = metadata or cargo_metadata(root, env)
+    packages = [package for package in metadata['packages']
+                if (((package.get('metadata') or {}).get('capi') or {}).get('library') or {}).get('name') == library]
+    if len(packages) != 1:
+        fail(f"error: {root}: {len(packages)} packages declare the C library '{library}' in "
+             '[package.metadata.capi.library]; exactly one must')
+    return packages[0]
+
+
+def crate_dir(root, library, env=None, *, metadata=None):
+    """The directory of the C crate that installs library ('pinyin' or 'zhuyin') in the source tree at root.
+
+    The tree's own Cargo metadata names the crate, so no package name and no layout is assumed.
+    """
+    metadata = metadata or cargo_metadata(root, env)
+    manifest = Path(capi_package(root, library, metadata=metadata)['manifest_path'])
+    return Path(root) / manifest.parent.relative_to(metadata['workspace_root'])
 
 
 def companion_headers(*, stage=False, root=ROOT):
+    metadata = cargo_metadata(root)
+    crates = [crate_dir(root, library, metadata=metadata) for library in LIBRARIES.values()]
     for name in HEADERS:
-        paths = [crate_dir(root, crate) / name for crate in LIBRARIES.values()]
+        paths = [crate / name for crate in crates]
         try:
             same = paths[0].read_bytes() == paths[1].read_bytes()
         except OSError:
@@ -375,11 +410,12 @@ def install(argv, tools):
 
 def install_library(argv, tools):
     layout = Layout.parse(argv, tools)
-    companion_headers(root=tools.root)
     # cargo-c reads the manifest's version declarations during the install below.
+    # The pin record is read first: it needs no Cargo.
     problems = version_problems(tools.root)
     if problems:
         fail('\n'.join(problems))
+    companion_headers(root=tools.root)
     selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
                     None) or cell.declared_default(tools.root)
     tools.run(['mkdir', '-p', layout.pcdir])
@@ -636,8 +672,9 @@ def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
 def version_problems(root=ROOT):
     """Each drop-in version declaration that differs from the pin record, as an error line."""
     want, problems = version(root), []
-    for crate in LIBRARIES.values():
-        path = crate_dir(root, crate) / 'Cargo.toml'
+    metadata = cargo_metadata(root)
+    for library in LIBRARIES.values():
+        path = crate_dir(root, library, metadata=metadata) / 'Cargo.toml'
         text = '\n'.join(line for line in path.read_text().splitlines() if not re.match(r'^\s*#', line))
         for value in re.findall(r'"(libpinyin-[^"]*)"', text):
             if value != 'libpinyin-' + want:
@@ -654,8 +691,8 @@ def version_problems(root=ROOT):
         got = '\n'.join(versions)
         if got != want:
             problems.append(f'error: {path} [package.metadata.capi.pkg_config] version is "{got}", want "{want}"')
-    for library, crate in LIBRARIES.items():
-        path = crate_dir(root, crate) / (library + '.pc.in')
+    for library, name in LIBRARIES.items():
+        path = crate_dir(root, name, metadata=metadata) / (library + '.pc.in')
         text = '\n'.join(line for line in path.read_text().splitlines() if not line.startswith('#'))
         if re.search(r'[0-9]+\.[0-9]+\.[0-9]+', text):
             problems.append(f'error: {path} carries a literal version; it must use @VERSION@')

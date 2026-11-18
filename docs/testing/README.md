@@ -20,7 +20,7 @@ retained speed code with its plain path. The pinyin C crate's `ffi/tests.rs` exe
 A separate test target stays only where a compilation boundary is needed.
 
 A verification test checks behaviour at an interface that a consumer uses: an
-exported C function of `oxpinyin-capi` or `oxpinyin-zhuyin-capi`, or the
+exported C function of `oxpinyin-capi` or `oxzhuyin-capi`, or the
 arguments, standard streams, exit status and files of a utility or of the REPL.
 It lives in the crate's one test target, `tests/it/main.rs`, with one module for
 each topic, and uses nothing else. A helper that more than one topic uses lives

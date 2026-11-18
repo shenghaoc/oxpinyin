@@ -272,7 +272,7 @@ class Settings:
             os.unlink(staged)
 
     def build(self, wanted: Sequence[str]) -> int:
-        packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxpinyin-zhuyin-capi'}
+        packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxzhuyin-capi'}
         for item in wanted:
             if item and item not in packages:
                 raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi)", 2)

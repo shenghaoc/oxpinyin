@@ -29,8 +29,8 @@ fn scratch_dir(prefix: &str, what: &str) -> (PathBuf, tempfile::TempDir) {
 /// The name that starts a [`TempUserDir`]: the zhuyin C crate's own, and
 /// the pinyin C crate's for every other includer.
 fn user_dir_prefix() -> &'static str {
-    if env!("CARGO_PKG_NAME") == "oxpinyin-zhuyin-capi" {
-        "oxpinyin-zhuyin-capi"
+    if env!("CARGO_PKG_NAME") == "oxzhuyin-capi" {
+        "oxzhuyin-capi"
     } else {
         "oxpinyin-capi"
     }

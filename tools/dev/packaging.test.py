@@ -34,10 +34,19 @@ class FixtureTools(packaging.Tools):
         return os.environ.get('FIXTURE_LOAD', '')
 sys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))
 '''
-FAKE_CARGO = r'''
+# A fake cargo's answer to `cargo metadata --no-deps`: the flat layout of the checkout fixture.
+FAKE_CARGO_METADATA = r'''
 import json, os, sys
 from pathlib import Path
 args=sys.argv[1:]
+if args[:1]==['metadata']:
+    root=Path.cwd()
+    print(json.dumps({'workspace_root':str(root),'packages':[
+        {'name':name,'manifest_path':str(root/directory/'Cargo.toml'),'metadata':{'capi':{'library':{'name':library}}}}
+        for name,directory,library in [('oxpinyin-capi','capi','pinyin'),('oxzhuyin-capi','zhuyin-capi','zhuyin')]]}))
+    sys.exit(0)
+'''
+FAKE_CARGO = FAKE_CARGO_METADATA + r'''
 Path(os.environ['CALLS']).write_text(json.dumps(args))
 Path(os.environ['CALLS']+'.deployment-target').write_text(os.environ.get('MACOSX_DEPLOYMENT_TARGET', ''))
 if os.environ.get('FAIL_CARGO'):
@@ -129,6 +138,9 @@ Cflags: -I${{libzhuyinincludedir}}
 class PcTextTests(unittest.TestCase):
     """packaging computes the whole .pc file; no build script and no build directory takes part."""
 
+    def setUp(self):
+        self.enterContext(test_support.fixture_metadata())
+
     def test_each_library_and_backend_gives_the_whole_file(self):
         for library in packaging.LIBRARIES:
             for backend, database_format in packaging.cell.BACKEND_FORMATS.items():
@@ -145,32 +157,49 @@ class PcTextTests(unittest.TestCase):
     def test_a_template_with_crlf_and_indented_comments_gives_the_same_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            crate = root / packaging.LIBRARIES['libzhuyin'].removeprefix('oxpinyin-')
+            crate = packaging.crate_dir(root, packaging.LIBRARIES['libzhuyin'])
             crate.mkdir(parents=True)
             (root / 'tools/oracle').mkdir(parents=True)
             shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', root / 'tools/oracle/oracle-pin.txt')
-            template = (ROOT / packaging.LIBRARIES['libzhuyin'].removeprefix('oxpinyin-') / 'libzhuyin.pc.in').read_bytes().decode()
+            template = (packaging.crate_dir(ROOT, packaging.LIBRARIES['libzhuyin']) / 'libzhuyin.pc.in').read_bytes().decode()
             (crate / 'libzhuyin.pc.in').write_bytes(('# header\n  # indented\n\n' + template).replace('\n', '\r\n').encode())
             self.assertEqual(packaging.pc_text('libzhuyin', 'bdb', root).decode(),
                              PC_FILES['libzhuyin'].format(database_format='BerkeleyDB'))
 
 
 class SourceLayoutTests(unittest.TestCase):
-    """The path helpers and the declared default resolve each layout this repository has had."""
+    """The path helpers and the declared default resolve each tree from its own Cargo metadata."""
 
+    FLAT = test_support.FLAT_CRATES
+    FLAT_MANIFEST = ('[workspace]\nmembers = [".", "capi", "zhuyin-capi"]\n\n[package]\nname = "oxpinyin"\n\n'
+                     '[features]\ndefault = ["bdb"]\nbdb = []\n')
+    # A revision before the flat layout: the C crates under crates/, the zhuyin package under its former name.
+    OLDER = (('oxpinyin-capi', 'crates/oxpinyin-capi', 'pinyin'),
+             ('oxpinyin-zhuyin-capi', 'crates/oxpinyin-zhuyin-capi', 'zhuyin'))
     # Each older revision declared the backend default in one of these manifests; the root
     # manifest of those revisions is a virtual workspace without [features].
     OLDER_DEFAULT_MANIFESTS = ('crates/oxpinyin-store/Cargo.toml', 'crates/oxpinyin-core/Cargo.toml',
                                'crates/oxpinyin/Cargo.toml')
 
-    def prepare(self, crate_dirs, default_manifest, root_manifest):
-        """A source tree with the C crates' files under crate_dirs and the default in default_manifest."""
+    def setUp(self):
+        # The crates of each fixture tree, by root. Any other root, such as this checkout, is flat.
+        self.crates = {}
+        self.reads = []
+
+        def read(root):
+            self.reads.append(Path(root))
+            return test_support.capi_metadata(root, self.crates.get(Path(root), self.FLAT))
+        self.enterContext(test_support.fixture_metadata(read))
+
+    def prepare(self, crates, default_manifest='Cargo.toml', root_manifest=FLAT_MANIFEST):
+        """A source tree with the C crates' files in the directories of CRATES and the default in default_manifest."""
         directory = tempfile.TemporaryDirectory(prefix='source-layout-')
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
-        for crate, relative in zip(packaging.LIBRARIES.values(), crate_dirs):
-            (root / relative).mkdir(parents=True)
-            for source in (ROOT / crate.removeprefix('oxpinyin-')).iterdir():
+        self.crates[root] = crates
+        for _, relative, library in crates:
+            (root / relative).mkdir(parents=True, exist_ok=True)
+            for source in packaging.crate_dir(ROOT, library).iterdir():
                 if source.is_file() and not source.is_symlink():
                     shutil.copyfile(source, root / relative / source.name)
         (root / 'tools/oracle').mkdir(parents=True)
@@ -181,38 +210,72 @@ class SourceLayoutTests(unittest.TestCase):
             (root / default_manifest).write_text('[package]\nname = "fixture"\n\n[features]\ndefault = ["bdb"]\nbdb = []\n')
         return root
 
-    def assert_resolves(self, root, crate_dirs):
-        for (library, crate), relative in zip(packaging.LIBRARIES.items(), crate_dirs):
-            self.assertEqual(packaging.crate_dir(root, crate), root / relative)
-            self.assertIn(b'database_format=BerkeleyDB', packaging.pc_text(library, 'bdb', root))
+    def assert_resolves(self, root, crates):
+        for _, relative, library in crates:
+            self.assertEqual(packaging.crate_dir(root, library), root / relative)
+            self.assertIn(b'database_format=BerkeleyDB', packaging.pc_text('lib' + library, 'bdb', root))
         packaging.companion_headers(root=root)
         self.assertEqual(packaging.version_problems(root), [])
         self.assertEqual(packaging.cell.declared_default(root), 'bdb')
         # The ABI gate's static half reads each crate's header, register and version script.
         settings = SimpleNamespace(root=root)
-        for library, crate, header in (('libpinyin', 'oxpinyin-capi', 'pinyin.h'),
-                                       ('libzhuyin', 'oxpinyin-zhuyin-capi', 'zhuyin.h')):
+        for library, header in (('libpinyin', 'pinyin.h'), ('libzhuyin', 'zhuyin.h')):
             with contextlib.redirect_stdout(io.StringIO()) as output:
-                status = abi.check_static(settings, library, crate, header)
+                status = abi.check_static(settings, library, header)
             self.assertEqual(status, 0, output.getvalue())
 
-    def test_a_tree_in_the_older_layout(self):
-        crate_dirs = [f'crates/{crate}' for crate in packaging.LIBRARIES.values()]
+    def refusal(self, root, library):
+        with contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(packaging.Finished) as finished:
+            packaging.crate_dir(root, library)
+        self.assertEqual(finished.exception.status, 1)
+        return stderr.getvalue()
+
+    def test_a_tree_in_the_flat_layout(self):
+        root = self.prepare(self.FLAT)
+        self.assert_resolves(root, self.FLAT)
+
+    def test_a_tree_in_the_crates_layout(self):
         for manifest in self.OLDER_DEFAULT_MANIFESTS:
             with self.subTest(default=manifest):
-                root = self.prepare(crate_dirs, manifest, '[workspace]\nmembers = ["crates/*"]\n')
+                root = self.prepare(self.OLDER, manifest, '[workspace]\nmembers = ["crates/*"]\n')
                 # A sibling crate that declares no default does not hide the one that does.
                 (root / 'crates/oxpinyin-core').mkdir(exist_ok=True)
                 if not (root / 'crates/oxpinyin-core/Cargo.toml').exists():
                     (root / 'crates/oxpinyin-core/Cargo.toml').write_text('[package]\nname = "core"\n\n[features]\ntools = []\n')
-                self.assert_resolves(root, crate_dirs)
+                self.assert_resolves(root, self.OLDER)
 
-    def test_a_tree_in_the_flat_layout(self):
-        crate_dirs = [crate.removeprefix('oxpinyin-') for crate in packaging.LIBRARIES.values()]
-        root = self.prepare(crate_dirs, 'Cargo.toml',
-                            '[workspace]\nmembers = [".", "capi", "zhuyin-capi"]\n\n[package]\nname = "oxpinyin"\n\n'
-                            '[features]\ndefault = ["bdb"]\nbdb = []\n')
-        self.assert_resolves(root, crate_dirs)
+    def test_the_zhuyin_crate_resolves_under_its_former_and_its_present_package_name(self):
+        for name in ('oxpinyin-zhuyin-capi', 'oxzhuyin-capi'):
+            with self.subTest(package=name):
+                crates = (self.FLAT[0], (name, 'zhuyin-capi', 'zhuyin'))
+                root = self.prepare(crates)
+                self.assert_resolves(root, crates)
+
+    def test_a_library_that_no_package_or_two_packages_declare_is_refused(self):
+        none = self.prepare(self.FLAT[:1])
+        message = self.refusal(none, 'zhuyin')
+        self.assertIn(str(none), message)
+        self.assertIn("0 packages declare the C library 'zhuyin'", message)
+        self.assertEqual(packaging.crate_dir(none, 'pinyin'), none / 'capi')
+        two = self.prepare((*self.FLAT, ('other-capi', 'other', 'pinyin')))
+        message = self.refusal(two, 'pinyin')
+        self.assertIn(str(two), message)
+        self.assertIn("2 packages declare the C library 'pinyin'", message)
+
+    def test_an_operation_reads_the_metadata_of_its_tree_once(self):
+        root = self.prepare(self.FLAT)
+        for operation in (lambda: packaging.companion_headers(root=root), lambda: packaging.version_problems(root),
+                          lambda: packaging.crate_dir(root, 'zhuyin'), lambda: packaging.pc_text('libpinyin', 'bdb', root)):
+            self.reads.clear()
+            operation()
+            self.assertEqual(self.reads, [root])
+
+    def test_a_root_that_takes_another_revision_resolves_from_the_new_tree(self):
+        # One path holds a crates/ revision and then a flat one, as the size build's source directory does.
+        root = self.prepare(self.OLDER)
+        self.assertEqual(packaging.crate_dir(root, 'zhuyin'), root / 'crates/oxpinyin-zhuyin-capi')
+        self.crates[root] = self.FLAT
+        self.assertEqual(packaging.crate_dir(root, 'zhuyin'), root / 'zhuyin-capi')
 
 
 if sys.platform != 'win32':
@@ -442,10 +505,12 @@ if Path(sys.argv[0]).name == 'import_interpolation':
             self.root = self.work / 'checkout'
             for relative in ['capi', 'zhuyin-capi', 'tools/oracle', 'tools/lib', 'tools/tkrzw']:
                 (self.root / relative).mkdir(parents=True)
-            for crate in packaging.LIBRARIES.values():
-                for source in (ROOT / crate.removeprefix('oxpinyin-')).iterdir():
+            # The fake cargo below answers the same flat-layout metadata in the packaging child.
+            self.enterContext(test_support.fixture_metadata())
+            for library in packaging.LIBRARIES.values():
+                for source in packaging.crate_dir(ROOT, library).iterdir():
                     if source.is_file():
-                        shutil.copyfile(source, self.root / crate.removeprefix('oxpinyin-') / source.name)
+                        shutil.copyfile(source, packaging.crate_dir(self.root, library) / source.name)
             shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
             # declared_default() reads the store manifest's [features].default from the checkout.
             shutil.copyfile(ROOT / 'Cargo.toml', self.root / 'Cargo.toml')
@@ -563,7 +628,7 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             self.env['CHECKOUT'] = str(self.root)
             self.env['LINK_CALLS'] = str(self.work / 'link-calls')
             self.env['DARWIN_EXPORTS'] = json.dumps({library: packaging.version_exports(
-                self.root/crate.removeprefix('oxpinyin-')/(library+'.ver'))[1] for library, crate in packaging.LIBRARIES.items()})
+                packaging.crate_dir(self.root, name)/(library+'.ver'))[1] for library, name in packaging.LIBRARIES.items()})
             self.fake('lipo', "import os; print('x86_64' if os.environ.get('CARGO_BUILD_TARGET','').startswith('x86_64') else 'arm64')")
             self.fake('otool', r'''import os,sys
 from pathlib import Path
@@ -1068,8 +1133,8 @@ else:
             self.fake('nm', r"""import os,sys
 from pathlib import Path
 library=Path(sys.argv[-1]).read_text()
-crate='oxpinyin-zhuyin-capi' if library=='libzhuyin' else 'oxpinyin-capi'
-text=(Path(os.environ['CHECKOUT'])/crate.removeprefix('oxpinyin-')/(library+'.ver')).read_text()
+directory='zhuyin-capi' if library=='libzhuyin' else 'capi'
+text=(Path(os.environ['CHECKOUT'])/directory/(library+'.ver')).read_text()
 node='LIBZHUYIN' if library=='libzhuyin' else 'LIBPINYIN'
 print('00000000 A '+node)
 for line in text.split('global:')[1].split('local:')[0].splitlines():
@@ -1094,7 +1159,9 @@ for line in text.split('global:')[1].split('local:')[0].splitlines():
             # run there, so even a broken guard deletes and writes nothing.
             removed = self.work / 'removed'
             self.fake('rm', "import json,os,sys; open(os.environ['REMOVED'],'a').write(json.dumps(sys.argv[1:])+'\\n'); sys.exit(97)")
-            for name in ('cargo', 'cargo-cinstall', 'mkdir'):
+            # The stage reads the Cargo metadata before that write; a build or an install stops the run.
+            self.fake('cargo', FAKE_CARGO_METADATA + 'sys.exit(98)\n')
+            for name in ('cargo-cinstall', 'mkdir'):
                 self.fake(name, 'import sys; sys.exit(98)')
             link = self.work / 'usr-link'
             link.symlink_to('/usr')

@@ -1,4 +1,4 @@
-//! The verification tests of oxpinyin-zhuyin-capi: each module calls the exported C
+//! The verification tests of oxzhuyin-capi: each module calls the exported C
 //! functions on the committed fixtures and checks their answers,
 //! out-parameters, aborts, standard error and the files they write.
 //! `support` holds the helpers more than one module uses.

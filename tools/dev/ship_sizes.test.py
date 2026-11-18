@@ -13,7 +13,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.dev import cell, ship_sizes
+from tools.dev import cell, packaging, ship_sizes, test_support
 
 VER = '''PINYIN {
   global:
@@ -200,26 +200,74 @@ class RunTests(unittest.TestCase):
 
 
 class VersionScriptTests(unittest.TestCase):
-    """Each library's version script comes from its C crate's directory, in either layout."""
+    """Each library's version script comes from its C crate's directory."""
 
     def test_a_fixture_with_the_same_name_does_not_hide_the_crate_script(self):
-        layouts = {'flat': lambda crate: crate.removeprefix('oxpinyin-'),
-                   'older': lambda crate: f'crates/{crate}'}
-        for name, directory in layouts.items():
-            with self.subTest(layout=name), tempfile.TemporaryDirectory() as scratch:
-                source = Path(scratch)
-                fixtures = source / 'tests/fixtures'
-                fixtures.mkdir(parents=True)
-                for library, (crate, _) in ship_sizes.LIBRARIES.items():
-                    (fixtures / f'{library}.ver').write_text('fixture\n')
-                    crate_root = source / directory(crate)
-                    crate_root.mkdir(parents=True)
-                    (crate_root / 'Cargo.toml').write_text('[package]\n')
-                    (crate_root / f'{library}.ver').write_text(f'{library} crate\n')
-                for library, (crate, _) in ship_sizes.LIBRARIES.items():
-                    script = ship_sizes.version_script(source, library)
-                    self.assertEqual(script, source / directory(crate) / f'{library}.ver')
-                    self.assertEqual(script.read_text(), f'{library} crate\n')
+        with tempfile.TemporaryDirectory() as scratch, test_support.fixture_metadata():
+            source = Path(scratch)
+            fixtures = source / 'tests/fixtures'
+            fixtures.mkdir(parents=True)
+            for library, name in ship_sizes.LIBRARIES.items():
+                (fixtures / f'{library}.ver').write_text('fixture\n')
+                crate_root = packaging.crate_dir(source, name)
+                crate_root.mkdir(parents=True)
+                (crate_root / 'Cargo.toml').write_text('[package]\n')
+                (crate_root / f'{library}.ver').write_text(f'{library} crate\n')
+            for library, name in ship_sizes.LIBRARIES.items():
+                script = ship_sizes.version_script(source, library)
+                self.assertEqual(script, packaging.crate_dir(source, name) / f'{library}.ver')
+                self.assertEqual(script.read_text(), f'{library} crate\n')
+
+
+class TwoRevisionsTests(unittest.TestCase):
+    """The base and the head are extracted into one source directory, one after the other."""
+
+    CRATES = {'base': (('oxpinyin-capi', 'crates/oxpinyin-capi', 'pinyin'),
+                       ('oxpinyin-zhuyin-capi', 'crates/oxpinyin-zhuyin-capi', 'zhuyin')),
+              'head': test_support.FLAT_CRATES}
+
+    def test_each_side_reads_its_own_version_scripts(self):
+        extracted = []
+
+        def fake_extract(revision, destination, root=ship_sizes.ROOT):
+            # Replace the tree, as git archive into an emptied directory does.
+            shutil.rmtree(destination, ignore_errors=True)
+            extracted.append(revision)
+            for _, directory, prefix in self.CRATES[revision]:
+                ver = destination / directory / f'lib{prefix}.ver'
+                ver.parent.mkdir(parents=True)
+                ver.write_text(VER.replace('pinyin', prefix))
+
+        def fake_recipe(revision, source, recipe, env):
+            argv = [str(word) for word in recipe]
+            library = argv[argv.index('install') + 1]
+            destdir = next(word for word in argv if word.startswith('--destdir=')).split('=', 1)[1]
+            so = Path(destdir, 'usr/lib', library + '.so.15.0.0')
+            so.parent.mkdir(parents=True, exist_ok=True)
+            so.write_bytes(b'x' * 100)
+
+        def fake_run(argv, *, cwd=None, env=None, capture=True):
+            argv = [str(word) for word in argv]
+            if argv[0] == 'strip':
+                Path(argv[-1]).write_bytes(b'x' * 60)
+            elif argv[0] == 'nm':
+                return NM.replace('pinyin', 'zhuyin') if 'libzhuyin' in argv[-1] else NM
+            return 'c' * 40 + '\n' if argv[:2] == ['git', 'rev-parse'] else ''
+
+        with tempfile.TemporaryDirectory() as directory, \
+                test_support.fixture_metadata(lambda root: test_support.capi_metadata(root, self.CRATES[extracted[-1]])), \
+                mock.patch.object(ship_sizes, 'extract', fake_extract), \
+                mock.patch.object(ship_sizes, 'revision_recipe', fake_recipe), \
+                mock.patch.object(ship_sizes, 'run', fake_run), \
+                mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'):
+            work = Path(directory, 'work')
+            for revision in ('base', 'head'):
+                with self.subTest(revision=revision):
+                    outcome = ship_sizes.build_side(revision, work, Path(directory, 'target'))
+                    self.assertEqual(outcome['libraries'], {'libpinyin': 60, 'libzhuyin': 60})
+                    for _, relative, prefix in self.CRATES[revision]:
+                        self.assertEqual(ship_sizes.version_script(work / 'src', 'lib' + prefix),
+                                         work / 'src' / relative / f'lib{prefix}.ver')
 
 
 class BuildSideTests(unittest.TestCase):
@@ -231,8 +279,8 @@ class BuildSideTests(unittest.TestCase):
             work = Path(directory, 'work')
 
             def fake_extract(revision, destination, root=ship_sizes.ROOT):
-                for library, (crate, prefix) in ship_sizes.LIBRARIES.items():
-                    ver = destination / crate.removeprefix('oxpinyin-') / (library + '.ver')
+                for library, prefix in ship_sizes.LIBRARIES.items():
+                    ver = packaging.crate_dir(destination, prefix) / (library + '.ver')
                     ver.parent.mkdir(parents=True, exist_ok=True)
                     ver.write_text(VER.replace('pinyin', prefix))
 
@@ -258,7 +306,7 @@ class BuildSideTests(unittest.TestCase):
                     return 'c' * 40 + '\n'
                 return ''
 
-            with mock.patch.object(ship_sizes, 'extract', fake_extract), \
+            with test_support.fixture_metadata(), mock.patch.object(ship_sizes, 'extract', fake_extract), \
                     mock.patch.object(ship_sizes, 'revision_recipe', fake_recipe), \
                     mock.patch.object(ship_sizes, 'run', fake_run), \
                     mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'):
@@ -353,8 +401,8 @@ class RevisionRecipeTests(unittest.TestCase):
             justfile += ('\npackaging *args: python\n'
                          f'    @"{interpreter}" {flags} record.py "$@"\n')
         files = {'.python-version': python + '\n', 'justfile': justfile, 'record.py': RECORDER}
-        for library, (crate, prefix) in ship_sizes.LIBRARIES.items():
-            files[str(Path(crate.removeprefix('oxpinyin-')) / f'{library}.ver')] = VER.replace('pinyin', prefix)
+        for _, directory, prefix in test_support.FLAT_CRATES:
+            files[str(Path(directory) / f'lib{prefix}.ver')] = VER.replace('pinyin', prefix)
         return self.repo.commit(files)
 
     def build(self, revision):
@@ -372,7 +420,8 @@ class RevisionRecipeTests(unittest.TestCase):
             return ''
 
         extract = ship_sizes.extract
-        with mock.patch.object(ship_sizes, 'extract', lambda rev, destination, root=None: extract(rev, destination, self.repo.root)), \
+        with test_support.fixture_metadata(), \
+                mock.patch.object(ship_sizes, 'extract', lambda rev, destination, root=None: extract(rev, destination, self.repo.root)), \
                 mock.patch.object(ship_sizes, 'run', fake_run), \
                 mock.patch.object(ship_sizes, 'platform_system', return_value='Linux'), \
                 contextlib.redirect_stderr(io.TextIOWrapper(io.BytesIO())):

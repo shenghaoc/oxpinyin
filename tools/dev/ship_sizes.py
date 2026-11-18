@@ -35,7 +35,8 @@ from typing import Sequence
 from . import cell
 
 ROOT = Path(__file__).resolve().parents[2]
-LIBRARIES = {'libpinyin': ('oxpinyin-capi', 'pinyin'), 'libzhuyin': ('oxpinyin-zhuyin-capi', 'zhuyin')}
+# Each installed library, with its symbol prefix and [package.metadata.capi.library] name.
+LIBRARIES = {'libpinyin': 'pinyin', 'libzhuyin': 'zhuyin'}
 SCHEMA = 1
 KEY_PREFIX = 'ship-sizes-v1-'
 # Inputs that can change a library byte: they key the cached base result. The
@@ -153,18 +154,18 @@ def version_globals(text: str) -> set[str]:
 
 
 def version_script(source: Path, library: str) -> Path:
-    """The version script in library's C crate directory, in either source layout.
+    """The version script in library's C crate directory, which the source's own Cargo metadata names.
 
     Only the crate directory is read: a fixture elsewhere in the tree can carry the same name
     (for example tests/fixtures/libpinyin.ver).
     """
     from .packaging import crate_dir
-    return crate_dir(source, LIBRARIES[library][0]) / f'{library}.ver'
+    return crate_dir(source, LIBRARIES[library]) / f'{library}.ver'
 
 
 def check_exports(library: str, nm_text: str, version_text: str) -> None:
     """The installed object exports exactly its pin version script's set."""
-    prefix = LIBRARIES[library][1]
+    prefix = LIBRARIES[library]
     actual, expected = exports(nm_text, prefix), version_globals(version_text)
     if actual != expected:
         lines = [f'{library}: exported symbols are not the version script set']
@@ -277,7 +278,6 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
         shutil.copyfile(installed, stripped)
         run(['strip', '--strip-unneeded', '--', stripped])
         nm = run(['nm', '-D', '--defined-only', stripped])
-        # The base and PR can place the same crate in different directories.
         script = version_script(source, library)
         if not script.is_file():
             raise Failure(f'{revision}: no {library}.ver at {script.relative_to(source).as_posix()}')

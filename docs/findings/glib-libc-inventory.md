@@ -415,7 +415,7 @@ negative controls). The `GArray` lifecycle is held by the
 caller elements, shrink, a refusing lookup, clearing and zero termination,
 zero-fill growth, `g_array_free(FALSE)` and `g_free`), by `oxpinyin-capi`
 `token_getters::lookup_tokens_resets_the_callers_array` and by
-`oxpinyin-zhuyin-capi`
+`oxzhuyin-capi`
 `token_getters::caller_arrays_keep_their_metadata_and_clear_through_the_callback`.
 
 The version scripts `src/libpinyin.ver` and `src/libzhuyin.ver` are the ABI. At the pin,
@@ -1081,7 +1081,7 @@ Buckets:
 
 | # | oxpinyin item (repository-relative path) | Pin cite (`074a2219`) | Bucket | Reason |
 | --- | --- | --- | --- | --- |
-| 1 | `oxpinyin-capi/src/dict.rs`, `oxpinyin-zhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size` / `g_array_append_vals` on the caller's array | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | Boundary | The caller owns a real `GArray`. |
+| 1 | `oxpinyin-capi/src/dict.rs`, `oxzhuyin-capi/src/dict.rs`: `glib_sys::g_array_set_size` / `g_array_append_vals` on the caller's array | `pinyin.cpp:2805,2817`; `zhuyin.cpp:1797,1809` | Boundary | The caller owns a real `GArray`. |
 | 2 | `ffi.rs` (both facades) `strdup`, `key_text`, `strconcat_aux`, `strjoinv`, `symbol_vector`, `sentence_text` (the pin's GLib calls), `malloc_cstr_with`, `take_owned_cstr`; the hand-declared `malloc` / `free` | `g_free` / `g_strfreev` ownership of returned strings (`pinyin.cpp:715-716,733`) | Boundary | Ownership and lifetime of returned C strings; `extern "C"` declarations are permitted. |
 | 3 | `ffi.rs` (both facades) `log_warning` (`g_log` at warning level in the facade's domain) and the lines it carries for class (b) refusals and notices with no pin counterpart | none: the pin's `assert` / `abort()` sites, for example `pinyin.cpp:2507` (`pinyin_choose_candidate`) and `:3738` (`pinyin_remove_user_candidate`), abort in the C adapters and write no such line | Behaviour | The warning text is oxpinyin's own and is not compared with the pin. |
 | 4 | `phrase.rs` (both facades), NULL `sentence`: GLib's `g_utf8_strlen` critical | `pinyin.cpp:1450`; `zhuyin.cpp:969`; GLib 2.84.4 `gutf8.c:240` | Imitation → Boundary | The pin's call, `glib_sys::g_utf8_strlen(sentence, -1)`, so GLib logs its own critical (domain `GLib`, `p != NULL \|\| max == 0`) and applies the caller's fatal mask. A hand-spelled copy of GLib's internal `g_return_val_if_fail` is rejected. |

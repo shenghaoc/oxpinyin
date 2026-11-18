@@ -2,7 +2,7 @@
 
 Status: **contract** (the two `.alloc` registers).
 
-`oxpinyin-capi` and `oxpinyin-zhuyin-capi` ship as drop-in replacements for
+`oxpinyin-capi` and `oxzhuyin-capi` ship as drop-in replacements for
 `libpinyin.so.15` / `libzhuyin.so.15`. Exactly one side owns every pointer
 that the ABI hands a consumer, and exactly one function releases it.
 `just abi exports` fixes *which* symbols cross the boundary. The
@@ -297,7 +297,7 @@ expects `gprintf.c:351: failed to allocate memory` on stderr then SIGABRT, with 
 `g_log`.
 
 ```sh
-cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+cargo build --locked -p oxpinyin-capi -p oxzhuyin-capi
 just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
   "$CARGO_TARGET_DIR/debug/libpinyin_capi.so" \
   "$CARGO_TARGET_DIR/debug/libzhuyin_capi.so"
